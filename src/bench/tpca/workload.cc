@@ -59,17 +59,17 @@ TpcaWorkload::TpcaWorkload(Config* config) : Workload(config) {
 //    int r1 = tpca_para_.n_customer_ / n_client;
 //    int r2 = tpca_para_.n_teller_ / n_client;
 //    int r3 = tpca_para_.n_teller_ / n_client;
-//    boost::random::uniform_int_distribution<> d1(0, r1-1);
-//    boost::random::uniform_int_distribution<> d2(0, r2-1);
-//    boost::random::uniform_int_distribution<> d3(0, r3-1);
+//    std::uniform_int_distribution<> d1(0, r1-1);
+//    std::uniform_int_distribution<> d2(0, r2-1);
+//    std::uniform_int_distribution<> d3(0, r3-1);
 //    k1 = r1 + d1(rand_gen_);
 //    k2 = r2 + d2(rand_gen_);
 //    k3 = r3 + d3(rand_gen_);
 //
 //  } else if (dist == "uniform") {
-//    boost::random::uniform_int_distribution<> d1(0, tpca_para_.n_customer_-1);
-//    boost::random::uniform_int_distribution<> d2(0, tpca_para_.n_teller_-1);
-//    boost::random::uniform_int_distribution<> d3(0, tpca_para_.n_branch_-1);
+//    std::uniform_int_distribution<> d1(0, tpca_para_.n_customer_-1);
+//    std::uniform_int_distribution<> d2(0, tpca_para_.n_teller_-1);
+//    std::uniform_int_distribution<> d3(0, tpca_para_.n_branch_-1);
 //    k1 = d1(rand_gen_);
 //    k2 = d2(rand_gen_);
 //    k3 = d3(rand_gen_);
@@ -248,4 +248,3 @@ void TpcaWorkload::RegisterPrecedures() {
 }
 
 } // namespace janus
-

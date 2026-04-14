@@ -54,8 +54,9 @@ void ServerWorker::SetupBase() {
     rep_sched_->site_id_ = site_info_->id;
     rep_sched_->rep_frame_ = rep_frame_;
 
-    // Phase 2.1: Initialize recovery for replication servers
-    InitializeRecovery(site_info_->partition_id_, site_info_->locale_id);
+    // Note: RAFT_TEST_CORO mode uses RaftPersistence (src/deptran/raft/) controlled
+    // by MAKO_RAFT_PERSISTENCE env var, not the mako-dev RecoveryManager system.
+    // InitializeRecovery() is intentionally not called here.
 
     // Start election timer after site_id_ is properly initialized
     // if (RaftServer* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
@@ -343,12 +344,33 @@ void ServerWorker::ShutDown() {
   delete rpc_server_;
   rpc_server_ = nullptr;
 
+  // Stop worker poll threads during explicit shutdown so test-mode runs don't
+  // leave background reconnect/election activity alive until global destructors.
+  if (svr_poll_thread_worker_.is_some()) {
+    Log_info("Shutting down server poll thread in ServerWorker::ShutDown()");
+    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
+    svr_poll_thread_worker_ = rusty::None;
+  }
+  if (svr_hb_poll_thread_worker_g.is_some()) {
+    Log_info("Shutting down heartbeat poll thread in ServerWorker::ShutDown()");
+    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
+    svr_hb_poll_thread_worker_g = rusty::None;
+  }
+
   // Modern C++ - smart pointer auto-cleanup
   // svr_poll_thread_worker_ automatically released by shared_ptr
 
-  // Jetpack: Clean up replication scheduler (raw pointer needs manual deletion)
+  // In lab test mode, RaftTestConfig::Kill/Restart can replace/delete server
+  // objects independently of ServerWorker, so rep_sched_ may be stale here.
+  // Skip manual deletion to avoid double-free/use-after-free on shutdown.
+#ifdef RAFT_TEST_CORO
+  Log_info("Skipping replication scheduler delete in RAFT_TEST_CORO shutdown");
+  rep_sched_ = nullptr;
+#else
+  // Production mode keeps ownership here.
   Log_info("Deleting replication scheduler...");
   if (rep_sched_) delete rep_sched_;
+#endif
   Log_info("ServerWorker shutdown complete.");
 }
 
@@ -449,4 +471,3 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
 }
 
 } // namespace janus
-

@@ -134,9 +134,14 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
       e->remove_xid(site);
     };
 
-    auto fu_result = proxy->async_Prepare(is_pilot, slot_id, ballot, di, fuattr);
+    CopilotProxy::RpcPrepareRequest req;
+    req.is_pilot = is_pilot;
+    req.slot = slot_id;
+    req.ballot = ballot;
+    req.dep_id = di;
+    auto fu_result = proxy->async_Prepare(req, fuattr);
     if (fu_result.is_ok()) {
-      auto f = fu_result.unwrap();
+      auto f = fu_result.unwrap().raw_future();
       e->add_xid(site, f->get_xid());
     }
   }
@@ -204,9 +209,16 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
   gettimeofday(&tp, NULL);
   Log_info("[1-] [tx=%d] async_FastAccept called by Submit %.3f", dynamic_pointer_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
-      auto fu_result = proxy->async_FastAccept(is_pilot, slot_id, ballot, dep, md, di, fuattr);
+      CopilotProxy::RpcFastAcceptRequest req;
+      req.is_pilot = is_pilot;
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.dep = dep;
+      req.cmd = md;
+      req.dep_id = di;
+      auto fu_result = proxy->async_FastAccept(req, fuattr);
       if (fu_result.is_ok()) {
-        auto f = fu_result.unwrap();
+        auto f = fu_result.unwrap().raw_future();
         e->add_xid(site, f->get_xid());
       }
     }
@@ -255,9 +267,16 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
       };
 
       MarshallDeputy md(cmd);
-      auto fu_result = proxy->async_Accept(is_pilot, slot_id, ballot, dep, md, di, fuattr);
+      CopilotProxy::RpcAcceptRequest req;
+      req.is_pilot = is_pilot;
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.dep = dep;
+      req.cmd = md;
+      req.dep_id = di;
+      auto fu_result = proxy->async_Accept(req, fuattr);
       if (fu_result.is_ok()) {
-        auto f = fu_result.unwrap();
+        auto f = fu_result.unwrap().raw_future();
         e->add_xid(site, f->get_xid());
       }
     }
@@ -289,9 +308,14 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
       e->remove_xid(site);
     };
     MarshallDeputy md(cmd);
-    auto fu_result = proxy->async_Commit(is_pilot, slot_id, dep, md, fuattr);
+    CopilotProxy::RpcCommitRequest req;
+    req.is_pilot = is_pilot;
+    req.slot = slot_id;
+    req.dep = dep;
+    req.cmd = md;
+    auto fu_result = proxy->async_Commit(req, fuattr);
     if (fu_result.is_ok()) {
-      auto f = fu_result.unwrap();
+      auto f = fu_result.unwrap().raw_future();
       e->add_xid(site, f->get_xid());
     }
   }

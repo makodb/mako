@@ -377,7 +377,6 @@ bench_worker::run()
 #if defined(COCO)
   shardTxnAll[TThread::getGlobalPartitionID()]=TThread::txn;
 #endif
-  std::cout<<"jump out the while loop"<<std::endl;
   // clockid_t cid;
   // int s;
   // s = pthread_getcpuclockid(pthread_self(), &cid);
@@ -551,7 +550,7 @@ bench_runner::run()
       uint32_t n_commits = 0 ;
       for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
       samplingTPUT.push_back({getEpochInms(), n_commits});
-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+      //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
     Warning("runtime_plus:%d",benchConfig.getRuntimePlus());
     runtime_loop = benchConfig.getRuntimePlus() * repeats;
@@ -563,7 +562,7 @@ bench_runner::run()
       uint32_t n_commits = 0 ;
       for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
       samplingTPUT.push_back({getEpochInms(), n_commits});
-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+      //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
   }
   // notify other leaders to shutdown as well
@@ -658,6 +657,9 @@ bench_runner::run()
   const unsigned long elapsed = t.lap()-1e6; // lap() must come after do_txn_finish(),
                                          // because do_txn_finish() potentially
                                          // waits a bit
+  const auto safe_div = [](double numer, double denom) -> double {
+    return denom > 0.0 ? numer / denom : 0.0;
+  };
 
   // various sanity checks
   ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
@@ -683,7 +685,7 @@ bench_runner::run()
 
   // XXX(stephentu): latency currently doesn't account for read-only txns
   const double avg_latency_us =
-    double(latency_numer_us) / double(n_commits);
+    safe_div(double(latency_numer_us), double(n_commits));
   const double avg_latency_ms = avg_latency_us / 1000.0;
   const double avg_persist_latency_ms =
     get<2>(persisted_info) / 1000.0;
@@ -754,19 +756,38 @@ bench_runner::run()
     string txn_ratio[] = {"NewOrder", "Payment"};
     for (int i=0;i<sizeof(txn_w1)/sizeof(txn_w1[0]); i++) {
       if (agg_txn_counts.find(txn_w1[i]+"_Local")!=agg_txn_counts.end()) {
-        cerr << "  " << txn_w1[i] << "_local_commit_latency: " << agg_txn_counts[txn_w1[i]+"_Local_NANO"] / (agg_txn_counts[txn_w1[i]+"_Local"] + 0.0) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_local_abort_latency: " << agg_txn_counts[txn_w1[i]+"_Local_NANO_abort"] / (agg_txn_counts[txn_w1[i]+"_Local_abort"] + 0.0) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_local_abort_ratio: " << agg_txn_counts[txn_w1[i]+"_Local_abort"] / (agg_txn_counts[txn_w1[i]+"_Local"] + agg_txn_counts[txn_w1[i]+"_Local_abort"] + 0.0) << endl;
+        const double local_commits = double(agg_txn_counts[txn_w1[i]+"_Local"]);
+        const double local_aborts = double(agg_txn_counts[txn_w1[i]+"_Local_abort"]);
+        const double local_commit_nano = double(agg_txn_counts[txn_w1[i]+"_Local_NANO"]);
+        const double local_abort_nano = double(agg_txn_counts[txn_w1[i]+"_Local_NANO_abort"]);
+        cerr << "  " << txn_w1[i] << "_local_commit_latency: "
+             << safe_div(local_commit_nano, local_commits) / 1000000.0 << " ms" << endl;
+        cerr << "  " << txn_w1[i] << "_local_abort_latency: "
+             << safe_div(local_abort_nano, local_aborts) / 1000000.0 << " ms" << endl;
+        cerr << "  " << txn_w1[i] << "_local_abort_ratio: "
+             << safe_div(local_aborts, local_commits + local_aborts) << endl;
       }
     }
 
     for (int i=0;i<sizeof(txn_ratio)/sizeof(txn_ratio[0]); i++) {
       if (agg_txn_counts.find(txn_ratio[i]+"_Local")!=agg_txn_counts.end() 
           && agg_txn_counts.find(txn_ratio[i]+"_Remote")!=agg_txn_counts.end()) {
-        cerr << "  " << txn_ratio[i] << "_remote_ratio: " << 100*(agg_txn_counts[txn_ratio[i]+"_Remote"]+agg_txn_counts[txn_ratio[i]+"_Remote_abort"]) / (agg_txn_counts[txn_ratio[i]+"_Local"]+agg_txn_counts[txn_ratio[i]+"_Local_abort"]+agg_txn_counts[txn_ratio[i]+"_Remote"]+agg_txn_counts[txn_ratio[i]+"_Remote_abort"] + 0.0) << " %"<< endl;
-        cerr << "  " << txn_ratio[i] << "_remote_abort_ratio: " << 100*agg_txn_counts[txn_ratio[i]+"_Remote_abort"] / (agg_txn_counts[txn_ratio[i]+"_Remote_abort"] + agg_txn_counts[txn_ratio[i]+"_Remote"] + 0.0) << " %" << endl;
-        cerr << "  " << txn_w1[i] << "_remote_commit_latency: " << agg_txn_counts[txn_w1[i]+"_Remote_NANO"] / (agg_txn_counts[txn_w1[i]+"_Remote"] + 0.0) / 1000000.0 << " ms" << endl;
-        cerr << "  " << txn_w1[i] << "_remote_abort_latency: " << agg_txn_counts[txn_w1[i]+"_Remote_NANO_abort"] / (agg_txn_counts[txn_w1[i]+"_Remote_abort"] + 0.0) / 1000000.0 << " ms" << endl;
+        const double local_commits = double(agg_txn_counts[txn_ratio[i]+"_Local"]);
+        const double local_aborts = double(agg_txn_counts[txn_ratio[i]+"_Local_abort"]);
+        const double remote_commits = double(agg_txn_counts[txn_ratio[i]+"_Remote"]);
+        const double remote_aborts = double(agg_txn_counts[txn_ratio[i]+"_Remote_abort"]);
+        const double remote_commit_nano = double(agg_txn_counts[txn_w1[i]+"_Remote_NANO"]);
+        const double remote_abort_nano = double(agg_txn_counts[txn_w1[i]+"_Remote_NANO_abort"]);
+        const double remote_total = remote_commits + remote_aborts;
+        const double txn_total = local_commits + local_aborts + remote_total;
+        cerr << "  " << txn_ratio[i] << "_remote_ratio: "
+             << 100 * safe_div(remote_total, txn_total) << " %"<< endl;
+        cerr << "  " << txn_ratio[i] << "_remote_abort_ratio: "
+             << 100 * safe_div(remote_aborts, remote_total) << " %" << endl;
+        cerr << "  " << txn_w1[i] << "_remote_commit_latency: "
+             << safe_div(remote_commit_nano, remote_commits) / 1000000.0 << " ms" << endl;
+        cerr << "  " << txn_w1[i] << "_remote_abort_latency: "
+             << safe_div(remote_abort_nano, remote_aborts) / 1000000.0 << " ms" << endl;
       }
     }
 
@@ -791,10 +812,10 @@ bench_runner::run()
 #endif
   }
 
-  cerr << "--- system counters for n_comits ---" << endl;
+  cerr << "--- system counters for n_commits ---" << endl;
 #if defined(COCO)
   for (int i = 0; i < samplingTPUT.size(); i++) {
-    cerr << "Time: " << samplingTPUT[i].first << ", n_comits: " << samplingTPUT[i].second << endl;
+    cerr << "Time: " << samplingTPUT[i].first << ", n_commits: " << samplingTPUT[i].second << endl;
   }
   std::cout<<"DONE"<<std::endl;
 #endif

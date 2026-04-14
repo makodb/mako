@@ -40,6 +40,32 @@ EOF
     GDB_PREFIX="gdb -batch -x ${GDB_CMD_FILE} --args"
 fi
 
+# Build optional dbtest CPU throttling CLI flags from environment.
+# - MAKO_CPU_LIMIT: integer in [0,100]
+# - MAKO_THROTTLE_CYCLE_MS: positive integer (milliseconds)
+# Prints a leading-space-prefixed argument string, or nothing if disabled.
+mako_dbtest_throttle_args() {
+    local args=""
+
+    if [ -n "${MAKO_CPU_LIMIT:-}" ]; then
+        if ! [[ "${MAKO_CPU_LIMIT}" =~ ^[0-9]+$ ]] || [ "${MAKO_CPU_LIMIT}" -lt 0 ] || [ "${MAKO_CPU_LIMIT}" -gt 100 ]; then
+            echo "Error: MAKO_CPU_LIMIT must be an integer in [0,100], got '${MAKO_CPU_LIMIT}'" >&2
+            return 1
+        fi
+        args="${args} --cpu-limit ${MAKO_CPU_LIMIT}"
+    fi
+
+    if [ -n "${MAKO_THROTTLE_CYCLE_MS:-}" ]; then
+        if ! [[ "${MAKO_THROTTLE_CYCLE_MS}" =~ ^[0-9]+$ ]] || [ "${MAKO_THROTTLE_CYCLE_MS}" -le 0 ]; then
+            echo "Error: MAKO_THROTTLE_CYCLE_MS must be a positive integer, got '${MAKO_THROTTLE_CYCLE_MS}'" >&2
+            return 1
+        fi
+        args="${args} --throttle-cycle ${MAKO_THROTTLE_CYCLE_MS}"
+    fi
+
+    printf '%s' "${args}"
+}
+
 # wait for nohup jobs DONE
 wait_for_jobs() {
   echo "Wait for jobs..."

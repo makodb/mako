@@ -18,6 +18,9 @@
 #include <condition_variable>
 #include <cstring>
 #include <cassert>
+#include <random>
+#include <system_error>
+#include <unistd.h>
 
 // eRPC includes
 #include "rpc.h"
@@ -28,10 +31,35 @@ using namespace std::chrono;
 // ============= Test Configuration =============
 
 // eRPC ports must be between kBaseSmUdpPort (31000) and kBaseSmUdpPort + kMaxNumERpcProcesses (41000)
-static constexpr int ERPC_TEST_PORT_BASE = 31100;
+static constexpr int ERPC_PORT_MIN = 31100;
+static constexpr int ERPC_PORT_MAX = 40900;
+static constexpr int ERPC_PORT_STRIDE = 10;
 static constexpr int ERPC_MSG_SIZE = 256;
 static constexpr int ERPC_REQ_TYPE_START = 1;
 static constexpr int ERPC_REQ_TYPE_END = 5;
+
+// Generate a random base port within the allowed eRPC range.
+static int generate_erpc_base_port() {
+    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    std::seed_seq seq{static_cast<unsigned>(getpid()),
+                      static_cast<unsigned>(now & 0xFFFFFFFF),
+                      static_cast<unsigned>(now >> 32)};
+    std::mt19937 gen(seq);
+    std::uniform_int_distribution<> dist(ERPC_PORT_MIN, ERPC_PORT_MAX - ERPC_PORT_STRIDE);
+    return dist(gen);
+}
+
+// Reserve a contiguous port block within the eRPC range.
+static int reserve_erpc_ports(int count) {
+    static std::atomic<int> counter{generate_erpc_base_port()};
+    int base = counter.fetch_add(count);
+    if (base + count > ERPC_PORT_MAX) {
+        int new_base = generate_erpc_base_port();
+        counter.store(new_base + count);
+        base = new_base;
+    }
+    return base;
+}
 
 // ============= Test Structures =============
 
@@ -126,24 +154,43 @@ protected:
     ErpcClientContext client_ctx_;
     std::thread server_thread_;
     std::atomic<bool> server_running_{false};
+    std::atomic<bool> server_failed_{false};
     std::atomic<bool> stop_server_{false};
     int server_port_;
     int client_port_;
     int session_num_{-1};
 
     void SetUp() override {
-        // Use unique ports to avoid conflicts
-        static std::atomic<int> port_counter{ERPC_TEST_PORT_BASE};
-        server_port_ = port_counter.fetch_add(10);
-        client_port_ = server_port_ + 5;
+        int attempts = 0;
+        while (attempts < 10) {
+            server_running_ = false;
+            server_failed_ = false;
+            stop_server_ = false;
 
-        // Start server in background thread
-        server_thread_ = std::thread([this]() { RunServer(); });
+            int base = reserve_erpc_ports(ERPC_PORT_STRIDE);
+            server_port_ = base;
+            client_port_ = base + 5;
 
-        // Wait for server to start
-        while (!server_running_) {
-            std::this_thread::sleep_for(milliseconds(10));
+            // Start server in background thread
+            server_thread_ = std::thread([this]() { RunServer(); });
+
+            // Wait for server to start or fail
+            while (!server_running_ && !server_failed_) {
+                std::this_thread::sleep_for(milliseconds(10));
+            }
+
+            if (server_running_) {
+                break;
+            }
+
+            stop_server_ = true;
+            if (server_thread_.joinable()) {
+                server_thread_.join();
+            }
+            attempts++;
         }
+
+        ASSERT_TRUE(server_running_) << "Failed to start eRPC server after retries";
 
         // Create client
         std::string client_uri = "127.0.0.1:" + std::to_string(client_port_);
@@ -190,7 +237,12 @@ protected:
 
     void RunServer() {
         std::string server_uri = "127.0.0.1:" + std::to_string(server_port_);
-        server_nexus_ = std::make_unique<erpc::Nexus>(server_uri);
+        try {
+            server_nexus_ = std::make_unique<erpc::Nexus>(server_uri);
+        } catch (const std::system_error&) {
+            server_failed_ = true;
+            return;
+        }
 
         // Register request handlers
         for (uint8_t req_type = ERPC_REQ_TYPE_START; req_type <= ERPC_REQ_TYPE_END; req_type++) {
@@ -351,8 +403,7 @@ protected:
     int port_;
 
     void SetUp() override {
-        static std::atomic<int> port_counter{ERPC_TEST_PORT_BASE + 500};
-        port_ = port_counter.fetch_add(10);
+        port_ = reserve_erpc_ports(2);
     }
 };
 

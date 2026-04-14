@@ -22,8 +22,9 @@
 
 #include <map>
 #include <vector>
+#include <tuple>
+#include <functional>
 #include <unordered_map>
-#include <boost/unordered_map.hpp>
 
 namespace mako {
 
@@ -75,14 +76,25 @@ public:
 class ErpcRequestHandle;
 class ErpcBackend;
 
+using SessionKey = std::tuple<uint8_t, uint8_t, uint16_t>;
+
+struct SessionKeyHash {
+    std::size_t operator()(const SessionKey& key) const noexcept {
+        const auto h1 = std::hash<uint8_t>{}(std::get<0>(key));
+        const auto h2 = std::hash<uint8_t>{}(std::get<1>(key));
+        const auto h3 = std::hash<uint16_t>{}(std::get<2>(key));
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
+    }
+};
+
 // eRPC context
 class AppContext {
 public:
     struct {
         req_tag_t *crt_req_tag;
         AppMemPool<req_tag_t> req_tag_pool;
-        boost::unordered_map<TransportReceiver *,
-            boost::unordered_map<std::tuple<uint8_t, uint8_t, uint16_t>, int>> sessions;
+        std::unordered_map<TransportReceiver *,
+            std::unordered_map<SessionKey, int, SessionKeyHash>> sessions;
     } client;
 
     erpc::Rpc<erpc::CTransport> *rpc = nullptr;

@@ -15,7 +15,7 @@ rm -f nfs_sync_*
 trd=${1:-6}
 script_name="$(basename "$0")"
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+pkill -9 -f "build/dbtest" 2>/dev/null || true
 sleep 1
 
 # Start shard 0 in background

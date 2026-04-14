@@ -36,7 +36,7 @@
 #include "../src/mako/util.h"
 
 // Mock get_epoch for testing
-int get_epoch() {
+static int get_epoch() {
     return 1;
 }
 

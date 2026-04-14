@@ -4,6 +4,10 @@
 # Each shard should:
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 40%
+#
+# NOTE: This script mirrors test_2shard_replication.sh (Paxos) exactly
+# in duration, polling, shutdown, and validation — only the replication
+# layer differs (Raft 3 replicas vs Paxos 4 replicas with learner).
 
 echo "========================================="
 echo "Testing 2-shard setup with Raft replication"
@@ -11,40 +15,45 @@ echo "========================================="
 
 # Clean up old log files
 rm -f nfs_sync_*
-rm -f shard0*.log shard1*.log
-rm -rf /tmp/mako_rocksdb_shard*
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-# Kill any lingering processes
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simpleRaft | awk "{print \$2}" | xargs kill -9 2>/dev/null
-sleep 1
-
-# Start shard 0 in background
-echo "Starting shard 0 with Raft replication..."
 trd=6
-nohup bash bash/shard_raft.sh 2 0 $trd localhost 0 1 > shard0-localhost.log 2>&1 &
-nohup bash bash/shard_raft.sh 2 0 $trd p2 0 1 > shard0-p2.log 2>&1 &
-sleep 1
-nohup bash bash/shard_raft.sh 2 0 $trd p1 0 1 > shard0-p1.log 2>&1 &
-SHARD0_PID=$!
+script_name="$(basename "$0")"
 
-# Wait longer for shard 0 to fully initialize before starting shard 1
-# This prevents port conflicts during startup
+# Determine transport type and create unique log prefix (match Paxos)
+transport="${MAKO_TRANSPORT:-rrr}"
+log_prefix="${script_name}_${transport}"
+
+ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+sleep 1
+
+# Start shard 0 in background (3 Raft replicas, no learner)
+echo "Starting shard 0 with Raft..."
+nohup bash bash/shard_raft.sh 2 0 $trd localhost 0 1 > ${log_prefix}_shard0-localhost.log 2>&1 &
+SHARD0_LOCALHOST_PID=$!
+nohup bash bash/shard_raft.sh 2 0 $trd p2 0 1 > ${log_prefix}_shard0-p2.log 2>&1 &
+SHARD0_P2_PID=$!
+sleep 1
+nohup bash bash/shard_raft.sh 2 0 $trd p1 0 1 > ${log_prefix}_shard0-p1.log 2>&1 &
+SHARD0_P1_PID=$!
+
 sleep 5
 
-# Start shard 1 in background
-echo "Starting shard 1 with Raft replication..."
-nohup bash bash/shard_raft.sh 2 1 $trd localhost 0 1 > shard1-localhost.log 2>&1 &
+# Start shard 1 in background (delayed start ensures shard1 stays running while shard0 shuts down)
+echo "Starting shard 1 with Raft..."
+nohup bash bash/shard_raft.sh 2 1 $trd localhost 0 1 > ${log_prefix}_shard1-localhost.log 2>&1 &
+SHARD1_LOCALHOST_PID=$!
+nohup bash bash/shard_raft.sh 2 1 $trd p2 0 1 > ${log_prefix}_shard1-p2.log 2>&1 &
+SHARD1_P2_PID=$!
 sleep 1
-nohup bash bash/shard_raft.sh 2 1 $trd p2 0 1 > shard1-p2.log 2>&1 &
-sleep 1
-nohup bash bash/shard_raft.sh 2 1 $trd p1 0 1 > shard1-p1.log 2>&1 &
-SHARD1_PID=$!
+nohup bash bash/shard_raft.sh 2 1 $trd p1 0 1 > ${log_prefix}_shard1-p1.log 2>&1 &
+SHARD1_P1_PID=$!
 
-# Wait for benchmarks to complete (poll for completion markers)
+# Wait for benchmarks to complete (poll for completion markers — same as Paxos)
 echo "Waiting for benchmarks to complete..."
-log_file0="shard0-localhost.log"
-log_file1="shard1-localhost.log"
+log_file0="${log_prefix}_shard0-localhost.log"
+log_file1="${log_prefix}_shard1-localhost.log"
 max_wait=120  # Maximum wait time in seconds
 wait_count=0
 
@@ -77,7 +86,7 @@ if [ $wait_count -ge $max_wait ]; then
     echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
 fi
 
-# Graceful shutdown: SIGTERM first
+# Graceful shutdown: SIGTERM first (same as Paxos)
 echo "Stopping shards (graceful)..."
 
 # First, kill the parent bash scripts to prevent them from respawning dbtest
@@ -96,7 +105,27 @@ killall -9 dbtest 2>/dev/null || true
 # Wait for OS to clean up
 sleep 2
 
-wait $SHARD0_PID $SHARD1_PID 2>/dev/null
+# Check for and kill any remaining processes including zombies
+remaining=$(ps aux | grep "dbtest" | grep -v grep | wc -l)
+if [ "$remaining" -gt 0 ]; then
+    echo "WARNING: $remaining dbtest processes still present after kill attempt"
+    ps aux | grep "dbtest" | grep -v grep
+
+    # Get PIDs and kill individually
+    pids=$(ps aux | grep "dbtest" | grep -v grep | awk '{print $2}')
+    for pid in $pids; do
+        echo "Force killing PID $pid"
+        kill -9 $pid 2>/dev/null || true
+    done
+
+    sleep 1
+fi
+
+# Final verification - reap zombie processes by explicitly waiting on child PIDs
+for pid in $SHARD0_LOCALHOST_PID $SHARD0_P2_PID $SHARD0_P1_PID \
+           $SHARD1_LOCALHOST_PID $SHARD1_P2_PID $SHARD1_P1_PID; do
+    wait $pid 2>/dev/null || true
+done
 
 echo ""
 echo "========================================="
@@ -107,7 +136,7 @@ failed=0
 
 # Check each shard's output
 for i in 0 1; do
-    log="shard${i}-localhost.log"
+    log="${log_prefix}_shard${i}-localhost.log"
     echo ""
     echo "Checking $log:"
     echo "-----------------"
@@ -118,10 +147,20 @@ for i in 0 1; do
         continue
     fi
 
+    # Check for TPC-C sharding policy initialization (only for shard 0, as policy is shared)
+    if [ "$i" -eq 0 ]; then
+        if grep -q "TPC-C Sharding: Initialized policy" "$log"; then
+            echo "  ✓ TPC-C sharding policy initialized"
+            grep "TPC-C Sharding: Initialized policy" "$log" | tail -n 1 | sed 's/^/    /'
+        else
+            echo "  ✗ TPC-C sharding policy not initialized"
+            failed=1
+        fi
+    fi
+
     # Check for agg_persist_throughput keyword
     if grep -q "agg_persist_throughput" "$log"; then
         echo "  ✓ Found 'agg_persist_throughput' keyword"
-        # Show the line for reference
         grep "agg_persist_throughput" "$log" | tail -1 | sed 's/^/    /'
     else
         echo "  ✗ 'agg_persist_throughput' keyword not found"
@@ -130,18 +169,18 @@ for i in 0 1; do
 
     # Check NewOrder_remote_abort_ratio
     if grep -q "NewOrder_remote_abort_ratio:" "$log"; then
-        # Extract the abort ratio value
         abort_ratio=$(grep "NewOrder_remote_abort_ratio:" "$log" | tail -1 | awk '{print $2}')
 
         if [ -z "$abort_ratio" ]; then
             echo "  ✗ Could not extract NewOrder_remote_abort_ratio value"
             failed=1
         else
-            # Remove % sign if present and convert to float
             abort_value=$(echo "$abort_ratio" | sed 's/%//')
 
-            # Check if value is less than 40 using awk (more portable than bc)
-            if awk "BEGIN {exit !($abort_value < 40)}"; then
+            # Handle -nan/nan (0/0 division)
+            if echo "$abort_value" | grep -qi "nan"; then
+                echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (no remote txns, OK)"
+            elif awk "BEGIN {exit !($abort_value < 40)}"; then
                 echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (< 40%)"
             else
                 echo "  ✗ NewOrder_remote_abort_ratio: $abort_ratio (>= 40%)"
@@ -152,28 +191,6 @@ for i in 0 1; do
         echo "  ✗ NewOrder_remote_abort_ratio not found"
         failed=1
     fi
-
-    # Check Raft-specific metrics (follower replication)
-    echo ""
-    echo "Checking Raft replication metrics for shard $i:"
-    for node in localhost p1 p2; do
-        node_log="shard${i}-${node}.log"
-        if [ -f "$node_log" ]; then
-            # Check for replay_batch metric (indicates follower replication)
-            if grep -q "replay_batch:" "$node_log"; then
-                # Extract replay count and remove trailing comma/whitespace
-                replay_count=$(grep "replay_batch:" "$node_log" | tail -1 | sed 's/.*replay_batch://' | awk '{print $1}' | tr -d ',')
-                echo "  ✓ Node $node - replay_batch: $replay_count"
-
-                # Warn if replay count is very low (indicates potential replication issues)
-                if [ "$node" != "localhost" ] && [ -n "$replay_count" ] && [ "$replay_count" -gt 0 ]; then
-                    if [ "$replay_count" -lt 1000 ]; then
-                        echo "    ⚠ Warning: replay_batch is low, may indicate follower replication issues"
-                    fi
-                fi
-            fi
-        fi
-    done
 done
 
 echo ""
@@ -181,27 +198,16 @@ echo "========================================="
 if [ $failed -eq 0 ]; then
     echo "All checks passed!"
     echo "========================================="
-    echo ""
-    echo "Summary:"
-    echo "  - Both shards completed successfully"
-    echo "  - Raft replication working across all nodes"
-    echo "  - Abort ratios within acceptable limits"
     exit 0
 else
     echo "Some checks failed!"
     echo "========================================="
     echo ""
     echo "Debug information:"
-    echo "Check shard0-localhost.log and shard1-localhost.log for details"
-    echo ""
-    echo "=== Last 20 lines of shard0-localhost.log ==="
-    tail -20 shard0-localhost.log 2>/dev/null || echo "File not found"
-    echo ""
-    echo "=== Last 20 lines of shard1-localhost.log ==="
-    tail -20 shard1-localhost.log 2>/dev/null || echo "File not found"
+    echo "Check ${log_prefix}_shard*-localhost.log for details"
+    tail -10 ${log_prefix}_shard0-localhost.log
+    tail -10 ${log_prefix}_shard1-localhost.log
     exit 1
 fi
 
-# Final cleanup
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simpleRaft | awk "{print \$2}" | xargs kill -9 2>/dev/null

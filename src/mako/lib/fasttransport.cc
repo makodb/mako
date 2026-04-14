@@ -35,6 +35,7 @@
 
 static std::mutex fasttransport_lock;
 static volatile bool fasttransport_initialized = false;
+static bool fasttransport_signal_handlers_enabled = true;
 
 std::function<int(int,int)> bench_callback_ = nullptr;
 void register_fasttransport_for_bench(std::function<int(int,int)> cb) {
@@ -44,6 +45,12 @@ void register_fasttransport_for_bench(std::function<int(int,int)> cb) {
 std::function<int(int,int)> dbtest_callback_ = nullptr;
 void register_fasttransport_for_dbtest(std::function<int(int,int)> cb) {
     dbtest_callback_ = cb;
+}
+
+void set_fasttransport_signal_handlers_enabled(bool enabled) {
+    fasttransport_lock.lock();
+    fasttransport_signal_handlers_enabled = enabled;
+    fasttransport_lock.unlock();
 }
 
 FastTransport::FastTransport(std::string file,
@@ -79,20 +86,22 @@ FastTransport::FastTransport(std::string file,
         eventBase = event_base_new();
         evthread_make_base_notifiable(eventBase);
 
-        // Create signal handlers for graceful shutdown
-        // @unsafe - evsignal_new calls non-borrow-checked libevent code
-        event *sigterm_event = evsignal_new(eventBase, SIGTERM, SignalCallback, this);
-        event *sigint_event = evsignal_new(eventBase, SIGINT, SignalCallback, this);
-        if (sigterm_event) {
-            signalEvents.push_back(sigterm_event);
-        }
-        if (sigint_event) {
-            signalEvents.push_back(sigint_event);
-        }
+        if (fasttransport_signal_handlers_enabled) {
+            // Create signal handlers for graceful shutdown
+            // @unsafe - evsignal_new calls non-borrow-checked libevent code
+            event *sigterm_event = evsignal_new(eventBase, SIGTERM, SignalCallback, this);
+            event *sigint_event = evsignal_new(eventBase, SIGINT, SignalCallback, this);
+            if (sigterm_event) {
+                signalEvents.push_back(sigterm_event);
+            }
+            if (sigint_event) {
+                signalEvents.push_back(sigint_event);
+            }
 
-        for (event *x : signalEvents)
-        {
-            event_add(x, NULL);
+            for (event *x : signalEvents)
+            {
+                event_add(x, NULL);
+            }
         }
 
         fasttransport_initialized = true;

@@ -274,6 +274,15 @@ class ClientStatus {
     guard->ready_block_defers.emplace_back(std::move(cb));
   }
 
+  void wait_until_ready_or_stop() const {
+    auto guard = sync_state_->lock().unwrap();
+    guard = sync_cond_->wait_while(
+        std::move(guard),
+        [](SyncState& s) {
+          return s.status != Status::READY && s.status != Status::STOP;
+        }).unwrap();
+  }
+
   unsigned int num_threads() const { return num_threads_; }
   pthread_t** coo_threads() const { return coo_threads_; }
   const std::map<int32_t, std::string>& txn_names() const { return txn_names_; }

@@ -125,14 +125,20 @@ rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
 
     // Call RPC with client_version=0 to get full config
     auto proxy = proxy_.as_ref().unwrap();
+    ConfigServiceProxy::RpcGetConfigRequest req;
+    req.client_version = 0;
     // @unsafe { RPC network call }
-    rrr::i32 result = proxy->GetConfig(0, &current_version, &has_update, &config_data);
+    auto result = proxy->GetConfig(req);
 
-    if (result != 0) {
+    if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetConfig RPC failed with error %d", result);
+        Log_warn("ConfigClient: GetConfig RPC failed with error %d", result.unwrap_err());
         return rusty::None;
     }
+    auto response = result.unwrap();
+    current_version = response.current_version;
+    has_update = response.has_update;
+    config_data = std::move(response.config_data);
 
     if (has_update == 0 || config_data.empty()) {
         // @unsafe { logging I/O }
@@ -166,14 +172,16 @@ rusty::Option<uint64_t> ConfigClient::fetch_version() {
 
     uint64_t version = 0;
     auto proxy = proxy_.as_ref().unwrap();
+    ConfigServiceProxy::RpcGetConfigVersionRequest req;
     // @unsafe { RPC network call }
-    rrr::i32 result = proxy->GetConfigVersion(&version);
+    auto result = proxy->GetConfigVersion(req);
 
-    if (result != 0) {
+    if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetConfigVersion RPC failed with error %d", result);
+        Log_warn("ConfigClient: GetConfigVersion RPC failed with error %d", result.unwrap_err());
         return rusty::None;
     }
+    version = result.unwrap().version;
 
     return rusty::Some(version);
 }
@@ -188,14 +196,16 @@ rusty::Option<bool> ConfigClient::has_config() {
 
     rrr::i32 has_config_result = 0;
     auto proxy = proxy_.as_ref().unwrap();
+    ConfigServiceProxy::RpcHasConfigRequest req;
     // @unsafe { RPC network call }
-    rrr::i32 result = proxy->HasConfig(&has_config_result);
+    auto result = proxy->HasConfig(req);
 
-    if (result != 0) {
+    if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: HasConfig RPC failed with error %d", result);
+        Log_warn("ConfigClient: HasConfig RPC failed with error %d", result.unwrap_err());
         return rusty::None;
     }
+    has_config_result = result.unwrap().has_config;
 
     return rusty::Some(has_config_result != 0);
 }
@@ -218,14 +228,20 @@ rusty::Option<ShardingPolicySet> ConfigClient::fetch_sharding_policy() {
 
     // Call RPC with client_version=0 to get full policy
     auto proxy = proxy_.as_ref().unwrap();
+    ConfigServiceProxy::RpcGetShardingPolicyRequest req;
+    req.client_version = 0;
     // @unsafe { RPC network call }
-    rrr::i32 result = proxy->GetShardingPolicy(0, &current_version, &has_update, &policy_data);
+    auto result = proxy->GetShardingPolicy(req);
 
-    if (result != 0) {
+    if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetShardingPolicy RPC failed with error %d", result);
+        Log_warn("ConfigClient: GetShardingPolicy RPC failed with error %d", result.unwrap_err());
         return rusty::None;
     }
+    auto response = result.unwrap();
+    current_version = response.current_version;
+    has_update = response.has_update;
+    policy_data = std::move(response.policy_data);
 
     if (has_update == 0 || policy_data.empty()) {
         // @unsafe { logging I/O }
@@ -259,14 +275,16 @@ rusty::Option<uint64_t> ConfigClient::fetch_sharding_version() {
 
     uint64_t version = 0;
     auto proxy = proxy_.as_ref().unwrap();
+    ConfigServiceProxy::RpcGetShardingPolicyVersionRequest req;
     // @unsafe { RPC network call }
-    rrr::i32 result = proxy->GetShardingPolicyVersion(&version);
+    auto result = proxy->GetShardingPolicyVersion(req);
 
-    if (result != 0) {
+    if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetShardingPolicyVersion RPC failed with error %d", result);
+        Log_warn("ConfigClient: GetShardingPolicyVersion RPC failed with error %d", result.unwrap_err());
         return rusty::None;
     }
+    version = result.unwrap().version;
 
     return rusty::Some(version);
 }
@@ -281,14 +299,16 @@ rusty::Option<bool> ConfigClient::has_sharding_policy() {
 
     rrr::i32 has_policy_result = 0;
     auto proxy = proxy_.as_ref().unwrap();
+    ConfigServiceProxy::RpcHasShardingPolicyRequest req;
     // @unsafe { RPC network call }
-    rrr::i32 result = proxy->HasShardingPolicy(&has_policy_result);
+    auto result = proxy->HasShardingPolicy(req);
 
-    if (result != 0) {
+    if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: HasShardingPolicy RPC failed with error %d", result);
+        Log_warn("ConfigClient: HasShardingPolicy RPC failed with error %d", result.unwrap_err());
         return rusty::None;
     }
+    has_policy_result = result.unwrap().has_policy;
 
     return rusty::Some(has_policy_result != 0);
 }
@@ -313,14 +333,17 @@ bool ConfigClient::set_sharding_policy(const ShardingPolicySet& policy) {
 
     rrr::i32 success = 0;
     auto proxy = proxy_.as_ref().unwrap();
+    ConfigServiceProxy::RpcSetShardingPolicyRequest req;
+    req.policy_data = std::move(policy_data);
     // @unsafe { RPC network call }
-    rrr::i32 result = proxy->SetShardingPolicy(policy_data, &success);
+    auto result = proxy->SetShardingPolicy(req);
 
-    if (result != 0) {
+    if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: SetShardingPolicy RPC failed with error %d", result);
+        Log_warn("ConfigClient: SetShardingPolicy RPC failed with error %d", result.unwrap_err());
         return false;
     }
+    success = result.unwrap().success;
 
     if (success == 0) {
         // @unsafe { logging I/O }

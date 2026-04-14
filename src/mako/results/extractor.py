@@ -112,7 +112,7 @@ def extract_time_ncommits(f):
         content = file.readlines()
 
     # Define the regex pattern to match
-    pattern = re.compile(r'Time:(.*), n_comits:(.*)')
+    pattern = re.compile(r'Time:(.*), n_com(?:m|)its:(.*)')
 
     ret = []
     # Print out the values for all lines that match the pattern

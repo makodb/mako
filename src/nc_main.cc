@@ -292,7 +292,6 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
     //while (t_counter - done > 10) { usleep(1000 * 1); }
     usleep(1000*10);
     int r = rand() % 100 + 1; // [1, 100]
-    int ret=0;
     if (r<=100) {  // communicator.cc
         FutureAttr fuattr;  // fuattr
         fuattr.callback = [&done] (rusty::Arc<Future> fu) {
@@ -301,8 +300,10 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
         // t.lap_nano();
         vector<int64_t> _req = nc_generate_read(par_id);
         // Future::safe_release(nc_clients[par_id]->async_txn_read(_req, fuattr));
+        NetworkClientProxy::RpcTxnReadRequest req;
+        req._req = _req;
         t.lap_nano();
-        nc_clients[par_id]->txn_read(_req);
+        nc_clients[par_id]->txn_read(req);
         nano_t += t.lap_nano();
         usleep(1000*1);
     } else {
@@ -316,9 +317,11 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
         // t.lap_nano();
         // Future::safe_release(nc_clients[par_id]->async_txn_rmw(_req, fuattr));
         // nano_t += t.lap_nano();
+        NetworkClientProxy::RpcTxnRmwRequest req;
+        req._req = _req;
 
         t.lap_nano();
-        nc_clients[par_id]->txn_rmw(_req);
+        nc_clients[par_id]->txn_rmw(req);
         nano_t += t.lap_nano();
     }
 

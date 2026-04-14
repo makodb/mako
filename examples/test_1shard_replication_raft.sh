@@ -11,6 +11,9 @@ echo "Testing 1-shard setup with RAFT replication"
 echo "========================================="
 
 trd=${1:-6}
+export MAKO_RAFT_PREFERRED_GRACE_US="${MAKO_RAFT_PREFERRED_GRACE_US:-30000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US:-5000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US:-10000000}"
 script_name="$(basename "$0")"
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
@@ -18,10 +21,9 @@ rm -f nfs_sync_*
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-# Start shard 0 in background with RAFT replication
+# Start shard 0 in background with RAFT replication (3 replicas, no learner)
 echo "Starting shard 0 with Raft..."
 nohup bash bash/shard.sh 1 0 $trd localhost 0 1 raft > $script_name\_shard0-localhost-$trd.log 2>&1 &
-nohup bash bash/shard.sh 1 0 $trd learner 0 1 raft > $script_name\_shard0-learner-$trd.log 2>&1 &
 nohup bash bash/shard.sh 1 0 $trd p2 0 1 raft > $script_name\_shard0-p2-$trd.log 2>&1 &
 sleep 1
 nohup bash bash/shard.sh 1 0 $trd p1 0 1 raft > $script_name\_shard0-p1-$trd.log 2>&1 &
@@ -108,8 +110,10 @@ failed=0
             # Remove % sign if present and convert to float
             abort_value=$(echo "$abort_ratio" | sed 's/%//')
 
-            # Check if value is less than 20 using awk (more portable than bc)
-            if awk "BEGIN {exit !($abort_value < 20)}"; then
+            # Handle -nan/nan (0 remote txns = 0/0 division, perfectly fine)
+            if echo "$abort_value" | grep -qi "nan"; then
+                echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (no remote txns, OK)"
+            elif awk "BEGIN {exit !($abort_value < 20)}"; then
                 echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (< 20%)"
             else
                 echo "  ✗ NewOrder_remote_abort_ratio: $abort_ratio (>= 20%)"

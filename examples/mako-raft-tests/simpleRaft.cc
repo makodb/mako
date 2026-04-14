@@ -8,6 +8,7 @@
 #include <atomic>
 #include <mako.hh>
 #include <examples/common.h>
+#include <deptran/replication_helper.h>
 
 using namespace std;
 using namespace mako;
@@ -83,6 +84,12 @@ int main(int argc, char **argv) {
     argv_raft[15] = (char *) raft_proc_name.c_str();
     argv_raft[16] = (char *)"-A";
     argv_raft[17] = (char *)"10000";
+
+    // Set replication type to Raft BEFORE setup() so the dispatcher routes
+    // to raft_impl::setup() which disables Jetpack recovery (MAKO_DISABLE_JETPACK=1).
+    // Without this, the default is PAXOS and setup() goes through paxos_main_helper
+    // which does not disable Jetpack, causing RPC handler mismatches at runtime.
+    janus::set_replication_type(janus::ReplicationType::RAFT);
 
     std::vector<string> ret = setup(18, argv_raft);
     if (ret.empty()) {

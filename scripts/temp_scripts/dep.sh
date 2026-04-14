@@ -11,8 +11,6 @@ sudo apt-get --assume-yes install -y \
     cmake \
     cgroup-tools \
     libapr1-dev libaprutil1-dev \
-    libboost-all-dev \
-    libyaml-cpp-dev \
     libjemalloc-dev \
     python3-dev \
     python3-pip \

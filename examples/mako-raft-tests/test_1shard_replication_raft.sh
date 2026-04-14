@@ -1,25 +1,29 @@
 #!/bin/bash
 
 # Script to test 1-shard experiments with Raft replication
-# The shard should:
+# Each shard should:
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 20%
 # 3. Followers replay at least 1000 batches
+#
+# NOTE: This script mirrors test_1shard_replication.sh (Paxos) exactly
+# in duration, polling, shutdown, and validation — only the replication
+# layer differs (Raft 3 replicas vs Paxos 4 replicas with learner).
 
 echo "========================================="
-echo "Testing 1-shard Raft setup with replication"
+echo "Testing 1-shard setup with Raft replication"
 echo "========================================="
 
 trd=${1:-6}
 script_name="$(basename "$0")"
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simpleRaft | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
 rm -f nfs_sync_*
-rm -rf /tmp/mako_rocksdb_shard*
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-# Start shard 0 with 3 Raft replicas (no learner in Raft)
-echo "Starting shard 0 with 3 Raft replicas..."
+# Start shard 0 in background (3 Raft replicas, no learner)
+echo "Starting shard 0 with Raft..."
 nohup bash bash/shard_raft.sh 1 0 $trd localhost 0 1 > $script_name\_shard0-localhost-$trd.log 2>&1 &
 nohup bash bash/shard_raft.sh 1 0 $trd p2 0 1 > $script_name\_shard0-p2-$trd.log 2>&1 &
 sleep 1
@@ -27,14 +31,43 @@ nohup bash bash/shard_raft.sh 1 0 $trd p1 0 1 > $script_name\_shard0-p1-$trd.log
 SHARD0_PID=$!
 sleep 2
 
-# Wait for experiments to run
-echo "Running experiments for 60 seconds..."
-sleep 60
+# Wait for benchmark to complete (poll for completion marker)
+# Same polling logic as Paxos test for fair comparison
+echo "Waiting for benchmark to complete..."
+log_file="${script_name}_shard0-localhost-$trd.log"
+max_wait=120  # Maximum wait time in seconds
+wait_count=0
 
-# Kill the processes
-echo "Stopping shards..."
-kill $SHARD0_PID 2>/dev/null
-wait $SHARD0_PID 2>/dev/null
+while [ $wait_count -lt $max_wait ]; do
+    # Check if throughput output appeared (indicates completion)
+    if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+        echo "Benchmark completed after ${wait_count}s"
+        sleep 2  # Give a moment for final output
+        break
+    fi
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed)"
+    fi
+done
+
+if [ $wait_count -ge $max_wait ]; then
+    echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+fi
+
+# Graceful shutdown: SIGTERM first (same as Paxos test)
+echo "Stopping shards (graceful)..."
+pkill -TERM -f "dbtest.*shard-index 0" 2>/dev/null || true
+sleep 3
+
+# Force kill any remaining processes
+pkill -9 -f "dbtest.*shard-index 0" 2>/dev/null || true
+sleep 1
+
+# Original cleanup for good measure
+kill $SHARD0_PID 2>/dev/null || true
+wait $SHARD0_PID 2>/dev/null || true
 
 echo ""
 echo "========================================="
@@ -43,7 +76,7 @@ echo "========================================="
 
 failed=0
 
-# Check leader (localhost) output
+# Check each shard's output
 {
     i=0
     log="${script_name}_shard${i}-localhost-$trd.log"
@@ -79,8 +112,10 @@ failed=0
             # Remove % sign if present and convert to float
             abort_value=$(echo "$abort_ratio" | sed 's/%//')
 
-            # Check if value is less than 20 using awk (more portable than bc)
-            if awk "BEGIN {exit !($abort_value < 20)}"; then
+            # Handle -nan/nan (0 remote txns = 0/0 division, perfectly fine for single shard)
+            if echo "$abort_value" | grep -qi "nan"; then
+                echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (no remote txns, OK)"
+            elif awk "BEGIN {exit !($abort_value < 20)}"; then
                 echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (< 20%)"
             else
                 echo "  ✗ NewOrder_remote_abort_ratio: $abort_ratio (>= 20%)"
@@ -93,7 +128,7 @@ failed=0
     fi
 }
 
-# Check replay_batch counter in shard0-p1.log (follower replication)
+# Check replay_batch counter in shard0-p1.log
 echo ""
 log_p1="${script_name}_shard0-p1-$trd.log"
 echo "Checking $log_p1:"

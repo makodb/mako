@@ -11,43 +11,70 @@
 // #include "../kv/server.h"
 
 // @external: {
-//   rrr::RandomGenerator::rand_double: [unsafe, (double, double) -> double]
-//   std::make_shared: [unsafe, (...) -> owned]
-//   std::unique_ptr::get: [unsafe, () -> *]
+//   Log_info: [safe, (...) -> void]
+//   Log_debug: [safe, (...) -> void]
+//   verify: [safe, (...) -> void]
+//   std::make_unique: [safe, (...) -> owned]
+//   std::make_shared: [safe, (...) -> owned]
+//   Config::GetConfig: [safe, () -> *]
+//   Reactor::get_reactor: [safe, () -> *]
+//   rusty::make_box: [safe, (...) -> owned]
 // }
 
 namespace janus {
 
 REG_FRAME(MODE_RAFT, vector<string>({"raft"}), RaftFrame);
 
+Frame* CreateRaftFrameBuiltin(int mode) {
+  return new RaftFrame(mode);
+}
+
 // @safe
 RaftFrame::RaftFrame(int mode) : Frame(mode) {
 
 }
 
-// @safe - Properly cleans up owned resources
+// @safe - Properly cleans up owned resources via Option<Box<T>>
 RaftFrame::~RaftFrame() {
-  // commo_ and svr_ automatically cleaned up by unique_ptr
 }
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-std::shared_ptr<Fiber> RaftFrame::raft_test_coro_ = nullptr;
+rusty::Option<rusty::Rc<Fiber>> RaftFrame::raft_test_coro_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
 bool RaftFrame::tests_done_ = false;
 uint16_t RaftFrame::n_commo_created_ = 0;
+bool RaftFrame::is_lab_test_config_ = false;
+bool RaftFrame::lab_test_config_checked_ = false;
+
+// @safe - Check if running in raft lab test configuration (1 partition, 5 replicas)
+bool RaftFrame::IsRaftLabTestConfig() {
+  if (!lab_test_config_checked_) {
+    auto config = Config::GetConfig();
+    if (config != nullptr) {
+      // Raft lab test configuration: 1 partition with exactly 5 replicas
+      is_lab_test_config_ = (config->GetNumPartition() == 1 &&
+                              config->GetPartitionSize(0) == 5);
+      lab_test_config_checked_ = true;
+      Log_info("RaftFrame: Lab test config check: partitions=%u, replicas=%d, is_lab_test=%s",
+               config->GetNumPartition(), config->GetPartitionSize(0),
+               is_lab_test_config_ ? "true" : "false");
+    }
+  }
+  return is_lab_test_config_;
+}
 #endif
 
 
-// @safe
+// @unsafe - factory method returns raw pointer via new (caller takes ownership)
 Executor *RaftFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
   Executor *exec = new RaftExecutor(cmd_id, sched);
   return exec;
 }
 
-// @safe
+// @unsafe - factory method uses new to create raw pointer (caller takes ownership)
 Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
                                                 Config *config,
                                                 int benchmark,
@@ -76,30 +103,37 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
   return coo;
 }
 
-// @safe
+// @unsafe - returns raw pointer to owned member (caller does not take ownership), calls Log_error/Log_debug
 TxLogServer *RaftFrame::CreateScheduler() {
   if(svr_ == nullptr)
   {
-    svr_ = std::make_unique<RaftServer>(this);
+    // @unsafe
+    { svr_ = std::make_unique<RaftServer>(this); }
   }
   else
   {
-    verify(0) ;
+    // @unsafe { Log_error is not borrow-checked }
+    Log_error("[RAFT] RaftFrame::CreateScheduler called but scheduler already exists");
+    return svr_.get();
   }
-  Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id);
+  // @unsafe
+  { Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id); }
 
 #ifdef RAFT_TEST_CORO
-  raft_test_mutex_.lock();
-  verify(n_replicas_ < 5);
-  frames_[this->site_info_->locale_id] = this;
-  n_replicas_++;
-  raft_test_mutex_.unlock();
+  // Only run test framework code if in raft lab test configuration
+  if (IsRaftLabTestConfig()) {
+    raft_test_mutex_.lock();
+    verify(n_replicas_ < 5);
+    frames_[this->site_info_->locale_id] = this;
+    n_replicas_++;
+    raft_test_mutex_.unlock();
+  }
 #endif
 
   return svr_.get();
 }
 
-// @safe
+// @safe - returns raw pointer to owned member, external calls marked @external [safe]
 Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
@@ -115,73 +149,76 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   }
 
   #ifdef RAFT_TEST_CORO
-  Log_info("CreateCommo: RAFT_TEST_CORO enabled");
-  raft_test_mutex_.lock();
-  Log_info("CreateCommo: n_replicas_ = %d, n_commo_ = %d", n_replicas_, n_commo_created_);
-  
-  // Simple verification: ensure all 5 schedulers are created
-  verify(n_replicas_ == 5);
-  
-  // Simple counter increment: track communicator creation
-  // Find this frame in the map and increment counter
-  bool found = false;
-  for (const auto& pair : frames_) {
-    if (pair.second == this) {
-      found = true;
-      break;
-    }
-  }
-  verify(found); // This frame should exist in frames_
-  
-  // Use a simple counter approach like lab solution
-  n_commo_created_++;
-  Log_info("CreateCommo: n_commo_ now = %d", n_commo_created_);
-  raft_test_mutex_.unlock();
-
-  // Only site 0 creates and manages the test coroutine
-  if (site_info_->locale_id == 0) {
-    Log_info("CreateCommo: About to create test coroutine");
-    verify(raft_test_coro_ == nullptr);
-    Log_info("Creating Raft test coroutine");
-    
-    raft_test_coro_ = Fiber::create_run([this] () {
-      Log_info("Test coroutine: Starting execution");
-      Log_info("Test coroutine: Thread ID = %lu", std::this_thread::get_id());
-      {
-        auto guard = Reactor::sp_running_coro_th_.borrow();
-        Log_info("Test coroutine: sp_running_coro_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
-      }
-
-      // Yield until all 5 communicators are initialized
-      Log_info("Test coroutine: About to yield");
-      auto current_coro = Fiber::current_coroutine();
-      if (current_coro.is_some()) {
-        current_coro.unwrap()->yield_();
-      }
-      Log_info("Test coroutine: Resumed after yield");
-      
-      // Run tests
-      verify(n_replicas_ == 5);
-      auto testconfig = new RaftTestConfig(frames_);
-      RaftLabTest test(testconfig);
-      test.Run();
-      test.Cleanup();
-      Log_info("Test coroutine: Tests completed, turning off reactor loop");
-      // Turn off Reactor loop
-      Reactor::get_reactor()->looping_ = false;
-      return;
-    });
-    Log_info("raft_test_coro_ id=%d", raft_test_coro_->id);
-    
-    // wait until n_commo_created_ == 5, then resume the coroutine
+  // Only run test framework code if in raft lab test configuration
+  if (IsRaftLabTestConfig()) {
+    Log_info("CreateCommo: RAFT_TEST_CORO enabled (lab test mode)");
     raft_test_mutex_.lock();
-    while (n_commo_created_ < 5) {
-      raft_test_mutex_.unlock();
-      sleep(0.1);
-      raft_test_mutex_.lock();
+    Log_info("CreateCommo: n_replicas_ = %d, n_commo_ = %d", n_replicas_, n_commo_created_);
+
+    // Simple verification: ensure all 5 schedulers are created
+    verify(n_replicas_ == 5);
+
+    // Simple counter increment: track communicator creation
+    // Find this frame in the map and increment counter
+    bool found = false;
+    for (const auto& pair : frames_) {
+      if (pair.second == this) {
+        found = true;
+        break;
+      }
     }
+    verify(found); // This frame should exist in frames_
+
+    // Use a simple counter approach like lab solution
+    n_commo_created_++;
+    Log_info("CreateCommo: n_commo_ now = %d", n_commo_created_);
     raft_test_mutex_.unlock();
-    Reactor::get_reactor()->ContinueCoro(raft_test_coro_);
+
+    // Only site 0 creates and manages the test coroutine
+    if (site_info_->locale_id == 0) {
+      Log_info("CreateCommo: About to create test coroutine");
+      verify(raft_test_coro_.is_none());
+      Log_info("Creating Raft test coroutine");
+
+      raft_test_coro_ = rusty::Some(Fiber::create_run([this] () {
+        Log_info("Test coroutine: Starting execution");
+        Log_info("Test coroutine: Thread ID = %lu", std::this_thread::get_id());
+        {
+          auto guard = Reactor::sp_running_coro_th_.borrow();
+          Log_info("Test coroutine: sp_running_coro_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+        }
+
+        // Yield until all 5 communicators are initialized
+        Log_info("Test coroutine: About to yield");
+        auto current_coro = Fiber::current_coroutine();
+        if (current_coro.is_some()) {
+          current_coro.unwrap()->yield_();
+        }
+        Log_info("Test coroutine: Resumed after yield");
+
+        // Run tests
+        verify(n_replicas_ == 5);
+        auto testconfig = new RaftTestConfig(frames_);
+        RaftLabTest test(testconfig);
+        test.Run();
+        test.Cleanup();
+        Log_info("Test coroutine: Tests completed, turning off reactor loop");
+        // Turn off Reactor loop
+        Reactor::get_reactor()->looping_.set(false);
+        return;
+      }));
+      Log_info("raft_test_coro_ id=%d", raft_test_coro_.as_ref().unwrap()->id);
+
+      // wait until n_commo_created_ == 5, then resume the coroutine
+      raft_test_mutex_.lock();
+      while (n_commo_created_ < 5) {
+        raft_test_mutex_.unlock();
+        sleep(0.1);
+        raft_test_mutex_.lock();
+      }
+      raft_test_mutex_.unlock();
+      Reactor::get_reactor()->continue_coro(raft_test_coro_.as_ref().unwrap().clone());
+    }
   }
   #endif
 
@@ -189,7 +226,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   return commo_.get();
 }
 
-// @safe
+// @safe - external calls marked @external [safe]
 vector<rusty::Box<rrr::Service>>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
@@ -197,7 +234,9 @@ RaftFrame::CreateRpcServices(uint32_t site_id,
   auto config = Config::GetConfig();
   auto result = std::vector<rusty::Box<Service>>();
   switch (config->replica_proto_) {
-    case MODE_RAFT:result.push_back(rusty::make_box<RaftServiceImpl>(rep_sched));
+    // Fix 2: Pass poll_thread_worker to RaftServiceImpl so it can be
+    // retrieved during Restart() to ensure inbound/outbound use same thread
+    case MODE_RAFT:result.push_back(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone()));
     default:break;
   }
   return result;

@@ -7,6 +7,9 @@
 #include <unordered_map>
 #include <chrono>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <memory>
 
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
@@ -17,6 +20,9 @@
 #include "connection_metrics.hpp"
 #include "request_options.hpp"
 #include "load_balancer.hpp"
+#include "heartbeat.hpp"
+#include "circuit_breaker.hpp"
+#include "callbacks.hpp"
 
 namespace rrr {
 
@@ -287,7 +293,7 @@ struct FutureAttr {
     std::function<void(rusty::Arc<Future>)> callback;
 };
 
-// @safe - Thread-safe future for async RPC results
+// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
 // Uses rusty::Arc for memory safety, RefCell/Cell for interior mutability
 // MIGRATED: Now uses rusty::Arc<Future> instead of RefCounted for memory safety
 class Future {
@@ -341,8 +347,9 @@ public:
 
     // @safe - Uses rusty::Mutex
     bool ready() const {
-        auto guard = state_.lock().unwrap();
-        return (*guard).ready;
+        // @unsafe
+        { auto guard = state_.lock().unwrap();
+        return (*guard).ready; }
     }
 
     // @safe - Uses rusty::Mutex and rusty::Condvar together
@@ -367,15 +374,17 @@ public:
 
     // @safe - Uses rusty::Mutex
     bool timed_out() const {
-        auto guard = state_.lock().unwrap();
-        return (*guard).timed_out;
+        // @unsafe
+        { auto guard = state_.lock().unwrap();
+        return (*guard).timed_out; }
     }
 
     // @safe - Returns guard for reply (Rust-idiomatic lifetime safety)
     // Caller holds the guard, ensuring the reference can't outlive it
     rusty::RefMut<Marshal> get_reply() const {
         wait();
-        return reply_.borrow_mut();
+        // @unsafe
+        { return reply_.borrow_mut(); }
     }
 
     // @safe - Calls wait methods, uses @unsafe for timed_wait which uses std::chrono
@@ -406,7 +415,7 @@ public:
     }
 
     // @safe - Set request options
-    void set_options(const RequestOptions& opts) {
+    void set_options(const RequestOptions& opts) const {
         options_.set(opts);
     }
 
@@ -533,7 +542,8 @@ class ClientConnection: public Pollable {
 
     // Reconnection policy and state
     ReconnectPolicy reconnect_policy_;
-    rusty::Cell<bool> reconnecting_{false};
+    std::atomic<bool> reconnecting_{false};
+    std::atomic<bool> reconnect_abort_{false};
     std::string reconnect_address_;  // Address to reconnect to
 
     // Request buffering during disconnection
@@ -550,6 +560,12 @@ class ClientConnection: public Pollable {
 
     // TCP Keepalive configuration for connection health monitoring (Cell for interior mutability)
     rusty::Cell<KeepaliveConfig> keepalive_config_;
+    // Heartbeat manager integrated into poll loop write/read lifecycle.
+    mutable HeartbeatManager heartbeat_manager_;
+    // Circuit breaker integrated into live request dispatch.
+    mutable CircuitBreaker circuit_breaker_;
+    // Lifecycle callback hooks shared with Client facade.
+    std::shared_ptr<CallbackManager> callback_manager_;
 
     // Last activity timestamp for idle detection (milliseconds since epoch)
     // Updated on send/receive operations
@@ -576,6 +592,10 @@ class ClientConnection: public Pollable {
     // @safe - Cancels all pending futures (has internal @unsafe blocks)
     // SAFETY: Protected by spinlock
     void invalidate_pending_futures();
+
+    // @safe - Fail one pending future by xid if it still exists.
+    // Safe to call repeatedly; only first call for a given xid has effect.
+    void fail_pending_future(i64 xid, int err) const;
 
 public:
     /**
@@ -639,7 +659,7 @@ public:
 
     // @safe - Check if a reconnection attempt is in progress
     bool is_reconnecting() const {
-        return reconnecting_.get();
+        return reconnecting_.load(std::memory_order_acquire);
     }
 
     /**
@@ -671,6 +691,24 @@ public:
         // @unsafe { RequestQueue::size }
         return pending_queue_.size();
     }
+
+    // @unsafe - Uses SpinMutex + std::unordered_map access
+    size_t pending_future_count() const {
+        auto pending_guard = pending_fu_.lock().unwrap();
+        return pending_guard->size();
+    }
+
+#ifdef RPC_TEST_HOOKS
+    // @unsafe - Test hook: replays queue through non-const internal method.
+    size_t replay_pending_requests_for_test() const {
+        return const_cast<ClientConnection*>(this)->replay_pending_requests();
+    }
+
+    // @safe - Test hook: update queue policy without clearing current queue.
+    void update_pending_queue_config_for_test(const RequestQueueConfig& config) const {
+        pending_queue_.update_config(config);
+    }
+#endif
 
     // @unsafe - Uses RequestQueue which uses std::list
     // Note: const because pending_queue_ is mutable
@@ -750,6 +788,27 @@ public:
     }
 
     /**
+     * Configure connection-level heartbeat behavior.
+     * Heartbeat probes are emitted by the poll loop when enabled.
+     */
+    // @safe - Replaces heartbeat manager state/config
+    void set_heartbeat_config(const HeartbeatConfig& config) const;
+
+    // @safe - Get current heartbeat configuration
+    HeartbeatConfig heartbeat_config() const;
+
+    // @safe - Configure circuit breaker behavior
+    void set_circuit_breaker_config(const CircuitBreakerConfig& config) const;
+
+    // @safe - Get current circuit breaker configuration
+    CircuitBreakerConfig circuit_breaker_config() const;
+
+    // @safe - Get current circuit breaker state
+    CircuitState circuit_breaker_state() const {
+        return circuit_breaker_.state();
+    }
+
+    /**
      * Update the last activity timestamp.
      * Called on send/receive operations to track connection activity.
      *
@@ -813,8 +872,37 @@ private:
     // @unsafe - Apply keepalive options to socket
     // Called after socket creation in connect()
     void apply_keepalive_options();
+    // @safe - Enqueue one internal heartbeat probe packet.
+    void enqueue_heartbeat_probe() const;
+    // @safe - Evaluate circuit breaker gate and update metrics.
+    bool allow_request_with_circuit_metrics() const;
+    // @safe - Whether an error should be counted as a circuit failure.
+    static bool should_trip_circuit_for_error(i32 err);
+    // @safe - Record circuit state transitions in metrics.
+    void record_circuit_state_transition(CircuitState before, CircuitState after) const;
+    // @safe - Record one request result in the circuit breaker.
+    void record_circuit_result(i32 err) const;
+    // @safe - Map system errno-style code into structured RPC error.
+    static RpcError map_system_error(i32 err);
+    // @safe - Invoke registered on_error callbacks.
+    void invoke_error_callback(i32 err, const std::string& message) const;
+    // @safe - Invoke registered on_disconnected callbacks.
+    void invoke_disconnected_callback() const;
+    // @safe - Invoke registered on_reconnecting callbacks.
+    void invoke_reconnecting_callback() const;
+    // @safe - Invoke registered on_reconnected callbacks.
+    void invoke_reconnected_callback(bool success) const;
+    // @safe - Invoke registered on_connected callbacks.
+    void invoke_connected_callback() const;
 
 public:
+    // @safe - Share callback manager with facade so pre-connect registrations persist.
+    void set_callback_manager(const std::shared_ptr<CallbackManager>& callback_manager) {
+        if (callback_manager != nullptr) {
+            callback_manager_ = callback_manager;
+        }
+    }
+
 
     /**
      * Send an RPC request with a lambda for writing arguments.
@@ -846,6 +934,10 @@ public:
                 // Queue the request for later replay
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
+            if (!allow_request_with_circuit_metrics()) {
+                return FutureResult::Err(EBUSY);
+            }
+            record_circuit_result(ENOTCONN);
             return FutureResult::Err(ENOTCONN);
         }
 
@@ -858,7 +950,15 @@ public:
                 buffering_config_.behavior == DisconnectBehavior::QUEUE) {
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
+            if (!allow_request_with_circuit_metrics()) {
+                return FutureResult::Err(EBUSY);
+            }
+            record_circuit_result(ENOTCONN);
             return FutureResult::Err(ENOTCONN);
+        }
+
+        if (!allow_request_with_circuit_metrics()) {
+            return FutureResult::Err(EBUSY);
         }
 
         auto fu = Future::create(xid_counter_.next(), attr);
@@ -882,6 +982,7 @@ public:
                 buffering_config_.behavior == DisconnectBehavior::QUEUE) {
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
+            record_circuit_result(ENOTCONN);
             return FutureResult::Err(ENOTCONN);
         }
 
@@ -948,28 +1049,19 @@ private:
         }
 
         // Set callback to notify future on queue failure (e.g., overflow, expiry)
-        auto weak_fu = fu;  // Copy Arc for callback
-        queued.callback = [this, weak_fu](int err) {
-            if (err < 0) {
-                // Remove from pending map
-                {
-                    auto pending_guard = pending_fu_.lock().unwrap();
-                    auto it = pending_guard->find(weak_fu->xid_);
-                    if (it != pending_guard->end()) {
-                        pending_guard->erase(it);
-                    }
-                }
-                // Notify future with error
-                weak_fu->error_code_.set(err);
-                weak_fu->notify_ready(weak_fu);
+        queued.callback = [this, xid = fu->xid_](int err) {
+            if (err != 0) {
+                fail_pending_future(xid, err);
             }
         };
 
         // Try to enqueue
         if (!pending_queue_.enqueue(std::move(queued))) {
-            // Queue rejected (full with FAIL_FAST strategy, etc.)
-            // The callback was already invoked by enqueue()
-            return FutureResult::Err(EAGAIN);
+            // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure no pending future
+            // remains if queue policy rejects without invoking callback.
+            metrics_.record_queue_drop();
+            fail_pending_future(fu->xid_, kRequestQueueRejectedError);
+            return FutureResult::Err(kRequestQueueRejectedError);
         }
 
         return FutureResult::Ok(fu);
@@ -1006,11 +1098,161 @@ public:
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
-        auto result = request(rpc_id, attr, std::forward<F>(write_fn));
-        if (result.is_ok()) {
-            result.ok()->set_options(options);
+        // Serialize args once so retries can replay identical payload safely.
+        Marshal serialized_args;
+        write_fn(serialized_args);
+        std::string args_bytes;
+        size_t args_size = serialized_args.content_size();
+        if (args_size > 0) {
+            args_bytes.resize(args_size);
+            verify(serialized_args.read(args_bytes.data(), args_size) == args_size);
         }
-        return result;
+
+        // Non-idempotent operations must never be retried even if max_retries is set.
+        RequestOptions effective_options = options;
+        if (!effective_options.idempotent) {
+            effective_options.max_retries = 0;
+        }
+
+        // Return a coordinator future immediately; internal attempts run async.
+        auto final_fu = Future::create(xid_counter_.next(), attr);
+        RequestOptions waiter_options = effective_options;
+        waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
+        final_fu->set_options(waiter_options);
+
+        auto weak_conn = weak_self_;
+        std::thread([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
+            auto start_time = std::chrono::steady_clock::now();
+            uint16_t retry_count = 0;
+
+            auto classify_request_failure = [](int err) -> TimeoutType {
+                if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
+                    err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
+                    return TimeoutType::CONNECT_TIMEOUT;
+                }
+                if (err == ETIMEDOUT || err == EAGAIN
+#if EWOULDBLOCK != EAGAIN
+                    || err == EWOULDBLOCK
+#endif
+                ) {
+                    return TimeoutType::REQUEST_TIMEOUT;
+                }
+                return TimeoutType::NONE;
+            };
+
+            auto finish_terminal = [&](int err, TimeoutType timeout_type) {
+                auto conn_opt = weak_conn.upgrade();
+                if (conn_opt.is_some()) {
+                    auto conn = conn_opt.unwrap();
+                    if (timeout_type == TimeoutType::CONNECT_TIMEOUT ||
+                        timeout_type == TimeoutType::REQUEST_TIMEOUT ||
+                        timeout_type == TimeoutType::RESPONSE_TIMEOUT ||
+                        timeout_type == TimeoutType::TOTAL_TIMEOUT) {
+                        conn->metrics_.record_request_timeout();
+                    } else if (err != 0) {
+                        conn->metrics_.record_request_failed();
+                    }
+                }
+                if (timeout_type != TimeoutType::NONE) {
+                    auto state_guard = final_fu->state_.lock().unwrap();
+                    state_guard->timed_out = true;
+                }
+                final_fu->error_code_.set(err);
+                final_fu->timeout_type_.set(timeout_type);
+                final_fu->retry_count_.set(retry_count);
+                final_fu->notify_ready(final_fu);
+            };
+
+            auto set_terminal_timeout = [&](TimeoutType timeout_type) {
+                finish_terminal(ETIMEDOUT, timeout_type);
+            };
+
+            while (true) {
+                auto now = std::chrono::steady_clock::now();
+                uint64_t elapsed_ms = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
+                if (effective_options.is_total_timeout_exceeded(elapsed_ms)) {
+                    set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                    return;
+                }
+
+                auto conn_opt = weak_conn.upgrade();
+                if (conn_opt.is_none()) {
+                    finish_terminal(ENOTCONN, TimeoutType::CONNECT_TIMEOUT);
+                    return;
+                }
+
+                auto conn = conn_opt.unwrap();
+                auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](Marshal& m) {
+                    if (!args_bytes.empty()) {
+                        verify(m.write(args_bytes.data(), args_bytes.size()) == args_bytes.size());
+                    }
+                });
+                if (attempt_result.is_err()) {
+                    int err = attempt_result.unwrap_err();
+                    finish_terminal(err, classify_request_failure(err));
+                    return;
+                }
+
+                auto attempt_fu = attempt_result.unwrap();
+                RequestOptions attempt_options = effective_options;
+                if (effective_options.total_timeout_ms > 0) {
+                    uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_ms);
+                    if (remaining_ms == 0) {
+                        conn->handle_free(attempt_fu->xid_);
+                        set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                        return;
+                    }
+                    if (attempt_options.timeout_ms == 0 || attempt_options.timeout_ms > remaining_ms) {
+                        attempt_options.timeout_ms = remaining_ms;
+                    }
+                }
+                attempt_fu->set_options(attempt_options);
+                if (attempt_fu->wait_with_options()) {
+                    final_fu->error_code_.set(attempt_fu->error_code_.get());
+                    final_fu->retry_count_.set(retry_count);
+                    if (attempt_fu->error_code_.get() == 0) {
+                        auto attempt_reply = attempt_fu->reply_.borrow_mut();
+                        size_t reply_size = attempt_reply->content_size();
+                        if (reply_size > 0) {
+                            final_fu->reply_.borrow_mut()->read_from_marshal(*attempt_reply, reply_size);
+                        }
+                    }
+                    final_fu->notify_ready(final_fu);
+                    return;
+                }
+
+                // Timed-out attempts are no longer useful; release pending map slot.
+                conn->handle_free(attempt_fu->xid_);
+
+                if (!effective_options.can_retry(retry_count)) {
+                    set_terminal_timeout(attempt_fu->get_timeout_type());
+                    return;
+                }
+
+                conn->metrics_.record_retry_attempt();
+                uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(retry_count);
+                if (backoff_delay_ms > 0) {
+                    if (effective_options.total_timeout_ms > 0) {
+                        auto before_sleep = std::chrono::steady_clock::now();
+                        uint64_t elapsed_before_sleep = static_cast<uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                before_sleep - start_time).count());
+                        uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_before_sleep);
+                        if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
+                            set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                            return;
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(backoff_delay_ms));
+                }
+
+                retry_count++;
+                final_fu->retry_count_.set(retry_count);
+            }
+        }).detach();
+
+        return FutureResult::Ok(final_fu);
     }
 
     // @unsafe - Convenience overload without FutureAttr
@@ -1055,15 +1297,8 @@ public:
     // @safe - Error handler
     void handle_error() override;
 
-    // @safe - Check and clear pending write update flag
-    // Called by poll loop after processing events
-    bool check_pending_write_update() const override {
-        if (pending_write_update_.get()) {
-            pending_write_update_.set(false);
-            return true;
-        }
-        return false;
-    }
+    // @safe - Check heartbeat tick and pending write update flag.
+    bool check_pending_write_update() const override;
 
     // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
@@ -1100,7 +1335,7 @@ namespace rrr {
 
 // @unsafe - RPC client facade that owns a ClientConnection
 // (Marked unsafe due to mutable field for interior mutability)
-// Thread-safe through delegation to ClientConnection
+// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
 // Client provides the user-facing API, ClientConnection handles socket I/O
 // Similar to Server/ServerConnection pattern
 class Client {
@@ -1119,6 +1354,12 @@ class Client {
 
     // Pending keepalive config (applied when connection is created) - Cell for interior mutability
     rusty::Cell<KeepaliveConfig> pending_keepalive_config_;
+    // Pending heartbeat config (applied when connection is created)
+    rusty::Cell<HeartbeatConfig> pending_heartbeat_config_{HeartbeatConfig::disabled()};
+    // Pending circuit-breaker config (applied when connection is created)
+    rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_{CircuitBreakerConfig::disabled()};
+    // Shared lifecycle callback manager, wired into active ClientConnection.
+    std::shared_ptr<CallbackManager> callback_manager_{std::make_shared<CallbackManager>()};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -1168,13 +1409,15 @@ public:
     // @safe - Thread-safe RPC request with lambda for marshaling
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
-        // @unsafe
-        { return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn)); }
+        return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn));
+        }
     }
 
     // @safe - Convenience overload without callback
@@ -1202,14 +1445,16 @@ public:
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
-        // @unsafe
-        { return guard->as_ref().unwrap()->request_with_options(
-            rpc_id, options, attr, std::forward<F>(write_fn)); }
+        return guard->as_ref().unwrap()->request_with_options(
+            rpc_id, options, attr, std::forward<F>(write_fn));
+        }
     }
 
     // @safe - Convenience overload without FutureAttr
@@ -1231,11 +1476,14 @@ public:
      */
     // @safe - Sets reconnection policy
     void set_reconnect_policy(const ReconnectPolicy& policy) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             // const_cast needed since ClientConnection::set_reconnect_policy is not const
             auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
             conn.set_reconnect_policy(policy);
+        }
         }
     }
 
@@ -1272,8 +1520,11 @@ public:
 
     // @safe - Check if reconnection is in progress
     bool is_reconnecting() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->is_reconnecting();
+        }
     }
 
     /**
@@ -1285,6 +1536,36 @@ public:
      */
     // @unsafe - Attempts reconnection (calls connect which has socket operations)
     int reconnect(std::function<void(bool)> on_complete = nullptr) const;
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_connected(ConnectionCallback cb) const {
+        callback_manager_->add_on_connected(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_disconnected(ConnectionCallback cb) const {
+        callback_manager_->add_on_disconnected(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_error(ErrorCallback cb) const {
+        callback_manager_->add_on_error(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_reconnecting(ConnectionCallback cb) const {
+        callback_manager_->add_on_reconnecting(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_reconnected(ReconnectCallback cb) const {
+        callback_manager_->add_on_reconnected(std::move(cb));
+    }
+
+    // @safe - Clear all lifecycle callbacks.
+    void clear_connection_callbacks() const {
+        callback_manager_->clear_all();
+    }
 
     // @safe - Pauses the connection
     void pause() const;
@@ -1302,37 +1583,47 @@ public:
 
     // @safe - Returns file descriptor
     int fd() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->fd();
         }
         return -1;
+        }
     }
 
     // @safe - Returns host string
     std::string host() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            // @unsafe
-            { return guard->as_ref().unwrap()->host(); }
+            return guard->as_ref().unwrap()->host();
         }
-        // @unsafe
-        { return ""; }
+        return "";
+        }
     }
 
     // @safe - Returns connection status
     bool connected() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->connected();
+        }
     }
 
     // @safe - Returns current connection state
     ConnectionState connection_state() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->connection_state();
         }
         return ConnectionState::NEW;
+        }
     }
 
     /**
@@ -1361,11 +1652,14 @@ public:
     // @safe - Returns a clone of the connection Option
     // Returns None if not connected, Some(Arc<ClientConnection>) if connected
     rusty::Option<rusty::Arc<ClientConnection>> connection() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return rusty::Some(guard->as_ref().unwrap().clone());
         }
         return rusty::None;
+        }
     }
 
     // === Server Restart Detection API ===
@@ -1376,11 +1670,14 @@ public:
      */
     // @safe - Delegates to ClientConnection
     uint64_t server_instance_id() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->server_instance_id();
         }
         return 0;
+        }
     }
 
     /**
@@ -1429,9 +1726,12 @@ public:
         pending_keepalive_config_.set(config);
 
         // If connection exists, also apply immediately
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_keepalive(config);
+        }
         }
     }
 
@@ -1441,12 +1741,72 @@ public:
      */
     // @safe - Returns copy via Cell::get()
     KeepaliveConfig keepalive_config() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->keepalive_config();
         }
+        }
         // Return pending config if no connection exists
         return pending_keepalive_config_.get();
+    }
+
+    /**
+     * Configure heartbeat behavior.
+     * If called before connect(), the config is stored and applied at connect time.
+     * If called after connect(), the config is applied immediately.
+     */
+    // @safe - Uses Cell for interior mutability
+    void set_heartbeat(const HeartbeatConfig& config) const {
+        pending_heartbeat_config_.set(config);
+
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            guard->as_ref().unwrap()->set_heartbeat_config(config);
+        }
+    }
+
+    // @safe - Get current heartbeat configuration
+    HeartbeatConfig heartbeat_config() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->heartbeat_config();
+        }
+        return pending_heartbeat_config_.get();
+    }
+
+    /**
+     * Configure circuit breaker behavior.
+     * If called before connect(), the config is stored and applied at connect time.
+     * If called after connect(), the config is applied immediately.
+     */
+    // @safe - Uses Cell for interior mutability
+    void set_circuit_breaker(const CircuitBreakerConfig& config) const {
+        pending_circuit_breaker_config_.set(config);
+
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            guard->as_ref().unwrap()->set_circuit_breaker_config(config);
+        }
+    }
+
+    // @safe - Get current circuit breaker configuration
+    CircuitBreakerConfig circuit_breaker_config() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->circuit_breaker_config();
+        }
+        return pending_circuit_breaker_config_.get();
+    }
+
+    // @safe - Get current circuit breaker state
+    CircuitState circuit_breaker_state() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->circuit_breaker_state();
+        }
+        return CircuitState::CLOSED;
     }
 
     /**
@@ -1458,11 +1818,14 @@ public:
      */
     // @safe - Delegates to @safe ClientConnection::is_idle
     bool is_idle(uint64_t idle_ms, uint64_t current_time_ms) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->is_idle(idle_ms, current_time_ms);
         }
         return false;
+        }
     }
 
     /**
@@ -1488,9 +1851,12 @@ public:
     // @lifetime: (&'a) -> &'a
     const ConnectionMetrics& metrics() const {
         static const ConnectionMetrics empty_metrics;
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->metrics();
+        }
         }
         return empty_metrics;
     }
@@ -1502,8 +1868,11 @@ public:
      */
     // @safe - Simple connection check
     bool has_connection() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         return guard->is_some();
+        }
     }
 
     // @safe - Jetpack: handle_free for explicit future cleanup

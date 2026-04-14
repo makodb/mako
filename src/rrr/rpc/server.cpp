@@ -21,6 +21,7 @@
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
 #include "server.hpp"
+#include "internal_protocol.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
@@ -143,12 +144,25 @@ ServerConnection::~ServerConnection() {
 
 // get_shared() is now inherited from Pollable base class
 
-// @safe - Delegates to thread pool
-int ServerConnection::run_async(const std::function<void()>& f) {
-  // run_async should not be used - process RPC synchronously
-  // Call f() directly instead where this was being used
-  verify(0); // This should never be called
+// @safe - Executes callback inline for API compatibility.
+int ServerConnection::run_async(std::function<void()> f) {
+  if (!f) {
+    Log_warn("rrr::ServerConnection::run_async called with empty callback");
+    return EINVAL;
+  }
+  f();
   return 0;
+}
+
+// @safe - Returns total buffered bytes owned by this connection.
+size_t ServerConnection::content_size() {
+    auto out_guard = out_.lock().unwrap();
+    return in_.content_size() + out_guard->content_size();
+}
+
+// @safe - Explicit no-op for server connection API compatibility.
+void ServerConnection::handle_free() {
+    Log_warn("rrr::ServerConnection::handle_free() is a no-op on server connections");
 }
 
 // @safe - Reads requests from socket and dispatches to handlers
@@ -206,12 +220,20 @@ bool ServerConnection::handle_read() {
             complete_requests.pop_front();
             return r;
         }();
+        req->attach_pending_guard(ctx_->pending_requests);
 
         if (req->m.content_size() < sizeof(i32)) {
             reply(*req, EINVAL);
         } else {
             i32 rpc_id;
             req->m >> rpc_id;
+            if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
+                // Internal liveness probe from client heartbeat loop.
+                if (!ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
+                    reply(*req, 0);
+                }
+                continue;
+            }
 
 #ifdef RPC_STATISTICS
             stat_server_rpc_counting(rpc_id);
@@ -302,6 +324,16 @@ int ServerConnection::poll_mode() const {
     return mode;
 }
 
+// @safe - Executes callback inline for API compatibility.
+int DeferredReply::run_async(std::function<void()> f) {
+    if (!f) {
+        Log_warn("rrr::DeferredReply::run_async called with empty callback");
+        return EINVAL;
+    }
+    f();
+    return 0;
+}
+
 // @safe - Constructs server with PollThread
 // ctx_ starts as None; created in start() after all registrations
 Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... */) {
@@ -326,7 +358,11 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
         uint64_t pid_component = static_cast<uint64_t>(getpid()) << 48;
 
         // Mix components with XOR for final ID
-        instance_id_ = time_component ^ random_component ^ pid_component;
+        instance_id_ = (time_component ^ random_component ^ pid_component)
+            & static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+        if (instance_id_ == 0) {
+            instance_id_ = 1;
+        }
 
         Log_debug("Server: generated instance_id=%lu", instance_id_);
     }
@@ -334,7 +370,7 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
 
 // @safe - Destroys server and requests close for all connections
 // Arc<RpcServiceContext> ensures services live until all connections are done
-Server::~Server() {
+Server::~Server() noexcept {
     // Request close for server listener and all its connections via poll thread
     if (server_listener_.is_some()) {
         auto& listener = server_listener_.as_ref().unwrap();
@@ -363,6 +399,28 @@ Server::~Server() {
 
 // @safe - Accepts new client connections
 // SAFETY: All unsafe operations wrapped in @unsafe blocks
+size_t ServerListener::content_size() {
+  return 0;
+}
+
+int ServerListener::handle_write() {
+  static std::atomic<bool> warned{false};
+  bool expected = false;
+  if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+    Log_warn("rrr::ServerListener::handle_write() is unsupported for READ-only listener");
+  }
+  return PollMode::NO_CHANGE;
+}
+
+void ServerListener::handle_error() {
+  static std::atomic<bool> warned{false};
+  bool expected = false;
+  if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+    Log_warn("rrr::ServerListener::handle_error() closing listener after poll error");
+  }
+  close();
+}
+
 bool ServerListener::handle_read() {
 //  fd_set fds;
 //  FD_ZERO(&fds);
@@ -388,7 +446,14 @@ bool ServerListener::handle_read() {
       (void)setsockopt(clnt_socket, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
 #endif
       // @unsafe - set_nonblocking
-      { verify(set_nonblocking(clnt_socket, true) == 0); }
+      {
+        if (set_nonblocking(clnt_socket, true) != 0) {
+          Log_error("server@%s failed to set nonblocking on accepted fd=%d: errno=%d (%s)",
+                    this->addr_.c_str(), clnt_socket, errno, strerror(errno));
+          ::close(clnt_socket);
+          continue;
+        }
+      }
 
       auto sconn = rusty::Arc<ServerConnection>::make(ctx_.clone(), clnt_socket);
       // @unsafe - const_cast to initialize weak_self_ (safe: we just created this object)
@@ -424,6 +489,8 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   size_t idx = addr.find(":");
   if (idx == string::npos) {
     Log_error("rrr::Server: bad bind address: %s", addr.c_str());
+    server_sock_ = -1;
+    return;
   }
   string host = addr.substr(0, idx);
   string port = addr.substr(idx + 1);
@@ -431,6 +498,8 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 #ifdef USE_IPC
   struct sockaddr_un saun;
   if ((server_sock_ = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+    Log_error("rrr::Server: ipc socket() failed for %s: errno=%d (%s)",
+              addr.c_str(), errno, strerror(errno));
     server_sock_ = -1;
     return;
   }
@@ -440,6 +509,8 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
   ::unlink(ipc_addr.data());
   if (::bind(server_sock_, (struct sockaddr*)&saun, len) != 0) {
+    Log_error("rrr::Server: ipc bind() failed for %s: errno=%d (%s)",
+              addr.c_str(), errno, strerror(errno));
     ::close(server_sock_);
     server_sock_ = -1;
     return;
@@ -459,7 +530,8 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
       &hints);
   if (addr_result.is_err()) {
     Log_error("rrr::Server: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
-    verify(0);  // Fatal error
+    server_sock_ = -1;
+    return;
   }
   gai_result_ = addr_result.unwrap();
 
@@ -527,14 +599,18 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   int listen_ret = listen(server_sock_, backlog);
   if (listen_ret != 0) {
     Log_error("rrr::Server: listen() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+    ::close(server_sock_);
+    server_sock_ = -1;
+    return;
   }
-  verify(listen_ret == 0);
 
   int nonblock_ret = set_nonblocking(server_sock_, true);
   if (nonblock_ret != 0) {
     Log_error("rrr::Server: set_nonblocking() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+    ::close(server_sock_);
+    server_sock_ = -1;
+    return;
   }
-  verify(nonblock_ret == 0);
 
   Log_debug("rrr::Server: started on %s", addr.c_str());
 }
@@ -557,7 +633,10 @@ int Server::start(const char* bind_addr) {
   ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
       std::move(pending_rpc_to_service_),
       std::move(wrapped_services),
-      addr_str));
+      addr_str,
+      pending_requests_,
+      drop_heartbeat_replies_,
+      instance_id_));
 
   server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
       ctx_.as_ref().unwrap().clone(), addr_str));
@@ -632,11 +711,11 @@ bool Server::drain(uint64_t timeout_ms) {
         current_phase != ShutdownPhase::STOP_ACCEPTING) {
         Log_debug("Server::drain: already in phase %s",
                   shutdown_phase_to_string(current_phase));
-        return pending_requests_.load(std::memory_order_relaxed) == 0;
+        return pending_requests_->load(std::memory_order_relaxed) == 0;
     }
 
     Log_info("Server::drain: transitioning to DRAINING, pending=%d",
-             pending_requests_.load(std::memory_order_relaxed));
+             pending_requests_->load(std::memory_order_relaxed));
     shutdown_phase_.set(ShutdownPhase::DRAINING);
 
     // Wait for pending requests with timeout
@@ -645,11 +724,11 @@ bool Server::drain(uint64_t timeout_ms) {
         auto start = std::chrono::steady_clock::now();
         auto timeout = std::chrono::milliseconds(timeout_ms);
 
-        while (pending_requests_.load(std::memory_order_relaxed) > 0) {
+        while (pending_requests_->load(std::memory_order_relaxed) > 0) {
             auto elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed >= timeout) {
                 Log_warn("Server::drain: timeout after %lu ms, pending=%d",
-                         timeout_ms, pending_requests_.load(std::memory_order_relaxed));
+                         timeout_ms, pending_requests_->load(std::memory_order_relaxed));
                 return false;
             }
 

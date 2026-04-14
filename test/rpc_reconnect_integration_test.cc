@@ -20,29 +20,59 @@ using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
 
+template <typename Predicate>
+bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+    return predicate();
+}
+
 // Simple test service for integration tests
 class ReconnectTestService : public benchmark::BenchmarkService {
 public:
     std::atomic<int> call_count{0};
 
-    void fast_nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcFastNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
     }
 
-    void nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcNopResponse, i32>
+    nop(const BenchmarkService::RpcNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
     }
 
-    void fast_prime(const i32& n, i8* flag) override {
-        *flag = 1;
+    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
+        (void)req;
+        BenchmarkService::RpcFastPrimeResponse resp{};
+        resp.flag = 1;
+        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
     }
 
-    void fast_vec(const i32& n, std::vector<i64>* v) override {
-        for (i32 i = 0; i < n; i++) v->push_back(i);
+    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
+        BenchmarkService::RpcFastVecResponse resp{};
+        for (i32 i = 0; i < req.n; i++) resp.v.push_back(i);
+        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
     }
 
-    void sleep(const double& sec) override {
-        std::this_thread::sleep_for(std::chrono::duration<double>(sec));
+    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
+    sleep(const BenchmarkService::RpcSleepRequest& req) override {
+        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
+        BenchmarkService::RpcSleepResponse resp{};
+        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
     }
 };
 
@@ -77,6 +107,17 @@ protected:
         return server;
     }
 
+    Server* start_server_with_retry(int attempts = 80, int delay_ms = 50) {
+        for (int i = 0; i < attempts; i++) {
+            auto server = start_server();
+            if (server != nullptr) {
+                return server;
+            }
+            std::this_thread::sleep_for(milliseconds(delay_ms));
+        }
+        return nullptr;
+    }
+
     std::string server_addr() {
         return "127.0.0.1:" + std::to_string(test_port_);
     }
@@ -99,6 +140,91 @@ TEST_F(ReconnectIntegrationTest, IsReconnectingInitiallyFalse) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     EXPECT_FALSE(client->is_reconnecting());
     client->close();
+}
+
+TEST_F(ReconnectIntegrationTest, ReconnectPolicyWithoutAutoRetryFailsFast) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    client->close();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto s = client->connection_state();
+        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+    }, milliseconds(1000)));
+
+    delete server;  // Ensure reconnect attempts fail.
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto probe = Client::create(poll_thread_.as_ref().unwrap());
+        int rc = probe->connect(server_addr().c_str());
+        if (rc == 0) {
+            probe->close();
+            return false;
+        }
+        return true;
+    }, milliseconds(1500)));
+
+    ReconnectPolicy policy;
+    policy.auto_reconnect = false;
+    policy.max_retries = 5;
+    policy.initial_delay_ms = 200;
+    policy.max_delay_ms = 200;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    auto start = steady_clock::now();
+    int result = client->reconnect();
+    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
+
+    EXPECT_NE(result, 0);
+    EXPECT_FALSE(client->connected());
+    EXPECT_LT(elapsed_ms, 150);  // No policy retries/sleeps when auto_reconnect is disabled.
+}
+
+TEST_F(ReconnectIntegrationTest, ReconnectPolicyAppliesRetryDelays) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    client->close();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto s = client->connection_state();
+        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+    }, milliseconds(1000)));
+
+    delete server;  // Ensure reconnect attempts fail.
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto probe = Client::create(poll_thread_.as_ref().unwrap());
+        int rc = probe->connect(server_addr().c_str());
+        if (rc == 0) {
+            probe->close();
+            return false;
+        }
+        return true;
+    }, milliseconds(1500)));
+
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 2;
+    policy.initial_delay_ms = 80;
+    policy.max_delay_ms = 80;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    auto start = steady_clock::now();
+    int result = client->reconnect();
+    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
+
+    EXPECT_NE(result, 0);
+    EXPECT_FALSE(client->connected());
+    EXPECT_GE(elapsed_ms, 130);  // Two retry sleeps (~160ms nominal) must be observed.
+    EXPECT_LT(elapsed_ms, 3000);
 }
 
 TEST_F(ReconnectIntegrationTest, ReconnectAfterDisconnect) {
@@ -202,6 +328,240 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
             EXPECT_EQ(fu2->get_error_code(), 0);
         }
     }
+
+    client->close();
+    delete server;
+}
+
+TEST_F(ReconnectIntegrationTest, AutoReconnectTriggeredAfterConnectionFailure) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 50;
+    policy.initial_delay_ms = 20;
+    policy.max_delay_ms = 20;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    std::string input = "auto_reconnect";
+    auto warmup = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(warmup.is_ok());
+    auto warmup_fu = warmup.unwrap();
+    warmup_fu->wait();
+    ASSERT_EQ(warmup_fu->get_error_code(), 0);
+
+    // Simulate failure and wait until client-side state observes disconnect.
+    delete server;
+    server = nullptr;
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto state = client->connection_state();
+        return state == ConnectionState::DISCONNECTED ||
+               state == ConnectionState::FAILED ||
+               !client->connected();
+    }, milliseconds(2000)));
+
+    // Drive at least one failed request while server is down so reconnect path
+    // is deterministically exercised before restart.
+    bool observed_failure = false;
+    for (int attempt = 0; attempt < 6 && !observed_failure; ++attempt) {
+        auto failing = client->request(
+            benchmark::BenchmarkService::FAST_NOP,
+            [&](Marshal& m) { m << input; }
+        );
+        if (!failing.is_ok()) {
+            observed_failure = true;
+        } else {
+            auto failing_fu = failing.unwrap();
+            failing_fu->timed_wait(0.5);
+            observed_failure = (!client->connected()) ||
+                               (failing_fu->ready() && failing_fu->get_error_code() != 0);
+        }
+        if (!observed_failure) {
+            std::this_thread::sleep_for(milliseconds(40));
+        }
+    }
+    ASSERT_TRUE(observed_failure);
+
+    // Bring server back and wait for automatic reconnect.
+    server = start_server_with_retry();
+    ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(6000)));
+    ASSERT_TRUE(wait_for_condition([&]() { return client->metrics().reconnect_count() >= 1u; },
+                                   milliseconds(1500)));
+
+    auto after = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(after.is_ok());
+    auto after_fu = after.unwrap();
+    after_fu->wait();
+    EXPECT_EQ(after_fu->get_error_code(), 0);
+
+    client->close();
+    delete server;
+}
+
+TEST_F(ReconnectIntegrationTest, ReconnectCallbackMatchesEachCallResult) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    client->close();
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto s = client->connection_state();
+        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+    }, milliseconds(1000)));
+
+    delete server;
+    server = nullptr;
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto probe = Client::create(poll_thread_.as_ref().unwrap());
+        int rc = probe->connect(server_addr().c_str());
+        if (rc == 0) {
+            probe->close();
+            return false;
+        }
+        return true;
+    }, milliseconds(1500)));
+
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 200;
+    policy.initial_delay_ms = 20;
+    policy.max_delay_ms = 20;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    std::atomic<int> cb_count_1{0};
+    std::atomic<int> cb_count_2{0};
+    std::atomic<int> cb_success_1{-1};
+    std::atomic<int> cb_success_2{-1};
+    std::atomic<int> rc_1{123456};
+    std::atomic<int> rc_2{123456};
+
+    std::thread reconnect_1([&]() {
+        int rc = client->reconnect([&](bool success) {
+            cb_count_1.fetch_add(1, std::memory_order_relaxed);
+            cb_success_1.store(success ? 1 : 0, std::memory_order_relaxed);
+        });
+        rc_1.store(rc, std::memory_order_release);
+    });
+
+    // Overlap with an in-flight reconnect so this call piggybacks.
+    std::this_thread::sleep_for(milliseconds(30));
+    std::thread reconnect_2([&]() {
+        int rc = client->reconnect([&](bool success) {
+            cb_count_2.fetch_add(1, std::memory_order_relaxed);
+            cb_success_2.store(success ? 1 : 0, std::memory_order_relaxed);
+        });
+        rc_2.store(rc, std::memory_order_release);
+    });
+
+    std::this_thread::sleep_for(milliseconds(120));
+    server = start_server_with_retry();
+    ASSERT_NE(server, nullptr);
+
+    reconnect_1.join();
+    reconnect_2.join();
+
+    EXPECT_EQ(cb_count_1.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(cb_count_2.load(std::memory_order_acquire), 1);
+
+    int reconnect_rc_1 = rc_1.load(std::memory_order_acquire);
+    int reconnect_rc_2 = rc_2.load(std::memory_order_acquire);
+    EXPECT_EQ(cb_success_1.load(std::memory_order_acquire), reconnect_rc_1 == 0 ? 1 : 0);
+    EXPECT_EQ(cb_success_2.load(std::memory_order_acquire), reconnect_rc_2 == 0 ? 1 : 0);
+    EXPECT_EQ(reconnect_rc_1, 0);
+    EXPECT_EQ(reconnect_rc_2, 0);
+    EXPECT_TRUE(client->connected());
+
+    client->close();
+    delete server;
+}
+
+TEST_F(ReconnectIntegrationTest, UnlimitedReconnectRetriesUntilServerReturns) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    client->close();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto s = client->connection_state();
+        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+    }, milliseconds(1000)));
+
+    delete server;
+    server = nullptr;
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto probe = Client::create(poll_thread_.as_ref().unwrap());
+        int rc = probe->connect(server_addr().c_str());
+        if (rc == 0) {
+            probe->close();
+            return false;
+        }
+        return true;
+    }, milliseconds(1500)));
+
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 0;  // unlimited
+    policy.initial_delay_ms = 20;
+    policy.max_delay_ms = 20;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    std::atomic<bool> reconnect_done{false};
+    std::atomic<int> reconnect_rc{123456};
+    std::atomic<int> callback_count{0};
+    std::atomic<int> callback_success{-1};
+
+    std::thread reconnect_thread([&]() {
+        int rc = client->reconnect([&](bool success) {
+            callback_count.fetch_add(1, std::memory_order_relaxed);
+            callback_success.store(success ? 1 : 0, std::memory_order_relaxed);
+        });
+        reconnect_rc.store(rc, std::memory_order_release);
+        reconnect_done.store(true, std::memory_order_release);
+    });
+
+    // With unlimited retries configured, reconnect should still be in progress
+    // while the server is down.
+    EXPECT_FALSE(wait_for_condition([&]() {
+        return reconnect_done.load(std::memory_order_acquire);
+    }, milliseconds(300)));
+
+    server = start_server_with_retry();
+    ASSERT_NE(server, nullptr);
+
+    bool finished = wait_for_condition([&]() {
+        return reconnect_done.load(std::memory_order_acquire);
+    }, milliseconds(5000));
+    if (!finished) {
+        client->close();
+    }
+    reconnect_thread.join();
+    ASSERT_TRUE(finished);
+
+    EXPECT_EQ(reconnect_rc.load(std::memory_order_acquire), 0);
+    EXPECT_EQ(callback_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(callback_success.load(std::memory_order_acquire), 1);
+    EXPECT_TRUE(client->connected());
 
     client->close();
     delete server;

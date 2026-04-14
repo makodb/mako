@@ -1,7 +1,12 @@
 #include "replication_helper.h"
+#include <yaml-cpp/yaml.h>
 #include <rusty/cell.hpp>
+#include <algorithm>
 #include <stdexcept>
 #include <iostream>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 namespace janus {
 
@@ -16,7 +21,7 @@ ReplicationType get_replication_type() {
     return g_replication_type.get();
 }
 
-// @safe - Mutation through Cell::set()
+// @unsafe - Mutation through Cell::set(), plus std::cerr output
 void set_replication_type(ReplicationType type) {
     g_replication_type.set(type);
     // @unsafe { std::cerr output is not borrow-checked }
@@ -46,6 +51,100 @@ const char* replication_type_to_string(ReplicationType type) {
 }
 
 }  // namespace janus
+
+namespace {
+
+using janus::ReplicationType;
+
+bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+        std::tolower(static_cast<unsigned char>(rhs[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::optional<ReplicationType> parse_replication_flag(int argc, char* argv[]) {
+  for (int i = 1; i < argc; ++i) {
+    std::string_view arg(argv[i] ? argv[i] : "");
+    constexpr std::string_view kPrefix = "--replication=";
+    if (arg.rfind(kPrefix, 0) == 0) {
+      std::string_view value = arg.substr(kPrefix.size());
+      if (equals_ignore_case(value, "raft")) {
+        return ReplicationType::RAFT;
+      }
+      if (equals_ignore_case(value, "paxos")) {
+        return ReplicationType::PAXOS;
+      }
+    }
+    if (arg == "--replication" && i + 1 < argc) {
+      std::string_view value(argv[++i] ? argv[i] : "");
+      if (equals_ignore_case(value, "raft")) {
+        return ReplicationType::RAFT;
+      }
+      if (equals_ignore_case(value, "paxos")) {
+        return ReplicationType::PAXOS;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+std::vector<std::string> collect_config_paths(int argc, char* argv[]) {
+  std::vector<std::string> config_paths;
+  for (int i = 1; i < argc; ++i) {
+    std::string_view arg(argv[i] ? argv[i] : "");
+    if ((arg == "-f" || arg == "--config") && i + 1 < argc) {
+      config_paths.emplace_back(argv[++i]);
+      continue;
+    }
+    constexpr std::string_view kConfigPrefix = "--config=";
+    if (arg.rfind(kConfigPrefix, 0) == 0) {
+      config_paths.emplace_back(arg.substr(kConfigPrefix.size()));
+    }
+  }
+  return config_paths;
+}
+
+std::optional<ReplicationType> infer_replication_type_from_configs(
+    const std::vector<std::string>& config_paths) {
+  std::optional<ReplicationType> inferred;
+  for (const auto& path : config_paths) {
+    try {
+      YAML::Node config = YAML::LoadFile(path);
+      if (!config["mode"] || !config["mode"]["ab"]) {
+        continue;
+      }
+      const std::string ab = config["mode"]["ab"].as<std::string>();
+      if (equals_ignore_case(ab, "raft")) {
+        inferred = ReplicationType::RAFT;
+      } else if (equals_ignore_case(ab, "paxos")) {
+        inferred = ReplicationType::PAXOS;
+      }
+    } catch (const std::exception&) {
+      // Ignore unreadable/non-YAML files and keep scanning remaining configs.
+    }
+  }
+  return inferred;
+}
+
+std::optional<ReplicationType> infer_replication_type_from_args(int argc, char* argv[]) {
+  if (auto flag_type = parse_replication_flag(argc, argv); flag_type.has_value()) {
+    return flag_type;
+  }
+  const auto config_paths = collect_config_paths(argc, argv);
+  if (config_paths.empty()) {
+    return std::nullopt;
+  }
+  return infer_replication_type_from_configs(config_paths);
+}
+
+}  // namespace
 
 // ============================================================================
 // Dispatch Macros
@@ -80,6 +179,9 @@ const char* replication_type_to_string(ReplicationType type) {
 // ============================================================================
 
 std::vector<std::string> setup(int argc, char* argv[]) {
+    if (auto inferred = infer_replication_type_from_args(argc, argv); inferred.has_value()) {
+        janus::set_replication_type(*inferred);
+    }
     DISPATCH_RAFT_OR_PAXOS(setup, argc, argv);  // @unsafe
 }
 
@@ -149,8 +251,16 @@ void add_log_without_queue(const char* data, int len, uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(add_log_without_queue, data, len, par_id);  // @unsafe
 }
 
-void add_log_to_nc(const char* data, int len, uint32_t par_id, int flag) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(add_log_to_nc, data, len, par_id, flag);  // @unsafe
+// @unsafe - dispatches to Raft or Paxos implementation
+bool add_log_to_nc(const char* data, int len, uint32_t par_id, int flag,
+                   uint16_t* leader_hint_out) {
+    auto type = janus::get_replication_type();
+    if (type == janus::ReplicationType::RAFT) {
+        return raft_impl::add_log_to_nc(data, len, par_id, flag, leader_hint_out);  // @unsafe
+    } else {
+        paxos_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
+        return true;  // Paxos always accepts (leader-only operation)
+    }
 }
 
 void wait_for_submit(uint32_t par_id) {

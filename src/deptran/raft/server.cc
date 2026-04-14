@@ -4,67 +4,213 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
+#include "rpc/file_snapshot_manager.hpp"
+#include <limits>
 
 // @external: {
-//   rrr::RandomGenerator::rand_double: [unsafe, (double, double) -> double]
-//   rrr::RandomGenerator::rand: [unsafe, (int, int) -> int]
-//   std::make_shared: [unsafe, (...) -> owned]
-//   rrr::Fiber::CreateRun: [unsafe, (...) -> owned]
-//   std::map::find: [unsafe, (&'a, ...) -> iterator]
-//   std::map::insert: [unsafe, (&'a mut, ...) -> pair]
-//   std::map::end: [unsafe, (&'a) -> iterator]
-//   operator bool: [unsafe, (&'a) -> bool]
-//   std::atomic::store: [unsafe, (&'a mut, ...) -> void]
-//   std::atomic::load: [unsafe, (&'a) -> T]
-//   std::recursive_mutex::lock: [unsafe, (&'a mut) -> void]
-//   std::recursive_mutex::unlock: [unsafe, (&'a mut) -> void]
-//   std::vector::push_back: [unsafe, (&'a mut, T) -> void]
-//   std::vector::operator[]: [unsafe, (&'a, size_t) -> &'a]
-//   std::sort: [unsafe, (iterator, iterator) -> void]
-//   std::dynamic_pointer_cast: [unsafe, (...) -> owned]
-//   std::shared_ptr::operator=: [unsafe, (&'a mut, &'a) -> &'a mut]
-//   janus::TpcBatchCommand::AddCmds: [unsafe, (&'a mut, &'a mut) -> void]
+//   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]
+//   rrr::RandomGenerator::rand: [safe, (int, int) -> int]
+//   Log_info: [safe, (...) -> void]
+//   Log_debug: [safe, (...) -> void]
+//   Log_warn: [safe, (...) -> void]
+//   Log_error: [safe, (...) -> void]
+//   Log_fatal: [safe, (...) -> void]
+//   verify: [safe, (...) -> void]
+//   Time::now: [safe, () -> uint64_t]
+//   strcmp: [safe, (const char*, const char*) -> int]
+//   std::getenv: [safe, (const char*) -> const char*]
+//   std::tolower: [safe, (int) -> int]
+//   std::transform: [safe, (...) -> void]
+//   std::stoull: [safe, (const std::string&) -> uint64_t]
+//   std::stoll: [safe, (const std::string&) -> int64_t]
+//   std::to_string: [safe, (...) -> owned std::string]
+//   std::min: [safe, (...) -> T]
+//   std::max: [safe, (...) -> T]
+//   std::sort: [safe, (iterator, iterator) -> void]
+//   std::copy: [safe, (...) -> void]
+//   std::make_shared: [safe, (...) -> owned]
+//   std::dynamic_pointer_cast: [safe, (...) -> owned]
+//   std::static_pointer_cast: [safe, (...) -> owned]
+//   std::lock_guard: [safe, (...) -> owned]
+//   std::recursive_mutex::lock: [safe, (&'a mut) -> void]
+//   std::recursive_mutex::unlock: [safe, (&'a mut) -> void]
+//   std::atomic::store: [safe, (&'a mut, ...) -> void]
+//   std::atomic::load: [safe, (&'a) -> T]
+//   std::vector::push_back: [safe, (&'a mut, T) -> void]
+//   std::vector::operator[]: [safe, (&'a, size_t) -> &'a]
+//   std::vector::reserve: [safe, (&'a mut, size_t) -> void]
+//   std::vector::size: [safe, (&'a) -> size_t]
+//   std::vector::empty: [safe, (&'a) -> bool]
+//   std::vector::begin: [safe, (&'a) -> iterator]
+//   std::vector::end: [safe, (&'a) -> iterator]
+//   std::map::find: [safe, (&'a, ...) -> iterator]
+//   std::map::insert: [safe, (&'a mut, ...) -> pair]
+//   std::map::end: [safe, (&'a) -> iterator]
+//   std::map::erase: [safe, (&'a mut, ...) -> void]
+//   std::map::size: [safe, (&'a) -> size_t]
+//   std::shared_ptr::operator=: [safe, (&'a mut, &'a) -> &'a mut]
+//   std::shared_ptr::get: [safe, (&'a) -> *]
+//   operator bool: [safe, (&'a) -> bool]
+//   rrr::Fiber::create_run: [safe, (...) -> owned]
+//   rrr::Fiber::sleep: [safe, (int) -> void]
+//   Reactor::create_sp_event: [safe, (...) -> owned]
+//   Config::GetConfig: [safe, () -> *]
+//   janus::TpcBatchCommand::AddCmds: [safe, (&'a mut, &'a mut) -> void]
+//   std::this_thread::sleep_for: [safe, (...) -> void]
+//   std::thread::joinable: [safe, (&'a) -> bool]
+//   std::thread::join: [safe, (&'a mut) -> void]
+//   std::thread::detach: [safe, (&'a mut) -> void]
+//   rrr::IntEvent::set: [safe, (&'a mut, int) -> void]
+//   rrr::IntEvent::wait: [safe, (&'a, int) -> void]
+//   rrr::Event::wait: [safe, (&'a, int) -> void]
+//   rrr::Event::TIMEOUT: [safe, () -> int]
+//   janus::View::View: [safe, (...) -> owned]
+//   janus::View::operator=: [safe, (&'a mut, const &'a) -> &'a mut]
+//   janus::TxLogServer::DestroyTx: [safe, (&'a mut, uint64_t) -> void]
+//   janus::RaftCommo::SendAppendEntries2: [safe, (...) -> owned]
+//   janus::RaftCommo::BroadcastVote: [safe, (...) -> owned]
 // }
 
 namespace janus {
+
+namespace {
+
+uint64_t ParseEnvUint64OrDefault(const char* env_name, uint64_t default_value) {
+  const char* env = std::getenv(env_name);
+  if (env == nullptr || *env == '\0') {
+    return default_value;
+  }
+
+  char* endptr = nullptr;
+  unsigned long long parsed = std::strtoull(env, &endptr, 10);
+  if (endptr != env && *endptr == '\0' && parsed > 0) {
+    Log_info("[LEADER-ELECTION] Using %s=%llu", env_name, parsed);
+    return static_cast<uint64_t>(parsed);
+  }
+
+  Log_warn("[LEADER-ELECTION] Invalid %s='%s'; using default %lu",
+           env_name, env, static_cast<unsigned long>(default_value));
+  return default_value;
+}
+
+uint64_t GetPreferredLeaderGracePeriodUs() {
+  constexpr uint64_t kDefaultGracePeriodUs = 5000000ULL;  // 5s
+  static uint64_t grace_period_us =
+      ParseEnvUint64OrDefault("MAKO_RAFT_PREFERRED_GRACE_US", kDefaultGracePeriodUs);
+  return grace_period_us;
+}
+
+uint64_t GetNonPreferredGraceElectionMinUs() {
+  constexpr uint64_t kDefaultMinUs = 1000000ULL;  // 1s
+  static uint64_t min_us = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US", kDefaultMinUs);
+  return min_us;
+}
+
+uint64_t GetNonPreferredGraceElectionMaxUs() {
+  constexpr uint64_t kDefaultMaxUs = 2000000ULL;  // 2s
+  static uint64_t max_us = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US", kDefaultMaxUs);
+  return max_us;
+}
+
+uint64_t RandomInRangeUs(uint64_t min_us, uint64_t max_us) {
+  if (max_us < min_us) {
+    std::swap(min_us, max_us);
+  }
+  if (max_us == min_us) {
+    return min_us;
+  }
+  uint64_t range = max_us - min_us;
+  if (range > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+    range = static_cast<uint64_t>(std::numeric_limits<int>::max());
+  }
+  return min_us + static_cast<uint64_t>(RandomGenerator::rand(0, static_cast<int>(range)));
+}
+
+uint64_t GetPreferredElectionTimeoutUs() {
+  return RandomInRangeUs(150000ULL, 300000ULL);
+}
+
+uint64_t GetNonPreferredGraceElectionTimeoutUs() {
+  return RandomInRangeUs(GetNonPreferredGraceElectionMinUs(),
+                         GetNonPreferredGraceElectionMaxUs());
+}
+
+uint64_t GetNonPreferredSteadyElectionTimeoutUs() {
+  return RandomInRangeUs(500000ULL, 1000000ULL);
+}
+
+bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
+  return preferred_leader_site_id != INVALID_SITEID;
+}
+
+}  // namespace
 
 // ============================================================================
 // LOG PERSISTENCE IMPLEMENTATION (Phase 1.3)
 // ============================================================================
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistTermAndVote() {
+void RaftServer::PersistTermAndVoteToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
 
-  log_storage_->set_metadata(META_TERM, std::to_string(currentTerm));  // @unsafe
-  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));  // @unsafe
-  log_storage_->sync();  // @unsafe - Durability guarantee
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_TERM, std::to_string(currentTerm));
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));
+  log_storage_->sync();
+  }
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistVote() {
+void RaftServer::PersistVoteToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
 
-  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));  // @unsafe
-  log_storage_->sync();  // @unsafe
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));
+  log_storage_->sync();
+  }
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistCommitIndex() {
+void RaftServer::PersistCommitIndexToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
 
-  log_storage_->set_metadata(META_COMMIT_INDEX, std::to_string(commitIndex));  // @unsafe
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_COMMIT_INDEX, std::to_string(commitIndex));
+  // Also persist speculative indices alongside commitIndex
+  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(specCommitIndex_));
+  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(securedLogIndex_));
   // Note: Don't sync for commitIndex - it can be recovered from logs
+  }
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistLogEntry(slotid_t slot_id, const RaftData& data) {
+// @safe - Persists specCommitIndex_ and securedLogIndex_ to storage
+void RaftServer::PersistSpeculativeIndicesToLogStorage() {
+  if (!log_storage_ || !log_storage_->is_open()) {
+    return;
+  }
+
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(specCommitIndex_));
+  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(securedLogIndex_));
+  // Note: Don't sync - these can be recovered conservatively from logs
+  }
+}
+
+// @unsafe - Uses LogStorage API
+void RaftServer::PersistLogEntryToLogStorage(slotid_t slot_id, const RaftData& data) {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
@@ -75,12 +221,15 @@ void RaftServer::PersistLogEntry(slotid_t slot_id, const RaftData& data) {
   entry.max_ballot_accepted = data.max_ballot_accepted_;
   entry.committed = (slot_id <= commitIndex);
 
-  log_storage_->put(entry);  // @unsafe
-  log_storage_->sync();  // @unsafe
+  // @unsafe
+  {
+  log_storage_->put(entry);
+  log_storage_->sync();
+  }
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries) {
+void RaftServer::PersistLogEntriesToLogStorage(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries) {
   if (!log_storage_ || !log_storage_->is_open() || entries.empty()) {
     return;
   }
@@ -97,11 +246,14 @@ void RaftServer::PersistLogEntries(const std::vector<std::pair<slotid_t, std::sh
     log_entries.push_back(entry);
   }
 
-  log_storage_->put_batch(log_entries);  // @unsafe
-  log_storage_->sync();  // @unsafe
+  // @unsafe
+  {
+  log_storage_->put_batch(log_entries);
+  log_storage_->sync();
+  }
 }
 
-// @unsafe - Uses LogStorage API
+// @safe - Recovers state from LogStorage
 bool RaftServer::RecoverFromStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return true;  // No storage configured, nothing to recover
@@ -110,30 +262,47 @@ bool RaftServer::RecoverFromStorage() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // Recover currentTerm
-  auto term_opt = log_storage_->get_metadata(META_TERM);  // @unsafe
+  // @unsafe
+  {
+  auto term_opt = log_storage_->get_metadata(META_TERM);
   if (term_opt.is_some()) {
     currentTerm = std::stoull(term_opt.unwrap());
   }
 
   // Recover vote_for
-  auto vote_opt = log_storage_->get_metadata(META_VOTE_FOR);  // @unsafe
+  auto vote_opt = log_storage_->get_metadata(META_VOTE_FOR);
   if (vote_opt.is_some()) {
     int64_t vote_val = std::stoll(vote_opt.unwrap());
     vote_for_ = static_cast<siteid_t>(vote_val);
   }
 
   // Recover commitIndex
-  auto commit_opt = log_storage_->get_metadata(META_COMMIT_INDEX);  // @unsafe
+  auto commit_opt = log_storage_->get_metadata(META_COMMIT_INDEX);
   if (commit_opt.is_some()) {
     commitIndex = std::stoull(commit_opt.unwrap());
   }
 
+  // Recover specCommitIndex
+  auto spec_str = log_storage_->get_metadata(META_SPEC_COMMIT_INDEX);
+  if (spec_str.is_some()) {
+    specCommitIndex_ = std::stoull(spec_str.unwrap());
+    Log_info("Recovered specCommitIndex=%lu", specCommitIndex_);
+  }
+
+  // Recover securedLogIndex
+  auto secured_str = log_storage_->get_metadata(META_SECURED_LOG_INDEX);
+  if (secured_str.is_some()) {
+    securedLogIndex_ = std::stoull(secured_str.unwrap());
+    Log_info("Recovered securedLogIndex=%lu", securedLogIndex_);
+  }
+  }
+
   // Recover lastLogIndex
-  lastLogIndex = log_storage_->get_last_index();  // @unsafe
+  lastLogIndex = log_storage_->get_last_index();
 
   // Recover log entries
   if (lastLogIndex > 0) {
-    auto entries = log_storage_->get_range(1, lastLogIndex + 1);  // @unsafe
+    auto entries = log_storage_->get_range(1, lastLogIndex + 1);
     for (const auto& entry : entries) {
       auto data = std::make_shared<RaftData>();
       data->term = entry.term;
@@ -144,13 +313,28 @@ bool RaftServer::RecoverFromStorage() {
     }
   }
 
-  Log_info("[RAFT-RECOVERY] Site %d: Recovered term=%lu vote_for=%d lastLogIndex=%lu commitIndex=%lu entries=%zu",
-           site_id_, currentTerm, vote_for_, lastLogIndex, commitIndex, raft_logs_.size());
+  // Clamp speculative indices to maintain invariant:
+  // securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
+  if (specCommitIndex_ > lastLogIndex) {
+    Log_warn("[RAFT-RECOVERY] Clamping specCommitIndex %lu -> %lu (lastLogIndex)",
+             specCommitIndex_, lastLogIndex);
+    specCommitIndex_ = lastLogIndex;
+  }
+  if (securedLogIndex_ > specCommitIndex_) {
+    Log_warn("[RAFT-RECOVERY] Clamping securedLogIndex %lu -> %lu (specCommitIndex)",
+             securedLogIndex_, specCommitIndex_);
+    securedLogIndex_ = specCommitIndex_;
+  }
+
+  Log_info("[RAFT-RECOVERY] Site %d: Recovered term=%lu vote_for=%d lastLogIndex=%lu "
+           "commitIndex=%lu specCommitIndex=%lu securedLogIndex=%lu entries=%zu",
+           site_id_, currentTerm, vote_for_, lastLogIndex, commitIndex,
+           specCommitIndex_, securedLogIndex_, raft_logs_.size());
 
   return true;
 }
 
-// @unsafe - Calls app_next_ callback
+// @safe - Replays committed entries (callbacks wrapped in @unsafe blocks)
 void RaftServer::ReplayCommittedEntries() {
   if (!app_next_) {
     Log_warn("[RAFT-REPLAY] Site %d: No app_next_ callback, skipping replay", site_id_);
@@ -174,9 +358,12 @@ void RaftServer::ReplayCommittedEntries() {
   for (slotid_t id = start; id <= end; id++) {
     auto instance = GetRaftInstance(id);
     if (instance && instance->log_) {
+      // @unsafe
+      {
       app_next_(id, instance->log_);
       executeIndex = id;
       replayed++;
+      }
     } else {
       Log_warn("[RAFT-REPLAY] Site %d: Missing log entry at slot %lu, stopping replay", site_id_, id);
       break;
@@ -202,7 +389,98 @@ size_t RaftServer::GetUncommittedCount() const {
   return 0;
 }
 
-// @unsafe - Modifies log storage
+// @unsafe - Initializes SnapshotManager from environment config
+void RaftServer::InitializeSnapshotManager() {
+  const char* snapshot_flag = std::getenv("MAKO_RAFT_SNAPSHOTS");  // @unsafe
+  bool should_enable = (snapshot_flag &&
+                       (strcmp(snapshot_flag, "1") == 0 ||
+                        strcmp(snapshot_flag, "true") == 0));
+
+  if (!should_enable) {
+    Log_info("[RAFT-SNAPSHOT] Snapshots disabled for site %d (set MAKO_RAFT_SNAPSHOTS=1 to enable)",
+             site_id_);
+    return;
+  }
+
+  // Build snapshot config
+  rrr::SnapshotConfig snap_config;
+  // @unsafe { getenv is not borrow-checked }
+  const char* custom_path = std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
+  if (custom_path && custom_path[0] != '\0') {
+    snap_config.storage_path = std::string(custom_path) + "/raft_snap_" +
+                               std::to_string(site_id_) + "_partition_" +
+                               std::to_string(partition_id_);
+  } else {
+    snap_config = rrr::SnapshotConfig::for_replica(partition_id_, loc_id_);
+  }
+
+  // Check for custom snapshot interval
+  const char* interval_str = std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL");  // @unsafe
+  if (interval_str && interval_str[0] != '\0') {
+    snap_config.snapshot_interval = std::stoull(interval_str);
+    snapshot_threshold_ = snap_config.snapshot_interval;
+  }
+
+  // Create the FileSnapshotManager
+  auto manager = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+  SetSnapshotManager(manager);
+
+  // If a snapshot exists, load its metadata into snapidx_/snapterm_
+  auto latest = manager->GetLatestSnapshot();
+  if (latest.is_some()) {
+    auto meta = latest.unwrap();
+    snapidx_ = meta.last_included_index;
+    snapterm_ = meta.last_included_term;
+    Log_info("[RAFT-SNAPSHOT] Loaded snapshot metadata: index=%lu term=%lu size=%zu",
+             snapidx_, snapterm_, meta.size_bytes);
+  }
+
+  // @safe - Recover server state from snapshot metadata
+  // InitializeSnapshotManager() runs AFTER RecoverFromStorage() in Setup(),
+  // so log-recovered values may already be set. Only advance, never go backwards.
+  if (snapidx_ > 0) {
+    if (snapidx_ > executeIndex) {
+      executeIndex = snapidx_;
+      Log_info("[RAFT-SNAPSHOT] Recovery: set executeIndex=%lu from snapshot", executeIndex);
+    }
+    if (snapidx_ > commitIndex) {
+      commitIndex = snapidx_;
+      PersistCommitIndexToLogStorage();
+      Log_info("[RAFT-SNAPSHOT] Recovery: set commitIndex=%lu from snapshot", commitIndex);
+    }
+    if (snapidx_ > lastLogIndex) {
+      lastLogIndex = snapidx_;
+      Log_info("[RAFT-SNAPSHOT] Recovery: set lastLogIndex=%lu from snapshot", lastLogIndex);
+    }
+    if (snapidx_ + 1 > min_active_slot_) {
+      min_active_slot_ = snapidx_ + 1;
+      Log_info("[RAFT-SNAPSHOT] Recovery: set min_active_slot_=%lu from snapshot", min_active_slot_);
+    }
+  }
+
+  Log_info("[RAFT-SNAPSHOT] Initialized for site %d partition %d: path=%s interval=%zu",
+           site_id_, partition_id_, snap_config.storage_path.c_str(),
+           snap_config.snapshot_interval);
+}
+
+// @safe - Returns true if a snapshot is available
+bool RaftServer::HasSnapshot() const {
+  if (!snapshot_manager_) return false;
+  auto latest = snapshot_manager_->GetLatestSnapshot();
+  return latest.is_some();
+}
+
+// @safe - Returns the last snapshotted log index
+uint64_t RaftServer::GetSnapshotIndex() const {
+  return snapidx_;
+}
+
+// @safe - Returns the term of the last snapshotted log entry
+uint64_t RaftServer::GetSnapshotTerm() const {
+  return snapterm_;
+}
+
+// @safe - Log compaction (storage operations wrapped in @unsafe blocks)
 size_t RaftServer::CompactLog(slotid_t up_to_index) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -219,10 +497,14 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
   }
 
   // Get current first slot
-  slotid_t first_slot = log_storage_->get_first_index();
+  slotid_t first_slot = 0;
+  // @unsafe
+  {
+  first_slot = log_storage_->get_first_index();
   if (first_slot == 0 || log_storage_->empty()) {
     Log_debug("[RAFT-COMPACT] Site %d: Log is empty, nothing to compact", site_id_);
     return 0;
+  }
   }
 
   // Nothing to compact if up_to_index is before first slot
@@ -234,6 +516,8 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
 
   // Remove entries from storage
   size_t to_remove = up_to_index - first_slot + 1;
+  // @unsafe
+  {
   if (log_storage_->remove_range(first_slot, up_to_index + 1)) {
     Log_info("[RAFT-COMPACT] Site %d: Compacted %zu entries [%lu..%lu]",
              site_id_, to_remove, first_slot, up_to_index);
@@ -253,11 +537,80 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
     Log_error("[RAFT-COMPACT] Site %d: Failed to compact log entries", site_id_);
     return 0;
   }
+  }
+}
+
+// @unsafe - Creates snapshot from current state, persists, and compacts log
+void RaftServer::CreateSnapshot() {
+  if (!snapshot_manager_) {
+    Log_debug("[RAFT-SNAPSHOT] Site %d: No snapshot manager, skipping CreateSnapshot",
+              site_id_);
+    return;
+  }
+
+  slotid_t snap_index = executeIndex;
+  if (snap_index == 0) {
+    Log_debug("[RAFT-SNAPSHOT] Site %d: executeIndex is 0, nothing to snapshot",
+              site_id_);
+    return;
+  }
+
+  // Determine the term at the snapshot index
+  ballot_t snap_term = 0;
+  auto instance = GetRaftInstance(snap_index);
+  if (instance) {
+    snap_term = instance->term;
+  } else {
+    // If the instance has been cleaned up, use currentTerm as fallback
+    snap_term = currentTerm;
+    Log_warn("[RAFT-SNAPSHOT] Site %d: No instance at index %lu, using currentTerm %lu",
+             site_id_, snap_index, snap_term);
+  }
+
+  // Serialize state: collect the key-value pairs from committed entries
+  // For now, we serialize a simple representation of the committed state.
+  // The actual state machine serialization will be protocol-specific in the future.
+  // We serialize the executeIndex and term as a minimal state marker.
+  // @unsafe { string operations }
+  std::string state_data;
+  {
+    // Format: 8 bytes executeIndex + 8 bytes term
+    state_data.resize(sizeof(uint64_t) * 2);
+    char* ptr = state_data.data();
+    std::memcpy(ptr, &snap_index, sizeof(uint64_t));
+    ptr += sizeof(uint64_t);
+    std::memcpy(ptr, &snap_term, sizeof(uint64_t));
+  }
+
+  // Persist the snapshot via the snapshot manager
+  // @unsafe { snapshot_manager_ I/O operations }
+  bool saved = snapshot_manager_->TakeSnapshot(
+      snap_index, snap_term,
+      state_data.data(), state_data.size());
+
+  if (!saved) {
+    Log_error("[RAFT-SNAPSHOT] Site %d: Failed to save snapshot at index=%lu term=%lu",
+              site_id_, snap_index, snap_term);
+    return;
+  }
+
+  // Update snapshot metadata
+  slotid_t old_snapidx = snapidx_;
+  snapidx_ = snap_index;
+  snapterm_ = snap_term;
+
+  Log_info("[RAFT-SNAPSHOT] Site %d: Snapshot saved at index=%lu term=%lu (prev snapidx=%lu)",
+           site_id_, snap_index, snap_term, old_snapidx);
+
+  // Compact the log up to the snapshot index
+  size_t compacted = CompactLog(snap_index);
+  Log_info("[RAFT-SNAPSHOT] Site %d: Compacted %zu entries up to index=%lu",
+           site_id_, compacted, snap_index);
 }
 
 // ============================================================================
 
-// @safe
+// @safe - Logs term changes (Log_info marked safe via @external)
 void RaftServer::LogTermChange(const char* reason,
                                uint64_t old_term,
                                uint64_t new_term,
@@ -265,6 +618,8 @@ void RaftServer::LogTermChange(const char* reason,
   if (old_term == new_term) {
     return;
   }
+  // @unsafe
+  {
   const char* why = reason ? reason : "unspecified";
   if (source != INVALID_SITEID) {
     Log_info("[RAFT-TERM] server %d term %lu -> %lu (%s, source_site=%d)",
@@ -272,6 +627,7 @@ void RaftServer::LogTermChange(const char* reason,
   } else {
     Log_info("[RAFT-TERM] server %d term %lu -> %lu (%s)",
              site_id_, old_term, new_term, why);
+  }
   }
 }
 
@@ -312,7 +668,7 @@ bool JetpackRecoveryEnabled() {
 
 }  // namespace
 
-// @safe - Uses rusty::Box for timer ownership
+// @safe - raw pointer parameter is bounded (frame outlives server)
 RaftServer::RaftServer(Frame * frame)
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
@@ -323,7 +679,7 @@ RaftServer::RaftServer(Frame * frame)
   stop_ = false ;
 }
 
-// @safe
+// @unsafe - raw pointer output params from base class virtual interface
 void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
                                    const epoch_t& oepoch,
                                    const std::vector<key_t>& keys,
@@ -344,45 +700,260 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
   }
 }
 
-// @safe
+// @safe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
 uint64_t RaftServer::GetElectionTimeout() {
-  uint64_t base_timeout;
   uint64_t current_time = Time::now();
-  bool in_grace_period = (current_time - startup_timestamp_) < 5000000; // 5 seconds in microseconds
+  const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
+  bool in_grace_period = (current_time - startup_timestamp_) < grace_period_us;
+
+  if (!IsPreferredLeaderConfigured(preferred_leader_site_id_)) {
+    // Traditional Raft behavior when no preferred leader is configured.
+    return GetNonPreferredSteadyElectionTimeoutUs();
+  }
 
   if (AmIPreferredLeader()) {
-    // Preferred replica: Short timeout (150-300ms) to win elections quickly
-    base_timeout = 150000; // 150ms
-    uint64_t jitter = RandomGenerator::rand(0, 150000);
-    return base_timeout + jitter; // 150-300ms
+    return GetPreferredElectionTimeoutUs();
   } else if (in_grace_period) {
-    // Non-preferred during grace period: Long timeout (1-2s) to allow preferred to win
-    base_timeout = 1000000; // 1s
-    uint64_t jitter = RandomGenerator::rand(0, 1000000);
-    return base_timeout + jitter; // 1-2s
+    // Startup grace timeout is tunable via env for test stability.
+    return GetNonPreferredGraceElectionTimeoutUs();
   } else {
-    // Non-preferred after grace: Medium timeout (500ms-1s) to enable failover
-    base_timeout = 500000; // 500ms
-    uint64_t jitter = RandomGenerator::rand(0, 500000);
-    return base_timeout + jitter; // 500ms-1s
+    return GetNonPreferredSteadyElectionTimeoutUs();
   }
 }
 
-// @safe
+#ifdef SINGLE_RAFT_INSTANCE
+// SINGLE-RAFT: StartApplyFiber - lightweight status monitor on PollThread.
+void RaftServer::StartApplyFiber() {
+  Fiber::create_run([this]() {
+    Log_info("[APPLY-FIBER] Site %d: Started apply fiber (monitor only)", site_id_);
+    while (!stop_) {
+      Fiber::sleep(5000000);  // 5s status check
+      Log_info("[APPLY-FIBER] Site %d: executeIndex=%lu commitIndex=%lu lastLogIndex=%lu",
+               site_id_, executeIndex, commitIndex, lastLogIndex);
+    }
+    Log_info("[APPLY-FIBER] Site %d: Apply fiber exiting (stop_=true)", site_id_);
+  });
+}
+
+// SINGLE-RAFT: Enqueue newly committed entries for the background apply thread.
+// Called from OnAppendEntries (already under mtx_) when commitIndex advances.
+void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit) {
+  std::vector<std::pair<slotid_t, shared_ptr<Marshallable>>> batch;
+  slotid_t first_missing = 0;
+  for (slotid_t id = old_commit + 1; id <= new_commit; id++) {
+    auto it = raft_logs_.find(id);
+    if (it != raft_logs_.end() && it->second && it->second->log_) {
+      batch.emplace_back(id, it->second->log_);
+    } else {
+      first_missing = id;
+      break;  // Gap in log — stop here
+    }
+  }
+  if (!batch.empty()) {
+    std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+    for (auto& entry : batch) {
+      apply_queue_.push_back(std::move(entry));
+    }
+  }
+  // Log if we couldn't enqueue the full range
+  if (first_missing > 0) {
+    Log_info("[ENQUEUE] Site %d: gap at slot %lu (range %lu..%lu, enqueued %zu)",
+             site_id_, first_missing, old_commit + 1, new_commit, batch.size());
+  }
+  static uint64_t enqueue_log_counter = 0;
+  if (enqueue_log_counter++ % 50 == 0) {
+    size_t qsize = 0;
+    {
+      std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+      qsize = apply_queue_.size();
+    }
+    Log_info("[ENQUEUE] Site %d: enqueued %zu entries (%lu..%lu) queue_total=%zu",
+             site_id_, batch.size(), old_commit + 1, new_commit, qsize);
+  }
+}
+
+// SINGLE-RAFT: Background OS thread for entry application.
+// Drains from apply_queue_ (populated by OnAppendEntries) to avoid contention on mtx_.
+void RaftServer::StartApplyThread() {
+  apply_thread_running_.store(true);
+  apply_thread_ = std::thread([this]() {
+    Log_info("[APPLY-THREAD] Site %d: Started background apply thread", site_id_);
+    uint64_t apply_count = 0;
+    auto last_log_time = std::chrono::steady_clock::now();
+    while (!stop_ && apply_thread_running_.load()) {
+      // Drain entries from the queue
+      std::pair<slotid_t, shared_ptr<Marshallable>> entry;
+      bool got_entry = false;
+      size_t queue_size = 0;
+      {
+        std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+        queue_size = apply_queue_.size();
+        if (!apply_queue_.empty()) {
+          entry = std::move(apply_queue_.front());
+          apply_queue_.pop_front();
+          got_entry = true;
+        }
+      }
+
+      if (got_entry) {
+        slotid_t id = entry.first;
+        auto& log_entry = entry.second;
+        // Log entries near the stall point for debugging
+        if (id >= 470 && id <= 500) {
+          Log_info("[APPLY-THREAD] Site %d: ABOUT TO APPLY entry %lu (queue_remaining=%zu)",
+                   site_id_, id, queue_size);
+        }
+        // @unsafe - callback may have side effects
+        RuleWitnessGC(log_entry);
+        app_next_(id, log_entry);
+        if (id >= 470 && id <= 500) {
+          Log_info("[APPLY-THREAD] Site %d: DONE APPLYING entry %lu", site_id_, id);
+        }
+        executeIndex = id;
+        apply_count++;
+
+        // Log progress periodically
+        if (apply_count % 100 == 0) {
+          Log_info("[APPLY-THREAD] Site %d: applied %lu entries, executeIndex=%lu queue_remaining=%zu",
+                   site_id_, apply_count, executeIndex, queue_size);
+        }
+
+        // Cleanup old log entries periodically to prevent memory buildup.
+        // Only erase from the map — skip DestroyTx since the apply callback
+        // may still reference transaction state on this thread.
+        if (id % 5000 == 0) {
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          slotid_t cutoff = (executeIndex > 10000) ? executeIndex - 10000 : 0;
+          while (min_active_slot_ < cutoff) {
+            raft_logs_.erase(min_active_slot_);
+            min_active_slot_++;
+          }
+        }
+      } else {
+        // Periodic heartbeat when queue is empty
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5) {
+          Log_info("[APPLY-THREAD] Site %d: IDLE executeIndex=%lu commitIndex=%lu queue_size=%zu applied_total=%lu",
+                   site_id_, executeIndex, commitIndex, queue_size, apply_count);
+          last_log_time = now;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    Log_info("[APPLY-THREAD] Site %d: Background apply thread exiting", site_id_);
+  });
+  apply_thread_.detach();
+}
+#endif  // SINGLE_RAFT_INSTANCE
+
+// @safe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
 void RaftServer::Setup() {
   // Record startup time for grace period logic
   startup_timestamp_ = Time::now();
+
+  // ========== INITIALIZE PERSISTENCE (LogStorage + RecoveryManager) ==========
+  const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
+  bool should_enable = (persistence_flag &&
+                       (strcmp(persistence_flag, "1") == 0 ||
+                        strcmp(persistence_flag, "true") == 0));
+
+  if (should_enable) {
+    // Check if async persistence is requested (default: sync)
+    const char* async_flag = std::getenv("MAKO_RAFT_ASYNC_PERSISTENCE");
+    async_persistence_ = (async_flag &&
+                         (strcmp(async_flag, "1") == 0 ||
+                          strcmp(async_flag, "true") == 0));
+
+    Log_info("[RAFT-PERSISTENCE] Initializing LogStorage for site %d partition %d (mode=%s)",
+             site_id_, partition_id_, async_persistence_ ? "async" : "sync");
+
+    // Create RecoveryConfig
+    rrr::RecoveryConfig config;
+    std::string base_path = "/tmp";
+    const char* custom_path = std::getenv("MAKO_RAFT_PERSISTENCE_PATH");
+    if (custom_path && custom_path[0] != '\0') {
+      base_path = custom_path;
+    }
+    config.storage_path = base_path + "/raft_" + std::to_string(site_id_) +
+                         "_partition_" + std::to_string(partition_id_);
+
+    // Create RecoveryManager and storage
+    rrr::RecoveryManager manager(config);
+    auto storage = manager.create_storage();
+
+    if (!storage) {
+      Log_error("[RAFT-PERSISTENCE] Failed to create LogStorage - continuing without persistence");
+    } else {
+      // Use RecoveryManager to orchestrate recovery
+      auto result = manager.recover(
+        [this](std::shared_ptr<rrr::LogStorage> s) { SetLogStorage(s); },
+        [this]() { return RecoverFromStorage(); },
+        [this](rrr::RecoveryResult& r) {
+          r.recovered_term = currentTerm;
+          r.recovered_entries = raft_logs_.size();
+        }
+      );
+
+      if (result.success) {
+        Log_info("[RAFT-PERSISTENCE] Recovery complete: mode=%d term=%lu entries=%lu time=%lums",
+                 static_cast<int>(result.mode), result.recovered_term,
+                 result.recovered_entries, result.recovery_time_ms);
+      } else {
+        Log_error("[RAFT-PERSISTENCE] Recovery failed: %s", result.error_message.c_str());
+      }
+    }
+  } else {
+    Log_info("[RAFT-PERSISTENCE] Disabled (set MAKO_RAFT_PERSISTENCE=1 to enable)");
+  }
+
+  // ========== HEARTBEAT INTERVAL (runtime override) ==========
+  // @unsafe { std::getenv and Log_info are not borrow-checked }
+  {
+    const char* hb_str = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US");
+    if (hb_str && hb_str[0] != '\0') {
+      heartbeat_interval_us_ = std::stoull(hb_str);
+      Log_info("[RAFT] Heartbeat interval set to %lu us from env", heartbeat_interval_us_);
+    }
+  }
+
+  // ========== LOG RETENTION WINDOW (runtime override) ==========
+  // @unsafe { std::getenv and Log_info are not borrow-checked }
+  {
+    const char* lrw_str = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW");
+    if (lrw_str && lrw_str[0] != '\0') {
+      uint64_t val = std::stoull(lrw_str);
+      log_retention_window_ = (val > 0) ? val : 1;
+      Log_info("[RAFT] Log retention window set to %lu from env", log_retention_window_);
+    }
+  }
+
+  // ========== INITIALIZE SNAPSHOT MANAGER (Phase 3.1) ==========
+  InitializeSnapshotManager();
+
+  // ========== INITIALIZE MEMBERSHIP CONFIGURATION ==========
+  // Populate current_config_ from the static partition configuration.
+  // This gives us the initial set of replicas; AddServer/RemoveServer will
+  // modify it dynamically at runtime.
+  {
+    auto config = Config::GetConfig();
+    auto replicas = config->SitesByPartitionId(partition_id_);
+    for (auto& site : replicas) {
+      current_config_.insert(site.id);
+    }
+    Log_info("[RAFT-CONFIG] Initialized current_config_ for site %d partition %d with %zu replicas",
+             site_id_, partition_id_, current_config_.size());
+  }
 
 #ifdef RAFT_TEST_CORO
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site %d", site_id_);
     Fiber::create_run([this](){
-      this->HeartbeatLoop(); 
+      this->HeartbeatLoop();
     });
     // Start election timeout loop
     if (failover_) {
       Fiber::create_run([this](){
-        StartElectionTimer(); 
+        StartElectionTimer();
       });
     }
 	}
@@ -392,20 +963,30 @@ void RaftServer::Setup() {
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site %d", site_id_);
     Fiber::create_run([this](){
-      this->HeartbeatLoop(); 
+      this->HeartbeatLoop();
     });
     // Start election timeout loop
     if (failover_) {
       Fiber::create_run([this](){
-        StartElectionTimer(); 
+        StartElectionTimer();
       });
     }
 	}
 #endif
+
+#ifdef SINGLE_RAFT_INSTANCE
+  // SINGLE-RAFT: Start apply infrastructure
+  StartApplyFiber();
+  if (commitIndex > executeIndex) {
+    EnqueueCommittedEntries(executeIndex, commitIndex);
+  }
+  StartApplyThread();
+#endif
+
   // Election timer will be started in Start() method when first command is submitted
 }
 
-// @safe
+// @unsafe - modifies connection state, accesses proxy maps
 void RaftServer::Disconnect(const bool disconnect) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(disconnected_ != disconnect);
@@ -416,7 +997,14 @@ void RaftServer::Disconnect(const bool disconnect) {
   }
   RaftCommo *c = (RaftCommo*) commo();
   if (disconnect) {
-    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    // Clear any stale proxy data from previous Kill/Restart cycle
+    // This can happen when a server is killed, restarted (with new proxies),
+    // and then killed again - the old _proxies data was never cleared
+    if (_proxies[partition_id_][loc_id_].size() > 0) {
+      Log_info("[DISCONNECT] Clearing stale proxy data for partition %d, site %d (had %zu entries)",
+               partition_id_, loc_id_, _proxies[partition_id_][loc_id_].size());
+      _proxies[partition_id_][loc_id_].clear();
+    }
     verify(c->rpc_par_proxies_.size() > 0);
     auto sz = c->rpc_par_proxies_.size();
     _proxies[partition_id_][loc_id_].insert(c->rpc_par_proxies_.begin(), c->rpc_par_proxies_.end());
@@ -440,7 +1028,18 @@ bool RaftServer::IsDisconnected() {
   return disconnected_;
 }
 
-// @safe
+// @safe - read-only access to current_leader_id_ under lock
+siteid_t RaftServer::GetLeaderHint() const {
+  // Note: mtx_ is recursive_mutex, but this is const - callers should hold lock
+  // or accept a slightly stale value. current_leader_id_ is set under lock in
+  // setIsLeader() and OnAppendEntries(), so reads are safe for hint purposes.
+  if (is_leader_) {
+    return site_id_;
+  }
+  return current_leader_id_;
+}
+
+// @safe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
 void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
@@ -455,8 +1054,13 @@ void RaftServer::setIsLeader(bool isLeader) {
       Log_info("commo_ is null, skipping leader initialization");
     } else {
       // Reset leader volatile state
+      vector<SiteProxyPair> proxies;
+      // @unsafe
+      {
       RaftCommo *c = (RaftCommo*) commo();
-      auto proxies = c->rpc_par_proxies_[partition_id_];
+      verify(c != nullptr);
+      proxies = c->rpc_par_proxies_[partition_id_];
+      }
       if(failover_) {
         for (auto& p : proxies) {
           if (p.first != site_id_) {
@@ -467,9 +1071,9 @@ void RaftServer::setIsLeader(bool isLeader) {
             Log_debug("loc_id_=%d match_index_[%d]=%d, next_index_[%d]=%d", loc_id_, p.first, match_index_[p.first], p.first, next_index_[p.first]);
           }
         }
-        // matchedIndex and nextIndex should have indices for all servers except self
-        verify(match_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id_) - 1);
-        verify(next_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id_) - 1);
+        // matchedIndex and nextIndex should have indices for all servers + learners except self
+        verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
+        verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
       }
     }
   }
@@ -481,6 +1085,11 @@ void RaftServer::setIsLeader(bool isLeader) {
 
   // Update the leader state after view handling
   is_leader_ = isLeader;
+
+  // Track current leader identity for GetLeaderHint()
+  if (isLeader) {
+    current_leader_id_ = site_id_;
+  }
 
   // Only log on actual transitions, not no-op calls
   if (become_new_leader || become_new_follower) {
@@ -501,10 +1110,14 @@ void RaftServer::setIsLeader(bool isLeader) {
     // Only update view if we have enough information (not during initialization)
     if (partition_id_ != 0xFFFFFFFF && site_id_ != -1 && frame_ != nullptr) {
       // Move current new_view to old_view before updating
+      int n_replicas = 0;
+      // @unsafe
+      {
       old_view_ = new_view_;
-      
+
       // Update new_view with this server as the leader
-      int n_replicas = Config::GetConfig()->GetPartitionSize(partition_id_);
+      n_replicas = static_cast<int>(current_config_.size());
+      }
       new_view_ = View(n_replicas, site_id_, currentTerm);
       Log_info("[RAFT_VIEW] Server %d became leader for partition %d, term=%lu, old_view=%s, new_view=%s", 
                site_id_, partition_id_, currentTerm, 
@@ -513,8 +1126,9 @@ void RaftServer::setIsLeader(bool isLeader) {
       // IMPORTANT: Update the communicator's view so it knows this server is the leader
       if (commo_) {
         auto view_data = std::make_shared<ViewData>(new_view_, partition_id_);
-        commo()->UpdatePartitionView(partition_id_, view_data);
-        Log_info("[RAFT_VIEW] Updated communicator view for partition %d with new leader %d", 
+        // @unsafe
+        { commo()->UpdatePartitionView(partition_id_, view_data); }
+        Log_info("[RAFT_VIEW] Updated communicator view for partition %d with new leader %d",
                  partition_id_, site_id_);
       }
       
@@ -567,6 +1181,8 @@ void RaftServer::setIsLeader(bool isLeader) {
   // CRITICAL: Fire leadership change callback so RaftWorker can update its state
   // This allows clients to retarget to the new leader after elections
   if (leader_change_cb_) {
+    // @unsafe
+    {
     if (become_new_leader) {
       Log_info("[LEADER_CALLBACK] Site %d: Firing leader_change_cb_(true) - became leader", site_id_);
       leader_change_cb_(true);
@@ -574,11 +1190,16 @@ void RaftServer::setIsLeader(bool isLeader) {
       Log_info("[LEADER_CALLBACK] Site %d: Firing leader_change_cb_(false) - became follower", site_id_);
       leader_change_cb_(false);
     }
+    }
   }
 }
 
-// @safe
+// @safe - Applies committed logs (callbacks wrapped in @unsafe blocks)
 void RaftServer::applyLogs() {
+  // Log commit state for debugging
+  Log_info("[APPLY-LOGS] site=%d commitIndex=%ld executeIndex=%ld",
+           site_id_, commitIndex, executeIndex);
+
   // Only mark pending if there's actually new work to apply
   if (executeIndex < commitIndex) {
     apply_pending_.store(true, std::memory_order_release);
@@ -601,10 +1222,15 @@ void RaftServer::applyLogs() {
     for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
       auto next_instance = GetRaftInstance(id);
       if (next_instance && next_instance->log_) {
+        // @unsafe
+        {
         RuleWitnessGC(next_instance->log_);
+        Log_info("[APPLY-LOGS] site=%d applying index=%ld", site_id_, id);
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;
+        }
       } else {
+        Log_info("[APPLY-LOGS] site=%d SKIP index=%ld (no instance or log)", site_id_, id);
         break;
       }
     }
@@ -615,16 +1241,40 @@ void RaftServer::applyLogs() {
 
   in_applying_logs_ = false;
 
-  // Cleanup old commands to prevent memory buildup
-  int i = min_active_slot_;
-  while (i + 60000 < executeIndex) {
-    removeCmd(i);
-    i++;
+  // Check if we should take a snapshot
+  if (snapshot_manager_ && snapidx_ < executeIndex &&
+      (executeIndex - snapidx_) > snapshot_threshold_) {
+    CreateSnapshot();
   }
-  min_active_slot_ = i;
+
+  // Cleanup old commands to prevent memory buildup
+#ifdef SINGLE_RAFT_INSTANCE
+  slotid_t cutoff = (executeIndex > log_retention_window_) ? executeIndex - log_retention_window_ : 0;
+  // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
+  if (snapidx_ > 0 && cutoff > snapidx_) {
+    cutoff = snapidx_;
+  }
+  while (min_active_slot_ < cutoff) {
+    removeCmd(min_active_slot_);
+    min_active_slot_++;
+  }
+#else
+  if (executeIndex % log_retention_window_ == 0) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    slotid_t cutoff = (executeIndex > 2 * log_retention_window_) ? executeIndex - 2 * log_retention_window_ : 0;
+    // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
+    if (snapidx_ > 0 && cutoff > snapidx_) {
+      cutoff = snapidx_;
+    }
+    while (min_active_slot_ < cutoff) {
+      raft_logs_.erase(min_active_slot_);
+      min_active_slot_++;
+    }
+  }
+#endif
 }
 
-// @unsafe
+// @safe - external calls marked @external [safe], core replication loop
 // TODO: Revisit borrow checker errors in this function.
 // The checker reports "use after move" for loop-local variables (matchedIndices,
 // batch_buffer_, batch_cmd, cmd) due to 2-iteration loop simulation. These variables
@@ -633,14 +1283,34 @@ void RaftServer::applyLogs() {
 // shared_ptr<Marshallable> by value (moves), which compounds the issue.
 // Potential fixes: (1) Change SendAppendEntries2 to take const shared_ptr&,
 // (2) Investigate checker's loop-local variable handling.
+// ============================================================================
+// PARALLEL HEARTBEAT FIX
+// ============================================================================
+// This struct holds context for each pending AppendEntries RPC.
+// Used to send RPCs in parallel and process responses without blocking.
+// The response field uses shared_ptr to ensure memory validity when callback fires.
+struct PendingAppendEntries {
+  siteid_t follower_id;
+  shared_ptr<AppendEntriesResponse> response;  // shared_ptr ensures callback memory safety
+  shared_ptr<Marshallable> cmd;  // nullptr for heartbeat
+  uint64_t sent_term;  // term when RPC was sent
+};
+
 void RaftServer::HeartbeatLoop() {
+  // @unsafe
+  {
   auto hb_timer = new Timer();
   hb_timer->start();
+  }
 
   parid_t partition_id = partition_id_;
   // Log_info("!!!!!!! if (!failover_)");
   // if (!failover_) {
-    auto proxies = commo()->rpc_par_proxies_[partition_id];
+    vector<SiteProxyPair> proxies;
+    // @unsafe
+    {
+    proxies = commo()->rpc_par_proxies_[partition_id];
+    }
     for (auto& p : proxies) {
       if (p.first == site_id_) {
         continue;  // skip self
@@ -650,9 +1320,9 @@ void RaftServer::HeartbeatLoop() {
       // set nextIndex = 1
       next_index_[p.first] = 1;
     }
-    // matchedIndex and nextIndex should have indices for all servers except self
-    verify(match_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id) - 1);
-    verify(next_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id) - 1);
+    // matchedIndex and nextIndex should have indices for all servers + learners except self
+    verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
+    verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
   // }
 
   Log_debug("heartbeat loop init from site: %d", site_id_);
@@ -661,14 +1331,13 @@ void RaftServer::HeartbeatLoop() {
     uint64_t term;
     {
       {
-        // std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
-        // if (ready_for_replication_ == nullptr)
-          ready_for_replication_ = Reactor::create_sp_event<IntEvent>();
+        std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
+        ready_for_replication_ = Reactor::create_sp_event<IntEvent>();
         ready_for_replication_->set(0);
       }
-      ready_for_replication_->wait(HEARTBEAT_INTERVAL);
+      ready_for_replication_->wait(heartbeat_interval_us_);
       {
-        // std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
+        std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         ready_for_replication_ = nullptr;
       }
       // Fiber::sleep(HEARTBEAT_INTERVAL);
@@ -677,272 +1346,420 @@ void RaftServer::HeartbeatLoop() {
         // Log_info("heartbeat loop at loc %d skip since not leader", loc_id_);
         continue;
       }
-      // Log_info("[1]heartbeat loop at loc %d continue since is leader", loc_id_);
-      // Log_info("time b/f sleep %" PRIu64, Time::now());
-      // Fiber::sleep(HEARTBEAT_INTERVAL);
-      // Log_info("time a/f sleep %" PRIu64, Time::now());
-      auto nservers = Config::GetConfig()->GetPartitionSize(partition_id);
-      // Log_info("next_index_ size %d", next_index_.size());
+
+      auto nservers = current_config_.size();
+
+      // ========================================================================
+      // PHASE 0: Calculate commit index ONCE per heartbeat round (not per-follower)
+      // ========================================================================
+      uint64_t current_commit_index = 0;
+      uint64_t current_last_log_index = 0;
+      {
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        std::vector<uint64_t> matchedIndices{};
+        for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
+          // Exclude learners from quorum calculation
+          if (learners_.count(it->first) > 0) continue;
+          matchedIndices.push_back(it->second);
+          Log_debug("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
+        }
+        Log_debug("[COMMIT-CALC] nservers=%lu, matchedIndices.size()=%zu", nservers, matchedIndices.size());
+        verify(matchedIndices.size() == nservers - 1);
+        std::sort(matchedIndices.begin(), matchedIndices.end());
+        uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
+        Log_debug("[COMMIT-CALC] newCommitIndex=%lu (median at index %lu), currentCommitIndex=%lu", newCommitIndex, (nservers - 1) / 2, commitIndex);
+
+        if (newCommitIndex > lastLogIndex) {
+          newCommitIndex = lastLogIndex;
+        }
+
+        if (newCommitIndex > commitIndex && (GetRaftInstance(newCommitIndex)->term == currentTerm)) {
+          uint64_t old_commit = commitIndex;
+          Log_debug("newCommitIndex %d", newCommitIndex);
+          commitIndex = newCommitIndex;
+          PersistCommitIndex(commitIndex, "HeartbeatLoop: leader commit");
+#ifdef SINGLE_RAFT_INSTANCE
+          EnqueueCommittedEntries(old_commit, commitIndex);
+#endif
+        }
+#ifndef SINGLE_RAFT_INSTANCE
+        if (commitIndex > executeIndex) {
+          applyLogs();
+        }
+#endif
+        term = currentTerm;
+        current_commit_index = commitIndex;
+        current_last_log_index = lastLogIndex;
+      }
+
+      // ========================================================================
+      // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
+      // ========================================================================
+      // Use unique_ptr to ensure stable memory addresses for the callback pointers.
+      // The async RPC callback writes to ret_status/ret_term/ret_last_log_index,
+      // so these must remain at fixed addresses until the RPC completes.
+      std::vector<std::unique_ptr<PendingAppendEntries>> pending_rpcs;
+
       for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
         auto site_id = it->first;
         if (site_id == site_id_) {
           continue;
         }
         if (!IsLeader()) {
-          // Log_info("sleep 1");
-          // Log_info("wake 1");
-          continue;
-        }
-        // Log_info("[2]heartbeat loop at loc %d continue since is leader", loc_id_);
-        static uint64_t ttt = 0;
-        uint64_t t2 = Time::now();
-        if (ttt+1000000 < t2) {
-          ttt = t2;
-          Log_debug("heartbeat from site: %d", site_id);
-          // Log_info("site %d in heartbeat_loop, not leader", site_id_);
+          break;  // Stop sending if we lost leadership
         }
 
-        mtx_.lock();
-        // update commitIndex first
-        std::vector<uint64_t> matchedIndices{};
-        for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
-          matchedIndices.push_back(it->second);
-        }
-        verify(matchedIndices.size() == nservers - 1);
-        std::sort(matchedIndices.begin(), matchedIndices.end());
-        // new commitIndex is the (N/2 + 1)th largest index
-        // only update commitIndex if the entry at new index was replicated in the current term
-        uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
-        
-        // Debug logging for commitIndex calculation
-        if (newCommitIndex > lastLogIndex) {
-          if (!IsLeader()) {
-            mtx_.unlock();
-            continue;
-          }
-          // Fix: cap newCommitIndex to lastLogIndex
-          newCommitIndex = lastLogIndex;
-        }
-        
-        auto commitInstance = GetRaftInstance(newCommitIndex);
-        if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
-          Log_debug("newCommitIndex %d", newCommitIndex);
-          commitIndex = newCommitIndex;
-        }
-        // leader apply logs applicable
-        if (commitIndex > executeIndex)
-          applyLogs();
-        // Log_info("[3]heartbeat loop at loc %d continue since is leader", loc_id_);
-        term = currentTerm;
-        mtx_.unlock();
-
-      // send 1 AppendEntries to each follower that needs one
-        // auto site_id = it->first;
-        // if (site_id == site_id_) {
-        //   continue;
-        // }
-        mtx_.lock();
-        uint64_t prevLogIndex = it->second - 1;
-        if (prevLogIndex > lastLogIndex) {
-          Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex (%ld) > lastLogIndex (%ld), fixing next_index", prevLogIndex, lastLogIndex);
-          // Fix the next_index to be valid
-          it->second = lastLogIndex + 1;
-          prevLogIndex = it->second - 1;
-        }
-        
-        // Additional safety check: if prevLogIndex is still invalid, skip this follower
-        if (prevLogIndex > lastLogIndex) {
-          Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower %d: prevLogIndex (%ld) > lastLogIndex (%ld), skipping", 
-                   site_id, prevLogIndex, lastLogIndex);
-          // Reset the next_index to start from the beginning to allow the follower to catch up
-          it->second = 1;
-          mtx_.unlock();
-          continue;
-        }
-        
-        verify(prevLogIndex <= lastLogIndex);
-        // if (prevLogIndex == lastLogIndex && !doHeartbeat) {
-        //   continue;
-        // }
-        auto instance = GetRaftInstance(prevLogIndex);
-
-        // CRITICAL: Defensive null check
-        if (!instance) {
-          Log_error("[HEARTBEAT-SEND] [CRITICAL] GetRaftInstance(%lu) returned NULL! Skipping follower %d",
-                    prevLogIndex, site_id);
-          mtx_.unlock();
-          continue;
-        }
-
-        uint64_t prevLogTerm = instance->term;
+        uint64_t prevLogIndex = 0;
+        uint64_t prevLogTerm = 0;
         shared_ptr<Marshallable> cmd = nullptr;
         uint64_t cmdLogTerm = 0;
-        if (cmd) {
-          Log_info("[APPEND_ENTRIES] Leader %d: sending NEW log entry to follower %d, prevLogIndex=%ld, prevLogTerm=%ld, lastLogIndex=%ld",
-                   site_id_, site_id, prevLogIndex, prevLogTerm, lastLogIndex);
-        }
+        bool skip_follower = false;
+        {
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          prevLogIndex = it->second - 1;
+          if (prevLogIndex > lastLogIndex) {
+            Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex (%ld) > lastLogIndex (%ld), fixing next_index", prevLogIndex, lastLogIndex);
+            it->second = lastLogIndex + 1;
+            prevLogIndex = it->second - 1;
+          }
+
+          if (prevLogIndex > lastLogIndex) {
+            Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower %d: prevLogIndex (%ld) > lastLogIndex (%ld), skipping",
+                     site_id, prevLogIndex, lastLogIndex);
+            it->second = 1;
+            skip_follower = true;
+          } else if (it->second < min_active_slot_ && snapshot_manager_) {
+            // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
+            Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d next_index=%lu < min_active_slot_=%lu, sending InstallSnapshot",
+                     site_id_, site_id, it->second, min_active_slot_);
+            rrr::SnapshotMetadata snap_meta;
+            std::string snap_data;
+            if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
+              uint64_t snap_last_idx = snap_meta.last_included_index;
+              uint64_t snap_last_term = snap_meta.last_included_term;
+              uint64_t send_term = currentTerm;
+              commo()->SendInstallSnapshot(
+                  site_id, partition_id_,
+                  send_term, site_id_,
+                  snap_last_idx, snap_last_term,
+                  snap_data,
+                  [this, site_id, snap_last_idx, send_term](uint64_t follower_term) {
+                    // @unsafe - callback modifies shared state under lock
+                    std::lock_guard<std::recursive_mutex> lock(mtx_);
+                    if (follower_term > currentTerm) {
+                      Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d has higher term %lu > %lu, stepping down",
+                               site_id_, site_id, follower_term, currentTerm);
+                      currentTerm = follower_term;
+                      stepDown(StepDownReason::HigherTerm);
+                      return;
+                    }
+                    if (currentTerm != send_term) {
+                      Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Term changed since snapshot send, ignoring response",
+                               site_id_);
+                      return;
+                    }
+                    next_index_[site_id] = snap_last_idx + 1;
+                    match_index_[site_id] = snap_last_idx;
+                    Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Updated follower %d: next_index=%lu match_index=%lu",
+                             site_id_, site_id, snap_last_idx + 1, snap_last_idx);
+                  });
+              skip_follower = true;  // Skip normal AppendEntries for this follower
+            } else {
+              Log_warn("[HEARTBEAT-SNAPSHOT] Site %d: Failed to load snapshot for follower %d, skipping",
+                       site_id_, site_id);
+              skip_follower = true;
+            }
+          } else {
+            verify(prevLogIndex <= lastLogIndex);
+            auto instance = GetRaftInstance(prevLogIndex);
+            if (!instance) {
+              Log_error("[HEARTBEAT-SEND] [CRITICAL] GetRaftInstance(%lu) returned NULL! Skipping follower %d",
+                        prevLogIndex, site_id);
+              skip_follower = true;
+            } else {
+              prevLogTerm = instance->term;
 
 #ifndef RAFT_BATCH_OPTIMIZATION
-        if (it->second <= lastLogIndex) {
-          auto curInstance = GetRaftInstance(it->second);
-          // @safe - Null check to prevent crash if instance doesn't exist
-          if (!curInstance) {
-            Log_error("[HEARTBEAT-SEND] GetRaftInstance(%d) returned NULL, skipping", it->second);
-          } else {
-            cmd = curInstance->log_;
-            cmdLogTerm = curInstance->term;
-            Log_debug("loc %d Sending AppendEntries for %d to loc %d cmd=%p",
-                loc_id_, it->second, it->first, cmd.get());
-          }
-        }
+              Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
+                       site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
+              if (it->second <= lastLogIndex) {
+                auto curInstance = GetRaftInstance(it->second);
+                if (!curInstance) {
+                  Log_error("[HEARTBEAT-SEND] GetRaftInstance(%lu) returned NULL, skipping", it->second);
+                } else {
+                  cmd = curInstance->log_;
+                  cmdLogTerm = curInstance->term;
+                  Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd=%p",
+                      site_id_, it->second, site_id, cmd.get());
+                }
+              }
 #endif
 
 #ifdef RAFT_BATCH_OPTIMIZATION
-        vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
-        // [Jetpack] Start from max(it->second, min_active_slot_) since after failure, new elected leader it->second is not updated and can be 1
-        for (int idx = std::max(it->second, min_active_slot_); idx <= lastLogIndex; idx++) {
-          auto curInstance = GetRaftInstance(idx);
-          // @safe - Null check to prevent crash if instance doesn't exist
-          if (!curInstance) {
-            Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%d) returned NULL, skipping", idx);
-            continue;
-          }
-          shared_ptr<TpcCommitCommand> curCmd = dynamic_pointer_cast<TpcCommitCommand>(curInstance->log_);
-          // @safe - Null check for dynamic_pointer_cast result
-          if (!curCmd) {
-            Log_error("[HEARTBEAT-BATCH] Failed to cast log at index %d to TpcCommitCommand", idx);
-            continue;
-          }
-          curCmd->term = curInstance->term;
-          batch_buffer_.push_back(curCmd);
-        }
-        // Log_info("batch size: %d", batch_buffer_.size());
-        shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
-        batch_cmd->AddCmds(batch_buffer_);
-        if (batch_buffer_.size() > 0) {
-          cmd = dynamic_pointer_cast<Marshallable>(batch_cmd);
-        }
+              vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
+              Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
+                       site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
+              for (int idx = std::max(it->second, min_active_slot_); idx <= lastLogIndex; idx++) {
+                auto curInstance = GetRaftInstance(idx);
+                if (!curInstance) {
+                  Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%d) returned NULL, skipping", idx);
+                  continue;
+                }
+                shared_ptr<TpcCommitCommand> curCmd = dynamic_pointer_cast<TpcCommitCommand>(curInstance->log_);
+                if (!curCmd) {
+                  Log_info("[BATCH_SKIP] site=%d idx=%d: log entry is not TpcCommitCommand (kind=%d), using raw log",
+                           site_id_, idx, curInstance->log_ ? curInstance->log_->kind_ : -1);
+                  cmd = curInstance->log_;
+                  break;
+                }
+                curCmd->term = curInstance->term;
+                batch_buffer_.push_back(curCmd);
+              }
+              if (batch_buffer_.size() > 0) {
+                shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
+                batch_cmd->AddCmds(batch_buffer_);
+                cmd = dynamic_pointer_cast<Marshallable>(batch_cmd);
+                Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d",
+                         site_id_, batch_buffer_.size(), site_id);
+              }
 #endif
+            }
+          }
+        }
+        if (skip_follower) {
+          continue;
+        }
 
-        uint64_t ret_status = false;
-        uint64_t ret_term = 0;
-        uint64_t ret_last_log_index = 0;
-        mtx_.unlock();
-        // @unsafe - output parameters passed by pointer
-        auto r = commo()->SendAppendEntries2(site_id,
+        // Create pending RPC context
+        auto pending = std::make_unique<PendingAppendEntries>();
+        pending->follower_id = site_id;
+        pending->cmd = cmd;
+        pending->sent_term = term;
+
+        // Send RPC (non-blocking - just initiates the async call)
+        // Response is allocated with shared_ptr - callback captures it to ensure memory validity
+        pending->response = commo()->SendAppendEntries2(site_id,
                                               partition_id,
                                               -1,
                                               -1,
                                               IsLeader(),
-                                              site_id_,  // leader's site_id
+                                              site_id_,
                                               term,
                                               prevLogIndex,
                                               prevLogTerm,
-                                              commitIndex,
+                                              current_commit_index,
                                               cmd,
-                                              cmdLogTerm, // deprecated in batched version cmdLogTerm
-                                              &ret_status,
-                                              &ret_term,
-                                              &ret_last_log_index);
-        r->wait(500000); // bound wait to avoid leader stall on slow/lost followers
-        if (r->status_.get() == Event::TIMEOUT) {
-          continue;
+                                              cmdLogTerm);
+
+        pending_rpcs.push_back(std::move(pending));
+      }
+
+      // ========================================================================
+      // PHASE 2: Wait for responses with SHORT timeout and process them
+      // ========================================================================
+      // Use a shorter per-RPC timeout (100ms) since we're processing in parallel.
+      // Total round time is bounded by the slowest responder, not sum of all.
+      const uint64_t PER_RPC_TIMEOUT = 100000;  // 100ms per RPC
+
+      for (auto& pending_ptr : pending_rpcs) {
+        if (!IsLeader()) {
+          break;  // Stop processing if we lost leadership
         }
 
-        mtx_.lock();
-        auto& next_index = next_index_[site_id];
-        auto& match_index = match_index_[site_id];
-        if (ret_status == false & ret_term == 0 && ret_last_log_index == 0) {
-          // do nothing
-        } else if (currentTerm > term) {
-          // continue; do nothing
-        } else if (ret_status == 0 && ret_term > term) {
-          // case 1: AppendEntries rejected because leader's term is expired
-          if (currentTerm == term) {
-            Log_info("[STEPDOWN] Site %d: Stepping down due to higher term from follower %d (my_term=%lu, follower_term=%lu)",
-                     site_id_, site_id, term, ret_term);
-            setIsLeader(false);
-            currentTerm = ret_term;
+        auto& pending = *pending_ptr;  // Dereference unique_ptr for cleaner access
+        auto& resp = *pending.response;  // Access response data
 
-            // CRITICAL SAFETY: Unlock and skip this iteration to prevent stale heartbeats
-            // The next iteration will check IsLeader() and skip sending, giving the
-            // new leader time to establish itself without interference from stale AppendEntries
-            mtx_.unlock();
-            continue;  // Skip rest of this follower, move to next iteration
-          }
-        } else if (ret_status == 0) {
-          // case 2: AppendEntries rejected because log doesn't contain an
-          // entry at prevLogIndex whose term matches prevLogTerm
+        resp.event->wait(PER_RPC_TIMEOUT);
 
-          // OPTIMIZED LOG RECONCILIATION: Use follower's reported last_log_index
-          // to jump directly instead of one-at-a-time backoff
-          if (ret_last_log_index > 0 && ret_last_log_index < next_index - 1) {
-            // Follower reported their actual last index - jump directly there
-            uint64_t old_next = next_index;
-            next_index = ret_last_log_index + 1;
-            Log_info("[LOG-RECONCILE] Site %d: Fast backoff for follower %d: next_index %lu -> %lu (gap: %lu, follower reported last: %lu)",
-                     site_id_, site_id, old_next, next_index, old_next - next_index, ret_last_log_index);
-          } else if (next_index > 10) {
-            // Exponential backoff: cut the gap in half to converge quickly
-            uint64_t old_next = next_index;
-            next_index = next_index / 2;
-            Log_info("[LOG-RECONCILE] Site %d: Exponential backoff for follower %d: next_index %lu -> %lu (halved)",
-                     site_id_, site_id, old_next, next_index);
-          } else if (next_index > 1) {
-            // Close to the beginning, fall back to one-at-a-time
-            next_index--;
-            Log_debug("[LOG-RECONCILE] Site %d: Linear backoff for follower %d: next_index %lu -> %lu",
-                      site_id_, site_id, next_index + 1, next_index);
+        if (resp.event->status_.get() == Event::TIMEOUT) {
+          Log_debug("[PARALLEL-HB] Timeout waiting for follower %d", pending.follower_id);
+          continue;  // Skip this follower, try again next round
+        }
+
+        bool stepped_down = false;
+        {
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          auto& next_index = next_index_[pending.follower_id];
+          auto& match_index = match_index_[pending.follower_id];
+
+          if (resp.status == false && resp.term == 0 && resp.last_log_index == 0) {
+            // RPC failed or no response - do nothing
+          } else if (currentTerm > pending.sent_term) {
+            // Stale response from old term - ignore
+          } else if (resp.status == 0 && resp.term > pending.sent_term) {
+            // case 1: AppendEntries rejected because leader's term is expired
+            if (currentTerm == pending.sent_term) {
+              Log_info("[STEPDOWN] Site %d: Stepping down due to higher term from follower %d (my_term=%lu, follower_term=%lu)",
+                       site_id_, pending.follower_id, pending.sent_term, resp.term);
+              currentTerm = resp.term;
+              stepDown(StepDownReason::HigherTerm);
+              stepped_down = true;
+            }
+          } else if (resp.status == 0) {
+            // case 2: AppendEntries rejected - log inconsistency
+            if (resp.last_log_index > 0 && resp.last_log_index < next_index - 1) {
+              uint64_t old_next = next_index;
+              next_index = resp.last_log_index + 1;
+              Log_info("[LOG-RECONCILE] Site %d: Fast backoff for follower %d: next_index %lu -> %lu (gap: %lu, follower reported last: %lu)",
+                       site_id_, pending.follower_id, old_next, next_index, old_next - next_index, resp.last_log_index);
+            } else if (next_index > 10) {
+              uint64_t old_next = next_index;
+              next_index = next_index / 2;
+              Log_info("[LOG-RECONCILE] Site %d: Exponential backoff for follower %d: next_index %lu -> %lu (halved)",
+                       site_id_, pending.follower_id, old_next, next_index);
+            } else if (next_index > 1) {
+              next_index--;
+              Log_debug("[LOG-RECONCILE] Site %d: Linear backoff for follower %d: next_index %lu -> %lu",
+                        site_id_, pending.follower_id, next_index + 1, next_index);
+            } else {
+              next_index = 1;
+            }
           } else {
-            next_index = 1;
-          }
-        } else {
-          // case 3: AppendEntries accepted
-          verify(ret_status == true);
-          if (cmd == nullptr) {
-            Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
-            verify(ret_term == term);
-            // follower could have log entries after the prevLogIndex the AppendEntries was sent for.
-            // neither party can detect if the entries are incorrect or not yet
-            verify(ret_last_log_index >= next_index - 1);
-            if (ret_last_log_index >= next_index) {
-              if (next_index <= lastLogIndex) {
-                next_index++;
-                Log_debug("empty heartbeat incrementing next_index for site: %d, next_index: %d", site_id, next_index);
+            // case 3: AppendEntries accepted
+            verify(resp.status == true);
+
+            // ==================================================================
+            // SPECULATIVE REPLICATION: Track memory acks
+            // ack_type=0 means Memory ack (immediate response before fsync)
+            // ack_type=1 means Durable ack (handled via AppendEntriesDurable RPC)
+            // ==================================================================
+            if (resp.ack_type == 0) {  // Memory ack
+              // Add follower to memoryAcks for all indices up to last_log_index
+              for (uint64_t idx = 1; idx <= resp.last_log_index; ++idx) {
+                memoryAcks_[idx].insert(pending.follower_id);
               }
+              Log_debug("[SPEC-RAFT] Memory ack from follower %d for index %lu",
+                        pending.follower_id, resp.last_log_index);
             }
-          } else {
-            Log_debug("case 3B: AppendEntries accepted for non-empty msg");
-            // follower could have log entries after the prevLogIndex the AppendEntries was sent for.
-            // neither party can detect if the entries are incorrect or not yet
-            if (ret_last_log_index < next_index) { // [Jetpack] I don't know why but it will happen when Jetpack + Raft failure recovery at high throughput
-              // Follower is behind; back up and retry from its last log index
-              next_index = ret_last_log_index + 1;
-              match_index = ret_last_log_index;
-              mtx_.unlock();
-              continue;
-            }
-            Log_debug("loc %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld", 
-                site_id, ret_last_log_index, next_index, match_index);
+
+            if (pending.cmd == nullptr) {
+              Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
+              if (resp.last_log_index > match_index) {
+                match_index = resp.last_log_index;
+                if (match_index > lastLogIndex) {
+                  match_index = lastLogIndex;
+                }
+                Log_debug("heartbeat updated match_index for site %d: match_index=%lu", pending.follower_id, match_index);
+              }
+              if (resp.last_log_index >= next_index) {
+                if (next_index <= lastLogIndex) {
+                  next_index++;
+                  Log_debug("empty heartbeat incrementing next_index for site: %d, next_index: %d", pending.follower_id, next_index);
+                }
+              }
+            } else {
+              Log_debug("case 3B: AppendEntries accepted for non-empty msg");
+              if (resp.last_log_index < next_index) {
+                next_index = resp.last_log_index + 1;
+                match_index = resp.last_log_index;
+              } else {
+                Log_debug("loc %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
+                    pending.follower_id, resp.last_log_index, next_index, match_index);
 #ifndef RAFT_BATCH_OPTIMIZATION
-            match_index = next_index;
-            next_index++;
+                match_index = next_index;
+                next_index++;
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
-            // For batch optimization, match_index should be updated to the last index in the batch
-            // which is ret_last_log_index, not next_index
-            match_index = ret_last_log_index;
-            next_index = ret_last_log_index + 1;
+                match_index = resp.last_log_index;
+                next_index = resp.last_log_index + 1;
 #endif
-            // Safety check: ensure match_index doesn't exceed leader's lastLogIndex
-            if (match_index > lastLogIndex) {
-              match_index = lastLogIndex;
+                if (match_index > lastLogIndex) {
+                  match_index = lastLogIndex;
+                }
+                Log_debug("leader site %d receiving site %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
+                    site_id_, pending.follower_id, resp.last_log_index, next_index, match_index);
+              }
             }
-            Log_debug("leader site %d receiving site %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
-                site_id_, site_id, ret_last_log_index, next_index, match_index);
           }
         }
-        mtx_.unlock();
+        if (stepped_down) {
+          break;  // Stop processing - we're no longer leader
+        }
+      }
+
+      // ========================================================================
+      // PHASE 3: Recalculate commit index after all responses processed
+      // ========================================================================
+      // This ensures commits happen promptly after replication, matching the
+      // original behavior where commit index was recalculated after each response.
+      if (IsLeader()) {
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        std::vector<uint64_t> finalMatchedIndices{};
+        for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
+          // Exclude learners from quorum calculation
+          if (learners_.count(it->first) > 0) continue;
+          finalMatchedIndices.push_back(it->second);
+        }
+        std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
+        uint64_t finalCommitIndex = finalMatchedIndices[(nservers - 1) / 2];
+        if (finalCommitIndex > lastLogIndex) {
+          finalCommitIndex = lastLogIndex;
+        }
+        if (finalCommitIndex > commitIndex && (GetRaftInstance(finalCommitIndex)->term == currentTerm)) {
+          uint64_t old_commit = commitIndex;
+          Log_debug("[PHASE3-COMMIT] Advancing commitIndex %lu -> %lu", commitIndex, finalCommitIndex);
+          commitIndex = finalCommitIndex;
+          PersistCommitIndex(commitIndex, "HeartbeatLoop: post-response commit");
+#ifdef SINGLE_RAFT_INSTANCE
+          EnqueueCommittedEntries(old_commit, commitIndex);
+#endif
+        }
+#ifndef SINGLE_RAFT_INSTANCE
+        if (commitIndex > executeIndex)
+          applyLogs();
+#endif
+
+        // ==================================================================
+        // LEARNER CATCH-UP: Check if any learners are caught up and promote
+        // ==================================================================
+        CheckAndPromoteLearners();
+
+        // ==================================================================
+        // SPECULATIVE REPLICATION: Update specCommitIndex based on memory acks
+        // ==================================================================
+        size_t quorum = GetQuorumSize();
+
+        // Find the highest index with memory ack quorum
+        // Leader's own entry counts as a memory ack
+        uint64_t newSpecCommitIndex = specCommitIndex_;
+        for (uint64_t idx = specCommitIndex_ + 1; idx <= lastLogIndex; ++idx) {
+          // Check if we have quorum for this index
+          auto it = memoryAcks_.find(idx);
+          size_t ack_count = (it != memoryAcks_.end()) ? it->second.size() : 0;
+          // Leader's own log counts as an ack (we have the entry)
+          ack_count += 1;  // +1 for leader's own entry
+
+          if (ack_count >= quorum) {
+            // Verify the entry is from current term
+            auto instance = GetRaftInstance(idx);
+            if (instance && instance->term == currentTerm) {
+              newSpecCommitIndex = idx;
+            }
+          } else {
+            // Stop at first index without quorum (monotonic advance)
+            break;
+          }
+        }
+
+        if (newSpecCommitIndex > specCommitIndex_) {
+          uint64_t oldSpecCommitIndex = specCommitIndex_;
+          Log_info("[SPEC-RAFT] Site %d: Advancing specCommitIndex %lu -> %lu",
+                   site_id_, specCommitIndex_, newSpecCommitIndex);
+          specCommitIndex_ = newSpecCommitIndex;
+
+          // Persist updated speculative indices
+          PersistSpeculativeIndicesToLogStorage();
+
+          // Phase 5.3: Notify clients with SPECULATIVE status for newly committed entries
+          if (lastSpecNotifiedIndex_ < newSpecCommitIndex) {
+            uint64_t notifyFrom = std::max(lastSpecNotifiedIndex_, oldSpecCommitIndex);
+            NotifyCallbacks(notifyFrom, newSpecCommitIndex, CommitStatus::SPECULATIVE);
+            lastSpecNotifiedIndex_ = newSpecCommitIndex;
+          }
+        }
+
+        // Verify invariants
+        VerifySpeculativeInvariants();
       }
     }
 
@@ -960,6 +1777,7 @@ void RaftServer::HeartbeatLoop() {
 	}
 }
 
+// @unsafe - thread join and timer cleanup require manual resource management
 RaftServer::~RaftServer() {
   // CRITICAL: Set stop_ FIRST to signal all coroutines to stop
   // This must happen before vtable collapse to prevent race conditions
@@ -979,6 +1797,25 @@ RaftServer::~RaftServer() {
   // Stop leadership transfer monitoring thread if running
   StopLeadershipTransferMonitoring();
 
+  // Join all async persistence threads to prevent use-after-free.
+  // These threads capture `this` for PersistState/PersistLogEntry/commo() calls.
+  // They must complete before this object is destroyed.
+  // NOTE: We swap the vector out under the lock, then join WITHOUT the lock.
+  // This prevents deadlock if an in-flight RPC handler tries to emplace_back
+  // a new thread while we're joining (it would block on async_threads_mtx_).
+  {
+    std::vector<std::pair<std::thread, rusty::Arc<AtomicFlag>>> threads_to_join;
+    {
+      std::lock_guard<std::mutex> lk(async_threads_mtx_);
+      threads_to_join = std::move(async_threads_);
+    }
+    for (auto& [t, done_flag] : threads_to_join) {
+      if (t.joinable()) {
+        t.join();
+      }
+    }
+  }
+
   // CRITICAL: Sleep briefly to allow detached coroutines to see stop_=true and exit
   // The election timer coroutine (StartElectionTimer) and leadership transfer coroutine
   // (InitiateLeadershipTransfer) are detached and check stop_ before calling RequestVote().
@@ -992,6 +1829,7 @@ RaftServer::~RaftServer() {
       partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
 }
 
+// @safe - external calls marked @external [safe], mutex/pointer ops in @unsafe blocks
 bool RaftServer::RequestVote() {
   // FIX 2: Prevent RequestVote during shutdown
   // The election timer coroutine may fire after ~RaftServer destructor runs,
@@ -1004,14 +1842,23 @@ bool RaftServer::RequestVote() {
 
   // for(int i = 0; i < 1000; i++) Log_info("not calling the wrong method");
 
-  parid_t par_id = this->frame_->site_info_->partition_id_ ;
-  parid_t loc_id = this->frame_->site_info_->locale_id ;
+  parid_t par_id = 0;
+  parid_t loc_id = 0;
+  // @unsafe
+  {
+  par_id = this->frame_->site_info_->partition_id_ ;
+  loc_id = this->frame_->site_info_->locale_id ;
+  }
 
   uint32_t lstoff = 0  ;
   slotid_t lst_idx = 0 ;
   ballot_t lst_term = 0 ;
   ballot_t prev_term = 0;
-  siteid_t prev_vote_for = INVALID_SITEID;
+  siteid_t prev_vote_for;
+  // @unsafe
+  {
+  prev_vote_for = INVALID_SITEID;
+  }
 
   {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -1020,8 +1867,12 @@ bool RaftServer::RequestVote() {
     auto prev_local_term = currentTerm;
     currentTerm++ ;
     vote_for_ = site_id_;  // Vote for ourselves when starting election
+
+    // CRITICAL: Persist term and vote BEFORE sending RequestVote RPCs
+    PersistState(currentTerm, vote_for_, "RequestVote: starting election");
+
     LogTermChange("starting election", prev_local_term, currentTerm);
-    PersistTermAndVote();  // Persist term increment and self-vote
+    // PersistState() already called above - no need for duplicate persistence
     lstoff = lastLogIndex - snapidx_ ;
     if (lstoff == 0) {
       lst_idx = snapidx_;
@@ -1038,8 +1889,12 @@ bool RaftServer::RequestVote() {
   Log_info("[RAFT_ELECTION] server %d (loc %d) starting election term %lu->%lu lastLogIdx=%lu lastLogTerm=%lu prev_vote_for=%d",
            site_id_, loc_id, prev_term, term, lst_idx, lst_term, prev_vote_for);
 #endif
-  auto sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
+  shared_ptr<RaftVoteQuorumEvent> sp_quorum;
+  // @unsafe
+  {
+  sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
   sp_quorum->wait(1000000);
+  }
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_ELECTION] server %d term %lu vote outcome yes=%d no=%d highest_term_seen=%ld timeout=%d",
@@ -1053,6 +1908,36 @@ bool RaftServer::RequestVote() {
 #endif
       return false;
     }
+
+    // =========================================================================
+    // SPECULATIVE VOTING: Initialize specVoters from vote responses
+    // =========================================================================
+    // These are memory votes - not yet durable
+    specVoters_ = sp_quorum->GetSpecVoters();
+    specVoters_.insert(site_id_);  // Add self vote
+
+    // Self vote is always durable (we persisted before broadcasting)
+    durableVoters_.clear();
+    durableVoters_.insert(site_id_);
+
+    // Reset commit indices
+    specCommitIndex_ = commitIndex;
+    securedLogIndex_ = commitIndex;
+
+    // Persist updated speculative indices
+    PersistSpeculativeIndicesToLogStorage();
+
+    // Clear ack tracking maps for new term
+    memoryAcks_.clear();
+    durableAcks_.clear();
+
+    // Start as unsecured leader until we receive VoteDurable from quorum
+    securedLeader_ = false;
+
+    Log_info("[SPEC-RAFT] Site %d: Won election term %lu - specVoters=%zu durableVoters=%zu",
+             site_id_, term, specVoters_.size(), durableVoters_.size());
+    // =========================================================================
+
     // become a leader
     setIsLeader(true) ;
     // verify(currentTerm == term); // [Jetpack] Comment this since in failure recovery test this will fail after experiment end.
@@ -1102,6 +1987,10 @@ bool RaftServer::RequestVote() {
       auto prev_local_term = currentTerm;
       currentTerm = new_term;
       vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+
+      // CRITICAL: Persist term after observing higher term from election responses
+      PersistState(currentTerm, vote_for_, "RequestVote: observed higher term");
+
       LogTermChange("observed higher term from RequestVote replies", prev_local_term, currentTerm);
     }
   	req_voting_ = false ;
@@ -1117,6 +2006,7 @@ bool RaftServer::RequestVote() {
   }
 }
 
+// @safe - calls @safe doVote, external calls marked @external [safe]
 void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& lst_log_term,
                                const siteid_t& can_id,
@@ -1138,12 +2028,15 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // CRITICAL FIX: Only reject if we already voted for someone else in this term
   // Standard Raft allows voting for the SAME candidate multiple times (idempotent)
   // and allows voting if we haven't voted yet in this term
+  // @unsafe
+  {
   if( can_term == cur_term && vote_for_ != INVALID_SITEID && vote_for_ != can_id )
   {
     Log_debug("site %d vote NO for %d (already voted for %d in term %lu)",
               site_id_, can_id, vote_for_, cur_term);
     doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
+  }
   }
 
   // If we already voted for this same candidate in this term, vote YES again (idempotent)
@@ -1184,9 +2077,136 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
 }
 
+// ============================================================================
+// VoteDurable RPC Handler - Speculative Voting Protocol
+// ============================================================================
+
+void RaftServer::OnVoteDurable(const ballot_t& term,
+                                const siteid_t& voter_id,
+                                bool_t* acknowledged,
+                                rusty::Function<void()> cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // Reject stale votes from old terms
+  if (term != currentTerm) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring VoteDurable from %d - term mismatch (got %lu, current %lu)",
+              site_id_, voter_id, term, currentTerm);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Only process if we're the leader
+  if (!is_leader_) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring VoteDurable from %d - not leader",
+              site_id_, voter_id);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Add voter to durable voters set
+  durableVoters_.insert(voter_id);
+  *acknowledged = true;
+
+  Log_info("[SPEC-RAFT] Site %d: Received VoteDurable from %d - durableVoters size=%zu",
+           site_id_, voter_id, durableVoters_.size());
+
+  // Check if we've achieved secured leader status
+  size_t quorum = GetQuorumSize();
+  if (!securedLeader_ && durableVoters_.size() >= quorum) {
+    securedLeader_ = true;
+    Log_info("[SPEC-RAFT] Site %d: Became SECURED leader with %zu durable votes (quorum=%zu)",
+             site_id_, durableVoters_.size(), quorum);
+  }
+
+  cb();
+}
+
+// ============================================================================
+// AppendEntriesDurable RPC Handler - Speculative Commit Protocol
+// ============================================================================
+
+void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
+                                         const siteid_t& follower_id,
+                                         const uint64_t& lastLogIndex,
+                                         bool_t* acknowledged,
+                                         rusty::Function<void()> cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // Reject stale acks from old terms
+  if (term != currentTerm) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring AppendEntriesDurable from %d - term mismatch (got %lu, current %lu)",
+              site_id_, follower_id, term, currentTerm);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Only process if we're the leader
+  if (!is_leader_) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring AppendEntriesDurable from %d - not leader",
+              site_id_, follower_id);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Add follower to durable acks for all indices up to lastLogIndex
+  // We track this for all indices since the follower has durably persisted everything up to lastLogIndex
+  for (uint64_t idx = 1; idx <= lastLogIndex; ++idx) {
+    durableAcks_[idx].insert(follower_id);
+  }
+  *acknowledged = true;
+
+  Log_info("[SPEC-RAFT] Site %d: Received AppendEntriesDurable from %d for index=%lu",
+           site_id_, follower_id, lastLogIndex);
+
+  // Check if we can advance securedLogIndex
+  // Only if we're a secured leader (have durable vote quorum)
+  if (securedLeader_) {
+    size_t quorum = GetQuorumSize();
+
+    // Find the highest index with durable ack quorum
+    uint64_t newSecuredIndex = securedLogIndex_;
+    for (uint64_t idx = securedLogIndex_ + 1; idx <= lastLogIndex && idx <= specCommitIndex_; ++idx) {
+      auto it = durableAcks_.find(idx);
+      if (it != durableAcks_.end() && it->second.size() >= quorum) {
+        newSecuredIndex = idx;
+      } else {
+        // Stop at first index without quorum (monotonic advance)
+        break;
+      }
+    }
+
+    if (newSecuredIndex > securedLogIndex_) {
+      uint64_t oldSecuredLogIndex = securedLogIndex_;
+      Log_info("[SPEC-RAFT] Site %d: Advancing securedLogIndex %lu -> %lu",
+               site_id_, securedLogIndex_, newSecuredIndex);
+      securedLogIndex_ = newSecuredIndex;
+
+      // Persist updated speculative indices
+      PersistSpeculativeIndicesToLogStorage();
+
+      // Phase 5.3: Notify clients with DURABLE status for newly secured entries
+      if (lastDurableNotifiedIndex_ < newSecuredIndex) {
+        uint64_t notifyFrom = std::max(lastDurableNotifiedIndex_, oldSecuredLogIndex);
+        NotifyCallbacks(notifyFrom, newSecuredIndex, CommitStatus::DURABLE);
+        lastDurableNotifiedIndex_ = newSecuredIndex;
+      }
+    }
+  }
+
+  // Verify invariants in debug mode
+  VerifySpeculativeInvariants();
+
+  cb();
+}
+
 // @safe - Calls undeclared Fiber::create_run()
 void RaftServer::StartElectionTimer() {
-  resetTimer("start election timer");
+  // @unsafe
+  { resetTimer("start election timer"); }
   last_heartbeat_time_ = Time::now();
 
   Fiber::create_run([this]() {
@@ -1197,7 +2217,15 @@ void RaftServer::StartElectionTimer() {
       uint64_t election_timeout = GetElectionTimeout();
 
       // Sleep for a portion of the timeout before checking
-      Fiber::sleep(RandomGenerator::rand(HEARTBEAT_INTERVAL * 2, HEARTBEAT_INTERVAL * 4));
+      Fiber::sleep(RandomGenerator::rand(heartbeat_interval_us_ * 2, heartbeat_interval_us_ * 4));
+
+      // Retry NotifyRestart for any PENDING peers
+      // This handles the case where a peer was partitioned when we restarted
+      auto c = commo();
+      if (c != nullptr && c->HasPendingNotifyRestart()) {
+        Log_debug("[NOTIFY-RESTART-RETRY] Site %d: retrying for pending peers", site_id_);
+        c->RetryPendingNotifyRestart();
+      }
 
       auto time_now = Time::now();
       auto time_elapsed = time_now - last_heartbeat_time_;
@@ -1227,6 +2255,7 @@ void RaftServer::StartElectionTimer() {
   });
 }
 
+// @safe - external calls marked @external [safe], pointer ops in @unsafe blocks
 bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
                        uint64_t *index,
                        uint64_t *term,
@@ -1253,22 +2282,29 @@ bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
   // }
   // #endif
   if (!IsLeader()) {
+    // @unsafe
+    {
     *index = 0;
     *term = 0;
+    }
     return false;
   }
   SetLocalAppend(cmd, term, index, slot_id, ballot);
   // SetLocalAppend returns the old lastLogIndex value, but Start returns the
   // index of the newly appended instance
+  // @unsafe
+  {
   verify(lastLogIndex == (*index) + 1);
   *index = lastLogIndex;
   Log_debug("Start(): ldr=%d index=%ld term=%ld", loc_id_, *index, *term);
+  }
   return true;
 }
 
 /* NOTE: same as ReceiveAppend */
-/* NOTE: broadcast send to all of the host even to its own server 
+/* NOTE: broadcast send to all of the host even to its own server
  * should we exclude the execution of this function for leader? */
+// @safe - external calls marked @external [safe], output pointer writes in @unsafe blocks
 void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  const ballot_t ballot,
                                  const uint64_t leaderCurrentTerm,
@@ -1283,7 +2319,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  uint64_t *followerLastLogIndex,
                                  rusty::Function<void()> cb,
                                  bool trigger_election_now) {
-  mtx_.lock();
+  std::unique_lock<std::recursive_mutex> lock(mtx_);
 
   bool term_ok = (leaderCurrentTerm >= this->currentTerm);
   bool index_ok = (leaderPrevLogIndex <= this->lastLogIndex);
@@ -1301,15 +2337,22 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   // This prevents followers with divergent logs from constantly starting elections
   // while the leader is trying to repair their log via backtracking
   if (term_ok) {
-      resetTimer("AppendEntries from current-term leader");
+      // Track the leader's identity for GetLeaderHint()
+      current_leader_id_ = leaderSiteId;
+      // @unsafe
+      { resetTimer("AppendEntries from current-term leader"); }
       if (leaderCurrentTerm > this->currentTerm) {
           auto prev_term = currentTerm;
           currentTerm = leaderCurrentTerm;
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+
+          // CRITICAL: Persist term before accepting any entries from new leader
+          PersistState(currentTerm, vote_for_, "OnAppendEntries: new leader term");
+
           LogTermChange("AppendEntries leader term is newer", prev_term, currentTerm, leaderSiteId);
           Log_debug("server %d, set to be follower", loc_id_ ) ;
           setIsLeader(false) ;
-          PersistTermAndVote();  // Persist term/vote change
+          // PersistState() already called above - no need for duplicate persistence
       }
   }
 
@@ -1326,62 +2369,149 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       //              site_id_, prev_leader, leaderSiteId, leaderCurrentTerm, currentTerm);
       // }
 
+      // ==================================================================
+      // SPECULATIVE REPLICATION: Append to memory, respond immediately,
+      // then persist asynchronously and send AppendEntriesDurable
+      // ==================================================================
+
+      // Capture state for async persistence before modifying in-memory state
+      std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>> entries_to_persist;
+      uint64_t log_index_for_durable_ack = 0;
+
       if (cmd != nullptr) {
 #ifndef RAFT_BATCH_OPTIMIZATION
         lastLogIndex = leaderPrevLogIndex + 1;
         auto instance = GetRaftInstance(lastLogIndex);
         instance->log_ = cmd;
         instance->term = leaderNextLogTerm;
-        // Persist the log entry
-        PersistLogEntry(lastLogIndex, *instance);
-        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted log entry at index %ld, term=%ld, lastLogIndex now=%ld",
-        //          this->loc_id_, lastLogIndex, leaderNextLogTerm, lastLogIndex);
-        // // Log the command that was accepted
-        // auto cmd_accepted = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted command %d at index %ld",
-        //          this->loc_id_, cmd_accepted ? cmd_accepted->tx_id_ : -1, lastLogIndex);
+
+        // Capture entry for async persistence
+        entries_to_persist.push_back({lastLogIndex, instance});
+        log_index_for_durable_ack = lastLogIndex;
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
         auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
         int cnt = 0;
-        std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>> entries_to_persist;
         for (shared_ptr<TpcCommitCommand>& c: cmds->cmds_) {
           cnt++;
           lastLogIndex = leaderPrevLogIndex + cnt;
           auto instance = GetRaftInstance(lastLogIndex);
           instance->log_ = c;
           instance->term = dynamic_pointer_cast<TpcCommitCommand>(c)->term;
-          entries_to_persist.emplace_back(lastLogIndex, instance);
+
+          // Capture entry for async persistence
+          entries_to_persist.push_back({lastLogIndex, instance});
         }
-        // Persist all entries in batch
-        PersistLogEntries(entries_to_persist);
+        log_index_for_durable_ack = lastLogIndex;  // Highest index in batch
 #endif
       }
 
-      // update commitIndex and trigger log application
+#ifdef SINGLE_RAFT_INSTANCE
+      // SINGLE-RAFT: Enqueue for background apply thread
+      if (leaderCommitIndex > commitIndex) {
+        auto old_commit = commitIndex;
+        commitIndex = std::min(leaderCommitIndex, lastLogIndex);
+        verify(lastLogIndex >= commitIndex);
+        PersistCommitIndex(commitIndex, "OnAppendEntries: SINGLE_RAFT follower commit");
+        EnqueueCommittedEntries(old_commit, commitIndex);
+      }
+
+      // @unsafe
+      {
+      *followerAppendOK = 1;
+      *followerCurrentTerm = this->currentTerm;
+      *followerLastLogIndex = this->lastLogIndex;
+      }
+#else
+      // MULTI-RAFT: Apply logs synchronously (release mtx_ to avoid blocking RPCs)
       bool need_apply = false;
       if (leaderCommitIndex > commitIndex) {
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
+
         need_apply = true;
-        PersistCommitIndex();  // Persist commitIndex update
       }
 
+      // @unsafe
+      {
       *followerAppendOK = 1;
       *followerCurrentTerm = this->currentTerm;
       *followerLastLogIndex = this->lastLogIndex;
+      }
+
+      // Capture state needed for async persistence thread
+      ballot_t term_copy = currentTerm;
+      siteid_t follower_id_copy = site_id_;
+      siteid_t leader_id_copy = leaderSiteId;
+      parid_t par_id_copy = partition_id_;
+      uint64_t commit_index_copy = commitIndex;
 
       // CRITICAL FIX: Release mutex before applying logs!
       // This allows concurrent AppendEntries to be processed
       // while we're applying the current batch
-      mtx_.unlock();
-
+      lock.unlock();
       if (need_apply) {
-        applyLogs();  // Now called WITHOUT holding the mutex!
+        applyLogs();
+      }
+
+      // ==================================================================
+      // PERSISTENCE: Either async (speculative) or sync (traditional)
+      // ==================================================================
+      if (async_persistence_) {
+        // ASYNC MODE (speculative): Start async persistence and send durable ack later
+        if (!entries_to_persist.empty()) {
+          // Capture entries by move to avoid dangling references
+          // Track async persistence thread (joined in destructor to prevent UAF)
+          {
+            std::lock_guard<std::mutex> lk(async_threads_mtx_);
+            // Prune completed threads to prevent unbounded accumulation
+            async_threads_.erase(
+              std::remove_if(async_threads_.begin(), async_threads_.end(),
+                [](auto& entry) {
+                  if (entry.second->get()) {
+                    if (entry.first.joinable()) entry.first.join();
+                    return true;
+                  }
+                  return false;
+                }),
+              async_threads_.end());
+            auto done = rusty::Arc<AtomicFlag>::make(false);
+            async_threads_.emplace_back(
+              std::thread([this, entries = std::move(entries_to_persist),
+                         log_index_for_durable_ack, term_copy, follower_id_copy,
+                         leader_id_copy, par_id_copy, commit_index_copy, done]() {
+              // Persist all log entries
+              for (const auto& entry : entries) {
+                PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
+              }
+
+              // Also persist commit index (async is fine for commit index)
+              PersistCommitIndex(commit_index_copy, "OnAppendEntries: async follower commit");
+
+              // Send AppendEntriesDurable RPC to leader
+              auto c = commo();
+              if (c != nullptr) {
+                c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
+                                            follower_id_copy, log_index_for_durable_ack);
+              }
+              done->set(true);
+            }), done);
+          }
+        }
+      } else {
+        // SYNC MODE (traditional): Persist entries synchronously before returning
+        // No separate AppendEntriesDurable RPC needed - the ack implies durability
+        if (!entries_to_persist.empty()) {
+          for (const auto& entry : entries_to_persist) {
+            PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: sync follower entry");
+          }
+          PersistCommitIndex(commit_index_copy, "OnAppendEntries: sync follower commit");
+        }
       }
 
       // Re-acquire mutex before returning (to handle remaining code safely)
-      mtx_.lock();
+      lock.lock();
+#endif
 
 #ifndef RAFT_TEST_CORO
       if (cmd != nullptr) {
@@ -1416,9 +2546,12 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         Log_info("[APPEND_REJECT] Site %d rejecting AppendEntries from leader %d - term_ok=%d index_ok=%d prev_term_ok=%d (leaderTerm=%lu myTerm=%lu prevIdx=%lu myLastIdx=%lu local_prev_term=%lu)",
                  site_id_, leaderSiteId, term_ok, index_ok, prev_term_ok, leaderCurrentTerm, currentTerm,
                  leaderPrevLogIndex, lastLogIndex, local_prev_term);
+        // @unsafe
+        {
         *followerAppendOK = 0;
         *followerCurrentTerm = this->currentTerm;
         *followerLastLogIndex = this->lastLogIndex;
+        }
     }
 
 /*if (rand() % 1000 == 0) {
@@ -1457,22 +2590,43 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         }
     }
 
-    mtx_.unlock();
+    lock.unlock();
     cb();
 }
 
+// @safe - Removes command from log (external calls wrapped in @unsafe blocks)
 void RaftServer::removeCmd(slotid_t slot) {
-  auto cmd = dynamic_pointer_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
-  if (!cmd)
+  auto it = raft_logs_.find(slot);
+  if (it == raft_logs_.end()) {
     return;
-  tx_sched_->DestroyTx(cmd->tx_id_);
-  raft_logs_.erase(slot);
+  }
+
+#ifdef SINGLE_RAFT_INSTANCE
+  // In SINGLE_RAFT_INSTANCE mode, committed log replay and callback execution can
+  // overlap with log cleanup. DestroyTx() here can race with callback usage and
+  // lead to shutdown/runtime crashes. We only evict the log entry.
+  raft_logs_.erase(it);
+  return;
+#else
+  // @unsafe
+  {
+    if (it->second && it->second->log_) {
+      auto cmd = dynamic_pointer_cast<TpcCommitCommand>(it->second->log_);
+      if (cmd && tx_sched_) {
+        tx_sched_->DestroyTx(cmd->tx_id_);
+      }
+    }
+  }
+  raft_logs_.erase(it);
+#endif
 }
 
+// @safe - Stores callback for later invocation
 void RaftServer::RegisterLeaderChangeCallback(std::function<void(bool)> cb) {
   leader_change_cb_ = std::move(cb);
 }
 
+// @safe - external calls marked @external [safe], output pointer writes in @unsafe blocks
 void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
                                const siteid_t leaderSiteId,
                                uint64_t *followerTerm,
@@ -1480,8 +2634,11 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
                                rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
+  // @unsafe
+  {
   *followerTerm = currentTerm;
   *success = false;
+  }
 
   // ============================================================================
   // Edge Case 0: Server shutting down
@@ -1510,13 +2667,20 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
              site_id_, leaderSiteId, leaderTerm, currentTerm);
 
     currentTerm = leaderTerm;
+    // @unsafe
+    {
     vote_for_ = INVALID_SITEID;  // Reset vote for new term
+    }
+
+    // CRITICAL: Persist term before responding to TimeoutNow
+    PersistState(currentTerm, vote_for_, "OnTimeoutNow: leader higher term");
 
     if (is_leader_) {
       setIsLeader(false);  // Step down from leadership
     }
 
-    *followerTerm = currentTerm;
+    // @unsafe
+    { *followerTerm = currentTerm; }
   }
 
   // ============================================================================
@@ -1574,6 +2738,143 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   cb();
 }
 
+// ============================================================================
+// InstallSnapshot RPC Handler
+// ============================================================================
+
+// @unsafe - Modifies log state, snapshot metadata, calls snapshot_manager_
+void RaftServer::OnInstallSnapshot(const uint64_t term,
+                                    const uint64_t leader_id,
+                                    const uint64_t last_included_index,
+                                    const uint64_t last_included_term,
+                                    const std::string& data,
+                                    uint64_t* term_out,
+                                    rusty::Function<void()> cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // @unsafe
+  { *term_out = currentTerm; }
+
+  // ============================================================================
+  // Edge Case 0: Server shutting down
+  // ============================================================================
+  if (stop_) {
+    Log_info("[INSTALL-SNAPSHOT] Site %d: Ignoring InstallSnapshot - server shutting down", site_id_);
+    cb();
+    return;
+  }
+
+  // ============================================================================
+  // Edge Case 1: Stale term - reject
+  // ============================================================================
+  if (term < currentTerm) {
+    Log_info("[INSTALL-SNAPSHOT] Site %d: Rejecting InstallSnapshot from leader %lu "
+             "(leader_term=%lu < my_term=%lu)",
+             site_id_, leader_id, term, currentTerm);
+    cb();
+    return;
+  }
+
+  // ============================================================================
+  // Edge Case 2: Higher or equal term - accept as legitimate leader
+  // ============================================================================
+  if (term > currentTerm) {
+    Log_info("[INSTALL-SNAPSHOT] Site %d: Leader %lu has higher term (%lu > %lu) - updating",
+             site_id_, leader_id, term, currentTerm);
+    auto prev_term = currentTerm;
+    currentTerm = term;
+    // @unsafe
+    {
+    vote_for_ = INVALID_SITEID;
+    }
+    setIsLeader(false);
+    PersistState(currentTerm, vote_for_, "OnInstallSnapshot: leader higher term");
+    LogTermChange("InstallSnapshot carried newer term", prev_term, currentTerm, leader_id);
+    // @unsafe
+    { *term_out = currentTerm; }
+  }
+
+  // Track the leader's identity for GetLeaderHint()
+  current_leader_id_ = static_cast<siteid_t>(leader_id);
+
+  // Reset election timer (legitimate leader contact)
+  resetTimer("received InstallSnapshot");
+
+  // ============================================================================
+  // Save snapshot data via snapshot_manager_
+  // ============================================================================
+  if (snapshot_manager_) {
+    // @unsafe { snapshot_manager_ I/O operations }
+    bool saved = snapshot_manager_->TakeSnapshot(
+        last_included_index, last_included_term,
+        data.data(), data.size());
+
+    if (!saved) {
+      Log_error("[INSTALL-SNAPSHOT] Site %d: Failed to save snapshot at index=%lu term=%lu",
+                site_id_, last_included_index, last_included_term);
+      // Still update in-memory state even if persistence fails
+    } else {
+      Log_info("[INSTALL-SNAPSHOT] Site %d: Snapshot saved at index=%lu term=%lu",
+               site_id_, last_included_index, last_included_term);
+    }
+  }
+
+  // ============================================================================
+  // Update snapshot metadata
+  // ============================================================================
+  snapidx_ = last_included_index;
+  snapterm_ = last_included_term;
+
+  // ============================================================================
+  // Discard log entries covered by the snapshot
+  // ============================================================================
+  // Remove all log entries up to and including last_included_index
+  std::vector<slotid_t> to_erase;
+  for (auto& kv : raft_logs_) {
+    if (kv.first <= last_included_index) {
+      to_erase.push_back(kv.first);
+    }
+  }
+  for (auto slot : to_erase) {
+    raft_logs_.erase(slot);
+  }
+
+  // Update min_active_slot_ to reflect compacted log
+  if (last_included_index + 1 > min_active_slot_) {
+    min_active_slot_ = last_included_index + 1;
+  }
+
+  // Also compact persistent log storage if available
+  if (log_storage_) {
+    // @unsafe { log_storage_ I/O }
+    log_storage_->remove_range(log_storage_->get_first_index(),
+                               last_included_index + 1);
+  }
+
+  // ============================================================================
+  // Advance commitIndex and executeIndex
+  // ============================================================================
+  if (last_included_index > commitIndex) {
+    commitIndex = last_included_index;
+    PersistCommitIndexToLogStorage();
+  }
+  if (last_included_index > executeIndex) {
+    executeIndex = last_included_index;
+  }
+
+  // Update lastLogIndex if the snapshot covers beyond it
+  if (last_included_index > lastLogIndex) {
+    lastLogIndex = last_included_index;
+  }
+
+  Log_info("[INSTALL-SNAPSHOT] Site %d: Installed snapshot from leader %lu "
+           "(snapidx=%lu, snapterm=%lu, commitIndex=%lu, executeIndex=%lu, lastLogIndex=%lu)",
+           site_id_, leader_id, snapidx_, snapterm_, commitIndex, executeIndex, lastLogIndex);
+
+  cb();
+}
+
+// @safe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)
 void RaftServer::StopLeadershipTransferMonitoring() {
   leadership_monitor_stop_ = true;
 
@@ -1585,7 +2886,7 @@ void RaftServer::StopLeadershipTransferMonitoring() {
   }
 }
 
-// @unsafe
+// @safe - Starts monitor thread (threading and mutex operations marked safe via @external)
 void RaftServer::StartLeadershipTransferMonitoring() {
   if (leadership_monitor_stop_.load()) {
     leadership_monitor_stop_ = false;
@@ -1670,6 +2971,7 @@ void RaftServer::StartLeadershipTransferMonitoring() {
   });
 }
 
+// @safe - Calls Setup if not already initialized
 void RaftServer::EnsureSetup() {
   if (heartbeat_setup_) {
     return;
@@ -1678,6 +2980,7 @@ void RaftServer::EnsureSetup() {
   Setup();
 }
 
+// @safe - Checks conditions for leadership transfer (mutex and map access marked safe via @external)
 bool RaftServer::ShouldTransferLeadership() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -1692,8 +2995,11 @@ bool RaftServer::ShouldTransferLeadership() {
   }
 
   // Must have a preferred leader configured
+  // @unsafe
+  {
   if (preferred_leader_site_id_ == INVALID_SITEID) {
     return false;
+  }
   }
 
   // Already transferring
@@ -1724,6 +3030,7 @@ bool RaftServer::ShouldTransferLeadership() {
   return true;
 }
 
+// @safe - Initiates leadership transfer (RPC calls wrapped in @unsafe blocks)
 void RaftServer::InitiateLeadershipTransfer() {
   // Check if server is shutting down
   if (stop_) {
@@ -1775,6 +3082,8 @@ void RaftServer::InitiateLeadershipTransfer() {
       // - Non-preferred replicas: Will activate election suppression
       bool trigger_election = true;  // Signal transfer to ALL replicas
 
+      // @unsafe
+      {
       commo()->SendAppendEntries(
         peer_site_id,
         partition_id_,
@@ -1790,6 +3099,7 @@ void RaftServer::InitiateLeadershipTransfer() {
         0,
         trigger_election
       );
+      }
     }
   }
 
@@ -1824,6 +3134,523 @@ void RaftServer::InitiateLeadershipTransfer() {
     Log_info("[LEADERSHIP-TRANSFER] Site %d: Leadership transfer complete - now follower",
              site_id_);
   }
+}
+
+// ============================================================================
+// SPECULATIVE REPLICATION STATE (Phase 1.1)
+// ============================================================================
+
+void RaftServer::ResetSpeculativeState() {
+  // Note: caller must hold mtx_ lock
+
+  if (is_leader_) {
+    // On becoming leader: initialize with self votes
+    specVoters_.clear();
+    specVoters_.insert(site_id_);  // voted for self
+    durableVoters_.clear();
+    durableVoters_.insert(site_id_);  // self vote is always durable
+
+    // Reset commit indices to current commitIndex (from previous term)
+    securedLogIndex_ = commitIndex;
+    specCommitIndex_ = commitIndex;
+
+    // Leader starts unsecured until durable vote quorum is achieved
+    securedLeader_ = false;
+
+    Log_info("[SPEC-RAFT] Site %d: Reset speculative state as new leader - "
+             "specVoters={%d} durableVoters={%d} securedLogIndex=%lu specCommitIndex=%lu",
+             site_id_, site_id_, site_id_, securedLogIndex_, specCommitIndex_);
+  } else {
+    // On stepping down: clear all speculative state
+    specVoters_.clear();
+    durableVoters_.clear();
+    securedLogIndex_ = 0;
+    specCommitIndex_ = 0;
+    securedLeader_ = false;
+
+    Log_info("[SPEC-RAFT] Site %d: Cleared speculative state (stepped down)",
+             site_id_);
+  }
+
+  // Persist the updated speculative indices
+  PersistSpeculativeIndicesToLogStorage();
+
+  // Clear ack tracking maps
+  memoryAcks_.clear();
+  durableAcks_.clear();
+
+  // Reset callback notification tracking
+  // Note: We don't clear pendingCallbacks_ here because:
+  // - On becoming leader: there shouldn't be any pending callbacks yet
+  // - On stepping down: NotifyRollback() handles clearing after notification
+  lastSpecNotifiedIndex_ = commitIndex;  // Don't re-notify already-committed entries
+  lastDurableNotifiedIndex_ = commitIndex;
+}
+
+void RaftServer::VerifySpeculativeInvariants() const {
+  // Invariant 1: securedLogIndex <= specCommitIndex <= lastLogIndex
+  if (securedLogIndex_ > specCommitIndex_) {
+    Log_error("[SPEC-RAFT] INVARIANT VIOLATION: securedLogIndex (%lu) > specCommitIndex (%lu)",
+              securedLogIndex_, specCommitIndex_);
+    verify(securedLogIndex_ <= specCommitIndex_);
+  }
+
+  if (specCommitIndex_ > lastLogIndex) {
+    Log_error("[SPEC-RAFT] INVARIANT VIOLATION: specCommitIndex (%lu) > lastLogIndex (%lu)",
+              specCommitIndex_, lastLogIndex);
+    verify(specCommitIndex_ <= lastLogIndex);
+  }
+
+  // Note (Phase 6): durableVoters ⊆ specVoters is NOT strictly enforced after crashes.
+  // A crashed node loses its memory vote but keeps its durable vote on disk.
+  // This is expected behavior, not an invariant violation.
+  //
+  // Key insight: |durableVoters| >= quorum is sufficient for securedLeader = true.
+  // Once durable quorum is reached, specVoters quorum is no longer required.
+  // See docs/dev/phase6_relax_invariant_plan.md for full safety argument.
+
+  Log_debug("[SPEC-RAFT] Site %d: Invariants OK - securedLogIndex=%lu specCommitIndex=%lu lastLogIndex=%lu",
+            site_id_, securedLogIndex_, specCommitIndex_, lastLogIndex);
+}
+
+// ============================================================================
+// OnPeerRestart - Handle speculative state invalidation on peer restart
+// ============================================================================
+
+void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // Only process if we're the leader
+  if (!is_leader_) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring peer restart from %d - not leader",
+              site_id_, restarted_site_id);
+    return;
+  }
+
+  Log_info("[SPEC-RAFT] Site %d: Handling peer restart from site %d",
+           site_id_, restarted_site_id);
+
+  // Remove from specVoters (their memory vote is no longer reliable)
+  size_t removed_from_voters = specVoters_.erase(restarted_site_id);
+  if (removed_from_voters > 0) {
+    Log_info("[SPEC-RAFT] Site %d: Removed site %d from specVoters (now size=%zu)",
+             site_id_, restarted_site_id, specVoters_.size());
+  }
+
+  // Remove from memoryAcks for unsecured entries only
+  // Entries at or below securedLogIndex are already durably committed,
+  // so removing the restarted server doesn't affect their status
+  size_t entries_affected = 0;
+  for (auto& entry : memoryAcks_) {
+    uint64_t idx = entry.first;
+    if (idx > securedLogIndex_) {
+      if (entry.second.erase(restarted_site_id) > 0) {
+        entries_affected++;
+      }
+    }
+  }
+  if (entries_affected > 0) {
+    Log_info("[SPEC-RAFT] Site %d: Removed site %d from memoryAcks for %zu unsecured entries",
+             site_id_, restarted_site_id, entries_affected);
+  }
+
+  // Note: We don't remove from durableVoters or durableAcks because:
+  // 1. durableVoters represents votes that were persisted to disk BEFORE the crash
+  //    - If the vote was durable, it survives the crash
+  //    - If it wasn't durable, it was never in durableVoters
+  // 2. durableAcks represents entries that were persisted to disk
+  //    - Same logic: durable acks survive crashes by definition
+
+  // Check if we need to become secured or step down
+  // Phase 6: Relaxed invariant - durableVoters and specVoters are independent after crashes
+  if (!securedLeader_ && is_leader_) {
+    size_t quorum = GetQuorumSize();
+
+    // NEW (Phase 6.4.1): Check if durable quorum is sufficient for secured status
+    // Note: site_id_ is already in durableVoters_ (inserted by ResetSpeculativeState
+    // or RequestElection), so no +1 needed. This matches OnVoteDurable() at line 1417.
+    size_t durable_vote_count = durableVoters_.size();
+    if (durable_vote_count >= quorum) {
+      // We have durable quorum - become secured leader
+      // Safety: durableVoters have votedFor=us on disk, can't vote for others in this term
+      securedLeader_ = true;
+      Log_info("[SPEC-RAFT] Site %d: Became secured via durable quorum (%zu/%zu) "
+               "despite spec quorum loss (specVoters=%zu)",
+               site_id_, durable_vote_count, quorum, specVoters_.size());
+    } else {
+      // No durable quorum yet - check speculative quorum
+      // Note: site_id_ is already in specVoters_ (inserted by ResetSpeculativeState
+      // or RequestElection), so no +1 needed.
+      size_t vote_count = specVoters_.size();
+      if (vote_count < quorum) {
+        // No durable quorum AND no speculative quorum - must step down
+        Log_info("[SPEC-RAFT] Site %d: Lost both spec quorum (%zu/%zu) and durable quorum (%zu/%zu) - stepping down",
+                 site_id_, vote_count, quorum, durable_vote_count, quorum);
+        stepDown(StepDownReason::UnsecuredFailure);
+        return;  // Don't verify invariants after stepping down
+      }
+    }
+  }
+
+  VerifySpeculativeInvariants();
+}
+
+// ============================================================================
+// stepDown - Central leader step-down function
+// ============================================================================
+
+static const char* StepDownReasonToString(StepDownReason reason) {
+  switch (reason) {
+    case StepDownReason::UnsecuredFailure: return "UnsecuredFailure";
+    case StepDownReason::SecuredFailure: return "SecuredFailure";
+    case StepDownReason::HigherTerm: return "HigherTerm";
+    default: return "Unknown";
+  }
+}
+
+void RaftServer::stepDown(StepDownReason reason) {
+  // Must be called with mtx_ held (caller's responsibility)
+  // Most callers already hold the lock
+
+  Log_info("[SPEC-RAFT] Site %d: Stepping down as leader (reason=%s, term=%lu, "
+           "securedLeader=%d, specVoters=%zu, durableVoters=%zu)",
+           site_id_, StepDownReasonToString(reason), currentTerm,
+           securedLeader_, specVoters_.size(), durableVoters_.size());
+
+  // Reset speculative state
+  // This clears specVoters_, durableVoters_, etc.
+  ResetSpeculativeState();
+
+  // Transition to follower state
+  // This handles view updates, callback notifications, etc.
+  setIsLeader(false);
+
+  // Reset election timer
+  // Important: Give other servers time to elect a new leader
+  resetTimer("stepDown");
+
+  Log_info("[SPEC-RAFT] Site %d: Step-down complete, now follower", site_id_);
+
+  // Notify pending callbacks of rollback based on step-down reason (Phase 5.3)
+  NotifyRollback(reason);
+}
+
+// ============================================================================
+// CLIENT NOTIFICATION CALLBACKS (Phase 5.3)
+// ============================================================================
+
+void RaftServer::RegisterCommitCallback(uint64_t index,
+                                        std::function<void(CommitStatus)> callback) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // If already speculatively committed, invoke immediately
+  if (index <= specCommitIndex_) {
+    Log_debug("[SPEC-CALLBACK] Index %lu already spec-committed, notifying SPECULATIVE",
+              index);
+    callback(CommitStatus::SPECULATIVE);
+  }
+
+  // If already durably committed, invoke immediately
+  if (securedLeader_ && index <= securedLogIndex_) {
+    Log_debug("[SPEC-CALLBACK] Index %lu already durable-committed, notifying DURABLE",
+              index);
+    callback(CommitStatus::DURABLE);
+    return;  // No need to track - already fully committed
+  }
+
+  // Store callback for future notification
+  pendingCallbacks_[index] = std::move(callback);
+  Log_debug("[SPEC-CALLBACK] Registered callback for index %lu", index);
+}
+
+void RaftServer::NotifyCallbacks(uint64_t from, uint64_t to, CommitStatus status) {
+  // Note: Caller must hold mtx_
+  // Notify callbacks for indices in (from, to]
+
+  for (uint64_t idx = from + 1; idx <= to; ++idx) {
+    auto it = pendingCallbacks_.find(idx);
+    if (it != pendingCallbacks_.end()) {
+      Log_debug("[SPEC-CALLBACK] Notifying index %lu with status %d",
+                idx, static_cast<int>(status));
+      it->second(status);
+
+      // If DURABLE, remove callback (fully committed)
+      if (status == CommitStatus::DURABLE) {
+        pendingCallbacks_.erase(it);
+      }
+    }
+  }
+}
+
+// @unsafe - Invokes callbacks, clears pendingCallbacks_
+void RaftServer::NotifyRollback(StepDownReason reason) {
+  // Note: Caller must hold mtx_
+  // Notify pending callbacks based on step-down reason
+
+  Log_info("[SPEC-CALLBACK] NotifyRollback reason=%s, pending=%zu, "
+           "commitIndex=%lu, specCommitIndex=%lu, securedLogIndex=%lu, lastLogIndex=%lu",
+           StepDownReasonToString(reason), pendingCallbacks_.size(),
+           commitIndex, specCommitIndex_, securedLogIndex_, lastLogIndex);
+
+  switch (reason) {
+    case StepDownReason::UnsecuredFailure:
+      // Lost speculative quorum while unsecured leader.
+      // All current-term entries are suspect -> rollback everything
+      // from commitIndex + 1 to lastLogIndex.
+      Log_info("[SPEC-CALLBACK] UnsecuredFailure: rolling back entries (%lu, %lu]",
+               commitIndex, lastLogIndex);
+      NotifyCallbacks(commitIndex, lastLogIndex, CommitStatus::ROLLEDBACK);  // @unsafe
+      break;
+
+    case StepDownReason::SecuredFailure:
+      // Lost quorum but was secured leader. Only unsecured entries
+      // (above securedLogIndex_) are suspect -> rollback from
+      // securedLogIndex_ + 1 to specCommitIndex_.
+      Log_info("[SPEC-CALLBACK] SecuredFailure: rolling back entries (%lu, %lu]",
+               securedLogIndex_, specCommitIndex_);
+      NotifyCallbacks(securedLogIndex_, specCommitIndex_, CommitStatus::ROLLEDBACK);  // @unsafe
+      break;
+
+    case StepDownReason::HigherTerm:
+      // Saw higher term from another server. Entries may still be
+      // valid under the new leader - don't send rollback notifications.
+      Log_info("[SPEC-CALLBACK] HigherTerm step-down - no automatic rollback");
+      break;
+  }
+
+  // Clear ALL pending callbacks regardless of reason (we're no longer leader)
+  pendingCallbacks_.clear();
+
+  // Reset notification tracking
+  lastSpecNotifiedIndex_ = 0;
+  lastDurableNotifiedIndex_ = 0;
+}
+
+// ============================================================================
+// MEMBERSHIP CHANGE IMPLEMENTATION
+// ============================================================================
+
+// @safe - Read-only computation on member field
+size_t RaftServer::GetQuorumSize() const {
+  return current_config_.size() / 2 + 1;
+}
+
+// @safe - Read-only accessor
+const std::set<siteid_t>& RaftServer::GetCurrentConfig() const {
+  return current_config_;
+}
+
+// @unsafe - Modifies config state
+void RaftServer::OnAddServer(const uint64_t term,
+                             const uint64_t new_server_id,
+                             const std::string& addr,
+                             bool_t* success,
+                             std::string* error_msg,
+                             uint64_t* leader_hint,
+                             rrr::DeferredReply defer) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // @unsafe
+  {
+    *leader_hint = (current_leader_id_ != INVALID_SITEID) ? current_leader_id_ : 0;
+  }
+
+  // Check if this server is the leader
+  if (!IsLeader()) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "not leader";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: not leader (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if a config change is already pending
+  if (config_change_pending_) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "config change already pending";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: config change pending (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if server is already in config or is already a learner
+  if (current_config_.count(static_cast<siteid_t>(new_server_id)) > 0) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "server already in config";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: server %lu already in config (site %d)",
+             new_server_id, site_id_);
+    defer.reply();
+    return;
+  }
+
+  if (learners_.count(static_cast<siteid_t>(new_server_id)) > 0) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "server already a learner (catch-up in progress)";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: server %lu already a learner (site %d)",
+             new_server_id, site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Add server as a learner first. It will receive log entries via HeartbeatLoop
+  // (through next_index_/match_index_) but will NOT count towards quorum.
+  // Once caught up (match_index_ within catchup_threshold_ of lastLogIndex),
+  // CheckAndPromoteLearners() will promote it to a full member.
+  auto sid = static_cast<siteid_t>(new_server_id);
+  learners_.insert(sid);
+  config_change_pending_ = true;
+  pending_config_index_ = lastLogIndex;  // Track where this change happened
+
+  // Initialize replication state so HeartbeatLoop sends entries to this learner
+  if (next_index_.find(sid) == next_index_.end()) {
+    next_index_[sid] = lastLogIndex + 1;
+  }
+  if (match_index_.find(sid) == match_index_.end()) {
+    match_index_[sid] = 0;
+  }
+
+  // @unsafe
+  {
+    *success = true;
+    *error_msg = "";
+  }
+
+  Log_info("[RAFT-CONFIG] AddServer: added server %lu as learner (site %d), "
+           "learners=%zu, config_size=%zu, next_index=%lu",
+           new_server_id, site_id_, learners_.size(),
+           current_config_.size(), next_index_[sid]);
+
+  defer.reply();
+}
+
+// @unsafe - Modifies config state, logs output
+void RaftServer::PromoteLearner(siteid_t id) {
+  // Must be called with mtx_ held
+  learners_.erase(id);
+  current_config_.insert(id);
+  config_change_pending_ = false;
+  Log_info("[RAFT-CONFIG] Promoted learner %d to full member "
+           "(config size=%zu, quorum=%zu, learners=%zu)",
+           id, current_config_.size(), GetQuorumSize(), learners_.size());
+}
+
+// @unsafe - Reads match_index_, calls PromoteLearner
+void RaftServer::CheckAndPromoteLearners() {
+  // Must be called with mtx_ held
+  if (learners_.empty()) {
+    return;
+  }
+
+  std::vector<siteid_t> to_promote;
+  for (auto learner_id : learners_) {
+    auto it = match_index_.find(learner_id);
+    if (it != match_index_.end() && lastLogIndex > 0) {
+      // Learner is caught up if within catchup_threshold_ of leader's log
+      if (it->second >= lastLogIndex ||
+          (lastLogIndex - it->second) <= catchup_threshold_) {
+        to_promote.push_back(learner_id);
+      }
+    }
+  }
+  for (auto id : to_promote) {
+    PromoteLearner(id);
+  }
+}
+
+// @unsafe - Modifies config state
+void RaftServer::OnRemoveServer(const uint64_t term,
+                                const uint64_t server_id,
+                                bool_t* success,
+                                std::string* error_msg,
+                                uint64_t* leader_hint,
+                                rrr::DeferredReply defer) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // @unsafe
+  {
+    *leader_hint = (current_leader_id_ != INVALID_SITEID) ? current_leader_id_ : 0;
+  }
+
+  // Check if this server is the leader
+  if (!IsLeader()) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "not leader";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: not leader (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if a config change is already pending
+  if (config_change_pending_) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "config change already pending";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: config change pending (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if server is in config
+  if (current_config_.count(static_cast<siteid_t>(server_id)) == 0) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "server not in config";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: server %lu not in config (site %d)",
+             server_id, site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Cannot remove the last server
+  if (current_config_.size() <= 1) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "cannot remove last server";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: cannot remove last server (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // TODO: In the future, this should append a configuration change entry to the
+  // Raft log and only take effect when committed. For now, we apply the change
+  // directly in memory.
+
+  // Apply config change immediately
+  current_config_.erase(static_cast<siteid_t>(server_id));
+  config_change_pending_ = true;
+  pending_config_index_ = lastLogIndex;  // Track where this change happened
+
+  // @unsafe
+  {
+    *success = true;
+    *error_msg = "";
+  }
+
+  Log_info("[RAFT-CONFIG] RemoveServer: removed server %lu from config (site %d), new config size=%zu, quorum=%zu",
+           server_id, site_id_, current_config_.size(), GetQuorumSize());
+
+  defer.reply();
 }
 
 } // namespace janus

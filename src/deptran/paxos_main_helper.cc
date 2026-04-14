@@ -79,43 +79,51 @@ void set_epoch(int v) {
 }
 
 void check_current_path() {
-    auto path = boost::filesystem::current_path();
+    auto path = std::filesystem::current_path();
     Log_info("PWD : %s", path.string().c_str());
 }
 
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
-    auto config = Config::GetConfig();
-
     int i = 0;
-    vector<std::thread> setup_ths;
+    vector<std::thread> service_setup_ths;
     for (auto& site_info : server_sites) {
-        // Capture the index by value to avoid race condition
         int thread_index = i++;
-        // Make a copy in the loop so each thread lambda captures its own snapshot
         auto site_info_for_thread = site_info;
-        setup_ths.push_back(std::thread([site_info_for_thread, thread_index, &config]() mutable {
+        service_setup_ths.push_back(std::thread([site_info_for_thread, thread_index]() mutable {
             Log_info("launching site: %x, bind address %s",
                      site_info_for_thread.id,
                      site_info_for_thread.GetBindAddress().c_str());
             auto& worker = pxs_workers_g[thread_index];
-            // start server service FIRST so it can receive connections
             worker->SetupService();
-            // THEN setup communicator (connects to other sites)
-            // Note: there is a small race window where Next() callback could fire
-            // before commo_ is set - the Next() code must handle commo_==nullptr
+        }));
+    }
+
+    Log_info("waiting for server service setup threads.");
+    for (auto& th : service_setup_ths) {
+        th.join();
+    }
+    Log_info("done waiting for server service setup threads.");
+
+    i = 0;
+    vector<std::thread> commo_setup_ths;
+    for (auto& site_info : server_sites) {
+        int thread_index = i++;
+        auto site_info_for_thread = site_info;
+        commo_setup_ths.push_back(std::thread([site_info_for_thread, thread_index]() mutable {
+            auto& worker = pxs_workers_g[thread_index];
             worker->SetupCommo();
             worker->InitQueueRead();
             Log_info("site %d launched!", (int)site_info_for_thread.id);
         }));
     }
-    Log_info("waiting for server setup threads.");
-    for (auto& th : setup_ths) {
+
+    Log_info("waiting for server communicator setup threads.");
+    for (auto& th : commo_setup_ths) {
         th.join();
     }
-    Log_info("done waiting for server setup threads.");
+    Log_info("done waiting for server communicator setup threads.");
 
     for (auto& worker : pxs_workers_g) {
-        // start communicator after all servers are running
         // setup communication between controller script - log data collection on the run.py
         worker->SetupHeartbeat();
     }
@@ -293,7 +301,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
       PaxosWorker* worker = new PaxosWorker();
       pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
       pxs_workers_g.back()->site_info_ = const_cast<Config::SiteInfo*>(&(Config::GetConfig()->SiteById(server_infos[i].id)));
-      Log_info("parition id of each Paxos group is %d, site-name: %s, site-id: %d", pxs_workers_g.back()->site_info_->partition_id_, server_infos[i].name.c_str(), server_infos[i].id);
+      Log_info("partition id of each Paxos group is %d, site-name: %s, site-id: %d", pxs_workers_g.back()->site_info_->partition_id_, server_infos[i].name.c_str(), server_infos[i].id);
       // setup frame and scheduler
       pxs_workers_g.back()->SetupBase();
     }
@@ -769,8 +777,9 @@ void* heartbeatBackground(void* arg) {
   // Arc::get() returns const T*, but proxy doesn't mutate client
   ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
   while (es->running) {
-    size_t connected = client_proxy->server_heart_beat();
-    if (connected==0){
+    ServerControlProxy::RpcServerHeartBeatRequest req;
+    auto connected = client_proxy->server_heart_beat(req);
+    if (connected.is_ok()){
       es->set_heartbeat_seen();
     }
     std::this_thread::sleep_for(10ms); // CAN'T run it too fast, otherwise error!
@@ -795,8 +804,9 @@ void* heartbeatBackground2(void* arg) {
   // Arc::get() returns const T*, but proxy doesn't mutate client
   ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
   while (es->running) {
-    size_t connected = client_proxy->server_heart_beat();
-    if (connected==0){
+    ServerControlProxy::RpcServerHeartBeatRequest req;
+    auto connected = client_proxy->server_heart_beat(req);
+    if (connected.is_ok()){
       es->set_heartbeat_seen();
     }
     std::this_thread::sleep_for(30ms); // for the heartbeat between 2 distant datacenters

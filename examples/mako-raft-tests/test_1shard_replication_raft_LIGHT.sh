@@ -19,8 +19,8 @@ script_name="$(basename "$0")"
 cleanup() {
     echo ""
     echo "Cleaning up all processes..."
-    ps aux | grep -i dbtest | grep -v grep | awk "{print \$2}" | xargs kill -9 2>/dev/null
-    ps aux | grep -i simpleRaft | grep -v grep | awk "{print \$2}" | xargs kill -9 2>/dev/null
+    pkill -9 -f "build/dbtest" 2>/dev/null || true
+    pkill -9 -f "build/simpleRaft" 2>/dev/null || true
     sleep 1
 }
 

@@ -217,7 +217,10 @@ void RccTx::CommitExecute(int rank) {
 
 void RccTx::start_ro(const SimpleCommand& cmd,
                      map<int32_t, Value> &output,
-                     DeferredReply defer) {
+                     rusty::Function<void()> done) {
+  (void)cmd;
+  (void)output;
+  (void)done;
   verify(0);
 }
 

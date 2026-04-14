@@ -3,6 +3,7 @@
 #include "rrr.hpp"
 
 #include <errno.h>
+#include <memory>
 
 // #include <math.h>
 
@@ -31,17 +32,261 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
 
 class BenchmarkService: public rrr::Service {
 public:
+    // Typed request/response scaffolding generated from RPC signature lists.
+    struct RpcFastPrimeRequest {
+        rrr::i32 n;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastPrimeRequest& o) {
+        m << o.n;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastPrimeRequest& o) {
+        m >> o.n;
+        return m;
+    }
+
+    struct RpcFastPrimeResponse {
+        rrr::i8 flag;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastPrimeResponse& o) {
+        m << o.flag;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastPrimeResponse& o) {
+        m >> o.flag;
+        return m;
+    }
+
+    struct RpcFastDotProdRequest {
+        point3 p1;
+        point3 p2;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastDotProdRequest& o) {
+        m << o.p1;
+        m << o.p2;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastDotProdRequest& o) {
+        m >> o.p1;
+        m >> o.p2;
+        return m;
+    }
+
+    struct RpcFastDotProdResponse {
+        double v;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastDotProdResponse& o) {
+        m << o.v;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastDotProdResponse& o) {
+        m >> o.v;
+        return m;
+    }
+
+    struct RpcFastAddRequest {
+        rrr::v32 a;
+        rrr::v32 b;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastAddRequest& o) {
+        m << o.a;
+        m << o.b;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAddRequest& o) {
+        m >> o.a;
+        m >> o.b;
+        return m;
+    }
+
+    struct RpcFastAddResponse {
+        rrr::v32 a_add_b;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastAddResponse& o) {
+        m << o.a_add_b;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAddResponse& o) {
+        m >> o.a_add_b;
+        return m;
+    }
+
+    struct RpcFastNopRequest {
+        std::string in_0;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastNopRequest& o) {
+        m << o.in_0;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastNopRequest& o) {
+        m >> o.in_0;
+        return m;
+    }
+
+    struct RpcFastNopResponse {
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastNopResponse& o) {
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastNopResponse& o) {
+        return m;
+    }
+
+    struct RpcFastVecRequest {
+        rrr::i32 n;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastVecRequest& o) {
+        m << o.n;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastVecRequest& o) {
+        m >> o.n;
+        return m;
+    }
+
+    struct RpcFastVecResponse {
+        std::vector<rrr::i64> v;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastVecResponse& o) {
+        m << o.v;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastVecResponse& o) {
+        m >> o.v;
+        return m;
+    }
+
+    struct RpcPrimeRequest {
+        rrr::i32 n;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrimeRequest& o) {
+        m << o.n;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrimeRequest& o) {
+        m >> o.n;
+        return m;
+    }
+
+    struct RpcPrimeResponse {
+        rrr::i8 flag;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrimeResponse& o) {
+        m << o.flag;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrimeResponse& o) {
+        m >> o.flag;
+        return m;
+    }
+
+    struct RpcDotProdRequest {
+        point3 p1;
+        point3 p2;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDotProdRequest& o) {
+        m << o.p1;
+        m << o.p2;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDotProdRequest& o) {
+        m >> o.p1;
+        m >> o.p2;
+        return m;
+    }
+
+    struct RpcDotProdResponse {
+        double v;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDotProdResponse& o) {
+        m << o.v;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDotProdResponse& o) {
+        m >> o.v;
+        return m;
+    }
+
+    struct RpcAddRequest {
+        rrr::v32 a;
+        rrr::v32 b;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAddRequest& o) {
+        m << o.a;
+        m << o.b;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddRequest& o) {
+        m >> o.a;
+        m >> o.b;
+        return m;
+    }
+
+    struct RpcAddResponse {
+        rrr::v32 a_add_b;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAddResponse& o) {
+        m << o.a_add_b;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddResponse& o) {
+        m >> o.a_add_b;
+        return m;
+    }
+
+    struct RpcNopRequest {
+        std::string in_0;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcNopRequest& o) {
+        m << o.in_0;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNopRequest& o) {
+        m >> o.in_0;
+        return m;
+    }
+
+    struct RpcNopResponse {
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcNopResponse& o) {
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNopResponse& o) {
+        return m;
+    }
+
+    struct RpcSleepRequest {
+        double sec;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSleepRequest& o) {
+        m << o.sec;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSleepRequest& o) {
+        m >> o.sec;
+        return m;
+    }
+
+    struct RpcSleepResponse {
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSleepResponse& o) {
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSleepResponse& o) {
+        return m;
+    }
+
     enum {
-        FAST_PRIME = 0x2a7259ef,
-        FAST_DOT_PROD = 0x4dd80f8c,
-        FAST_ADD = 0x5db68837,
-        FAST_NOP = 0x21bfc0ab,
-        FAST_VEC = 0x5322e011,
-        PRIME = 0x3ec8d31a,
-        DOT_PROD = 0x53be0a74,
-        ADD = 0x6008b4f5,
-        NOP = 0x12d59407,
-        SLEEP = 0x364f2762,
+        FAST_PRIME = 0x4f4daa5a,
+        FAST_DOT_PROD = 0x36ff5226,
+        FAST_ADD = 0x3a24232d,
+        FAST_NOP = 0x4b921bd9,
+        FAST_VEC = 0x23928fcb,
+        PRIME = 0x4e81b3fc,
+        DOT_PROD = 0x1f7d12f4,
+        ADD = 0x1e8ff45b,
+        NOP = 0x327203ee,
+        SLEEP = 0x22cb72f2,
     };
     // Registers RPC IDs with server using service index
     // @safe
@@ -107,157 +352,250 @@ public:
         default: break;  // Unknown RPC ID, ignore
         }
     }
+    // typed service signatures
+    // @safe
+    virtual rusty::Result<RpcFastPrimeResponse, rrr::i32> fast_prime(const RpcFastPrimeRequest& req);
+    // @safe
+    virtual rusty::Result<RpcFastDotProdResponse, rrr::i32> fast_dot_prod(const RpcFastDotProdRequest& req);
+    // @safe
+    virtual rusty::Result<RpcFastAddResponse, rrr::i32> fast_add(const RpcFastAddRequest& req);
+    // @safe
+    virtual rusty::Result<RpcFastNopResponse, rrr::i32> fast_nop(const RpcFastNopRequest& req);
+    // @safe
+    virtual rusty::Result<RpcFastVecResponse, rrr::i32> fast_vec(const RpcFastVecRequest& req);
+    // @safe
+    virtual rusty::Result<RpcPrimeResponse, rrr::i32> prime(const RpcPrimeRequest& req);
+    // @safe
+    virtual rusty::Result<RpcDotProdResponse, rrr::i32> dot_prod(const RpcDotProdRequest& req);
+    // @safe
+    virtual rusty::Result<RpcAddResponse, rrr::i32> add(const RpcAddRequest& req);
+    // @safe
+    virtual rusty::Result<RpcNopResponse, rrr::i32> nop(const RpcNopRequest& req);
+    // @safe
+    virtual rusty::Result<RpcSleepResponse, rrr::i32> sleep(const RpcSleepRequest& req);
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
-    virtual void fast_prime(const rrr::i32& n, rrr::i8* flag);
-    virtual void fast_dot_prod(const point3& p1, const point3& p2, double* v);
-    virtual void fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b);
-    virtual void fast_nop(const std::string&);
-    virtual void fast_vec(const rrr::i32& n, std::vector<rrr::i64>* v);
-    virtual void prime(const rrr::i32& n, rrr::i8* flag);
-    virtual void dot_prod(const point3& p1, const point3& p2, double* v);
-    virtual void add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b);
-    virtual void nop(const std::string&);
-    virtual void sleep(const double& sec);
 private:
+    // @safe
     void __fast_prime__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        rrr::i32 in_0;
-        req->m >> in_0;
-        rrr::i8 out_0;
-        this->fast_prime(in_0, &out_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                m << out_0;
-            });
+        // @unsafe
+        {
+            RpcFastPrimeRequest __typed_req__;
+            req->m >> __typed_req__.n;
+            auto __typed_result__ = this->fast_prime(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                        m << __typed_resp__.flag;
+                    });
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __fast_dot_prod__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        point3 in_0;
-        req->m >> in_0;
-        point3 in_1;
-        req->m >> in_1;
-        double out_0;
-        this->fast_dot_prod(in_0, in_1, &out_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                m << out_0;
-            });
+        // @unsafe
+        {
+            RpcFastDotProdRequest __typed_req__;
+            req->m >> __typed_req__.p1;
+            req->m >> __typed_req__.p2;
+            auto __typed_result__ = this->fast_dot_prod(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                        m << __typed_resp__.v;
+                    });
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __fast_add__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        rrr::v32 in_0;
-        req->m >> in_0;
-        rrr::v32 in_1;
-        req->m >> in_1;
-        rrr::v32 out_0;
-        this->fast_add(in_0, in_1, &out_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                m << out_0;
-            });
+        // @unsafe
+        {
+            RpcFastAddRequest __typed_req__;
+            req->m >> __typed_req__.a;
+            req->m >> __typed_req__.b;
+            auto __typed_result__ = this->fast_add(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                        m << __typed_resp__.a_add_b;
+                    });
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __fast_nop__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        std::string in_0;
-        req->m >> in_0;
-        this->fast_nop(in_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+        // @unsafe
+        {
+            RpcFastNopRequest __typed_req__;
+            req->m >> __typed_req__.in_0;
+            auto __typed_result__ = this->fast_nop(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    (void)__typed_resp__;
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __fast_vec__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        rrr::i32 in_0;
-        req->m >> in_0;
-        std::vector<rrr::i64> out_0;
-        this->fast_vec(in_0, &out_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                m << out_0;
-            });
+        // @unsafe
+        {
+            RpcFastVecRequest __typed_req__;
+            req->m >> __typed_req__.n;
+            auto __typed_result__ = this->fast_vec(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                        m << __typed_resp__.v;
+                    });
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __prime__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        rrr::i32 in_0;
-        req->m >> in_0;
-        rrr::i8 out_0;
-        this->prime(in_0, &out_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                m << out_0;
-            });
+        // @unsafe
+        {
+            RpcPrimeRequest __typed_req__;
+            req->m >> __typed_req__.n;
+            auto __typed_result__ = this->prime(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                        m << __typed_resp__.flag;
+                    });
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __dot_prod__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        point3 in_0;
-        req->m >> in_0;
-        point3 in_1;
-        req->m >> in_1;
-        double out_0;
-        this->dot_prod(in_0, in_1, &out_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                m << out_0;
-            });
+        // @unsafe
+        {
+            RpcDotProdRequest __typed_req__;
+            req->m >> __typed_req__.p1;
+            req->m >> __typed_req__.p2;
+            auto __typed_result__ = this->dot_prod(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                        m << __typed_resp__.v;
+                    });
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __add__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        rrr::v32 in_0;
-        req->m >> in_0;
-        rrr::v32 in_1;
-        req->m >> in_1;
-        rrr::v32 out_0;
-        this->add(in_0, in_1, &out_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                m << out_0;
-            });
+        // @unsafe
+        {
+            RpcAddRequest __typed_req__;
+            req->m >> __typed_req__.a;
+            req->m >> __typed_req__.b;
+            auto __typed_result__ = this->add(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                        m << __typed_resp__.a_add_b;
+                    });
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __nop__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        std::string in_0;
-        req->m >> in_0;
-        this->nop(in_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+        // @unsafe
+        {
+            RpcNopRequest __typed_req__;
+            req->m >> __typed_req__.in_0;
+            auto __typed_result__ = this->nop(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    (void)__typed_resp__;
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
+    // @safe
     void __sleep__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        double in_0;
-        req->m >> in_0;
-        this->sleep(in_0);
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+        // @unsafe
+        {
+            RpcSleepRequest __typed_req__;
+            req->m >> __typed_req__.sec;
+            auto __typed_result__ = this->sleep(__typed_req__);
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                if (__typed_result__.is_err()) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                } else {
+                    auto __typed_resp__ = __typed_result__.unwrap();
+                    (void)__typed_resp__;
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                }
+            }
+            // req automatically cleaned up by rusty::Box
         }
-        // req automatically cleaned up by rusty::Box
     }
 };
 
@@ -266,180 +604,457 @@ protected:
     rrr::Client* __cl__;
 public:
     BenchmarkProxy(rrr::Client* cl): __cl__(cl) { }
-    rrr::FutureResult async_fast_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << n;
+    // Alias typed request/response structs from the sibling Service class.
+    using RpcFastPrimeRequest = BenchmarkService::RpcFastPrimeRequest;
+    using RpcFastPrimeResponse = BenchmarkService::RpcFastPrimeResponse;
+    using RpcFastDotProdRequest = BenchmarkService::RpcFastDotProdRequest;
+    using RpcFastDotProdResponse = BenchmarkService::RpcFastDotProdResponse;
+    using RpcFastAddRequest = BenchmarkService::RpcFastAddRequest;
+    using RpcFastAddResponse = BenchmarkService::RpcFastAddResponse;
+    using RpcFastNopRequest = BenchmarkService::RpcFastNopRequest;
+    using RpcFastNopResponse = BenchmarkService::RpcFastNopResponse;
+    using RpcFastVecRequest = BenchmarkService::RpcFastVecRequest;
+    using RpcFastVecResponse = BenchmarkService::RpcFastVecResponse;
+    using RpcPrimeRequest = BenchmarkService::RpcPrimeRequest;
+    using RpcPrimeResponse = BenchmarkService::RpcPrimeResponse;
+    using RpcDotProdRequest = BenchmarkService::RpcDotProdRequest;
+    using RpcDotProdResponse = BenchmarkService::RpcDotProdResponse;
+    using RpcAddRequest = BenchmarkService::RpcAddRequest;
+    using RpcAddResponse = BenchmarkService::RpcAddResponse;
+    using RpcNopRequest = BenchmarkService::RpcNopRequest;
+    using RpcNopResponse = BenchmarkService::RpcNopResponse;
+    using RpcSleepRequest = BenchmarkService::RpcSleepRequest;
+    using RpcSleepResponse = BenchmarkService::RpcSleepResponse;
+    class fast_primeTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit fast_primeTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcFastPrimeResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcFastPrimeResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.flag;
+            return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<fast_primeTypedFuture, rrr::i32> async_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.n;
         });
-    }
-    rrr::i32 fast_prime(const rrr::i32& n, rrr::i8* flag) {
-        auto __fu_result__ = this->async_fast_prime(n);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<fast_primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        if (__ret__ == 0) {
-            __fu__->get_reply() >> *flag;
-        }
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<fast_primeTypedFuture, rrr::i32>::Ok(fast_primeTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_fast_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << p1;
-            __m__ << p2;
+    rusty::Result<RpcFastPrimeResponse, rrr::i32> fast_prime(const RpcFastPrimeRequest& req) {
+        auto __typed_fu_result__ = this->async_fast_prime(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class fast_dot_prodTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit fast_dot_prodTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcFastDotProdResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcFastDotProdResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.v;
+            return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<fast_dot_prodTypedFuture, rrr::i32> async_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.p1;
+            __m__ << req.p2;
         });
-    }
-    rrr::i32 fast_dot_prod(const point3& p1, const point3& p2, double* v) {
-        auto __fu_result__ = this->async_fast_dot_prod(p1, p2);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        if (__ret__ == 0) {
-            __fu__->get_reply() >> *v;
-        }
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Ok(fast_dot_prodTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_fast_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << a;
-            __m__ << b;
+    rusty::Result<RpcFastDotProdResponse, rrr::i32> fast_dot_prod(const RpcFastDotProdRequest& req) {
+        auto __typed_fu_result__ = this->async_fast_dot_prod(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class fast_addTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit fast_addTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcFastAddResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcFastAddResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcFastAddResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.a_add_b;
+            return rusty::Result<RpcFastAddResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<fast_addTypedFuture, rrr::i32> async_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.a;
+            __m__ << req.b;
         });
-    }
-    rrr::i32 fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-        auto __fu_result__ = this->async_fast_add(a, b);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<fast_addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        if (__ret__ == 0) {
-            __fu__->get_reply() >> *a_add_b;
-        }
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<fast_addTypedFuture, rrr::i32>::Ok(fast_addTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_fast_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << in_0;
+    rusty::Result<RpcFastAddResponse, rrr::i32> fast_add(const RpcFastAddRequest& req) {
+        auto __typed_fu_result__ = this->async_fast_add(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcFastAddResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class fast_nopTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit fast_nopTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcFastNopResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcFastNopResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcFastNopResponse __typed_resp__;
+            return rusty::Result<RpcFastNopResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<fast_nopTypedFuture, rrr::i32> async_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.in_0;
         });
-    }
-    rrr::i32 fast_nop(const std::string& in_0) {
-        auto __fu_result__ = this->async_fast_nop(in_0);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<fast_nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<fast_nopTypedFuture, rrr::i32>::Ok(fast_nopTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_fast_vec(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << n;
+    rusty::Result<RpcFastNopResponse, rrr::i32> fast_nop(const RpcFastNopRequest& req) {
+        auto __typed_fu_result__ = this->async_fast_nop(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcFastNopResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class fast_vecTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit fast_vecTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcFastVecResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcFastVecResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcFastVecResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.v;
+            return rusty::Result<RpcFastVecResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<fast_vecTypedFuture, rrr::i32> async_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.n;
         });
-    }
-    rrr::i32 fast_vec(const rrr::i32& n, std::vector<rrr::i64>* v) {
-        auto __fu_result__ = this->async_fast_vec(n);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<fast_vecTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        if (__ret__ == 0) {
-            __fu__->get_reply() >> *v;
-        }
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<fast_vecTypedFuture, rrr::i32>::Ok(fast_vecTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << n;
+    rusty::Result<RpcFastVecResponse, rrr::i32> fast_vec(const RpcFastVecRequest& req) {
+        auto __typed_fu_result__ = this->async_fast_vec(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcFastVecResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class primeTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit primeTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcPrimeResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcPrimeResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcPrimeResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.flag;
+            return rusty::Result<RpcPrimeResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<primeTypedFuture, rrr::i32> async_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.n;
         });
-    }
-    rrr::i32 prime(const rrr::i32& n, rrr::i8* flag) {
-        auto __fu_result__ = this->async_prime(n);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        if (__ret__ == 0) {
-            __fu__->get_reply() >> *flag;
-        }
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<primeTypedFuture, rrr::i32>::Ok(primeTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << p1;
-            __m__ << p2;
+    rusty::Result<RpcPrimeResponse, rrr::i32> prime(const RpcPrimeRequest& req) {
+        auto __typed_fu_result__ = this->async_prime(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcPrimeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class dot_prodTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit dot_prodTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcDotProdResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcDotProdResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcDotProdResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.v;
+            return rusty::Result<RpcDotProdResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<dot_prodTypedFuture, rrr::i32> async_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.p1;
+            __m__ << req.p2;
         });
-    }
-    rrr::i32 dot_prod(const point3& p1, const point3& p2, double* v) {
-        auto __fu_result__ = this->async_dot_prod(p1, p2);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        if (__ret__ == 0) {
-            __fu__->get_reply() >> *v;
-        }
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<dot_prodTypedFuture, rrr::i32>::Ok(dot_prodTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << a;
-            __m__ << b;
+    rusty::Result<RpcDotProdResponse, rrr::i32> dot_prod(const RpcDotProdRequest& req) {
+        auto __typed_fu_result__ = this->async_dot_prod(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcDotProdResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class addTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit addTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcAddResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcAddResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcAddResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.a_add_b;
+            return rusty::Result<RpcAddResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<addTypedFuture, rrr::i32> async_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.a;
+            __m__ << req.b;
         });
-    }
-    rrr::i32 add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-        auto __fu_result__ = this->async_add(a, b);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        if (__ret__ == 0) {
-            __fu__->get_reply() >> *a_add_b;
-        }
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<addTypedFuture, rrr::i32>::Ok(addTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << in_0;
+    rusty::Result<RpcAddResponse, rrr::i32> add(const RpcAddRequest& req) {
+        auto __typed_fu_result__ = this->async_add(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcAddResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class nopTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit nopTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcNopResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcNopResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcNopResponse __typed_resp__;
+            return rusty::Result<RpcNopResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<nopTypedFuture, rrr::i32> async_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.in_0;
         });
-    }
-    rrr::i32 nop(const std::string& in_0) {
-        auto __fu_result__ = this->async_nop(in_0);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<nopTypedFuture, rrr::i32>::Ok(nopTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::FutureResult async_sleep(const double& sec, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << sec;
+    rusty::Result<RpcNopResponse, rrr::i32> nop(const RpcNopRequest& req) {
+        auto __typed_fu_result__ = this->async_nop(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcNopResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class sleepTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit sleepTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcSleepResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcSleepResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcSleepResponse __typed_resp__;
+            return rusty::Result<RpcSleepResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<sleepTypedFuture, rrr::i32> async_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.sec;
         });
-    }
-    rrr::i32 sleep(const double& sec) {
-        auto __fu_result__ = this->async_sleep(sec);
         if (__fu_result__.is_err()) {
-            return __fu_result__.unwrap_err();  // Return error code
+            return rusty::Result<sleepTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        auto __fu__ = __fu_result__.unwrap();
-        rrr::i32 __ret__ = __fu__->get_error_code();
-        // Arc auto-released
-        return __ret__;
+        return rusty::Result<sleepTypedFuture, rrr::i32>::Ok(sleepTypedFuture(__fu_result__.unwrap()));
+    }
+    rusty::Result<RpcSleepResponse, rrr::i32> sleep(const RpcSleepRequest& req) {
+        auto __typed_fu_result__ = this->async_sleep(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcSleepResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
     }
 };
 
@@ -448,31 +1063,6 @@ public:
 
 // optional %%: marks footer section, code below will be copied into end of generated C++ header
 
-namespace benchmark {
-
-inline void BenchmarkService::fast_dot_prod(const point3& p1, const point3& p2, double* v) {
-    *v = p1.x * p2.x + p1.y * p2.y + p1.z * p2.z;
-}
-
-inline void BenchmarkService::fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-    a_add_b->set(a.get() + b.get());
-}
-
-inline void BenchmarkService::prime(const rrr::i32& n, rrr::i8* flag) {
-    return fast_prime(n, flag);
-}
-
-inline void BenchmarkService::dot_prod(const point3& p1, const point3& p2, double *v) {
-    *v = p1.x * p2.x + p1.y * p2.y + p1.z * p2.z;
-}
-
-inline void BenchmarkService::add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-    a_add_b->set(a.get() + b.get());
-}
-
-inline void BenchmarkService::fast_nop(const std::string& str) {
-    nop(str);
-}
-
-} // namespace benchmark
+// BenchmarkService methods are implemented in test/benchmark_service.cc using
+// typed Rpc*Request/Rpc*Response signatures.
 

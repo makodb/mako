@@ -21,6 +21,228 @@
 #include "../bench/rw/workload.h" //<copilot+ kv debug>
 
 namespace janus {
+void ClassicServiceImpl::ReElect(const ClassicService::RpcReElectRequest& req, ClassicService::RpcReElectResponse& resp, rrr::DeferredReply defer) {
+  (void)req;
+  this->ReElect(&resp.success, std::move(defer));
+}
+
+void ClassicServiceImpl::RuleSpeculativeExecute(const ClassicService::RpcRuleSpeculativeExecuteRequest& req, ClassicService::RpcRuleSpeculativeExecuteResponse& resp, rrr::DeferredReply defer) {
+  this->RuleSpeculativeExecute(req.md, &resp.accepted, &resp.result, &resp.is_leader, std::move(defer));
+}
+
+void ClassicServiceImpl::Dispatch(const ClassicService::RpcDispatchRequest& req, ClassicService::RpcDispatchResponse& resp, rrr::DeferredReply defer) {
+  this->Dispatch(req.tid, req.dep_id, req.cmd, &resp.res, &resp.output, &resp.coro_id, &resp.view_data, std::move(defer));
+}
+
+void ClassicServiceImpl::FailoverPauseSocketOut(const ClassicService::RpcFailoverPauseSocketOutRequest& req, ClassicService::RpcFailoverPauseSocketOutResponse& resp, rrr::DeferredReply defer) {
+  (void)req;
+  this->FailoverPauseSocketOut(&resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::FailoverResumeSocketOut(const ClassicService::RpcFailoverResumeSocketOutRequest& req, ClassicService::RpcFailoverResumeSocketOutResponse& resp, rrr::DeferredReply defer) {
+  (void)req;
+  this->FailoverResumeSocketOut(&resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::SimpleCmd(const ClassicService::RpcSimpleCmdRequest& req, ClassicService::RpcSimpleCmdResponse& resp, rrr::DeferredReply defer) {
+  this->SimpleCmd(req.cmd, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::IsLeader(const ClassicService::RpcIsLeaderRequest& req, ClassicService::RpcIsLeaderResponse& resp, rrr::DeferredReply defer) {
+  this->IsLeader(req.cur_pause, &resp.is_leader, std::move(defer));
+}
+
+void ClassicServiceImpl::IsFPGALeader(const ClassicService::RpcIsFPGALeaderRequest& req, ClassicService::RpcIsFPGALeaderResponse& resp, rrr::DeferredReply defer) {
+  this->IsFPGALeader(req.cur_pause, &resp.is_leader, std::move(defer));
+}
+
+void ClassicServiceImpl::Prepare(const ClassicService::RpcPrepareRequest& req, ClassicService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
+  this->Prepare(req.tid, req.sids, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, std::move(defer));
+}
+
+void ClassicServiceImpl::Commit(const ClassicService::RpcCommitRequest& req, ClassicService::RpcCommitResponse& resp, rrr::DeferredReply defer) {
+  this->Commit(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+}
+
+void ClassicServiceImpl::Abort(const ClassicService::RpcAbortRequest& req, ClassicService::RpcAbortResponse& resp, rrr::DeferredReply defer) {
+  this->Abort(req.tid, req.dep_id, &resp.res, &resp.slow, &resp.coro_id, &resp.profile, &resp.view_data, std::move(defer));
+}
+
+void ClassicServiceImpl::EarlyAbort(const ClassicService::RpcEarlyAbortRequest& req, ClassicService::RpcEarlyAbortResponse& resp, rrr::DeferredReply defer) {
+  this->EarlyAbort(req.tid, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::rpc_null(const ClassicService::RpcRpcNullRequest& req, ClassicService::RpcRpcNullResponse& resp, rrr::DeferredReply defer) {
+  (void)req;
+  (void)resp;
+  this->rpc_null(std::move(defer));
+}
+
+void ClassicServiceImpl::UpgradeEpoch(const ClassicService::RpcUpgradeEpochRequest& req, ClassicService::RpcUpgradeEpochResponse& resp, rrr::DeferredReply defer) {
+  this->UpgradeEpoch(req.curr_epoch, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::TruncateEpoch(const ClassicService::RpcTruncateEpochRequest& req, ClassicService::RpcTruncateEpochResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->TruncateEpoch(req.old_epoch, std::move(defer));
+}
+
+void ClassicServiceImpl::TapirAccept(const ClassicService::RpcTapirAcceptRequest& req, ClassicService::RpcTapirAcceptResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->TapirAccept(req.cmd_id, req.ballot, req.decision, std::move(defer));
+}
+
+void ClassicServiceImpl::TapirFastAccept(const ClassicService::RpcTapirFastAcceptRequest& req, ClassicService::RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->TapirFastAccept(req.cmd_id, req.txn_cmds, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->TapirDecide(req.cmd_id, req.commit, std::move(defer));
+}
+
+void ClassicServiceImpl::CarouselReadAndPrepare(const ClassicService::RpcCarouselReadAndPrepareRequest& req, ClassicService::RpcCarouselReadAndPrepareResponse& resp, rrr::DeferredReply defer) {
+  this->CarouselReadAndPrepare(req.tid, req.cmd, req.leader, &resp.res, &resp.output, std::move(defer));
+}
+
+void ClassicServiceImpl::CarouselAccept(const ClassicService::RpcCarouselAcceptRequest& req, ClassicService::RpcCarouselAcceptResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->CarouselAccept(req.cmd_id, req.ballot, req.decision, std::move(defer));
+}
+
+void ClassicServiceImpl::CarouselFastAccept(const ClassicService::RpcCarouselFastAcceptRequest& req, ClassicService::RpcCarouselFastAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->CarouselFastAccept(req.cmd_id, req.txn_cmds, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::CarouselDecide(const ClassicService::RpcCarouselDecideRequest& req, ClassicService::RpcCarouselDecideResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->CarouselDecide(req.cmd_id, req.commit, std::move(defer));
+}
+
+void ClassicServiceImpl::RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) {
+  this->RccDispatch(req.cmd, &resp.res, &resp.output, &resp.md_graph, std::move(defer));
+}
+
+void ClassicServiceImpl::RccFinish(const ClassicService::RpcRccFinishRequest& req, ClassicService::RpcRccFinishResponse& resp, rrr::DeferredReply defer) {
+  this->RccFinish(req.id, req.md_graph, &resp.outputs, std::move(defer));
+}
+
+void ClassicServiceImpl::RccInquire(const ClassicService::RpcRccInquireRequest& req, ClassicService::RpcRccInquireResponse& resp, rrr::DeferredReply defer) {
+  this->RccInquire(req.txn_id, req.rank, &resp.out_0, std::move(defer));
+}
+
+void ClassicServiceImpl::RccDispatchRo(const ClassicService::RpcRccDispatchRoRequest& req, ClassicService::RpcRccDispatchRoResponse& resp, rrr::DeferredReply defer) {
+  this->RccDispatchRo(req.cmd, &resp.output, std::move(defer));
+}
+
+void ClassicServiceImpl::RccInquireValidation(const ClassicService::RpcRccInquireValidationRequest& req, ClassicService::RpcRccInquireValidationResponse& resp, rrr::DeferredReply defer) {
+  this->RccInquireValidation(req.tx_id, req.rank, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::RccNotifyGlobalValidation(const ClassicService::RpcRccNotifyGlobalValidationRequest& req, ClassicService::RpcRccNotifyGlobalValidationResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->RccNotifyGlobalValidation(req.tx_id, req.rank, req.res, std::move(defer));
+}
+
+void ClassicServiceImpl::JanusDispatch(const ClassicService::RpcJanusDispatchRequest& req, ClassicService::RpcJanusDispatchResponse& resp, rrr::DeferredReply defer) {
+  this->JanusDispatch(req.cmd, &resp.res, &resp.output, &resp.ret_graph, std::move(defer));
+}
+
+void ClassicServiceImpl::JanusCommit(const ClassicService::RpcJanusCommitRequest& req, ClassicService::RpcJanusCommitResponse& resp, rrr::DeferredReply defer) {
+  this->JanusCommit(req.id, req.rank, req.need_validation, req.graph, &resp.res, &resp.output, std::move(defer));
+}
+
+void ClassicServiceImpl::RccCommit(const ClassicService::RpcRccCommitRequest& req, ClassicService::RpcRccCommitResponse& resp, rrr::DeferredReply defer) {
+  this->RccCommit(req.id, req.rank, req.need_validation, req.parents, &resp.res, &resp.output, std::move(defer));
+}
+
+void ClassicServiceImpl::JanusCommitWoGraph(const ClassicService::RpcJanusCommitWoGraphRequest& req, ClassicService::RpcJanusCommitWoGraphResponse& resp, rrr::DeferredReply defer) {
+  this->JanusCommitWoGraph(req.id, req.rank, req.need_validation, &resp.res, &resp.output, std::move(defer));
+}
+
+void ClassicServiceImpl::JanusInquire(const ClassicService::RpcJanusInquireRequest& req, ClassicService::RpcJanusInquireResponse& resp, rrr::DeferredReply defer) {
+  this->JanusInquire(req.epoch, req.txn_id, &resp.ret_graph, std::move(defer));
+}
+
+void ClassicServiceImpl::RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req, ClassicService::RpcRccPreAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->RccPreAccept(req.txn_id, req.rank, req.cmd, &resp.res, &resp.x, std::move(defer));
+}
+
+void ClassicServiceImpl::JanusPreAccept(const ClassicService::RpcJanusPreAcceptRequest& req, ClassicService::RpcJanusPreAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->JanusPreAccept(req.txn_id, req.rank, req.cmd, req.graph, &resp.res, &resp.ret_graph, std::move(defer));
+}
+
+void ClassicServiceImpl::JanusPreAcceptWoGraph(const ClassicService::RpcJanusPreAcceptWoGraphRequest& req, ClassicService::RpcJanusPreAcceptWoGraphResponse& resp, rrr::DeferredReply defer) {
+  this->JanusPreAcceptWoGraph(req.txn_id, req.rank, req.cmd, &resp.res, &resp.ret_graph, std::move(defer));
+}
+
+void ClassicServiceImpl::RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->RccAccept(req.txn_id, req.rank, req.ballot, req.p, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::JanusAccept(const ClassicService::RpcJanusAcceptRequest& req, ClassicService::RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->JanusAccept(req.txn_id, req.rank, req.ballot, req.graph, &resp.res, std::move(defer));
+}
+
+void ClassicServiceImpl::PreAcceptFebruus(const ClassicService::RpcPreAcceptFebruusRequest& req, ClassicService::RpcPreAcceptFebruusResponse& resp, rrr::DeferredReply defer) {
+  this->PreAcceptFebruus(req.tx_id, &resp.ret, &resp.timestamp, std::move(defer));
+}
+
+void ClassicServiceImpl::AcceptFebruus(const ClassicService::RpcAcceptFebruusRequest& req, ClassicService::RpcAcceptFebruusResponse& resp, rrr::DeferredReply defer) {
+  this->AcceptFebruus(req.tx_id, req.ballot, req.timestamp, &resp.ret, std::move(defer));
+}
+
+void ClassicServiceImpl::CommitFebruus(const ClassicService::RpcCommitFebruusRequest& req, ClassicService::RpcCommitFebruusResponse& resp, rrr::DeferredReply defer) {
+  this->CommitFebruus(req.tx_id, req.timestamp, &resp.ret, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->JetpackBeginRecovery(req.old_view, req.new_view, req.new_view_id, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackPullIdSet(const ClassicService::RpcJetpackPullIdSetRequest& req, ClassicService::RpcJetpackPullIdSetResponse& resp, rrr::DeferredReply defer) {
+  this->JetpackPullIdSet(req.jepoch, req.oepoch, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.id_set, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackPullCmd(const ClassicService::RpcJetpackPullCmdRequest& req, ClassicService::RpcJetpackPullCmdResponse& resp, rrr::DeferredReply defer) {
+  this->JetpackPullCmd(req.jepoch, req.oepoch, req.key_batch, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.cmd_batch, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackRecordCmd(const ClassicService::RpcJetpackRecordCmdRequest& req, ClassicService::RpcJetpackRecordCmdResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->JetpackRecordCmd(req.jepoch, req.oepoch, req.sid, req.rid, req.cmd_batch, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackPrepare(const ClassicService::RpcJetpackPrepareRequest& req, ClassicService::RpcJetpackPrepareResponse& resp, rrr::DeferredReply defer) {
+  this->JetpackPrepare(req.jepoch, req.oepoch, req.max_seen_ballot, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.reply_max_seen_ballot, &resp.accepted_ballot, &resp.replied_sid, &resp.replied_set_size, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackAccept(const ClassicService::RpcJetpackAcceptRequest& req, ClassicService::RpcJetpackAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->JetpackAccept(req.jepoch, req.oepoch, req.max_seen_ballot, req.sid, req.set_size, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.reply_max_seen_ballot, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackCommit(const ClassicService::RpcJetpackCommitRequest& req, ClassicService::RpcJetpackCommitResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->JetpackCommit(req.jepoch, req.oepoch, req.sid, req.set_size, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackPullRecSetIns(const ClassicService::RpcJetpackPullRecSetInsRequest& req, ClassicService::RpcJetpackPullRecSetInsResponse& resp, rrr::DeferredReply defer) {
+  this->JetpackPullRecSetIns(req.jepoch, req.oepoch, req.sid, req.rid, &resp.ok, &resp.reply_jepoch, &resp.reply_oepoch, &resp.reply_old_view, &resp.reply_new_view, &resp.cmd, std::move(defer));
+}
+
+void ClassicServiceImpl::JetpackFinishRecovery(const ClassicService::RpcJetpackFinishRecoveryRequest& req, ClassicService::RpcJetpackFinishRecoveryResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->JetpackFinishRecovery(req.oepoch, std::move(defer));
+}
+
+void ClassicServiceImpl::MsgString(const ClassicService::RpcMsgStringRequest& req, ClassicService::RpcMsgStringResponse& resp, rrr::DeferredReply defer) {
+  this->MsgString(req.arg, &resp.ret, std::move(defer));
+}
+
+void ClassicServiceImpl::MsgMarshall(const ClassicService::RpcMsgMarshallRequest& req, ClassicService::RpcMsgMarshallResponse& resp, rrr::DeferredReply defer) {
+  this->MsgMarshall(req.arg, &resp.ret, std::move(defer));
+}
 
 ClassicServiceImpl::ClassicServiceImpl(TxLogServer* sched,
                                        rusty::Arc<rrr::PollThread> poll_thread_worker)
@@ -510,7 +732,7 @@ void ClassicServiceImpl::RccDispatchRo(const SimpleCommand& cmd,
   verify(0);
   auto tx = dtxn_sched_->GetOrCreateTx(cmd.root_id_, true);
   auto dtxn = dynamic_pointer_cast<RccTx>(tx);
-  dtxn->start_ro(cmd, *output, std::move(defer));
+  dtxn->start_ro(cmd, *output, [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void ClassicServiceImpl::RccInquireValidation(

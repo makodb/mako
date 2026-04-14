@@ -12,9 +12,7 @@
 #include <string>
 #include <cstdint>
 
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
-#include <rocksdb/write_batch.h>
+#include <rocksdb/c.h>
 
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
@@ -37,13 +35,13 @@ namespace janus {
 class ConfigStore {
 private:
     // Database handle (raw pointer, RocksDB manages memory)
-    rocksdb::DB* db_{nullptr};  // @unsafe - Raw pointer managed by RocksDB API
+    rocksdb_t* db_{nullptr};  // @unsafe - Raw pointer managed by RocksDB C API
     std::string db_path_;
 
     // Configuration
-    rocksdb::Options options_;
-    rocksdb::WriteOptions write_options_;
-    rocksdb::ReadOptions read_options_;
+    rocksdb_options_t* options_{nullptr};
+    rocksdb_writeoptions_t* write_options_{nullptr};
+    rocksdb_readoptions_t* read_options_{nullptr};
 
     // State
     rusty::Cell<bool> is_open_{false};

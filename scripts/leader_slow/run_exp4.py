@@ -717,7 +717,7 @@ class ServerController(object):
         ps_output = ps.ps(hosts, "deptran_server")
         logger.debug("Existing Server or Client After Kill:\n{}".format(ps_output))
         # sync tmp folder
-        subprocess.run(["bash", "batch_op.sh", "sync_tmp"])
+        subprocess.run(["bash", "scripts/legacy/batch_op.sh", "sync_tmp"])
         logger.info("sync tmp folder....\n")
 
     def setup_heartbeat(self, client_controller):

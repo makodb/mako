@@ -96,8 +96,9 @@ Mako includes a Redis-compatible layer for:
 
 | Document | Description |
 |----------|-------------|
-| [Development Guide](doc/DEVELOPMENT.md) | Build system, testing, architecture |
-| [Transport Backends](doc/transport_backends.md) | RPC and networking options |
+| [Full Documentation](docs/index.md) | Complete documentation index |
+| [Developer Guide](docs/developer/development.md) | Build system, testing, architecture |
+| [Transport Backends](docs/developer/transport-backends.md) | RPC and networking options |
 | [CLAUDE.md](CLAUDE.md) | Codebase guidelines for AI assistants |
 
 ---

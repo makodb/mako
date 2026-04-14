@@ -27,30 +27,5 @@ service Benchmark {
 %%
 // optional %%: marks footer section, code below will be copied into end of generated C++ header
 
-namespace benchmark {
-
-inline void BenchmarkService::fast_dot_prod(const point3& p1, const point3& p2, double* v) {
-    *v = p1.x * p2.x + p1.y * p2.y + p1.z * p2.z;
-}
-
-inline void BenchmarkService::fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-    a_add_b->set(a.get() + b.get());
-}
-
-inline void BenchmarkService::prime(const rrr::i32& n, rrr::i8* flag) {
-    return fast_prime(n, flag);
-}
-
-inline void BenchmarkService::dot_prod(const point3& p1, const point3& p2, double *v) {
-    *v = p1.x * p2.x + p1.y * p2.y + p1.z * p2.z;
-}
-
-inline void BenchmarkService::add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-    a_add_b->set(a.get() + b.get());
-}
-
-inline void BenchmarkService::fast_nop(const std::string& str) {
-    nop(str);
-}
-
-} // namespace benchmark
+// BenchmarkService methods are implemented in test/benchmark_service.cc using
+// typed Rpc*Request/Rpc*Response signatures.

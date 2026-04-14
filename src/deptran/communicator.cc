@@ -61,10 +61,13 @@ uint64_t Communicator::global_id = 0;
 Communicator::Communicator(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   Log_info("setup paxos communicator");
   vector<string> addrs;
-  if (poll_thread_worker.is_none())
+  if (poll_thread_worker.is_none()) {
     rpc_poll_ = rusty::Some(PollThread::create());
-  else
+    owns_poll_thread_ = true;  // We created this poll thread, we own it
+  } else {
     rpc_poll_ = rusty::Some(poll_thread_worker.as_ref().unwrap().clone());
+    owns_poll_thread_ = false;  // Passed in, don't shutdown on destruction
+  }
   auto config = Config::GetConfig();
   // create more client per server
   int proxy_batch_size = 1 ;
@@ -143,9 +146,14 @@ Communicator::~Communicator() {
   }
   rpc_clients_.clear();
 
-  // Shutdown PollThread if we own it
-  if (rpc_poll_.is_some()) {
+  // Only shutdown PollThread if we created it (owns_poll_thread_ == true)
+  // If it was passed in (shared with RPC server), we must NOT shutdown it
+  // or the server will stop accepting new connections
+  if (rpc_poll_.is_some() && owns_poll_thread_) {
+    Log_info("[COMMUNICATOR] Shutting down owned poll thread");
     rpc_poll_.as_ref().unwrap()->shutdown();
+  } else if (rpc_poll_.is_some()) {
+    Log_info("[COMMUNICATOR] Not shutting down shared poll thread (owns_poll_thread_=false)");
   }
 }
 
@@ -372,6 +380,72 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
   return std::make_pair(FAILURE, nullptr);
 }
 
+bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
+  Log_info("[RECONNECT] Attempting to reconnect to site %d for partition %d", site_id, par_id);
+
+  auto config = Config::GetConfig();
+  Config::SiteInfo* site_info = nullptr;
+
+  // Find the site info
+  for (auto& site : config->sites_) {
+    if (site.id == site_id) {
+      site_info = &site;
+      break;
+    }
+  }
+
+  if (!site_info) {
+    Log_error("[RECONNECT] Could not find site info for site %d", site_id);
+    return false;
+  }
+
+  // Close old connection if exists
+  auto old_client_it = rpc_clients_.find(site_id);
+  if (old_client_it != rpc_clients_.end()) {
+    Log_info("[RECONNECT] Closing old connection to site %d", site_id);
+    old_client_it->second->close();
+    rpc_clients_.erase(old_client_it);
+  }
+
+  // Delete old proxy if exists
+  auto old_proxy_it = rpc_proxies_.find(site_id);
+  ClassicProxy* old_proxy = nullptr;
+  if (old_proxy_it != rpc_proxies_.end()) {
+    old_proxy = old_proxy_it->second;
+    rpc_proxies_.erase(old_proxy_it);
+  }
+
+  // Create new connection
+  auto result = ConnectToSite(*site_info, std::chrono::milliseconds(CONNECT_TIMEOUT_MS));
+  if (result.first != SUCCESS) {
+    Log_error("[RECONNECT] Failed to reconnect to site %d", site_id);
+    return false;
+  }
+
+  ClassicProxy* new_proxy = result.second;
+  Log_info("[RECONNECT] Successfully reconnected to site %d, new proxy=%p", site_id, new_proxy);
+
+  // Update rpc_par_proxies_ with new proxy
+  auto par_it = rpc_par_proxies_.find(par_id);
+  if (par_it != rpc_par_proxies_.end()) {
+    for (auto& pair : par_it->second) {
+      if (pair.first == site_id) {
+        Log_info("[RECONNECT] Updating proxy in rpc_par_proxies_ for site %d: old=%p new=%p",
+                 site_id, pair.second, new_proxy);
+        pair.second = new_proxy;
+        break;
+      }
+    }
+  }
+
+  // Clean up old proxy after updating references
+  if (old_proxy) {
+    delete old_proxy;
+  }
+
+  return true;
+}
+
 std::pair<siteid_t, ClassicProxy*>
 Communicator::NearestProxyForPartition(parid_t par_id) const {
   // TODO Fix me.
@@ -407,8 +481,8 @@ std::shared_ptr<QuorumEvent> Communicator::SendReelect(){
 		rrr::FutureAttr fuattr;
 		int id = pair.first;
 		if(id != 1) continue;
-		fuattr.callback =
-			[e, this, id] (rusty::Arc<Future> fu) {
+			fuattr.callback =
+				[e, this, id] (rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -416,15 +490,18 @@ std::shared_ptr<QuorumEvent> Communicator::SendReelect(){
 				bool_t success = false;
 				fu->get_reply() >> success;
 
-				if(success){
-					e->vote_yes();
-					this->SetNewLeaderProxy(0, id);
-				}
-			};
-		auto f = pair.second->async_ReElect(fuattr);
-		Future::safe_release(f);
-	}
-	return e;
+					if(success){
+						e->vote_yes();
+						this->SetNewLeaderProxy(0, id);
+					}
+				};
+			ClassicProxy::RpcReElectRequest req;
+			auto f = pair.second->async_ReElect(req, fuattr);
+			if (f.is_ok()) {
+				Future::safe_release(f.unwrap().raw_future());
+			}
+		}
+		return e;
 
 }
 
@@ -506,8 +583,14 @@ void Communicator::BroadcastDispatch(
 #ifdef LATENCY_LOG_DEBUG
   Log_info("!!!!!!!! Before proxy->async_Dispatch(cmd_id, di, md, fuattr);");
 #endif
-  auto future = proxy->async_Dispatch(cmd_id, di, md, fuattr);
-  Future::safe_release(future);
+  ClassicProxy::RpcDispatchRequest dispatch_req;
+  dispatch_req.tid = cmd_id;
+  dispatch_req.dep_id = di;
+  dispatch_req.cmd = md;
+  auto future = proxy->async_Dispatch(dispatch_req, fuattr);
+  if (future.is_ok()) {
+    Future::safe_release(future.unwrap().raw_future());
+  }
 }
 
 void Communicator::SyncBroadcastDispatch(
@@ -566,8 +649,17 @@ void Communicator::SyncBroadcastDispatch(
   TxnOutput outputs;
   uint64_t coro_id;
   MarshallDeputy view_md;
-  int32_t dispatch_error_code = proxy->Dispatch(cmd_id, di, md, &ret, &outputs, &coro_id, &view_md);
-	verify(dispatch_error_code == 0);
+  ClassicProxy::RpcDispatchRequest dispatch_req;
+  dispatch_req.tid = cmd_id;
+  dispatch_req.dep_id = di;
+  dispatch_req.cmd = md;
+  auto dispatch_result = proxy->Dispatch(dispatch_req);
+	verify(dispatch_result.is_ok());
+  auto dispatch_response = dispatch_result.unwrap();
+  ret = dispatch_response.res;
+  outputs = dispatch_response.output;
+  coro_id = dispatch_response.coro_id;
+  view_md = dispatch_response.view_data;
   
   // Handle WRONG_LEADER response with view data
   if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
@@ -691,8 +783,14 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 		di.str = "dep";
 		di.id = Communicator::global_id++;
     
-		auto future = proxy->async_Dispatch(cmd_id, di, md, fuattr);
-    Future::safe_release(future);
+			ClassicProxy::RpcDispatchRequest dispatch_req;
+			dispatch_req.tid = cmd_id;
+			dispatch_req.dep_id = di;
+			dispatch_req.cmd = md;
+			auto future = proxy->async_Dispatch(dispatch_req, fuattr);
+    if (future.is_ok()) {
+      Future::safe_release(future.unwrap().raw_future());
+    }
     if(!broadcasting_to_leaders_only_){
       for (auto& pair : rpc_par_proxies_[par_id]) {
         if (pair.first != pair_leader_proxy.first) {
@@ -718,7 +816,14 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 					di2.str = "dep";
 					di2.id = Communicator::global_id++;
           
-					Future::safe_release(pair.second->async_Dispatch(cmd_id, di2, md, fuattr));
+						ClassicProxy::RpcDispatchRequest follower_dispatch_req;
+						follower_dispatch_req.tid = cmd_id;
+						follower_dispatch_req.dep_id = di2;
+						follower_dispatch_req.cmd = md;
+						auto follower_future = pair.second->async_Dispatch(follower_dispatch_req, fuattr);
+            if (follower_future.is_ok()) {
+						  Future::safe_release(follower_future.unwrap().raw_future());
+            }
         }
       }
     }
@@ -792,7 +897,14 @@ Communicator::SendPrepare(Coordinator* coo,
 		di.str = "dep";
 		di.id = Communicator::global_id++;
     
-		Future::safe_release(proxy->async_Prepare(tid, sids, di, fuattr));
+			ClassicProxy::RpcPrepareRequest prepare_req;
+			prepare_req.tid = tid;
+			prepare_req.sids = sids;
+			prepare_req.dep_id = di;
+      auto prepare_result = proxy->async_Prepare(prepare_req, fuattr);
+      if (prepare_result.is_ok()) {
+			  Future::safe_release(prepare_result.unwrap().raw_future());
+      }
     if(follower_forwarding){
       for(auto& pair : rpc_par_proxies_[partition_id]){
         if(pair.first != leader_id){
@@ -803,7 +915,14 @@ Communicator::SendPrepare(Coordinator* coo,
 					di2.str = "dep";
 					di2.id = Communicator::global_id++;
           
-					Future::safe_release(proxy->async_Prepare(tid, sids, di2, fuattr));  
+						ClassicProxy::RpcPrepareRequest follower_prepare_req;
+						follower_prepare_req.tid = tid;
+						follower_prepare_req.sids = sids;
+						follower_prepare_req.dep_id = di2;
+            auto follower_prepare_result = proxy->async_Prepare(follower_prepare_req, fuattr);
+            if (follower_prepare_result.is_ok()) {
+						  Future::safe_release(follower_prepare_result.unwrap().raw_future());
+            }
         }
       }
     }
@@ -938,7 +1057,13 @@ Communicator::SendCommit(Coordinator* coo,
 		di.id = Communicator::global_id++;
     ClassicProxy* proxy = LeaderProxyForPartition(rp).second;
     Log_debug("SendCommit to %ld tid:%ld\n", rp, tid);
-    Future::safe_release(proxy->async_Commit(tid, di, fuattr));
+    ClassicProxy::RpcCommitRequest commit_req;
+    commit_req.tid = tid;
+    commit_req.dep_id = di;
+    auto commit_result = proxy->async_Commit(commit_req, fuattr);
+    if (commit_result.is_ok()) {
+      Future::safe_release(commit_result.unwrap().raw_future());
+    }
     
     if(follower_forwarding){
       for(auto& pair : rpc_par_proxies_[rp]){
@@ -949,7 +1074,13 @@ Communicator::SendCommit(Coordinator* coo,
           
 					site_id = pair.first;
           proxy = pair.second;
-          Future::safe_release(proxy->async_Commit(tid, di2, fuattr));  
+          ClassicProxy::RpcCommitRequest follower_commit_req;
+          follower_commit_req.tid = tid;
+          follower_commit_req.dep_id = di2;
+          auto follower_commit_result = proxy->async_Commit(follower_commit_req, fuattr);
+          if (follower_commit_result.is_ok()) {
+            Future::safe_release(follower_commit_result.unwrap().raw_future());
+          }
         }
       }
     }
@@ -1070,7 +1201,13 @@ Communicator::SendAbort(Coordinator* coo,
     di.id = Communicator::global_id++;
     ClassicProxy* proxy = LeaderProxyForPartition(rp).second;
     Log_debug("SendAbort to %ld tid:%ld\n", rp, tid);
-    Future::safe_release(proxy->async_Abort(tid, di, fuattr));
+    ClassicProxy::RpcAbortRequest abort_req;
+    abort_req.tid = tid;
+    abort_req.dep_id = di;
+    auto abort_result = proxy->async_Abort(abort_req, fuattr);
+    if (abort_result.is_ok()) {
+      Future::safe_release(abort_result.unwrap().raw_future());
+    }
 
     if(follower_forwarding){
       for(auto& pair : rpc_par_proxies_[rp]){
@@ -1081,7 +1218,13 @@ Communicator::SendAbort(Coordinator* coo,
 
           site_id = pair.first;
           proxy = pair.second;
-          Future::safe_release(proxy->async_Abort(tid, di2, fuattr));
+          ClassicProxy::RpcAbortRequest follower_abort_req;
+          follower_abort_req.tid = tid;
+          follower_abort_req.dep_id = di2;
+          auto follower_abort_result = proxy->async_Abort(follower_abort_req, fuattr);
+          if (follower_abort_result.is_ok()) {
+            Future::safe_release(follower_abort_result.unwrap().raw_future());
+          }
         }
       }
 
@@ -1100,7 +1243,12 @@ void Communicator::SendEarlyAbort(parid_t pid,
   fuattr.callback = [](rusty::Arc<Future>) {};
   ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   Log_debug("SendAbort to %ld tid:%ld\n", pid, tid);
-  Future::safe_release(proxy->async_EarlyAbort(tid, fuattr));
+  ClassicProxy::RpcEarlyAbortRequest early_abort_req;
+  early_abort_req.tid = tid;
+  auto early_abort_result = proxy->async_EarlyAbort(early_abort_req, fuattr);
+  if (early_abort_result.is_ok()) {
+    Future::safe_release(early_abort_result.unwrap().raw_future());
+  }
 }
 
 /*void Communicator::SendAbort(parid_t pid, txnid_t tid,
@@ -1138,7 +1286,9 @@ void Communicator::SendUpgradeEpoch(epoch_t curr_epoch,
       };
       fuattr.callback = cb;
       auto proxy = (ClassicProxy*) pair.second;
-      auto fu_result = proxy->async_UpgradeEpoch(curr_epoch, fuattr);
+      ClassicProxy::RpcUpgradeEpochRequest req;
+      req.curr_epoch = curr_epoch;
+      auto fu_result = proxy->async_UpgradeEpoch(req, fuattr);
       // Arc auto-released (fire-and-forget pattern)
     }
   }
@@ -1152,7 +1302,9 @@ void Communicator::SendTruncateEpoch(epoch_t old_epoch) {
       FutureAttr fuattr;
       fuattr.callback = [](rusty::Arc<Future>) {};
       auto proxy = (ClassicProxy*) pair.second;
-      auto fu_result = proxy->async_TruncateEpoch(old_epoch);
+      ClassicProxy::RpcTruncateEpochRequest req;
+      req.old_epoch = old_epoch;
+      auto fu_result = proxy->async_TruncateEpoch(req, fuattr);
       // Arc auto-released (fire-and-forget pattern)
     }
   }
@@ -1186,7 +1338,9 @@ void Communicator::SendForwardTxnRequest(
     fu->get_reply() >> reply;
     callback(reply);
   };
-  auto fu_result = leader_proxy->async_DispatchTxn(dispatch_request, future);
+  ClientControlProxy::RpcDispatchTxnRequest dispatch_rpc_req;
+  dispatch_rpc_req.req = dispatch_request;
+  auto fu_result = leader_proxy->async_DispatchTxn(dispatch_rpc_req, future);
   // Arc auto-released (fire-and-forget pattern)
 }
 
@@ -1253,7 +1407,12 @@ shared_ptr<GetLeaderQuorumEvent> Communicator::BroadcastGetLeader(
       fu->get_reply() >> is_leader;
       e->FeedResponse(is_leader, p.first);
     };
-    Future::safe_release(proxy->async_IsFPGALeader(par_id, fuattr));
+    ClassicProxy::RpcIsFPGALeaderRequest req;
+    req.cur_pause = par_id;
+    auto is_leader_result = proxy->async_IsFPGALeader(req, fuattr);
+    if (is_leader_result.is_ok()) {
+      Future::safe_release(is_leader_result.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -1290,7 +1449,11 @@ shared_ptr<QuorumEvent> Communicator::FailoverPauseSocketOut(
 #ifdef FAILOVER_DEBUG
     Log_info("!!!!!!!!!!!! Communicator::FailoverPauseSocketOut");
 #endif
-    Future::safe_release(proxy->async_FailoverPauseSocketOut(fuattr));
+    ClassicProxy::RpcFailoverPauseSocketOutRequest req;
+    auto pause_result = proxy->async_FailoverPauseSocketOut(req, fuattr);
+    if (pause_result.is_ok()) {
+      Future::safe_release(pause_result.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -1327,7 +1490,11 @@ shared_ptr<QuorumEvent> Communicator::FailoverResumeSocketOut(
 #ifdef FAILOVER_DEBUG
     Log_info("!!!!!!!!!!!! Communicator::FailoverResumeSocketOut");
 #endif
-    Future::safe_release(proxy->async_FailoverResumeSocketOut(fuattr));
+    ClassicProxy::RpcFailoverResumeSocketOutRequest req;
+    auto resume_result = proxy->async_FailoverResumeSocketOut(req, fuattr);
+    if (resume_result.is_ok()) {
+      Future::safe_release(resume_result.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -1359,7 +1526,7 @@ void Communicator::SetNewLeaderProxy(parid_t par_id, locid_t loc_id) {
         });
      verify (proxy_it != partition_proxies.end()) ;
      leader_cache_[par_id] = *proxy_it;*/
-  Log_debug("set leader porxy for parition %d is %d", par_id, loc_id);
+  Log_debug("set leader proxy for partition %d is %d", par_id, loc_id);
 }
 
 void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,
@@ -1377,7 +1544,12 @@ void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,
   fuattr.callback = cb;
   ClassicProxy* proxy = LeaderProxyForPartition(gid).second;
   Log_debug("SendEmptyCmd to %ld sites gid:%ld\n", sids.size(), gid);
-  Future::safe_release(proxy->async_SimpleCmd(cmd, fuattr));
+  ClassicProxy::RpcSimpleCmdRequest req;
+  req.cmd = cmd;
+  auto simple_cmd_result = proxy->async_SimpleCmd(req, fuattr);
+  if (simple_cmd_result.is_ok()) {
+    Future::safe_release(simple_cmd_result.unwrap().raw_future());
+  }
 }
 
 
@@ -1410,9 +1582,13 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
       }
       e->vote_yes();
     };
-    auto fu_result = proxy->async_JetpackBeginRecovery(old_view_deputy, new_view_deputy, new_view_id, fuattr);
+    ClassicProxy::RpcJetpackBeginRecoveryRequest req;
+    req.old_view = old_view_deputy;
+    req.new_view = new_view_deputy;
+    req.new_view_id = new_view_id;
+    auto fu_result = proxy->async_JetpackBeginRecovery(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;
@@ -1453,9 +1629,12 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
       fu->get_reply() >> ok >> reply_jepoch >> reply_oepoch >> reply_old_view >> reply_new_view >> id_set;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set);
     };
-    auto fu_result = proxy->async_JetpackPullIdSet(jepoch, oepoch, fuattr);
+    ClassicProxy::RpcJetpackPullIdSetRequest req;
+    req.jepoch = jepoch;
+    req.oepoch = oepoch;
+    auto fu_result = proxy->async_JetpackPullIdSet(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;
@@ -1521,13 +1700,17 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
     };
 
     // Log_info("[JETPACK-DEBUG] About to call async_JetpackPullCmd");
-    auto fu_result = proxy->async_JetpackPullCmd(jepoch, oepoch, key_batch_md, fuattr);
+    ClassicProxy::RpcJetpackPullCmdRequest req;
+    req.jepoch = jepoch;
+    req.oepoch = oepoch;
+    req.key_batch = key_batch_md;
+    auto fu_result = proxy->async_JetpackPullCmd(req, fuattr);
     // if (!fu) {
     //   Log_info("[JETPACK-DEBUG] ERROR: async_JetpackPullCmd returned NULL Future!");
     // }
     // Log_info("[JETPACK-DEBUG] async_JetpackPullCmd returned Future, adding to list");
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   // Log_info("[JETPACK-DEBUG] JetpackBroadcastPullCmd returning event with %zu futures", fus.size());
@@ -1577,9 +1760,15 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
       e->vote_yes();
     };
     // Log_info("[JETPACK-DEBUG] Sending RecordCmd to site %d", p.first);
-    auto fu_result = proxy->async_JetpackRecordCmd(jepoch, oepoch, sid, rid, cmd_deputy, fuattr);
+    ClassicProxy::RpcJetpackRecordCmdRequest req;
+    req.jepoch = jepoch;
+    req.oepoch = oepoch;
+    req.sid = sid;
+    req.rid = rid;
+    req.cmd_batch = cmd_deputy;
+    auto fu_result = proxy->async_JetpackRecordCmd(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;
@@ -1624,9 +1813,13 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
                      >> reply_max_seen_ballot >> accepted_ballot >> replied_sid >> replied_set_size;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, accepted_ballot, replied_sid, replied_set_size, reply_max_seen_ballot);
     };
-    auto fu_result = proxy->async_JetpackPrepare(jepoch, oepoch, max_seen_ballot, fuattr);
+    ClassicProxy::RpcJetpackPrepareRequest req;
+    req.jepoch = jepoch;
+    req.oepoch = oepoch;
+    req.max_seen_ballot = max_seen_ballot;
+    auto fu_result = proxy->async_JetpackPrepare(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;
@@ -1660,9 +1853,15 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
       fu->get_reply() >> reply_max_seen_ballot;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, reply_max_seen_ballot);
     };
-    auto fu_result = proxy->async_JetpackAccept(jepoch, oepoch, max_seen_ballot, sid, set_size, fuattr);
+    ClassicProxy::RpcJetpackAcceptRequest req;
+    req.jepoch = jepoch;
+    req.oepoch = oepoch;
+    req.max_seen_ballot = max_seen_ballot;
+    req.sid = sid;
+    req.set_size = set_size;
+    auto fu_result = proxy->async_JetpackAccept(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;
@@ -1684,9 +1883,14 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, loc
       }
       e->vote_yes();
     };
-    auto fu_result = proxy->async_JetpackCommit(jepoch, oepoch, sid, set_size, fuattr);
+    ClassicProxy::RpcJetpackCommitRequest req;
+    req.jepoch = jepoch;
+    req.oepoch = oepoch;
+    req.sid = sid;
+    req.set_size = set_size;
+    auto fu_result = proxy->async_JetpackCommit(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;
@@ -1717,9 +1921,14 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
       fu->get_reply() >> cmd;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
     };
-    auto fu_result = proxy->async_JetpackPullRecSetIns(jepoch, oepoch, sid, rid, fuattr);
+    ClassicProxy::RpcJetpackPullRecSetInsRequest req;
+    req.jepoch = jepoch;
+    req.oepoch = oepoch;
+    req.sid = sid;
+    req.rid = rid;
+    auto fu_result = proxy->async_JetpackPullRecSetIns(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;
@@ -1741,9 +1950,11 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par
       }
       e->vote_yes();
     };
-    auto fu_result = proxy->async_JetpackFinishRecovery(oepoch, fuattr);
+    ClassicProxy::RpcJetpackFinishRecoveryRequest req;
+    req.oepoch = oepoch;
+    auto fu_result = proxy->async_JetpackFinishRecovery(req, fuattr);
     if (fu_result.is_ok()) {
-      fus.push_back(fu_result.unwrap());
+      fus.push_back(fu_result.unwrap().raw_future());
     }
   }
   return e;

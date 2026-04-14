@@ -2,6 +2,7 @@
 #include <memory>
 #include <chrono>
 #include <mutex>
+#include <climits>
 
 #include <errno.h>
 #include <string.h>
@@ -14,6 +15,7 @@
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
 #include "client.hpp"
+#include "internal_protocol.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
@@ -114,11 +116,16 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
       socket_(-1),
       state_machine_(),
+      heartbeat_manager_(HeartbeatConfig::disabled()),
+      circuit_breaker_(CircuitBreakerConfig::disabled()),
+      callback_manager_(std::make_shared<CallbackManager>()),
       pending_queue_(buffering_config_.to_queue_config()) {
 }
 
 // @safe - Simple destructor
 ClientConnection::~ClientConnection() {
+  reconnect_abort_.store(true, std::memory_order_release);
+  reconnecting_.store(false, std::memory_order_release);
   invalidate_pending_futures();
 }
 
@@ -133,39 +140,76 @@ void ClientConnection::invalidate_pending_futures() {
   // Guard dropped here, releasing lock
 
   for (auto& fu: futures) {
+    metrics_.record_request_dropped();
     fu->error_code_.set(ENOTCONN);
     fu->notify_ready(fu);  // Pass Arc to self for callback safety
     // Arc auto-released when list destroyed
   }
 }
 
+// @safe - Fails one pending future if it still exists in the pending map
+void ClientConnection::fail_pending_future(i64 xid, int err) const {
+  rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
+  {
+    auto pending_guard = pending_fu_.lock().unwrap();
+    auto it = pending_guard->find(xid);
+    if (it != pending_guard->end()) {
+      fu_opt = rusty::Some(it->second);  // Copy Arc before erase
+      pending_guard->erase(it);
+    }
+  }  // Drop lock before notifying callback/future waiters
+
+  if (fu_opt.is_some()) {
+    auto fu = fu_opt.unwrap();
+    metrics_.record_request_dropped();
+    fu->error_code_.set(err);
+    // @unsafe - Future::notify_ready uses interior mutability + callback execution.
+    { fu->notify_ready(fu); }
+  }
+}
+
 // @unsafe - Closes socket and invalidates futures (call from poll thread only)
 void ClientConnection::close() {
-  if (state_machine_.is_connected()) {
-    // Transition to DISCONNECTING state
+  ConnectionState prev_state = state_machine_.state();
+  const bool was_connected = state_machine_.is_connected();
+  if (was_connected) {
+    // Transition to DISCONNECTING state while preserving normal lifecycle semantics.
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
+  }
+
+  // Always close the socket when it is valid, regardless of state.
+  if (socket_ >= 0) {
     // @unsafe - system call
     {
       ::close(socket_);
     }
-    // Transition to DISCONNECTED state
+    socket_ = -1;
+  }
+
+  if (was_connected) {
+    // Transition to DISCONNECTED state for clean shutdown.
     state_machine_.transition_to(ConnectionState::DISCONNECTED);
   } else if (!state_machine_.is_terminal()) {
-    // If not connected and not already terminal, force to DISCONNECTED
+    // If not connected and not already terminal, force to DISCONNECTED.
     state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
+  heartbeat_manager_.reset();
   invalidate_pending_futures();
+
+  if (prev_state == ConnectionState::CONNECTED ||
+      prev_state == ConnectionState::DISCONNECTING) {
+    invoke_disconnected_callback();
+  }
 }
 
 // @safe - Mark connection as closing without closing socket
 // Used by Client::close() to update state before poll thread closes socket
 void ClientConnection::mark_closing() {
+  reconnect_abort_.store(true, std::memory_order_release);
   if (state_machine_.is_connected()) {
-    // Just transition state - don't close socket
+    // Mark as in-progress close, but do not enter terminal state yet.
+    // The poll-thread close callback performs the actual fd close and final state transition.
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
-    state_machine_.transition_to(ConnectionState::DISCONNECTED);
-  } else if (!state_machine_.is_terminal()) {
-    state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
   invalidate_pending_futures();
 }
@@ -176,6 +220,7 @@ void ClientConnection::handle_free(i64 xid) const {
   auto it = guard->find(xid);
   if (it != guard->end()) {
     guard->erase(it);
+    metrics_.record_request_dropped();
     // Arc auto-released when removed from map
   }
   // Guard dropped here, releasing lock
@@ -190,6 +235,7 @@ int ClientConnection::connect(const char* addr) {
   if (!state_machine_.transition_to(ConnectionState::CONNECTING)) {
     Log_error("rrr::ClientConnection: cannot connect from state %s",
               connection_state_to_string(state_machine_.state()));
+    invoke_error_callback(EINVAL, "invalid state for connect");
     return EINVAL;
   }
   string addr_str(addr);
@@ -197,6 +243,7 @@ int ClientConnection::connect(const char* addr) {
   if (idx == string::npos) {
     Log_error("rrr::ClientConnection: bad connect address: %s", addr);
     state_machine_.transition_to(ConnectionState::FAILED);
+    invoke_error_callback(EINVAL, "invalid connect address");
     return EINVAL;
   }
   // @unsafe { - string operations
@@ -268,11 +315,12 @@ int ClientConnection::connect(const char* addr) {
     // AddrInfo automatically freed when addr_info goes out of scope
     // }
 
-    if (rp == nullptr) {
-      // failed to connect
-      state_machine_.transition_to(ConnectionState::FAILED);
-      return ENOTCONN;
-    }
+  if (rp == nullptr) {
+    // failed to connect
+    state_machine_.transition_to(ConnectionState::FAILED);
+    invoke_error_callback(ENOTCONN, "connect failed");
+    return ENOTCONN;
+  }
 #endif
   // @unsafe - set_nonblocking syscall
   {
@@ -297,6 +345,7 @@ int ClientConnection::connect(const char* addr) {
 
   // Transition to CONNECTED state
   state_machine_.transition_to(ConnectionState::CONNECTED);
+  heartbeat_manager_.reset();
 
   // Register with poll thread using weak_self_
   // @unsafe { - Weak::upgrade and PollThread::add
@@ -306,63 +355,169 @@ int ClientConnection::connect(const char* addr) {
   // }
   } else {
     Log_error("rrr::ClientConnection: weak_self_ upgrade failed - connection may not have been created properly");
+    invoke_error_callback(EINVAL, "connection registration failed");
     return EINVAL;
   }
 
   // Store address for potential reconnection
   reconnect_address_ = addr;
+  invoke_connected_callback();
 
   return 0;
 }
 
 // @unsafe - Attempts to reconnect to the last connected address
 int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
+  auto complete_callback = [&](int result) -> int {
+    if (on_complete) on_complete(result == 0);
+    return result;
+  };
+
+  if (reconnect_abort_.load(std::memory_order_acquire)) {
+    return complete_callback(ECANCELED);
+  }
+
+  auto wait_for_inflight_reconnect = [&]() -> int {
+    while (reconnecting_.load(std::memory_order_acquire)) {
+      if (reconnect_abort_.load(std::memory_order_acquire)) {
+        return ECANCELED;
+      }
+      if (state_machine_.is_connected()) {
+        return 0;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    if (state_machine_.is_connected()) {
+      return 0;
+    }
+    return INT_MIN;
+  };
+
+  if (reconnecting_.load(std::memory_order_acquire)) {
+    int waited = wait_for_inflight_reconnect();
+    if (waited != INT_MIN) {
+      return complete_callback(waited);
+    }
+  }
+
   // Check if we have an address to reconnect to
   if (reconnect_address_.empty()) {
     Log_error("rrr::ClientConnection: no address to reconnect to");
-    if (on_complete) on_complete(false);
-    return EINVAL;
+    return complete_callback(EINVAL);
   }
 
   // Can only reconnect from FAILED or DISCONNECTED state
   if (!state_machine_.can_connect()) {
     Log_error("rrr::ClientConnection: cannot reconnect from state %s",
               connection_state_to_string(state_machine_.state()));
-    if (on_complete) on_complete(false);
-    return EINVAL;
+    return complete_callback(EINVAL);
   }
 
-  // Mark as reconnecting
-  reconnecting_.set(true);
-
-  // Reset socket for reconnection
-  socket_ = -1;
-
-  // Attempt to connect
-  int result = connect(reconnect_address_.c_str());
-
-  reconnecting_.set(false);
-
-  if (result == 0) {
-    Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
-
-    // Record reconnection in metrics
-    metrics_.record_reconnect();
-
-    // Replay any queued requests
-    size_t replayed = replay_pending_requests();
-    if (replayed > 0) {
-      Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
+  while (true) {
+    bool expected = false;
+    if (reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      break;
     }
 
-    if (on_complete) on_complete(true);
-  } else {
-    Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
-              reconnect_address_.c_str(), result);
-    if (on_complete) on_complete(false);
+    int waited = wait_for_inflight_reconnect();
+    if (waited != INT_MIN) {
+      return complete_callback(waited);
+    }
+  }
+  invoke_reconnecting_callback();
+
+  auto complete_reconnect = [&](bool success, int result) -> int {
+    reconnecting_.store(false, std::memory_order_release);
+    invoke_reconnected_callback(success);
+
+    if (success) {
+      Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
+
+      // Record reconnection in metrics
+      metrics_.record_reconnect();
+
+      // Replay any queued requests
+      size_t replayed = replay_pending_requests();
+      if (replayed > 0) {
+        Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
+      }
+      return complete_callback(0);
+    } else {
+      if (result == ECANCELED) {
+        Log_debug("rrr::ClientConnection: reconnect cancelled for %s",
+                  reconnect_address_.c_str());
+      } else {
+        Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
+                  reconnect_address_.c_str(), result);
+      }
+      return complete_callback(result);
+    }
+  };
+
+  auto reconnect_once = [&]() -> int {
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      return ECANCELED;
+    }
+    // Reset socket for each reconnect attempt.
+    socket_ = -1;
+    return connect(reconnect_address_.c_str());
+  };
+
+  if (reconnect_abort_.load(std::memory_order_acquire)) {
+    return complete_reconnect(false, ECANCELED);
   }
 
-  return result;
+  // Another reconnect attempt can complete between the pre-CAS state check and
+  // this thread acquiring reconnect ownership.
+  if (state_machine_.is_connected()) {
+    return complete_reconnect(true, 0);
+  }
+
+  if (!state_machine_.can_connect()) {
+    return complete_reconnect(false, EINVAL);
+  }
+
+  // First attempt happens immediately.
+  int result = reconnect_once();
+  if (result == 0) {
+    return complete_reconnect(true, 0);
+  }
+
+  // Follow configured backoff/retry policy for subsequent attempts.
+  ReconnectCalculator calc(reconnect_policy_);
+  while (calc.should_retry()) {
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      return complete_reconnect(false, ECANCELED);
+    }
+
+    uint32_t delay_ms = calc.next_delay_ms();
+    if (delay_ms > 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      return complete_reconnect(false, ECANCELED);
+    }
+
+    // Another path may have re-established connection while sleeping.
+    if (state_machine_.is_connected()) {
+      return complete_reconnect(true, 0);
+    }
+
+    if (!state_machine_.can_connect()) {
+      return complete_reconnect(false, EINVAL);
+    }
+
+    Log_debug("rrr::ClientConnection: reconnect retry #%u to %s",
+              calc.retry_count(), reconnect_address_.c_str());
+    result = reconnect_once();
+    if (result == 0) {
+      return complete_reconnect(true, 0);
+    }
+  }
+
+  return complete_reconnect(false, result);
 }
 
 // @unsafe - Uses interior mutability (const method modifying mutable members)
@@ -383,6 +538,44 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
   }
 }
 
+// @safe - Configure heartbeat manager and timeout callback.
+void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
+  heartbeat_manager_.set_config(config);
+  WeakClientConnection weak_conn;
+  // @unsafe - Weak copy construction is currently modeled as non-safe.
+  { weak_conn = weak_self_; }
+  heartbeat_manager_.set_on_timeout([weak_conn]() {
+    auto conn_opt = weak_conn.upgrade();
+    if (conn_opt.is_none()) {
+      return;
+    }
+    auto conn = conn_opt.unwrap();
+    if (!conn->connected()) {
+      return;
+    }
+    Log_warn("rrr::ClientConnection: heartbeat timeout for %s", conn->host().c_str());
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    if (mut_conn != nullptr) {
+      mut_conn->handle_error();
+    }
+  });
+}
+
+// @safe - Returns heartbeat config snapshot.
+HeartbeatConfig ClientConnection::heartbeat_config() const {
+  return heartbeat_manager_.config();
+}
+
+// @safe - Configure circuit breaker and reset state.
+void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
+  circuit_breaker_.set_config(config);
+}
+
+// @safe - Returns circuit breaker config snapshot.
+CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
+  return circuit_breaker_.config();
+}
+
 // @unsafe - Uses RequestQueue methods (not borrow-checked)
 size_t ClientConnection::replay_pending_requests() {
   size_t replayed = 0;
@@ -395,7 +588,8 @@ size_t ClientConnection::replay_pending_requests() {
 
     // Check if expired
     if (req.is_expired()) {
-      if (req.callback) req.callback(-2);  // Expired error code
+      metrics_.record_queue_drop();
+      if (req.callback) req.callback(kRequestQueueExpiredError);
       continue;
     }
 
@@ -404,14 +598,32 @@ size_t ClientConnection::replay_pending_requests() {
       // Connection lost during replay, re-queue
       // Note: This could lead to infinite loop if connection keeps failing
       // The TTL will eventually expire stale requests
-      pending_queue_.enqueue(std::move(req));
+      i64 replay_xid = req.xid;
+      req.callback = [this, replay_xid](int err) {
+        if (err != 0) {
+          fail_pending_future(replay_xid, err);
+        }
+      };
+      if (!pending_queue_.enqueue(std::move(req))) {
+        // Explicit fallback: even if queue policy rejects without invoking
+        // callback, do not leave the pending future orphaned.
+        metrics_.record_queue_drop();
+        fail_pending_future(replay_xid, kRequestQueueRejectedError);
+        Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy (xid=%lld)",
+                 static_cast<long long>(replay_xid));
+      }
       break;
     }
 
     // Copy payload to output buffer
     if (req.payload && req.payload->content_size() > 0) {
+      size_t payload_size = req.payload->content_size();
+      std::string payload_bytes;
+      payload_bytes.resize(payload_size);
+      verify(req.payload->read(payload_bytes.data(), payload_size) == payload_size);
+
       auto guard = out_.lock().unwrap();
-      guard->read_from_marshal(*req.payload, req.payload->content_size());
+      verify(guard->write(payload_bytes.data(), payload_size) == payload_size);
       // Reset write_cnt_ so that subsequent set_bookmark() calls work
       // The replayed payload already contains the packet size
       guard->get_and_reset_write_cnt();
@@ -431,12 +643,231 @@ size_t ClientConnection::replay_pending_requests() {
   return replayed;
 }
 
+// @safe - Enqueue one internal heartbeat probe into the output buffer.
+void ClientConnection::enqueue_heartbeat_probe() const {
+  auto guard = out_.lock().unwrap();
+  Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
+  *guard << v64(xid_counter_.next());
+  *guard << static_cast<i32>(kInternalHeartbeatRpcId);
+  i32 packet_size = guard->get_and_reset_write_cnt();
+  guard->write_bookmark(bmark, packet_size);
+}
+
+// @safe - Route allow_request through metrics (rejections + state transitions).
+bool ClientConnection::allow_request_with_circuit_metrics() const {
+  CircuitState before = circuit_breaker_.state();
+  bool allowed = circuit_breaker_.allow_request();
+  CircuitState after = circuit_breaker_.state();
+  record_circuit_state_transition(before, after);
+  if (!allowed) {
+    metrics_.record_circuit_open_rejection();
+  }
+  return allowed;
+}
+
+// @safe - Checks whether an error should contribute to circuit tripping.
+bool ClientConnection::should_trip_circuit_for_error(i32 err) {
+  switch (err) {
+    case 0:
+      return false;
+    case ENOTCONN:
+    case ECONNREFUSED:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ETIMEDOUT:
+    case EHOSTUNREACH:
+    case ENETUNREACH:
+    case EPIPE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// @safe - Track circuit breaker state transitions in metrics.
+void ClientConnection::record_circuit_state_transition(
+    CircuitState before,
+    CircuitState after) const {
+  if (before == after) {
+    return;
+  }
+
+  switch (after) {
+    case CircuitState::OPEN:
+      metrics_.record_circuit_open_transition();
+      break;
+    case CircuitState::HALF_OPEN:
+      metrics_.record_circuit_half_open_transition();
+      break;
+    case CircuitState::CLOSED:
+      metrics_.record_circuit_closed_transition();
+      break;
+    default:
+      break;
+  }
+}
+
+// @safe - Records success/failure in circuit breaker.
+void ClientConnection::record_circuit_result(i32 err) const {
+  CircuitState before = circuit_breaker_.state();
+  if (err == 0) {
+    circuit_breaker_.record_success();
+  } else if (should_trip_circuit_for_error(err)) {
+    circuit_breaker_.record_failure();
+  }
+  CircuitState after = circuit_breaker_.state();
+  record_circuit_state_transition(before, after);
+}
+
+// @safe - Maps errno-style errors into structured RpcError categories.
+RpcError ClientConnection::map_system_error(i32 err) {
+  switch (err) {
+    case 0:
+      return RpcError::OK;
+    case ENOTCONN:
+      return RpcError::NOT_CONNECTED;
+    case ECONNREFUSED:
+      return RpcError::CONNECTION_REFUSED;
+    case ECONNRESET:
+      return RpcError::CONNECTION_RESET;
+    case ENETUNREACH:
+      return RpcError::NETWORK_UNREACHABLE;
+    case EHOSTUNREACH:
+      return RpcError::HOST_UNREACHABLE;
+    case ECONNABORTED:
+    case EPIPE:
+      return RpcError::CONNECTION_CLOSED;
+    case EBUSY:
+      return RpcError::CIRCUIT_OPEN;
+    case ETIMEDOUT:
+      return RpcError::RESPONSE_TIMEOUT;
+    case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
+    case EWOULDBLOCK:
+#endif
+      return RpcError::REQUEST_TIMEOUT;
+    case EINVAL:
+      return RpcError::INVALID_ARGUMENT;
+    default:
+      return RpcError::UNKNOWN_ERROR;
+  }
+}
+
+// @safe - Invoke callback manager error hooks.
+void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_error(map_system_error(err), message);
+}
+
+// @safe - Invoke callback manager disconnected hooks.
+void ClientConnection::invoke_disconnected_callback() const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_disconnected();
+}
+
+// @safe - Invoke callback manager reconnecting hooks.
+void ClientConnection::invoke_reconnecting_callback() const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_reconnecting();
+}
+
+// @safe - Invoke callback manager reconnected hooks.
+void ClientConnection::invoke_reconnected_callback(bool success) const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_reconnected(success);
+}
+
+// @safe - Invoke callback manager connected hooks.
+void ClientConnection::invoke_connected_callback() const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_connected();
+}
+
 // @safe - Error handler - transitions to FAILED state
 void ClientConnection::handle_error() {
-  // Force transition to FAILED state (from any state)
-  state_machine_.force_state(ConnectionState::FAILED);
+  ConnectionState prev_state = state_machine_.state();
+  const bool user_initiated_closing =
+      prev_state == ConnectionState::DISCONNECTING ||
+      prev_state == ConnectionState::DISCONNECTED ||
+      reconnect_abort_.load(std::memory_order_acquire);
+
+  if (!user_initiated_closing) {
+    invoke_error_callback(ECONNRESET, "connection error");
+    // Force transition to FAILED state (from any state)
+    state_machine_.force_state(ConnectionState::FAILED);
+  }
   // @unsafe - calls close() which does system calls
   { close(); }
+
+  if (user_initiated_closing) {
+    return;
+  }
+  invoke_disconnected_callback();
+
+  // Trigger policy-driven reconnect automatically after transport failures.
+  if (reconnect_policy_.auto_reconnect &&
+      !reconnect_abort_.load(std::memory_order_acquire)) {
+    // @unsafe - std::string::empty and Weak copy are currently treated as non-safe.
+    {
+      if (reconnect_address_.empty()) {
+        return;
+      }
+      auto weak_conn = weak_self_;
+      std::thread([weak_conn]() {
+        auto conn_opt = weak_conn.upgrade();
+        if (conn_opt.is_none()) {
+          return;
+        }
+
+        auto conn = conn_opt.unwrap();
+        if (!conn->reconnect_policy_.auto_reconnect ||
+            conn->reconnect_abort_.load(std::memory_order_acquire)) {
+          return;
+        }
+
+        auto state = conn->connection_state();
+        if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
+          Log_info("rrr::ClientConnection: auto-reconnect triggered after connection failure");
+          // @unsafe - reconnect mutates socket/state and performs network I/O.
+          auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+          if (mut_conn != nullptr) {
+            mut_conn->reconnect();
+          }
+        }
+      }).detach();
+    }
+  }
+}
+
+// @safe - Poll-loop heartbeat tick and pending write-update handling.
+bool ClientConnection::check_pending_write_update() const {
+  if (state_machine_.is_connected() && !paused_.get()) {
+    if (heartbeat_manager_.check_timeout()) {
+      // Timeout callback already transitioned connection through error handling.
+      return false;
+    }
+    if (heartbeat_manager_.should_send_heartbeat()) {
+      enqueue_heartbeat_probe();
+      heartbeat_manager_.on_heartbeat_sent();
+      return true;
+    }
+  }
+
+  if (pending_write_update_.get()) {
+    pending_write_update_.set(false);
+    return true;
+  }
+  return false;
 }
 
 // @safe - Writes buffered data to socket, protected by SpinMutex
@@ -487,18 +918,41 @@ bool ClientConnection::handle_read() {
 
   // Process all available packets
   while (state_machine_.is_connected()) {
-    i32 packet_size;
-    int n_peek = in_.peek(packet_size);
+    i32 encoded_packet_size = 0;
+    int n_peek = in_.peek(encoded_packet_size);
+    if (n_peek != sizeof(i32)) {
+      break;
+    }
+    i32 packet_size = response_payload_size(encoded_packet_size);
+    if (in_.content_size() >= static_cast<size_t>(packet_size) + sizeof(i32)) {
 
-    if (n_peek == sizeof(i32)
-        && in_.content_size() >= packet_size + sizeof(i32)) {
+      verify(in_.read(&encoded_packet_size, sizeof(i32)) == sizeof(i32));
 
-      verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
+      const bool has_extended_header = response_has_extended_header(encoded_packet_size);
+      packet_size = response_payload_size(encoded_packet_size);
 
       v64 v_reply_xid;
       v32 v_error_code;
+      size_t parsed_header_size = 0;
 
       in_ >> v_reply_xid >> v_error_code;
+      parsed_header_size += v_reply_xid.val_size() + v_error_code.val_size();
+
+      if (has_extended_header) {
+        v64 v_server_instance_id;
+        in_ >> v_server_instance_id;
+        parsed_header_size += v_server_instance_id.val_size();
+        check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
+      }
+
+      if (packet_size < static_cast<i32>(parsed_header_size)) {
+        invoke_error_callback(EPROTO, "response header larger than packet payload");
+        handle_error();
+        return false;
+      }
+
+      size_t response_payload_size_bytes = static_cast<size_t>(packet_size) - parsed_header_size;
+      heartbeat_manager_.on_pong_received();
 
       rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
       {
@@ -515,9 +969,7 @@ bool ClientConnection::handle_read() {
         verify(fu->xid_ == v_reply_xid.get());
 
         fu->error_code_.set(v_error_code.get());
-        fu->reply_.borrow_mut()->read_from_marshal(in_,
-                                            packet_size - v_reply_xid.val_size()
-                                                - v_error_code.val_size());
+        fu->reply_.borrow_mut()->read_from_marshal(in_, response_payload_size_bytes);
 
         // Record request completion in metrics
         if (v_error_code.get() == 0) {
@@ -525,6 +977,7 @@ bool ClientConnection::handle_read() {
         } else {
           metrics_.record_request_failed();
         }
+        record_circuit_result(v_error_code.get());
 
         fu->notify_ready(fu);  // Pass Arc to self for callback safety
 
@@ -532,9 +985,7 @@ bool ClientConnection::handle_read() {
       } else {
         // the future might have timed out - consume data anyway
         Marshal reply;
-        reply.read_from_marshal(in_,
-                                packet_size - v_reply_xid.val_size()
-                                - v_error_code.val_size());
+        reply.read_from_marshal(in_, response_payload_size_bytes);
       }
     } else {
       // No complete packet available
@@ -585,14 +1036,13 @@ void Client::close() const {
   auto guard = connection_.borrow_mut();
   if (guard->is_some()) {
     auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
-    if (conn.connected()) {
+    const bool was_connected = conn.connected();
+    conn.mark_closing();
+    if (was_connected) {
       // Request poll thread to close the connection
       // The poll thread will call ClientConnection::close() via do_close_pollable()
       // @unsafe - PollThread::request_close
       { poll_thread_worker_->request_close(conn.fd()); }
-      // Just update state machine - don't close socket here
-      // The actual socket close happens in the poll thread
-      conn.mark_closing();
     }
     // Don't clear connection to None - we need it for reconnect()
   }
@@ -639,11 +1089,16 @@ int Client::connect(const char* addr, bool client) const {
   {
     mut_conn.weak_self_ = conn;
   }
+  mut_conn.set_callback_manager(callback_manager_);
   mut_conn.is_client_mode_ = client;
   is_client_mode_.set(client);
 
   // Apply pending keepalive config before connecting
   mut_conn.set_keepalive(pending_keepalive_config_.get());
+  // Apply pending heartbeat config before connecting
+  mut_conn.set_heartbeat_config(pending_heartbeat_config_.get());
+  // Apply pending circuit-breaker config before connecting
+  mut_conn.set_circuit_breaker_config(pending_circuit_breaker_config_.get());
 
   // Call connect through mutable reference
   int result = 0;
@@ -672,6 +1127,7 @@ int Client::reconnect(std::function<void(bool)> on_complete) const {
 
   // Need to get mutable access to the connection for reconnect
   auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
+  conn.reconnect_abort_.store(false, std::memory_order_release);
 
   // @unsafe - reconnect does socket operations
   {

@@ -7,7 +7,7 @@
  *
  * Key differences from C++20 coroutines:
  *   - C++20 coroutines are stackless (state machines)
- *   - Our implementation uses Boost.Coroutine2 which provides stackful execution
+ *   - Our implementation uses a custom C++ runtime with assembly context switching
  *   - Stackful execution contexts are properly called "fibers"
  *
  * Example usage:
@@ -100,12 +100,12 @@ inline bool in_fiber_context() noexcept {
  *
  * @note No-op if called outside fiber context
  *
- * @unsafe - Delegates to boost coroutine yield
+ * @unsafe - Delegates to fiber context switch yield
  */
 inline void yield() noexcept {
     auto fiber = Fiber::current_fiber();
     if (fiber.is_some()) {
-        // @unsafe { boost coroutine yield }
+        // @unsafe { fiber context switch yield }
         fiber.unwrap()->yield_();
     }
 }

@@ -1,0 +1,597 @@
+cmake -S . -B build
+-- RustyCpp parallel jobs: 64
+-- Rusty C++ Checker submodule found at: /home/users/wshen24/mako/third-party/rusty-cpp
+-- Checker will be built on demand at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- C++ Borrow Checking enabled
+-- Checker will be built at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- Build type: release
+-- Checking RustyCpp dependencies...
+-- Found cargo: /home/users/wshen24/.local-rust/bin/cargo
+-- Found libclang: /usr/lib/llvm-16/lib/libclang.so
+-- Found libclang headers: /usr/lib/llvm-16/include
+-- Found llvm-config: /usr/lib/llvm-16/bin/llvm-config
+-- Found Z3: /usr/lib/x86_64-linux-gnu/libz3.so
+-- Found Z3 headers: /usr/include
+-- Checker already exists at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker - skipping build target
+-- I: /home/users/wshen24/mako/third-party/erpc
+-- environment: eth
+CMake Deprecation Warning at third-party/erpc/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 2.8.12 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+-- Compilation optimized for performance.
+-- Debugging is disabled.
+-- Profile-guided optimization is disabled.
+-- Logging level = none.
+-- Testing is disabled, so tests may fail.
+-- Selected transport = fake.
+-- Compiling app = latency
+-- DPDK not needed to build eRPC
+STATUS,server compiles
+-- Reuse coroutine enabled
+-- --- Configuring Mako Root & STO Borrow Checks ---
+-- Found 0 files to check in src/mako/ and benchmarks/sto/
+-- --- End Mako Borrow Checks Configuration ---
+-- GoogleTest found via find_package
+-- Test targets configured:
+--   RRR Framework Tests:
+--     - test_marshal: Marshal/Unmarshal tests
+--     - test_rpc: RPC client/server tests
+--     - test_rpc_extended: Extended RPC tests (timeouts, reconnection, load)
+--     - test_future: Future/async operation tests
+--     - test_masstree: Core Masstree b-tree regression tests
+--     - test_reactor: Reactor/event system tests
+--     - test_reactor_extended: Extended reactor tests (events, coroutines, load)
+--     - rpcbench: RPC performance benchmark test
+--   Silo/STO Tests:
+--     - test_silo_varint: Varint encoding/decoding (22 tests)
+--     - test_silo_rcu_thread: RCU memory management (9 tests)
+--     - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)
+--     - test_sto_transaction: STO Transaction RCU (13 tests)
+--     - test_sto_transaction_real: STO Transaction integration tests
+-- Additional perf binaries:
+--   - masstree_perf: On-demand Masstree throughput benchmark (JSON output)
+-- 
+-- Run all tests with: make run_tests
+-- Run Silo/STO tests: make run_silo_sto_tests
+-- Or individually: make test && ctest
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/users/wshen24/mako/build
+Building with 32 parallel jobs...
+cmake --build build --parallel 32
+gmake[1]: warning: -j32 forced in submake: resetting jobserver mode.
+gmake[1]: Entering directory '/home/users/wshen24/mako/build'
+gmake[2]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gtest
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[  1%] Checker already exists, skipping build
+[  1%] Built target rust_build
+Consolidate compiler generated dependencies of target gflags_nothreads_static
+[  1%] Built target rcc_rpc_gen
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gflags_nothreads_shared
+Consolidate compiler generated dependencies of target hdr_histogram_static
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target hdr_histogram
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Checker already built: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  1%] Built target gflags_nothreads_static
+[  1%] Built target build_rusty_cpp_checker
+[  1%] Built target gtest
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  3%] Built target hdr_histogram
+[  3%] Built target gflags_nothreads_shared
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  4%] Built target hdr_histogram_static
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target rrr
+[  5%] Borrow checking src/mako/masstree/kvthread.cc
+[  5%] Borrow checking src/mako/masstree/masstree_context.cc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gtest_main
+[  5%] Borrow checking src/mako/masstree/query_masstree.cc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[  6%] Borrow checking src/deptran/workload.cc (from deptran_borrow)
+[  6%] Borrow checking src/deptran/executor.cc (from deptran_borrow)
+[  6%] Borrow checking src/deptran/paxos_worker.cc (from deptran_borrow)
+[  6%] Borrow checking src/deptran/stats_registry.cc (from deptran_borrow)
+[  6%] Borrow checking src/deptran/empty.cc (from deptran_borrow)
+Consolidate compiler generated dependencies of target gmock
+[  6%] Borrow checking src/deptran/communicator.cc (from deptran_borrow)
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[  7%] Borrow checking src/mako/masstree/value_versioned_array.cc
+[  8%] Built target gtest_main
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/masstree_context.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/empty.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/executor.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/workload.cc
+Rusty C++ Checker
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/query_masstree.cc
+Analyzing: /home/users/wshen24/mako/src/deptran/stats_registry.cc
+[ 11%] Built target gmock
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/communicator.cc
+[ 13%] Built target rrr
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/kvthread.cc
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/paxos_worker.cc
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/value_versioned_array.cc
+Consolidate compiler generated dependencies of target gmock_main
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 13%] Built target gmock_main
+Consolidate compiler generated dependencies of target erpc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target memdb
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+[ 21%] Built target erpc
+[ 22%] Built target memdb
+Auto-detected 7 C++ include path(s)
+Consolidate compiler generated dependencies of target mako
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target latency
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 22%] Built target borrow_check_deptran_borrow_empty
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sharding_policy
+Consolidate compiler generated dependencies of target test_erpc_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_idempotency
+Consolidate compiler generated dependencies of target test_marshal
+Consolidate compiler generated dependencies of target test_client_service
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target hello_client
+Consolidate compiler generated dependencies of target test_fiber
+Consolidate compiler generated dependencies of target test_config_schema
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_completion_tracker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_load_balancer
+Consolidate compiler generated dependencies of target test_coroutine
+Consolidate compiler generated dependencies of target rpcbench
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_extended
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_reactor
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target hello_server
+Consolidate compiler generated dependencies of target test_rpc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 23%] Built target test_sharding_policy
+Consolidate compiler generated dependencies of target test_future
+Consolidate compiler generated dependencies of target bench_future
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 23%] Built target test_marshal
+[ 24%] Built target test_erpc_integration
+[ 24%] Built target test_idempotency
+[ 24%] Built target test_client_service
+Consolidate compiler generated dependencies of target test_reactor_extended
+[ 24%] Built target test_fiber
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target rpc_chaos_test
+[ 24%] Built target test_config_schema
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 24%] Built target test_reactor
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 24%] Built target test_completion_tracker
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 24%] Built target test_coroutine
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 25%] Built target test_load_balancer
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 25%] Built target rpcbench
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 26%] Built target hello_client
+[ 26%] Built target hello_server
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 27%] Built target test_future
+[ 27%] Built target test_reactor_extended
+[ 27%] Built target test_rpc_extended
+[ 27%] Built target test_rpc
+[ 27%] Built target bench_future
+Consolidate compiler generated dependencies of target test_and_event
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_arc_mutex_thread
+Consolidate compiler generated dependencies of target test_transport_backend
+Consolidate compiler generated dependencies of target stress_transport_backend
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_timeout_race
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 31%] Built target rpc_chaos_test
+[ 33%] Built target latency
+Consolidate compiler generated dependencies of target test_rpc_reconnect_policy
+Consolidate compiler generated dependencies of target test_rpc_heartbeat
+Consolidate compiler generated dependencies of target test_rpc_circuit_breaker
+Consolidate compiler generated dependencies of target test_rpc_connection_state
+Consolidate compiler generated dependencies of target test_transport_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 34%] Built target test_and_event
+Consolidate compiler generated dependencies of target test_rpc_request_buffering
+Consolidate compiler generated dependencies of target test_rpc_request_queue
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_callbacks
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_errors
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_timeout_retry
+[ 41%] Built target test_timeout_race
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 43%] Built target test_arc_mutex_thread
+[ 43%] Built target test_transport_backend
+[ 43%] Built target stress_transport_backend
+[ 45%] Built target mako
+[ 45%] Built target test_rpc_circuit_breaker
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 46%] Built target test_rpc_reconnect_policy
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_state_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 50%] Built target test_rpc_callbacks
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 50%] Built target test_rpc_request_queue
+[ 50%] Built target test_rpc_heartbeat
+[ 50%] Built target test_rpc_connection_state
+Consolidate compiler generated dependencies of target test_rpc_circuit_breaker_integration
+[ 50%] Built target test_rpc_request_buffering
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_graceful_shutdown
+Consolidate compiler generated dependencies of target test_rpc_error_integration
+Consolidate compiler generated dependencies of target test_rpc_reconnect_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 51%] Built target test_rpc_timeout_retry
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_combined_reliability
+[ 51%] Built target test_transport_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 52%] Built target test_rpc_errors
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_restart_detection
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_txn_timeout
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_log_storage
+Consolidate compiler generated dependencies of target test_masstree
+[ 52%] Built target test_rpc_graceful_shutdown
+Consolidate compiler generated dependencies of target test_rpc_rocksdb_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 52%] Built target test_rpc_state_integration
+Consolidate compiler generated dependencies of target test_masstree_multi_instance
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_validation
+[ 52%] Built target test_rpc_error_integration
+[ 52%] Built target test_rpc_combined_reliability
+Consolidate compiler generated dependencies of target masstree_perf
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_metrics
+[ 53%] Built target test_rpc_reconnect_integration
+[ 53%] Built target test_rpc_circuit_breaker_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_masstree_internals
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_runtime
+Consolidate compiler generated dependencies of target test_rpc_stress_crash
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_multi_site_stress
+Consolidate compiler generated dependencies of target test_rpc_partition
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_client_pool
+[ 54%] Built target test_txn_timeout
+[ 55%] Built target test_masstree
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 55%] Built target test_masstree_multi_instance
+[ 55%] Built target test_rpc_restart_detection
+[ 55%] Built target test_rpc_log_storage
+[ 55%] Built target test_rpc_rocksdb_log_storage
+[ 55%] Built target masstree_perf
+[ 56%] Built target test_masstree_internals
+[ 56%] Built target test_rpc_validation
+[ 56%] Built target test_silo_runtime
+[ 56%] Built target test_rpc_metrics
+[ 58%] Built target test_rpc_stress_crash
+[ 58%] Built target test_silo_multi_site_stress
+[ 60%] Built target test_rpc_partition
+[ 60%] Built target test_rpc_client_pool
+Consolidate compiler generated dependencies of target txlog
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 91%] Built target txlog
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_callback_demo
+Consolidate compiler generated dependencies of target test_stress_partitioned_queues
+Consolidate compiler generated dependencies of target rocksdb_replay_app
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_partitioned_queues
+Consolidate compiler generated dependencies of target test_ordered_callbacks
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target erpc_server
+Consolidate compiler generated dependencies of target test_rocksdb_persistence
+Consolidate compiler generated dependencies of target makoConMultiTrd
+Consolidate compiler generated dependencies of target makoCon
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target continuousTransactions
+Consolidate compiler generated dependencies of target simpleTransactionRep
+Consolidate compiler generated dependencies of target basic
+Consolidate compiler generated dependencies of target test_config_store
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target paxos_async_commit_test
+Consolidate compiler generated dependencies of target simpleTransaction
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target makoConDBBench
+Consolidate compiler generated dependencies of target simplePaxos
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 91%] Built target rocksdb_replay_app
+Consolidate compiler generated dependencies of target test_sharding_policy_cache
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target erpc_client
+[ 92%] Built target makoCon
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_shard_router
+Consolidate compiler generated dependencies of target test_tpcc_sharding
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 93%] Built target test_stress_partitioned_queues
+[ 93%] Built target test_callback_demo
+[ 93%] Built target erpc_server
+[ 93%] Built target test_partitioned_queues
+Consolidate compiler generated dependencies of target test_config_client
+Consolidate compiler generated dependencies of target test_config_service
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 93%] Built target test_rocksdb_persistence
+[ 94%] Built target basic
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 94%] Built target test_config_store
+[ 94%] Built target test_ordered_callbacks
+[ 94%] Built target makoConMultiTrd
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 94%] Built target paxos_async_commit_test
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 94%] Built target continuousTransactions
+[ 94%] Built target simpleTransaction
+Consolidate compiler generated dependencies of target test_sharding_startup
+[ 95%] Built target simplePaxos
+[ 95%] Built target simpleTransactionRep
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 96%] Built target test_sharding_policy_cache
+[ 96%] Built target erpc_client
+Consolidate compiler generated dependencies of target test_silo_rcu_thread
+[ 96%] Built target test_tpcc_sharding
+[ 96%] Built target makoConDBBench
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sto_transaction_real
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_varint
+[ 98%] Built target test_shard_router
+[ 98%] Built target test_config_client
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 98%] Built target test_config_service
+Consolidate compiler generated dependencies of target test_silo_allocator_tuple
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sto_transaction
+Consolidate compiler generated dependencies of target test_config_failure
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 98%] Built target test_sharding_startup
+[ 98%] Built target test_sto_transaction_real
+[ 98%] Built target test_silo_rcu_thread
+[100%] Built target test_silo_varint
+[100%] Built target test_silo_allocator_tuple
+[100%] Built target test_sto_transaction
+[100%] Built target test_config_failure
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_kvthread
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_masstree_context
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_value_versioned_array
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_query_masstree
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_executor
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_stats_registry
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_paxos_worker
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_communicator
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_workload
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_all_deptran_borrow
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[100%] Running borrow checker on Deptran worker sources
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target dbtest
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target dbtest
+gmake[2]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[1]: Leaving directory '/home/users/wshen24/mako/build'

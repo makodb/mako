@@ -1,7 +1,15 @@
 .waf*
 /build
+/build*
+/build_*/
 /build_docker
+/dist
+/core.*
+/third-party/fragile/
+/.apas
 /target-docker
+/target
+/.cargo-docker
 .lock-waf*
 *.pyc
 .cproject
@@ -67,3 +75,6 @@ prof
 .cache/*
 cmake-build/*
 *.stamp
+
+# Misc build/test artifacts
+/Testing/

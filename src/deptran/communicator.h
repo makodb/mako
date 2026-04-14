@@ -375,6 +375,7 @@ class Communicator {
   const int CONNECT_TIMEOUT_MS = 120*1000;
   const int CONNECT_SLEEP_MS = 1000;
   rusty::Option<rusty::Arc<rrr::PollThread>> rpc_poll_;
+  bool owns_poll_thread_ = false;  // True if we created the poll thread, false if passed in
   TxLogServer *rep_sched_ = nullptr;  // Jetpack protocols (Copilot) need direct scheduler access
   locid_t loc_id_ = -1;
   map<siteid_t, rusty::Arc<rrr::Client>> rpc_clients_{};
@@ -464,6 +465,7 @@ class Communicator {
    */
   bool EnsureClientConnected(siteid_t site_id);
 
+  bool ReconnectToSite(siteid_t site_id, parid_t par_id);
   void Pause();
   void Resume();
   void ConnectClientLeaders();

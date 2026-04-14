@@ -1,13 +1,13 @@
 site:
   # each line is a partition (Raft group), first 3 sites are replicas (no learner in Raft)
-  # Use ports 27xxx to avoid conflicts with common services (8xxx range often used)
+  # Use ports 55xxx to avoid conflicts with common services (8xxx range often used)
   server:
-    - ["s101:27001", "s201:27101", "s301:27201"]
-    - ["s102:27002", "s202:27102", "s302:27202"]
-    - ["s103:27003", "s203:27103", "s303:27203"]
-    - ["s104:27004", "s204:27104", "s304:27204"]
-    - ["s105:27005", "s205:27105", "s305:27205"]
-    - ["s106:27006", "s206:27106", "s306:27206"]
+    - ["s101:55001", "s201:55101", "s301:55201"]
+    - ["s102:55002", "s202:55102", "s302:55202"]
+    - ["s103:55003", "s203:55103", "s303:55203"]
+    - ["s104:55004", "s204:55104", "s304:55204"]
+    - ["s105:55005", "s205:55105", "s305:55205"]
+    - ["s106:55006", "s206:55106", "s306:55206"]
 
 # s101: localhost
 # s201: p1

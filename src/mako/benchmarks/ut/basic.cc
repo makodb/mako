@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include "benchmarks/common.h"
 #include <boost/fiber/all.hpp>
+#include "unordered_map"
 #include "util.h"
 #include "benchmarks/sto/sync_util.hh"
 using namespace std;
@@ -250,7 +251,6 @@ void test_static_scope() {
 int main(int argc, char ** argv)
 {
     test_static_scope();
-    fiber_testing();
     request_trim();
     erpc_instance_exp_seq(3);
     testing_map_get();

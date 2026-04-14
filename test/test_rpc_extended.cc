@@ -26,7 +26,9 @@ public:
     std::atomic<int> delay_ms{100};
     std::atomic<bool> should_throw{false};
 
-    void fast_nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+        (void)req;
         call_count++;
         if (should_throw) {
             throw std::runtime_error("Simulated service error");
@@ -34,41 +36,70 @@ public:
         if (should_crash) {
             abort(); // Simulate crash
         }
+        BenchmarkService::RpcFastNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
     }
 
-    void nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcNopResponse, i32>
+    nop(const BenchmarkService::RpcNopRequest& req) override {
+        (void)req;
         call_count++;
         if (should_delay) {
             std::this_thread::sleep_for(milliseconds(delay_ms.load()));
         }
+        BenchmarkService::RpcNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
     }
 
-    void fast_prime(const i32& n, i8* flag) override {
+    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
         call_count++;
         bool is_prime = true;
-        if (n <= 1) {
+        if (req.n <= 1) {
             is_prime = false;
         } else {
-            for (i32 i = 2; i * i <= n; i++) {
-                if (n % i == 0) {
+            for (i32 i = 2; i * i <= req.n; i++) {
+                if (req.n % i == 0) {
                     is_prime = false;
                     break;
                 }
             }
         }
-        *flag = is_prime ? 1 : 0;
+        BenchmarkService::RpcFastPrimeResponse resp{};
+        resp.flag = is_prime ? 1 : 0;
+        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
     }
 
-    void fast_vec(const i32& n, std::vector<i64>* v) override {
-        call_count++;
-        for (i32 i = 0; i < n; i++) {
-            v->push_back(i);
+    rusty::Result<BenchmarkService::RpcPrimeResponse, i32>
+    prime(const BenchmarkService::RpcPrimeRequest& req) override {
+        BenchmarkService::RpcFastPrimeRequest fast_req{};
+        fast_req.n = req.n;
+        auto fast_ret = fast_prime(fast_req);
+        if (fast_ret.is_err()) {
+            return rusty::Result<BenchmarkService::RpcPrimeResponse, i32>::Err(
+                fast_ret.unwrap_err());
         }
+        BenchmarkService::RpcPrimeResponse resp{};
+        resp.flag = fast_ret.unwrap().flag;
+        return rusty::Result<BenchmarkService::RpcPrimeResponse, i32>::Ok(resp);
     }
 
-    void sleep(const double& sec) override {
+    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
         call_count++;
-        std::this_thread::sleep_for(std::chrono::duration<double>(sec));
+        BenchmarkService::RpcFastVecResponse resp{};
+        for (i32 i = 0; i < req.n; i++) {
+            resp.v.push_back(i);
+        }
+        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
+    }
+
+    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
+    sleep(const BenchmarkService::RpcSleepRequest& req) override {
+        call_count++;
+        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
+        BenchmarkService::RpcSleepResponse resp{};
+        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
     }
 };
 
@@ -107,6 +138,116 @@ protected:
 };
 
 std::atomic<int> ExtendedRPCTest::port_offset{0};
+
+namespace {
+
+rusty::Arc<RpcServiceContext> make_test_rpc_context() {
+    std::unordered_map<i32, size_t> rpc_to_service;
+    rusty::Vec<rusty::RefCell<rusty::Box<Service>>> services;
+    return rusty::Arc<RpcServiceContext>::make(
+        std::move(rpc_to_service),
+        std::move(services),
+        "127.0.0.1:0",
+        std::make_shared<std::atomic<int>>(0),
+        std::make_shared<std::atomic<bool>>(false),
+        1);
+}
+
+}  // namespace
+
+TEST(ServerApiSafetyTest, ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback) {
+    ServerConnection sconn(make_test_rpc_context(), -1);
+    std::atomic<int> callback_count{0};
+
+    EXPECT_EQ(sconn.run_async([&]() { callback_count.fetch_add(1); }), 0);
+    EXPECT_EQ(callback_count.load(), 1);
+
+    std::function<void()> empty_callback;
+    EXPECT_NE(sconn.run_async(empty_callback), 0);
+    EXPECT_EQ(callback_count.load(), 1);
+}
+
+TEST(ServerApiSafetyTest, ServerConnectionContentSizeAndHandleFreeAreSafe) {
+    ServerConnection sconn(make_test_rpc_context(), -1);
+
+    EXPECT_EQ(sconn.content_size(), 0u);
+    sconn.handle_free();  // Explicit no-op for server side.
+    EXPECT_EQ(sconn.content_size(), 0u);
+}
+
+TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback) {
+    auto req = rusty::make_box<Request>();
+    req->xid = 1;
+
+    auto sconn = rusty::Arc<ServerConnection>::make(make_test_rpc_context(), -1);
+    auto weak_sconn = rusty::downgrade(sconn);
+
+    bool cleanup_called = false;
+    std::atomic<int> callback_count{0};
+    {
+        DeferredReply defer(
+            std::move(req),
+            weak_sconn,
+            [](Marshal&) {},
+            [&]() { cleanup_called = true; });
+
+        EXPECT_EQ(defer.run_async([&]() { callback_count.fetch_add(1); }), 0);
+        EXPECT_EQ(callback_count.load(), 1);
+
+        std::function<void()> empty_callback;
+        EXPECT_NE(defer.run_async(empty_callback), 0);
+        EXPECT_EQ(callback_count.load(), 1);
+    }
+
+    EXPECT_TRUE(cleanup_called);
+}
+
+TEST(ServerApiSafetyTest, ServerListenerUnsupportedHooksAreNonFatal) {
+    ServerListener listener(make_test_rpc_context(), "127.0.0.1:0");
+    ASSERT_GE(listener.fd(), 0);
+
+    EXPECT_EQ(listener.content_size(), 0u);
+    EXPECT_EQ(listener.handle_write(), PollMode::NO_CHANGE);
+
+    listener.handle_error();
+    EXPECT_TRUE(listener.is_closed());
+}
+
+TEST(ServerApiSafetyTest, ServerStartWithInvalidHostReturnsError) {
+    auto poll_thread = PollThread::create();
+    {
+        Server server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<ExtendedTestService>();
+        server.reg_service(std::move(service_box));
+
+        EXPECT_NE(server.start("invalid host:12345"), 0);
+    }
+    poll_thread->shutdown();
+}
+
+TEST(ServerApiSafetyTest, ServerStartWithMalformedAddressReturnsError) {
+    auto poll_thread = PollThread::create();
+    {
+        Server server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<ExtendedTestService>();
+        server.reg_service(std::move(service_box));
+
+        EXPECT_NE(server.start("malformed-address-without-port"), 0);
+    }
+    poll_thread->shutdown();
+}
+
+TEST(ServerApiSafetyTest, ServerStartWithNullAddressReturnsError) {
+    auto poll_thread = PollThread::create();
+    {
+        Server server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<ExtendedTestService>();
+        server.reg_service(std::move(service_box));
+
+        EXPECT_NE(server.start(static_cast<const char*>(nullptr)), 0);
+    }
+    poll_thread->shutdown();
+}
 
 // Test 1: Multiple clients connecting to the same server
 TEST_F(ExtendedRPCTest, MultipleClients) {

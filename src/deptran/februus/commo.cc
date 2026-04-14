@@ -25,7 +25,9 @@ void CommoFebruus::BroadcastPreAccept(QuorumEvent& e,
       e.vote_yes();
     };
     verify(tx_id > 0);
-    auto fu_result = proxy->async_PreAcceptFebruus(tx_id, fuattr);
+    ClassicProxy::RpcPreAcceptFebruusRequest req;
+    req.tx_id = tx_id;
+    auto fu_result = proxy->async_PreAcceptFebruus(req, fuattr);
     // Arc auto-released
   }
 }
@@ -51,7 +53,11 @@ void CommoFebruus::BroadcastAccept(QuorumEvent& e,
       e.vote_yes();
     };
     verify(tx_id > 0);
-    auto fu_result = proxy->async_AcceptFebruus(tx_id, ballot, timestamp, fuattr);
+    ClassicProxy::RpcAcceptFebruusRequest req;
+    req.tx_id = tx_id;
+    req.ballot = ballot;
+    req.timestamp = timestamp;
+    auto fu_result = proxy->async_AcceptFebruus(req, fuattr);
     // Arc auto-released
   }
 }
@@ -71,7 +77,10 @@ void CommoFebruus::BroadcastCommit(const set<parid_t>& set_par_id,
       };
       verify(tx_id > 0);
 
-      auto fu_result = proxy->async_CommitFebruus(tx_id, timestamp, fuattr);
+      ClassicProxy::RpcCommitFebruusRequest req;
+      req.tx_id = tx_id;
+      req.timestamp = timestamp;
+      auto fu_result = proxy->async_CommitFebruus(req, fuattr);
       // Arc auto-released
     }
   }

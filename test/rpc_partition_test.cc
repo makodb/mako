@@ -41,23 +41,45 @@ public:
     std::atomic<bool> reject_requests{false};
 
     // @safe - Count requests and optionally reject
-    void fast_nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+        (void)req;
         request_count++;
         // We can't easily reject RPC requests at service level,
         // but we can track request patterns
+        BenchmarkService::RpcFastNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
     }
 
     // @safe - Count requests
-    void nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcNopResponse, i32>
+    nop(const BenchmarkService::RpcNopRequest& req) override {
+        (void)req;
         request_count++;
+        BenchmarkService::RpcNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
     }
 
-    void fast_prime(const i32& n, i8* flag) override { *flag = 1; }
-    void fast_vec(const i32& n, std::vector<i64>* v) override {
-        for (i32 i = 0; i < n; i++) v->push_back(i);
+    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
+        (void)req;
+        BenchmarkService::RpcFastPrimeResponse resp{};
+        resp.flag = 1;
+        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
     }
-    void sleep(const double& sec) override {
-        std::this_thread::sleep_for(std::chrono::duration<double>(sec));
+
+    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
+        BenchmarkService::RpcFastVecResponse resp{};
+        for (i32 i = 0; i < req.n; i++) resp.v.push_back(i);
+        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
+    }
+
+    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
+    sleep(const BenchmarkService::RpcSleepRequest& req) override {
+        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
+        BenchmarkService::RpcSleepResponse resp{};
+        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
     }
 };
 
@@ -200,6 +222,21 @@ protected:
         fu->timed_wait(0.5);  // 0.5 seconds (500ms) timeout
         return fu->get_error_code() == 0;
     }
+
+    bool wait_for_request_success(
+        rusty::Arc<Client>& client,
+        milliseconds timeout = milliseconds(5000),
+        milliseconds retry_interval = milliseconds(20)
+    ) {
+        auto deadline = steady_clock::now() + timeout;
+        do {
+            if (send_request(client)) {
+                return true;
+            }
+            std::this_thread::sleep_for(retry_interval);
+        } while (steady_clock::now() < deadline);
+        return false;
+    }
 };
 
 // ============================================================================
@@ -219,7 +256,7 @@ TEST_F(PartitionTest, TemporaryPartition) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Verify connection works
-    EXPECT_TRUE(send_request(client));
+    EXPECT_TRUE(wait_for_request_success(client));
 
     // Simulate partition by closing client connection
     stats.partition_start_count++;
@@ -394,9 +431,9 @@ TEST_F(PartitionTest, PartialPartition) {
     EXPECT_EQ(client1->connect(addr.c_str()), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
-    // Both work again
-    EXPECT_TRUE(send_request(client1));
-    EXPECT_TRUE(send_request(client2));
+    // Both should work again once reconnect settles.
+    EXPECT_TRUE(wait_for_request_success(client1));
+    EXPECT_TRUE(wait_for_request_success(client2));
 
     client1->close();
     client2->close();
@@ -460,7 +497,7 @@ TEST_F(PartitionTest, AsymmetricPartitionSimulation) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Normal operation
-    EXPECT_TRUE(send_request(client));
+    EXPECT_TRUE(wait_for_request_success(client));
 
     // Simulate asymmetric partition by stopping server
     // (client can try to send, but won't get responses)
@@ -617,16 +654,19 @@ TEST_F(PartitionTest, SplitBrainSimulation) {
     server1 = create_server(port1);
     ASSERT_NE(server1, nullptr);
 
-    // Reconnect group 1
+    // Recreate group 1 clients to avoid stale reconnect state from the
+    // old server instance during split-brain heal.
     client1a->close();
     client1b->close();
+    client1a = create_client();
+    client1b = create_client();
     EXPECT_EQ(client1a->connect(addr1.c_str()), 0);
     EXPECT_EQ(client1b->connect(addr1.c_str()), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
-    // All groups work
-    EXPECT_TRUE(send_request(client1a));
-    EXPECT_TRUE(send_request(client2a));
+    // All groups should work again once reconnect/replay settles.
+    EXPECT_TRUE(wait_for_request_success(client1a));
+    EXPECT_TRUE(wait_for_request_success(client2a));
 
     // Cleanup
     client1a->close();

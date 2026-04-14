@@ -1,29 +1,7 @@
 #include "constants.h"
 #include "sharding.h"
 #include "scheduler.h"
-
-// for tpca benchmark
-#include "bench/tpca/workload.h"
-#include "bench/tpca/payment.h"
-
-// tpcc benchmark
-#include "bench/tpcc/workload.h"
-#include "bench/tpcc/procedure.h"
-
-// tpcc dist partition benchmark
-#include "bench/tpcc_dist/procedure.h"
-
-// tpcc real dist partition benchmark
-#include "bench/tpcc_real_dist/workload.h"
-#include "bench/tpcc_real_dist/procedure.h"
-
-// rw benchmark
-#include "bench/rw/workload.h"
-#include "bench/rw/procedure.h"
-
-// micro bench
-#include "bench/micro/workload.h"
-#include "bench/micro/procedure.h"
+#include "benchmark_registry.h"
 
 namespace janus {
 
@@ -73,13 +51,20 @@ void Sharding::BuildTableInfoPtr() {
 
 parid_t Sharding::PartitionFromKey(const MultiValue &key,
                                    const tb_info_t *tb_info) {
+  EnsureBenchmarkRegistryInitialized();
+  auto table_names = BenchmarkRegistry::Instance().GetTableNames();
+  if (Config::GetConfig()->benchmark() == TPCC_REAL_DIST_PART) {
+    verify(!table_names.tpcc_stock.empty());
+    verify(!table_names.tpcc_item.empty());
+    verify(!table_names.tpcc_history.empty());
+  }
   const MultiValue &key_buf =
       Config::GetConfig()->benchmark() != TPCC_REAL_DIST_PART ?
       key :
-      (tb_info->tb_name == TPCC_TB_STOCK
-           || tb_info->tb_name == TPCC_TB_ITEM ?
+      (tb_info->tb_name == table_names.tpcc_stock
+           || tb_info->tb_name == table_names.tpcc_item ?
        stock_mapping(key) :
-       (tb_info->tb_name != TPCC_TB_HISTORY ?
+       (tb_info->tb_name != table_names.tpcc_history ?
         dist_mapping(key) : key));
 
   const int num_partitions = Config::GetConfig()->replica_groups_.size();

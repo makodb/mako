@@ -6,7 +6,6 @@
 #include <vector>
 #include <string>
 #include <ctime>
-#include <boost/crc.hpp>      // for boost::crc_basic, boost::crc_optimal
 
 #include "utils.h"
 #include "schema.h"
@@ -138,7 +137,7 @@ class Row: public RefCounted {
         ret ^= *c;
         c++;
       }
-//      boost::crc_basic<16>  crc_ccitt1( 0x1021, 0xFFFF, 0, false, false );
+//      crc_basic<16>  crc_ccitt1( 0x1021, 0xFFFF, 0, false, false );
 //      crc_ccitt1.process_bytes(blob.data, blob.len);
 //      auto cs = crc_ccitt1.checksum();
 //      ret ^= cs;

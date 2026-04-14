@@ -23,7 +23,10 @@
 #include <thread>
 #include <vector>
 #include <map>
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <cstdlib>
 #include <signal.h>
 #include <atomic>
 #include <mako.hh>
@@ -1155,17 +1158,28 @@ int main(int argc, char **argv) {
     }
 
     // Build config path - fix the format string to use std::to_string
-    std::string config_path = get_current_absolute_path()
+    const char* config_env = std::getenv("MAKO_CONFIG");
+    std::string config_path = config_env
+        ? config_env
+        : get_current_absolute_path()
             + "../src/mako/config/local-shards" + std::to_string(nshards)
             + "-warehouses" + std::to_string(nthreads) + ".yml";
 
-    // Use occ_raft.yml for Raft replication, occ_paxos.yml for Paxos
-    std::string occ_config = (replication_type == "raft" || replication_type == "RAFT")
+    std::string replication_type_normalized = replication_type;
+    std::transform(replication_type_normalized.begin(),
+                   replication_type_normalized.end(),
+                   replication_type_normalized.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const bool use_raft_replication = (replication_type_normalized == "raft");
+
+    // Use replication-specific config files.
+    std::string occ_config = use_raft_replication
         ? "../config/occ_raft.yml"
         : "../config/occ_paxos.yml";
+    std::string replication_config_prefix = use_raft_replication ? "raft" : "paxos";
 
     std::vector<std::string> paxos_config_files{
-        get_current_absolute_path() + "../config/1leader_2followers/paxos" + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml",
+        get_current_absolute_path() + "../config/1leader_2followers/" + replication_config_prefix + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml",
         get_current_absolute_path() + occ_config
     };
 

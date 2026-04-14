@@ -30,6 +30,7 @@ extern "C" {
 typedef enum {
     TXN_OP_GET = 1,
     TXN_OP_SET = 2,
+    TXN_OP_DEL = 3,
 } TxnOpCode;
 
 /**

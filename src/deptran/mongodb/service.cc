@@ -7,9 +7,11 @@ MongodbServiceImpl::MongodbServiceImpl(TxLogServer *sched)
 
 }
 
-void MongodbServiceImpl::Commit(const MarshallDeputy& md_cmd,
+void MongodbServiceImpl::Commit(const MongodbService::RpcCommitRequest& rpc_req,
+                                MongodbService::RpcCommitResponse& rpc_resp,
                                 rrr::DeferredReply defer) {
-  sched_->RuleWitnessGC(const_cast<MarshallDeputy&>(md_cmd).sp_data_);
+  (void)rpc_resp;
+  sched_->RuleWitnessGC(const_cast<MarshallDeputy&>(rpc_req.cmd).sp_data_);
   defer.reply();
 }
 

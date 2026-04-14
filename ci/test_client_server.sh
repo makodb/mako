@@ -25,9 +25,15 @@ echo "========================================="
 echo "Client-Server Integration Test"
 echo "========================================="
 
-# Check if binaries exist
+# Ensure required binary exists (works even if only dbtest was built previously).
 if [ ! -f "$PROJECT_DIR/$BUILD_DIR/simpleTransactionRep" ]; then
-    echo -e "${RED}Error: simpleTransactionRep not found. Run 'make -j32' first.${RESET}"
+    echo -e "${YELLOW}simpleTransactionRep not found in '$BUILD_DIR'. Building target now...${RESET}"
+    cmake -S "$PROJECT_DIR" -B "$PROJECT_DIR/$BUILD_DIR"
+    cmake --build "$PROJECT_DIR/$BUILD_DIR" --parallel "${CI_BUILD_JOBS:-$(nproc)}" --target simpleTransactionRep
+fi
+
+if [ ! -f "$PROJECT_DIR/$BUILD_DIR/simpleTransactionRep" ]; then
+    echo -e "${RED}Error: failed to build simpleTransactionRep in '$BUILD_DIR'.${RESET}"
     exit 1
 fi
 

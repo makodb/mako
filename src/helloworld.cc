@@ -51,15 +51,26 @@ void *nc_start_client(void *input) {
   ret.push_back(1);
   
   std::cout<<"send out first req"<<std::endl;
-  nc_clients[par_id]->async_txn_read(ret, fuattr);
+  HelloworldClientProxy::RpcTxnReadRequest first_req;
+  first_req._req = ret;
+  auto first_result = nc_clients[par_id]->async_txn_read(first_req, fuattr);
+  if (first_result.is_ok()) {
+    Future::safe_release(first_result.unwrap().raw_future());
+  }
 
   //sleep(1); 
 
   ret.push_back(2);
   std::cout<<"send out second req"<<std::endl;
-  nc_clients[par_id]->async_txn_read(ret, fuattr);
+  HelloworldClientProxy::RpcTxnReadRequest second_req;
+  second_req._req = ret;
+  auto second_result = nc_clients[par_id]->async_txn_read(second_req, fuattr);
+  if (second_result.is_ok()) {
+    Future::safe_release(second_result.unwrap().raw_future());
+  }
 
   sleep(10);
+  return nullptr;
 }
 
 void nc_setup_client(int nkeys, int nthreads, int run) {

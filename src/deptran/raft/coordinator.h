@@ -6,10 +6,21 @@
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 
+// @external: {
+//   Log_info: [safe, (...) -> void],
+//   Log_debug: [safe, (...) -> void],
+//   verify: [safe, (bool) -> void],
+//   Config::GetConfig: [safe, () -> Config*],
+//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   std::make_shared: [safe, (...) -> shared_ptr<T>],
+//   dynamic_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>]
+// }
+
 namespace janus {
 
 class RaftCommo;
 class RaftServer;
+// @unsafe - inherits from non-@interface Coordinator
 class CoordinatorRaft : public Coordinator {
  public:
 //  static ballot_t next_slot_s;
@@ -18,10 +29,12 @@ class CoordinatorRaft : public Coordinator {
   enum Phase { INIT_END = 0, PREPARE = 1, ACCEPT = 2, COMMIT = 3, FORWARD = 4 };
   const int32_t n_phase_ = 4;
 
+  // @unsafe - C-style cast on raw pointer
   RaftCommo *commo() {
     // TODO fix this.
     verify(commo_ != nullptr);
-    return (RaftCommo *) commo_;
+    // @unsafe
+    { return (RaftCommo *) commo_; }
   }
   bool in_submission_ = false; // debug;
   bool in_prepare_ = false; // debug
@@ -47,12 +60,15 @@ class CoordinatorRaft : public Coordinator {
     return n_replica_;
   }
 
+  // @unsafe - raw pointer dereference svr_->
   bool IsLeader() ;
+  // @unsafe - raw pointer dereference svr_->
   bool IsFPGALeader() ;
 
-  // @safe - Uses Arc<Cell<T>> for safe shared mutable access
+  // @unsafe - calls Log_warn (non-borrow-checked I/O), Uses Arc<Cell<T>> for safe shared mutable access
   slotid_t GetNextSlot() {
-    verify(0);
+    // @unsafe { Log_warn is not borrow-checked }
+    Log_warn("[RAFT] CoordinatorRaft::GetNextSlot called but not implemented for Raft");
     slot_id_ = slot_hint_->get();
     slot_hint_->set(slot_hint_->get() + 1);
     return 0;
@@ -63,19 +79,30 @@ class CoordinatorRaft : public Coordinator {
     return n_replica() / 2 + 1;
   }
 
+  // @safe
   void DoTxAsync(TxRequest &req) override {}
 
+  // @unsafe - raw pointer dereferences, shared_ptr, complex logic
   void Submit(shared_ptr<Marshallable> &cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
+  // @unsafe - raw pointer dereference svr_->, address-of &
   void AppendEntries();
+  // @safe - mutex and callback operations are bounded
   void Commit();
+  // @safe - mutex and callback operations are bounded
   void LeaderLearn();
 
+  // @safe
   void Reset() override {}
-  void Restart() override { verify(0); }
+  // @unsafe - calls Log_warn (non-borrow-checked I/O)
+  void Restart() override {
+    // @unsafe { Log_warn is not borrow-checked }
+    Log_warn("[RAFT] CoordinatorRaft::Restart called but not implemented for Raft");
+  }
 
+  // @unsafe - calls AppendEntries which is @unsafe
   void GotoNextPhase();
 };
 

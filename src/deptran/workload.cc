@@ -1,52 +1,17 @@
-
+#include "workload.h"
 #include "config.h"
 #include "constants.h"
 #include "sharding.h"
-
-// for tpca benchmark
-#include "bench/tpca/workload.h"
-#include "bench/tpca/payment.h"
-
-// tpcc benchmark
-#include "bench/tpcc/workload.h"
-#include "bench/tpcc/procedure.h"
-
-// tpcc dist partition benchmark
-#include "bench/tpcc_dist/procedure.h"
-
-// tpcc real dist partition benchmark
-#include "bench/tpcc_real_dist/workload.h"
-#include "bench/tpcc_real_dist/procedure.h"
-
-// rw benchmark
-#include "bench/rw/workload.h"
-#include "bench/rw/procedure.h"
-
-// micro bench
-#include "bench/micro/workload.h"
-#include "bench/micro/procedure.h"
+#include "benchmark_registry.h"
 
 namespace janus {
 
 Workload* Workload::CreateWorkload(Config *config) {
-  switch (config->benchmark()) {
-    case TPCA:
-      return new TpcaWorkload(config);
-    case TPCC:
-      return new TpccWorkload(config);
-    case TPCC_DIST_PART:
-      verify(0);
-      return new TpccWorkload(config);
-    case TPCC_REAL_DIST_PART:
-      return new TpccRdWorkload(config);
-    case RW_BENCHMARK:
-      return new RwWorkload(config);
-    case MICRO_BENCH:
-      return new MicroWorkload(config);
-    default:
-      verify(0);
-      return NULL;
-  }
+  EnsureBenchmarkRegistryInitialized();
+  auto& registry = BenchmarkRegistry::Instance();
+  Workload* workload = registry.CreateWorkload(config->benchmark(), config);
+  verify(workload != nullptr);
+  return workload;
 }
 
 Workload::Workload(Config* config)
@@ -63,13 +28,19 @@ Workload::Workload(Config* config)
   if (Config::GetConfig()->dist_ == "fixed") {
     single_server_ = Config::SS_PROCESS_SINGLE;
   }
+  EnsureBenchmarkRegistryInitialized();
+  auto table_names = BenchmarkRegistry::Instance().GetTableNames();
 
   switch (benchmark_) {
     case MICRO_BENCH:
-      micro_bench_para_.n_table_a_ = table_num_rows[std::string(MICRO_BENCH_TABLE_A)];
-      micro_bench_para_.n_table_b_ = table_num_rows[std::string(MICRO_BENCH_TABLE_B)];
-      micro_bench_para_.n_table_c_ = table_num_rows[std::string(MICRO_BENCH_TABLE_C)];
-      micro_bench_para_.n_table_d_ = table_num_rows[std::string(MICRO_BENCH_TABLE_D)];
+      verify(!table_names.micro_table_a.empty());
+      verify(!table_names.micro_table_b.empty());
+      verify(!table_names.micro_table_c.empty());
+      verify(!table_names.micro_table_d.empty());
+      micro_bench_para_.n_table_a_ = table_num_rows[table_names.micro_table_a];
+      micro_bench_para_.n_table_b_ = table_num_rows[table_names.micro_table_b];
+      micro_bench_para_.n_table_c_ = table_num_rows[table_names.micro_table_c];
+      micro_bench_para_.n_table_d_ = table_num_rows[table_names.micro_table_d];
       break;
     case TPCA:
     case TPCC:
@@ -78,7 +49,8 @@ Workload::Workload(Config* config)
       break;
     }
     case RW_BENCHMARK:
-      rw_benchmark_para_.n_table_ = table_num_rows[std::string(RW_BENCHMARK_TABLE)];
+      verify(!table_names.rw_benchmark_table.empty());
+      rw_benchmark_para_.n_table_ = table_num_rows[table_names.rw_benchmark_table];
       fix_id_ = (Config::GetConfig()->dist_ == "fixed") ?
                 RandomGenerator::rand(0, rw_benchmark_para_.n_table_) :
                 -1;
@@ -90,36 +62,12 @@ Workload::Workload(Config* config)
 }
 
 void Workload::GetProcedureTypes(map<int32_t, string> &txn_types) {
-  txn_types.clear();
-  switch (benchmark_) {
-    case TPCA:
-      txn_types[TPCA_PAYMENT] = std::string(TPCA_PAYMENT_NAME);
-      break;
-    case TPCC:
-    case TPCC_DIST_PART:
-    case TPCC_REAL_DIST_PART:
-      txn_types[TPCC_NEW_ORDER] = std::string(TPCC_NEW_ORDER_NAME);
-      txn_types[TPCC_PAYMENT] = std::string(TPCC_PAYMENT_NAME);
-      txn_types[TPCC_STOCK_LEVEL] = std::string(TPCC_STOCK_LEVEL_NAME);
-      txn_types[TPCC_DELIVERY] = std::string(TPCC_DELIVERY_NAME);
-      txn_types[TPCC_ORDER_STATUS] = std::string(TPCC_ORDER_STATUS_NAME);
-      break;
-    case RW_BENCHMARK:
-      txn_types[RW_BENCHMARK_W_TXN] = std::string(RW_BENCHMARK_W_TXN_NAME);
-      txn_types[RW_BENCHMARK_R_TXN] = std::string(RW_BENCHMARK_R_TXN_NAME);
-      break;
-    case MICRO_BENCH:
-      txn_types[MICRO_BENCH_R] = std::string(MICRO_BENCH_R_NAME);
-      txn_types[MICRO_BENCH_W] = std::string(MICRO_BENCH_W_NAME);
-      break;
-    default:
-      Log_fatal("benchmark not implemented");
-      verify(0);
-  }
+  EnsureBenchmarkRegistryInitialized();
+  txn_types = BenchmarkRegistry::Instance().GetTxnTypes(benchmark_);
+  verify(!txn_types.empty());
 }
 
 Workload::~Workload() {
 }
 
 } // namespace janus
-

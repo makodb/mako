@@ -40,6 +40,18 @@ using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
 
+template <typename Predicate>
+bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(5));
+    }
+    return predicate();
+}
+
 // ===========================================================================
 // LoadBalancerState Unit Tests
 // ===========================================================================
@@ -112,6 +124,13 @@ public:
         }
         for (uint64_t i = 0; i < 10; i++) {
             metrics_.record_request_completed();
+        }
+    }
+
+    void add_failed_requests(uint64_t count) {
+        for (uint64_t i = 0; i < count; i++) {
+            metrics_.record_request_sent();
+            metrics_.record_request_failed();
         }
     }
 
@@ -232,6 +251,22 @@ TEST_F(LoadBalancerTest, LeastConnectionsSelectsFirstWhenEqual) {
     EXPECT_EQ(idx, 0);  // First client when all equal
 }
 
+TEST_F(LoadBalancerTest, LeastConnectionsUsesExplicitInFlightCounter) {
+    // Client 0 has history but no active requests.
+    clients_[0]->add_failed_requests(50);
+    // Client 1 has one active in-flight request.
+    clients_[1]->set_pending(1);
+
+    size_t idx = LoadBalancer::select(
+        LoadBalancingStrategy::LEAST_CONNECTIONS,
+        clients_,
+        state_,
+        0
+    );
+
+    EXPECT_EQ(idx, 0);
+}
+
 TEST_F(LoadBalancerTest, LeastLatencySelectsClientWithLowestLatency) {
     // Client 0: 1000us latency
     clients_[0]->set_latency(1000);
@@ -318,26 +353,44 @@ class TestServiceForLB : public benchmark::BenchmarkService {
 public:
     std::atomic<int> call_count{0};
 
-    void fast_nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcFastNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
     }
 
-    void nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcNopResponse, i32>
+    nop(const BenchmarkService::RpcNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
     }
 
-    void fast_prime(const i32& n, i8* flag) override {
+    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
         call_count++;
-        *flag = (n > 1) ? 1 : 0;
+        BenchmarkService::RpcFastPrimeResponse resp{};
+        resp.flag = (req.n > 1) ? 1 : 0;
+        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
     }
 
-    void fast_vec(const i32& n, std::vector<i64>* v) override {
+    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
         call_count++;
+        BenchmarkService::RpcFastVecResponse resp{};
+        (void)req;
+        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
     }
 
-    void sleep(const double& sec) override {
+    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
+    sleep(const BenchmarkService::RpcSleepRequest& req) override {
         call_count++;
-        std::this_thread::sleep_for(std::chrono::duration<double>(sec));
+        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
+        BenchmarkService::RpcSleepResponse resp{};
+        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
     }
 };
 
@@ -426,6 +479,43 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
 
     EXPECT_EQ(fu->get_error_code(), 0);
     EXPECT_EQ(service_->call_count, 1);
+}
+
+TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFlightLoad) {
+    PoolConfig config;
+    config.load_balancing = LoadBalancingStrategy::LEAST_CONNECTIONS;
+    config.min_connections = 2;
+    config.max_connections = 2;
+
+    ClientPool pool(poll_thread_.clone(), config);
+
+    auto busy_client_opt = pool.get_client(addr_);
+    ASSERT_TRUE(busy_client_opt.is_some());
+    auto busy_client = busy_client_opt.unwrap();
+
+    // Keep one request in-flight on the selected client.
+    auto sleep_result = busy_client->request(
+        benchmark::BenchmarkService::SLEEP,
+        [&](Marshal& m) { m << 0.30; }
+    );
+    ASSERT_TRUE(sleep_result.is_ok());
+    auto sleep_future = sleep_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition(
+        [&]() { return busy_client->metrics().in_flight_requests() > 0; },
+        milliseconds(500)));
+
+    // With one in-flight on busy_client and zero on peer, least-connections
+    // should route to the other connection.
+    auto selected_opt = pool.get_client(addr_);
+    ASSERT_TRUE(selected_opt.is_some());
+    auto selected = selected_opt.unwrap();
+
+    EXPECT_NE(selected->fd(), busy_client->fd());
+    EXPECT_EQ(selected->metrics().in_flight_requests(), 0u);
+
+    sleep_future->wait();
+    EXPECT_EQ(sleep_future->get_error_code(), 0);
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {

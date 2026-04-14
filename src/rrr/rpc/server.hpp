@@ -13,12 +13,14 @@
 #include <unordered_set>
 #include <pthread.h>
 #include <memory>
+#include <atomic>
 #include <chrono>
 
 #include <sys/socket.h>
 #include <netdb.h>
 
 #include "misc/marshal.hpp"
+#include "internal_protocol.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 #include "utils.hpp"
@@ -124,10 +126,41 @@ using ShutdownHook = std::function<void()>;
  * For the request object, the marshal only contains <arg1>..<argN>,
  * other fields are already consumed.
  */
+// @safe - RAII guard for one in-flight request.
+struct PendingRequestGuard {
+    std::shared_ptr<std::atomic<int>> pending_counter;
+
+    explicit PendingRequestGuard(std::shared_ptr<std::atomic<int>> counter)
+        : pending_counter(std::move(counter)) {
+        if (pending_counter) {
+            pending_counter->fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    ~PendingRequestGuard() {
+        if (pending_counter) {
+            pending_counter->fetch_sub(1, std::memory_order_relaxed);
+        }
+    }
+
+    PendingRequestGuard(PendingRequestGuard&&) = default;
+    PendingRequestGuard& operator=(PendingRequestGuard&&) = default;
+    PendingRequestGuard(const PendingRequestGuard&) = delete;
+    PendingRequestGuard& operator=(const PendingRequestGuard&) = delete;
+};
+
 // @safe - Simple request container
 struct Request {
     Marshal m;
     i64 xid;
+    std::unique_ptr<PendingRequestGuard> pending_guard;
+
+    // @safe - Attach request-lifetime pending counter guard once.
+    void attach_pending_guard(const std::shared_ptr<std::atomic<int>>& counter) {
+        if (pending_guard == nullptr && counter != nullptr) {
+            pending_guard = std::make_unique<PendingRequestGuard>(counter);
+        }
+    }
 };
 
 // Forward declaration for WeakServerConnection
@@ -173,14 +206,26 @@ struct RpcServiceContext {
 
     // Server address for logging (immutable after setup)
     const std::string addr;
+    // Shared in-flight request counter for dispatch-lifetime tracking.
+    const std::shared_ptr<std::atomic<int>> pending_requests;
+    // Test/runtime toggle to intentionally drop heartbeat probe replies.
+    const std::shared_ptr<std::atomic<bool>> drop_heartbeat_replies;
+    // Stable server instance ID for restart detection in response headers.
+    const uint64_t server_instance_id;
 
     // Constructor taking ownership of all data
     RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
                       rusty::Vec<rusty::RefCell<rusty::Box<Service>>> svcs,
-                      std::string address)
+                      std::string address,
+                      std::shared_ptr<std::atomic<int>> pending_counter,
+                      std::shared_ptr<std::atomic<bool>> drop_heartbeats,
+                      uint64_t instance_id)
         : rpc_to_service(std::move(rpc_map))
         , services(std::move(svcs))
-        , addr(std::move(address)) {}
+        , addr(std::move(address))
+        , pending_requests(std::move(pending_counter))
+        , drop_heartbeat_replies(std::move(drop_heartbeats))
+        , server_instance_id(instance_id) {}
 };
 
 // @unsafe - Server listener handling incoming connections
@@ -203,16 +248,13 @@ class ServerListener: public Pollable {
     return PollMode::READ;
   }
 
-  size_t content_size() override {
-    verify(0);
-    return 0;
-  }
+  size_t content_size() override;
 
-  int handle_write() override {verify(0); return PollMode::NO_CHANGE;}
+  int handle_write() override;
 
   bool handle_read() override;
 
-  void handle_error() override {verify(0);}
+  void handle_error() override;
 
   void close() override;
 
@@ -227,7 +269,7 @@ class ServerListener: public Pollable {
 
 //protected:
   // @safe - AddrInfo RAII wrapper handles freeaddrinfo automatically
-  virtual ~ServerListener() {
+  virtual ~ServerListener() noexcept override {
     // gai_result_ RAII wrapper automatically calls freeaddrinfo
     p_svr_addr_ = nullptr;  // Clear pointer into freed memory
   };
@@ -299,8 +341,9 @@ public:
      * Send a reply message with callback-based marshaling.
      *
      * Reply message format:
-     * <size> <xid> <error_code> <ret1> <ret2> ... <retN>
+     * <size> <xid> <error_code> [<server_instance_id>] <ret1> <ret2> ... <retN>
      * NOTE: size does not include size itself (<xid>..<retN>).
+     * If the size high-bit flag is set, <server_instance_id> is present.
      *
      * The write_fn callback receives a Marshal& to write <ret1>..<retN>.
      *
@@ -316,24 +359,31 @@ public:
     // - status_: read-only access
     template<typename F>
     void reply(const Request& req, i32 error_code, F&& write_fn) const {
+        // @unsafe
+        {
         auto guard = out_.lock().unwrap();
         v32 v_error_code = error_code;
         v64 v_reply_xid = req.xid;
+        const bool include_instance_id = true;
 
         Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
         // @unsafe
         {
             *guard << v_reply_xid;
             *guard << v_error_code;
+            if (include_instance_id) {
+                *guard << v64(static_cast<i64>(ctx_->server_instance_id));
+            }
         }
 
         write_fn(*guard);
 
         i32 reply_size = guard->get_and_reset_write_cnt();
-        guard->write_bookmark(bm, reply_size);
+        guard->write_bookmark(bm, encode_response_size(reply_size, include_instance_id));
 
         if (status_ == CONNECTED) {
             pending_write_update_.set(true);
+        }
         }
     }
 
@@ -343,7 +393,8 @@ public:
     }
 
     // @safe - Delegates to thread pool (currently a no-op stub)
-    int run_async(const std::function<void()>& f);
+    // Takes callback by value to avoid const-propagation issues in rusty-cpp.
+    int run_async(std::function<void()> f);
 
     // @safe - Returns file descriptor
     int fd() const override {
@@ -354,12 +405,8 @@ public:
     // Uses const_cast for interior mutability (SpinLock marked as external)
     int poll_mode() const override;
 
-    // @safe - Not implemented, will abort if called
-    // Jetpack: content_size not used for connection
-    size_t content_size() override {
-        verify(0);
-        return 0;
-    }
+    // @safe - Returns buffered input/output bytes for diagnostics.
+    size_t content_size() override;
 
     // @safe - Writes buffered data to socket
     // SAFETY: Protected by output spinlock (SpinLock marked as external)
@@ -390,9 +437,8 @@ public:
         return status_ == CLOSED;
     }
 
-    // @safe - Not implemented, will abort if called
-    // Jetpack: handle_free stub
-    void handle_free() {verify(0);}
+    // @safe - Explicit server-side no-op (kept for API compatibility).
+    void handle_free();
 
 };
 
@@ -433,11 +479,9 @@ public:
         // req_ automatically cleaned up by rusty::Box destructor
     }
 
-    // @safe - Currently a no-op stub
-    int run_async(const std::function<void()>& f) {
-      // TODO disable threadpool run in RPCs.
-      return 0;
-    }
+    // @safe - Executes callback inline; returns error on empty callback.
+    // Takes callback by value to avoid const-propagation issues in rusty-cpp.
+    int run_async(std::function<void()> f);
 
     // @safe - Sends reply using callback-based API
     // Can only be called once (checked by replied_ flag)
@@ -462,6 +506,27 @@ public:
             }
         }
         // Object will be destroyed when it goes out of scope, destructor calls cleanup_()
+    }
+
+    // @safe - Sends error reply (no payload) using the original request context.
+    // Can only be called once (checked by replied_ flag).
+    void reply_error(i32 error_code) {
+        if (replied_) {
+            Log_warn("DeferredReply::reply_error() called multiple times, ignoring");
+            return;
+        }
+        replied_ = true;
+
+        // @unsafe - weak pointer upgrade (safe operation, but rusty-cpp needs annotation)
+        {
+            auto sconn_opt = weak_sconn_.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                sconn->reply(*req_, error_code);
+            } else {
+                Log_debug("Connection closed before error reply sent, dropping reply");
+            }
+        }
     }
 };
 
@@ -493,7 +558,9 @@ class Server: public NoCopy {
     // Graceful shutdown support
     rusty::Cell<ShutdownPhase> shutdown_phase_{ShutdownPhase::RUNNING};
     SpinMutex<std::vector<ShutdownHook>> shutdown_hooks_;
-    std::atomic<int> pending_requests_{0};
+    std::shared_ptr<std::atomic<int>> pending_requests_{std::make_shared<std::atomic<int>>(0)};
+    std::shared_ptr<std::atomic<bool>> drop_heartbeat_replies_{
+        std::make_shared<std::atomic<bool>>(false)};
 
     // Server restart detection: unique instance ID generated on startup
     // Used by clients to detect server restarts (ID changes after restart)
@@ -505,7 +572,7 @@ public:
     Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
     // @safe - Destroys server and requests close for all connections
     // SAFETY: Arc<RpcServiceContext> ensures services live until all connections are done
-    virtual ~Server();
+    virtual ~Server() noexcept override;
 
     // @unsafe - Starts server on specified address (raw pointer dereference)
     int start(const char* bind_addr);
@@ -515,11 +582,14 @@ public:
     // Accepts Box<Derived> which converts to Box<Service> via move constructor.
     // Must be called before start().
     void reg_service(rusty::Box<Service> svc) {
+        // @unsafe
+        {
         pending_services_.push(std::move(svc));
         // Get index AFTER push - this is the position of the service we just added
         size_t svc_index = pending_services_.size() - 1;
         // Register handlers using the index (service is safely stored in pending_services_)
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
+        }
     }
 
     /**
@@ -613,7 +683,7 @@ public:
      */
     // @unsafe - Uses std::atomic::load
     int pending_request_count() const {
-        return pending_requests_.load(std::memory_order_relaxed);  // @unsafe
+        return pending_requests_->load(std::memory_order_relaxed);  // @unsafe
     }
 
     /**
@@ -621,7 +691,7 @@ public:
      */
     // @unsafe - Uses std::atomic::fetch_add
     void increment_pending() {
-        pending_requests_.fetch_add(1, std::memory_order_relaxed);  // @unsafe
+        pending_requests_->fetch_add(1, std::memory_order_relaxed);  // @unsafe
     }
 
     /**
@@ -629,7 +699,19 @@ public:
      */
     // @unsafe - Uses std::atomic::fetch_sub
     void decrement_pending() {
-        pending_requests_.fetch_sub(1, std::memory_order_relaxed);  // @unsafe
+        pending_requests_->fetch_sub(1, std::memory_order_relaxed);  // @unsafe
+    }
+
+    // @safe - Toggle dropping of internal heartbeat probe replies.
+    void set_drop_heartbeat_replies(bool drop) {
+        // @unsafe - std::atomic::store is currently modeled as non-safe.
+        { drop_heartbeat_replies_->store(drop, std::memory_order_release); }
+    }
+
+    // @safe - Read drop-heartbeat toggle.
+    bool drop_heartbeat_replies() const {
+        // @unsafe - std::atomic::load is currently modeled as non-safe.
+        { return drop_heartbeat_replies_->load(std::memory_order_acquire); }
     }
 
     /**
@@ -648,21 +730,26 @@ public:
     // Must be called after start().
     template<typename F>
     void for_each_service(F&& callback) {
+        // @unsafe
+        {
         auto& ctx = ctx_.as_ref().unwrap();
         for (size_t i = 0; i < ctx->services.size(); ++i) {
             auto guard = ctx->services[i].borrow_mut();
-            // guard is RefMut<Box<Service>>, *guard is Box<Service>&, **guard is Service&
             callback(**guard);
+        }
         }
     }
 
     // @safe - Returns the number of registered services
     // Can be called before or after start().
     size_t service_count() const {
+        // @unsafe
+        {
         if (ctx_.is_some()) {
             return ctx_.as_ref().unwrap()->services.size();
         }
         return pending_services_.size();
+        }
     }
 
     // Returns the server address (copy to avoid reference through Arc)

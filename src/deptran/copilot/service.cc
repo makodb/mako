@@ -7,10 +7,32 @@ CopilotServiceImpl::CopilotServiceImpl(TxLogServer *sched)
     : sched_((CopilotServer *)sched) {
 }
 
+void CopilotServiceImpl::Forward(const CopilotService::RpcForwardRequest& req, CopilotService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->Forward(req.cmd, std::move(defer));
+}
+
+void CopilotServiceImpl::Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
+  this->Prepare(req.is_pilot, req.slot, req.ballot, req.dep_id, &resp.ret_cmd, &resp.max_ballot, &resp.dep, &resp.status, std::move(defer));
+}
+
+void CopilotServiceImpl::FastAccept(const CopilotService::RpcFastAcceptRequest& req, CopilotService::RpcFastAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->FastAccept(req.is_pilot, req.slot, req.ballot, req.dep, req.cmd, req.dep_id, &resp.max_ballot, &resp.ret_dep, std::move(defer));
+}
+
+void CopilotServiceImpl::Accept(const CopilotService::RpcAcceptRequest& req, CopilotService::RpcAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->Accept(req.is_pilot, req.slot, req.ballot, req.dep, req.cmd, req.dep_id, &resp.max_ballot, std::move(defer));
+}
+
+void CopilotServiceImpl::Commit(const CopilotService::RpcCommitRequest& req, CopilotService::RpcCommitResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->Commit(req.is_pilot, req.slot, req.dep, req.cmd, std::move(defer));
+}
+
 void CopilotServiceImpl::Forward(const MarshallDeputy& cmd,
                                  rrr::DeferredReply defer) {
   verify(sched_);
-  auto coro = Fiber::create_run([&]() {
+  Fiber::create_run([this, cmd, defer = std::move(defer)]() mutable {
     sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
                       [defer = std::move(defer)]() mutable { defer.reply(); });
   });
@@ -19,14 +41,15 @@ void CopilotServiceImpl::Forward(const MarshallDeputy& cmd,
 void CopilotServiceImpl::Prepare(const uint8_t& is_pilot,
                                  const uint64_t& slot,
                                  const ballot_t& ballot,
-                                 const struct DepId& dep_id,
+                                 const DepId& dep_id,
                                  MarshallDeputy* ret_cmd,
                                  ballot_t* max_ballot,
                                  uint64_t* dep,
                                  status_t* status,
                                  rrr::DeferredReply defer) {
   verify(sched_);
-  sched_->OnPrepare(is_pilot, slot,
+  sched_->OnPrepare(is_pilot,
+                    slot,
                     ballot,
                     dep_id,
                     ret_cmd,
@@ -41,28 +64,27 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                                     const ballot_t& ballot,
                                     const uint64_t& dep,
                                     const MarshallDeputy& cmd,
-                                    const struct DepId& dep_id,
+                                    const DepId& dep_id,
                                     ballot_t* max_ballot,
                                     uint64_t* ret_dep,
                                     rrr::DeferredReply defer) {
   verify(sched_);
-
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[1+] [tx=%d] on FastAccept %.3f", dynamic_pointer_cast<TpcBatchCommand>(const_cast<MarshallDeputy&>(cmd).sp_data_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[1+] [tx=%d] on FastAccept %.3f",
+           dynamic_pointer_cast<TpcBatchCommand>(const_cast<MarshallDeputy&>(cmd).sp_data_)->cmds_.at(0)->tx_id_,
+           tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
-
-  // auto coro = Fiber::create_run([&]() {
-    sched_->OnFastAccept(is_pilot, slot,
-                         ballot,
-                         dep,
-                         const_cast<MarshallDeputy&>(cmd).sp_data_,
-                         dep_id,
-                         max_ballot,
-                         ret_dep,
-                         [defer = std::move(defer)]() mutable { defer.reply(); });
-  // });
+  sched_->OnFastAccept(is_pilot,
+                       slot,
+                       ballot,
+                       dep,
+                       const_cast<MarshallDeputy&>(cmd).sp_data_,
+                       dep_id,
+                       max_ballot,
+                       ret_dep,
+                       [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
@@ -70,20 +92,18 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                                 const ballot_t& ballot,
                                 const uint64_t& dep,
                                 const MarshallDeputy& cmd,
-                                const struct DepId& dep_id,
+                                const DepId& dep_id,
                                 ballot_t* max_ballot,
                                 rrr::DeferredReply defer) {
   verify(sched_);
-
-  // auto coro = Fiber::create_run([&]() {
-    sched_->OnAccept(is_pilot, slot,
-                     ballot,
-                     dep,
-                     const_cast<MarshallDeputy&>(cmd).sp_data_,
-                     dep_id,
-                     max_ballot,
-                     [defer = std::move(defer)]() mutable { defer.reply(); });
-  // });
+  sched_->OnAccept(is_pilot,
+                   slot,
+                   ballot,
+                   dep,
+                   const_cast<MarshallDeputy&>(cmd).sp_data_,
+                   dep_id,
+                   max_ballot,
+                   [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
@@ -92,11 +112,8 @@ void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const MarshallDeputy& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_);
-  // Fiber::create_run([&]() {
-    sched_->OnCommit(is_pilot, slot, dep,
-                     const_cast<MarshallDeputy&>(cmd).sp_data_);
-    defer.reply();
-  // });
+  sched_->OnCommit(is_pilot, slot, dep, const_cast<MarshallDeputy&>(cmd).sp_data_);
+  defer.reply();
 }
 
 } // namespace janus

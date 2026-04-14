@@ -3,7 +3,6 @@
 #include <string>
 #include <list>
 #include <unordered_map>
-#include <boost/crc.hpp>      // for boost::crc_basic, boost::crc_optimal
 
 #include "value.h"
 #include "row.h"
@@ -195,7 +194,7 @@ public:
         i++;
         ret ^= c;
       }
-//      boost::crc_basic<16>  crc_ccitt1( 0x1021, 0xFFFF, 0, false, false );
+//      crc_basic<16>  crc_ccitt1( 0x1021, 0xFFFF, 0, false, false );
 //      crc_ccitt1.process_bytes( v->data(), v->size() * sizeof((*v)[0]));
 //      auto r = crc_ccitt1.checksum();
       return ret;

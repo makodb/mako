@@ -10,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <chrono>
+#include <unistd.h>
 #include "lib/configuration.h"
 #include "lib/common.h"
 #include "lib/helper_queue.h"
@@ -43,6 +44,12 @@ struct ShardContext {
 // @unsafe: singleton with mutable state
 class BenchmarkConfig {
   private:
+      static std::string defaultNfsSyncDir() {
+          // Scope sync files by effective user id so non-root runs do not trip
+          // over stale root-owned files from prior sessions.
+          return "/tmp/mako_sync_" + std::to_string(static_cast<unsigned long>(::getuid()));
+      }
+
       // Private constructor with default values
       BenchmarkConfig() : 
           nthreads_(1),
@@ -127,7 +134,7 @@ class BenchmarkConfig {
 
       // NFS-based multi-shard synchronization
       // Works for both single-process and distributed deployments
-      std::string nfs_sync_dir_{"/tmp/mako_sync"};  // Shared directory for sync files
+      std::string nfs_sync_dir_{defaultNfsSyncDir()};  // Shared directory for sync files
       int nfs_sync_timeout_sec_{60};                 // Timeout for waiting for other shards
 
       // Config node settings (for centralized configuration)
@@ -309,24 +316,48 @@ class BenchmarkConfig {
 
       // Initialize NFS sync: create directory and clean up old files
       void initMultiShardBarrier(int /* num_shards - unused, we use nshards_ */) {
+          std::error_code ec;
+
           // Create sync directory if it doesn't exist
-          std::filesystem::create_directories(nfs_sync_dir_);
+          std::filesystem::create_directories(nfs_sync_dir_, ec);
+          if (ec) {
+              std::cerr << "[WARN] Failed to ensure sync dir '" << nfs_sync_dir_
+                        << "': " << ec.message() << std::endl;
+              ec.clear();
+          }
 
           // Clean up any old ready files for ALL shards
           for (size_t i = 0; i < nshards_; i++) {
               std::string ready_file = getShardReadyFilePath(i);
-              std::filesystem::remove(ready_file);
+              std::filesystem::remove(ready_file, ec);
+              if (ec) {
+                  std::cerr << "[WARN] Failed to remove stale shard-ready file '"
+                            << ready_file << "': " << ec.message() << std::endl;
+                  ec.clear();
+              }
           }
       }
 
       // Signal this shard is ready by creating a ready file
       void signalShardReady(int shard_idx) {
+          std::error_code ec;
+
           // Ensure directory exists (needed for multi-process mode where
           // initMultiShardBarrier() might not be called)
-          std::filesystem::create_directories(nfs_sync_dir_);
+          std::filesystem::create_directories(nfs_sync_dir_, ec);
+          if (ec) {
+              std::cerr << "[WARN] Failed to ensure sync dir '" << nfs_sync_dir_
+                        << "': " << ec.message() << std::endl;
+              return;
+          }
 
           std::string ready_file = getShardReadyFilePath(shard_idx);
           std::ofstream ofs(ready_file);
+          if (!ofs.is_open()) {
+              std::cerr << "[WARN] Failed to open shard-ready file '" << ready_file
+                        << "' for writing." << std::endl;
+              return;
+          }
           ofs << "ready" << std::endl;
           ofs.close();
       }
@@ -347,7 +378,8 @@ class BenchmarkConfig {
               bool all_ready = true;
               for (size_t i = 0; i < nshards_; i++) {
                   std::string ready_file = getShardReadyFilePath(i);
-                  if (!std::filesystem::exists(ready_file)) {
+                  std::error_code ec;
+                  if (!std::filesystem::exists(ready_file, ec) || ec) {
                       all_ready = false;
                       break;
                   }
@@ -372,9 +404,15 @@ class BenchmarkConfig {
 
       // Clean up ready files after benchmark completes
       void resetMultiShardBarrier() {
+          std::error_code ec;
           for (size_t i = 0; i < nshards_; i++) {
               std::string ready_file = getShardReadyFilePath(i);
-              std::filesystem::remove(ready_file);
+              std::filesystem::remove(ready_file, ec);
+              if (ec) {
+                  std::cerr << "[WARN] Failed to remove shard-ready file '"
+                            << ready_file << "': " << ec.message() << std::endl;
+                  ec.clear();
+              }
           }
       }
 };

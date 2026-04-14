@@ -13,6 +13,7 @@
 #include "rpc/server.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
@@ -25,9 +26,6 @@ static uint64_t current_time_ms() {
         std::chrono::duration_cast<std::chrono::milliseconds>(
             now.time_since_epoch()).count());
 }
-
-// Atomic counter for dynamic port allocation
-static std::atomic<int> g_pool_test_port{18000};
 
 // ============================================================================
 // PoolConfig Tests
@@ -83,33 +81,74 @@ class PoolTestService : public benchmark::BenchmarkService {
 public:
     std::atomic<int> call_count{0};
 
-    void fast_nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcFastNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
     }
 
-    void nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcNopResponse, i32>
+    nop(const BenchmarkService::RpcNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
     }
 
-    void fast_prime(const i32& n, i8* flag) override {
-        *flag = 1;
+    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
+        (void)req;
+        BenchmarkService::RpcFastPrimeResponse resp{};
+        resp.flag = 1;
+        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
     }
 
-    void fast_vec(const i32& n, std::vector<i64>* v) override {
-        for (i32 i = 0; i < n; i++) v->push_back(i);
+    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
+        BenchmarkService::RpcFastVecResponse resp{};
+        for (i32 i = 0; i < req.n; i++) resp.v.push_back(i);
+        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
     }
 
-    void sleep(const double& sec) override {
-        std::this_thread::sleep_for(std::chrono::duration<double>(sec));
+    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
+    sleep(const BenchmarkService::RpcSleepRequest& req) override {
+        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
+        BenchmarkService::RpcSleepResponse resp{};
+        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
     }
 };
+
+// @safe - Start a server with retries to avoid port collisions.
+static Server* start_server_with_retry(const rusty::Arc<PollThread>& poll_thread, int* port_out) {
+    const int kMaxAttempts = 10;
+    for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
+        int port = (port_out != nullptr && *port_out > 0) ? *port_out : test_ports::get_port();
+        auto server = new Server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<PoolTestService>();
+        server->reg_service(std::move(service_box));
+        if (server->start(("0.0.0.0:" + std::to_string(port)).c_str()) == 0) {
+            if (port_out != nullptr) {
+                *port_out = port;
+            }
+            return server;
+        }
+        delete server;
+        if (port_out != nullptr) {
+            *port_out = -1;
+        }
+        std::this_thread::sleep_for(milliseconds(5));
+    }
+    return nullptr;
+}
 
 class ClientPoolTest : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     int test_port_;
 
-    ClientPoolTest() : test_port_(g_pool_test_port.fetch_add(1)) {}
+    ClientPoolTest() : test_port_(test_ports::get_port()) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
@@ -120,14 +159,7 @@ protected:
     }
 
     Server* start_server() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-        auto service_box = rusty::make_box<PoolTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
-            delete server;
-            return nullptr;
-        }
-        return server;
+        return start_server_with_retry(poll_thread_.as_ref().unwrap().clone(), &test_port_);
     }
 
     std::string server_addr() {
@@ -235,12 +267,10 @@ TEST_F(ClientPoolTest, AddressCount) {
     ASSERT_NE(server1, nullptr);
 
     // Create second server on different port
-    int port2 = g_pool_test_port.fetch_add(1);
+    int port2 = test_ports::get_port();
     auto poll2 = PollThread::create();
-    auto server2 = new Server(rusty::Some(poll2.clone()));
-    auto service_box2 = rusty::make_box<PoolTestService>();
-    server2->reg_service(std::move(service_box2));
-    ASSERT_EQ(server2->start(("0.0.0.0:" + std::to_string(port2)).c_str()), 0);
+    auto server2 = start_server_with_retry(poll2, &port2);
+    ASSERT_NE(server2, nullptr);
 
     ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
 

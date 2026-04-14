@@ -12,26 +12,29 @@
 
 namespace janus {
 
-// @safe
+// @unsafe - inherits from non-@interface Frame (individual methods are @safe)
 class RaftFrame : public Frame {
  private:
   // Safe shared mutable counter using Arc<Cell<T>> pattern
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_ = rusty::Arc<rusty::Cell<slotid_t>>::make(1);
 #ifdef RAFT_TEST_CORO
   static std::mutex raft_test_mutex_;
-  static std::shared_ptr<Fiber> raft_test_coro_;
+  static rusty::Option<rusty::Rc<Fiber>> raft_test_coro_;
   static uint16_t n_replicas_;
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;
   static bool tests_done_;
   static uint16_t n_commo_created_;
+  static bool is_lab_test_config_;        // True if running raft lab test (1 partition, 5 replicas)
+  static bool lab_test_config_checked_;   // True once we've checked the config
+  static bool IsRaftLabTestConfig();      // Check if we're in lab test configuration
 #endif
  public:
   RaftFrame(int mode);
   ~RaftFrame();  // Destructor to clean up owned resources
-  std::unique_ptr<RaftCommo> commo_;  // Owned RaftCommo, automatically cleaned up
+  std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility
   /* TODO: have another class for common data */
-  std::unique_ptr<RaftServer> svr_;  // Owned RaftServer, automatically cleaned up
+  std::unique_ptr<RaftServer> svr_;  // @unsafe - unique_ptr kept for test file compatibility
   Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,

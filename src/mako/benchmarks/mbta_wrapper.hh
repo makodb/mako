@@ -1198,7 +1198,7 @@ public:
 
     // We only actually create tables in preallocate_open_index now!
     auto ret = new mbta_ordered_index(name, this, name.find("dummy") != std::string::npos);
-    std::cout << "new table is createded with name: " << name << ", id: " << ret->get_table_id() << std::endl;
+    std::cout << "new table is created with name: " << name << ", id: " << ret->get_table_id() << std::endl;
     return ret;
   }
 
@@ -1214,7 +1214,7 @@ public:
     if (tables_taken.find(std::make_tuple(name, shard_index)) != tables_taken.end() ) {
       int table_id = tables_taken[std::make_tuple(name, shard_index)];
       auto tbl = get_index_by_table_id(table_id) ;
-      std::cout << "existing table is createded with name: " << name 
+      std::cout << "existing table is created with name: " << name 
               << ", table-id: " << tbl->get_table_id()
               << ", on shard-server id:" << shard_index << std::endl;
       return tbl ;
@@ -1248,7 +1248,7 @@ public:
     mako::get_table_registry().register_table(available_table_id, name);
     // Record this table to prevent duplicate creation for the same (name, shard)
     tables_taken[std::make_tuple(name, shard_index)] = available_table_id;
-    std::cout << "new table is createded with name: " << name 
+    std::cout << "new table is created with name: " << name 
               << ", table-id: " << tbl->get_table_id()
               << ", on shard-server id:" << shard_index << std::endl;
     mako::setup_update_table(available_table_id, tbl);

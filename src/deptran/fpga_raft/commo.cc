@@ -40,8 +40,12 @@ shared_ptr<FpgaRaftForwardQuorumEvent> FpgaRaftCommo::SendForward(parid_t par_id
       e->FeedResponse(cmt_idx);
     };    
     MarshallDeputy md(cmd);
-    auto f = proxy->async_Forward(md, fuattr);
-    Future::safe_release(f);
+    FpgaRaftProxy::RpcForwardRequest req{};
+    req.cmd = md;
+    auto f = proxy->async_Forward(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
     return e;
 }
 
@@ -74,8 +78,13 @@ void FpgaRaftCommo::BroadcastHeartbeat(parid_t par_id,
 		DepId di;
 		di.str = "hb";
 		di.id = -1;
-    auto f = proxy->async_Heartbeat(logIndex, di, fuattr);
-    Future::safe_release(f);
+    FpgaRaftProxy::RpcHeartbeatRequest req{};
+    req.leaderPrevLogIndex = logIndex;
+    req.dep_id = di;
+    auto f = proxy->async_Heartbeat(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 
@@ -98,8 +107,13 @@ void FpgaRaftCommo::SendHeartbeat(parid_t par_id,
 		di.id = -1;
 		
 		//Log_info("heartbeat2 for log index: %d", logIndex);
-    auto f = proxy->async_Heartbeat(logIndex, di, fuattr);
-    Future::safe_release(f);
+    FpgaRaftProxy::RpcHeartbeatRequest req{};
+    req.leaderPrevLogIndex = logIndex;
+    req.dep_id = di;
+    auto f = proxy->async_Heartbeat(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 
@@ -132,16 +146,19 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
 		di.id = -1;
 
 		Log_info("heartbeat2 for log index: %d", prevLogIndex);
-    auto f = proxy->async_AppendEntries(slot_id,
-                                        ballot,
-                                        currentTerm,
-                                        prevLogIndex,
-                                        prevLogTerm,
-                                        commitIndex,
-																				di,
-                                        md, 
-                                        fuattr);
-    Future::safe_release(f);
+    FpgaRaftProxy::RpcAppendEntriesRequest req{};
+    req.slot = slot_id;
+    req.ballot = ballot;
+    req.leaderCurrentTerm = currentTerm;
+    req.leaderPrevLogIndex = prevLogIndex;
+    req.leaderPrevLogTerm = prevLogTerm;
+    req.leaderCommitIndex = commitIndex;
+    req.dep_id = di;
+    req.cmd = md;
+    auto f = proxy->async_AppendEntries(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 
 }
@@ -229,16 +246,19 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
 		DepId di;
 		di.str = "dep";
 		di.id = dep_id;
-    auto f = proxy->async_AppendEntries(slot_id,
-                                        ballot,
-                                        currentTerm,
-                                        prevLogIndex,
-                                        prevLogTerm,
-                                        commitIndex,
-																				di,
-                                        md, 
-                                        fuattr);
-    Future::safe_release(f);
+    FpgaRaftProxy::RpcAppendEntriesRequest req{};
+    req.slot = slot_id;
+    req.ballot = ballot;
+    req.leaderCurrentTerm = currentTerm;
+    req.leaderPrevLogIndex = prevLogIndex;
+    req.leaderPrevLogTerm = prevLogTerm;
+    req.leaderCommitIndex = commitIndex;
+    req.dep_id = di;
+    req.cmd = md;
+    auto f = proxy->async_AppendEntries(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
   verify(!e->is_ready());
   return e;
@@ -265,16 +285,19 @@ void FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
 		DepId di;
 		di.str = "dep";
 		di.id = dep_id;
-    auto f = proxy->async_AppendEntries(slot_id, 
-                                        ballot, 
-                                        currentTerm,
-                                        prevLogIndex,
-                                        prevLogTerm,
-                                        commitIndex,
-																				di,
-                                        md, 
-                                        fuattr);
-    Future::safe_release(f);
+    FpgaRaftProxy::RpcAppendEntriesRequest req{};
+    req.slot = slot_id;
+    req.ballot = ballot;
+    req.leaderCurrentTerm = currentTerm;
+    req.leaderPrevLogIndex = prevLogIndex;
+    req.leaderPrevLogTerm = prevLogTerm;
+    req.leaderCommitIndex = commitIndex;
+    req.dep_id = di;
+    req.cmd = md;
+    auto f = proxy->async_AppendEntries(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 //  verify(0);
 }
@@ -294,8 +317,15 @@ void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
 		DepId di;
 		di.str = "dep";
 		di.id = dep_id;
-    auto f = proxy->async_Decide(slot_id, ballot, di, md, fuattr);
-    Future::safe_release(f);
+    FpgaRaftProxy::RpcDecideRequest req{};
+    req.slot = slot_id;
+    req.ballot = ballot;
+    req.dep_id = di;
+    req.cmd = md;
+    auto f = proxy->async_Decide(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 
@@ -311,7 +341,15 @@ void FpgaRaftCommo::BroadcastVote(parid_t par_id,
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = cb;
-    Future::safe_release(proxy->async_Vote(lst_log_idx, lst_log_term, self_id,cur_term, fuattr));
+    FpgaRaftProxy::RpcVoteRequest req{};
+    req.lst_log_idx = lst_log_idx;
+    req.lst_log_term = lst_log_term;
+    req.par_id = self_id;
+    req.cur_term = cur_term;
+    auto f = proxy->async_Vote(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 
@@ -342,7 +380,15 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
       e->FeedResponse(vote, term);
       // TODO add max accepted value.
     };
-    Future::safe_release(proxy->async_Vote(lst_log_idx, lst_log_term, self_id, cur_term, fuattr));
+    FpgaRaftProxy::RpcVoteRequest req{};
+    req.lst_log_idx = lst_log_idx;
+    req.lst_log_term = lst_log_term;
+    req.par_id = self_id;
+    req.cur_term = cur_term;
+    auto f = proxy->async_Vote(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -359,7 +405,15 @@ void FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = cb;
-    Future::safe_release(proxy->async_Vote(lst_log_idx, lst_log_term, self_id,cur_term, fuattr));
+    FpgaRaftProxy::RpcVoteRequest req{};
+    req.lst_log_idx = lst_log_idx;
+    req.lst_log_term = lst_log_term;
+    req.par_id = self_id;
+    req.cur_term = cur_term;
+    auto f = proxy->async_Vote(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 
@@ -389,7 +443,15 @@ FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
       fu->get_reply() >> vote ;
       e->FeedResponse(vote, term);
     };
-    Future::safe_release(proxy->async_Vote(lst_log_idx, lst_log_term, self_id, cur_term, fuattr));
+    FpgaRaftProxy::RpcVoteRequest req{};
+    req.lst_log_idx = lst_log_idx;
+    req.lst_log_term = lst_log_term;
+    req.par_id = self_id;
+    req.cur_term = cur_term;
+    auto f = proxy->async_Vote(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
   return e;
 }

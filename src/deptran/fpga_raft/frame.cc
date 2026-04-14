@@ -12,6 +12,10 @@ namespace janus {
 
 REG_FRAME(MODE_FPGA_RAFT, vector<string>({"fpga_raft"}), FpgaRaftFrame);
 
+Frame* CreateFpgaRaftFrameBuiltin(int mode) {
+  return new FpgaRaftFrame(mode);
+}
+
 /*
 template<typename D>
 struct automatic_register {

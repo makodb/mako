@@ -20,12 +20,6 @@ sudo apt-get update
 # Build tools
 sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf
 
-# Boost libraries
-sudo apt-get --assume-yes install libboost-all-dev
-
-# YAML
-sudo apt-get --assume-yes install libyaml-cpp-dev
-
 # Memory allocators and profiling
 sudo apt-get --assume-yes install libjemalloc-dev libgoogle-perftools-dev
 
@@ -35,7 +29,7 @@ sudo apt-get --assume-yes install googletest libgtest-dev libgmock-dev
 # Development libraries
 sudo apt-get --assume-yes install libaio-dev libssl-dev libffi-dev python3-dev
 sudo apt-get --assume-yes install libprotobuf-dev librocksdb-dev
-sudo apt-get --assume-yes install libnuma-dev libibverbs-dev libgflags-dev
+sudo apt-get --assume-yes install libnuma-dev libibverbs-dev libgflags-dev libevent-dev
 sudo apt-get --assume-yes install libpmem-dev libsystemd-dev
 
 # Networking

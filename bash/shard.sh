@@ -23,7 +23,16 @@ mkdir -p results
 path=$(pwd)/src/mako
 
 # Build the base command
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml -P $cluster"
+config_path="$path/config/local-shards${nshard}-warehouses${trd}.yml"
+if [ -n "$MAKO_CONFIG" ]; then
+    config_path="$MAKO_CONFIG"
+fi
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $config_path -P $cluster"
+
+THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
+if [ -n "$THROTTLE_ARGS" ]; then
+    CMD="$CMD$THROTTLE_ARGS"
+fi
 
 # Add --is-micro flag if enabled (value is 1)
 if [ "$is_micro" == "1" ]; then
@@ -32,19 +41,38 @@ fi
 
 # Add paxos config and --is-replicated flag only if replication is enabled
 if [ "$is_replicated" == "1" ]; then
-    # Use occ_raft.yml for Raft replication, occ_paxos.yml for Paxos
-    if [ "$replication_type" == "raft" ]; then
+    replication_type_normalized="$(echo "$replication_type" | tr '[:upper:]' '[:lower:]')"
+
+    # Pick replication-specific config files.
+    if [ "$replication_type_normalized" == "raft" ]; then
         OCC_CONFIG="config/occ_raft.yml"
+        REPLICATION_CONFIG="config/1leader_2followers/raft${trd}_shardidx${shard}.yml"
     else
         OCC_CONFIG="config/occ_paxos.yml"
+        REPLICATION_CONFIG="config/1leader_2followers/paxos${trd}_shardidx${shard}.yml"
     fi
-    CMD="$CMD -F config/1leader_2followers/paxos${trd}_shardidx${shard}.yml -F $OCC_CONFIG --is-replicated --replication=$replication_type"
+
+    if [ ! -f "$REPLICATION_CONFIG" ]; then
+        echo "Error: replication config not found: $REPLICATION_CONFIG"
+        exit 1
+    fi
+    if [ ! -f "$OCC_CONFIG" ]; then
+        echo "Error: OCC config not found: $OCC_CONFIG"
+        exit 1
+    fi
+
+    CMD="$CMD -F $REPLICATION_CONFIG -F $OCC_CONFIG --is-replicated --replication=$replication_type_normalized"
 fi
 
 # Print configuration
 echo "========================================="
 echo "Configuration:"
 echo "========================================="
+if [ -n "${MAKO_CPU_LIMIT:-}" ]; then
+    cpu_throttle_label="${MAKO_CPU_LIMIT}%"
+else
+    cpu_throttle_label="disabled"
+fi
 echo "  Number of shards:  $nshard"
 echo "  Shard index:       $shard"
 echo "  Number of threads: $trd"
@@ -52,6 +80,7 @@ echo "  Cluster:           $cluster"
 echo "  Micro benchmark:   $([ "$is_micro" == "1" ] && echo "enabled" || echo "disabled")"
 echo "  Replicated mode:   $([ "$is_replicated" == "1" ] && echo "enabled" || echo "disabled")"
 echo "  Replication type:  $replication_type"
+echo "  CPU throttle:      ${cpu_throttle_label} (cycle=${MAKO_THROTTLE_CYCLE_MS:-default}ms)"
 echo "========================================="
 
 # Execute command (with or without gdb based on GDB_PREFIX from util.sh)

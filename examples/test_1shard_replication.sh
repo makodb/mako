@@ -3,8 +3,11 @@
 # Script to test 1-shard experiments with replication
 # Each shard should:
 # 1. Show "agg_persist_throughput" keyword
-# 2. Have NewOrder_remote_abort_ratio < 20%
+# 2. Have NewOrder_remote_abort_ratio < 20%, or N/A when no remote txns occur
 # 3. Followers replay at least 1000 batches
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
 
 echo "========================================="
 echo "Testing 1-shard setup with replication"
@@ -12,7 +15,72 @@ echo "========================================="
 
 trd=${1:-6}
 script_name="$(basename "$0")"
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+binary_path="./${BUILD_DIR:-build}/dbtest"
+SHARD0_LOCALHOST_PID=""
+SHARD0_LEARNER_PID=""
+SHARD0_P2_PID=""
+SHARD0_P1_PID=""
+CLEANUP_DONE=0
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: dbtest binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
+
+if ! ensure_paxos_replication_configs "$trd" 1; then
+    exit 1
+fi
+
+TEMP_CONFIG=$(make_simple_txn_rep_config 1 $trd)
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "dbtest config: $MAKO_CONFIG"
+
+cleanup_temp_config() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop any started shard wrappers.
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Best-effort cleanup for dbtest workers tied to this run's unique temp config.
+    # This prevents leaked workers when the script exits early (timeout/Ctrl-C).
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+        sleep 1
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    fi
+
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
+    rm -f "$TEMP_CONFIG"
+    unset MAKO_CONFIG
+}
+
+handle_interrupt() {
+    cleanup_temp_config
+    exit 130
+}
+
+trap cleanup_temp_config EXIT
+trap handle_interrupt INT TERM
+
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 # Clean up old log files
 rm -f nfs_sync_*
 USERNAME=${USER:-unknown}
@@ -21,26 +89,52 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 # Start shard 0 in background
 echo "Starting shard 0..."
 nohup bash bash/shard.sh 1 0 $trd localhost 0 1 > $script_name\_shard0-localhost-$trd.log 2>&1 &
+SHARD0_LOCALHOST_PID=$!
 nohup bash bash/shard.sh 1 0 $trd learner 0 1 > $script_name\_shard0-learner-$trd.log 2>&1 &
+SHARD0_LEARNER_PID=$!
 nohup bash bash/shard.sh 1 0 $trd p2 0 1 > $script_name\_shard0-p2-$trd.log 2>&1 &
+SHARD0_P2_PID=$!
 sleep 1
 nohup bash bash/shard.sh 1 0 $trd p1 0 1 > $script_name\_shard0-p1-$trd.log 2>&1 &
-SHARD0_PID=$!
+SHARD0_P1_PID=$!
 sleep 2
 
 # Wait for benchmark to complete (poll for completion marker)
 echo "Waiting for benchmark to complete..."
 log_file="${script_name}_shard0-localhost-$trd.log"
-max_wait=120  # Maximum wait time in seconds
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 
-while [ $wait_count -lt $max_wait ]; do
+while [ "$wait_count" -lt "$max_wait" ]; do
     # Check if throughput output appeared (indicates completion)
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2  # Give a moment for final output
         break
     fi
+
+    if ! kill -0 "$SHARD0_LOCALHOST_PID" 2>/dev/null; then
+        # Process may exit immediately after writing final metrics.
+        sleep 1
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (process exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Shard 0 localhost process exited unexpectedly after ${wait_count}s"
+        process_exited_early=1
+        break
+    fi
+
     sleep 1
     wait_count=$((wait_count + 1))
     if [ $((wait_count % 10)) -eq 0 ]; then
@@ -48,8 +142,9 @@ while [ $wait_count -lt $max_wait ]; do
     fi
 done
 
-if [ $wait_count -ge $max_wait ]; then
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Graceful shutdown: SIGTERM first
@@ -62,8 +157,8 @@ pkill -9 -f "dbtest.*shard-index 0" 2>/dev/null || true
 sleep 1
 
 # Original cleanup for good measure
-kill $SHARD0_PID 2>/dev/null || true
-wait $SHARD0_PID 2>/dev/null || true
+kill $SHARD0_LOCALHOST_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID 2>/dev/null || true
+wait $SHARD0_LOCALHOST_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID 2>/dev/null || true
 
 echo ""
 echo "========================================="
@@ -71,6 +166,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  ✗ Shard 0 localhost process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  ✗ Benchmark timed out before throughput was observed"
+    failed=1
+fi
 
 # Check each shard's output
 {
@@ -108,8 +213,13 @@ failed=0
             # Remove % sign if present and convert to float
             abort_value=$(echo "$abort_ratio" | sed 's/%//')
             
+            abort_value_lower=$(echo "$abort_value" | tr '[:upper:]' '[:lower:]')
+
+            # In 1-shard mode there are no remote transactions, so ratio may be nan/-nan.
+            if [ "$abort_value_lower" = "nan" ] || [ "$abort_value_lower" = "-nan" ]; then
+                echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (N/A: no remote transactions in single-shard run)"
             # Check if value is less than 20 using awk (more portable than bc)
-            if awk "BEGIN {exit !($abort_value < 20)}"; then
+            elif awk "BEGIN {exit !($abort_value < 20)}"; then
                 echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (< 20%)"
             else
                 echo "  ✗ NewOrder_remote_abort_ratio: $abort_ratio (>= 20%)"
