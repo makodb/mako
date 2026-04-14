@@ -121,9 +121,14 @@ class RaftServer : public TxLogServer {
   // SNAPSHOT SUPPORT (Phase 3.1)
   // ============================================================================
   std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
+  uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
 
   // @unsafe - Initializes snapshot manager from environment config
   void InitializeSnapshotManager();
+
+  // @unsafe - Creates a snapshot of current state, persists via snapshot_manager_,
+  //           then compacts the log. Called from applyLogs() when threshold is met.
+  void CreateSnapshot();
 
   // Metadata keys for LogStorage persistence
   static constexpr const char* META_TERM = "currentTerm";
@@ -753,6 +758,24 @@ class RaftServer : public TxLogServer {
    */
   // @safe - log compaction (storage operations wrapped in @unsafe blocks)
   size_t CompactLog(slotid_t up_to_index);
+
+  /**
+   * Set the snapshot threshold (number of entries between snapshots).
+   * @param threshold Number of log entries applied before taking a snapshot
+   */
+  // @safe - sets POD field
+  void SetSnapshotThreshold(uint64_t threshold) {
+    snapshot_threshold_ = threshold;
+  }
+
+  /**
+   * Get the current snapshot threshold.
+   * @return Current threshold value
+   */
+  // @safe - reads POD field
+  uint64_t GetSnapshotThreshold() const {
+    return snapshot_threshold_;
+  }
 
   // ============================================================================
 

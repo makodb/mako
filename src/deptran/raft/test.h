@@ -159,6 +159,19 @@ class RaftLabTest {
   // Test snapshot_manager_ wiring in RaftServer
   int testSnapshotManagerWiring(void);
 
+  // ===========================================================================
+  // PHASE 3.2: CreateSnapshot Tests
+  // ===========================================================================
+
+  // Test CreateSnapshot basic functionality
+  int testCreateSnapshotBasic(void);
+
+  // Test CreateSnapshot triggers compaction
+  int testCreateSnapshotAndCompaction(void);
+
+  // Test snapshot threshold is configurable
+  int testSnapshotThresholdConfigurable(void);
+
   void wait(uint64_t microseconds);
 
 };

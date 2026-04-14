@@ -581,9 +581,12 @@ size_t CompactLog(uint64_t up_to_index); // Discard entries before index
 
 On initialization, if a prior snapshot exists on disk, `snapidx_` and `snapterm_` are loaded from it. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks.
 
+### CreateSnapshot
+
+`CreateSnapshot()` is called automatically from `applyLogs()` when `executeIndex - snapidx_ > snapshot_threshold_`. It serializes a state marker, persists via `snapshot_manager_->TakeSnapshot()`, updates `snapidx_`/`snapterm_`, and calls `CompactLog()` to discard old entries and advance `min_active_slot_`. The threshold is configurable via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var or `SetSnapshotThreshold()`.
+
 ### Planned Features
 
-- **CreateSnapshot**: Called from `applyLogs()` when `executeIndex - snapidx_ > SNAPSHOT_THRESHOLD`
 - **InstallSnapshot RPC**: Leader sends snapshot to lagging followers when `next_index_[follower] < min_active_slot_`
 - **Recovery**: On startup, load snapshot state before replaying log entries
 

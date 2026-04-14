@@ -83,13 +83,44 @@ uint64_t GetSnapshotTerm() const;
 size_t CompactLog(uint64_t up_to_index);
 ```
 
+### CreateSnapshot (Phase 3.2)
+
+`CreateSnapshot()` is a private method on `RaftServer` that performs periodic
+log compaction via snapshotting. It is called automatically from `applyLogs()`
+when the number of applied entries since the last snapshot exceeds the threshold.
+
+**Trigger condition** (in `applyLogs()`):
+```cpp
+if (snapshot_manager_ && snapidx_ < executeIndex &&
+    (executeIndex - snapidx_) > snapshot_threshold_)
+```
+
+**Implementation** (`server.cc`):
+1. Reads `executeIndex` as the snapshot point
+2. Looks up the term for that index via `GetRaftInstance()`
+3. Serializes a minimal state marker (executeIndex + term, 16 bytes)
+4. Calls `snapshot_manager_->TakeSnapshot(index, term, data, size)`
+5. Updates `snapidx_` and `snapterm_`
+6. Calls `CompactLog(executeIndex)` which removes entries from both
+   `log_storage_` and `raft_logs_`, and advances `min_active_slot_`
+
+**Configuration**:
+- `snapshot_threshold_` member (default: 10000) controls how many entries
+  are applied before triggering a snapshot
+- Set via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var (read in `InitializeSnapshotManager()`)
+- Programmatic setter: `SetSnapshotThreshold(uint64_t)`
+
+**Thread safety**: `CreateSnapshot()` is called from `applyLogs()` which uses
+the `in_applying_logs_` reentrance guard. `CompactLog()` acquires `mtx_` internally.
+
+**Tests** (Tests 55-57 in `test.cc`):
+- Test 55: Basic snapshot creation after exceeding threshold
+- Test 56: Snapshot + compaction, then verify continued operation
+- Test 57: Threshold configurability via getter/setter
+
 ## Subsequent Tasks
 
 This design supports the following planned features:
-
-1. **CreateSnapshot** (Phase 3.2): Called from `applyLogs()` when
-   `executeIndex - snapidx_ > SNAPSHOT_THRESHOLD`. Serializes state machine,
-   persists via `snapshot_manager_->TakeSnapshot()`, then calls `CompactLog()`.
 
 2. **InstallSnapshot RPC** (Phase 3.3): New RPC handler for leader to send
    snapshot to lagging followers. Uses streaming via `SnapshotReader`/`SnapshotWriter`.

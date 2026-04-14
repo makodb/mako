@@ -371,6 +371,7 @@ void RaftServer::InitializeSnapshotManager() {
   const char* interval_str = std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL");  // @unsafe
   if (interval_str && interval_str[0] != '\0') {
     snap_config.snapshot_interval = std::stoull(interval_str);
+    snapshot_threshold_ = snap_config.snapshot_interval;
   }
 
   // Create the FileSnapshotManager
@@ -467,6 +468,74 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
     return 0;
   }
   }
+}
+
+// @unsafe - Creates snapshot from current state, persists, and compacts log
+void RaftServer::CreateSnapshot() {
+  if (!snapshot_manager_) {
+    Log_debug("[RAFT-SNAPSHOT] Site %d: No snapshot manager, skipping CreateSnapshot",
+              site_id_);
+    return;
+  }
+
+  slotid_t snap_index = executeIndex;
+  if (snap_index == 0) {
+    Log_debug("[RAFT-SNAPSHOT] Site %d: executeIndex is 0, nothing to snapshot",
+              site_id_);
+    return;
+  }
+
+  // Determine the term at the snapshot index
+  ballot_t snap_term = 0;
+  auto instance = GetRaftInstance(snap_index);
+  if (instance) {
+    snap_term = instance->term;
+  } else {
+    // If the instance has been cleaned up, use currentTerm as fallback
+    snap_term = currentTerm;
+    Log_warn("[RAFT-SNAPSHOT] Site %d: No instance at index %lu, using currentTerm %lu",
+             site_id_, snap_index, snap_term);
+  }
+
+  // Serialize state: collect the key-value pairs from committed entries
+  // For now, we serialize a simple representation of the committed state.
+  // The actual state machine serialization will be protocol-specific in the future.
+  // We serialize the executeIndex and term as a minimal state marker.
+  // @unsafe { string operations }
+  std::string state_data;
+  {
+    // Format: 8 bytes executeIndex + 8 bytes term
+    state_data.resize(sizeof(uint64_t) * 2);
+    char* ptr = state_data.data();
+    std::memcpy(ptr, &snap_index, sizeof(uint64_t));
+    ptr += sizeof(uint64_t);
+    std::memcpy(ptr, &snap_term, sizeof(uint64_t));
+  }
+
+  // Persist the snapshot via the snapshot manager
+  // @unsafe { snapshot_manager_ I/O operations }
+  bool saved = snapshot_manager_->TakeSnapshot(
+      snap_index, snap_term,
+      state_data.data(), state_data.size());
+
+  if (!saved) {
+    Log_error("[RAFT-SNAPSHOT] Site %d: Failed to save snapshot at index=%lu term=%lu",
+              site_id_, snap_index, snap_term);
+    return;
+  }
+
+  // Update snapshot metadata
+  slotid_t old_snapidx = snapidx_;
+  snapidx_ = snap_index;
+  snapterm_ = snap_term;
+
+  Log_info("[RAFT-SNAPSHOT] Site %d: Snapshot saved at index=%lu term=%lu (prev snapidx=%lu)",
+           site_id_, snap_index, snap_term, old_snapidx);
+
+  // Compact the log up to the snapshot index
+  size_t compacted = CompactLog(snap_index);
+  Log_info("[RAFT-SNAPSHOT] Site %d: Compacted %zu entries up to index=%lu",
+           site_id_, compacted, snap_index);
 }
 
 // ============================================================================
@@ -1050,6 +1119,12 @@ void RaftServer::applyLogs() {
   } while (apply_pending_.load(std::memory_order_acquire));
 
   in_applying_logs_ = false;
+
+  // Check if we should take a snapshot
+  if (snapshot_manager_ && snapidx_ < executeIndex &&
+      (executeIndex - snapidx_) > snapshot_threshold_) {
+    CreateSnapshot();
+  }
 
   // Cleanup old commands to prevent memory buildup
 #ifdef SINGLE_RAFT_INSTANCE

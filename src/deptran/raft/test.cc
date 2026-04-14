@@ -72,6 +72,15 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testSnapshotManagerWiring());         // Test 54
   }
 
+  // CreateSnapshot integration tests (Phase 3.2)
+  if (!failed) {
+    Log_info("Running CreateSnapshot tests (Phase 3.2)");
+    failed =
+        TEST_EXPAND(testCreateSnapshotBasic())               // Test 55
+        || TEST_EXPAND(testCreateSnapshotAndCompaction())    // Test 56
+        || TEST_EXPAND(testSnapshotThresholdConfigurable()); // Test 57
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -4666,6 +4675,167 @@ int RaftLabTest::testSnapshotManagerWiring(void) {
   rmdir(test_path.c_str());
 
   Log_info("[SNAPSHOT-WIRING-TEST] Wiring in RaftServer PASSED");
+  Passed2();
+}
+
+// =============================================================================
+// Test 55: CreateSnapshot basic functionality
+// =============================================================================
+// @unsafe - test function that exercises CreateSnapshot
+int RaftLabTest::testCreateSnapshotBasic(void) {
+  Init2(55, "CreateSnapshot basic");
+
+  // Wait for a leader
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // Set up a snapshot manager with a temporary path
+  std::string test_path = "/tmp/raft_snap_create_test_" + std::to_string(getpid());
+  rrr::SnapshotConfig config;
+  config.storage_path = test_path;
+  auto test_mgr = std::make_shared<rrr::FileSnapshotManager>(config);
+  auto original_mgr = server->GetSnapshotManager();
+  server->SetSnapshotManager(test_mgr);
+
+  // Set a low threshold so we can trigger a snapshot easily
+  server->SetSnapshotThreshold(5);
+
+  // Verify no snapshot exists yet
+  Assert2(!server->HasSnapshot(), "No snapshot should exist initially");
+  Assert2(server->GetSnapshotIndex() == 0,
+          "Snapshot index should be 0 initially");
+
+  // Submit enough entries to exceed the threshold
+  // We need > 5 committed + applied entries
+  for (int i = 1; i <= 10; i++) {
+    uint64_t idx = config_->DoAgreement(100 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 100 + i);
+  }
+
+  // Give time for applyLogs to run and trigger CreateSnapshot
+  Fiber::sleep(2000000);  // 2 seconds
+
+  // Verify a snapshot was taken
+  Assert2(server->HasSnapshot(),
+          "Snapshot should exist after exceeding threshold");
+  Assert2(server->GetSnapshotIndex() > 0,
+          "Snapshot index should be > 0, got %lu", server->GetSnapshotIndex());
+  Assert2(server->GetSnapshotTerm() > 0,
+          "Snapshot term should be > 0, got %lu", server->GetSnapshotTerm());
+
+  // Verify the snapshot manager has the snapshot
+  auto latest = test_mgr->GetLatestSnapshot();
+  Assert2(latest.is_some(), "Snapshot manager should have a snapshot");
+  auto meta = latest.unwrap();
+  Assert2(meta.last_included_index == server->GetSnapshotIndex(),
+          "Manager index (%lu) should match server index (%lu)",
+          meta.last_included_index, server->GetSnapshotIndex());
+
+  // Restore and clean up
+  server->SetSnapshotManager(original_mgr);
+  test_mgr->DeleteAllSnapshots();
+  rmdir(test_path.c_str());
+
+  Log_info("[CREATE-SNAPSHOT-BASIC-TEST] PASSED");
+  Passed2();
+}
+
+// =============================================================================
+// Test 56: CreateSnapshot triggers compaction and new entries still work
+// =============================================================================
+// @unsafe - test function that exercises CreateSnapshot with compaction
+int RaftLabTest::testCreateSnapshotAndCompaction(void) {
+  Init2(56, "CreateSnapshot and compaction");
+
+  // Wait for a leader
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // Set up snapshot manager
+  std::string test_path = "/tmp/raft_snap_compact_test_" + std::to_string(getpid());
+  rrr::SnapshotConfig config;
+  config.storage_path = test_path;
+  auto test_mgr = std::make_shared<rrr::FileSnapshotManager>(config);
+  auto original_mgr = server->GetSnapshotManager();
+  server->SetSnapshotManager(test_mgr);
+
+  // Set a low threshold
+  server->SetSnapshotThreshold(5);
+
+  // Submit entries to trigger snapshot
+  for (int i = 1; i <= 10; i++) {
+    uint64_t idx = config_->DoAgreement(200 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 200 + i);
+  }
+
+  // Wait for snapshot and compaction
+  Fiber::sleep(2000000);
+
+  uint64_t snap_idx = server->GetSnapshotIndex();
+  Assert2(snap_idx > 0, "Snapshot should have been taken, got index=%lu", snap_idx);
+
+  // Now submit more entries AFTER snapshot - these should still commit
+  for (int i = 1; i <= 5; i++) {
+    uint64_t idx = config_->DoAgreement(300 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement after snapshot failed for cmd %d", 300 + i);
+  }
+
+  // Verify the system is still functional
+  int leader2 = config_->OneLeader();
+  Assert2(leader2 >= 0, "Should still have a leader after snapshot+compaction");
+
+  // Restore and clean up
+  server->SetSnapshotManager(original_mgr);
+  test_mgr->DeleteAllSnapshots();
+  rmdir(test_path.c_str());
+
+  Log_info("[CREATE-SNAPSHOT-COMPACTION-TEST] PASSED");
+  Passed2();
+}
+
+// =============================================================================
+// Test 57: Snapshot threshold is configurable
+// =============================================================================
+// @unsafe - test function that exercises snapshot threshold configuration
+int RaftLabTest::testSnapshotThresholdConfigurable(void) {
+  Init2(57, "Snapshot threshold configurable");
+
+  // Wait for a leader
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // Check default threshold
+  uint64_t default_threshold = server->GetSnapshotThreshold();
+  Assert2(default_threshold == 10000,
+          "Default threshold should be 10000, got %lu", default_threshold);
+
+  // Set a custom threshold
+  server->SetSnapshotThreshold(42);
+  Assert2(server->GetSnapshotThreshold() == 42,
+          "Threshold should be 42 after SetSnapshotThreshold, got %lu",
+          server->GetSnapshotThreshold());
+
+  // Set another value
+  server->SetSnapshotThreshold(100000);
+  Assert2(server->GetSnapshotThreshold() == 100000,
+          "Threshold should be 100000, got %lu", server->GetSnapshotThreshold());
+
+  // Restore default
+  server->SetSnapshotThreshold(10000);
+
+  Log_info("[SNAPSHOT-THRESHOLD-CONFIG-TEST] PASSED");
   Passed2();
 }
 
