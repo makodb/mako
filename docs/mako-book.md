@@ -488,6 +488,87 @@ With N replicas, Mako tolerates floor(N/2) failures:
 - 3 replicas: tolerates 1 failure
 - 5 replicas: tolerates 2 failures
 
+### Replicated RocksDB (Raft State Machine)
+
+The Configuration Manager (Section 3) needs a **durable, replicated key-value store**. Rather than building a bespoke solution, Mako layers RocksDB on top of the Raft consensus module as a generic **replicated state machine**. This same pattern can serve any component that needs strongly-consistent replicated storage.
+
+#### Architecture
+
+```
+  Client
+    |
+    v
++-------------------+
+| ReplicatedDB      |  <-- Application-facing API (Get/Put/Delete)
+|   (leader only    |
+|    for writes)    |
++-------------------+
+    |  writes go through Raft
+    v
++-------------------+
+| RaftServer        |  <-- Consensus: replicates log entries across nodes
+|   app_next_()     |  <-- Callback on commit: applies entry to RocksDB
++-------------------+
+    |
+    v
++-------------------+
+| RocksDB           |  <-- Local durable state machine on each replica
++-------------------+
+```
+
+**Write path**: Client calls `ReplicatedDB::Put(key, value)` on the leader. The leader serializes the operation into a Raft log entry and proposes it. Once Raft commits the entry (majority ack), the `app_next_` callback fires on each replica, applying the Put to the local RocksDB instance. The leader returns success to the client.
+
+**Read path**: Reads can be served from any replica's local RocksDB (stale reads), or only from the leader (linearizable reads). For the Configuration Manager, leader reads are sufficient since config changes are infrequent.
+
+**Snapshot integration**: Raft's `CreateSnapshot()` calls `RocksDB::CreateCheckpoint()` to produce a consistent snapshot. `InstallSnapshot` ships the checkpoint to lagging followers, who load it into their local RocksDB. This replaces the current minimal state marker (executeIndex + term) with a real state machine snapshot.
+
+#### Operation Encoding
+
+Each Raft log entry encodes a key-value operation:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op` | uint8 | `PUT=1`, `DELETE=2`, `BATCH=3` |
+| `key` | string | Key bytes |
+| `value` | string | Value bytes (empty for DELETE) |
+
+For `BATCH`, the entry contains a sequence of (op, key, value) tuples applied atomically via `RocksDB::WriteBatch`.
+
+#### ReplicatedDB Class
+
+```cpp
+class ReplicatedDB {
+  RaftServer* raft_;           // Consensus layer
+  rocksdb::DB* db_;            // Local state machine
+  
+  // Write (leader only) — proposes to Raft, applied on commit
+  Status Put(const std::string& key, const std::string& value);
+  Status Delete(const std::string& key);
+  
+  // Read (local) — reads directly from RocksDB
+  Status Get(const std::string& key, std::string* value);
+  
+  // Raft callback — called on each replica when entry is committed
+  void ApplyEntry(slotid_t index, shared_ptr<Marshallable> cmd);
+  
+  // Snapshot — creates RocksDB checkpoint for Raft snapshot
+  void CreateStateMachineSnapshot(const std::string& path);
+  void LoadStateMachineSnapshot(const std::string& path);
+};
+```
+
+#### Configuration Manager Integration
+
+The Config Manager (Section 3) uses `ReplicatedDB` as its storage backend on shard 0:
+
+- `ConfigManager::Put/Get` delegate to `ReplicatedDB::Put/Get`
+- Config keys (`__version__`, `shard/<id>/replicas`, etc.) are regular RocksDB keys
+- Config changes are Raft-replicated writes — no separate replication path
+- On leader failure, the new leader's RocksDB has the same committed state
+- Snapshot/recovery uses RocksDB checkpoints instead of log replay
+
+This means the `__mako_config__` table from Section 3 is physically stored in a RocksDB instance that is replicated via Raft.
+
 ---
 
 ## 6. Storage Engines
