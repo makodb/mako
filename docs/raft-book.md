@@ -25,6 +25,7 @@ A comprehensive developer guide for the Raft consensus implementation in Mako.
 17. [Failure Scenarios and Recovery](#17-failure-scenarios-and-recovery)
 18. [Known Issues and Workarounds](#18-known-issues-and-workarounds)
 19. [Debugging](#19-debugging)
+20. [Membership Changes](#20-membership-changes)
 
 ---
 
@@ -1039,6 +1040,54 @@ config->Disconnect(server_id);
 // ... do work ...
 config->Reconnect(server_id);
 ```
+
+---
+
+## 20. Membership Changes
+
+The Raft implementation supports single-server membership changes via `AddServer` and `RemoveServer` RPCs. The protocol ensures safety by allowing only one server to change at a time, maintaining quorum overlap between old and new configurations.
+
+### Configuration Tracking
+
+`RaftServer` maintains a dynamic membership configuration:
+
+```cpp
+std::set<siteid_t> current_config_;      // Active replica set
+bool config_change_pending_ = false;     // True when a config entry is in-flight
+uint64_t pending_config_index_ = 0;      // Log index of pending config entry
+```
+
+`current_config_` is initialized from `Config::SitesByPartitionId()` during `Setup()`. All quorum calculations use `GetQuorumSize()` (which returns `current_config_.size() / 2 + 1`) instead of the static `Config::GetConfig()->GetPartitionSize()`.
+
+### RPCs
+
+Both RPCs are leader-only. Non-leaders return `success=false` with `leader_hint` set to the last known leader's site ID.
+
+**AddServer(term, new_server_id, new_server_addr)**: Adds a server to the configuration. Rejects if:
+- This server is not the leader
+- A config change is already pending (`config_change_pending_ == true`)
+- The server is already in `current_config_`
+
+**RemoveServer(term, server_id)**: Removes a server from the configuration. Rejects if:
+- This server is not the leader
+- A config change is already pending
+- The server is not in `current_config_`
+- Removing would leave zero servers (minimum cluster size is 1)
+
+### Current Limitations
+
+The current implementation applies configuration changes directly in memory rather than through Raft log entries. This means:
+- Config changes are not replicated to followers
+- Config changes do not survive leader failure
+- No server catch-up (new servers are not brought up to date before joining)
+
+These limitations will be addressed in future work when log-based configuration entries and server catch-up are implemented. See `docs/dev/raft_membership_change_design.md` for the full protocol design.
+
+### Tests
+
+- **Test 73** (`testAddServerBasic`): Verifies initial config size, adds a server, checks config grows and quorum updates.
+- **Test 74** (`testRemoveServerBasic`): Adds then removes a server, verifies config shrinks and quorum updates.
+- **Test 75** (`testRejectDuplicateConfigChange`): Verifies `config_change_pending_` blocks concurrent changes, and non-leaders reject config change requests.
 
 ---
 

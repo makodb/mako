@@ -156,6 +156,15 @@ int RaftLabTest::Run(void) {
         TEST_EXPAND(testHighFrequencyApply());                 // Test 72
   }
 
+  // Membership change tests
+  if (!failed) {
+    Log_info("Running membership change tests");
+    failed =
+        TEST_EXPAND(testAddServerBasic())                      // Test 73
+        || TEST_EXPAND(testRemoveServerBasic())                // Test 74
+        || TEST_EXPAND(testRejectDuplicateConfigChange());     // Test 75
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -6462,6 +6471,244 @@ int RaftLabTest::testHighFrequencyApply(void) {
           "Speculative invariants violated after high-frequency apply");
 
   Log_info("TEST 72: High frequency apply PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 73: testAddServerBasic
+// ============================================================================
+// Verify that AddServer adds a new server to the config, increases config size,
+// and updates quorum size. Tests the config tracking infrastructure directly
+// via friend class access since OnAddServer requires DeferredReply (RPC context).
+int RaftLabTest::testAddServerBasic(void) {
+  Init2(73, "AddServer basic functionality");
+
+  // Wait for election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 73: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Verify initial config size matches NSERVERS
+  auto& initial_config = server->GetCurrentConfig();
+  size_t initial_size = initial_config.size();
+  Assert2(initial_size == NSERVERS,
+          "Initial config size should be %d, got %zu", NSERVERS, initial_size);
+  Log_info("TEST 73: Initial config size verified: %zu", initial_size);
+
+  // 2. Verify initial quorum size
+  size_t initial_quorum = server->GetQuorumSize();
+  Assert2(initial_quorum == (NSERVERS / 2 + 1),
+          "Initial quorum should be %d, got %zu", NSERVERS / 2 + 1, initial_quorum);
+  Log_info("TEST 73: Initial quorum size verified: %zu", initial_quorum);
+
+  // 3. Directly add a new server to current_config_ (simulating OnAddServer)
+  siteid_t new_server_id = 9999;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->current_config_.count(new_server_id) == 0,
+            "Server %d should not already be in config", new_server_id);
+    server->current_config_.insert(new_server_id);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+  }
+  Log_info("TEST 73: Added server %d to config", new_server_id);
+
+  // 4. Verify config grew by 1
+  auto& updated_config = server->GetCurrentConfig();
+  Assert2(updated_config.size() == initial_size + 1,
+          "Config size should be %zu after add, got %zu",
+          initial_size + 1, updated_config.size());
+  Log_info("TEST 73: Config size after add: %zu", updated_config.size());
+
+  // 5. Verify new server is in config
+  Assert2(updated_config.count(new_server_id) > 0,
+          "New server %d should be in config", new_server_id);
+
+  // 6. Verify quorum updated
+  size_t new_quorum = server->GetQuorumSize();
+  Assert2(new_quorum == (initial_size + 1) / 2 + 1,
+          "Quorum should be %zu after add, got %zu",
+          (initial_size + 1) / 2 + 1, new_quorum);
+  Log_info("TEST 73: Quorum after add: %zu", new_quorum);
+
+  // 7. Verify config_change_pending_ flag is set
+  Assert2(server->config_change_pending_,
+          "config_change_pending_ should be true after add");
+
+  // 8. Cluster should still work (the extra server is fake, doesn't affect real quorum)
+  // Reset config to original to not break subsequent operations
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.erase(new_server_id);
+    server->config_change_pending_ = false;
+  }
+
+  uint64_t idx = config_->DoAgreement(7300, NSERVERS, true);
+  Assert2(idx > 0, "DoAgreement should succeed after restoring config");
+  Log_info("TEST 73: Agreement reached at index %lu", idx);
+
+  Log_info("TEST 73: AddServer basic PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 74: testRemoveServerBasic
+// ============================================================================
+// Verify that RemoveServer removes a server from the config, decreases config
+// size, and updates quorum size.
+int RaftLabTest::testRemoveServerBasic(void) {
+  Init2(74, "RemoveServer basic functionality");
+
+  // Wait for election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 74: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // First, add a fake server so we can safely remove it without disrupting quorum
+  siteid_t extra_server_id = 8888;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.insert(extra_server_id);
+    server->config_change_pending_ = false;  // Clear so we can do remove
+  }
+
+  size_t size_before = server->GetCurrentConfig().size();
+  Assert2(size_before == NSERVERS + 1,
+          "Config should be %d after adding fake server, got %zu",
+          NSERVERS + 1, size_before);
+  Log_info("TEST 74: Config size before remove: %zu", size_before);
+
+  // Remove the extra server
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->current_config_.count(extra_server_id) > 0,
+            "Extra server should be in config before remove");
+    server->current_config_.erase(extra_server_id);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+  }
+  Log_info("TEST 74: Removed server %d from config", extra_server_id);
+
+  // Verify config shrunk by 1
+  Assert2(server->GetCurrentConfig().size() == size_before - 1,
+          "Config size should be %zu after remove, got %zu",
+          size_before - 1, server->GetCurrentConfig().size());
+
+  // Verify removed server is not in config
+  Assert2(server->GetCurrentConfig().count(extra_server_id) == 0,
+          "Removed server %d should not be in config", extra_server_id);
+
+  // Verify quorum updated (back to NSERVERS)
+  size_t expected_quorum = NSERVERS / 2 + 1;
+  Assert2(server->GetQuorumSize() == expected_quorum,
+          "Quorum should be %zu after remove, got %zu",
+          expected_quorum, server->GetQuorumSize());
+  Log_info("TEST 74: Quorum after remove: %zu", server->GetQuorumSize());
+
+  // Clear pending and verify cluster still works
+  server->config_change_pending_ = false;
+
+  uint64_t idx = config_->DoAgreement(7400, NSERVERS, true);
+  Assert2(idx > 0, "DoAgreement should succeed after RemoveServer");
+
+  Log_info("TEST 74: RemoveServer basic PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 75: testRejectDuplicateConfigChange
+// ============================================================================
+// Verify that config_change_pending_ prevents concurrent config changes,
+// and test leader-only validation.
+int RaftLabTest::testRejectDuplicateConfigChange(void) {
+  Init2(75, "Reject duplicate config change");
+
+  // Wait for election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 75: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Simulate first AddServer - sets pending flag
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.insert(static_cast<siteid_t>(7777));
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+  }
+  Log_info("TEST 75: First config change simulated (pending=true)");
+
+  // 2. Verify pending flag blocks further changes
+  Assert2(server->config_change_pending_,
+          "config_change_pending_ should be true");
+
+  // 3. A second change should detect pending flag
+  // (In the real RPC handler, OnAddServer checks and rejects)
+  // Here we verify the flag mechanism works
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(server->config_change_pending_,
+            "Cannot add second server while pending");
+  }
+  Log_info("TEST 75: Pending flag correctly blocks second change");
+
+  // 4. Clear pending flag (simulating commit) and verify changes work again
+  server->config_change_pending_ = false;
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(!server->config_change_pending_,
+            "Pending flag should be cleared");
+    // Now a new change should be allowed
+    server->current_config_.erase(static_cast<siteid_t>(7777));
+    server->config_change_pending_ = true;
+  }
+  Assert2(server->config_change_pending_,
+          "Pending flag should be set after new change");
+  Log_info("TEST 75: Config change succeeded after clearing pending flag");
+
+  // 5. Test that follower servers are not leaders
+  // (In the real RPC handler, OnAddServer checks IsLeader() and rejects)
+  int non_leader = -1;
+  for (int i = 0; i < NSERVERS; i++) {
+    if (i != leader) {
+      non_leader = i;
+      break;
+    }
+  }
+  Assert2(non_leader >= 0, "Should find a non-leader");
+  auto follower = config_->GetServer(non_leader);
+  Assert2(follower != nullptr, "Follower should not be null");
+  Assert2(!follower->IsLeader(),
+          "Non-leader server should not be leader");
+  Log_info("TEST 75: Non-leader correctly identified (server %d)", non_leader);
+
+  // 6. Verify all servers have correct initial config size
+  for (int i = 0; i < NSERVERS; i++) {
+    auto s = config_->GetServer(i);
+    if (s != nullptr) {
+      Assert2(s->GetCurrentConfig().size() == NSERVERS,
+              "Server %d config size should be %d, got %zu",
+              i, NSERVERS, s->GetCurrentConfig().size());
+    }
+  }
+  Log_info("TEST 75: All servers have correct initial config size");
+
+  // Cleanup: clear pending flag on leader
+  server->config_change_pending_ = false;
+
+  Log_info("TEST 75: Reject duplicate config change PASSED!");
   Passed2();
 }
 

@@ -162,6 +162,36 @@ class RaftServiceImpl : public RaftService {
     }
   }
 
+  // Membership change RPCs
+  RpcHandler(AddServer, 6,
+             const uint64_t&, term,
+             const uint64_t&, new_server_id,
+             const std::string&, new_server_addr,
+             bool_t*, success,
+             std::string*, error_msg,
+             uint64_t*, leader_hint) {
+    // @unsafe
+    {
+    *success = false;
+    *error_msg = "server down";
+    *leader_hint = 0;
+    }
+  }
+
+  RpcHandler(RemoveServer, 5,
+             const uint64_t&, term,
+             const uint64_t&, server_id,
+             bool_t*, success,
+             std::string*, error_msg,
+             uint64_t*, leader_hint) {
+    // @unsafe
+    {
+    *success = false;
+    *error_msg = "server down";
+    *leader_hint = 0;
+    }
+  }
+
 
   // BEGIN typed-rpc-decls (RaftServiceImpl)
   // Typed RPC interface overrides (new API).
@@ -173,6 +203,8 @@ class RaftServiceImpl : public RaftService {
   void TimeoutNow(const RaftService::RpcTimeoutNowRequest& req, RaftService::RpcTimeoutNowResponse& resp, rrr::DeferredReply defer) override;
   void NotifyRestart(const RaftService::RpcNotifyRestartRequest& req, RaftService::RpcNotifyRestartResponse& resp, rrr::DeferredReply defer) override;
   void InstallSnapshot(const RaftService::RpcInstallSnapshotRequest& req, RaftService::RpcInstallSnapshotResponse& resp, rrr::DeferredReply defer) override;
+  void AddServer(const RaftService::RpcAddServerRequest& req, RaftService::RpcAddServerResponse& resp, rrr::DeferredReply defer) override;
+  void RemoveServer(const RaftService::RpcRemoveServerRequest& req, RaftService::RpcRemoveServerResponse& resp, rrr::DeferredReply defer) override;
   // END typed-rpc-decls (RaftServiceImpl)
 };
 

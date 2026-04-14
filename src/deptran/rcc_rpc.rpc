@@ -196,6 +196,13 @@ abstract service Raft {
                         string data |
                         uint64_t term_out);
 
+  // Membership changes - single-server protocol
+  defer AddServer(uint64_t term, uint64_t new_server_id, string new_server_addr |
+                  bool_t success, string error_msg, uint64_t leader_hint);
+
+  defer RemoveServer(uint64_t term, uint64_t server_id |
+                     bool_t success, string error_msg, uint64_t leader_hint);
+
 }
 
 abstract service Copilot {

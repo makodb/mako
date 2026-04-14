@@ -233,6 +233,19 @@ class RaftLabTest {
   // Stress test: rapid entry submission verifies apply_pending_ processes all
   int testHighFrequencyApply(void);
 
+  // ===========================================================================
+  // MEMBERSHIP CHANGE TESTS
+  // ===========================================================================
+
+  // Test AddServer basic functionality: add a new server, verify config grows
+  int testAddServerBasic(void);
+
+  // Test RemoveServer basic functionality: remove a server, verify config shrinks
+  int testRemoveServerBasic(void);
+
+  // Test that duplicate config changes are rejected when one is pending
+  int testRejectDuplicateConfigChange(void);
+
   void wait(uint64_t microseconds);
 
 };

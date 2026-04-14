@@ -265,6 +265,17 @@ class RaftServer : public TxLogServer {
   uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
   uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
 
+  // ============================================================================
+  // MEMBERSHIP CONFIGURATION TRACKING
+  // ============================================================================
+  // Tracks the active set of replicas in this partition. Initialized from the
+  // static partition config in Setup(), then modified by AddServer/RemoveServer.
+  // All quorum calculations should use current_config_.size() instead of the
+  // static Config::GetConfig()->GetPartitionSize().
+  std::set<siteid_t> current_config_;          // Active replica set (site IDs)
+  bool config_change_pending_ = false;         // True when a config entry is in-flight
+  uint64_t pending_config_index_ = 0;          // Log index of pending config entry
+
   // @safe - simple comparison of member fields
   bool AmIPreferredLeader() const {
     // @unsafe
@@ -908,6 +919,71 @@ class RaftServer : public TxLogServer {
                          const std::string& data,
                          uint64_t* term_out,
                          rusty::Function<void()> cb);
+
+  // ============================================================================
+  // MEMBERSHIP CHANGE PUBLIC API
+  // ============================================================================
+
+  /**
+   * Get the current quorum size based on current_config_.
+   * @return Majority size: current_config_.size() / 2 + 1
+   */
+  // @safe - Read-only computation on member field
+  size_t GetQuorumSize() const;
+
+  /**
+   * Get the current membership configuration.
+   * @return Reference to the active replica set
+   */
+  // @safe - Read-only accessor
+  const std::set<siteid_t>& GetCurrentConfig() const;
+
+  /**
+   * AddServer RPC Handler - Membership Change Protocol
+   *
+   * Adds a new server to the cluster configuration. Only the leader can
+   * process this request. Rejects if a config change is already pending.
+   * For now, applies the config change immediately in memory.
+   * TODO: Make this log-based (append config entry to Raft log) when
+   * server catch-up is implemented.
+   *
+   * @param term - Client's known term
+   * @param new_server_id - Site ID of the server to add
+   * @param addr - Address of the new server (host:port)
+   * @param success - [OUT] true if config change was accepted
+   * @param error_msg - [OUT] error description if rejected
+   * @param leader_hint - [OUT] current leader's site ID (for redirect)
+   * @param defer - Deferred reply
+   */
+  // @unsafe - Modifies config state
+  void OnAddServer(const uint64_t term, const uint64_t new_server_id,
+                   const std::string& addr,
+                   bool_t* success, std::string* error_msg,
+                   uint64_t* leader_hint,
+                   rrr::DeferredReply defer);
+
+  /**
+   * RemoveServer RPC Handler - Membership Change Protocol
+   *
+   * Removes a server from the cluster configuration. Only the leader can
+   * process this request. Rejects if a config change is already pending,
+   * or if this would remove the last server.
+   * For now, applies the config change immediately in memory.
+   * TODO: Make this log-based (append config entry to Raft log) when
+   * server catch-up is implemented.
+   *
+   * @param term - Client's known term
+   * @param server_id - Site ID of the server to remove
+   * @param success - [OUT] true if config change was accepted
+   * @param error_msg - [OUT] error description if rejected
+   * @param leader_hint - [OUT] current leader's site ID (for redirect)
+   * @param defer - Deferred reply
+   */
+  // @unsafe - Modifies config state
+  void OnRemoveServer(const uint64_t term, const uint64_t server_id,
+                      bool_t* success, std::string* error_msg,
+                      uint64_t* leader_hint,
+                      rrr::DeferredReply defer);
 
   // @unsafe - modifies proxy maps with C-style casts on raw pointers (non-trivial pointer arithmetic)
   void Disconnect(const bool disconnect = true);

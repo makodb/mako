@@ -382,4 +382,70 @@ void RaftServiceImpl::HandleNotifyRestart(const siteid_t& restartedSiteId,
   defer.reply();
 }
 
+// @safe - Typed RPC dispatcher for AddServer
+void RaftServiceImpl::AddServer(const RaftService::RpcAddServerRequest& req,
+                                RaftService::RpcAddServerResponse& resp,
+                                rrr::DeferredReply defer) {
+  this->AddServer(req.term,
+                  req.new_server_id,
+                  req.new_server_addr,
+                  &resp.success,
+                  &resp.error_msg,
+                  &resp.leader_hint,
+                  std::move(defer));
+}
+
+// @safe - Typed RPC dispatcher for RemoveServer
+void RaftServiceImpl::RemoveServer(const RaftService::RpcRemoveServerRequest& req,
+                                   RaftService::RpcRemoveServerResponse& resp,
+                                   rrr::DeferredReply defer) {
+  this->RemoveServer(req.term,
+                     req.server_id,
+                     &resp.success,
+                     &resp.error_msg,
+                     &resp.leader_hint,
+                     std::move(defer));
+}
+
+// @safe - svr_ pointer is bounded, delegates to RaftServer::OnAddServer
+void RaftServiceImpl::HandleAddServer(const uint64_t& term,
+                                       const uint64_t& new_server_id,
+                                       const std::string& new_server_addr,
+                                       bool_t* success,
+                                       std::string* error_msg,
+                                       uint64_t* leader_hint,
+                                       rrr::DeferredReply defer) {
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    *success = false;
+    *error_msg = "server down";
+    *leader_hint = 0;
+    defer.reply();
+    return;
+  }
+  svr->OnAddServer(term, new_server_id, new_server_addr,
+                   success, error_msg, leader_hint,
+                   std::move(defer));
+}
+
+// @safe - svr_ pointer is bounded, delegates to RaftServer::OnRemoveServer
+void RaftServiceImpl::HandleRemoveServer(const uint64_t& term,
+                                          const uint64_t& server_id,
+                                          bool_t* success,
+                                          std::string* error_msg,
+                                          uint64_t* leader_hint,
+                                          rrr::DeferredReply defer) {
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    *success = false;
+    *error_msg = "server down";
+    *leader_hint = 0;
+    defer.reply();
+    return;
+  }
+  svr->OnRemoveServer(term, server_id,
+                      success, error_msg, leader_hint,
+                      std::move(defer));
+}
+
 } // namespace janus;

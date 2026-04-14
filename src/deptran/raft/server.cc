@@ -930,6 +930,20 @@ void RaftServer::Setup() {
   // ========== INITIALIZE SNAPSHOT MANAGER (Phase 3.1) ==========
   InitializeSnapshotManager();
 
+  // ========== INITIALIZE MEMBERSHIP CONFIGURATION ==========
+  // Populate current_config_ from the static partition configuration.
+  // This gives us the initial set of replicas; AddServer/RemoveServer will
+  // modify it dynamically at runtime.
+  {
+    auto config = Config::GetConfig();
+    auto replicas = config->SitesByPartitionId(partition_id_);
+    for (auto& site : replicas) {
+      current_config_.insert(site.id);
+    }
+    Log_info("[RAFT-CONFIG] Initialized current_config_ for site %d partition %d with %zu replicas",
+             site_id_, partition_id_, current_config_.size());
+  }
+
 #ifdef RAFT_TEST_CORO
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site %d", site_id_);
@@ -1058,8 +1072,8 @@ void RaftServer::setIsLeader(bool isLeader) {
           }
         }
         // matchedIndex and nextIndex should have indices for all servers except self
-        verify(match_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id_) - 1);
-        verify(next_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id_) - 1);
+        verify(match_index_.size() == current_config_.size() - 1);
+        verify(next_index_.size() == current_config_.size() - 1);
       }
     }
   }
@@ -1102,7 +1116,7 @@ void RaftServer::setIsLeader(bool isLeader) {
       old_view_ = new_view_;
 
       // Update new_view with this server as the leader
-      n_replicas = Config::GetConfig()->GetPartitionSize(partition_id_);
+      n_replicas = static_cast<int>(current_config_.size());
       }
       new_view_ = View(n_replicas, site_id_, currentTerm);
       Log_info("[RAFT_VIEW] Server %d became leader for partition %d, term=%lu, old_view=%s, new_view=%s", 
@@ -1307,8 +1321,8 @@ void RaftServer::HeartbeatLoop() {
       next_index_[p.first] = 1;
     }
     // matchedIndex and nextIndex should have indices for all servers except self
-    verify(match_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id) - 1);
-    verify(next_index_.size() == Config::GetConfig()->GetPartitionSize(partition_id) - 1);
+    verify(match_index_.size() == current_config_.size() - 1);
+    verify(next_index_.size() == current_config_.size() - 1);
   // }
 
   Log_debug("heartbeat loop init from site: %d", site_id_);
@@ -1333,7 +1347,7 @@ void RaftServer::HeartbeatLoop() {
         continue;
       }
 
-      auto nservers = Config::GetConfig()->GetPartitionSize(partition_id);
+      auto nservers = current_config_.size();
 
       // ========================================================================
       // PHASE 0: Calculate commit index ONCE per heartbeat round (not per-follower)
@@ -1694,7 +1708,7 @@ void RaftServer::HeartbeatLoop() {
         // ==================================================================
         // SPECULATIVE REPLICATION: Update specCommitIndex based on memory acks
         // ==================================================================
-        size_t quorum = (nservers / 2) + 1;
+        size_t quorum = GetQuorumSize();
 
         // Find the highest index with memory ack quorum
         // Leader's own entry counts as a memory ack
@@ -2090,7 +2104,7 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
            site_id_, voter_id, durableVoters_.size());
 
   // Check if we've achieved secured leader status
-  size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
+  size_t quorum = GetQuorumSize();
   if (!securedLeader_ && durableVoters_.size() >= quorum) {
     securedLeader_ = true;
     Log_info("[SPEC-RAFT] Site %d: Became SECURED leader with %zu durable votes (quorum=%zu)",
@@ -2142,7 +2156,7 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
   // Check if we can advance securedLogIndex
   // Only if we're a secured leader (have durable vote quorum)
   if (securedLeader_) {
-    size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
+    size_t quorum = GetQuorumSize();
 
     // Find the highest index with durable ack quorum
     uint64_t newSecuredIndex = securedLogIndex_;
@@ -3241,7 +3255,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
   // Check if we need to become secured or step down
   // Phase 6: Relaxed invariant - durableVoters and specVoters are independent after crashes
   if (!securedLeader_ && is_leader_) {
-    size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
+    size_t quorum = GetQuorumSize();
 
     // NEW (Phase 6.4.1): Check if durable quorum is sufficient for secured status
     // Note: site_id_ is already in durableVoters_ (inserted by ResetSpeculativeState
@@ -3401,6 +3415,178 @@ void RaftServer::NotifyRollback(StepDownReason reason) {
   // Reset notification tracking
   lastSpecNotifiedIndex_ = 0;
   lastDurableNotifiedIndex_ = 0;
+}
+
+// ============================================================================
+// MEMBERSHIP CHANGE IMPLEMENTATION
+// ============================================================================
+
+// @safe - Read-only computation on member field
+size_t RaftServer::GetQuorumSize() const {
+  return current_config_.size() / 2 + 1;
+}
+
+// @safe - Read-only accessor
+const std::set<siteid_t>& RaftServer::GetCurrentConfig() const {
+  return current_config_;
+}
+
+// @unsafe - Modifies config state
+void RaftServer::OnAddServer(const uint64_t term,
+                             const uint64_t new_server_id,
+                             const std::string& addr,
+                             bool_t* success,
+                             std::string* error_msg,
+                             uint64_t* leader_hint,
+                             rrr::DeferredReply defer) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // @unsafe
+  {
+    *leader_hint = (current_leader_id_ != INVALID_SITEID) ? current_leader_id_ : 0;
+  }
+
+  // Check if this server is the leader
+  if (!IsLeader()) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "not leader";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: not leader (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if a config change is already pending
+  if (config_change_pending_) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "config change already pending";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: config change pending (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if server is already in config
+  if (current_config_.count(static_cast<siteid_t>(new_server_id)) > 0) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "server already in config";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: server %lu already in config (site %d)",
+             new_server_id, site_id_);
+    defer.reply();
+    return;
+  }
+
+  // TODO: In the future, this should append a configuration change entry to the
+  // Raft log and only take effect when committed. For now, we apply the change
+  // directly in memory. Server catch-up (bringing new server up to date) is also
+  // deferred to a future task.
+
+  // Apply config change immediately
+  current_config_.insert(static_cast<siteid_t>(new_server_id));
+  config_change_pending_ = true;
+  pending_config_index_ = lastLogIndex;  // Track where this change happened
+
+  // @unsafe
+  {
+    *success = true;
+    *error_msg = "";
+  }
+
+  Log_info("[RAFT-CONFIG] AddServer: added server %lu to config (site %d), new config size=%zu, quorum=%zu",
+           new_server_id, site_id_, current_config_.size(), GetQuorumSize());
+
+  defer.reply();
+}
+
+// @unsafe - Modifies config state
+void RaftServer::OnRemoveServer(const uint64_t term,
+                                const uint64_t server_id,
+                                bool_t* success,
+                                std::string* error_msg,
+                                uint64_t* leader_hint,
+                                rrr::DeferredReply defer) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // @unsafe
+  {
+    *leader_hint = (current_leader_id_ != INVALID_SITEID) ? current_leader_id_ : 0;
+  }
+
+  // Check if this server is the leader
+  if (!IsLeader()) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "not leader";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: not leader (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if a config change is already pending
+  if (config_change_pending_) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "config change already pending";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: config change pending (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Check if server is in config
+  if (current_config_.count(static_cast<siteid_t>(server_id)) == 0) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "server not in config";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: server %lu not in config (site %d)",
+             server_id, site_id_);
+    defer.reply();
+    return;
+  }
+
+  // Cannot remove the last server
+  if (current_config_.size() <= 1) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "cannot remove last server";
+    }
+    Log_info("[RAFT-CONFIG] RemoveServer rejected: cannot remove last server (site %d)", site_id_);
+    defer.reply();
+    return;
+  }
+
+  // TODO: In the future, this should append a configuration change entry to the
+  // Raft log and only take effect when committed. For now, we apply the change
+  // directly in memory.
+
+  // Apply config change immediately
+  current_config_.erase(static_cast<siteid_t>(server_id));
+  config_change_pending_ = true;
+  pending_config_index_ = lastLogIndex;  // Track where this change happened
+
+  // @unsafe
+  {
+    *success = true;
+    *error_msg = "";
+  }
+
+  Log_info("[RAFT-CONFIG] RemoveServer: removed server %lu from config (site %d), new config size=%zu, quorum=%zu",
+           server_id, site_id_, current_config_.size(), GetQuorumSize());
+
+  defer.reply();
 }
 
 } // namespace janus
