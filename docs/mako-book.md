@@ -187,7 +187,7 @@ YAML config files define the initial cluster topology at first boot. Once the cl
 - Runtime config changes (adding shards, updating replicas) without editing files on every node and restarting.
 - A single, replicated source of truth that cannot drift between nodes.
 
-By storing config in shard 0 (replicated via Raft/Paxos), config changes are:
+By storing config in shard 0 (replicated via Raft), config changes are:
 - **Replicated** automatically — no separate replication path.
 - **Transactional** — atomic updates to membership and topology.
 - **Discoverable** — other shards bootstrap by reading from shard 0.
@@ -208,11 +208,12 @@ By storing config in shard 0 (replicated via Raft/Paxos), config changes are:
               |  | shard/0/replicas   | [s1,s2,s3] |    |
               |  | shard/1/replicas   | [s4,s5,s6] |    |
               |  | shard/1/leader     | "s4"       |    |
+              |  | shard/<id>/epoch   | 7          |    |
               |  | sharding/policy    | {"hash"}   |    |
               |  | node/s1/addr       | 10.0.1.1   |    |
               |  +--------------------+------------+    |
               |                                          |
-              |  Replicated via Raft/Paxos (3+ replicas) |
+              |  Replicated via Raft (3+ replicas)       |
               +------------------------------------------+
                     |              |              |
               Shard 1         Shard 2        Clients
@@ -231,13 +232,19 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 | `shard/<id>/replicas` | JSON array | Ordered replica list (first = preferred leader) |
 | `shard/<id>/leader` | string | Current leader site name |
 | `shard/<id>/status` | string | `active`, `draining`, `adding`, `removing` |
+| `shard/<id>/epoch` | uint64 | Current speculative epoch for this shard |
+| `shard/<id>/epoch_status` | string | `open`, `closing`, `closed` |
+| `shard/<id>/range_start` | string | Key range start (range-based sharding) |
+| `shard/<id>/range_end` | string | Key range end (range-based sharding) |
 | `sharding/policy` | JSON | `{"type":"hash","func":"murmur3"}` or `{"type":"range"}` |
 | `node/<site>/addr` | string | Node address (`ip:port`) |
 | `node/<site>/status` | string | `alive`, `dead`, `decommissioning` |
+| `reshard/active` | bool | Whether resharding is in progress |
+| `reshard/phase` | string | `prepare`, `migrating`, `committed` |
 
 ### Key Components
 
-**ConfigManager**: Thin wrapper around `ITable` on shard 0. Provides typed methods like `GetShardReplicas()`, `AddShard()`, `SetShardLeader()`. Every write increments `__version__`.
+**ConfigManager**: Thin wrapper around `ITable` on shard 0. Provides typed methods like `GetShardReplicas()`, `AddShard()`, `SetShardLeader()`, `AdvanceEpoch()`. Every write increments `__version__`.
 
 **ClusterConfig**: In-memory cache of the full cluster topology. Every node holds a local copy. Includes a `GetShardForKey()` routing helper.
 
@@ -283,23 +290,45 @@ The resharding state is stored in config keys (`reshard/phase`, `reshard/type`, 
 
 ### Speculation Recovery (Epoch-Based)
 
-The CM orchestrates recovery when a shard leader fails mid-speculation (Section 5.2 of the Mako paper). Mako groups Paxos log entries into **epochs** — each epoch corresponds to a leader's tenure. When the CM detects a leader failure:
+The CM orchestrates recovery when a shard leader fails mid-speculation (Section 5.2 of the Mako paper).
 
-1. **Advance epoch**: CM increments the epoch number and broadcasts to all shards.
+**Replication as a blind log layer.** The paper uses Paxos for replication, but our implementation uses Raft. This distinction does not matter for speculation recovery — both Paxos and Raft are treated as a **blind replicated log**. The speculative execution layer sits above the log layer, and epochs are managed independently of the consensus protocol.
+
+**Epochs.** Mako groups replicated log entries into **epochs**. An epoch is a period during which a particular leader is active on a shard. The CM maintains the current epoch number for each shard (`shard/<id>/epoch`). When an epoch advances, the CM writes an **AdvanceSpecEpoch entry** to the Raft replicated log on shard 0. This entry is replicated to all shard 0 followers, and ConfigWatchers on other shards detect the version change.
+
+**Explicit epoch advance in the Raft log.** When the CM decides to advance a shard's epoch (e.g., on leader failure), it does not just update a config key — it explicitly inserts an `AdvanceSpecEpoch(shard_id, new_epoch)` entry into the Raft log. This ensures:
+- The epoch advance is **ordered** relative to other config changes in the log.
+- The epoch advance is **durable** — it survives CM crashes.
+- All replicas of shard 0 see the epoch advance in the same position in the log.
+- On recovery, the CM replays the log and reconstructs the correct epoch state.
+
+**Recovery protocol.** When the CM detects a shard leader failure:
+
+1. **Advance epoch**: CM inserts `AdvanceSpecEpoch(shard_id, epoch+1)` into the Raft log. Once committed, the new epoch is broadcast to all shards via ConfigWatcher polling.
+
 2. **Close old epoch on failed shard**: New leader retrieves replicated entries from peers, re-commits them, and issues no-ops for unrecoverable entries. Replicates an **INF shard clock** to signal epoch closure.
+
 3. **Close old epoch on healthy shards**: Healthy shards finish old-epoch work and replicate their own INF entries.
-4. **Global finalized watermark**: Each shard reports its finalized shard watermark (min clock across its streams) to the CM. The CM computes the global watermark = min across all shards — a single scalar timestamp providing a consistent global cutoff.
+
+4. **Global finalized watermark**: Each shard computes its finalized shard watermark (min clock across its Raft streams). The CM collects these and computes the global watermark = min across all shards — a single scalar timestamp providing a consistent global cutoff.
+
 5. **Rollback**: Speculative transactions above the global watermark that depended on lost transactions are rolled back. Unaffected transactions on healthy shards proceed normally.
 
-We use a **scalar timestamp watermark** (not a vector) for simplicity and scalability — one integer instead of an N-element vector. This is conservative (may slightly delay visibility) but correct and scales to thousands of shards.
+**Scalar timestamp watermark.** We use a single scalar watermark (not a vector) for simplicity and scalability:
+
+```
+global_watermark = min(shard_0_watermark, shard_1_watermark, ..., shard_N_watermark)
+shard_i_watermark = min(stream_0_clock, stream_1_clock, ..., stream_K_clock)
+```
+
+This is conservative (may slightly delay visibility) but correct and scales to thousands of shards. The trade-off: a transaction that depends only on shard 1 must wait for all shards to catch up. In practice, shards replicate at similar rates, so the lag is bounded by the slowest shard.
 
 ### Consistency Guarantees
 
 - **Config writes**: Serializable (regular transactions on shard 0, replicated via Raft).
 - **Config reads**: Linearizable from shard 0 leader, or eventually-consistent from watchers (bounded by poll interval).
 - **Version monotonicity**: Watchers only apply configs with strictly higher versions.
-
-For the full design document including resharding and speculation recovery details, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
+- **Epoch ordering**: Epoch advances are ordered in the Raft log, ensuring all replicas agree on epoch transitions.
 
 ---
 
