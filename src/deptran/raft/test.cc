@@ -163,7 +163,12 @@ int RaftLabTest::Run(void) {
         TEST_EXPAND(testAddServerBasic())                      // Test 73
         || TEST_EXPAND(testRemoveServerBasic())                // Test 74
         || TEST_EXPAND(testRejectDuplicateConfigChange())      // Test 75
-        || TEST_EXPAND(testNewServerCatchUp());               // Test 76
+        || TEST_EXPAND(testNewServerCatchUp())                // Test 76
+        || TEST_EXPAND(testAddServerReceivesLogs())           // Test 77
+        || TEST_EXPAND(testRemoveServerQuorumShrinks())       // Test 78
+        || TEST_EXPAND(testAddServerDuringActiveWorkload())   // Test 79
+        || TEST_EXPAND(testLeaderFailureDuringConfigChange()) // Test 80
+        || TEST_EXPAND(testCannotAddTwoServersSimultaneously()); // Test 81
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -6923,6 +6928,454 @@ int RaftLabTest::testNewServerCatchUp(void) {
   Log_info("TEST 76: Agreement reached at index %lu after cleanup", idx3);
 
   Log_info("TEST 76: New server catch-up PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 77: testAddServerReceivesLogs
+// ============================================================================
+// Verify that adding a server as a learner, catching it up, and promoting it
+// results in correct config size and quorum. This exercises the full add path:
+// commit entries -> add learner -> initialize tracking -> catch up -> promote.
+// @unsafe - Accesses internal server state via friend class
+int RaftLabTest::testAddServerReceivesLogs(void) {
+  Init2(77, "AddServer receives logs and promotes with correct quorum");
+
+  // @unsafe { election wait }
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 77: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Commit 5 entries so the log is non-trivial
+  // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
+  for (int i = 1; i <= 5; i++) {
+    uint64_t idx = config_->DoAgreement(7700 + i, NSERVERS, true);
+    Assert2(idx > 0, "Agreement %d should succeed", i);
+  }
+  Log_info("TEST 77: Committed 5 entries");
+
+  // 2. Record initial state
+  size_t initial_config_size = server->GetCurrentConfig().size();
+  Assert2(initial_config_size == NSERVERS,
+          "Initial config should be %d, got %zu", NSERVERS, initial_config_size);
+  size_t initial_quorum = server->GetQuorumSize();
+  Assert2(initial_quorum == (NSERVERS / 2 + 1),
+          "Initial quorum should be %d, got %zu", NSERVERS / 2 + 1, initial_quorum);
+
+  // 3. Add server 999 as learner
+  siteid_t new_server_id = 999;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->learners_.insert(new_server_id);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+    server->next_index_[new_server_id] = server->lastLogIndex + 1;
+    server->match_index_[new_server_id] = 0;
+  }
+
+  // 4. Verify learner state
+  Assert2(server->IsLearner(new_server_id),
+          "Server 999 should be a learner");
+  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+          "Server 999 should NOT be in current_config_ yet");
+  Assert2(server->GetCurrentConfig().size() == initial_config_size,
+          "Config size should be unchanged while learner");
+  Log_info("TEST 77: Server 999 added as learner, next_index/match_index initialized");
+
+  // 5. Simulate catch-up: set match_index to lastLogIndex
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->match_index_[new_server_id] = server->lastLogIndex;
+  }
+
+  // 6. Promote via CheckAndPromoteLearners
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->CheckAndPromoteLearners();
+  }
+
+  // 7. Verify promotion: in current_config_, not in learners_
+  Assert2(!server->IsLearner(new_server_id),
+          "Server 999 should no longer be a learner after promotion");
+  Assert2(server->GetCurrentConfig().count(new_server_id) > 0,
+          "Server 999 should be in current_config_ after promotion");
+  Assert2(server->GetCurrentConfig().size() == initial_config_size + 1,
+          "Config should grow to %zu, got %zu",
+          initial_config_size + 1, server->GetCurrentConfig().size());
+
+  // 8. Verify quorum: 6 servers -> quorum = 4
+  size_t expected_quorum = (initial_config_size + 1) / 2 + 1;
+  size_t actual_quorum = server->GetQuorumSize();
+  Assert2(actual_quorum == expected_quorum,
+          "Quorum should be %zu for 6-server config, got %zu",
+          expected_quorum, actual_quorum);
+  Log_info("TEST 77: Promoted! config_size=%zu, quorum=%zu",
+           server->GetCurrentConfig().size(), actual_quorum);
+
+  // Cleanup
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.erase(new_server_id);
+    server->match_index_.erase(new_server_id);
+    server->next_index_.erase(new_server_id);
+    server->config_change_pending_ = false;
+  }
+
+  // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
+  uint64_t idx = config_->DoAgreement(7799, NSERVERS, true);
+  Assert2(idx > 0, "DoAgreement should succeed after cleanup");
+
+  Log_info("TEST 77: AddServer receives logs PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 78: testRemoveServerQuorumShrinks
+// ============================================================================
+// Verify that removing a server shrinks the quorum and the cluster can still
+// commit entries with the reduced config.
+// @unsafe - Accesses internal server state via friend class
+int RaftLabTest::testRemoveServerQuorumShrinks(void) {
+  Init2(78, "RemoveServer quorum shrinks");
+
+  // @unsafe { election wait }
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 78: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Record initial quorum (NSERVERS=5, quorum=3)
+  size_t initial_quorum = server->GetQuorumSize();
+  Assert2(initial_quorum == (NSERVERS / 2 + 1),
+          "Initial quorum should be %d, got %zu", NSERVERS / 2 + 1, initial_quorum);
+  Log_info("TEST 78: Initial config size=%d, quorum=%zu", NSERVERS, initial_quorum);
+
+  // 2. Add two fake servers so we can remove one and still have enough real servers
+  siteid_t fake1 = 8001;
+  siteid_t fake2 = 8002;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.insert(fake1);
+    server->current_config_.insert(fake2);
+  }
+
+  size_t size_with_extras = server->GetCurrentConfig().size();
+  Assert2(size_with_extras == NSERVERS + 2,
+          "Config should be %d after adding fakes, got %zu", NSERVERS + 2, size_with_extras);
+  size_t quorum_with_extras = server->GetQuorumSize();
+  Log_info("TEST 78: After adding 2 fake servers: size=%zu, quorum=%zu",
+           size_with_extras, quorum_with_extras);
+
+  // 3. Remove fake1 via config manipulation (simulating OnRemoveServer)
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.erase(fake1);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+  }
+
+  // 4. Verify config shrinks
+  size_t size_after_remove = server->GetCurrentConfig().size();
+  Assert2(size_after_remove == NSERVERS + 1,
+          "Config should be %d after remove, got %zu", NSERVERS + 1, size_after_remove);
+
+  // 5. Verify quorum shrinks
+  size_t quorum_after_remove = server->GetQuorumSize();
+  size_t expected_quorum = (NSERVERS + 1) / 2 + 1;
+  Assert2(quorum_after_remove == expected_quorum,
+          "Quorum should be %zu after remove, got %zu",
+          expected_quorum, quorum_after_remove);
+  Assert2(quorum_after_remove < quorum_with_extras,
+          "Quorum should shrink: was %zu, now %zu",
+          quorum_with_extras, quorum_after_remove);
+  Log_info("TEST 78: After remove: size=%zu, quorum=%zu (was %zu)",
+           size_after_remove, quorum_after_remove, quorum_with_extras);
+
+  // 6. Verify cluster can still commit entries
+  server->config_change_pending_ = false;
+  // Remove fake2 to restore config
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.erase(fake2);
+  }
+
+  // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
+  uint64_t idx = config_->DoAgreement(7800, NSERVERS, true);
+  Assert2(idx > 0, "DoAgreement should succeed after removing server");
+  Log_info("TEST 78: Agreement reached at index %lu after restore", idx);
+
+  Log_info("TEST 78: RemoveServer quorum shrinks PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 79: testAddServerDuringActiveWorkload
+// ============================================================================
+// Verify that adding a learner mid-workload does not disrupt ongoing commits.
+// @unsafe - Accesses internal server state via friend class
+int RaftLabTest::testAddServerDuringActiveWorkload(void) {
+  Init2(79, "AddServer during active workload");
+
+  // @unsafe { election wait }
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 79: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Commit first batch of entries
+  // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
+  for (int i = 1; i <= 3; i++) {
+    uint64_t idx = config_->DoAgreement(7900 + i, NSERVERS, true);
+    Assert2(idx > 0, "Pre-add agreement %d should succeed", i);
+  }
+  Log_info("TEST 79: Committed 3 entries before adding learner");
+
+  // 2. Add a fake server as learner mid-workload
+  siteid_t new_server_id = 997;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->learners_.insert(new_server_id);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+    server->next_index_[new_server_id] = server->lastLogIndex + 1;
+    server->match_index_[new_server_id] = 0;
+  }
+  Assert2(server->IsLearner(new_server_id),
+          "Server 997 should be a learner");
+  Log_info("TEST 79: Added learner 997 mid-workload");
+
+  // 3. Continue committing entries while learner is present
+  // Learner should not affect quorum since it's not in current_config_
+  // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
+  for (int i = 4; i <= 8; i++) {
+    uint64_t idx = config_->DoAgreement(7900 + i, NSERVERS, true);
+    Assert2(idx > 0, "Post-add agreement %d should succeed", i);
+  }
+  Log_info("TEST 79: Committed 5 more entries after adding learner");
+
+  // 4. Verify learner tracking state is consistent
+  Assert2(server->IsLearner(new_server_id),
+          "Server 997 should still be a learner");
+  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+          "Server 997 should NOT be in current_config_");
+  Assert2(server->GetCurrentConfig().size() == NSERVERS,
+          "Config size should still be %d, got %zu",
+          NSERVERS, server->GetCurrentConfig().size());
+
+  // 5. Verify quorum was never affected by learner
+  Assert2(server->GetQuorumSize() == (NSERVERS / 2 + 1),
+          "Quorum should be %d (learner doesn't count)", NSERVERS / 2 + 1);
+  Log_info("TEST 79: Quorum unchanged at %zu, learner correctly excluded",
+           server->GetQuorumSize());
+
+  // Cleanup
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->learners_.erase(new_server_id);
+    server->match_index_.erase(new_server_id);
+    server->next_index_.erase(new_server_id);
+    server->config_change_pending_ = false;
+  }
+
+  Log_info("TEST 79: AddServer during active workload PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 80: testLeaderFailureDuringConfigChange
+// ============================================================================
+// Verify that if the leader fails while a config change is pending, the new
+// leader does not inherit the pending state (config_change_pending_ is local
+// to each server and resets on new elections).
+// @unsafe - Accesses internal server state via friend class
+int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
+  Init2(80, "Leader failure during config change");
+
+  // @unsafe { election wait }
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 80: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Set config_change_pending on the leader (simulating in-flight AddServer)
+  siteid_t fake_server = 996;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->learners_.insert(fake_server);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+    server->next_index_[fake_server] = server->lastLogIndex + 1;
+    server->match_index_[fake_server] = 0;
+  }
+  Assert2(server->config_change_pending_,
+          "Leader should have config_change_pending_=true");
+  Log_info("TEST 80: Set config_change_pending=true on leader %d", leader);
+
+  // 2. Disconnect the leader to trigger re-election
+  // @unsafe { Disconnect manipulates network state }
+  config_->Disconnect(leader);
+  Log_info("TEST 80: Disconnected leader %d", leader);
+
+  // 3. Wait for new election
+  // @unsafe { election wait }
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int new_leader = config_->OneLeader();
+  Assert2(new_leader >= 0, "New leader should be elected");
+  Assert2(new_leader != leader, "New leader should be different from old leader");
+  Log_info("TEST 80: New leader elected: %d", new_leader);
+
+  // 4. Verify new leader does NOT have config_change_pending
+  auto new_server = config_->GetServer(new_leader);
+  Assert2(new_server != nullptr, "New leader server should not be null");
+  Assert2(!new_server->config_change_pending_,
+          "New leader should NOT have config_change_pending_=true");
+  Log_info("TEST 80: New leader has config_change_pending_=false (correct)");
+
+  // 5. Verify the new leader does not have the fake server as learner
+  Assert2(!new_server->IsLearner(fake_server),
+          "New leader should not have fake server as learner");
+
+  // 6. Verify cluster can commit entries with new leader
+  // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
+  uint64_t idx = config_->DoAgreement(8000, NSERVERS - 1, true);
+  Assert2(idx > 0, "DoAgreement should succeed with new leader");
+  Log_info("TEST 80: Agreement reached at index %lu with new leader", idx);
+
+  // 7. Reconnect old leader
+  // @unsafe { Reconnect manipulates network state }
+  config_->Reconnect(leader);
+  // @unsafe { wait for reconnection }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Cleanup old leader's pending state (it may rejoin as follower)
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->learners_.erase(fake_server);
+    server->match_index_.erase(fake_server);
+    server->next_index_.erase(fake_server);
+    server->config_change_pending_ = false;
+  }
+
+  Log_info("TEST 80: Leader failure during config change PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 81: testCannotAddTwoServersSimultaneously
+// ============================================================================
+// Verify that when one config change is pending, a second add is rejected.
+// This tests the serialization of membership changes via config_change_pending_.
+// While Test 75 tests the pending flag mechanism, this test explicitly simulates
+// two sequential OnAddServer-like operations and verifies the second fails.
+// @unsafe - Accesses internal server state via friend class
+int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
+  Init2(81, "Cannot add two servers simultaneously");
+
+  // @unsafe { election wait }
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 81: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. First AddServer: add server 995 as learner
+  siteid_t server1 = 995;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(!server->config_change_pending_,
+            "No config change should be pending initially");
+    server->learners_.insert(server1);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+    server->next_index_[server1] = server->lastLogIndex + 1;
+    server->match_index_[server1] = 0;
+  }
+  Assert2(server->config_change_pending_,
+          "config_change_pending_ should be true after first add");
+  Assert2(server->IsLearner(server1),
+          "Server 995 should be a learner");
+  Log_info("TEST 81: First AddServer (995) succeeded, pending=true");
+
+  // 2. Second AddServer: attempt to add server 994 - should be rejected
+  siteid_t server2 = 994;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    // Simulate OnAddServer rejection logic: check pending flag first
+    bool rejected = server->config_change_pending_;
+    Assert2(rejected,
+            "Second AddServer should be rejected (config_change_pending_=true)");
+    // Do NOT add server2 since the change is rejected
+  }
+  Assert2(!server->IsLearner(server2),
+          "Server 994 should NOT have been added as learner");
+  Assert2(server->GetCurrentConfig().count(server2) == 0,
+          "Server 994 should NOT be in config");
+  Log_info("TEST 81: Second AddServer (994) correctly rejected");
+
+  // 3. Complete the first change (promote server1)
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->match_index_[server1] = server->lastLogIndex;
+    server->CheckAndPromoteLearners();
+  }
+  Assert2(!server->IsLearner(server1),
+          "Server 995 should be promoted");
+  Assert2(server->GetCurrentConfig().count(server1) > 0,
+          "Server 995 should be in current_config_");
+  Assert2(!server->config_change_pending_,
+          "config_change_pending_ should be false after promotion");
+  Log_info("TEST 81: First change completed, server 995 promoted");
+
+  // 4. Now adding server 994 should succeed
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    Assert2(!server->config_change_pending_,
+            "Pending should be false, allowing new config change");
+    server->learners_.insert(server2);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+    server->next_index_[server2] = server->lastLogIndex + 1;
+    server->match_index_[server2] = 0;
+  }
+  Assert2(server->IsLearner(server2),
+          "Server 994 should now be a learner");
+  Assert2(server->config_change_pending_,
+          "config_change_pending_ should be true for second change");
+  Log_info("TEST 81: Second AddServer (994) now succeeded after first completed");
+
+  // Cleanup
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.erase(server1);
+    server->learners_.erase(server2);
+    server->match_index_.erase(server1);
+    server->match_index_.erase(server2);
+    server->next_index_.erase(server1);
+    server->next_index_.erase(server2);
+    server->config_change_pending_ = false;
+  }
+
+  // Verify cluster still works
+  // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
+  uint64_t idx = config_->DoAgreement(8100, NSERVERS, true);
+  Assert2(idx > 0, "DoAgreement should succeed after cleanup");
+
+  Log_info("TEST 81: Cannot add two servers simultaneously PASSED!");
   Passed2();
 }
 

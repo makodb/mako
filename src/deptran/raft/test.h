@@ -249,6 +249,21 @@ class RaftLabTest {
   // Test new server catch-up: learner tracking and promotion
   int testNewServerCatchUp(void);
 
+  // Test add server with log verification: learner receives logs and promotes with correct quorum
+  int testAddServerReceivesLogs(void);
+
+  // Test remove server quorum shrinks: verify quorum decreases after removal
+  int testRemoveServerQuorumShrinks(void);
+
+  // Test add server during active workload: entries commit while learner is added
+  int testAddServerDuringActiveWorkload(void);
+
+  // Test leader failure during config change: new leader clears pending state
+  int testLeaderFailureDuringConfigChange(void);
+
+  // Test cannot add two servers simultaneously via OnAddServer-like logic
+  int testCannotAddTwoServersSimultaneously(void);
+
   void wait(uint64_t microseconds);
 
 };
