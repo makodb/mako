@@ -281,13 +281,28 @@ Adding, removing, or splitting shards uses a **two-phase commit** protocol where
 
 The resharding state is stored in config keys (`reshard/phase`, `reshard/type`, etc.), so the protocol is crash-recoverable — shard 0 can resume or abort in-progress resharding on restart.
 
+### Speculation Recovery (Jetpack Protocol)
+
+The Configuration Manager also supports **Mako's speculation recovery**. When a leader crashes after speculatively committing transactions but before replication completes, the **Jetpack protocol** recovers those transactions on the new leader.
+
+Each shard maintains a **witness** — a per-node buffer of all speculatively executed commands not yet durably replicated. On leader failure, the new leader:
+
+1. Broadcasts `BeginRecovery` with `old_view` and `new_view` (from config manager).
+2. Collects witness command IDs from f+1 replicas (`PullIdSet`).
+3. Fetches full command data for missing entries (`PullCmd`).
+4. Achieves Paxos consensus on the recovery set (Prepare/Accept/Commit).
+5. Re-executes all recovered commands on the new leader.
+6. Clears witnesses and resumes normal operation.
+
+The config manager provides the **view membership** (which replicas to contact), **leader identity** (who initiates recovery), and **epoch tracking** (ensuring recovery uses the correct view). Enabled when `cc: rule` in config.
+
 ### Consistency Guarantees
 
 - **Config writes**: Serializable (regular transactions on shard 0, replicated via Raft).
 - **Config reads**: Linearizable from shard 0 leader, or eventually-consistent from watchers (bounded by poll interval).
 - **Version monotonicity**: Watchers only apply configs with strictly higher versions.
 
-For the full design document including resharding protocol details, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
+For the full design document including resharding and speculation recovery details, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
 
 ---
 
