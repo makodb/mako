@@ -208,7 +208,7 @@ By storing config in shard 0 (replicated via Raft), config changes are:
               |  | shard/0/replicas   | [s1,s2,s3] |    |
               |  | shard/1/replicas   | [s4,s5,s6] |    |
               |  | shard/1/leader     | "s4"       |    |
-              |  | shard/<id>/epoch   | 7          |    |
+              |  | epoch              | 7          |    |
               |  | sharding/policy    | {"hash"}   |    |
               |  | node/s1/addr       | 10.0.1.1   |    |
               |  +--------------------+------------+    |
@@ -232,8 +232,7 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 | `shard/<id>/replicas` | JSON array | Ordered replica list (first = preferred leader) |
 | `shard/<id>/leader` | string | Current leader site name |
 | `shard/<id>/status` | string | `active`, `draining`, `adding`, `removing` |
-| `shard/<id>/epoch` | uint64 | Current speculative epoch for this shard |
-| `shard/<id>/epoch_status` | string | `open`, `closing`, `closed` |
+| `epoch` | uint64 | Global speculative epoch number (all shards converge to this) |
 | `shard/<id>/range_start` | string | Key range start (range-based sharding) |
 | `shard/<id>/range_end` | string | Key range end (range-based sharding) |
 | `sharding/policy` | JSON | `{"type":"hash","func":"murmur3"}` or `{"type":"range"}` |
@@ -294,9 +293,9 @@ The CM orchestrates recovery when a shard leader fails mid-speculation (Section 
 
 **Replication as a blind log layer.** The paper uses Paxos for replication, but our implementation uses Raft. This distinction does not matter for speculation recovery — both Paxos and Raft are treated as a **blind replicated log**. The speculative execution layer sits above the log layer, and epochs are managed independently of the consensus protocol.
 
-**Epochs.** Mako groups replicated log entries into **epochs**. An epoch is a period during which a particular leader is active on a shard. The CM maintains the current epoch number for each shard (`shard/<id>/epoch`). When an epoch advances, the CM writes an **AdvanceSpecEpoch entry** to the Raft replicated log on shard 0. This entry is replicated to all shard 0 followers, and ConfigWatchers on other shards detect the version change.
+**Epochs.** Mako groups replicated log entries into **epochs**. An epoch is a **global** number — all shards converge to the same epoch during normal operation. The CM maintains the current epoch in the config table (`epoch`). A lagging shard may temporarily be on an older epoch, but it will catch up. When an epoch advances, the CM writes an **AdvanceSpecEpoch entry** to the Raft replicated log on shard 0. This entry is replicated to all shard 0 followers, and ConfigWatchers on other shards detect the version change.
 
-**Explicit epoch advance in the Raft log.** When the CM decides to advance a shard's epoch (e.g., on leader failure), it does not just update a config key — it explicitly inserts an `AdvanceSpecEpoch(shard_id, new_epoch)` entry into the Raft log. This ensures:
+**Explicit epoch advance in the Raft log.** When the CM decides to advance the epoch (e.g., on leader failure), it does not just update a config key — it explicitly inserts an `AdvanceSpecEpoch(new_epoch)` entry into the Raft log. This ensures:
 - The epoch advance is **ordered** relative to other config changes in the log.
 - The epoch advance is **durable** — it survives CM crashes.
 - All replicas of shard 0 see the epoch advance in the same position in the log.
@@ -304,7 +303,7 @@ The CM orchestrates recovery when a shard leader fails mid-speculation (Section 
 
 **Recovery protocol.** When the CM detects a shard leader failure:
 
-1. **Advance epoch**: CM inserts `AdvanceSpecEpoch(shard_id, epoch+1)` into the Raft log. Once committed, the new epoch is broadcast to all shards via ConfigWatcher polling.
+1. **Advance epoch**: CM inserts `AdvanceSpecEpoch(epoch+1)` into the Raft log. Once committed, the new epoch is broadcast to all shards via ConfigWatcher polling.
 
 2. **Close old epoch on failed shard**: New leader retrieves replicated entries from peers, re-commits them, and issues no-ops for unrecoverable entries. Replicates an **INF shard clock** to signal epoch closure.
 
@@ -328,7 +327,7 @@ This is conservative (may slightly delay visibility) but correct and scales to t
 - **Config writes**: Serializable (regular transactions on shard 0, replicated via Raft).
 - **Config reads**: Linearizable from shard 0 leader, or eventually-consistent from watchers (bounded by poll interval).
 - **Version monotonicity**: Watchers only apply configs with strictly higher versions.
-- **Epoch ordering**: Epoch advances are ordered in the Raft log, ensuring all replicas agree on epoch transitions.
+- **Epoch ordering**: Epoch advances are ordered in the Raft log, ensuring all replicas agree on epoch transitions. The epoch is global — all shards converge to the same number.
 
 ---
 
