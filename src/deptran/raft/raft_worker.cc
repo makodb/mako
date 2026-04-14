@@ -306,6 +306,18 @@ bool RaftWorker::IsLeader(uint32_t par_id) {
   return false;
 }
 
+// @unsafe - uses raw pointers, dynamic_cast
+siteid_t RaftWorker::GetLeaderHint() {
+  // @unsafe
+  { // GetRaftServer uses dynamic_cast on raw pointer
+    auto raft_server = GetRaftServer();
+    if (raft_server) {
+      return raft_server->GetLeaderHint();
+    }
+  }
+  return INVALID_SITEID;
+}
+
 // @safe - pointer dereferences are bounded
 bool RaftWorker::IsPartition(uint32_t par_id) {
 #ifdef SINGLE_RAFT_INSTANCE

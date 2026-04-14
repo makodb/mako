@@ -162,6 +162,8 @@ public:
   // Leadership & Partition queries
   // @unsafe - uses raw pointers, dynamic_cast
   bool IsLeader(uint32_t par_id);
+  // @unsafe - uses raw pointers, dynamic_cast
+  siteid_t GetLeaderHint();
   // @unsafe - uses raw pointers
   bool IsPartition(uint32_t par_id);
 

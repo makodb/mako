@@ -686,19 +686,40 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id) {
   submit(log, len, par_id);
 }
 
-// add_log_to_nc ensures we are leader (waiting briefly if needed) then enqueues.
-void add_log_to_nc(const char* log, int len, uint32_t par_id,
-                   int batch_size) {
+// @unsafe - checks leadership, enqueues log, returns false with leader hint if not leader
+bool add_log_to_nc(const char* log, int len, uint32_t par_id,
+                   int batch_size, siteid_t* leader_hint_out /* = nullptr */) {
   // Log_debug("[RAFT-ADD-LOG] par_id=%u len=%d batch=%d", par_id, len, batch_size);
   auto* worker = find_worker(par_id);
   if (!worker) {
     Log_warn("[RAFT-ADD-LOG] no worker found for par_id=%u", par_id);
-    return;
+    if (leader_hint_out) {
+      // @unsafe
+      { *leader_hint_out = INVALID_SITEID; }
+    }
+    return false;
   }
-  // Do not pre-check leadership here. RaftServer::Start() performs the
-  // authoritative leadership check under server lock; pre-checking can race.
+  // Pre-check leadership so callers get an immediate error with a leader hint
+  // instead of silently dropping the log deep inside RaftServer::Start().
+  if (!worker->IsLeader(par_id)) {
+    siteid_t hint = worker->GetLeaderHint();
+    // @unsafe
+    {
+    Log_warn("[RAFT-ADD-LOG] par_id=%u: not leader, leader_hint=%d", par_id, hint);
+    }
+    if (leader_hint_out) {
+      // @unsafe
+      { *leader_hint_out = hint; }
+    }
+    return false;
+  }
   enqueue_to_worker(worker, log, len, par_id, std::max(1, batch_size));
   // Log_debug("[RAFT-ADD-LOG] enqueued par_id=%u len=%d batch=%d", par_id, len, batch_size);
+  if (leader_hint_out) {
+    // @unsafe
+    { *leader_hint_out = INVALID_SITEID; }
+  }
+  return true;
 }
 
 // wait_for_submit blocks until the worker drained its submission queue.

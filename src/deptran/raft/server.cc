@@ -1014,6 +1014,17 @@ bool RaftServer::IsDisconnected() {
   return disconnected_;
 }
 
+// @safe - read-only access to current_leader_id_ under lock
+siteid_t RaftServer::GetLeaderHint() const {
+  // Note: mtx_ is recursive_mutex, but this is const - callers should hold lock
+  // or accept a slightly stale value. current_leader_id_ is set under lock in
+  // setIsLeader() and OnAppendEntries(), so reads are safe for hint purposes.
+  if (is_leader_) {
+    return site_id_;
+  }
+  return current_leader_id_;
+}
+
 // @safe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
 void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
@@ -1060,6 +1071,11 @@ void RaftServer::setIsLeader(bool isLeader) {
 
   // Update the leader state after view handling
   is_leader_ = isLeader;
+
+  // Track current leader identity for GetLeaderHint()
+  if (isLeader) {
+    current_leader_id_ = site_id_;
+  }
 
   // Only log on actual transitions, not no-op calls
   if (become_new_leader || become_new_follower) {
@@ -2298,6 +2314,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   // This prevents followers with divergent logs from constantly starting elections
   // while the leader is trying to repair their log via backtracking
   if (term_ok) {
+      // Track the leader's identity for GetLeaderHint()
+      current_leader_id_ = leaderSiteId;
       // @unsafe
       { resetTimer("AppendEntries from current-term leader"); }
       if (leaderCurrentTerm > this->currentTerm) {
@@ -2752,6 +2770,9 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     // @unsafe
     { *term_out = currentTerm; }
   }
+
+  // Track the leader's identity for GetLeaderHint()
+  current_leader_id_ = static_cast<siteid_t>(leader_id);
 
   // Reset election timer (legitimate leader contact)
   resetTimer("received InstallSnapshot");

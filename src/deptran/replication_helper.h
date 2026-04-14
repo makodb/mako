@@ -110,7 +110,7 @@ void register_for_leader_par_id_return(
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
-void add_log_to_nc(const char*, int, uint32_t, int);
+bool add_log_to_nc(const char*, int, uint32_t, int, uint16_t* leader_hint_out = nullptr);
 void wait_for_submit(uint32_t);
 void microbench_paxos_queue();
 void pre_shutdown_step();
@@ -154,7 +154,7 @@ void register_for_leader_par_id_return(
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
-void add_log_to_nc(const char*, int, uint32_t, int = 0);
+bool add_log_to_nc(const char*, int, uint32_t, int = 0, uint16_t* leader_hint_out = nullptr);
 void wait_for_submit(uint32_t);
 void microbench_paxos_queue();
 void pre_shutdown_step();

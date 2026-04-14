@@ -440,7 +440,8 @@ map<int, callback> follower_replay_cb;          // Follower replay callbacks
 | Function | Purpose |
 |----------|---------|
 | `setup(argc, argv)` | Initialize Raft workers from YAML config |
-| `add_log_to_nc(log, len, par_id, batch)` | Submit transaction log to local Raft |
+| `add_log_to_nc(log, len, par_id, batch, hint_out)` | Submit transaction log to local Raft. Returns `bool` (false = not leader). Optional `hint_out` receives the last known leader's site_id for redirection. |
+| `RaftServer::GetLeaderHint()` | Returns the last known leader's site_id (`INVALID_SITEID` if unknown). Tracked via AppendEntries and InstallSnapshot RPCs. |
 | `register_for_leader_par_id_return(cb)` | Register callback for leader log application |
 | `register_for_follower_par_id_return(cb)` | Register callback for follower log replay |
 | `get_outstanding_logs(par_id)` | Query uncommitted log count |
@@ -483,18 +484,20 @@ Mako's speculative execution uses watermarks (not built into Raft):
 - **Follower callback**: Checks watermark; if not leader, queues for deferred replay
 - **Safety check**: `sync_logger::safety_check(timestamp, watermark)` before follower replay
 
-### Important: Non-Leader Log Drop
+### Non-Leader Log Rejection
 
-When `add_log_to_nc()` is called on a non-leader node, the log is **dropped silently**:
+When `add_log_to_nc()` is called on a non-leader node, the call returns `false` and provides a leader hint:
 
 ```cpp
-if (!worker->IsLeader(par_id)) {
-    Log_info("partition %u not led here, dropping", par_id);
-    return;  // Log is lost!
+uint16_t leader_hint = 0;
+bool ok = add_log_to_nc(log, len, par_id, batch, &leader_hint);
+if (!ok) {
+    // leader_hint contains the last known leader's site_id (or INVALID_SITEID)
+    // Caller can redirect to the correct leader or abort gracefully
 }
 ```
 
-This differs from Paxos (where workers only run on the leader node). Currently mitigated by the preferred leader system ensuring stable leadership.
+This differs from Paxos (where workers only run on the leader node). The preferred leader system ensures stable leadership, and the leader hint enables callers to redirect transactions when needed.
 
 ---
 
@@ -948,13 +951,13 @@ Result: Safe — entry 5 only discarded if leader was isolated
 
 ## 18. Known Issues and Workarounds
 
-### Non-Leader Log Drop
+### Non-Leader Log Rejection (Resolved)
 
-**Issue**: `add_log_to_nc()` silently drops logs on non-leader nodes.
+**Previously**: `add_log_to_nc()` silently dropped logs on non-leader nodes.
 
-**Impact**: If Mako workers run on all nodes, 66% of transaction throughput is lost (in a 3-node cluster).
+**Fix**: `add_log_to_nc()` now returns `false` when called on a non-leader, and provides a leader hint (the last known leader's site_id) via an optional output parameter. `RaftServer::GetLeaderHint()` tracks the leader identity from AppendEntries and InstallSnapshot RPCs.
 
-**Workaround**: The preferred leader system ensures stable leadership, so most logs are submitted on the leader node. Workers on followers should ideally not execute transactions.
+**Impact**: Callers can now detect non-leader submission and redirect transactions to the correct leader. Combined with the preferred leader system, this provides a complete solution for leader routing.
 
 ### Leader Shutdown Hang
 

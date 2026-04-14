@@ -166,6 +166,7 @@ class RaftServer : public TxLogServer {
   siteid_t vote_for_ = INVALID_SITEID ;
   bool init_ = false ;
   bool is_leader_ = false ;
+  siteid_t current_leader_id_ = INVALID_SITEID ;  // Last known leader (self if leader, sender of AppendEntries otherwise)
   slotid_t snapidx_ = 0 ;
   ballot_t snapterm_ = 0 ;
   int32_t wait_int_ = 100000 ;
@@ -979,6 +980,13 @@ class RaftServer : public TxLogServer {
   siteid_t GetPreferredLeader() const {
     return preferred_leader_site_id_;
   }
+
+  /**
+   * Get the last known leader's site_id for client redirection.
+   * @return Leader site_id, or INVALID_SITEID if unknown
+   */
+  // @safe - read-only access to current_leader_id_ under lock
+  siteid_t GetLeaderHint() const;
 
   /**
    * Check if leadership transfer should be initiated

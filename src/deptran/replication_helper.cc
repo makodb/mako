@@ -251,12 +251,15 @@ void add_log_without_queue(const char* data, int len, uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(add_log_without_queue, data, len, par_id);  // @unsafe
 }
 
-void add_log_to_nc(const char* data, int len, uint32_t par_id, int flag) {
+// @unsafe - dispatches to Raft or Paxos implementation
+bool add_log_to_nc(const char* data, int len, uint32_t par_id, int flag,
+                   uint16_t* leader_hint_out) {
     auto type = janus::get_replication_type();
     if (type == janus::ReplicationType::RAFT) {
-        raft_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
+        return raft_impl::add_log_to_nc(data, len, par_id, flag, leader_hint_out);  // @unsafe
     } else {
         paxos_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
+        return true;  // Paxos always accepts (leader-only operation)
     }
 }
 
