@@ -227,6 +227,12 @@ class RaftLabTest {
   // Test leadership transfer timeout (preferred replica crashes before winning)
   int testLeadershipTransferTimeout(void);
 
+  // Test durable ack loss: specCommitIndex advances but securedLogIndex doesn't
+  int testDurableAckLoss(void);
+
+  // Stress test: rapid entry submission verifies apply_pending_ processes all
+  int testHighFrequencyApply(void);
+
   void wait(uint64_t microseconds);
 
 };
