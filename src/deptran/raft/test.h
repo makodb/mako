@@ -264,6 +264,20 @@ class RaftLabTest {
   // Test cannot add two servers simultaneously via OnAddServer-like logic
   int testCannotAddTwoServersSimultaneously(void);
 
+  // ===========================================================================
+  // REPLICATED DB COMMAND TESTS
+  // ===========================================================================
+  // Pure serialization tests for ReplicatedDBCommand (no cluster needed)
+
+  // Test PUT command marshal/unmarshal round-trip
+  int testReplicatedDBCommandPutMarshal(void);
+
+  // Test DELETE command marshal/unmarshal round-trip
+  int testReplicatedDBCommandDeleteMarshal(void);
+
+  // Test BATCH command marshal/unmarshal round-trip
+  int testReplicatedDBCommandBatchMarshal(void);
+
   void wait(uint64_t microseconds);
 
 };

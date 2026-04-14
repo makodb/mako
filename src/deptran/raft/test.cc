@@ -7,6 +7,7 @@
 #include "rpc/snapshot_manager.hpp"
 #include "rpc/snapshot_format.hpp"
 #include "rpc/file_snapshot_manager.hpp"
+#include "replicated_db.h"
 
 namespace janus {
 
@@ -169,6 +170,15 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testAddServerDuringActiveWorkload())   // Test 79
         || TEST_EXPAND(testLeaderFailureDuringConfigChange()) // Test 80
         || TEST_EXPAND(testCannotAddTwoServersSimultaneously()); // Test 81
+  }
+
+  // ReplicatedDB command serialization tests
+  if (!failed) {
+    Log_info("Running ReplicatedDB command tests");
+    failed =
+        TEST_EXPAND(testReplicatedDBCommandPutMarshal())      // Test 82
+        || TEST_EXPAND(testReplicatedDBCommandDeleteMarshal()) // Test 83
+        || TEST_EXPAND(testReplicatedDBCommandBatchMarshal()); // Test 84
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -7376,6 +7386,220 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   Assert2(idx > 0, "DoAgreement should succeed after cleanup");
 
   Log_info("TEST 81: Cannot add two servers simultaneously PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 82: testReplicatedDBCommandPutMarshal
+// ============================================================================
+// Verify PUT command marshal/unmarshal round-trip preserves all fields.
+// @unsafe - Uses Marshal I/O (non-borrow-checked)
+int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
+  Init2(82, "ReplicatedDBCommand PUT marshal round-trip");
+
+  // @unsafe { Factory creates shared_ptr }
+  auto cmd = ReplicatedDBCommand::CreatePut("test_key", "test_value");
+  Assert2(cmd->op_ == ReplicatedDBOp::PUT, "Op should be PUT");
+  Assert2(cmd->key_ == "test_key", "Key should be test_key");
+  Assert2(cmd->value_ == "test_value", "Value should be test_value");
+
+  // Marshal
+  // @unsafe { Marshal I/O }
+  rrr::Marshal m;
+  cmd->to_marshal(m);
+
+  // Unmarshal into a new command
+  // @unsafe { Marshal I/O }
+  auto cmd2 = std::make_shared<ReplicatedDBCommand>();
+  cmd2->from_marshal(m);
+
+  Assert2(cmd2->op_ == ReplicatedDBOp::PUT,
+          "Unmarshalled op should be PUT");
+  Assert2(cmd2->key_ == "test_key",
+          "Unmarshalled key should be test_key, got %s", cmd2->key_.c_str());
+  Assert2(cmd2->value_ == "test_value",
+          "Unmarshalled value should be test_value, got %s", cmd2->value_.c_str());
+  Assert2(cmd2->batch_ops_.empty(),
+          "Unmarshalled batch_ops should be empty for PUT");
+
+  // Test with empty key and value
+  // @unsafe { Factory creates shared_ptr }
+  auto cmd_empty = ReplicatedDBCommand::CreatePut("", "");
+  rrr::Marshal m2;
+  cmd_empty->to_marshal(m2);
+  auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
+  cmd_empty2->from_marshal(m2);
+  Assert2(cmd_empty2->op_ == ReplicatedDBOp::PUT, "Empty PUT op should be PUT");
+  Assert2(cmd_empty2->key_.empty(), "Empty PUT key should be empty");
+  Assert2(cmd_empty2->value_.empty(), "Empty PUT value should be empty");
+
+  // Test with large key/value
+  std::string large_key(1024, 'K');
+  std::string large_value(4096, 'V');
+  // @unsafe { Factory creates shared_ptr }
+  auto cmd_large = ReplicatedDBCommand::CreatePut(large_key, large_value);
+  rrr::Marshal m3;
+  cmd_large->to_marshal(m3);
+  auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
+  cmd_large2->from_marshal(m3);
+  Assert2(cmd_large2->key_ == large_key,
+          "Large key should survive round-trip");
+  Assert2(cmd_large2->value_ == large_value,
+          "Large value should survive round-trip");
+
+  Log_info("TEST 82: ReplicatedDBCommand PUT marshal round-trip PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 83: testReplicatedDBCommandDeleteMarshal
+// ============================================================================
+// Verify DELETE command marshal/unmarshal round-trip preserves all fields.
+// @unsafe - Uses Marshal I/O (non-borrow-checked)
+int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
+  Init2(83, "ReplicatedDBCommand DELETE marshal round-trip");
+
+  // @unsafe { Factory creates shared_ptr }
+  auto cmd = ReplicatedDBCommand::CreateDelete("delete_key");
+  Assert2(cmd->op_ == ReplicatedDBOp::DELETE, "Op should be DELETE");
+  Assert2(cmd->key_ == "delete_key", "Key should be delete_key");
+  Assert2(cmd->value_.empty(), "Value should be empty for DELETE");
+
+  // Marshal
+  // @unsafe { Marshal I/O }
+  rrr::Marshal m;
+  cmd->to_marshal(m);
+
+  // Unmarshal into a new command
+  // @unsafe { Marshal I/O }
+  auto cmd2 = std::make_shared<ReplicatedDBCommand>();
+  cmd2->from_marshal(m);
+
+  Assert2(cmd2->op_ == ReplicatedDBOp::DELETE,
+          "Unmarshalled op should be DELETE");
+  Assert2(cmd2->key_ == "delete_key",
+          "Unmarshalled key should be delete_key, got %s", cmd2->key_.c_str());
+  Assert2(cmd2->value_.empty(),
+          "Unmarshalled value should be empty for DELETE");
+  Assert2(cmd2->batch_ops_.empty(),
+          "Unmarshalled batch_ops should be empty for DELETE");
+
+  // Test MarshallDeputy round-trip (tests factory registration)
+  // @unsafe { MarshallDeputy uses non-borrow-checked factory }
+  auto cmd3 = ReplicatedDBCommand::CreateDelete("deputy_test_key");
+  shared_ptr<Marshallable> base_ptr = std::static_pointer_cast<Marshallable>(cmd3);
+  MarshallDeputy md(base_ptr);
+  rrr::Marshal m2;
+  m2 << md;
+
+  MarshallDeputy md2;
+  m2 >> md2;
+  Assert2(md2.sp_data_ != nullptr, "MarshallDeputy should have deserialized data");
+  auto cmd4 = std::dynamic_pointer_cast<ReplicatedDBCommand>(md2.sp_data_);
+  Assert2(cmd4 != nullptr, "Should dynamic_cast to ReplicatedDBCommand");
+  Assert2(cmd4->op_ == ReplicatedDBOp::DELETE,
+          "Deputy round-trip op should be DELETE");
+  Assert2(cmd4->key_ == "deputy_test_key",
+          "Deputy round-trip key should match");
+
+  Log_info("TEST 83: ReplicatedDBCommand DELETE marshal round-trip PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 84: testReplicatedDBCommandBatchMarshal
+// ============================================================================
+// Verify BATCH command marshal/unmarshal round-trip preserves all ops.
+// @unsafe - Uses Marshal I/O (non-borrow-checked)
+int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
+  Init2(84, "ReplicatedDBCommand BATCH marshal round-trip");
+
+  // Create a batch with 3 operations
+  std::vector<KVOperation> ops;
+  ops.push_back({ReplicatedDBOp::PUT, "key1", "value1"});
+  ops.push_back({ReplicatedDBOp::DELETE, "key2", ""});
+  ops.push_back({ReplicatedDBOp::PUT, "key3", "value3"});
+
+  // @unsafe { Factory creates shared_ptr }
+  auto cmd = ReplicatedDBCommand::CreateBatch(ops);
+  Assert2(cmd->op_ == ReplicatedDBOp::BATCH, "Op should be BATCH");
+  Assert2(cmd->batch_ops_.size() == 3, "Should have 3 batch ops");
+
+  // Marshal
+  // @unsafe { Marshal I/O }
+  rrr::Marshal m;
+  cmd->to_marshal(m);
+
+  // Unmarshal into a new command
+  // @unsafe { Marshal I/O }
+  auto cmd2 = std::make_shared<ReplicatedDBCommand>();
+  cmd2->from_marshal(m);
+
+  Assert2(cmd2->op_ == ReplicatedDBOp::BATCH,
+          "Unmarshalled op should be BATCH");
+  Assert2(cmd2->batch_ops_.size() == 3,
+          "Unmarshalled batch should have 3 ops, got %zu", cmd2->batch_ops_.size());
+
+  // Verify each operation
+  Assert2(cmd2->batch_ops_[0].op == ReplicatedDBOp::PUT,
+          "Op 0 should be PUT");
+  Assert2(cmd2->batch_ops_[0].key == "key1",
+          "Op 0 key should be key1");
+  Assert2(cmd2->batch_ops_[0].value == "value1",
+          "Op 0 value should be value1");
+
+  Assert2(cmd2->batch_ops_[1].op == ReplicatedDBOp::DELETE,
+          "Op 1 should be DELETE");
+  Assert2(cmd2->batch_ops_[1].key == "key2",
+          "Op 1 key should be key2");
+  Assert2(cmd2->batch_ops_[1].value.empty(),
+          "Op 1 value should be empty for DELETE");
+
+  Assert2(cmd2->batch_ops_[2].op == ReplicatedDBOp::PUT,
+          "Op 2 should be PUT");
+  Assert2(cmd2->batch_ops_[2].key == "key3",
+          "Op 2 key should be key3");
+  Assert2(cmd2->batch_ops_[2].value == "value3",
+          "Op 2 value should be value3");
+
+  // Test empty batch
+  std::vector<KVOperation> empty_ops;
+  // @unsafe { Factory creates shared_ptr }
+  auto cmd_empty = ReplicatedDBCommand::CreateBatch(empty_ops);
+  rrr::Marshal m2;
+  cmd_empty->to_marshal(m2);
+  auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
+  cmd_empty2->from_marshal(m2);
+  Assert2(cmd_empty2->op_ == ReplicatedDBOp::BATCH,
+          "Empty batch op should be BATCH");
+  Assert2(cmd_empty2->batch_ops_.empty(),
+          "Empty batch should have 0 ops");
+
+  // Test large batch (100 operations)
+  std::vector<KVOperation> large_ops;
+  for (int i = 0; i < 100; i++) {
+    ReplicatedDBOp op = (i % 2 == 0) ? ReplicatedDBOp::PUT : ReplicatedDBOp::DELETE;
+    large_ops.push_back({op, "key_" + std::to_string(i), "val_" + std::to_string(i)});
+  }
+  // @unsafe { Factory creates shared_ptr }
+  auto cmd_large = ReplicatedDBCommand::CreateBatch(large_ops);
+  rrr::Marshal m3;
+  cmd_large->to_marshal(m3);
+  auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
+  cmd_large2->from_marshal(m3);
+  Assert2(cmd_large2->batch_ops_.size() == 100,
+          "Large batch should have 100 ops, got %zu", cmd_large2->batch_ops_.size());
+  for (int i = 0; i < 100; i++) {
+    ReplicatedDBOp expected_op = (i % 2 == 0) ? ReplicatedDBOp::PUT : ReplicatedDBOp::DELETE;
+    Assert2(cmd_large2->batch_ops_[i].op == expected_op,
+            "Op %d type mismatch", i);
+    Assert2(cmd_large2->batch_ops_[i].key == "key_" + std::to_string(i),
+            "Op %d key mismatch", i);
+    Assert2(cmd_large2->batch_ops_[i].value == "val_" + std::to_string(i),
+            "Op %d value mismatch", i);
+  }
+
+  Log_info("TEST 84: ReplicatedDBCommand BATCH marshal round-trip PASSED!");
   Passed2();
 }
 
