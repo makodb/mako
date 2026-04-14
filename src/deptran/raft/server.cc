@@ -3221,20 +3221,6 @@ void RaftServer::stepDown(StepDownReason reason) {
            site_id_, StepDownReasonToString(reason), currentTerm,
            securedLeader_, specVoters_.size(), durableVoters_.size());
 
-  // TODO (future): Notify pending clients based on reason
-  // The client notification infrastructure is deferred to a future phase.
-  // For now, just log the step-down reason.
-  //
-  // Future implementation outline:
-  // if (reason == StepDownReason::UnsecuredFailure) {
-  //     // All current-term entries are suspect
-  //     notifyClientsRollback(commitIndex + 1, lastLogIndex);
-  // } else if (reason == StepDownReason::SecuredFailure) {
-  //     // Only unsecured entries are suspect
-  //     notifyClientsRollback(securedLogIndex_ + 1, specCommitIndex_);
-  // }
-  // // HigherTerm: no automatic rollback - entries may still commit
-
   // Reset speculative state
   // This clears specVoters_, durableVoters_, etc.
   ResetSpeculativeState();
@@ -3249,8 +3235,8 @@ void RaftServer::stepDown(StepDownReason reason) {
 
   Log_info("[SPEC-RAFT] Site %d: Step-down complete, now follower", site_id_);
 
-  // Notify pending callbacks of rollback (Phase 5.3)
-  NotifyRollback();
+  // Notify pending callbacks of rollback based on step-down reason (Phase 5.3)
+  NotifyRollback(reason);
 }
 
 // ============================================================================
@@ -3300,21 +3286,43 @@ void RaftServer::NotifyCallbacks(uint64_t from, uint64_t to, CommitStatus status
   }
 }
 
-void RaftServer::NotifyRollback() {
+// @unsafe - Invokes callbacks, clears pendingCallbacks_
+void RaftServer::NotifyRollback(StepDownReason reason) {
   // Note: Caller must hold mtx_
-  // Notify all pending callbacks above securedLogIndex_ with ROLLEDBACK
+  // Notify pending callbacks based on step-down reason
 
-  Log_info("[SPEC-CALLBACK] Notifying rollback for %zu pending callbacks (securedLogIndex=%lu)",
-           pendingCallbacks_.size(), securedLogIndex_);
+  Log_info("[SPEC-CALLBACK] NotifyRollback reason=%s, pending=%zu, "
+           "commitIndex=%lu, specCommitIndex=%lu, securedLogIndex=%lu, lastLogIndex=%lu",
+           StepDownReasonToString(reason), pendingCallbacks_.size(),
+           commitIndex, specCommitIndex_, securedLogIndex_, lastLogIndex);
 
-  for (auto& [idx, callback] : pendingCallbacks_) {
-    if (idx > securedLogIndex_) {
-      Log_debug("[SPEC-CALLBACK] Notifying index %lu with ROLLEDBACK", idx);
-      callback(CommitStatus::ROLLEDBACK);
-    }
+  switch (reason) {
+    case StepDownReason::UnsecuredFailure:
+      // Lost speculative quorum while unsecured leader.
+      // All current-term entries are suspect -> rollback everything
+      // from commitIndex + 1 to lastLogIndex.
+      Log_info("[SPEC-CALLBACK] UnsecuredFailure: rolling back entries (%lu, %lu]",
+               commitIndex, lastLogIndex);
+      NotifyCallbacks(commitIndex, lastLogIndex, CommitStatus::ROLLEDBACK);  // @unsafe
+      break;
+
+    case StepDownReason::SecuredFailure:
+      // Lost quorum but was secured leader. Only unsecured entries
+      // (above securedLogIndex_) are suspect -> rollback from
+      // securedLogIndex_ + 1 to specCommitIndex_.
+      Log_info("[SPEC-CALLBACK] SecuredFailure: rolling back entries (%lu, %lu]",
+               securedLogIndex_, specCommitIndex_);
+      NotifyCallbacks(securedLogIndex_, specCommitIndex_, CommitStatus::ROLLEDBACK);  // @unsafe
+      break;
+
+    case StepDownReason::HigherTerm:
+      // Saw higher term from another server. Entries may still be
+      // valid under the new leader - don't send rollback notifications.
+      Log_info("[SPEC-CALLBACK] HigherTerm step-down - no automatic rollback");
+      break;
   }
 
-  // Clear all pending callbacks after notification
+  // Clear ALL pending callbacks regardless of reason (we're no longer leader)
   pendingCallbacks_.clear();
 
   // Reset notification tracking

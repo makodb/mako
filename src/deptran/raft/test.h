@@ -195,6 +195,16 @@ class RaftLabTest {
   // Test that speculative indices are recovered correctly on restart
   int testSpecIndicesRecoveredOnRestart(void);
 
+  // ===========================================================================
+  // REASON-AWARE ROLLBACK NOTIFICATION TESTS
+  // ===========================================================================
+
+  // Test that UnsecuredFailure step-down rolls back all entries above commitIndex
+  int testRollbackOnUnsecuredFailure(void);
+
+  // Test that HigherTerm step-down does not send rollback notifications
+  int testNoRollbackOnHigherTerm(void);
+
   void wait(uint64_t microseconds);
 
 };

@@ -301,6 +301,18 @@ The leader can notify clients about entry status:
 | `DURABLE` | Entry reached disk quorum with secured leader |
 | `ROLLEDBACK` | Entry discarded (leader stepped down) |
 
+#### Reason-Aware Rollback Notification
+
+When a leader steps down, `NotifyRollback(StepDownReason)` differentiates rollback behavior based on why the step-down occurred:
+
+| StepDownReason | Rollback Range | Rationale |
+|----------------|---------------|-----------|
+| `UnsecuredFailure` | `(commitIndex, lastLogIndex]` | Lost speculative quorum while unsecured. All current-term entries are suspect since no durable quorum was ever achieved. |
+| `SecuredFailure` | `(securedLogIndex_, specCommitIndex_]` | Lost quorum but was secured leader. Entries up to `securedLogIndex_` are durably committed and safe. Only unsecured entries above that are suspect. |
+| `HigherTerm` | None (no rollback sent) | Saw higher term from another server. Entries may still be valid under the new leader, so no premature rollback notification is sent. |
+
+After notification, all pending callbacks are cleared and notification tracking indices are reset, regardless of reason (the server is no longer leader).
+
 ---
 
 ## 7. Speculative Voting and Replication

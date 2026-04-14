@@ -1181,10 +1181,19 @@ class RaftServer : public TxLogServer {
   void NotifyCallbacks(uint64_t from, uint64_t to, CommitStatus status);
 
   /**
-   * Notify rollback for all pending callbacks above securedLogIndex.
+   * Notify rollback for pending callbacks based on step-down reason.
    * Called during step-down when leader is still alive.
+   *
+   * Behavior per reason:
+   * - UnsecuredFailure: Rollback all entries in (commitIndex, lastLogIndex]
+   * - SecuredFailure: Rollback only unsecured entries in (securedLogIndex_, specCommitIndex_]
+   * - HigherTerm: No automatic rollback (entries may still be valid under new leader)
+   *
+   * Always clears pendingCallbacks_ and resets notification tracking regardless of reason.
+   *
+   * @param reason - Why the leader is stepping down
    */
   // @unsafe - Invokes callbacks, clears pendingCallbacks_
-  void NotifyRollback();
+  void NotifyRollback(StepDownReason reason);
 };
 } // namespace janus
