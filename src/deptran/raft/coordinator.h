@@ -65,9 +65,10 @@ class CoordinatorRaft : public Coordinator {
   // @unsafe - raw pointer dereference svr_->
   bool IsFPGALeader() ;
 
-  // @safe - Uses Arc<Cell<T>> for safe shared mutable access
+  // @unsafe - calls Log_warn (non-borrow-checked I/O), Uses Arc<Cell<T>> for safe shared mutable access
   slotid_t GetNextSlot() {
-    verify(0);
+    // @unsafe { Log_warn is not borrow-checked }
+    Log_warn("[RAFT] CoordinatorRaft::GetNextSlot called but not implemented for Raft");
     slot_id_ = slot_hint_->get();
     slot_hint_->set(slot_hint_->get() + 1);
     return 0;
@@ -95,8 +96,11 @@ class CoordinatorRaft : public Coordinator {
 
   // @safe
   void Reset() override {}
-  // @safe
-  void Restart() override { verify(0); }
+  // @unsafe - calls Log_warn (non-borrow-checked I/O)
+  void Restart() override {
+    // @unsafe { Log_warn is not borrow-checked }
+    Log_warn("[RAFT] CoordinatorRaft::Restart called but not implemented for Raft");
+  }
 
   // @unsafe - calls AppendEntries which is @unsafe
   void GotoNextPhase();

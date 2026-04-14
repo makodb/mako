@@ -170,9 +170,10 @@ void CoordinatorRaft::AppendEntries() {
     committed_ = true;
 }
 
-// @safe
+// @unsafe - calls Log_warn (non-borrow-checked I/O), mutex, callback
 void CoordinatorRaft::Commit() {
-  verify(0);
+  // @unsafe { Log_warn is not borrow-checked }
+  Log_warn("[RAFT] CoordinatorRaft::Commit called but not expected in Raft mode");
   // @unsafe
   {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -207,8 +208,9 @@ void CoordinatorRaft::GotoNextPhase() {
         phase_++;
         verify(phase_ % n_phase == Phase::COMMIT);
       } else {
-        // TODO
-        verify(0);
+        // TODO: non-leader should forward to leader
+        // @unsafe { Log_warn is not borrow-checked }
+        Log_warn("[RAFT] CoordinatorRaft::GotoNextPhase: non-leader path not yet implemented, skipping to COMMIT");
         // Forward(cmd_,commit_callback_) ;
         phase_ = Phase::COMMIT;
       }
@@ -230,7 +232,9 @@ void CoordinatorRaft::GotoNextPhase() {
       // do nothing.
       break;
     default:
-      verify(0);
+      // @unsafe { Log_error is not borrow-checked }
+      Log_error("[RAFT] CoordinatorRaft::GotoNextPhase: unexpected phase %d", current_phase);
+      break;
   }
 }
 

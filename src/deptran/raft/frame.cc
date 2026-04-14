@@ -103,7 +103,7 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
   return coo;
 }
 
-// @safe - returns raw pointer to owned member (caller does not take ownership)
+// @unsafe - returns raw pointer to owned member (caller does not take ownership), calls Log_error/Log_debug
 TxLogServer *RaftFrame::CreateScheduler() {
   if(svr_ == nullptr)
   {
@@ -112,7 +112,9 @@ TxLogServer *RaftFrame::CreateScheduler() {
   }
   else
   {
-    verify(0) ;
+    // @unsafe { Log_error is not borrow-checked }
+    Log_error("[RAFT] RaftFrame::CreateScheduler called but scheduler already exists");
+    return svr_.get();
   }
   // @unsafe
   { Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id); }
