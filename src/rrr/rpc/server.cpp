@@ -60,131 +60,6 @@ using namespace std;
 
 namespace rrr {
 
-#ifdef __APPLE__
-namespace {
-
-struct InprocEndpoint {
-  rusty::sync::Weak<RpcServiceContext> ctx;
-  rusty::sync::Weak<PollThread> server_poll_thread;
-  rusty::sync::Weak<ServerListener> listener;
-};
-
-std::mutex g_inproc_mu;
-std::unordered_map<std::string, InprocEndpoint> g_inproc_by_port;
-
-std::string port_key_from_addr(const std::string& addr) {
-  auto idx = addr.rfind(':');
-  if (idx == std::string::npos || idx + 1 >= addr.size()) {
-    return std::string();
-  }
-  return addr.substr(idx + 1);
-}
-
-}  // namespace
-#endif  // __APPLE__
-
-#ifdef __APPLE__
-void inproc_register_server(const std::string& bind_addr,
-                            const rusty::Arc<RpcServiceContext>& ctx,
-                            const rusty::Arc<PollThread>& poll_thread,
-                            const rusty::Arc<ServerListener>& listener) {
-  const auto key = port_key_from_addr(bind_addr);
-  if (key.empty()) {
-    return;
-  }
-  std::lock_guard<std::mutex> lk(g_inproc_mu);
-  g_inproc_by_port[key] = InprocEndpoint{
-      rusty::downgrade(ctx),
-      rusty::downgrade(poll_thread),
-      rusty::downgrade(listener),
-  };
-}
-
-void inproc_unregister_server(const std::string& bind_addr) {
-  const auto key = port_key_from_addr(bind_addr);
-  if (key.empty()) {
-    return;
-  }
-  std::lock_guard<std::mutex> lk(g_inproc_mu);
-  g_inproc_by_port.erase(key);
-}
-
-int inproc_try_connect(const std::string& addr,
-                       const rusty::Arc<PollThread>& client_poll_thread,
-                       int* out_client_fd) {
-  if (!out_client_fd) {
-    return EINVAL;
-  }
-  *out_client_fd = -1;
-
-  const auto key = port_key_from_addr(addr);
-  if (key.empty()) {
-    return ENOTCONN;
-  }
-
-  InprocEndpoint ep;
-  {
-    std::lock_guard<std::mutex> lk(g_inproc_mu);
-    auto it = g_inproc_by_port.find(key);
-    if (it == g_inproc_by_port.end()) {
-      return ENOTCONN;
-    }
-    ep = it->second;
-  }
-
-  auto ctx_opt = ep.ctx.upgrade();
-  auto poll_opt = ep.server_poll_thread.upgrade();
-  auto listener_opt = ep.listener.upgrade();
-  if (ctx_opt.is_none() || poll_opt.is_none() || listener_opt.is_none()) {
-    // Server was dropped; remove stale entry.
-    std::lock_guard<std::mutex> lk(g_inproc_mu);
-    g_inproc_by_port.erase(key);
-    return ENOTCONN;
-  }
-
-  auto ctx = ctx_opt.unwrap();
-  auto server_poll = poll_opt.unwrap();
-  auto listener = listener_opt.unwrap();
-
-  int fds[2] = {-1, -1};
-  if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
-    return errno ? errno : ENOTCONN;
-  }
-
-  const int server_fd = fds[0];
-  const int client_fd = fds[1];
-
-#ifdef __APPLE__
-  // Prevent SIGPIPE termination on write() to closed sockets.
-  const int yes = 1;
-  (void)setsockopt(server_fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
-  (void)setsockopt(client_fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
-#endif
-
-  // Make both ends non-blocking so they behave like the normal TCP sockets.
-  if (set_nonblocking(server_fd, true) != 0 || set_nonblocking(client_fd, true) != 0) {
-    ::close(server_fd);
-    ::close(client_fd);
-    return errno ? errno : EINVAL;
-  }
-
-  // Create a server-side connection and register it with the server poll thread.
-  auto sconn = rusty::Arc<ServerConnection>::make(ctx.clone(), server_fd);
-  ServerConnection::init_weak_self(sconn);
-  {
-    auto guard = listener->sconn_fds_.lock().unwrap();
-    guard->push(server_fd);
-  }
-  server_poll->add(sconn);
-
-  // Client side will be owned and closed by ClientConnection.
-  *out_client_fd = client_fd;
-  (void)client_poll_thread;  // reserved for future use
-  return 0;
-}
-#endif  // __APPLE__
-
-
 #ifdef RPC_STATISTICS
 
 static const int g_stat_server_batching_size = 1000;
@@ -460,14 +335,6 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
 // @safe - Destroys server and requests close for all connections
 // Arc<RpcServiceContext> ensures services live until all connections are done
 Server::~Server() {
-#ifdef __APPLE__
-    if (inproc_registered_) {
-        inproc_unregister_server(inproc_bind_addr_);
-        inproc_registered_ = false;
-        inproc_bind_addr_.clear();
-    }
-#endif
-
     // Request close for server listener and all its connections via poll thread
     if (server_listener_.is_some()) {
         auto& listener = server_listener_.as_ref().unwrap();
@@ -564,9 +431,6 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 #ifdef USE_IPC
   struct sockaddr_un saun;
   if ((server_sock_ = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-#ifdef __APPLE__
-    bind_errno_ = errno;
-#endif
     server_sock_ = -1;
     return;
   }
@@ -576,9 +440,6 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
   ::unlink(ipc_addr.data());
   if (::bind(server_sock_, (struct sockaddr*)&saun, len) != 0) {
-#ifdef __APPLE__
-    bind_errno_ = errno;
-#endif
     ::close(server_sock_);
     server_sock_ = -1;
     return;
@@ -603,7 +464,6 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   gai_result_ = addr_result.unwrap();
 
   struct addrinfo* rp = nullptr;
-  int last_bind_errno = 0;
   for (rp = gai_result_.get(); rp != nullptr; rp = rp->ai_next) {
     server_sock_ = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (server_sock_ == -1) {
@@ -635,15 +495,8 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
     }
 
     if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
-#ifdef __APPLE__
-      bind_errno_ = 0;
-#endif
       break;  // Successfully bound
     } else {
-      last_bind_errno = errno;
-#ifdef __APPLE__
-      bind_errno_ = last_bind_errno;
-#endif
       Log_error("port bind error for %s:%s, errno: %d (%s)", host.c_str(), port.c_str(), errno, strerror(errno));
       ::close(server_sock_);
       server_sock_ = -1;
@@ -653,9 +506,6 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 
   if (rp == nullptr) {
     // Failed to bind to any address
-#ifdef __APPLE__
-    bind_errno_ = last_bind_errno;
-#endif
     Log_error("rrr::Server: failed to bind to %s:%s after trying all addresses", host.c_str(), port.c_str());
     if (last_bind_errno != 0) {
       Log_error("rrr::Server: last bind() errno=%d (%s)", last_bind_errno, strerror(last_bind_errno));
@@ -714,21 +564,6 @@ int Server::start(const char* bind_addr) {
 
   // Check if listener was created successfully (binding may have failed)
   if (server_listener_.as_ref().unwrap()->server_sock_ < 0) {
-#ifdef __APPLE__
-    // In restricted environments (e.g., sandboxed runs), bind() may be denied (EPERM).
-    // Fall back to in-process transport using socketpair, which does not require bind/listen.
-    if (server_listener_.as_ref().unwrap()->bind_errno_ == EPERM) {
-      Log_warn("rrr::Server::start: bind() denied (EPERM) for %s; enabling in-process transport fallback", bind_addr);
-      inproc_register_server(addr_str,
-                             ctx_.as_ref().unwrap(),
-                             poll_thread_.as_ref().unwrap(),
-                             server_listener_.as_ref().unwrap());
-      inproc_registered_ = true;
-      inproc_bind_addr_ = addr_str;
-      return 0;
-    }
-#endif
-
     Log_error("rrr::Server::start: failed to bind to %s", bind_addr);
     server_listener_ = rusty::None;
     ctx_ = rusty::None;

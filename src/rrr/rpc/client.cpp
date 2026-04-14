@@ -36,13 +36,6 @@
 using namespace std;
 
 namespace rrr {
-
-#ifdef __APPLE__
-int inproc_try_connect(const std::string& addr,
-                       const rusty::Arc<PollThread>& client_poll_thread,
-                       int* out_client_fd);
-#endif
-
 // Helper function to get current time in milliseconds
 // @unsafe - Uses std::chrono which is not borrow-checked (but is memory-safe)
 static uint64_t current_time_ms() {
@@ -212,17 +205,6 @@ int ClientConnection::connect(const char* addr) {
   string port = addr_str.substr(idx + 1);
   // }
 
-#ifdef __APPLE__
-  bool is_inproc = false;
-  int inproc_fd = -1;
-  const int inproc_res = inproc_try_connect(addr_str, poll_thread_worker_, &inproc_fd);
-  if (inproc_res == 0 && inproc_fd >= 0) {
-    socket_ = inproc_fd;
-    is_inproc = true;
-  }
-
-  if (!is_inproc) {
-#endif
 #ifdef USE_IPC
     // @unsafe { - IPC socket creation and connect syscalls
     struct sockaddr_un saun;
@@ -292,9 +274,6 @@ int ClientConnection::connect(const char* addr) {
       return ENOTCONN;
     }
 #endif
-#ifdef __APPLE__
-  }
-#endif
   // @unsafe - set_nonblocking syscall
   {
 #ifdef __APPLE__
@@ -307,13 +286,7 @@ int ClientConnection::connect(const char* addr) {
 
   // Apply TCP keepalive options after socket is connected
   // @unsafe { setsockopt system calls }
-#ifdef __APPLE__
-  if (!is_inproc) {
-    apply_keepalive_options();
-  }
-#else
   apply_keepalive_options();
-#endif
 
   // Initialize last activity time and record connection in metrics
   auto now_ms = current_time_ms();
