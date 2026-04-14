@@ -19,9 +19,10 @@ A comprehensive developer guide for the Mako distributed transactional datastore
 11. [Memory Safety: RustyCpp](#11-memory-safety-rustycpp)
 12. [Performance Optimization Techniques](#12-performance-optimization-techniques)
 13. [Design Principles](#13-design-principles)
-14. [Anti-Patterns to Avoid](#14-anti-patterns-to-avoid)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Glossary](#16-glossary)
+14. [Configuration Manager (Master Shard)](#14-configuration-manager-master-shard)
+15. [Anti-Patterns to Avoid](#15-anti-patterns-to-avoid)
+16. [Troubleshooting](#16-troubleshooting)
+17. [Glossary](#17-glossary)
 
 ---
 
@@ -809,7 +810,100 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 
 ---
 
-## 14. Anti-Patterns to Avoid
+## 14. Configuration Manager (Master Shard)
+
+Mako uses **shard 0** as a dedicated **master shard** that stores system-wide configuration — cluster membership, shard topology, routing metadata — as regular replicated key-value entries. Config changes are ACID transactions with the same durability guarantees as application data.
+
+### Why a Master Shard?
+
+Static YAML config files work for development but break down for production:
+- Adding/removing shards or replicas requires editing files on every node and restarting.
+- No single source of truth — config can drift between nodes.
+- No transactional guarantees on config changes.
+
+By storing config in shard 0 (replicated via Raft/Paxos), config changes are:
+- **Replicated** automatically — no separate replication path.
+- **Transactional** — atomic updates to membership and topology.
+- **Discoverable** — other shards bootstrap by reading from shard 0.
+- **Versioned** — automatic via Raft log index, enabling cache invalidation.
+
+### Architecture
+
+```
+              +------------------------------------------+
+              |        Shard 0 (Master Shard)             |
+              |                                          |
+              |  Config Table: "__mako_config__"         |
+              |  ┌────────────────────┬────────────┐    |
+              |  │ Key                │ Value      │    |
+              |  ├────────────────────┼────────────┤    |
+              |  │ __version__        │ 42         │    |
+              |  │ shard_count        │ 3          │    |
+              |  │ shard/0/replicas   │ [s1,s2,s3] │    |
+              |  │ shard/1/replicas   │ [s4,s5,s6] │    |
+              |  │ shard/1/leader     │ "s4"       │    |
+              |  │ sharding/policy    │ {"hash"}   │    |
+              |  │ node/s1/addr       │ 10.0.1.1   │    |
+              |  └────────────────────┴────────────┘    |
+              |                                          |
+              |  Replicated via Raft/Paxos (3+ replicas) |
+              +------------------------------------------+
+                    |              |              |
+              Shard 1         Shard 2        Clients
+              (bootstrap      (bootstrap     (discover
+               from shard 0)   from shard 0)  topology)
+```
+
+### Config Table Schema
+
+All configuration lives in a reserved table `__mako_config__` on shard 0, accessed via the standard `ITable::Put/Get/Delete` API.
+
+| Key Pattern | Value | Description |
+|-------------|-------|-------------|
+| `__version__` | uint64 | Monotonically increasing config version |
+| `shard_count` | uint32 | Total shard count |
+| `shard/<id>/replicas` | JSON array | Ordered replica list (first = preferred leader) |
+| `shard/<id>/leader` | string | Current leader site name |
+| `shard/<id>/status` | string | `active`, `draining`, `adding`, `removing` |
+| `sharding/policy` | JSON | `{"type":"hash","func":"murmur3"}` or `{"type":"range"}` |
+| `node/<site>/addr` | string | Node address (`ip:port`) |
+| `node/<site>/status` | string | `alive`, `dead`, `decommissioning` |
+
+### Key Components
+
+**ConfigManager**: Thin wrapper around `ITable` on shard 0. Provides typed methods like `GetShardReplicas()`, `AddShard()`, `SetShardLeader()`. Every write increments `__version__`.
+
+**ClusterConfig**: In-memory cache of the full cluster topology. Every node holds a local copy. Includes a `GetShardForKey()` routing helper.
+
+**ConfigWatcher**: Background fiber on non-master shards. Polls shard 0's `__version__` key periodically (default: 1 second). On version change, fetches the full `ClusterConfig` and invokes a callback to update local routing.
+
+### Bootstrap Protocol
+
+**First boot**: Shard 0 leader loads the static YAML config, populates `__mako_config__`, sets `__version__ = 1`. Other shards connect to shard 0 (via a static seed list: `--master-addrs=s1:8100,s2:8101,s3:8102`) and fetch the config.
+
+**Subsequent boots**: Shard 0 recovers its Masstree from Raft log + snapshot. Config is immediately available — no YAML needed. Other shards fetch the latest version from shard 0.
+
+### Config Change Protocol
+
+All config changes are regular transactions on shard 0:
+
+1. Admin calls `ConfigManager::AddShard(id, replicas)`.
+2. ConfigManager begins a transaction, writes `shard/<id>/replicas`, increments `shard_count` and `__version__`.
+3. Transaction commits (replicated via Raft).
+4. ConfigWatcher on other shards detects the version bump, fetches the new config.
+5. Shard router updates routing table.
+
+### Consistency Guarantees
+
+- **Config writes**: Serializable (regular transactions on shard 0, replicated via Raft).
+- **Config reads**: Linearizable from shard 0 leader, or eventually-consistent from watchers (bounded by poll interval).
+- **Version monotonicity**: Watchers only apply configs with strictly higher versions.
+
+For the full design document, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
+
+---
+
+## 15. Anti-Patterns to Avoid
 
 ### Hot Shard
 **Problem:** All transactions touch the same shard.
@@ -829,7 +923,7 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 ### Quick Diagnostic Checklist
 
@@ -871,7 +965,7 @@ perf report
 
 ---
 
-## 16. Glossary
+## 17. Glossary
 
 | Term | Definition |
 |------|------------|
@@ -888,6 +982,7 @@ perf report
 | **Leader** | Replica that proposes values and coordinates consensus |
 | **Local Timestamp** | Per-partition timestamp of most recently committed transaction |
 | **Mako** | Speculative distributed transaction system (named for the fast mako shark) |
+| **Master Shard** | Shard 0 — stores cluster configuration in `__mako_config__` table, replicated via Raft/Paxos |
 | **Masstree** | In-memory concurrent B+tree storage engine |
 | **Multi-Paxos** | Optimized Paxos with stable leader skipping prepare phase |
 | **NO-OP** | Heartbeat/sync log entry in Paxos that triggers watermark computation |
