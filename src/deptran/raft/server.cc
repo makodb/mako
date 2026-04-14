@@ -1297,6 +1297,47 @@ void RaftServer::HeartbeatLoop() {
                      site_id, prevLogIndex, lastLogIndex);
             it->second = 1;
             skip_follower = true;
+          } else if (it->second < min_active_slot_ && snapshot_manager_) {
+            // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
+            Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d next_index=%lu < min_active_slot_=%lu, sending InstallSnapshot",
+                     site_id_, site_id, it->second, min_active_slot_);
+            rrr::SnapshotMetadata snap_meta;
+            std::string snap_data;
+            if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
+              uint64_t snap_last_idx = snap_meta.last_included_index;
+              uint64_t snap_last_term = snap_meta.last_included_term;
+              uint64_t send_term = currentTerm;
+              commo()->SendInstallSnapshot(
+                  site_id, partition_id_,
+                  send_term, site_id_,
+                  snap_last_idx, snap_last_term,
+                  snap_data,
+                  [this, site_id, snap_last_idx, send_term](uint64_t follower_term) {
+                    // @unsafe - callback modifies shared state under lock
+                    std::lock_guard<std::recursive_mutex> lock(mtx_);
+                    if (follower_term > currentTerm) {
+                      Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d has higher term %lu > %lu, stepping down",
+                               site_id_, site_id, follower_term, currentTerm);
+                      currentTerm = follower_term;
+                      stepDown(StepDownReason::HigherTerm);
+                      return;
+                    }
+                    if (currentTerm != send_term) {
+                      Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Term changed since snapshot send, ignoring response",
+                               site_id_);
+                      return;
+                    }
+                    next_index_[site_id] = snap_last_idx + 1;
+                    match_index_[site_id] = snap_last_idx;
+                    Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Updated follower %d: next_index=%lu match_index=%lu",
+                             site_id_, site_id, snap_last_idx + 1, snap_last_idx);
+                  });
+              skip_follower = true;  // Skip normal AppendEntries for this follower
+            } else {
+              Log_warn("[HEARTBEAT-SNAPSHOT] Site %d: Failed to load snapshot for follower %d, skipping",
+                       site_id_, site_id);
+              skip_follower = true;
+            }
           } else {
             verify(prevLogIndex <= lastLogIndex);
             auto instance = GetRaftInstance(prevLogIndex);

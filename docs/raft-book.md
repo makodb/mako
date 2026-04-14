@@ -601,9 +601,23 @@ When a follower is too far behind (its `next_index_` points to compacted log ent
 - Sends full snapshot in one RPC (no chunking)
 - Callback receives follower's current term
 
+### HeartbeatLoop Integration
+
+The leader's `HeartbeatLoop()` detects when a follower has fallen too far behind and automatically sends `InstallSnapshot` instead of `AppendEntries`. This happens in PHASE 1 of the heartbeat loop, during the per-follower iteration:
+
+1. For each follower, the leader checks if `next_index_[follower] < min_active_slot_` and `snapshot_manager_` is set
+2. If so, loads the latest snapshot via `snapshot_manager_->LoadLatestSnapshot()`
+3. Sends `InstallSnapshot` RPC via `commo()->SendInstallSnapshot()`
+4. The callback handles three cases:
+   - **Follower has higher term**: leader steps down (same as AppendEntries rejection)
+   - **Term changed since send**: stale response, ignored
+   - **Success**: updates `next_index_[follower] = snap_index + 1` and `match_index_[follower] = snap_index`
+5. The normal `AppendEntries` path is skipped for this follower (via `continue`)
+
+After the follower installs the snapshot and responds, subsequent heartbeats resume normal `AppendEntries` replication for any entries after the snapshot index.
+
 ### Planned Features
 
-- **HeartbeatLoop integration**: Automatically send InstallSnapshot when `next_index_[follower] < min_active_slot_`
 - **Recovery**: On startup, load snapshot state before replaying log entries
 
 See `docs/dev/raft_snapshot_design.md` for the full design document.
@@ -622,6 +636,7 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 | `BroadcastVote()` | Parallel RequestVote to all replicas |
 | `SendVoteDurable()` | Notify leader of persisted vote |
 | `SendAppendEntriesDurable()` | Notify leader of persisted entries |
+| `SendInstallSnapshot()` | Send full snapshot to lagging follower |
 | `SendTimeoutNow()` | Trigger immediate election on target |
 | `SendNotifyRestart()` | Notify peers of server restart |
 | `RetryPendingNotifyRestart()` | Retry notifications to PENDING peers |

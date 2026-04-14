@@ -86,7 +86,8 @@ int RaftLabTest::Run(void) {
     Log_info("Running InstallSnapshot tests (Phase 3.3)");
     failed =
         TEST_EXPAND(testInstallSnapshotBasic())              // Test 58
-        || TEST_EXPAND(testInstallSnapshotRejectsStaleTerm()); // Test 59
+        || TEST_EXPAND(testInstallSnapshotRejectsStaleTerm()) // Test 59
+        || TEST_EXPAND(testHeartbeatTriggersInstallSnapshot()); // Test 60
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -5018,6 +5019,148 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
           before_executeIndex, server->executeIndex);
 
   Log_info("[INSTALL-SNAPSHOT-REJECTS-STALE-TEST] PASSED");
+  Passed2();
+}
+
+// =============================================================================
+// Test 60: HeartbeatLoop triggers InstallSnapshot for lagging followers
+// =============================================================================
+// @unsafe - test function that exercises HeartbeatLoop snapshot integration
+int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
+  Init2(60, "HeartbeatLoop triggers InstallSnapshot for lagging follower");
+
+  // Wait for a leader to be elected
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  auto leader_server = config_->GetServer(leader);
+  Assert2(leader_server != nullptr, "Leader server should not be null");
+
+  // Set up a snapshot manager on the leader with a low threshold
+  std::string test_path = "/tmp/raft_hb_snap_test_" + std::to_string(getpid());
+  rrr::SnapshotConfig snap_config;
+  snap_config.storage_path = test_path;
+  auto test_mgr = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+  auto original_mgr = leader_server->GetSnapshotManager();
+  leader_server->SetSnapshotManager(test_mgr);
+  leader_server->SetSnapshotThreshold(3);  // Low threshold to trigger snapshot quickly
+
+  // Commit enough entries to trigger snapshot and compaction on the leader
+  // We need > threshold entries to trigger CreateSnapshot in applyLogs
+  for (int i = 1; i <= 8; i++) {
+    uint64_t idx = config_->DoAgreement(600 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 600 + i);
+  }
+
+  // Wait for applyLogs to trigger CreateSnapshot on leader
+  Fiber::sleep(HEARTBEAT_INTERVAL * 3);
+
+  // Verify leader has taken a snapshot and compacted
+  uint64_t leader_snap_idx = leader_server->GetSnapshotIndex();
+  uint64_t leader_min_active = leader_server->min_active_slot_;
+  Log_info("[HB-SNAP-TEST] Leader snapshot index=%lu, min_active_slot=%lu",
+           leader_snap_idx, leader_min_active);
+
+  // If snapshot wasn't automatically triggered, force it
+  if (leader_snap_idx == 0) {
+    leader_server->CreateSnapshot();
+    leader_snap_idx = leader_server->GetSnapshotIndex();
+    leader_min_active = leader_server->min_active_slot_;
+    Log_info("[HB-SNAP-TEST] After forced snapshot: index=%lu, min_active_slot=%lu",
+             leader_snap_idx, leader_min_active);
+  }
+
+  Assert2(leader_snap_idx > 0, "Leader should have created a snapshot, got snapidx=%lu", leader_snap_idx);
+  Assert2(leader_min_active > 1, "Leader min_active_slot_ should be > 1 after compaction, got %lu", leader_min_active);
+
+  // Pick a follower and simulate it being far behind
+  int follower = -1;
+  siteid_t follower_site_id = 0;
+  for (int i = 0; i < NSERVERS; i++) {
+    if (i != leader) {
+      follower = i;
+      break;
+    }
+  }
+  Assert2(follower >= 0, "No follower found");
+
+  auto follower_server = config_->GetServer(follower);
+  Assert2(follower_server != nullptr, "Follower server should not be null");
+  follower_site_id = follower_server->site_id_;
+
+  // Set up a snapshot manager on the follower (so it can receive the snapshot)
+  std::string follower_test_path = "/tmp/raft_hb_snap_follower_" + std::to_string(getpid());
+  rrr::SnapshotConfig follower_snap_config;
+  follower_snap_config.storage_path = follower_test_path;
+  auto follower_mgr = std::make_shared<rrr::FileSnapshotManager>(follower_snap_config);
+  auto follower_original_mgr = follower_server->GetSnapshotManager();
+  follower_server->SetSnapshotManager(follower_mgr);
+
+  // Record follower state before manipulation
+  uint64_t follower_snap_before = follower_server->GetSnapshotIndex();
+
+  // Manually set the follower's next_index in the leader to be below min_active_slot_
+  // This simulates a follower that has fallen far behind
+  {
+    std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
+    leader_server->next_index_[follower_site_id] = 1;  // Far behind
+    leader_server->match_index_[follower_site_id] = 0;
+    Log_info("[HB-SNAP-TEST] Set leader's next_index[%d]=%d, min_active_slot=%lu",
+             follower_site_id, 1, leader_min_active);
+  }
+
+  // Verify the condition: next_index < min_active_slot_
+  Assert2(1 < leader_min_active,
+          "next_index (1) should be < min_active_slot_ (%lu) for InstallSnapshot trigger",
+          leader_min_active);
+
+  // Wait for a few heartbeat rounds to allow HeartbeatLoop to detect and send InstallSnapshot
+  Fiber::sleep(HEARTBEAT_INTERVAL * 5);
+
+  // Verify the leader updated next_index and match_index for the follower
+  uint64_t final_next_index = 0;
+  uint64_t final_match_index = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
+    final_next_index = leader_server->next_index_[follower_site_id];
+    final_match_index = leader_server->match_index_[follower_site_id];
+  }
+
+  Log_info("[HB-SNAP-TEST] After heartbeat: next_index[%d]=%lu, match_index[%d]=%lu",
+           follower_site_id, final_next_index, follower_site_id, final_match_index);
+
+  // The leader should have updated next_index to snap_index + 1
+  Assert2(final_next_index > 1,
+          "Leader next_index for follower should have advanced from 1, got %lu", final_next_index);
+  Assert2(final_match_index >= leader_snap_idx,
+          "Leader match_index for follower should be >= snapshot index %lu, got %lu",
+          leader_snap_idx, final_match_index);
+
+  // Verify the follower received and applied the snapshot
+  uint64_t follower_snap_after = follower_server->GetSnapshotIndex();
+  Log_info("[HB-SNAP-TEST] Follower snapshot index: before=%lu, after=%lu",
+           follower_snap_before, follower_snap_after);
+  Assert2(follower_snap_after >= leader_snap_idx,
+          "Follower snapshot index should be >= %lu after InstallSnapshot, got %lu",
+          leader_snap_idx, follower_snap_after);
+
+  // Verify the system can still make progress (new entries can be committed)
+  uint64_t new_idx = config_->DoAgreement(700, NSERVERS, true);
+  Assert2(new_idx > 0, "DoAgreement should succeed after InstallSnapshot recovery");
+
+  // Restore original managers
+  leader_server->SetSnapshotManager(original_mgr);
+  follower_server->SetSnapshotManager(follower_original_mgr);
+
+  // Cleanup temp files
+  // @unsafe { system calls }
+  std::string cleanup1 = "rm -rf " + test_path;
+  std::string cleanup2 = "rm -rf " + follower_test_path;
+  system(cleanup1.c_str());
+  system(cleanup2.c_str());
+
+  Log_info("[HEARTBEAT-SNAPSHOT-TEST] PASSED");
   Passed2();
 }
 

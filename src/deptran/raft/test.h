@@ -182,6 +182,9 @@ class RaftLabTest {
   // Test InstallSnapshot rejects stale term
   int testInstallSnapshotRejectsStaleTerm(void);
 
+  // Test HeartbeatLoop triggers InstallSnapshot for lagging followers
+  int testHeartbeatTriggersInstallSnapshot(void);
+
   void wait(uint64_t microseconds);
 
 };

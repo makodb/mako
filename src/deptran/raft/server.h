@@ -110,6 +110,7 @@ struct KeyValue {
 // @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
 class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
+  friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)

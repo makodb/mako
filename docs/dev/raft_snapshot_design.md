@@ -150,13 +150,18 @@ defer InstallSnapshot(uint64_t term, uint64_t leader_id,
 - Test 58: Basic InstallSnapshot on a follower, verifying snapidx_, snapterm_,
   commitIndex, executeIndex update and snapshot persistence
 - Test 59: InstallSnapshot with stale term is rejected, follower state unchanged
+- Test 60: HeartbeatLoop detects lagging follower (next_index < min_active_slot_),
+  sends InstallSnapshot, and verifies next_index_/match_index_ are updated
 
 ## Subsequent Tasks
 
 The following features are planned:
 
-1. **HeartbeatLoop integration** (Phase 3.4): When `next_index_[follower] < min_active_slot_`,
-   send InstallSnapshot instead of AppendEntries.
+1. ~~**HeartbeatLoop integration** (Phase 3.4)~~: **DONE**. In HeartbeatLoop's PHASE 1
+   per-follower loop, checks `next_index < min_active_slot_ && snapshot_manager_` before
+   attempting GetRaftInstance. Loads snapshot via LoadLatestSnapshot, sends InstallSnapshot
+   RPC, callback updates next_index_/match_index_ or steps down on higher term.
+   Test 60 (testHeartbeatTriggersInstallSnapshot) covers this integration.
 
 2. **Recovery** (Phase 3.5): On startup, check for snapshots before replaying log entries.
    Load snapshot state, set `executeIndex`/`commitIndex` to snapshot index, then replay.
