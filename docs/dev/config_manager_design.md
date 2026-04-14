@@ -631,18 +631,42 @@ CM                          Failed Shard            Healthy Shards
 
 **Step 5: Close old epoch on healthy shards.** Healthy shards finish speculative execution and certification of all transactions in the old epoch, then replicate a special **INF ending entry** into all Paxos streams. When the INF entry is replicated, the healthy shard's old epoch is closed.
 
-**Step 6: Compute finalized shard watermark.** Once the old epoch is closed on a shard, its **finalized shard watermark** can be computed by choosing the minimum shard clock of all its streams. Note that INF is the minimum shard clock of all streams, so the finalized shard watermark is the same for both recovered and healthy shards.
+**Step 6: Compute finalized shard watermark.** Once the old epoch is closed on a shard, its **finalized shard watermark** can be computed by choosing the minimum shard clock of all its streams.
 
-**Step 7: Exchange finalized watermarks.** Each shard computes its finalized watermark, then broadcasts it to all other shards. All shards exchange their finalized watermarks to form the **Finalized Vector Watermark (FVW)** — a consistent global cutoff across all shards.
+**Step 7: Compute global watermark.** Each shard reports its finalized shard watermark to the CM. The CM computes the **global finalized watermark** as the minimum across all shards' finalized watermarks. This single scalar timestamp is the consistent global cutoff — all transactions with timestamp ≤ this watermark are durably replicated across all shards.
 
-**Step 8: Rollback.** For any transactions on healthy shards that are below the FVW but were not replicated (marked as speculative), they are **rolled back** because they could have depended transitively or directly on a lost transaction from the failed shard. After rollback, all shards advance to the new epoch and resume normal operation.
+**Step 8: Rollback.** For any transactions on healthy shards that are above the global finalized watermark and were speculatively executed, they are **rolled back** if they depended (transitively or directly) on a lost transaction from the failed shard. After rollback, all shards advance to the new epoch and resume normal operation.
+
+### Watermark Design: Scalar Timestamp
+
+The Mako paper (Section 6.1) discusses both vector watermarks and compressed scalar watermarks. Our implementation uses the **scalar timestamp watermark** — a single monotonically increasing integer representing the global replication progress:
+
+```
+global_watermark = min(shard_0_watermark, shard_1_watermark, ..., shard_N_watermark)
+```
+
+Each shard's watermark is itself:
+```
+shard_i_watermark = min(stream_0_clock, stream_1_clock, ..., stream_K_clock)
+```
+
+where each stream corresponds to a Paxos/Raft worker thread's replication log, and the clock is the timestamp of the most recently replicated transaction.
+
+**Why scalar instead of vector:**
+- **Simpler**: One integer instead of an N-element vector (where N = number of shards).
+- **Cheaper gossip**: Shards periodically exchange a single integer, not a vector.
+- **Sufficient for correctness**: The scalar watermark is conservative — it may lag behind the true per-shard progress, but it never advances past what's durably replicated. This means some transactions that are safe to read may be temporarily invisible (slightly higher read latency), but no transaction is ever exposed before it's durable.
+- **Scalable**: Vector watermark size grows linearly with shard count. With 10,000 shards, each watermark would be ~40KB. The scalar is always 8 bytes.
+
+**Trade-off**: The scalar watermark is lossy — it collapses per-shard progress into a single number. A transaction that depends only on shard 1 must still wait for all other shards to catch up before becoming visible. In practice, this is acceptable because shards typically replicate at similar rates, so the watermark lag is bounded by the slowest shard's replication latency.
 
 ### Key Properties
 
-- **No unbounded cascading aborts**: The FVW provides a clean cutoff. Only transactions in the old epoch that depended on lost transactions are rolled back — not all speculative transactions.
+- **No unbounded cascading aborts**: The global finalized watermark provides a clean cutoff. Only transactions in the old epoch that depended on lost transactions are rolled back — not all speculative transactions.
 - **Healthy shards are minimally affected**: They simply close the old epoch, replicate INF, and roll back affected transactions. Transactions on healthy shards that don't depend on the failed shard are unaffected.
 - **CM is replicated**: The CM itself is replicated (it is shard 0), so it is considered always available.
 - **Epoch-based grouping**: Using epochs to group log entries is a classic consensus approach — the CM is not introducing new algorithmic complexity in each consensus instance, just coordinating the epoch transitions.
+- **Scalar watermark**: Simple, scalable, and sufficient for correctness. No per-shard vector tracking needed.
 
 ### CM's Responsibilities for Recovery
 

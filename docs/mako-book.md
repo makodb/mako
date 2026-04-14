@@ -288,10 +288,10 @@ The CM orchestrates recovery when a shard leader fails mid-speculation (Section 
 1. **Advance epoch**: CM increments the epoch number and broadcasts to all shards.
 2. **Close old epoch on failed shard**: New leader retrieves replicated entries from peers, re-commits them, and issues no-ops for unrecoverable entries. Replicates an **INF shard clock** to signal epoch closure.
 3. **Close old epoch on healthy shards**: Healthy shards finish old-epoch work and replicate their own INF entries.
-4. **Finalized Vector Watermark (FVW)**: Each shard computes its finalized shard watermark (min clock across streams), then all shards exchange watermarks to form a consistent global cutoff.
-5. **Rollback**: Speculative transactions below FVW that depended on lost transactions are rolled back. Unaffected transactions on healthy shards proceed normally.
+4. **Global finalized watermark**: Each shard reports its finalized shard watermark (min clock across its streams) to the CM. The CM computes the global watermark = min across all shards — a single scalar timestamp providing a consistent global cutoff.
+5. **Rollback**: Speculative transactions above the global watermark that depended on lost transactions are rolled back. Unaffected transactions on healthy shards proceed normally.
 
-This ensures no unbounded cascading aborts — only transactions that transitively depend on lost entries from the failed shard are rolled back.
+We use a **scalar timestamp watermark** (not a vector) for simplicity and scalability — one integer instead of an N-element vector. This is conservative (may slightly delay visibility) but correct and scales to thousands of shards.
 
 ### Consistency Guarantees
 
