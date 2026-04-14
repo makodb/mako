@@ -182,10 +182,10 @@ Mako uses **shard 0** as a dedicated **master shard** that stores system-wide co
 
 ### Why a Master Shard?
 
-Static YAML config files work for development but break down for production:
-- Adding/removing shards or replicas requires editing files on every node and restarting.
-- No single source of truth — config can drift between nodes.
-- No transactional guarantees on config changes.
+YAML config files define the initial cluster topology at first boot. Once the cluster is running, shard 0 becomes the **primary source of truth** for configuration. This separation allows:
+- The initial YAML to bootstrap the cluster (both development and production).
+- Runtime config changes (adding shards, updating replicas) without editing files on every node and restarting.
+- A single, replicated source of truth that cannot drift between nodes.
 
 By storing config in shard 0 (replicated via Raft/Paxos), config changes are:
 - **Replicated** automatically — no separate replication path.
@@ -247,7 +247,7 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 
 **First boot**: Shard 0 leader loads the static YAML config, populates `__mako_config__`, sets `__version__ = 1`. Other shards connect to shard 0 (via a static seed list: `--master-addrs=s1:8100,s2:8101,s3:8102`) and fetch the config.
 
-**Subsequent boots**: Shard 0 recovers its Masstree from Raft log + snapshot. Config is immediately available — no YAML needed. Other shards fetch the latest version from shard 0.
+**Subsequent boots**: Shard 0 recovers its Masstree from Raft log + snapshot. Config is immediately available from the replicated state — the original YAML is not re-read. Other shards fetch the latest version from shard 0.
 
 ### Config Change Protocol
 

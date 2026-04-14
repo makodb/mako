@@ -6,7 +6,9 @@ The Configuration Manager is **shard 0** — the "master shard." It stores the s
 
 ## Motivation
 
-The current system uses static YAML files for cluster topology. A separate ConfigStore/ConfigService prototype exists (`src/deptran/config_store.h`, `config_service.h`) but it is a standalone RocksDB instance outside the shard system — it doesn't benefit from Raft/Paxos replication, and it requires a separate bootstrap path.
+The current system uses YAML files to define the initial cluster topology. A separate ConfigStore/ConfigService prototype exists (`src/deptran/config_store.h`, `config_service.h`) but it is a standalone RocksDB instance outside the shard system — it doesn't benefit from Raft/Paxos replication, and it requires a separate bootstrap path.
+
+YAML config files remain necessary for first boot (both development and production) — they define the initial topology that seeds shard 0. Once the cluster is running, shard 0 becomes the primary source of truth, and runtime changes go through it rather than requiring file edits across all nodes.
 
 By making shard 0 the config manager:
 - Config is **replicated** via the same Raft/Paxos protocol as data — no separate replication path.
@@ -233,7 +235,7 @@ private:
 ### Subsequent Boots (Config Exists)
 
 1. Shard 0 leader starts, finds existing `__mako_config__` table in Masstree (recovered from Raft log + snapshot).
-2. Config is immediately available — no YAML needed.
+2. Config is immediately available from the replicated state — the original YAML is not re-read.
 3. Other shards connect to shard 0 and fetch latest config.
 
 ### Bootstrap Sequence Diagram
