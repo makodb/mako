@@ -520,7 +520,7 @@ The Configuration Manager (Section 3) needs a **durable, replicated key-value st
 
 **Read path**: Reads can be served from any replica's local RocksDB (stale reads), or only from the leader (linearizable reads). For the Configuration Manager, leader reads are sufficient since config changes are infrequent.
 
-**Snapshot integration**: Raft's `CreateSnapshot()` calls `RocksDB::CreateCheckpoint()` to produce a consistent snapshot. `InstallSnapshot` ships the checkpoint to lagging followers, who load it into their local RocksDB. This replaces the current minimal state marker (executeIndex + term) with a real state machine snapshot.
+**Snapshot integration**: `ReplicatedDB` registers callback hooks on `RaftServer` (`create_sm_snapshot_cb_` / `load_sm_snapshot_cb_`). When `CreateSnapshot()` fires, it calls `rocksdb_checkpoint_create()` to produce a consistent checkpoint, serializes all checkpoint files into a binary blob (format: `num_files(4) + [name_len(4) + name + file_size(8) + file_data]*`), and returns the blob as snapshot data. When `OnInstallSnapshot()` fires on a follower, it deserializes the blob, closes the current RocksDB instance, replaces it with the checkpoint files, and reopens the database. This replaces the previous minimal state marker (16-byte executeIndex + term) with a real state machine snapshot.
 
 #### Operation Encoding
 
@@ -551,9 +551,10 @@ class ReplicatedDB {
   // Raft callback — called on each replica when entry is committed
   void ApplyEntry(slotid_t index, shared_ptr<Marshallable> cmd);
   
-  // Snapshot — creates RocksDB checkpoint for Raft snapshot
-  void CreateStateMachineSnapshot(const std::string& path);
-  void LoadStateMachineSnapshot(const std::string& path);
+  // Snapshot — creates RocksDB checkpoint and serializes into binary blob
+  std::string CreateStateMachineSnapshot();
+  // Snapshot — deserializes binary blob, replaces DB with checkpoint, reopens
+  void LoadStateMachineSnapshot(const std::string& data);
 };
 ```
 

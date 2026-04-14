@@ -630,7 +630,18 @@ This ensures a server that restarts with a snapshot but no log entries does not 
 
 ### CreateSnapshot
 
-`CreateSnapshot()` is called automatically from `applyLogs()` when `executeIndex - snapidx_ > snapshot_threshold_`. It serializes a state marker, persists via `snapshot_manager_->TakeSnapshot()`, updates `snapidx_`/`snapterm_`, and calls `CompactLog()` to discard old entries and advance `min_active_slot_`. The threshold is configurable via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var or `SetSnapshotThreshold()`.
+`CreateSnapshot()` is called automatically from `applyLogs()` when `executeIndex - snapidx_ > snapshot_threshold_`. It serializes the state machine data, persists via `snapshot_manager_->TakeSnapshot()`, updates `snapidx_`/`snapterm_`, and calls `CompactLog()` to discard old entries and advance `min_active_slot_`. The threshold is configurable via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var or `SetSnapshotThreshold()`.
+
+**State machine snapshot hooks**: If `create_sm_snapshot_cb_` is registered (e.g., by `ReplicatedDB`), `CreateSnapshot()` calls it to produce the snapshot data instead of the default 16-byte placeholder (executeIndex + term). Similarly, `OnInstallSnapshot()` calls `load_sm_snapshot_cb_` (if set) to load the received snapshot data into the state machine.
+
+```cpp
+// RaftServer callback registration
+void SetStateMachineSnapshotCallbacks(
+    std::function<std::string()> create_cb,
+    std::function<void(const std::string&)> load_cb);
+```
+
+**ReplicatedDB integration**: `ReplicatedDB` registers these callbacks in its constructor. `CreateStateMachineSnapshot()` uses `rocksdb_checkpoint_create()` to produce a consistent checkpoint, serializes all files into a binary blob (format: `num_files(4) + [name_len(4) + name + file_size(8) + file_data]*`), and cleans up the temporary checkpoint directory. `LoadStateMachineSnapshot()` deserializes the blob, closes the current RocksDB, destroys the old data directory, writes the checkpoint files, reopens the database, and reloads `last_applied_index_` from the snapshot's metadata.
 
 ### InstallSnapshot RPC
 
@@ -666,6 +677,9 @@ After the follower installs the snapshot and responds, subsequent heartbeats res
 ### Planned Features
 
 - ~~**Recovery**: On startup, load snapshot state before replaying log entries~~ (Implemented: see "Snapshot Recovery on Startup" above)
+- ~~**State machine snapshots**: Hook CreateSnapshot/InstallSnapshot into ReplicatedDB for real RocksDB checkpoint-based snapshots~~ (Implemented: see "State machine snapshot hooks" above)
+- **Snapshot compression**: Add configurable compression (Snappy/LZ4) to reduce snapshot transfer size
+- **Streaming InstallSnapshot**: Chunk large snapshots instead of sending in a single RPC
 
 See `docs/dev/raft_snapshot_design.md` for the full design document.
 

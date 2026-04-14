@@ -1,5 +1,10 @@
 #include "replicated_db.h"
 #include "server.h"
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fstream>
+#include <cstring>
 
 using namespace janus;
 
@@ -123,6 +128,14 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
 
   // Load last applied index from metadata
   LoadLastAppliedIndex();
+
+  // Register snapshot callbacks on the RaftServer
+  // @unsafe { captures 'this' in lambdas for callback }
+  if (raft_) {
+    raft_->SetStateMachineSnapshotCallbacks(
+        [this]() { return CreateStateMachineSnapshot(); },
+        [this](const std::string& snap_data) { LoadStateMachineSnapshot(snap_data); });
+  }
 
   Log_info("[ReplicatedDB] Opened database at %s, last_applied_index=%lu",
            db_path_.c_str(), last_applied_index_);
@@ -363,4 +376,260 @@ std::string ReplicatedDB::take_rocksdb_error(char** errptr) {
   rocksdb_free(*errptr);
   *errptr = nullptr;
   return err;
+}
+
+// ===========================================================================
+// CloseDB / OpenDB helpers (for snapshot loading)
+// ===========================================================================
+
+// @unsafe - Closes RocksDB, nulls db_ pointer (keeps options alive)
+void ReplicatedDB::CloseDB() {
+  if (db_ != nullptr) {
+    rocksdb_close(db_);
+    db_ = nullptr;
+  }
+}
+
+// @unsafe - Opens RocksDB at db_path_ using existing options
+bool ReplicatedDB::OpenDB() {
+  if (db_ != nullptr) {
+    Log_warn("[ReplicatedDB] OpenDB called but db_ is already open");
+    return true;
+  }
+  char* err = nullptr;
+  db_ = rocksdb_open(options_, db_path_.c_str(), &err);
+  if (err != nullptr || db_ == nullptr) {
+    std::string err_str = take_rocksdb_error(&err);
+    Log_error("[ReplicatedDB] Failed to reopen %s: %s",
+              db_path_.c_str(), err_str.empty() ? "null handle" : err_str.c_str());
+    db_ = nullptr;
+    return false;
+  }
+  return true;
+}
+
+// ===========================================================================
+// State Machine Snapshot: Create
+// ===========================================================================
+// Binary format:
+//   num_files (uint32_t, 4 bytes)
+//   For each file:
+//     name_len (uint32_t, 4 bytes)
+//     name     (name_len bytes, filename only, no directory prefix)
+//     file_size (uint64_t, 8 bytes)
+//     file_data (file_size bytes)
+// ===========================================================================
+
+// @unsafe - RocksDB checkpoint C API, filesystem I/O
+std::string ReplicatedDB::CreateStateMachineSnapshot() {
+  if (!db_) {
+    Log_error("[ReplicatedDB] CreateStateMachineSnapshot: db_ is null");
+    return "";
+  }
+
+  // 1. Create a RocksDB checkpoint
+  char* err = nullptr;
+  rocksdb_checkpoint_t* cp = rocksdb_checkpoint_object_create(db_, &err);
+  if (err != nullptr || cp == nullptr) {
+    std::string err_str = take_rocksdb_error(&err);
+    Log_error("[ReplicatedDB] Failed to create checkpoint object: %s", err_str.c_str());
+    return "";
+  }
+
+  std::string cp_dir = db_path_ + "_ckpt_" + std::to_string(last_applied_index_);
+
+  // @unsafe { filesystem operations }
+  rocksdb_checkpoint_create(cp, cp_dir.c_str(), 0, &err);
+  rocksdb_checkpoint_object_destroy(cp);
+
+  if (err != nullptr) {
+    std::string err_str = take_rocksdb_error(&err);
+    Log_error("[ReplicatedDB] Failed to create checkpoint at %s: %s",
+              cp_dir.c_str(), err_str.c_str());
+    return "";
+  }
+
+  // 2. Read all files in the checkpoint directory and serialize
+  // @unsafe { directory and file I/O }
+  DIR* dir = opendir(cp_dir.c_str());
+  if (!dir) {
+    Log_error("[ReplicatedDB] Failed to open checkpoint dir %s", cp_dir.c_str());
+    return "";
+  }
+
+  // Collect filenames (skip . and ..)
+  std::vector<std::string> filenames;
+  struct dirent* entry;
+  while ((entry = readdir(dir)) != nullptr) {
+    if (std::strcmp(entry->d_name, ".") == 0 || std::strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    filenames.push_back(entry->d_name);
+  }
+  closedir(dir);
+
+  // Serialize into blob
+  std::string blob;
+  uint32_t num_files = static_cast<uint32_t>(filenames.size());
+  blob.append(reinterpret_cast<const char*>(&num_files), sizeof(num_files));
+
+  for (const auto& fname : filenames) {
+    std::string filepath = cp_dir + "/" + fname;
+
+    // Get file size
+    struct stat st;
+    if (stat(filepath.c_str(), &st) != 0) {
+      Log_error("[ReplicatedDB] Failed to stat %s", filepath.c_str());
+      // Clean up and return empty
+      for (const auto& f : filenames) {
+        std::string p = cp_dir + "/" + f;
+        unlink(p.c_str());
+      }
+      rmdir(cp_dir.c_str());
+      return "";
+    }
+    uint64_t file_size = static_cast<uint64_t>(st.st_size);
+
+    // Append filename
+    uint32_t name_len = static_cast<uint32_t>(fname.size());
+    blob.append(reinterpret_cast<const char*>(&name_len), sizeof(name_len));
+    blob.append(fname);
+
+    // Append file data
+    blob.append(reinterpret_cast<const char*>(&file_size), sizeof(file_size));
+
+    // Read file contents
+    std::ifstream ifs(filepath, std::ios::binary);
+    if (!ifs) {
+      Log_error("[ReplicatedDB] Failed to read checkpoint file %s", filepath.c_str());
+      for (const auto& f : filenames) {
+        std::string p = cp_dir + "/" + f;
+        unlink(p.c_str());
+      }
+      rmdir(cp_dir.c_str());
+      return "";
+    }
+    std::string file_data(file_size, '\0');
+    ifs.read(file_data.data(), file_size);
+    blob.append(file_data);
+  }
+
+  // 3. Clean up the checkpoint directory
+  for (const auto& fname : filenames) {
+    std::string filepath = cp_dir + "/" + fname;
+    unlink(filepath.c_str());
+  }
+  rmdir(cp_dir.c_str());
+
+  Log_info("[ReplicatedDB] Created snapshot: %u files, %zu bytes total",
+           num_files, blob.size());
+  return blob;
+}
+
+// ===========================================================================
+// State Machine Snapshot: Load
+// ===========================================================================
+
+// @unsafe - Filesystem I/O, RocksDB close/reopen
+void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
+  if (data.empty()) {
+    Log_error("[ReplicatedDB] LoadStateMachineSnapshot: empty data");
+    return;
+  }
+
+  // 1. Parse the blob header
+  size_t offset = 0;
+  if (data.size() < sizeof(uint32_t)) {
+    Log_error("[ReplicatedDB] LoadStateMachineSnapshot: data too small for header");
+    return;
+  }
+  uint32_t num_files = 0;
+  std::memcpy(&num_files, data.data() + offset, sizeof(num_files));
+  offset += sizeof(num_files);
+
+  // Parse all file entries before modifying anything
+  struct FileEntry {
+    std::string name;
+    std::string contents;
+  };
+  std::vector<FileEntry> files;
+  files.reserve(num_files);
+
+  for (uint32_t i = 0; i < num_files; i++) {
+    if (offset + sizeof(uint32_t) > data.size()) {
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name_len", i);
+      return;
+    }
+    uint32_t name_len = 0;
+    std::memcpy(&name_len, data.data() + offset, sizeof(name_len));
+    offset += sizeof(name_len);
+
+    if (offset + name_len > data.size()) {
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name", i);
+      return;
+    }
+    std::string name(data.data() + offset, name_len);
+    offset += name_len;
+
+    if (offset + sizeof(uint64_t) > data.size()) {
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u size", i);
+      return;
+    }
+    uint64_t file_size = 0;
+    std::memcpy(&file_size, data.data() + offset, sizeof(file_size));
+    offset += sizeof(file_size);
+
+    if (offset + file_size > data.size()) {
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u data", i);
+      return;
+    }
+    std::string contents(data.data() + offset, file_size);
+    offset += file_size;
+
+    files.push_back({std::move(name), std::move(contents)});
+  }
+
+  // 2. Close the current RocksDB instance
+  CloseDB();
+
+  // 3. Delete the old database directory
+  // @unsafe { RocksDB C API - destroy_db removes all DB files }
+  {
+    rocksdb_options_t* destroy_opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(destroy_opts, db_path_.c_str(), &err);
+    if (err) {
+      Log_warn("[ReplicatedDB] destroy_db warning: %s", err);
+      rocksdb_free(err);
+    }
+    rocksdb_options_destroy(destroy_opts);
+  }
+
+  // Ensure the directory exists
+  // @unsafe { mkdir }
+  mkdir(db_path_.c_str(), 0755);
+
+  // 4. Write the checkpoint files to the database directory
+  // @unsafe { filesystem I/O }
+  for (const auto& fe : files) {
+    std::string filepath = db_path_ + "/" + fe.name;
+    std::ofstream ofs(filepath, std::ios::binary);
+    if (!ofs) {
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: failed to write %s", filepath.c_str());
+      return;
+    }
+    ofs.write(fe.contents.data(), fe.contents.size());
+  }
+
+  // 5. Reopen RocksDB at the same path
+  if (!OpenDB()) {
+    Log_error("[ReplicatedDB] LoadStateMachineSnapshot: failed to reopen RocksDB");
+    return;
+  }
+
+  // 6. Reload last_applied_index_ from the snapshot's RocksDB metadata
+  LoadLastAppliedIndex();
+
+  Log_info("[ReplicatedDB] Loaded snapshot: %u files, last_applied_index=%lu",
+           num_files, last_applied_index_);
 }

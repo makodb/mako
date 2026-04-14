@@ -292,6 +292,12 @@ class RaftLabTest {
   // Test that apply callback replicates data to follower's RocksDB
   int testReplicatedDBReplication(void);
 
+  // Test CreateStateMachineSnapshot / LoadStateMachineSnapshot round-trip
+  int testReplicatedDBSnapshot(void);
+
+  // Test snapshot transfer from leader to follower
+  int testReplicatedDBSnapshotTransfer(void);
+
   void wait(uint64_t microseconds);
 
 };

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <functional>
 #include <rocksdb/c.h>
 
 namespace janus {
@@ -93,6 +94,13 @@ public:
     // @safe - Returns last applied Raft index
     uint64_t GetLastAppliedIndex() const { return last_applied_index_; }
 
+    // Snapshot support: create and load RocksDB checkpoints for Raft snapshots
+    // @unsafe - Creates RocksDB checkpoint, serializes files into binary blob
+    std::string CreateStateMachineSnapshot();
+
+    // @unsafe - Deserializes binary blob, replaces current RocksDB with checkpoint
+    void LoadStateMachineSnapshot(const std::string& data);
+
 private:
     // @unsafe - Helper to free RocksDB error strings
     static std::string take_rocksdb_error(char** errptr);
@@ -108,6 +116,12 @@ private:
 
     // @unsafe - Loads last_applied_index_ from RocksDB metadata
     void LoadLastAppliedIndex();
+
+    // @unsafe - Closes the current RocksDB instance (for snapshot loading)
+    void CloseDB();
+
+    // @unsafe - Opens (or reopens) RocksDB at db_path_
+    bool OpenDB();
 
     RaftServer* raft_;  // Non-owning pointer, lifetime managed externally
     rocksdb_t* db_ = nullptr;

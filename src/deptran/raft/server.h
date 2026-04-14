@@ -124,6 +124,11 @@ class RaftServer : public TxLogServer {
   std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
   uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
 
+  // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
+  // @unsafe - std::function holds non-borrow-checked closures
+  std::function<std::string()> create_sm_snapshot_cb_;
+  std::function<void(const std::string&)> load_sm_snapshot_cb_;
+
   // @unsafe - Initializes snapshot manager from environment config
   void InitializeSnapshotManager();
 
@@ -769,6 +774,21 @@ class RaftServer : public TxLogServer {
   // @safe - returns copy of shared_ptr
   std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
+  }
+
+  /**
+   * Set state machine snapshot callbacks.
+   * Called by ReplicatedDB (or other state machines) to hook into
+   * CreateSnapshot() and OnInstallSnapshot().
+   * @param create_cb Returns serialized state machine snapshot data
+   * @param load_cb Loads serialized state machine snapshot data
+   */
+  // @unsafe - stores std::function closures
+  void SetStateMachineSnapshotCallbacks(
+      std::function<std::string()> create_cb,
+      std::function<void(const std::string&)> load_cb) {
+    create_sm_snapshot_cb_ = std::move(create_cb);
+    load_sm_snapshot_cb_ = std::move(load_cb);
   }
 
   /**

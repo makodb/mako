@@ -187,7 +187,9 @@ int RaftLabTest::Run(void) {
     failed =
         TEST_EXPAND(testReplicatedDBPutGet())         // Test 85
         || TEST_EXPAND(testReplicatedDBDelete())      // Test 86
-        || TEST_EXPAND(testReplicatedDBReplication()); // Test 87
+        || TEST_EXPAND(testReplicatedDBReplication()) // Test 87
+        || TEST_EXPAND(testReplicatedDBSnapshot())    // Test 88
+        || TEST_EXPAND(testReplicatedDBSnapshotTransfer()); // Test 89
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -7886,6 +7888,222 @@ int RaftLabTest::testReplicatedDBReplication(void) {
   }
 
   Log_info("TEST 87: ReplicatedDB replication to follower PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 88: testReplicatedDBSnapshot
+// ============================================================================
+// Create ReplicatedDB on leader, put several keys, create a snapshot via
+// CreateStateMachineSnapshot(), verify blob is non-empty, then load it back
+// via LoadStateMachineSnapshot() and verify all keys are still accessible.
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testReplicatedDBSnapshot(void) {
+  Init2(88, "ReplicatedDB snapshot create/load round-trip");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  std::string db_path = "/tmp/raft_test_repldb_88_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  // Create ReplicatedDB and register apply callback
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put several keys
+  Assert2(rdb->Put("snap_key1", "value1"), "Put snap_key1 should succeed");
+  Assert2(rdb->Put("snap_key2", "value2"), "Put snap_key2 should succeed");
+  Assert2(rdb->Put("snap_key3", "value3"), "Put snap_key3 should succeed");
+
+  // Verify keys are present
+  std::string val;
+  Assert2(rdb->Get("snap_key1", &val) && val == "value1", "snap_key1 should be value1");
+  Assert2(rdb->Get("snap_key2", &val) && val == "value2", "snap_key2 should be value2");
+  Assert2(rdb->Get("snap_key3", &val) && val == "value3", "snap_key3 should be value3");
+
+  // Create snapshot
+  std::string snapshot_blob = rdb->CreateStateMachineSnapshot();
+  Assert2(!snapshot_blob.empty(), "Snapshot blob should be non-empty");
+  Log_info("TEST 88: Snapshot blob size = %zu bytes", snapshot_blob.size());
+
+  // Verify the blob has a valid header (at least 4 bytes for num_files)
+  Assert2(snapshot_blob.size() >= sizeof(uint32_t), "Blob should have at least 4 bytes");
+  uint32_t num_files = 0;
+  std::memcpy(&num_files, snapshot_blob.data(), sizeof(num_files));
+  Assert2(num_files > 0, "Snapshot should contain at least one file (got %u)", num_files);
+  Log_info("TEST 88: Snapshot contains %u files", num_files);
+
+  // Load snapshot back into the same ReplicatedDB (simulates recovery)
+  rdb->LoadStateMachineSnapshot(snapshot_blob);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after snapshot load");
+
+  // Verify all keys are still accessible after loading
+  Assert2(rdb->Get("snap_key1", &val) && val == "value1",
+          "snap_key1 should be value1 after snapshot load");
+  Assert2(rdb->Get("snap_key2", &val) && val == "value2",
+          "snap_key2 should be value2 after snapshot load");
+  Assert2(rdb->Get("snap_key3", &val) && val == "value3",
+          "snap_key3 should be value3 after snapshot load");
+
+  // Verify last_applied_index was preserved
+  Assert2(rdb->GetLastAppliedIndex() > 0,
+          "last_applied_index should be > 0 after snapshot load");
+
+  // Restore the original learner action
+  config_->SetLearnerAction();
+
+  // Cleanup
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 88: ReplicatedDB snapshot create/load round-trip PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 89: testReplicatedDBSnapshotTransfer
+// ============================================================================
+// Create ReplicatedDB on leader and follower. Put keys on leader. Create
+// snapshot on leader. Load snapshot on follower. Verify follower has all keys.
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
+  Init2(89, "ReplicatedDB snapshot transfer to follower");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* leader_svr = config_->GetServer(leader);
+  Assert2(leader_svr != nullptr, "Leader server is null");
+
+  // Find a follower
+  siteid_t follower = -1;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t sid = config_->getServerIdByIndex(i);
+    if (static_cast<int>(sid) != leader) {
+      follower = sid;
+      break;
+    }
+  }
+  Assert2(follower != static_cast<siteid_t>(-1), "No follower found");
+
+  auto* follower_svr = config_->GetServer(follower);
+  Assert2(follower_svr != nullptr, "Follower server is null");
+
+  std::string leader_db_path = "/tmp/raft_test_repldb_89_leader_" + std::to_string(leader);
+  std::string follower_db_path = "/tmp/raft_test_repldb_89_follower_" + std::to_string(follower);
+
+  // Clean up previous DBs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  // Create ReplicatedDB on leader only (follower gets snapshot)
+  auto leader_rdb = std::make_unique<ReplicatedDB>(leader_svr, leader_db_path);
+  Assert2(leader_rdb->IsOpen(), "Leader ReplicatedDB should be open");
+
+  // Register apply callback on leader
+  // @unsafe { RegLearnerAction }
+  leader_svr->RegLearnerAction([&leader_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    leader_rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put keys on leader (goes through Raft)
+  Assert2(leader_rdb->Put("transfer_key1", "val_a"), "Put transfer_key1 should succeed");
+  Assert2(leader_rdb->Put("transfer_key2", "val_b"), "Put transfer_key2 should succeed");
+  Assert2(leader_rdb->Put("transfer_key3", "val_c"), "Put transfer_key3 should succeed");
+
+  // Create snapshot on leader
+  std::string snapshot_blob = leader_rdb->CreateStateMachineSnapshot();
+  Assert2(!snapshot_blob.empty(), "Leader snapshot blob should be non-empty");
+  Log_info("TEST 89: Leader snapshot blob size = %zu bytes", snapshot_blob.size());
+
+  // Create a follower ReplicatedDB (empty initially)
+  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
+  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
+
+  // Verify follower does NOT have the keys yet
+  std::string val;
+  Assert2(!follower_rdb->Get("transfer_key1", &val),
+          "Follower should NOT have transfer_key1 before snapshot load");
+
+  // Load the leader's snapshot onto the follower
+  follower_rdb->LoadStateMachineSnapshot(snapshot_blob);
+  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open after snapshot load");
+
+  // Verify follower now has all keys
+  Assert2(follower_rdb->Get("transfer_key1", &val) && val == "val_a",
+          "Follower should have transfer_key1=val_a after snapshot load");
+  Assert2(follower_rdb->Get("transfer_key2", &val) && val == "val_b",
+          "Follower should have transfer_key2=val_b after snapshot load");
+  Assert2(follower_rdb->Get("transfer_key3", &val) && val == "val_c",
+          "Follower should have transfer_key3=val_c after snapshot load");
+
+  // Verify follower's last_applied_index was transferred
+  Assert2(follower_rdb->GetLastAppliedIndex() > 0,
+          "Follower last_applied_index should be > 0 after snapshot load");
+  Assert2(follower_rdb->GetLastAppliedIndex() == leader_rdb->GetLastAppliedIndex(),
+          "Follower and leader last_applied_index should match");
+
+  // Restore the original learner action
+  config_->SetLearnerAction();
+
+  // Cleanup
+  leader_rdb.reset();
+  follower_rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 89: ReplicatedDB snapshot transfer to follower PASSED!");
   Passed2();
 }
 

@@ -567,14 +567,18 @@ void RaftServer::CreateSnapshot() {
              site_id_, snap_index, snap_term);
   }
 
-  // Serialize state: collect the key-value pairs from committed entries
-  // For now, we serialize a simple representation of the committed state.
-  // The actual state machine serialization will be protocol-specific in the future.
-  // We serialize the executeIndex and term as a minimal state marker.
-  // @unsafe { string operations }
+  // Serialize state machine data.
+  // If a state machine snapshot callback is registered (e.g., ReplicatedDB),
+  // use it to produce a full checkpoint. Otherwise, fall back to the minimal
+  // 16-byte marker (executeIndex + term).
+  // @unsafe { string operations, callback invocation }
   std::string state_data;
-  {
-    // Format: 8 bytes executeIndex + 8 bytes term
+  if (create_sm_snapshot_cb_) {
+    state_data = create_sm_snapshot_cb_();
+    Log_info("[RAFT-SNAPSHOT] Site %d: State machine snapshot callback produced %zu bytes",
+             site_id_, state_data.size());
+  } else {
+    // Fallback: 8 bytes executeIndex + 8 bytes term
     state_data.resize(sizeof(uint64_t) * 2);
     char* ptr = state_data.data();
     std::memcpy(ptr, &snap_index, sizeof(uint64_t));
@@ -2865,6 +2869,16 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // Update lastLogIndex if the snapshot covers beyond it
   if (last_included_index > lastLogIndex) {
     lastLogIndex = last_included_index;
+  }
+
+  // ============================================================================
+  // Load state machine snapshot if callback is registered
+  // ============================================================================
+  if (load_sm_snapshot_cb_) {
+    // @unsafe { callback invocation }
+    Log_info("[INSTALL-SNAPSHOT] Site %d: Loading state machine snapshot (%zu bytes)",
+             site_id_, data.size());
+    load_sm_snapshot_cb_(data);
   }
 
   Log_info("[INSTALL-SNAPSHOT] Site %d: Installed snapshot from leader %lu "
