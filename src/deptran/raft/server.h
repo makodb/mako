@@ -185,6 +185,7 @@ class RaftServer : public TxLogServer {
   bool heartbeat_ = true;
   bool heartbeat_setup_ = false;
   uint64_t heartbeat_interval_us_ = HEARTBEAT_INTERVAL;  // Runtime-configurable heartbeat interval (microseconds)
+  uint64_t log_retention_window_ = 5000;  // Configurable log retention window (entries to keep after compaction)
 	enum { STOPPED, RUNNING } status_;
 	std::function<void(bool)> leader_change_cb_{};
 
@@ -564,6 +565,12 @@ class RaftServer : public TxLogServer {
 
   // @safe - sets POD field
   void SetHeartbeatInterval(uint64_t micros) { heartbeat_interval_us_ = micros; }
+
+  // @safe - returns POD field
+  uint64_t GetLogRetentionWindow() const { return log_retention_window_; }
+
+  // @safe - sets POD field (minimum 1 to avoid division by zero)
+  void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){

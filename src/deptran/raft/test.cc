@@ -121,6 +121,13 @@ int RaftLabTest::Run(void) {
         TEST_EXPAND(testHeartbeatIntervalConfigurable());         // Test 67
   }
 
+  // Log retention window configurability test
+  if (!failed) {
+    Log_info("Running log retention window configurability test");
+    failed =
+        TEST_EXPAND(testLogRetentionWindowConfigurable());        // Test 68
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -5928,6 +5935,76 @@ int RaftLabTest::testHeartbeatIntervalConfigurable(void) {
   }
 
   Log_info("TEST 67: Heartbeat interval configurable PASSED!");
+  Passed2();
+}
+
+// =============================================================================
+// Test 68: Log retention window configurable
+// =============================================================================
+// @unsafe - test function that exercises log retention window configuration
+int RaftLabTest::testLogRetentionWindowConfigurable(void) {
+  Init2(68, "Log retention window runtime-configurable");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 68: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Verify default window is 5000
+  uint64_t default_window = server->GetLogRetentionWindow();
+  Assert2(default_window == 5000,
+          "Default log retention window should be 5000, got %lu", default_window);
+  Log_info("TEST 68: Default log retention window verified: %lu", default_window);
+
+  // 2. Set window to a smaller value via SetLogRetentionWindow()
+  uint64_t new_window = 20;
+  server->SetLogRetentionWindow(new_window);
+
+  // 3. Verify GetLogRetentionWindow() returns the new value
+  uint64_t retrieved = server->GetLogRetentionWindow();
+  Assert2(retrieved == new_window,
+          "Log retention window should be %lu after set, got %lu",
+          new_window, retrieved);
+  Log_info("TEST 68: Log retention window updated to %lu", retrieved);
+
+  // 4. Set on all servers and verify
+  for (int i = 0; i < NSERVERS; i++) {
+    auto s = config_->GetServer(i);
+    if (s != nullptr) {
+      s->SetLogRetentionWindow(new_window);
+      Assert2(s->GetLogRetentionWindow() == new_window,
+              "Server %d log retention window should be %lu, got %lu",
+              i, new_window, s->GetLogRetentionWindow());
+    }
+  }
+  Log_info("TEST 68: All servers updated to window=%lu", new_window);
+
+  // 5. Commit enough entries to trigger cleanup
+  // With window=20, committing 40 entries should trigger cleanup
+  for (int i = 0; i < 40; i++) {
+    uint64_t idx = config_->DoAgreement(6800 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement should succeed (entry %d)", i);
+  }
+  Log_info("TEST 68: Committed 40 entries with small retention window");
+
+  // 6. Verify the cluster still works after cleanup
+  uint64_t final_idx = config_->DoAgreement(6899, NSERVERS, true);
+  Assert2(final_idx > 0, "DoAgreement should succeed after log cleanup");
+  Log_info("TEST 68: Agreement reached at index %lu after cleanup", final_idx);
+
+  // 7. Restore default window
+  for (int i = 0; i < NSERVERS; i++) {
+    auto s = config_->GetServer(i);
+    if (s != nullptr) {
+      s->SetLogRetentionWindow(5000);
+    }
+  }
+
+  Log_info("TEST 68: Log retention window configurable PASSED!");
   Passed2();
 }
 

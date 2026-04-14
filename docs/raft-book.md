@@ -768,11 +768,15 @@ For multi-shard deployments:
 | `MAKO_RAFT_PERSISTENCE_PATH` | `/tmp` | Base directory for persistence files |
 | `MAKO_RAFT_SNAPSHOTS` | (unset) | Set to `1` to enable snapshot manager |
 | `MAKO_RAFT_SNAPSHOT_PATH` | `/tmp` | Base directory for snapshot files |
+| `MAKO_RAFT_LOG_RETENTION_WINDOW` | `5000` | Number of log entries to retain after compaction. Compaction is also coordinated with snapshots: entries beyond the latest snapshot index are never removed. |
 
-The heartbeat interval can also be changed at runtime via the C++ API:
+The heartbeat interval and log retention window can also be changed at runtime via the C++ API:
 ```cpp
 server->SetHeartbeatInterval(10000);  // 10ms
 uint64_t current = server->GetHeartbeatInterval();
+
+server->SetLogRetentionWindow(2000);  // keep 2000 entries
+uint64_t window = server->GetLogRetentionWindow();
 ```
 
 ---

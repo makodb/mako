@@ -218,6 +218,9 @@ class RaftLabTest {
   // Test runtime-configurable heartbeat interval
   int testHeartbeatIntervalConfigurable(void);
 
+  // Test runtime-configurable log retention window
+  int testLogRetentionWindowConfigurable(void);
+
   void wait(uint64_t microseconds);
 
 };

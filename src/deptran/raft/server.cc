@@ -916,6 +916,17 @@ void RaftServer::Setup() {
     }
   }
 
+  // ========== LOG RETENTION WINDOW (runtime override) ==========
+  // @unsafe { std::getenv and Log_info are not borrow-checked }
+  {
+    const char* lrw_str = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW");
+    if (lrw_str && lrw_str[0] != '\0') {
+      uint64_t val = std::stoull(lrw_str);
+      log_retention_window_ = (val > 0) ? val : 1;
+      Log_info("[RAFT] Log retention window set to %lu from env", log_retention_window_);
+    }
+  }
+
   // ========== INITIALIZE SNAPSHOT MANAGER (Phase 3.1) ==========
   InitializeSnapshotManager();
 
@@ -1208,15 +1219,23 @@ void RaftServer::applyLogs() {
 
   // Cleanup old commands to prevent memory buildup
 #ifdef SINGLE_RAFT_INSTANCE
-  slotid_t cutoff = (executeIndex > 5000) ? executeIndex - 5000 : 0;
+  slotid_t cutoff = (executeIndex > log_retention_window_) ? executeIndex - log_retention_window_ : 0;
+  // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
+  if (snapidx_ > 0 && cutoff > snapidx_) {
+    cutoff = snapidx_;
+  }
   while (min_active_slot_ < cutoff) {
     removeCmd(min_active_slot_);
     min_active_slot_++;
   }
 #else
-  if (executeIndex % 5000 == 0) {
+  if (executeIndex % log_retention_window_ == 0) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
-    slotid_t cutoff = (executeIndex > 10000) ? executeIndex - 10000 : 0;
+    slotid_t cutoff = (executeIndex > 2 * log_retention_window_) ? executeIndex - 2 * log_retention_window_ : 0;
+    // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
+    if (snapidx_ > 0 && cutoff > snapidx_) {
+      cutoff = snapidx_;
+    }
     while (min_active_slot_ < cutoff) {
       raft_logs_.erase(min_active_slot_);
       min_active_slot_++;
