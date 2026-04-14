@@ -585,9 +585,25 @@ On initialization, if a prior snapshot exists on disk, `snapidx_` and `snapterm_
 
 `CreateSnapshot()` is called automatically from `applyLogs()` when `executeIndex - snapidx_ > snapshot_threshold_`. It serializes a state marker, persists via `snapshot_manager_->TakeSnapshot()`, updates `snapidx_`/`snapterm_`, and calls `CompactLog()` to discard old entries and advance `min_active_slot_`. The threshold is configurable via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var or `SetSnapshotThreshold()`.
 
+### InstallSnapshot RPC
+
+When a follower is too far behind (its `next_index_` points to compacted log entries), the leader sends the full snapshot via `InstallSnapshot` RPC instead of `AppendEntries`.
+
+**Follower handler** (`OnInstallSnapshot()` in `server.cc`):
+1. Rejects if leader term < currentTerm (stale leader)
+2. Updates term and steps down if leader has higher term
+3. Resets election timer
+4. Saves snapshot via `snapshot_manager_->TakeSnapshot()`
+5. Updates `snapidx_`/`snapterm_`, discards old log entries
+6. Advances `commitIndex`/`executeIndex`/`lastLogIndex`
+
+**Leader sender** (`SendInstallSnapshot()` in `commo.cc`):
+- Sends full snapshot in one RPC (no chunking)
+- Callback receives follower's current term
+
 ### Planned Features
 
-- **InstallSnapshot RPC**: Leader sends snapshot to lagging followers when `next_index_[follower] < min_active_slot_`
+- **HeartbeatLoop integration**: Automatically send InstallSnapshot when `next_index_[follower] < min_active_slot_`
 - **Recovery**: On startup, load snapshot state before replaying log entries
 
 See `docs/dev/raft_snapshot_design.md` for the full design document.

@@ -81,6 +81,14 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testSnapshotThresholdConfigurable()); // Test 57
   }
 
+  // InstallSnapshot tests (Phase 3.3)
+  if (!failed) {
+    Log_info("Running InstallSnapshot tests (Phase 3.3)");
+    failed =
+        TEST_EXPAND(testInstallSnapshotBasic())              // Test 58
+        || TEST_EXPAND(testInstallSnapshotRejectsStaleTerm()); // Test 59
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -4836,6 +4844,180 @@ int RaftLabTest::testSnapshotThresholdConfigurable(void) {
   server->SetSnapshotThreshold(10000);
 
   Log_info("[SNAPSHOT-THRESHOLD-CONFIG-TEST] PASSED");
+  Passed2();
+}
+
+// =============================================================================
+// Test 58: InstallSnapshot basic functionality
+// =============================================================================
+// @unsafe - test function that exercises OnInstallSnapshot
+int RaftLabTest::testInstallSnapshotBasic(void) {
+  Init2(58, "InstallSnapshot basic");
+
+  // Wait for a leader
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  // Commit some entries so there's log state
+  for (int i = 1; i <= 5; i++) {
+    uint64_t idx = config_->DoAgreement(200 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 200 + i);
+  }
+
+  // Pick a follower to install snapshot on
+  int follower = -1;
+  for (int i = 0; i < NSERVERS; i++) {
+    if (i != leader) {
+      follower = i;
+      break;
+    }
+  }
+  Assert2(follower >= 0, "No follower found");
+
+  auto server = config_->GetServer(follower);
+  Assert2(server != nullptr, "Follower server should not be null");
+
+  // Set up a snapshot manager on the follower for persistence
+  std::string test_path = "/tmp/raft_install_snap_test_" + std::to_string(getpid());
+  rrr::SnapshotConfig snap_config;
+  snap_config.storage_path = test_path;
+  auto test_mgr = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+  auto original_mgr = server->GetSnapshotManager();
+  server->SetSnapshotManager(test_mgr);
+
+  // Record follower state before InstallSnapshot
+  uint64_t old_snapidx = server->GetSnapshotIndex();
+  uint64_t old_snapterm = server->GetSnapshotTerm();
+
+  // Create fake snapshot data
+  uint64_t snap_index = 10;
+  uint64_t snap_term = server->currentTerm;
+  std::string snap_data = "test_snapshot_data_for_install";
+
+  // Call OnInstallSnapshot directly on the follower
+  uint64_t reply_term = 0;
+  bool callback_called = false;
+  server->OnInstallSnapshot(
+      server->currentTerm,  // term (matches follower's current term)
+      config_->GetServer(leader)->site_id_,  // leader_id
+      snap_index,
+      snap_term,
+      snap_data,
+      &reply_term,
+      [&callback_called]() { callback_called = true; });
+
+  Assert2(callback_called, "Callback should have been called");
+  Assert2(reply_term > 0, "Reply term should be > 0, got %lu", reply_term);
+
+  // Verify snapshot metadata updated
+  Assert2(server->GetSnapshotIndex() == snap_index,
+          "snapidx should be %lu, got %lu", snap_index, server->GetSnapshotIndex());
+  Assert2(server->GetSnapshotTerm() == snap_term,
+          "snapterm should be %lu, got %lu", snap_term, server->GetSnapshotTerm());
+
+  // Verify commitIndex and executeIndex advanced
+  Assert2(server->commitIndex >= snap_index,
+          "commitIndex should be >= %lu, got %lu", snap_index, server->commitIndex);
+  Assert2(server->executeIndex >= snap_index,
+          "executeIndex should be >= %lu, got %lu", snap_index, server->executeIndex);
+
+  // Verify snapshot was persisted
+  auto latest = test_mgr->GetLatestSnapshot();
+  Assert2(latest.is_some(), "Snapshot should be persisted in manager");
+  auto meta = latest.unwrap();
+  Assert2(meta.last_included_index == snap_index,
+          "Persisted snapshot index should be %lu, got %lu",
+          snap_index, meta.last_included_index);
+
+  // Restore original manager
+  server->SetSnapshotManager(original_mgr);
+
+  // Cleanup temp files
+  // @unsafe { system call }
+  std::string cleanup = "rm -rf " + test_path;
+  system(cleanup.c_str());
+
+  Log_info("[INSTALL-SNAPSHOT-BASIC-TEST] PASSED");
+  Passed2();
+}
+
+// =============================================================================
+// Test 59: InstallSnapshot rejects stale term
+// =============================================================================
+// @unsafe - test function that exercises OnInstallSnapshot with stale term
+int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
+  Init2(59, "InstallSnapshot rejects stale term");
+
+  // Wait for a leader
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  // Commit a few entries to establish state
+  for (int i = 1; i <= 3; i++) {
+    uint64_t idx = config_->DoAgreement(300 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 300 + i);
+  }
+
+  // Pick a follower
+  int follower = -1;
+  for (int i = 0; i < NSERVERS; i++) {
+    if (i != leader) {
+      follower = i;
+      break;
+    }
+  }
+  Assert2(follower >= 0, "No follower found");
+
+  auto server = config_->GetServer(follower);
+  Assert2(server != nullptr, "Follower server should not be null");
+
+  // Record follower state before the stale InstallSnapshot
+  uint64_t before_snapidx = server->GetSnapshotIndex();
+  uint64_t before_snapterm = server->GetSnapshotTerm();
+  uint64_t before_commitIndex = server->commitIndex;
+  uint64_t before_executeIndex = server->executeIndex;
+  uint64_t follower_term = server->currentTerm;
+
+  // Send InstallSnapshot with a stale term (term 0, which is less than any active term)
+  uint64_t stale_term = 0;
+  Assert2(stale_term < follower_term,
+          "Stale term %lu should be < follower term %lu", stale_term, follower_term);
+
+  uint64_t reply_term = 0;
+  bool callback_called = false;
+  server->OnInstallSnapshot(
+      stale_term,  // stale term
+      999,         // fake leader_id
+      100,         // last_included_index
+      1,           // last_included_term
+      "stale_snapshot_data",
+      &reply_term,
+      [&callback_called]() { callback_called = true; });
+
+  Assert2(callback_called, "Callback should have been called");
+
+  // Reply should contain the follower's current term (so leader can update)
+  Assert2(reply_term == follower_term,
+          "Reply term should be follower's current term %lu, got %lu",
+          follower_term, reply_term);
+
+  // Verify follower state is UNCHANGED
+  Assert2(server->GetSnapshotIndex() == before_snapidx,
+          "snapidx should be unchanged (%lu), got %lu",
+          before_snapidx, server->GetSnapshotIndex());
+  Assert2(server->GetSnapshotTerm() == before_snapterm,
+          "snapterm should be unchanged (%lu), got %lu",
+          before_snapterm, server->GetSnapshotTerm());
+  Assert2(server->commitIndex == before_commitIndex,
+          "commitIndex should be unchanged (%lu), got %lu",
+          before_commitIndex, server->commitIndex);
+  Assert2(server->executeIndex == before_executeIndex,
+          "executeIndex should be unchanged (%lu), got %lu",
+          before_executeIndex, server->executeIndex);
+
+  Log_info("[INSTALL-SNAPSHOT-REJECTS-STALE-TEST] PASSED");
   Passed2();
 }
 

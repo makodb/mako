@@ -149,6 +149,19 @@ class RaftServiceImpl : public RaftService {
     *acknowledged = false;
   }
 
+  RpcHandler(InstallSnapshot, 6,
+             const uint64_t&, term,
+             const uint64_t&, leader_id,
+             const uint64_t&, last_included_index,
+             const uint64_t&, last_included_term,
+             const std::string&, data,
+             uint64_t*, term_out) {
+    // @unsafe
+    {
+    *term_out = 0;
+    }
+  }
+
 
   // BEGIN typed-rpc-decls (RaftServiceImpl)
   // Typed RPC interface overrides (new API).
@@ -159,6 +172,7 @@ class RaftServiceImpl : public RaftService {
   void AppendEntriesDurable(const RaftService::RpcAppendEntriesDurableRequest& req, RaftService::RpcAppendEntriesDurableResponse& resp, rrr::DeferredReply defer) override;
   void TimeoutNow(const RaftService::RpcTimeoutNowRequest& req, RaftService::RpcTimeoutNowResponse& resp, rrr::DeferredReply defer) override;
   void NotifyRestart(const RaftService::RpcNotifyRestartRequest& req, RaftService::RpcNotifyRestartResponse& resp, rrr::DeferredReply defer) override;
+  void InstallSnapshot(const RaftService::RpcInstallSnapshotRequest& req, RaftService::RpcInstallSnapshotResponse& resp, rrr::DeferredReply defer) override;
   // END typed-rpc-decls (RaftServiceImpl)
 };
 

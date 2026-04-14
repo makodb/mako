@@ -118,17 +118,47 @@ the `in_applying_logs_` reentrance guard. `CompactLog()` acquires `mtx_` interna
 - Test 56: Snapshot + compaction, then verify continued operation
 - Test 57: Threshold configurability via getter/setter
 
+### InstallSnapshot RPC (Phase 3.3)
+
+`OnInstallSnapshot()` handles the follower side of snapshot transfer. When a leader
+determines a follower is too far behind (its `next_index_` points to compacted log),
+the leader sends the full snapshot in a single RPC.
+
+**Follower-side handler** (`OnInstallSnapshot()` in `server.cc`):
+1. Validates term: rejects if `term < currentTerm` (stale leader)
+2. Updates term and steps down if leader has higher term
+3. Resets election timer (legitimate leader contact)
+4. Saves snapshot data via `snapshot_manager_->TakeSnapshot()`
+5. Updates `snapidx_` and `snapterm_`
+6. Discards all in-memory log entries up to `last_included_index`
+7. Compacts persistent log storage if available
+8. Advances `commitIndex`, `executeIndex`, and `lastLogIndex` to at least `last_included_index`
+
+**Leader-side sender** (`SendInstallSnapshot()` in `commo.cc`):
+- Sends `InstallSnapshot` RPC with term, leader_id, last_included_index,
+  last_included_term, and serialized snapshot data
+- Callback receives follower's current term for leader term update
+
+**RPC definition** (in `rcc_rpc.rpc`):
+```
+defer InstallSnapshot(uint64_t term, uint64_t leader_id,
+                      uint64_t last_included_index, uint64_t last_included_term,
+                      string data | uint64_t term_out);
+```
+
+**Tests** (Tests 58-59 in `test.cc`):
+- Test 58: Basic InstallSnapshot on a follower, verifying snapidx_, snapterm_,
+  commitIndex, executeIndex update and snapshot persistence
+- Test 59: InstallSnapshot with stale term is rejected, follower state unchanged
+
 ## Subsequent Tasks
 
-This design supports the following planned features:
+The following features are planned:
 
-2. **InstallSnapshot RPC** (Phase 3.3): New RPC handler for leader to send
-   snapshot to lagging followers. Uses streaming via `SnapshotReader`/`SnapshotWriter`.
-
-3. **HeartbeatLoop integration** (Phase 3.4): When `next_index_[follower] < min_active_slot_`,
+1. **HeartbeatLoop integration** (Phase 3.4): When `next_index_[follower] < min_active_slot_`,
    send InstallSnapshot instead of AppendEntries.
 
-4. **Recovery** (Phase 3.5): On startup, check for snapshots before replaying log entries.
+2. **Recovery** (Phase 3.5): On startup, check for snapshots before replaying log entries.
    Load snapshot state, set `executeIndex`/`commitIndex` to snapshot index, then replay.
 
 ## RustyCpp Compliance

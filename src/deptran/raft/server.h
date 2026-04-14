@@ -864,6 +864,31 @@ class RaftServer : public TxLogServer {
                     bool_t *success,
                     rusty::Function<void()> cb);
 
+  /**
+   * InstallSnapshot RPC Handler - Snapshot Transfer Protocol
+   *
+   * Receives a full snapshot from the leader when this follower is too far
+   * behind to catch up via AppendEntries. Replaces the follower's state machine
+   * state, updates snapshot metadata, discards old log entries, and advances
+   * commitIndex/executeIndex.
+   *
+   * @param term - Leader's current term
+   * @param leader_id - Leader's site ID
+   * @param last_included_index - Last log index included in the snapshot
+   * @param last_included_term - Term of the last included log entry
+   * @param data - Serialized snapshot data
+   * @param term_out - [OUT] Follower's current term (for leader to update itself)
+   * @param cb - Callback to invoke when handling complete
+   */
+  // @unsafe - Modifies log state, snapshot metadata, calls snapshot_manager_
+  void OnInstallSnapshot(const uint64_t term,
+                         const uint64_t leader_id,
+                         const uint64_t last_included_index,
+                         const uint64_t last_included_term,
+                         const std::string& data,
+                         uint64_t* term_out,
+                         rusty::Function<void()> cb);
+
   // @unsafe - modifies proxy maps with C-style casts on raw pointers (non-trivial pointer arithmetic)
   void Disconnect(const bool disconnect = true);
 

@@ -277,6 +277,31 @@ friend class RaftProxy;
    * @return true if any peer is still in PENDING state
    */
   bool HasPendingNotifyRestart();
+
+  /**
+   * SendInstallSnapshot - Send snapshot to a follower that is too far behind
+   *
+   * Sends the full snapshot in one RPC (no chunking). The follower will
+   * replace its state machine state and discard old log entries.
+   *
+   * @param site_id - Target follower site ID
+   * @param par_id - Partition ID
+   * @param term - Leader's current term
+   * @param leader_id - Leader's site ID
+   * @param last_included_index - Last log index included in snapshot
+   * @param last_included_term - Term of last included log entry
+   * @param data - Serialized snapshot data
+   * @param callback - Called when RPC completes with follower's term
+   */
+  // @unsafe - C-style cast, std::function
+  void SendInstallSnapshot(siteid_t site_id,
+                           parid_t par_id,
+                           uint64_t term,
+                           uint64_t leader_id,
+                           uint64_t last_included_index,
+                           uint64_t last_included_term,
+                           const std::string& data,
+                           std::function<void(uint64_t follower_term)> callback);
 };
 
 } // namespace janus

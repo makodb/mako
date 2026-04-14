@@ -95,6 +95,38 @@ void RaftServiceImpl::NotifyRestart(const RaftService::RpcNotifyRestartRequest& 
   this->NotifyRestart(req.restartedSiteId, &resp.acknowledged, std::move(defer));
 }
 
+void RaftServiceImpl::InstallSnapshot(const RaftService::RpcInstallSnapshotRequest& req,
+                                      RaftService::RpcInstallSnapshotResponse& resp,
+                                      rrr::DeferredReply defer) {
+  this->InstallSnapshot(req.term,
+                        req.leader_id,
+                        req.last_included_index,
+                        req.last_included_term,
+                        req.data,
+                        &resp.term_out,
+                        std::move(defer));
+}
+
+// @safe - svr_ pointer is bounded, delegates to RaftServer::OnInstallSnapshot
+void RaftServiceImpl::HandleInstallSnapshot(const uint64_t& term,
+                                             const uint64_t& leader_id,
+                                             const uint64_t& last_included_index,
+                                             const uint64_t& last_included_term,
+                                             const std::string& data,
+                                             uint64_t* term_out,
+                                             rrr::DeferredReply defer) {
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *term_out = 0;
+    defer.reply();
+    return;
+  }
+  svr->OnInstallSnapshot(term, leader_id, last_included_index,
+                         last_included_term, data, term_out,
+                         [defer = std::move(defer)]() mutable { defer.reply(); });
+}
+
 // Static member definitions for service registry
 std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;
 std::mutex RaftServiceImpl::registry_mutex_;

@@ -172,6 +172,16 @@ class RaftLabTest {
   // Test snapshot threshold is configurable
   int testSnapshotThresholdConfigurable(void);
 
+  // ===========================================================================
+  // PHASE 3.3: InstallSnapshot Tests
+  // ===========================================================================
+
+  // Test InstallSnapshot basic functionality
+  int testInstallSnapshotBasic(void);
+
+  // Test InstallSnapshot rejects stale term
+  int testInstallSnapshotRejectsStaleTerm(void);
+
   void wait(uint64_t microseconds);
 
 };

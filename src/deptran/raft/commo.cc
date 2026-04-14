@@ -643,4 +643,83 @@ bool RaftCommo::HasPendingNotifyRestart() {
   return false;
 }
 
+// ============================================================================
+// InstallSnapshot RPC - Snapshot Transfer Protocol
+// ============================================================================
+
+/**
+ * SendInstallSnapshot - Send snapshot to a follower that is too far behind
+ *
+ * Sends the full snapshot in one RPC. The follower replaces its state
+ * machine state and discards old log entries covered by the snapshot.
+ */
+// @unsafe - C-style cast, std::function
+void RaftCommo::SendInstallSnapshot(siteid_t site_id,
+                                     parid_t par_id,
+                                     uint64_t term,
+                                     uint64_t leader_id,
+                                     uint64_t last_included_index,
+                                     uint64_t last_included_term,
+                                     const std::string& data,
+                                     std::function<void(uint64_t follower_term)> callback) {
+  auto proxies = rpc_par_proxies_[par_id];
+
+  // Find the target proxy
+  for (auto& p : proxies) {
+    if (p.first != site_id) {
+      continue;
+    }
+
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
+    FutureAttr fuattr;
+
+    fuattr.callback = [callback, site_id](rusty::Arc<Future> fu) {
+      if (fu->get_error_code() != 0) {
+        Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot to site %d - error code %d",
+                  site_id, fu->get_error_code());
+        if (callback) {
+          callback(0);
+        }
+        return;
+      }
+
+      uint64_t follower_term = 0;
+      fu->get_reply() >> follower_term;
+
+      Log_info("[INSTALL-SNAPSHOT-RPC] InstallSnapshot response from site %d: term=%lu",
+               site_id, follower_term);
+
+      if (callback) {
+        callback(follower_term);
+      }
+    };
+
+    Log_info("[INSTALL-SNAPSHOT-RPC] Sending InstallSnapshot to site %d (term=%lu, lastIdx=%lu, lastTerm=%lu, dataSize=%zu)",
+             site_id, term, last_included_index, last_included_term, data.size());
+
+    RaftProxy::RpcInstallSnapshotRequest req{};
+    req.term = term;
+    req.leader_id = leader_id;
+    req.last_included_index = last_included_index;
+    req.last_included_term = last_included_term;
+    req.data = data;
+    auto f = proxy->async_InstallSnapshot(req, fuattr);
+    _RPC_COUNT();
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
+
+    return;  // Found and sent to target
+  }
+
+  // Target not found in proxy list
+  Log_warn("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot - site %d not found in proxies",
+           site_id);
+  if (callback) {
+    callback(0);
+  }
+}
+
 } // namespace janus

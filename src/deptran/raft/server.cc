@@ -2548,6 +2548,139 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   cb();
 }
 
+// ============================================================================
+// InstallSnapshot RPC Handler
+// ============================================================================
+
+// @unsafe - Modifies log state, snapshot metadata, calls snapshot_manager_
+void RaftServer::OnInstallSnapshot(const uint64_t term,
+                                    const uint64_t leader_id,
+                                    const uint64_t last_included_index,
+                                    const uint64_t last_included_term,
+                                    const std::string& data,
+                                    uint64_t* term_out,
+                                    rusty::Function<void()> cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // @unsafe
+  { *term_out = currentTerm; }
+
+  // ============================================================================
+  // Edge Case 0: Server shutting down
+  // ============================================================================
+  if (stop_) {
+    Log_info("[INSTALL-SNAPSHOT] Site %d: Ignoring InstallSnapshot - server shutting down", site_id_);
+    cb();
+    return;
+  }
+
+  // ============================================================================
+  // Edge Case 1: Stale term - reject
+  // ============================================================================
+  if (term < currentTerm) {
+    Log_info("[INSTALL-SNAPSHOT] Site %d: Rejecting InstallSnapshot from leader %lu "
+             "(leader_term=%lu < my_term=%lu)",
+             site_id_, leader_id, term, currentTerm);
+    cb();
+    return;
+  }
+
+  // ============================================================================
+  // Edge Case 2: Higher or equal term - accept as legitimate leader
+  // ============================================================================
+  if (term > currentTerm) {
+    Log_info("[INSTALL-SNAPSHOT] Site %d: Leader %lu has higher term (%lu > %lu) - updating",
+             site_id_, leader_id, term, currentTerm);
+    auto prev_term = currentTerm;
+    currentTerm = term;
+    // @unsafe
+    {
+    vote_for_ = INVALID_SITEID;
+    }
+    setIsLeader(false);
+    PersistState(currentTerm, vote_for_, "OnInstallSnapshot: leader higher term");
+    LogTermChange("InstallSnapshot carried newer term", prev_term, currentTerm, leader_id);
+    // @unsafe
+    { *term_out = currentTerm; }
+  }
+
+  // Reset election timer (legitimate leader contact)
+  resetTimer("received InstallSnapshot");
+
+  // ============================================================================
+  // Save snapshot data via snapshot_manager_
+  // ============================================================================
+  if (snapshot_manager_) {
+    // @unsafe { snapshot_manager_ I/O operations }
+    bool saved = snapshot_manager_->TakeSnapshot(
+        last_included_index, last_included_term,
+        data.data(), data.size());
+
+    if (!saved) {
+      Log_error("[INSTALL-SNAPSHOT] Site %d: Failed to save snapshot at index=%lu term=%lu",
+                site_id_, last_included_index, last_included_term);
+      // Still update in-memory state even if persistence fails
+    } else {
+      Log_info("[INSTALL-SNAPSHOT] Site %d: Snapshot saved at index=%lu term=%lu",
+               site_id_, last_included_index, last_included_term);
+    }
+  }
+
+  // ============================================================================
+  // Update snapshot metadata
+  // ============================================================================
+  snapidx_ = last_included_index;
+  snapterm_ = last_included_term;
+
+  // ============================================================================
+  // Discard log entries covered by the snapshot
+  // ============================================================================
+  // Remove all log entries up to and including last_included_index
+  std::vector<slotid_t> to_erase;
+  for (auto& kv : raft_logs_) {
+    if (kv.first <= last_included_index) {
+      to_erase.push_back(kv.first);
+    }
+  }
+  for (auto slot : to_erase) {
+    raft_logs_.erase(slot);
+  }
+
+  // Update min_active_slot_ to reflect compacted log
+  if (last_included_index + 1 > min_active_slot_) {
+    min_active_slot_ = last_included_index + 1;
+  }
+
+  // Also compact persistent log storage if available
+  if (log_storage_) {
+    // @unsafe { log_storage_ I/O }
+    log_storage_->remove_range(log_storage_->get_first_index(),
+                               last_included_index + 1);
+  }
+
+  // ============================================================================
+  // Advance commitIndex and executeIndex
+  // ============================================================================
+  if (last_included_index > commitIndex) {
+    commitIndex = last_included_index;
+    PersistCommitIndexToLogStorage();
+  }
+  if (last_included_index > executeIndex) {
+    executeIndex = last_included_index;
+  }
+
+  // Update lastLogIndex if the snapshot covers beyond it
+  if (last_included_index > lastLogIndex) {
+    lastLogIndex = last_included_index;
+  }
+
+  Log_info("[INSTALL-SNAPSHOT] Site %d: Installed snapshot from leader %lu "
+           "(snapidx=%lu, snapterm=%lu, commitIndex=%lu, executeIndex=%lu, lastLogIndex=%lu)",
+           site_id_, leader_id, snapidx_, snapterm_, commitIndex, executeIndex, lastLogIndex);
+
+  cb();
+}
+
 // @safe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)
 void RaftServer::StopLeadershipTransferMonitoring() {
   leadership_monitor_stop_ = true;

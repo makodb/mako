@@ -187,6 +187,15 @@ abstract service Raft {
   defer NotifyRestart(siteid_t restartedSiteId |
                       bool_t acknowledged);
 
+  // InstallSnapshot - Sent by leader to follower that is too far behind
+  // Transfers the full snapshot in one RPC (no chunking)
+  defer InstallSnapshot(uint64_t term,
+                        uint64_t leader_id,
+                        uint64_t last_included_index,
+                        uint64_t last_included_term,
+                        string data |
+                        uint64_t term_out);
+
 }
 
 abstract service Copilot {
