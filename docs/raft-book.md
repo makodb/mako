@@ -643,6 +643,8 @@ void SetStateMachineSnapshotCallbacks(
 
 **ReplicatedDB integration**: `ReplicatedDB` registers these callbacks in its constructor. `CreateStateMachineSnapshot()` uses `rocksdb_checkpoint_create()` to produce a consistent checkpoint, serializes all files into a binary blob (format: `num_files(4) + [name_len(4) + name + file_size(8) + file_data]*`), and cleans up the temporary checkpoint directory. `LoadStateMachineSnapshot()` deserializes the blob, closes the current RocksDB, destroys the old data directory, writes the checkpoint files, reopens the database, and reloads `last_applied_index_` from the snapshot's metadata.
 
+**Startup wiring**: When the `MAKO_REPLICATED_DB=1` environment variable is set, `RaftServer::Setup()` automatically creates a `ReplicatedDB` instance after `InitializeSnapshotManager()` completes. It registers the `ApplyEntry` method as the `app_next_` callback via `RegLearnerAction`, so committed Raft entries are applied to local RocksDB. The DB path defaults to `/tmp/mako_replicated_db_<site_id>` but can be overridden with `MAKO_REPLICATED_DB_PATH`. The instance is accessible via `GetReplicatedDB()`. Initialization order: `RecoverFromStorage()` -> `InitializeSnapshotManager()` -> ReplicatedDB creation -> membership config -> heartbeat loops.
+
 ### InstallSnapshot RPC
 
 When a follower is too far behind (its `next_index_` points to compacted log entries), the leader sends the full snapshot via `InstallSnapshot` RPC instead of `AppendEntries`.

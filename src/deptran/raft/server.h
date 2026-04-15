@@ -42,6 +42,7 @@
 namespace janus {
 class Command;
 class CmdData;
+class ReplicatedDB;
 
 #define INVALID_SITEID  ((siteid_t)-1)
 #define NUM_BATCH_TIMER_RESET  (100)
@@ -128,6 +129,9 @@ class RaftServer : public TxLogServer {
   // @unsafe - std::function holds non-borrow-checked closures
   std::function<std::string()> create_sm_snapshot_cb_;
   std::function<void(const std::string&)> load_sm_snapshot_cb_;
+
+  // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set)
+  std::shared_ptr<ReplicatedDB> replicated_db_;
 
   // @unsafe - Initializes snapshot manager from environment config
   void InitializeSnapshotManager();
@@ -774,6 +778,15 @@ class RaftServer : public TxLogServer {
   // @safe - returns copy of shared_ptr
   std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
+  }
+
+  /**
+   * Get the ReplicatedDB instance, if one was created during Setup().
+   * @return Shared pointer to ReplicatedDB, or nullptr if not enabled
+   */
+  // @safe - returns copy of shared_ptr
+  std::shared_ptr<ReplicatedDB> GetReplicatedDB() const {
+    return replicated_db_;
   }
 
   /**

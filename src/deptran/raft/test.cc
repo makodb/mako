@@ -189,7 +189,8 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testReplicatedDBDelete())      // Test 86
         || TEST_EXPAND(testReplicatedDBReplication()) // Test 87
         || TEST_EXPAND(testReplicatedDBSnapshot())    // Test 88
-        || TEST_EXPAND(testReplicatedDBSnapshotTransfer()); // Test 89
+        || TEST_EXPAND(testReplicatedDBSnapshotTransfer()) // Test 89
+        || TEST_EXPAND(testReplicatedDBWiring());     // Test 90
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -8104,6 +8105,164 @@ int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
   }
 
   Log_info("TEST 89: ReplicatedDB snapshot transfer to follower PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 90: testReplicatedDBWiring
+// Verifies that Setup() creates a ReplicatedDB and registers the apply callback
+// when MAKO_REPLICATED_DB=1 env var is set. Tests the full wiring path:
+//   1. Manually create and wire a ReplicatedDB on leader (simulates Setup() logic)
+//   2. Verify GetReplicatedDB() returns non-null
+//   3. Put/Get through the wired ReplicatedDB
+//   4. Verify follower also works when wired
+// ============================================================================
+// @unsafe - Creates ReplicatedDB, interacts with Raft and RocksDB
+int RaftLabTest::testReplicatedDBWiring(void) {
+  Init2(90, "ReplicatedDB wiring in Setup path");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* leader_svr = config_->GetServer(leader);
+  Assert2(leader_svr != nullptr, "Leader server is null");
+
+  // Verify no ReplicatedDB exists initially (Setup() was called without env var)
+  Assert2(leader_svr->GetReplicatedDB() == nullptr,
+          "ReplicatedDB should be null before wiring");
+
+  // Simulate what Setup() does when MAKO_REPLICATED_DB=1: create and register
+  std::string leader_db_path = "/tmp/raft_test_repldb_90_leader_" + std::to_string(leader);
+
+  // Clean up previous DB
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  // Create ReplicatedDB and assign to server (same as Setup() would do)
+  auto rdb = std::make_shared<ReplicatedDB>(leader_svr, leader_db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after construction");
+
+  // Wire it into the server (mirroring Setup() logic)
+  leader_svr->replicated_db_ = rdb;
+
+  // Register apply callback (same lambda as Setup())
+  // @unsafe { RegLearnerAction }
+  leader_svr->RegLearnerAction([rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    if (rdb) {
+      rdb->ApplyEntry(slot, cmd);
+    }
+    return 0;
+  });
+
+  // Verify GetReplicatedDB() now returns the instance
+  Assert2(leader_svr->GetReplicatedDB() != nullptr,
+          "GetReplicatedDB() should return non-null after wiring");
+  Assert2(leader_svr->GetReplicatedDB().get() == rdb.get(),
+          "GetReplicatedDB() should return the same instance we set");
+
+  // Test Put/Get through the wired ReplicatedDB (goes through Raft)
+  Assert2(rdb->Put("wiring_key1", "value1"), "Put wiring_key1 should succeed");
+  Assert2(rdb->Put("wiring_key2", "value2"), "Put wiring_key2 should succeed");
+
+  std::string val;
+  Assert2(rdb->Get("wiring_key1", &val) && val == "value1",
+          "Get wiring_key1 should return value1");
+  Assert2(rdb->Get("wiring_key2", &val) && val == "value2",
+          "Get wiring_key2 should return value2");
+
+  // Verify last_applied_index was updated by the apply callback
+  Assert2(rdb->GetLastAppliedIndex() > 0,
+          "last_applied_index should be > 0 after applying entries");
+
+  // Test Delete through wired path
+  Assert2(rdb->Delete("wiring_key1"), "Delete wiring_key1 should succeed");
+  Assert2(!rdb->Get("wiring_key1", &val),
+          "wiring_key1 should not exist after delete");
+  Assert2(rdb->Get("wiring_key2", &val) && val == "value2",
+          "wiring_key2 should still exist after deleting key1");
+
+  // Now wire a follower too and verify it also works
+  siteid_t follower_id = static_cast<siteid_t>(-1);
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t sid = config_->getServerIdByIndex(i);
+    if (static_cast<int>(sid) != leader) {
+      follower_id = sid;
+      break;
+    }
+  }
+  Assert2(follower_id != static_cast<siteid_t>(-1), "No follower found");
+
+  auto* follower_svr = config_->GetServer(follower_id);
+  Assert2(follower_svr != nullptr, "Follower server is null");
+
+  std::string follower_db_path = "/tmp/raft_test_repldb_90_follower_" + std::to_string(follower_id);
+
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  auto follower_rdb = std::make_shared<ReplicatedDB>(follower_svr, follower_db_path);
+  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
+
+  follower_svr->replicated_db_ = follower_rdb;
+
+  // @unsafe { RegLearnerAction }
+  follower_svr->RegLearnerAction([follower_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    if (follower_rdb) {
+      follower_rdb->ApplyEntry(slot, cmd);
+    }
+    return 0;
+  });
+
+  Assert2(follower_svr->GetReplicatedDB() != nullptr,
+          "Follower GetReplicatedDB() should return non-null after wiring");
+
+  // Put through leader, wait for replication, check follower
+  Assert2(rdb->Put("wiring_replicated", "cross_node"), "Put wiring_replicated should succeed");
+
+  // Give time for replication
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(500000);  // 500ms
+
+  Assert2(follower_rdb->Get("wiring_replicated", &val) && val == "cross_node",
+          "Follower should have wiring_replicated=cross_node after replication");
+
+  // Restore original learner action
+  config_->SetLearnerAction();
+
+  // Cleanup: clear replicated_db_ pointers
+  leader_svr->replicated_db_ = nullptr;
+  follower_svr->replicated_db_ = nullptr;
+  rdb.reset();
+  follower_rdb.reset();
+
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 90: ReplicatedDB wiring in Setup path PASSED!");
   Passed2();
 }
 

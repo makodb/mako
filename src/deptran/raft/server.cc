@@ -5,6 +5,7 @@
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
 #include "rpc/file_snapshot_manager.hpp"
+#include "replicated_db.h"
 #include <limits>
 
 // @external: {
@@ -933,6 +934,33 @@ void RaftServer::Setup() {
 
   // ========== INITIALIZE SNAPSHOT MANAGER (Phase 3.1) ==========
   InitializeSnapshotManager();
+
+  // ========== INITIALIZE REPLICATED DB (optional) ==========
+  // @unsafe { std::getenv, std::make_shared, RegLearnerAction, Log_info }
+  {
+    const char* rdb_flag = std::getenv("MAKO_REPLICATED_DB");
+    if (rdb_flag && (strcmp(rdb_flag, "1") == 0 || strcmp(rdb_flag, "true") == 0)) {
+      std::string db_path;
+      const char* custom_path = std::getenv("MAKO_REPLICATED_DB_PATH");
+      if (custom_path && custom_path[0] != '\0') {
+        db_path = std::string(custom_path) + "/replicated_db_" + std::to_string(site_id_);
+      } else {
+        db_path = "/tmp/mako_replicated_db_" + std::to_string(site_id_);
+      }
+      replicated_db_ = std::make_shared<ReplicatedDB>(this, db_path);
+
+      // Register apply callback so committed Raft entries are applied to RocksDB
+      RegLearnerAction([this](int slot, shared_ptr<Marshallable> cmd) -> int {
+        if (replicated_db_) {
+          replicated_db_->ApplyEntry(slot, cmd);
+        }
+        return 0;
+      });
+
+      Log_info("[RAFT-REPLICATED-DB] Initialized for site %d at path %s",
+               site_id_, db_path.c_str());
+    }
+  }
 
   // ========== INITIALIZE MEMBERSHIP CONFIGURATION ==========
   // Populate current_config_ from the static partition configuration.

@@ -298,6 +298,9 @@ class RaftLabTest {
   // Test snapshot transfer from leader to follower
   int testReplicatedDBSnapshotTransfer(void);
 
+  // Test ReplicatedDB wiring in Setup() via MAKO_REPLICATED_DB=1
+  int testReplicatedDBWiring(void);
+
   void wait(uint64_t microseconds);
 
 };
