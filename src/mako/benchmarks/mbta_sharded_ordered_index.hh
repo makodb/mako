@@ -80,7 +80,8 @@ public:
   const char *insert(void *txn,
                      lcdf::Str key,
                      const std::string &value) {
-    return put(txn, key, value);
+    // @safe - Forward to per-shard insert() which calls transInsert (not transPut)
+    return pick_shard(key)->insert(txn, key, value);
   }
 
   void remove(void *txn, lcdf::Str key);
@@ -110,6 +111,12 @@ public:
    * @return Status::OK() on success
    */
   mako::Status Put(void *txn, const std::string &key, const std::string &value);
+
+  /**
+   * Insert a key (RocksDB-style wrapper). Delegates to put().
+   * @return Status::OK() on success
+   */
+  mako::Status Insert(void *txn, const std::string &key, const std::string &value);
 
   /**
    * Delete a key (RocksDB-style wrapper)
@@ -314,6 +321,14 @@ inline mako::Status mbta_sharded_ordered_index::Put(
   // NOTE: The value must already be encoded with mako::Encode() by the caller,
   // and the encoded value must remain valid until commit_txn() is called.
   // This is because StringWrapper stores only a pointer to avoid copying.
+  put(txn, key, value);
+  return mako::Status::OK();
+}
+
+inline mako::Status mbta_sharded_ordered_index::Insert(
+    void *txn,
+    const std::string &key,
+    const std::string &value) {
   put(txn, key, value);
   return mako::Status::OK();
 }

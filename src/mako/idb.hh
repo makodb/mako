@@ -19,6 +19,7 @@
  */
 
 #include "status.hh"
+#include <functional>
 #include <string>
 
 namespace mako {
@@ -64,6 +65,33 @@ public:
      * Get the table name
      */
     virtual const std::string& GetName() const = 0;
+
+    // Forward scan [start_key, end_key). end_key=nullptr means end of table.
+    // Local shard only — cross-shard scan requires RPC (not yet implemented).
+    // Callback returns false to stop early.
+    virtual Status Scan(void* txn,
+                        const std::string& start_key,
+                        const std::string* end_key,
+                        std::function<bool(const std::string& key, const std::string& value)> callback) = 0;
+
+    // Reverse scan (start_key, end_key] descending. end_key=nullptr means start of table.
+    // Local shard only. Callback returns false to stop early.
+    virtual Status ReverseScan(void* txn,
+                               const std::string& start_key,
+                               const std::string* end_key,
+                               std::function<bool(const std::string& key, const std::string& value)> callback) = 0;
+
+    // Key existence check. Returns OK even when key is absent (exists=false).
+    // Implemented via Get internally; does not expose the value.
+    virtual Status Exists(void* txn, const std::string& key, bool* exists) = 0;
+
+    // Insert only if key does not exist (OCC transInsert semantics, unlike Put which overwrites).
+    // Aborts the transaction if the key is already present.
+    virtual Status Insert(void* txn, const std::string& key, const std::string& value) = 0;
+
+    // Approximate key count for the LOCAL shard only; no transaction needed.
+    // Value may be stale. For cluster-wide count, RPC to other shards is required (not yet implemented).
+    virtual Status GetApproximateSize(size_t* size) = 0;
 };
 
 /**
