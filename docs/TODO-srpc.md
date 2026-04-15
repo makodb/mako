@@ -373,3 +373,30 @@ compatibility wrappers for incremental rollout.
 - [ ] Legacy pointer-style API remains available only as compatibility wrappers and is explicitly deprecated.
 - [ ] Full RPC-focused tests and docs guards pass in both typed-default and compatibility CI configurations.
 - [ ] Migration guide includes rollout steps and removal criteria for legacy wrappers.
+
+---
+
+## Move Raft-specific files out of `src/rrr/rpc/`
+
+These files were placed in `src/rrr/rpc/` during Raft development but are Raft storage abstractions, not RPC infrastructure. They belong in `src/deptran/raft/storage/`.
+
+- [ ] *high* Move `log_storage.hpp` to `src/deptran/raft/storage/`. Defines `LogStorage` interface (18 virtual methods) and `LogEntry` struct. Used only by RaftServer. Update all `#include` paths — run `grep -r 'log_storage.hpp' src/` to find includers.
+- [ ] *high* Move `memory_log_storage.hpp` to `src/deptran/raft/storage/`. In-memory LogStorage implementation. Update includes.
+- [ ] *high* Move `rocksdb_log_storage.hpp` to `src/deptran/raft/storage/`. RocksDB LogStorage implementation. Update includes.
+- [ ] *high* Move `recovery_manager.hpp` to `src/deptran/raft/storage/`. Raft crash recovery logic wrapping LogStorage. Update includes.
+- [ ] *high* Move `snapshot_manager.hpp` to `src/deptran/raft/storage/`. Defines SnapshotManager, SnapshotReader, SnapshotWriter interfaces. Update includes.
+- [ ] *high* Move `file_snapshot_manager.hpp` to `src/deptran/raft/storage/`. File-based snapshot implementation. Update includes.
+- [ ] *high* Move `snapshot_format.hpp` to `src/deptran/raft/storage/`. Binary snapshot wire format with CRC32 checksums. Update includes.
+- [ ] *medium* Update CMakeLists.txt to reflect new file locations. Verify borrow checking targets still find the moved files. Run full CI.
+
+---
+
+## Replace inheritance with proxy (ngcpp/proxy) in `src/rrr/`
+
+Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/proxy) for polymorphism without vtables. NoCopy is excluded (it disables copy construction, not polymorphism). RpcException is excluded (inherits std::exception — standard library contract). Plan: `docs/dev/rpc_proxy_migration_plan.md`
+
+- [ ] *high* Add proxy library as git submodule: `git submodule add https://github.com/ngcpp/proxy third-party/proxy`. Add include path to CMakeLists.txt. Upgrade project from C++17 to C++20 (`-std=c++20`). Proxy requires GCC 13.1+ or Clang 16+. Verify compilation.
+- [ ] *high* Phase 1: Migrate `Pollable` to proxy. Defined in `reactor/epoll_wrapper.h`, 10 virtual methods, 3 implementations (ServerListener, ServerConnection, ClientConnection). Stored as `Arc<Pollable>`. Define `PollableFacade` using `PRO_DEF_MEM_DISPATCH`. Remove `: public Pollable` from impls. Change `Arc<Pollable>` to `pro::proxy<PollableFacade>`. ~200 LOC.
+- [ ] *high* Phase 2: Migrate `Service` to proxy. Defined in `rpc/server.hpp`, 2 virtual methods (`__reg_to__`, `__dispatch__`). Many rpcgen-generated implementations. Define `ServiceFacade`. Update rpcgen to emit classes without `: public Service`. ~100 LOC.
+- [ ] *medium* Phase 3: Migrate `Marshallable` to proxy. Defined in `misc/marshal.hpp`, 4 virtual methods. Many implementations across codebase. Uses `kind_` tag for runtime type ID — facade must include `kind()` convention. High-risk due to cross-codebase dependents. ~150 LOC in rrr/, more in deptran/.
+- [ ] *low* Phase 4: Remove `RefCounted` base class. Defined in `base/basetypes.hpp`, 1 pure virtual method (abstract destructor). Legacy manual ref counting — replace all usages with `rusty::Arc<T>`. ~30 LOC.
