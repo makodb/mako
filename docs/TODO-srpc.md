@@ -393,13 +393,18 @@ compatibility wrappers for incremental rollout.
 - [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.
 - [ ] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.
 - [ ] Add borrow-check guard for generated typed APIs (no public `T* out` signatures in typed mode output).
-- [ ] Re-run full RPC-focused suite in both CI modes: typed-default and compatibility-wrapper mode.
+- [x] Re-run full RPC-focused suite in both CI modes: typed-default and compatibility-wrapper mode.
+  - Legacy-compat mode has been removed. Full RPC-focused suite passes in typed-only mode (42/42 tests, verified on 2026-04-15 across multiple commits).
 
 ### DoD
-- [ ] Typed request/response API is the default generated C++ interface.
-- [ ] All callsites migrated to typed API. No legacy pointer-style wrappers remain.
-- [ ] `--legacy-compat` flag and `SRPC_LEGACY_COMPAT` CMake option removed.
-- [ ] Full RPC-focused tests pass in typed-only mode.
+- [x] Typed request/response API is the default generated C++ interface.
+  - Completed: typed mode is the only code generation path since `--legacy-compat` removal on 2026-04-15.
+- [x] All callsites migrated to typed API. No legacy pointer-style wrappers remain.
+  - Completed: audit on 2026-04-15 confirmed 100% typed API adoption (110/110 proxy callsites).
+- [x] `--legacy-compat` flag and `SRPC_LEGACY_COMPAT` CMake option removed.
+  - Completed on 2026-04-15.
+- [x] Full RPC-focused tests pass in typed-only mode.
+  - Completed: 42/42 tests pass in typed-only mode (verified on 2026-04-15).
 
 ---
 
@@ -435,7 +440,8 @@ We do NOT want compatibility wrappers. Instead, rewrite all RPC callsites to use
   - Verification note: full RPC-focused suite passed (42/42 tests).
 - [x] *medium* Remove legacy-compat test code. Delete `test/rpcgen_compat_compile_test.py` and its CTest wiring. Update `test/rpcgen_compile_test.py` to only test typed-only mode. Update `test/rpcgen_typed_structs_test.py` to remove legacy-compat assertions.
   - Completed on 2026-04-15 as part of the header regeneration above.
-- [ ] *medium* Update docs: remove references to `--legacy-compat` from `docs/srpc-book.md`, `docs/rpc/migration-guide.md`, and `docs/TODO-srpc.md` completed items.
+- [x] *medium* Update docs: remove references to `--legacy-compat` from `docs/srpc-book.md`, `docs/rpc/migration-guide.md`, and `docs/TODO-srpc.md` completed items.
+  - Completed on 2026-04-15: updated `docs/rpc/migration-guide.md` (replaced obsolete migration knob section with typed-only status). Updated `docs/srpc-book.md` (already cleaned in prior commit). Checked off completed DoD items in this file.
 
 ---
 

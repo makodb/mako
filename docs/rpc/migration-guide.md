@@ -48,23 +48,16 @@ several behaviors became stricter/safer:
 No source-level migration is required for existing callers, but operators
 should follow the wire upgrade order above for mixed-version deployments.
 
-### Typed RPC API migration knob
+### Typed RPC API (completed)
 
-The `rpcgen` code generator now supports a `--legacy-compat` flag (CMake option:
-`SRPC_LEGACY_COMPAT`, default ON) that controls backward-compatible generation
-during the typed API rollout:
+All RPC services now use typed request/response structs exclusively. The
+`rpcgen` code generator produces only typed APIs — no legacy pointer-style
+wrappers. Generated service classes do not inherit `rrr::Service`; they
+register via `ServiceTypedBoxAdapter` / `Server::reg_service(Box<T>)`.
 
-- **With `--legacy-compat`** (current default): generated service classes inherit
-  `rrr::Service`, and deprecated pointer-style proxy wrappers are emitted alongside
-  typed request/response APIs.
-- **Without `--legacy-compat`**: only typed APIs are generated. Service classes do
-  not inherit `rrr::Service`; registration uses `ServiceTypedBoxAdapter`.
-
-Migration steps per service:
-1. Set `SRPC_LEGACY_COMPAT=ON` (default), regenerate headers.
-2. Update callsites from pointer-style to typed request/response structs.
-3. Once all callsites are migrated, set `SRPC_LEGACY_COMPAT=OFF` and regenerate.
-4. Verify no deprecated-usage warnings remain.
+The `--legacy-compat` flag and `SRPC_LEGACY_COMPAT` CMake option have been
+removed. All callsites across `src/deptran/` use typed `Rpc*Request`/
+`Rpc*Response` structs.
 
 ## New Dependencies
 
