@@ -21,7 +21,6 @@
 #include "status.hh"
 #include <functional>
 #include <string>
-#include <vector>
 
 namespace mako {
 
@@ -141,12 +140,6 @@ public:
      * For remote DB: Creates RemoteTable proxy
      */
     virtual ITable* GetTable(const std::string& name) = 0;
-
-    /**
-     * List all table names currently tracked by this database instance
-     * @return Vector of table name strings (only tables opened via GetTable)
-     */
-    virtual std::vector<std::string> ListTables() = 0;
 
     // =========================================================================
     // Connection Management (optional for local DB)

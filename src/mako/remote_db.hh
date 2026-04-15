@@ -276,14 +276,6 @@ public:
      */
     void InitThread() override {}
 
-    /**
-     * Not applicable for remote tables: tables are identified by table_id,
-     * not by name, and are created on demand. Returns empty list.
-     */
-    std::vector<std::string> ListTables() override {
-        return {};
-    }
-
     // Internal: Send Put/Get/Delete request to server (used by RemoteTable)
     // @safe - These use RRR RPC
     Status SendPut(uint64_t txn_id, uint16_t table_id,

@@ -310,6 +310,8 @@ public:
   }
 
 
+  // Returns an approximate count of keys in the table (local shard only).
+  // Updated at commit time under lock; may be stale for recently aborted transactions.
   size_t approx_size() const {
     // @safe - returns count updated at commit time (under lock); no atomics needed.
     return size_count_;
