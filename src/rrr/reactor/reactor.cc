@@ -34,7 +34,7 @@ const int64_t n_max_coroutine = 2000;
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
 thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> Reactor::sp_running_coro_th_{};
-thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> Reactor::clients_{};
+thread_local std::unordered_map<std::string, std::vector<PollableProxy>> Reactor::clients_{};
 
 // Thread-local storage for PollThreadWorker (raw pointer for direct access)
 // Safe because worker outlives all coroutines on its thread
@@ -832,11 +832,6 @@ void PollThread::shutdown() const {
 
 void PollThread::add_proxy(PollableProxy poll) const {
   sender_.send(CmdAddPollable{std::move(poll)});
-}
-
-void PollThread::add(rusty::Arc<Pollable> poll) const {
-  auto poll_proxy = make_pollable_proxy_from_arc(std::move(poll));
-  add_proxy(std::move(poll_proxy));
 }
 
 void PollThread::remove(Pollable& poll) const {

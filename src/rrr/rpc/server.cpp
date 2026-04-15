@@ -136,8 +136,6 @@ ServerConnection::~ServerConnection() {
     // Arc reference to RpcServiceContext is automatically released
 }
 
-// get_shared() is now inherited from Pollable base class
-
 // @safe - Executes callback inline for API compatibility.
 int ServerConnection::run_async(std::function<void()> f) {
   if (!f) {

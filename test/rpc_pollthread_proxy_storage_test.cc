@@ -151,7 +151,7 @@ TEST(RpcPollThreadProxyStorageTest, RequestCloseInvokesCloseAfterCallerArcReleas
     auto pollable = rusty::Arc<CountingPollable>::new_(
         CountingPollable(sv[0], PollMode::READ, nullptr, nullptr, &close_count));
     tracked_fd = pollable->fd();
-    poll_thread->add(pollable.clone());
+    poll_thread->add_proxy(make_pollable_proxy_from_typed_arc(pollable.clone()));
   }
 
   std::this_thread::sleep_for(milliseconds(60));
@@ -177,11 +177,11 @@ TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughPro
       CountingPollable(sv[0], PollMode::READ, nullptr, &write_count, nullptr));
   Pollable& poll_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*pollable));
 
-  poll_thread->add(pollable.clone());
+  poll_thread->add_proxy(make_pollable_proxy_from_typed_arc(pollable.clone()));
   std::this_thread::sleep_for(milliseconds(60));
 
   pollable->set_mode(PollMode::WRITE);
-  poll_thread->update_mode(poll_ref, PollMode::WRITE);
+  poll_thread->update_mode(pollable->fd(), PollMode::WRITE);
 
   ASSERT_TRUE(wait_until([&] { return write_count.load(std::memory_order_relaxed) > 0; }, 1000));
 
@@ -209,7 +209,7 @@ TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
   auto first_pollable = rusty::Arc<CountingPollable>::new_(
       CountingPollable(first_sv[0], PollMode::READ, &first_read_count, nullptr, &first_close_count));
   const int reused_fd = first_pollable->fd();
-  poll_thread->add(first_pollable.clone());
+  poll_thread->add_proxy(make_pollable_proxy_from_typed_arc(first_pollable.clone()));
 
   ASSERT_GT(::write(first_sv[1], "a", 1), 0);
   ASSERT_TRUE(wait_until([&] { return first_read_count.load(std::memory_order_relaxed) >= 1; }, 1000));
@@ -242,7 +242,7 @@ TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
   std::atomic<int> second_close_count{0};
   auto second_pollable = rusty::Arc<CountingPollable>::new_(
       CountingPollable(second_sv[0], PollMode::READ, &second_read_count, nullptr, &second_close_count));
-  poll_thread->add(second_pollable.clone());
+  poll_thread->add_proxy(make_pollable_proxy_from_typed_arc(second_pollable.clone()));
 
   ASSERT_GT(::write(second_sv[1], "b", 1), 0);
   ASSERT_TRUE(wait_until([&] { return second_read_count.load(std::memory_order_relaxed) >= 1; }, 1000));

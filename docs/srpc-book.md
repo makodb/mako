@@ -432,7 +432,7 @@ class Pollable {
 ```
 
 Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
-(`PollableFacade`, `PollableArcAdapter`, and typed-arc adapter support). Poll-thread
+(`PollableFacade` and typed-arc adapter support). Poll-thread
 command payloads, storage, and event dispatch run through proxy-backed state
 (`pro::proxy<PollableFacade>`), and epoll integration is fd-based (no
 `Pollable*` userdata/update assumptions). `ServerListener`, `ServerConnection`,
@@ -458,10 +458,8 @@ class Epoll {
 
 ```cpp srpc-no-compile
 Arc<PollThread> pt = PollThread::create();
-pt->add(Arc<Pollable>(connection));     // Register for I/O
 pt->add_proxy(make_pollable_proxy_from_typed_arc(connection)); // Direct proxy path
-pt->remove(*connection);                // Unregister
-pt->request_close(fd);                  // Close and drop
+pt->request_close(connection->fd());    // Unregister + close
 pt->shutdown();                         // Stop poll loop
 ```
 
@@ -1335,7 +1333,6 @@ class Future {
 class PollThread {
     static Arc<PollThread> create();
     void add_proxy(PollableProxy p);
-    void add(Arc<Pollable> p);
     void remove(Pollable& p);
     void request_close(int fd);
     void update_mode(int fd, int new_mode);

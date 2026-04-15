@@ -988,7 +988,7 @@ TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
     ASSERT_TRUE(create_connected_tcp_pair(sv));
 
     auto pollable = rusty::Arc<ClosedFlagPollable>::make(sv[0]);
-    poll_thread_.as_ref().unwrap()->add(pollable);
+    poll_thread_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(pollable));
     std::this_thread::sleep_for(milliseconds(50));
 
     ASSERT_EQ(pollable->close_calls(), 0);

@@ -354,17 +354,16 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       rpc_clients_.insert(std::make_pair(site.id, rpc_cli));
       rpc_proxies_.insert(std::make_pair(site.id, rpc_proxy));
 
-			// Store the underlying ClientConnection (which inherits from Pollable)
-			// instead of Client (which no longer inherits from Pollable)
-			auto conn_opt = rpc_cli->connection();
-			if (conn_opt.is_some()) {
-				auto it = Reactor::clients_.find(rpc_cli->host());
-				if (it == Reactor::clients_.end()) {
-					std::vector<rusty::Arc<rrr::Pollable>> clients{};
-					Reactor::clients_[rpc_cli->host()] = clients;
-				}
-				Reactor::clients_[rpc_cli->host()].push_back(conn_opt.as_ref().unwrap().clone());
-			}
+      // Keep a host-scoped reference to the connection through PollableProxy.
+      auto conn_opt = rpc_cli->connection();
+      if (conn_opt.is_some()) {
+        auto it = Reactor::clients_.find(rpc_cli->host());
+        if (it == Reactor::clients_.end()) {
+          Reactor::clients_[rpc_cli->host()] = std::vector<rrr::PollableProxy>{};
+        }
+        auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
+        Reactor::clients_[rpc_cli->host()].push_back(std::move(conn_proxy));
+      }
       Log_info("connect to site: %s success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);
     } else {

@@ -163,7 +163,7 @@ TEST_F(ReactorTest, AddRemoveFd) {
     auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1));
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
     }
 
     // Allow worker thread time to process the add command via channel
@@ -195,7 +195,7 @@ TEST_F(ReactorTest, PollReadEvent) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
     }
 
     // Write data to trigger read event
@@ -226,7 +226,7 @@ TEST_F(ReactorTest, PollWriteEvent) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
     }
 
     // Socket should be immediately writable
@@ -263,8 +263,8 @@ TEST_F(ReactorTest, MultipleEvents) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p1);
-        poll_thread_worker_.as_ref().unwrap()->add(p2);
+        poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p1.clone()));
+        poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p2.clone()));
     }
 
     // Trigger both events
@@ -305,7 +305,7 @@ TEST_F(ReactorTest, UpdateMode) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
     }
 
     // Initially only READ mode
@@ -343,7 +343,7 @@ TEST_F(ReactorTest, ErrorHandling) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
     }
 
     // Allow worker thread time to process the add command via channel
@@ -476,7 +476,7 @@ TEST_F(ReactorTest, StressTest) {
         });
 
         {
-            poll_thread_worker_.as_ref().unwrap()->add(p);
+            poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
         }
         pollables.push_back(p);
     }
@@ -544,7 +544,7 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
         // Add pollables WITHOUT explicit remove
         for (auto& [fd1, fd2] : socket_pairs) {
             auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
-            test_poll_worker->add(p);
+            test_poll_worker->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
         }
 
         // Allow worker thread time to process the add commands via channel

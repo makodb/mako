@@ -169,7 +169,7 @@ class Reactor {
   rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> coros_{};
   rusty::RefCell<std::vector<rusty::Rc<Fiber>>> available_coros_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
-  static thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> clients_;
+  static thread_local std::unordered_map<std::string, std::vector<PollableProxy>> clients_;
   static thread_local std::unordered_set<std::string> dangling_ips_;
   // Interior mutability using Cell<T> for safe const method access
   rusty::Cell<bool> looping_{false};
@@ -466,9 +466,8 @@ public:
 
     // Send commands to worker via channel
     void add_proxy(PollableProxy poll) const;
-    void add(rusty::Arc<Pollable> poll) const;
     void remove(Pollable& poll) const;
-    void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops Arc
+    void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops proxy ownership
     // @safe - Sends update mode command via channel
     // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
     void update_mode(int fd, int new_mode) const;

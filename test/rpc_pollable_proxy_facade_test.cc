@@ -55,7 +55,7 @@ class CountingPollable : public Pollable {
 
 TEST(RpcPollableProxyFacadeTest, AdapterForwardsAllPollableMethods) {
   auto pollable = rusty::Arc<CountingPollable>::make(42);
-  auto proxy = make_pollable_proxy_from_arc(pollable);
+  auto proxy = make_pollable_proxy_from_typed_arc(pollable);
 
   EXPECT_EQ(proxy->fd(), 42);
   EXPECT_EQ(proxy->poll_mode(), PollMode::READ | PollMode::WRITE);
@@ -73,7 +73,7 @@ TEST(RpcPollableProxyFacadeTest, AdapterForwardsAllPollableMethods) {
 
 TEST(RpcPollableProxyFacadeTest, AdapterPropagatesCloseAndPendingState) {
   auto pollable = rusty::Arc<CountingPollable>::make(77);
-  auto proxy = make_pollable_proxy_from_arc(pollable);
+  auto proxy = make_pollable_proxy_from_typed_arc(pollable);
 
   EXPECT_FALSE(proxy->check_pending_write_update());
   pollable->set_pending_write_update(true);
