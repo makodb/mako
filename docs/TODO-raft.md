@@ -53,6 +53,15 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
     - [x] *low* Add `testHighFrequencyApply`: Stress test with rapid AppendEntries arrivals during log application. Verify the `apply_pending_` mechanism (added at `server.cc:944`) correctly processes all entries without dropping work. [26:04:14] Implemented as Test 72.
   - [x] *low* Fix non-leader log submission handling
     - [x] *low* In `raft_main_helper.cc`, `add_log_to_nc()` silently drops logs when the local Raft instance is not the leader. Instead of silently dropping, return an error code to the caller so Mako's transaction layer can redirect the transaction to the correct leader or abort gracefully. Add a `GetLeaderHint()` method to `RaftServer` that returns the last known leader's site_id, so the caller can redirect. [26:04:14] Implemented: `add_log_to_nc()` now returns `bool` (false = not leader) with optional `leader_hint_out` parameter. `RaftServer::GetLeaderHint()` returns the last known leader's site_id tracked via AppendEntries and InstallSnapshot RPCs.
+- [ ] *medium* Move Raft-specific files from `src/rrr/rpc/` to `src/deptran/raft/storage/`
+    - [ ] *medium* Move `log_storage.hpp` (LogStorage interface, 18 virtual methods, LogEntry struct). Update all `#include` paths — run `grep -r 'log_storage.hpp' src/`.
+    - [ ] *medium* Move `memory_log_storage.hpp` (InMemoryLogStorage). Update includes.
+    - [ ] *medium* Move `rocksdb_log_storage.hpp` (RocksDBLogStorage). Update includes.
+    - [ ] *medium* Move `recovery_manager.hpp` (crash recovery wrapping LogStorage). Update includes.
+    - [ ] *medium* Move `snapshot_manager.hpp` (SnapshotManager/Reader/Writer interfaces). Update includes.
+    - [ ] *medium* Move `file_snapshot_manager.hpp` (FileSnapshotManager implementation). Update includes.
+    - [ ] *medium* Move `snapshot_format.hpp` (binary format with CRC32). Update includes.
+    - [ ] *low* Update CMakeLists.txt for new paths. Verify borrow checking targets. Run full CI.
 - [ ] Replicated RocksDB: build a Raft-backed replicated key-value store for the Configuration Manager
   - [x] *high* Implement ReplicatedDB core
     - [x] *high* Define operation encoding format. Create a `ReplicatedDBCommand` Marshallable subclass in `src/deptran/raft/replicated_db.h` with fields: `op` (PUT=1, DELETE=2, BATCH=3), `key` (string), `value` (string). For BATCH, encode a vector of (op, key, value) tuples. Implement `Marshal`/`Unmarshal` for Raft log serialization. Register the command type in the Marshallable factory. [26:04:14] Implemented as CMD_REPLICATED_DB=23. Tests 82-84 verify PUT, DELETE, and BATCH marshal round-trips including MarshallDeputy factory registration.

@@ -376,21 +376,6 @@ compatibility wrappers for incremental rollout.
 
 ---
 
-## Move Raft-specific files out of `src/rrr/rpc/`
-
-These files were placed in `src/rrr/rpc/` during Raft development but are Raft storage abstractions, not RPC infrastructure. They belong in `src/deptran/raft/storage/`.
-
-- [ ] *high* Move `log_storage.hpp` to `src/deptran/raft/storage/`. Defines `LogStorage` interface (18 virtual methods) and `LogEntry` struct. Used only by RaftServer. Update all `#include` paths — run `grep -r 'log_storage.hpp' src/` to find includers.
-- [ ] *high* Move `memory_log_storage.hpp` to `src/deptran/raft/storage/`. In-memory LogStorage implementation. Update includes.
-- [ ] *high* Move `rocksdb_log_storage.hpp` to `src/deptran/raft/storage/`. RocksDB LogStorage implementation. Update includes.
-- [ ] *high* Move `recovery_manager.hpp` to `src/deptran/raft/storage/`. Raft crash recovery logic wrapping LogStorage. Update includes.
-- [ ] *high* Move `snapshot_manager.hpp` to `src/deptran/raft/storage/`. Defines SnapshotManager, SnapshotReader, SnapshotWriter interfaces. Update includes.
-- [ ] *high* Move `file_snapshot_manager.hpp` to `src/deptran/raft/storage/`. File-based snapshot implementation. Update includes.
-- [ ] *high* Move `snapshot_format.hpp` to `src/deptran/raft/storage/`. Binary snapshot wire format with CRC32 checksums. Update includes.
-- [ ] *medium* Update CMakeLists.txt to reflect new file locations. Verify borrow checking targets still find the moved files. Run full CI.
-
----
-
 ## Replace inheritance with proxy (ngcpp/proxy) in `src/rrr/`
 
 Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/proxy) for polymorphism without vtables. NoCopy is excluded (it disables copy construction, not polymorphism). RpcException is excluded (inherits std::exception — standard library contract). Plan: `docs/dev/rpc_proxy_migration_plan.md`
