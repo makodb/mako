@@ -450,8 +450,8 @@ bool ServerListener::handle_read() {
           auto guard = sconn_fds_.lock().unwrap();
           guard->push(clnt_socket);
       }
-      // @unsafe - add_pollable_from_current_thread
-      { PollThreadWorker::add_pollable_from_current_thread(sconn); }
+      auto poll_proxy = make_pollable_proxy_from_typed_arc(sconn);
+      PollThreadWorker::add_pollable_from_current_thread(std::move(poll_proxy));
     } else {
       break;
     }
@@ -633,7 +633,8 @@ int Server::start(const char* bind_addr) {
     return -1;
   }
 
-  poll_thread_.as_ref().unwrap()->add(server_listener_.as_ref().unwrap().clone());
+  auto listener_proxy = make_pollable_proxy_from_typed_arc(server_listener_.as_ref().unwrap().clone());
+  poll_thread_.as_ref().unwrap()->add_proxy(std::move(listener_proxy));
   return 0;
 }
 

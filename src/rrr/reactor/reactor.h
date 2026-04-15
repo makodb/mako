@@ -356,9 +356,15 @@ public:
     // @unsafe - Add a pollable from within the poll thread (e.g., from handle_read)
     // Must only be called from the poll thread (asserts if not)
     // SAFETY: Dereferences raw pointer current_worker_ and calls do_add_pollable
-    static void add_pollable_from_current_thread(rusty::Arc<Pollable> poll) {
+    static void add_pollable_from_current_thread(PollableProxy poll) {
         verify(current_worker_ != nullptr);
-        auto poll_proxy = make_pollable_proxy_from_arc(std::move(poll));
+        current_worker_->do_add_pollable(std::move(poll));
+    }
+
+    template <typename T>
+    static void add_pollable_from_current_thread(rusty::Arc<T> poll) {
+        verify(current_worker_ != nullptr);
+        auto poll_proxy = make_pollable_proxy_from_typed_arc(std::move(poll));
         current_worker_->do_add_pollable(std::move(poll_proxy));
     }
 
@@ -459,11 +465,13 @@ public:
     PollThread& operator=(PollThread&& other) = delete;
 
     // Send commands to worker via channel
+    void add_proxy(PollableProxy poll) const;
     void add(rusty::Arc<Pollable> poll) const;
     void remove(Pollable& poll) const;
     void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops Arc
     // @safe - Sends update mode command via channel
     // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
+    void update_mode(int fd, int new_mode) const;
     void update_mode(const Pollable& poll, int new_mode) const;
     void add(rusty::Arc<Job> job) const;
     void remove(rusty::Arc<Job> job) const;

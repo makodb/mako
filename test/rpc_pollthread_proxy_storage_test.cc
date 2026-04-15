@@ -83,6 +83,60 @@ class CountingPollable : public Pollable {
   std::atomic<int>* close_count_;
 };
 
+class PlainPollable {
+ public:
+  PlainPollable(
+      int fd,
+      int mode,
+      std::atomic<int>* read_count,
+      std::atomic<int>* write_count,
+      std::atomic<int>* close_count)
+      : fd_(fd),
+        mode_(mode),
+        read_count_(read_count),
+        write_count_(write_count),
+        close_count_(close_count) {}
+
+  int fd() const { return fd_; }
+  int poll_mode() const { return mode_; }
+  size_t content_size() { return 0; }
+  bool handle_read() {
+    char buf[32];
+    (void)::read(fd_, buf, sizeof(buf));
+    if (read_count_ != nullptr) {
+      read_count_->fetch_add(1, std::memory_order_relaxed);
+    }
+    return true;
+  }
+  int handle_write() {
+    if (write_count_ != nullptr) {
+      write_count_->fetch_add(1, std::memory_order_relaxed);
+    }
+    return PollMode::NO_CHANGE;
+  }
+  void handle_error() {}
+  void close() {
+    if (fd_ >= 0) {
+      ::close(fd_);
+      fd_ = -1;
+    }
+    if (close_count_ != nullptr) {
+      close_count_->fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+  bool check_pending_write_update() const { return false; }
+  bool is_closed() const { return fd_ < 0; }
+
+  void set_mode(int mode) const { mode_ = mode; }
+
+ private:
+  int fd_;
+  mutable int mode_;
+  std::atomic<int>* read_count_;
+  std::atomic<int>* write_count_;
+  std::atomic<int>* close_count_;
+};
+
 TEST(RpcPollThreadProxyStorageTest, RequestCloseInvokesCloseAfterCallerArcReleased) {
   auto poll_thread = PollThread::create();
 
@@ -199,6 +253,38 @@ TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
 
   poll_thread->shutdown();
   ::close(second_sv[1]);
+}
+
+TEST(RpcPollThreadProxyStorageTest, DirectTypedProxySupportsNonPollableClass) {
+  auto poll_thread = PollThread::create();
+
+  int sv[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+  ASSERT_EQ(::fcntl(sv[0], F_SETFL, O_NONBLOCK), 0);
+  ASSERT_EQ(::fcntl(sv[1], F_SETFL, O_NONBLOCK), 0);
+
+  std::atomic<int> read_count{0};
+  std::atomic<int> write_count{0};
+  std::atomic<int> close_count{0};
+  auto plain = rusty::Arc<PlainPollable>::new_(
+      PlainPollable(sv[0], PollMode::READ, &read_count, &write_count, &close_count));
+  const int fd = plain->fd();
+
+  auto proxy = make_pollable_proxy_from_typed_arc(plain.clone());
+  poll_thread->add_proxy(std::move(proxy));
+
+  ASSERT_GT(::write(sv[1], "x", 1), 0);
+  ASSERT_TRUE(wait_until([&] { return read_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+
+  plain->set_mode(PollMode::WRITE);
+  poll_thread->update_mode(fd, PollMode::WRITE);
+  ASSERT_TRUE(wait_until([&] { return write_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+
+  poll_thread->request_close(fd);
+  ASSERT_TRUE(wait_until([&] { return close_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+
+  poll_thread->shutdown();
+  ::close(sv[1]);
 }
 
 }  // namespace

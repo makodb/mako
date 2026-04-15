@@ -119,7 +119,7 @@ src/rrr/
     reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
     request_options.hpp # Per-request configuration
-    pollable_proxy.h    # Pollable proxy facade + Arc adapter (migration bridge)
+    pollable_proxy.h    # Pollable proxy facade + Arc adapters (legacy + typed)
     errors.hpp          # Error code definitions
     utils.hpp/cpp       # RPC utilities
 
@@ -281,7 +281,7 @@ Each iteration of `Reactor::Loop()`:
 
 1. **Process commands** from other threads (add/remove Pollables, Jobs)
 2. **epoll_wait()** to get ready file descriptors
-3. **Handle I/O** on ready FDs (call `Pollable::handle_read/write`)
+3. **Handle I/O** on ready FDs (proxy-dispatch `handle_read/write` by FD)
 4. **Check events** — collect ready events from the waiting queue
 5. **Check timeouts** — move expired events to ready queue
 6. **Process composite events** (WaitAll, WaitAny, QuorumEvent)
@@ -418,7 +418,7 @@ if (event->status_ == Event::TIMEOUT) {
 
 ### Pollable Interface
 
-Any object that needs I/O multiplexing implements `Pollable`:
+Legacy path: objects can still implement `Pollable` directly:
 
 ```cpp srpc-no-compile
 class Pollable {
@@ -432,9 +432,12 @@ class Pollable {
 ```
 
 Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
-(`PollableFacade` + `PollableArcAdapter`). Poll-thread command payloads, storage,
-and event dispatch now run through proxy-backed state (`pro::proxy<PollableFacade>`),
-and epoll integration is fd-based (no `Pollable*` userdata/update assumptions).
+(`PollableFacade`, `PollableArcAdapter`, and typed-arc adapter support). Poll-thread
+command payloads, storage, and event dispatch run through proxy-backed state
+(`pro::proxy<PollableFacade>`), and epoll integration is fd-based (no
+`Pollable*` userdata/update assumptions). `ServerListener`, `ServerConnection`,
+and `ClientConnection` now use direct typed-proxy construction and no longer
+inherit `Pollable`.
 
 ### Epoll Abstraction
 
@@ -456,6 +459,7 @@ class Epoll {
 ```cpp srpc-no-compile
 Arc<PollThread> pt = PollThread::create();
 pt->add(Arc<Pollable>(connection));     // Register for I/O
+pt->add_proxy(make_pollable_proxy_from_typed_arc(connection)); // Direct proxy path
 pt->remove(*connection);                // Unregister
 pt->request_close(fd);                  // Close and drop
 pt->shutdown();                         // Stop poll loop
@@ -1330,6 +1334,7 @@ class Future {
 ```cpp srpc-no-compile
 class PollThread {
     static Arc<PollThread> create();
+    void add_proxy(PollableProxy p);
     void add(Arc<Pollable> p);
     void remove(Pollable& p);
     void request_close(int fd);

@@ -350,7 +350,8 @@ int ClientConnection::connect(const char* addr) {
   // @unsafe { - Weak::upgrade and PollThread::add
   auto self = weak_self_.upgrade();
   if (self.is_some()) {
-    poll_thread_worker_->add(self.unwrap());
+    auto poll_proxy = make_pollable_proxy_from_typed_arc(self.unwrap());
+    poll_thread_worker_->add_proxy(std::move(poll_proxy));
   // }
   } else {
     Log_error("rrr::ClientConnection: weak_self_ upgrade failed - connection may not have been created properly");
@@ -635,7 +636,7 @@ size_t ClientConnection::replay_pending_requests() {
     if (PollThreadWorker::is_on_poll_thread()) {
       pending_write_update_.set(true);
     } else {
-      poll_thread_worker_->update_mode(*this, PollMode::READ | PollMode::WRITE);
+      poll_thread_worker_->update_mode(fd(), PollMode::READ | PollMode::WRITE);
     }
   }
 

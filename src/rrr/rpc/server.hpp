@@ -230,7 +230,7 @@ struct RpcServiceContext {
 
 // @unsafe - Server listener handling incoming connections
 // SAFETY: Manages socket lifecycle and address info properly
-class ServerListener: public Pollable {
+class ServerListener {
   friend class Server;
  public:
   std::string addr_;
@@ -244,40 +244,40 @@ class ServerListener: public Pollable {
 
   int server_sock_{0};
 
-  int poll_mode() const override {
+  int poll_mode() const {
     return PollMode::READ;
   }
 
-  size_t content_size() override;
+  size_t content_size();
 
-  int handle_write() override;
+  int handle_write();
 
-  bool handle_read() override;
+  bool handle_read();
 
-  void handle_error() override;
+  void handle_error();
 
-  void close() override;
+  void close();
 
-  bool is_closed() const override { return server_sock_ < 0; }
+  bool is_closed() const { return server_sock_ < 0; }
 
-  bool check_pending_write_update() const override { return false; }
+  bool check_pending_write_update() const { return false; }
 
-  int fd() const override {return server_sock_;}
+  int fd() const {return server_sock_;}
 
   // @safe - Constructor with proper error handling
   ServerListener(rusty::Arc<RpcServiceContext> ctx, std::string addr);
 
 //protected:
   // @safe - AddrInfo RAII wrapper handles freeaddrinfo automatically
-  virtual ~ServerListener() noexcept override {
+  virtual ~ServerListener() noexcept {
     // gai_result_ RAII wrapper automatically calls freeaddrinfo
     p_svr_addr_ = nullptr;  // Clear pointer into freed memory
   };
 };
 
-// @unsafe - Inherits from @interface Pollable (rusty-cpp namespace resolution bug workaround)
+// @unsafe - Socket-backed connection handler exposed to poll loop via Pollable proxy facade.
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
-class ServerConnection: public Pollable {
+class ServerConnection {
     // Handles individual client connections
     // SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
 
@@ -303,8 +303,6 @@ class ServerConnection: public Pollable {
     // Used to pass weak reference to async handlers
     WeakServerConnection weak_self_;
 
-    // get_shared() is now inherited from Pollable base class
-
 public:
     /**
      * Closes the connection and cleans up resources.
@@ -314,7 +312,7 @@ public:
      */
     // @safe - Closes connection and cleans up
     // SAFETY: Thread-safe with server connection lock
-    void close() override;
+    void close();
 
 private:
     // used to surpress multiple "no handler for rpc_id=..." errro
@@ -397,33 +395,33 @@ public:
     int run_async(std::function<void()> f);
 
     // @safe - Returns file descriptor
-    int fd() const override {
+    int fd() const {
         return socket_;
     }
 
     // @safe - Returns poll mode based on output buffer
     // Uses const_cast for interior mutability (SpinLock marked as external)
-    int poll_mode() const override;
+    int poll_mode() const;
 
     // @safe - Returns buffered input/output bytes for diagnostics.
-    size_t content_size() override;
+    size_t content_size();
 
     // @safe - Writes buffered data to socket
     // SAFETY: Protected by output spinlock (SpinLock marked as external)
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
-    int handle_write() override;
+    int handle_write();
 
     // @safe - Reads and processes RPC requests
     // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers,
     // Arc for shared context, RefCell for interior mutability, Fiber::create_run for async.
-    bool handle_read() override;  // Batching mode: reads ALL available requests
+    bool handle_read();  // Batching mode: reads ALL available requests
 
     // @safe - Error handler
-    void handle_error() override;
+    void handle_error();
 
     // @safe - Check and clear pending write update flag
     // Called by poll loop after processing events
-    bool check_pending_write_update() const override {
+    bool check_pending_write_update() const {
         if (pending_write_update_.get()) {
             pending_write_update_.set(false);
             return true;
@@ -433,7 +431,7 @@ public:
 
     // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
-    bool is_closed() const override {
+    bool is_closed() const {
         return status_ == CLOSED;
     }
 

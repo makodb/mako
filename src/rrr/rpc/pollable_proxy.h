@@ -65,4 +65,29 @@ inline PollableProxy make_pollable_proxy_from_arc(rusty::Arc<Pollable> poll) {
   return pro::make_proxy<PollableFacade, PollableArcAdapter>(std::move(poll));
 }
 
+template <typename T>
+class PollableTypedArcAdapter {
+ public:
+  explicit PollableTypedArcAdapter(rusty::Arc<T> poll) : poll_(std::move(poll)) {}
+
+  int fd() const { return poll_->fd(); }
+  int poll_mode() const { return poll_->poll_mode(); }
+  size_t content_size() { return mut_poll().content_size(); }
+  bool handle_read() { return mut_poll().handle_read(); }
+  int handle_write() { return mut_poll().handle_write(); }
+  void handle_error() { mut_poll().handle_error(); }
+  void close() { mut_poll().close(); }
+  bool check_pending_write_update() const { return poll_->check_pending_write_update(); }
+  bool is_closed() const { return poll_->is_closed(); }
+
+ private:
+  T& mut_poll() { return const_cast<T&>(*poll_.get()); }
+  rusty::Arc<T> poll_;
+};
+
+template <typename T>
+inline PollableProxy make_pollable_proxy_from_typed_arc(rusty::Arc<T> poll) {
+  return pro::make_proxy<PollableFacade, PollableTypedArcAdapter<T>>(std::move(poll));
+}
+
 }  // namespace rrr

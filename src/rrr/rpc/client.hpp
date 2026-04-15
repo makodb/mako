@@ -514,11 +514,11 @@ public:
 // Type alias for Arc weak reference to ClientConnection
 using WeakClientConnection = rusty::sync::Weak<ClientConnection>;
 
-// @unsafe - Inherits from @interface Pollable (rusty-cpp namespace resolution bug workaround)
+// @unsafe - Client-side socket handler exposed to poll loop via Pollable proxy facade.
 // Similar to ServerConnection but for client-side connections
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
 // Note: connect() and handle_read() contain @unsafe blocks for socket I/O
-class ClientConnection: public Pollable {
+class ClientConnection {
     friend class Client;
     friend class ClientPool;
 
@@ -606,7 +606,7 @@ public:
      */
     // @safe - Closes connection and cleans up
     // SAFETY: Thread-safe cleanup sequence
-    void close() override;
+    void close();
 
     /**
      * Mark connection as closing without closing the socket.
@@ -1007,7 +1007,7 @@ public:
         if (PollThreadWorker::is_on_poll_thread()) {
             pending_write_update_.set(true);
         } else {
-            poll_thread_worker_->update_mode(*this, PollMode::READ | PollMode::WRITE);
+            poll_thread_worker_->update_mode(fd(), PollMode::READ | PollMode::WRITE);
         }
 
         // Record request sent in metrics
@@ -1263,7 +1263,7 @@ public:
     }
 
     // @safe - Returns file descriptor
-    int fd() const override {
+    int fd() const {
         return socket_;
     }
 
@@ -1279,30 +1279,30 @@ public:
     void resume() const { paused_.set(false); }
 
     // @safe - Returns poll mode based on output buffer
-    int poll_mode() const override;
+    int poll_mode() const;
 
     // @safe - Jetpack: content_size helper
-    size_t content_size() override {
+    size_t content_size() {
         return in_.content_size();
     }
 
     // @safe - Writes buffered data to socket
     // SAFETY: Protected by output spinlock
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
-    int handle_write() override;
+    int handle_write();
 
     // @safe - Reads and processes RPC responses
-    bool handle_read() override;
+    bool handle_read();
 
     // @safe - Error handler
-    void handle_error() override;
+    void handle_error();
 
     // @safe - Check heartbeat tick and pending write update flag.
-    bool check_pending_write_update() const override;
+    bool check_pending_write_update() const;
 
     // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
-    bool is_closed() const override {
+    bool is_closed() const {
         return state_machine_.is_terminal();
     }
 

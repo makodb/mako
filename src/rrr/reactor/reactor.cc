@@ -830,9 +830,13 @@ void PollThread::shutdown() const {
   Log_debug("[PollThread::shutdown] Complete");
 }
 
+void PollThread::add_proxy(PollableProxy poll) const {
+  sender_.send(CmdAddPollable{std::move(poll)});
+}
+
 void PollThread::add(rusty::Arc<Pollable> poll) const {
   auto poll_proxy = make_pollable_proxy_from_arc(std::move(poll));
-  sender_.send(CmdAddPollable{std::move(poll_proxy)});
+  add_proxy(std::move(poll_proxy));
 }
 
 void PollThread::remove(Pollable& poll) const {
@@ -845,14 +849,15 @@ void PollThread::request_close(int fd) const {
 
 // @safe - Sends update mode command via channel
 // SAFETY: Channel send is thread-safe
-void PollThread::update_mode(const Pollable& poll, int new_mode) const {
-  // @unsafe - channel send and pointer operations
-  {
-    auto result = sender_.send(CmdUpdateMode{poll.fd(), new_mode});
-    if (result.is_err()) {
-      Log_error("PollThread::update_mode: send failed! Channel disconnected?");
-    }
+void PollThread::update_mode(int fd, int new_mode) const {
+  auto result = sender_.send(CmdUpdateMode{fd, new_mode});
+  if (result.is_err()) {
+    Log_error("PollThread::update_mode: send failed! Channel disconnected?");
   }
+}
+
+void PollThread::update_mode(const Pollable& poll, int new_mode) const {
+  update_mode(poll.fd(), new_mode);
 }
 
 void PollThread::add(rusty::Arc<Job> job) const {
