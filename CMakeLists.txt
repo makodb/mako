@@ -1815,6 +1815,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_proxy_dependency ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_proxy_dependency COMMAND test_rpc_proxy_dependency)
 
+    # Pollable proxy facade guard tests (Phase 1 leaf 1)
+    add_executable(test_rpc_pollable_proxy_facade test/rpc_pollable_proxy_facade_test.cc)
+    target_include_directories(test_rpc_pollable_proxy_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_pollable_proxy_facade PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_pollable_proxy_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_pollable_proxy_facade COMMAND test_rpc_pollable_proxy_facade)
+
     find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
     add_test(
         NAME test_rpc_docs_snippet_compile

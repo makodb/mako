@@ -119,6 +119,7 @@ src/rrr/
     reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
     request_options.hpp # Per-request configuration
+    pollable_proxy.h    # Pollable proxy facade + Arc adapter (migration bridge)
     errors.hpp          # Error code definitions
     utils.hpp/cpp       # RPC utilities
 
@@ -429,6 +430,10 @@ class Pollable {
     virtual void close() = 0;              // Cleanup
 };
 ```
+
+Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
+(`PollableFacade` + `PollableArcAdapter`). Core poll-thread ownership remains
+`Arc<Pollable>` until later migration leaves switch storage/callsites to proxy types.
 
 ### Epoll Abstraction
 

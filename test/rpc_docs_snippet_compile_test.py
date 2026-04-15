@@ -230,6 +230,8 @@ def compile_snippet(cxx: str, repo_root: Path, idx: int, line_no: int, profile: 
         str(repo_root / "src/rrr"),
         "-I",
         str(repo_root / "third-party/rusty-cpp/include"),
+        "-I",
+        str(repo_root / "third-party/proxy/include"),
         str(path),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -264,6 +266,14 @@ def main():
     if not rusty_include.exists():
         print(
             f"missing Rusty C++ headers at {rusty_include}; run submodule update before this test",
+            file=sys.stderr,
+        )
+        return 2
+
+    proxy_include = repo_root / "third-party/proxy/include/proxy"
+    if not proxy_include.exists():
+        print(
+            f"missing proxy headers at {proxy_include}; run submodule update before this test",
             file=sys.stderr,
         )
         return 2
