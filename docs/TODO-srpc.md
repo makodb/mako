@@ -392,9 +392,31 @@ compatibility wrappers for incremental rollout.
 
 ### DoD
 - [ ] Typed request/response API is the default generated C++ interface.
-- [ ] Legacy pointer-style API remains available only as compatibility wrappers and is explicitly deprecated.
-- [ ] Full RPC-focused tests and docs guards pass in both typed-default and compatibility CI configurations.
-- [ ] Migration guide includes rollout steps and removal criteria for legacy wrappers.
+- [ ] All callsites migrated to typed API. No legacy pointer-style wrappers remain.
+- [ ] `--legacy-compat` flag and `SRPC_LEGACY_COMPAT` CMake option removed.
+- [ ] Full RPC-focused tests pass in typed-only mode.
+
+---
+
+## Remove `--legacy-compat` and migrate all callsites to typed API
+
+We do NOT want compatibility wrappers. Instead, rewrite all RPC callsites to use the new typed request/response structs directly, then remove the `--legacy-compat` flag entirely.
+
+- [ ] *high* Audit all RPC proxy callsites across `src/deptran/`. There are ~249 proxy calls across 15 protocol directories. Identify which use old pointer-style params vs already-typed params. The following directories have proxy usage: `fpga_raft/`, `raft/`, `paxos/`, `rcc/`, `janus/`, `rule/`, `tapir/`, `snow/`, `troad/`, `carousel/`, `februus/`, `mencius/`, `copilot/`, `mongodb/`, and root `deptran/` (communicator.cc, service.cc). Run: `grep -rn "proxy->" src/deptran/ --include="*.cc" --include="*.h"` for the full list.
+- [ ] *high* Migrate `rcc_rpc.rpc` callsites (the main RPC service, largest impact). This is the primary service definition used by all protocols. Rewrite all callsites in `src/deptran/communicator.cc` and each protocol's `commo.cc` to use typed request/response structs (e.g., `FooProxy::RpcBarRequest req{}; req.field = val; auto f = proxy->async_Bar(req);`) instead of old pointer-style params.
+  - [ ] *high* Migrate `src/deptran/communicator.cc` (root communicator, shared by multiple protocols)
+  - [ ] *high* Migrate `src/deptran/raft/commo.cc` (Raft RPCs — Vote, AppendEntries, InstallSnapshot, etc.)
+  - [ ] *medium* Migrate `src/deptran/paxos/commo.cc`
+  - [ ] *medium* Migrate `src/deptran/rcc/commo.cc`
+  - [ ] *medium* Migrate `src/deptran/janus/commo.cc`
+  - [ ] *medium* Migrate `src/deptran/fpga_raft/commo.cc`
+  - [ ] *low* Migrate remaining protocol commo files: `rule/`, `tapir/`, `snow/`, `troad/`, `carousel/`, `februus/`, `mencius/`, `copilot/`, `mongodb/`
+- [ ] *high* Migrate `network.rpc` callsites. Used in `src/deptran/network.h` and related files for inter-node communication.
+- [ ] *low* Migrate `helloworld.rpc` callsites. Test/example service — minimal usage.
+- [ ] *high* Regenerate all in-tree `.rpc` headers in typed-only mode (WITHOUT `--legacy-compat`). Run: `bin/rpcgen src/deptran/rcc_rpc.rpc`, `bin/rpcgen src/deptran/network.rpc`, `bin/rpcgen src/deptran/helloworld.rpc`. Verify no `rrr::Service` inheritance, no deprecated wrappers in output.
+- [ ] *high* Remove `--legacy-compat` flag from rpcgen. Delete the flag from `bin/rpcgen`, `src/rrr/pylib/simplerpcgen/rpcgen.py`, and `src/rrr/pylib/simplerpcgen/lang_cpp.py`. Remove `SRPC_LEGACY_COMPAT` option and `RPCGEN_COMPAT_FLAG` from `CMakeLists.txt`.
+- [ ] *medium* Remove legacy-compat test code. Delete `test/rpcgen_compat_compile_test.py` and its CTest wiring. Update `test/rpcgen_compile_test.py` to only test typed-only mode. Update `test/rpcgen_typed_structs_test.py` to remove legacy-compat assertions.
+- [ ] *medium* Update docs: remove references to `--legacy-compat` from `docs/srpc-book.md`, `docs/rpc/migration-guide.md`, and `docs/TODO-srpc.md` completed items.
 
 ---
 
