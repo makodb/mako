@@ -281,9 +281,7 @@ def verify_alpha_service_block(block: str) -> None:
         "                [__typed_resp__](rrr::Marshal& m) {\n"
         "                    m << __typed_resp__->sequence;\n"
         "                },\n"
-        "                [__typed_resp__]() mutable {\n"
-        "                    __typed_resp__.reset();\n"
-        "                });\n"
+        "                []() {});\n"
         "            this->stream(__typed_req__, *__typed_resp__, std::move(__defer__));\n"
         "        }\n"
         "    }",

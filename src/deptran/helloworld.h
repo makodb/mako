@@ -8,7 +8,7 @@
 
 namespace helloworld_client {
 
-class HelloworldClientService {
+class HelloworldClientService : public rrr::Service {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcTxnReadRequest {
@@ -36,7 +36,7 @@ public:
     }
 
     enum {
-        TXN_READ = 0x18a64b98,
+        TXN_READ = 0x4e5916a6,
     };
     // Registers RPC IDs with server using service index
     // @safe
@@ -76,9 +76,7 @@ private:
                 [__typed_resp__](rrr::Marshal& m) {
                     m << __typed_resp__->val;
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }

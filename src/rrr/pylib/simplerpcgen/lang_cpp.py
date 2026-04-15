@@ -278,10 +278,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                                 for _, field_name in output_fields:
                                     f.writeln("m << __typed_resp__->%s;" % field_name)
                             f.writeln("},")
-                            f.writeln("[__typed_resp__]() mutable {")
-                            with f.indent():
-                                f.writeln("__typed_resp__.reset();")
-                            f.writeln("});")
+                            f.writeln("[]() {});")
                         f.writeln("this->%s(__typed_req__, *__typed_resp__, std::move(__defer__));" % func.name)
                     elif func.attr == "fiber":
                         request_struct_name = typed_request_struct_name(func)

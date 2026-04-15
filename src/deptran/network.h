@@ -8,7 +8,7 @@
 
 namespace network_client {
 
-class NetworkClientService {
+class NetworkClientService : public rrr::Service {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcTxnRmwRequest {
@@ -159,13 +159,13 @@ public:
     }
 
     enum {
-        TXN_RMW = 0x12f0019b,
-        TXN_READ = 0x2faf244f,
-        TXN_NEW_ORDER = 0x5f68b108,
-        TXN_PAYMENT = 0x25014c57,
-        TXN_DELIVERY = 0x6bec7f91,
-        TXN_ORDER_STATUS = 0x3b137366,
-        TXN_STOCK_LEVEL = 0x36be00a9,
+        TXN_RMW = 0x21524de9,
+        TXN_READ = 0x36078b5a,
+        TXN_NEW_ORDER = 0x4da58142,
+        TXN_PAYMENT = 0x343cf22a,
+        TXN_DELIVERY = 0x5cf0aaac,
+        TXN_ORDER_STATUS = 0x5711069e,
+        TXN_STOCK_LEVEL = 0x69916666,
     };
     // Registers RPC IDs with server using service index
     // @safe
@@ -246,9 +246,7 @@ private:
                 weak_sconn,
                 [__typed_resp__](rrr::Marshal& m) {
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_rmw(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
@@ -264,9 +262,7 @@ private:
                 weak_sconn,
                 [__typed_resp__](rrr::Marshal& m) {
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
@@ -282,9 +278,7 @@ private:
                 weak_sconn,
                 [__typed_resp__](rrr::Marshal& m) {
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_new_order(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
@@ -300,9 +294,7 @@ private:
                 weak_sconn,
                 [__typed_resp__](rrr::Marshal& m) {
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_payment(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
@@ -318,9 +310,7 @@ private:
                 weak_sconn,
                 [__typed_resp__](rrr::Marshal& m) {
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_delivery(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
@@ -336,9 +326,7 @@ private:
                 weak_sconn,
                 [__typed_resp__](rrr::Marshal& m) {
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_order_status(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
@@ -354,9 +342,7 @@ private:
                 weak_sconn,
                 [__typed_resp__](rrr::Marshal& m) {
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_stock_level(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }

@@ -30,7 +30,7 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
     return m;
 }
 
-class BenchmarkService {
+class BenchmarkService : public rrr::Service {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcFastPrimeRequest {

@@ -199,10 +199,12 @@ public:
 
 PRO_DEF_MEM_DISPATCH(ServiceMemRegTo, __reg_to__);
 PRO_DEF_MEM_DISPATCH(ServiceMemDispatch, __dispatch__);
+PRO_DEF_MEM_DISPATCH(ServiceMemGetService, __get_service__);
 
 struct ServiceFacade : pro::facade_builder
     ::add_convention<ServiceMemRegTo, int(Server&, size_t)>
     ::add_convention<ServiceMemDispatch, void(i32, rusty::Box<Request>, WeakServerConnection)>
+    ::add_convention<ServiceMemGetService, void*()>
     ::build {};
 
 using ServiceProxy = pro::proxy<ServiceFacade>;
@@ -217,6 +219,8 @@ class ServiceBoxAdapter {
   void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
     svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
   }
+
+  void* __get_service__() const { return static_cast<void*>(svc_.get()); }
 
  private:
   rusty::Box<Service> svc_;
@@ -248,6 +252,8 @@ class ServiceTypedBoxAdapter {
   void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
     svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
   }
+
+  void* __get_service__() const { return static_cast<void*>(svc_.get()); }
 
  private:
   rusty::Box<T> svc_;
@@ -818,7 +824,7 @@ public:
         auto& ctx = ctx_.as_ref().unwrap();
         for (size_t i = 0; i < ctx->services.size(); ++i) {
             auto guard = ctx->services[i].borrow_mut();
-            callback(**guard);
+            callback(*static_cast<Service*>((*guard)->__get_service__()));
         }
         }
     }
