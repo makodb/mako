@@ -532,7 +532,9 @@ Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/pr
   - [x] Leaf 1: Define `MarshallableFacade` proxy conventions in `src/rrr/misc/marshallable_proxy.h` with dispatch for `to_marshal`, `from_marshal`, `entity_size`, `write_to_fd`, and accessor `kind()`. Add `MarshallableSharedPtrAdapter` from `shared_ptr<Marshallable>` to proxy. Add focused guard test. ~150 LOC.
     - Implemented on 2026-04-15 in `src/rrr/misc/marshallable_proxy.h`: `MarshallableFacade` with 5 dispatch conventions, `MarshallableSharedPtrAdapter` wrapping `shared_ptr<Marshallable>`, factory `make_marshallable_proxy()`. Added 6 guard tests in `test/rpc_marshallable_proxy_test.cc` (to_marshal, from_marshal, kind, entity_size, move-only, round-trip).
     - Verification note: full RPC-focused suite passed (44/44 tests).
-  - [ ] Leaf 2: Add `kind()` accessor method to `Marshallable` base class. Migrate `MarshallDeputy` to read `kind_` via accessor instead of direct field access. Keep `shared_ptr<Marshallable>` storage unchanged. ~100 LOC.
+  - [x] Leaf 2: Add `kind()` accessor method to `Marshallable` base class. Migrate `MarshallDeputy` to read `kind_` via accessor instead of direct field access. Keep `shared_ptr<Marshallable>` storage unchanged. ~100 LOC.
+    - Implemented on 2026-04-15: added `int32_t kind() const` accessor to `Marshallable`. Migrated 4 `sp_data_->kind_` accesses in `MarshallDeputy` (2 constructors, 1 setter, 2 verify assertions) to use `kind()`. Updated `MarshallableSharedPtrAdapter` to use accessor.
+    - Verification note: full RPC-focused suite passed (45/45 tests).
   - [ ] Leaf 3: Migrate `MarshallDeputy::sp_data_` from `shared_ptr<Marshallable>` to proxy-backed storage via adapter. Factory pattern creates `shared_ptr<Marshallable>` then wraps in proxy. ~150 LOC.
   - [ ] Leaf 4: Update derived classes to not inherit `Marshallable`; register via typed proxy adapters. Update factory lambdas. ~200 LOC across many files (may need sub-decomposition).
   - [ ] Leaf 5: Remove legacy `MarshallableArcAdapter` compatibility bridge. Close Phase 3 DoD. ~50 LOC.

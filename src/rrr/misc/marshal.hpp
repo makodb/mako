@@ -48,6 +48,7 @@ class Marshallable {
 //  int32_t __debug_{10};
   Marshallable() = delete;
   explicit Marshallable(int32_t k): kind_(k) {};
+  int32_t kind() const { return kind_; }
   virtual ~Marshallable() {
 //    if (__debug_ != 10) {
 //      verify(0);
@@ -140,7 +141,7 @@ class MarshallDeputy {
     // @safe - Constructor accepts shared_ptr<Marshallable> with polymorphism support
     // SAFETY: Moves ownership, proper null checking in usage
     explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
-      kind_ = sp_data_->kind_;
+      kind_ = sp_data_->kind();
       if(sp_data_->bypass_to_socket_){
         bypass_to_socket_ = true;
       }
@@ -154,7 +155,7 @@ class MarshallDeputy {
       requires std::is_base_of_v<rrr::Marshallable, T>
     {
       sp_data_ = sp_m;
-      kind_ = sp_data_->kind_;
+      kind_ = sp_data_->kind();
       if(sp_data_->bypass_to_socket_){
         bypass_to_socket_ = true;
       }
@@ -171,7 +172,7 @@ class MarshallDeputy {
     void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
       verify(sp_data_ == nullptr);
       sp_data_ = m;
-      kind_ = m->kind_;
+      kind_ = m->kind();
     }
 
     virtual size_t entity_size() const {

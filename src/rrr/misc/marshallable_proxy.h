@@ -43,7 +43,7 @@ class MarshallableSharedPtrAdapter {
   size_t write_to_fd(int fd, size_t written) const {
     return m_->write_to_fd(fd, written);
   }
-  int32_t kind() const { return m_->kind_; }
+  int32_t kind() const { return m_->kind(); }
 
   std::shared_ptr<Marshallable> inner() const { return m_; }
 

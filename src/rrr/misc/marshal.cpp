@@ -560,9 +560,9 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   Marshallable* mut_data = sp_data_.get();
   verify(mut_data);  // Should succeed - we just created it
   mut_data->from_marshal(m);
-  verify(sp_data_->kind_);
+  verify(sp_data_->kind());
   verify(kind_);
-  verify(sp_data_->kind_ == kind_);
+  verify(sp_data_->kind() == kind_);
   return m;
 }
 
