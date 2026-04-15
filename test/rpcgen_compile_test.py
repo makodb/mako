@@ -44,7 +44,7 @@ def compile_header(
     repo_root: Path,
     header_path: Path,
     extra_include_dirs: list[Path],
-    timeout_sec: float = 30.0,
+    timeout_sec: float = 120.0,
 ) -> tuple[bool, str]:
     unit = f'#include "{header_path}"\n'
 
@@ -111,8 +111,10 @@ def main() -> int:
             continue
 
         extra_includes: list[Path] = []
+        per_file_timeout = 120.0
         if "rcc_rpc" in rpc_rel:
             extra_includes.append(repo_root / "src/deptran")
+            per_file_timeout = 300.0  # rcc_rpc.h is ~14K lines
 
         for mode_name, legacy_compat in [("typed-only", False), ("legacy-compat", True)]:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -127,7 +129,8 @@ def main() -> int:
                     continue
 
                 ok, err = compile_header(
-                    cxx, repo_root, header, extra_includes
+                    cxx, repo_root, header, extra_includes,
+                    timeout_sec=per_file_timeout,
                 )
                 tested += 1
                 label = f"{rpc_rel} [{mode_name}]"

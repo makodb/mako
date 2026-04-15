@@ -407,17 +407,24 @@ compatibility wrappers for incremental rollout.
 
 We do NOT want compatibility wrappers. Instead, rewrite all RPC callsites to use the new typed request/response structs directly, then remove the `--legacy-compat` flag entirely.
 
-- [ ] *high* Audit all RPC proxy callsites across `src/deptran/`. There are ~249 proxy calls across 15 protocol directories. Identify which use old pointer-style params vs already-typed params. The following directories have proxy usage: `fpga_raft/`, `raft/`, `paxos/`, `rcc/`, `janus/`, `rule/`, `tapir/`, `snow/`, `troad/`, `carousel/`, `februus/`, `mencius/`, `copilot/`, `mongodb/`, and root `deptran/` (communicator.cc, service.cc). Run: `grep -rn "proxy->" src/deptran/ --include="*.cc" --include="*.h"` for the full list.
-- [ ] *high* Migrate `rcc_rpc.rpc` callsites (the main RPC service, largest impact). This is the primary service definition used by all protocols. Rewrite all callsites in `src/deptran/communicator.cc` and each protocol's `commo.cc` to use typed request/response structs (e.g., `FooProxy::RpcBarRequest req{}; req.field = val; auto f = proxy->async_Bar(req);`) instead of old pointer-style params.
-  - [ ] *high* Migrate `src/deptran/communicator.cc` (root communicator, shared by multiple protocols)
-  - [ ] *high* Migrate `src/deptran/raft/commo.cc` (Raft RPCs — Vote, AppendEntries, InstallSnapshot, etc.)
-  - [ ] *medium* Migrate `src/deptran/paxos/commo.cc`
-  - [ ] *medium* Migrate `src/deptran/rcc/commo.cc`
-  - [ ] *medium* Migrate `src/deptran/janus/commo.cc`
-  - [ ] *medium* Migrate `src/deptran/fpga_raft/commo.cc`
-  - [ ] *low* Migrate remaining protocol commo files: `rule/`, `tapir/`, `snow/`, `troad/`, `carousel/`, `februus/`, `mencius/`, `copilot/`, `mongodb/`
-- [ ] *high* Migrate `network.rpc` callsites. Used in `src/deptran/network.h` and related files for inter-node communication.
-- [ ] *low* Migrate `helloworld.rpc` callsites. Test/example service — minimal usage.
+- [x] *high* Audit all RPC proxy callsites across `src/deptran/`. There are ~249 proxy calls across 15 protocol directories. Identify which use old pointer-style params vs already-typed params. The following directories have proxy usage: `fpga_raft/`, `raft/`, `paxos/`, `rcc/`, `janus/`, `rule/`, `tapir/`, `snow/`, `troad/`, `carousel/`, `februus/`, `mencius/`, `copilot/`, `mongodb/`, and root `deptran/` (communicator.cc, service.cc). Run: `grep -rn "proxy->" src/deptran/ --include="*.cc" --include="*.h"` for the full list.
+  - Audit completed on 2026-04-15: 110 proxy calls found across `src/deptran/`; 109 already used typed `RpcMethodRequest` structs; 1 legacy call remained in `mongodb/commo.cc` (`proxy->async_Commit(md, fuattr)` with bare `MarshallDeputy`) — fixed to use `MongodbProxy::RpcCommitRequest`.
+  - External callsites (`src/helloworld.cc`, `src/nc_main.cc`) already use typed APIs.
+  - Result: **100% typed API adoption** across all active proxy callsites.
+- [x] *high* Migrate `rcc_rpc.rpc` callsites (the main RPC service, largest impact). This is the primary service definition used by all protocols. Rewrite all callsites in `src/deptran/communicator.cc` and each protocol's `commo.cc` to use typed request/response structs (e.g., `FooProxy::RpcBarRequest req{}; req.field = val; auto f = proxy->async_Bar(req);`) instead of old pointer-style params.
+  - All callsites were already migrated to typed APIs prior to the audit. Confirmed on 2026-04-15.
+  - [x] *high* Migrate `src/deptran/communicator.cc` (root communicator, shared by multiple protocols)
+  - [x] *high* Migrate `src/deptran/raft/commo.cc` (Raft RPCs — Vote, AppendEntries, InstallSnapshot, etc.)
+  - [x] *medium* Migrate `src/deptran/paxos/commo.cc`
+  - [x] *medium* Migrate `src/deptran/rcc/commo.cc`
+  - [x] *medium* Migrate `src/deptran/janus/commo.cc`
+  - [x] *medium* Migrate `src/deptran/fpga_raft/commo.cc`
+  - [x] *low* Migrate remaining protocol commo files: `rule/`, `tapir/`, `snow/`, `troad/`, `carousel/`, `februus/`, `mencius/`, `copilot/`, `mongodb/`
+    - Fixed `mongodb/commo.cc` on 2026-04-15: one remaining legacy call migrated to typed `RpcCommitRequest`.
+- [x] *high* Migrate `network.rpc` callsites. Used in `src/deptran/network.h` and related files for inter-node communication.
+  - Already migrated prior to audit. Confirmed on 2026-04-15.
+- [x] *low* Migrate `helloworld.rpc` callsites. Test/example service — minimal usage.
+  - Already migrated prior to audit. Confirmed on 2026-04-15.
 - [ ] *high* Regenerate all in-tree `.rpc` headers in typed-only mode (WITHOUT `--legacy-compat`). Run: `bin/rpcgen src/deptran/rcc_rpc.rpc`, `bin/rpcgen src/deptran/network.rpc`, `bin/rpcgen src/deptran/helloworld.rpc`. Verify no `rrr::Service` inheritance, no deprecated wrappers in output.
 - [ ] *high* Remove `--legacy-compat` flag from rpcgen. Delete the flag from `bin/rpcgen`, `src/rrr/pylib/simplerpcgen/rpcgen.py`, and `src/rrr/pylib/simplerpcgen/lang_cpp.py`. Remove `SRPC_LEGACY_COMPAT` option and `RPCGEN_COMPAT_FLAG` from `CMakeLists.txt`.
 - [ ] *medium* Remove legacy-compat test code. Delete `test/rpcgen_compat_compile_test.py` and its CTest wiring. Update `test/rpcgen_compile_test.py` to only test typed-only mode. Update `test/rpcgen_typed_structs_test.py` to remove legacy-compat assertions.
