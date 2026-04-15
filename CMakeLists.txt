@@ -1873,6 +1873,13 @@ if(BUILD_TESTS)
                 ${CMAKE_SOURCE_DIR}/test/rpcgen_typed_structs_test.py
                 --repo ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME test_rpc_rpcgen_compile
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/test/rpcgen_compile_test.py
+                --repo ${CMAKE_SOURCE_DIR}
+                --cxx ${RPC_DOCS_SNIPPET_CXX}
+    )
 
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)

@@ -335,7 +335,7 @@ compatibility wrappers for incremental rollout.
   - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: generated `*Proxy` classes now emit per-method typed async wrappers (`<method>TypedFuture`) for each non-raw method with `resolve()` returning `rusty::Result<MethodResponse, rrr::i32>`.
   - Generated typed async overload shape: `async_<method>(const MethodRequest& req, const rrr::FutureAttr& attr)` returns `rusty::Result<<method>TypedFuture, rrr::i32>`, delegating to legacy async request path while preserving request/transport error codes.
   - Scope check: completed within small-change budget (<500 non-generated LOC).
-- [ ] Keep legacy pointer-style service/proxy signatures as compatibility wrappers that delegate to typed methods.
+- [x] Keep legacy pointer-style service/proxy signatures as compatibility wrappers that delegate to typed methods.
   - Decomposed on 2026-04-12 to keep each migration leaf below ~500 LOC while preserving correctness boundaries between proxy wrappers and service dispatch behavior.
   - [x] Leaf 1 (proxy): make legacy pointer-style proxy async/sync signatures delegate to typed request/response APIs.
     - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: non-raw generated proxy `async_<method>(legacy args...)` now builds `MethodRequest` and delegates to typed async overload; non-raw legacy sync wrappers now call typed sync overloads and unpack `MethodResponse`.
@@ -376,7 +376,10 @@ compatibility wrappers for incremental rollout.
   - Extended on 2026-04-12 to assert legacy proxy wrapper delegation direction (legacy async/sync signatures now marshal typed request structs and route through typed async/sync overloads for non-raw methods).
   - Extended on 2026-04-12 to assert non-deferred service dispatch wrapper generation uses typed service calls and propagates typed `Err(i32)` as RPC error replies, while keeping deferred wrapper shape unchanged.
   - Extended on 2026-04-12 to assert deferred service dispatch wrapper typed-first behavior with explicit `Err(i32)` propagation and `ENOTSUP` fallback to legacy deferred handler path.
-- [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
+- [x] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
+  - Implemented on 2026-04-15 in `test/rpcgen_compile_test.py` + CTest wiring `test_rpc_rpcgen_compile`: for each in-tree `.rpc` source (`helloworld`, `network`, `rcc_rpc`), the test generates headers in both typed-only and legacy-compat modes via `bin/rpcgen`, then compiles each with `-fsyntax-only -std=c++23` to verify valid C++ output.
+  - Scope: 1 new test file (~130 LOC) + 7 lines CMakeLists.txt wiring.
+  - Verification note: all 6 compile checks pass (3 files × 2 modes); full RPC-focused suite passed (41/41 built tests passed, `test_rpc_rocksdb_log_storage` not built due to RocksDB dependency).
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
 - [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.
