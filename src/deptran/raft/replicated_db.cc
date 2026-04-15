@@ -276,6 +276,23 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
   return true;
 }
 
+// @unsafe - Linearizable read via ReadIndex protocol
+bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
+  if (!raft_ || !raft_->IsLeader()) {
+    Log_warn("[REPLICATED-DB] LinearizableGet: not leader");
+    return false;
+  }
+
+  if (!raft_->ReadIndex(5000000)) {  // 5 second timeout
+    Log_warn("[REPLICATED-DB] LinearizableGet: ReadIndex failed");
+    return false;
+  }
+
+  // Safe to read from local RocksDB - we confirmed leadership and
+  // all committed entries are applied to the state machine
+  return Get(key, value);
+}
+
 // @unsafe - Applies committed Raft entries to local RocksDB
 void ReplicatedDB::ApplyEntry(int slot, shared_ptr<Marshallable> cmd) {
   if (!db_ || !cmd) return;

@@ -222,6 +222,14 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testConfigWatcherCallback());     // Test 98
   }
 
+  // LinearizableGet tests (require running Raft cluster + ReplicatedDB)
+  if (!failed) {
+    Log_info("Running LinearizableGet tests");
+    failed =
+        TEST_EXPAND(testLinearizableGet())                    // Test 99
+        || TEST_EXPAND(testLinearizableGetAfterLeaderChange()); // Test 100
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -9174,6 +9182,258 @@ int RaftLabTest::testConfigWatcherCallback(void) {
   }
 
   Log_info("TEST 98: ConfigWatcher callback PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 99: testLinearizableGet
+// ============================================================================
+// Put a key via Raft, then read it via LinearizableGet on the leader.
+// Verify value matches. Verify LinearizableGet fails on a non-leader (follower).
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testLinearizableGet(void) {
+  Init2(99, "LinearizableGet on leader and follower");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  // Create ReplicatedDB on the leader
+  std::string db_path = "/tmp/raft_test_repldb_99_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // Register the apply callback on the server
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put a key-value pair (goes through Raft)
+  bool put_ok = rdb->Put("linread_key", "linread_value");
+  Assert2(put_ok, "Put should succeed on leader");
+
+  // LinearizableGet on the leader should succeed
+  std::string value;
+  bool get_ok = rdb->LinearizableGet("linread_key", &value);
+  Assert2(get_ok, "LinearizableGet should succeed on leader");
+  Assert2(value == "linread_value",
+          "LinearizableGet value should be 'linread_value', got '%s'", value.c_str());
+
+  // LinearizableGet for non-existent key should fail
+  std::string value2;
+  bool get_ok2 = rdb->LinearizableGet("nonexistent_key", &value2);
+  Assert2(!get_ok2, "LinearizableGet should return false for non-existent key");
+
+  // Create ReplicatedDB on a follower and verify LinearizableGet fails
+  siteid_t follower = static_cast<siteid_t>(-1);
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t sid = config_->getServerIdByIndex(i);
+    if (static_cast<int>(sid) != leader) {
+      follower = sid;
+      break;
+    }
+  }
+  Assert2(follower != static_cast<siteid_t>(-1), "Should have at least one follower");
+
+  auto* follower_svr = config_->GetServer(follower);
+  Assert2(follower_svr != nullptr, "Follower server is null");
+
+  std::string follower_db_path = "/tmp/raft_test_repldb_99_follower_" + std::to_string(follower);
+
+  // Clean up any leftover DB
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
+  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
+
+  // LinearizableGet on follower should fail (not leader)
+  std::string follower_value;
+  bool follower_get = follower_rdb->LinearizableGet("linread_key", &follower_value);
+  Assert2(!follower_get, "LinearizableGet should fail on follower");
+
+  // Restore and cleanup
+  config_->SetLearnerAction();
+  follower_rdb.reset();
+  rdb.reset();
+
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 99: LinearizableGet on leader and follower PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 100: testLinearizableGetAfterLeaderChange
+// ============================================================================
+// Put a key, disconnect the leader to force a new election, verify
+// LinearizableGet fails on the old leader and succeeds on the new leader.
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
+  Init2(100, "LinearizableGet after leader change");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader1 = config_->OneLeader();
+  Assert2(leader1 >= 0, "No leader elected");
+
+  auto* svr1 = config_->GetServer(leader1);
+  Assert2(svr1 != nullptr, "Leader server is null");
+
+  // Create ReplicatedDB on the leader
+  std::string db_path1 = "/tmp/raft_test_repldb_100_" + std::to_string(leader1);
+
+  // Clean up any leftover DB
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path1.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb1 = std::make_unique<ReplicatedDB>(svr1, db_path1);
+  Assert2(rdb1->IsOpen(), "ReplicatedDB should be open");
+
+  // @unsafe { RegLearnerAction }
+  svr1->RegLearnerAction([&rdb1](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb1->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put a key-value pair
+  bool put_ok = rdb1->Put("leader_change_key", "leader_change_value");
+  Assert2(put_ok, "Put should succeed on leader");
+
+  // Verify LinearizableGet works on current leader
+  std::string value1;
+  bool get_ok1 = rdb1->LinearizableGet("leader_change_key", &value1);
+  Assert2(get_ok1, "LinearizableGet should succeed on leader before disconnect");
+  Assert2(value1 == "leader_change_value",
+          "Value should be 'leader_change_value', got '%s'", value1.c_str());
+
+  // Disconnect the leader to force a new election
+  config_->Disconnect(leader1);
+
+  // Wait for new election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
+
+  int leader2 = config_->OneLeader();
+  Assert2(leader2 >= 0, "New leader should be elected after disconnect");
+  Assert2(leader2 != leader1, "New leader should be different from old leader");
+
+  // LinearizableGet on disconnected old leader should fail
+  // (it's disconnected, IsLeader() should eventually return false)
+  std::string old_value;
+  bool old_get = rdb1->LinearizableGet("leader_change_key", &old_value);
+  Assert2(!old_get, "LinearizableGet should fail on disconnected old leader");
+
+  // Create ReplicatedDB on the new leader and verify LinearizableGet works
+  auto* svr2 = config_->GetServer(leader2);
+  Assert2(svr2 != nullptr, "New leader server is null");
+
+  std::string db_path2 = "/tmp/raft_test_repldb_100_" + std::to_string(leader2);
+
+  // Clean up any leftover DB
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path2.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb2 = std::make_unique<ReplicatedDB>(svr2, db_path2);
+  Assert2(rdb2->IsOpen(), "New leader ReplicatedDB should be open");
+
+  // @unsafe { RegLearnerAction }
+  svr2->RegLearnerAction([&rdb2](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb2->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put a new key on the new leader to ensure it's applied
+  bool put_ok2 = rdb2->Put("new_leader_key", "new_leader_value");
+  Assert2(put_ok2, "Put should succeed on new leader");
+
+  // LinearizableGet on new leader should work
+  std::string new_value;
+  bool new_get = rdb2->LinearizableGet("new_leader_key", &new_value);
+  Assert2(new_get, "LinearizableGet should succeed on new leader");
+  Assert2(new_value == "new_leader_value",
+          "Value should be 'new_leader_value', got '%s'", new_value.c_str());
+
+  // Reconnect old leader and cleanup
+  config_->Reconnect(leader1);
+
+  // Restore and cleanup
+  config_->SetLearnerAction();
+  rdb1.reset();
+  rdb2.reset();
+
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path1.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path2.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 100: LinearizableGet after leader change PASSED!");
   Passed2();
 }
 

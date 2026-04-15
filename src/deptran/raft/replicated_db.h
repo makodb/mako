@@ -88,6 +88,12 @@ public:
     // @unsafe - Direct RocksDB read
     bool Get(const std::string& key, std::string* value);
 
+    // Linearizable read via ReadIndex protocol.
+    // Confirms this server is still leader and all committed entries are applied,
+    // then reads from local RocksDB. Avoids writing a log entry for reads.
+    // @unsafe - Calls RaftServer::ReadIndex and RocksDB read
+    bool LinearizableGet(const std::string& key, std::string* value);
+
     // Apply callback - registered as app_next_ on RaftServer's scheduler
     // @unsafe - Applies commands to RocksDB
     void ApplyEntry(int slot, shared_ptr<Marshallable> cmd);

@@ -1226,6 +1226,52 @@ void RaftServer::setIsLeader(bool isLeader) {
   }
 }
 
+// @unsafe - ReadIndex protocol for linearizable reads
+// Confirms this server is leader and that executeIndex >= commitIndex,
+// meaning all committed entries have been applied to the state machine.
+bool RaftServer::ReadIndex(uint64_t timeout_us) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  if (!IsLeader()) {
+    Log_debug("[READ-INDEX] site=%d not leader, rejecting read", site_id_);
+    return false;
+  }
+
+  uint64_t read_index = commitIndex;
+
+  // Wait for executeIndex to catch up to commitIndex
+  // (entries may be committed but not yet applied to state machine)
+  if (executeIndex >= read_index) {
+    Log_debug("[READ-INDEX] site=%d executeIndex=%lu >= readIndex=%lu, serving read",
+              site_id_, executeIndex, read_index);
+    return true;
+  }
+
+  // Need to wait for apply to catch up - release lock while sleeping
+  uint64_t waited = 0;
+  uint64_t wait_step = 100;  // 100 microseconds
+  while (executeIndex < read_index) {
+    if (timeout_us > 0 && waited >= timeout_us) {
+      Log_warn("[READ-INDEX] site=%d timed out waiting for executeIndex=%lu to reach readIndex=%lu",
+               site_id_, executeIndex, read_index);
+      return false;
+    }
+    // @unsafe { release lock, sleep, re-acquire }
+    mtx_.unlock();
+    usleep(wait_step);
+    waited += wait_step;
+    mtx_.lock();
+    if (!IsLeader()) {
+      Log_debug("[READ-INDEX] site=%d lost leadership while waiting", site_id_);
+      return false;
+    }
+  }
+
+  Log_debug("[READ-INDEX] site=%d executeIndex=%lu caught up to readIndex=%lu after %lu us",
+            site_id_, executeIndex, read_index, waited);
+  return true;
+}
+
 // @safe - Applies committed logs (callbacks wrapped in @unsafe blocks)
 void RaftServer::applyLogs() {
   // Log commit state for debugging

@@ -598,6 +598,11 @@ class RaftServer : public TxLogServer {
   // @safe - sets POD field
   void SetHeartbeatInterval(uint64_t micros) { heartbeat_interval_us_ = micros; }
 
+  // @unsafe - Implements ReadIndex protocol for linearizable reads.
+  // Returns true if this server is confirmed leader and safe to serve reads.
+  // Waits for executeIndex to catch up to commitIndex.
+  bool ReadIndex(uint64_t timeout_us = 5000000);
+
   // @safe - returns POD field
   uint64_t GetLogRetentionWindow() const { return log_retention_window_; }
 

@@ -334,6 +334,12 @@ class RaftLabTest {
   // Test that ConfigWatcher invokes callback on update and not when nothing changed
   int testConfigWatcherCallback(void);
 
+  // Test 99: LinearizableGet on leader succeeds; fails on follower
+  int testLinearizableGet(void);
+
+  // Test 100: LinearizableGet after leader change
+  int testLinearizableGetAfterLeaderChange(void);
+
   void wait(uint64_t microseconds);
 
 };
