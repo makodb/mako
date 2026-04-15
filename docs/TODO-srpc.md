@@ -376,6 +376,12 @@ compatibility wrappers for incremental rollout.
 
 ---
 
+## Delete dead RpcException class
+
+- [ ] *high* Delete `RpcException` from `src/rrr/rpc/errors.hpp` (lines 178-261). It inherits `std::exception` but is never thrown or caught anywhere in the codebase — only referenced in a doc comment. The `RpcError` enum and helper functions (`is_retryable_error()`, `is_connection_error()`, etc.) are the actual error handling mechanism. Remove the class, remove the doc comment example, and grep for any test references. We do not use C++ exceptions — use error codes or `Result<Err>` for recoverable errors and `assert(0)` / `verify(0)` for non-recoverable errors.
+
+---
+
 ## Replace inheritance with proxy (ngcpp/proxy) in `src/rrr/`
 
 Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/proxy) for polymorphism without vtables. NoCopy is excluded (it disables copy construction, not polymorphism). RpcException is excluded (inherits std::exception — standard library contract). Plan: `docs/dev/rpc_proxy_migration_plan.md`
