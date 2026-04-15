@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include <rocksdb/c.h>
+#include "lz4.h"
 
 namespace janus {
 
@@ -94,6 +95,9 @@ public:
     // @safe - Returns last applied Raft index
     uint64_t GetLastAppliedIndex() const { return last_applied_index_; }
 
+    // @safe - Returns whether snapshot compression is enabled
+    bool IsCompressionEnabled() const { return compression_enabled_; }
+
     // Snapshot support: create and load RocksDB checkpoints for Raft snapshots
     // @unsafe - Creates RocksDB checkpoint, serializes files into binary blob
     std::string CreateStateMachineSnapshot();
@@ -130,8 +134,13 @@ private:
     rocksdb_readoptions_t* read_options_ = nullptr;
     std::string db_path_;
     uint64_t last_applied_index_ = 0;
+    bool compression_enabled_ = true;  // LZ4 snapshot compression (env: MAKO_SNAPSHOT_COMPRESSION)
 
     static constexpr const char* META_LAST_APPLIED = "__raft_last_applied__";
+
+    // Snapshot blob header byte values
+    static constexpr uint8_t SNAPSHOT_UNCOMPRESSED = 0;
+    static constexpr uint8_t SNAPSHOT_LZ4 = 1;
 };
 
 } // namespace janus

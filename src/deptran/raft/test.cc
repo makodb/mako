@@ -190,7 +190,8 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testReplicatedDBReplication()) // Test 87
         || TEST_EXPAND(testReplicatedDBSnapshot())    // Test 88
         || TEST_EXPAND(testReplicatedDBSnapshotTransfer()) // Test 89
-        || TEST_EXPAND(testReplicatedDBWiring());     // Test 90
+        || TEST_EXPAND(testReplicatedDBWiring())      // Test 90
+        || TEST_EXPAND(testReplicatedDBSnapshotCompression()); // Test 91
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -7950,12 +7951,12 @@ int RaftLabTest::testReplicatedDBSnapshot(void) {
   Assert2(!snapshot_blob.empty(), "Snapshot blob should be non-empty");
   Log_info("TEST 88: Snapshot blob size = %zu bytes", snapshot_blob.size());
 
-  // Verify the blob has a valid header (at least 4 bytes for num_files)
-  Assert2(snapshot_blob.size() >= sizeof(uint32_t), "Blob should have at least 4 bytes");
-  uint32_t num_files = 0;
-  std::memcpy(&num_files, snapshot_blob.data(), sizeof(num_files));
-  Assert2(num_files > 0, "Snapshot should contain at least one file (got %u)", num_files);
-  Log_info("TEST 88: Snapshot contains %u files", num_files);
+  // Verify the blob has a compression header byte followed by data
+  Assert2(snapshot_blob.size() >= 1, "Blob should have at least 1 byte (compression header)");
+  uint8_t compression_byte = static_cast<uint8_t>(snapshot_blob[0]);
+  Assert2(compression_byte == 0 || compression_byte == 1,
+          "Compression header should be 0 (uncompressed) or 1 (LZ4), got %u", compression_byte);
+  Log_info("TEST 88: Snapshot compression byte = %u", compression_byte);
 
   // Load snapshot back into the same ReplicatedDB (simulates recovery)
   rdb->LoadStateMachineSnapshot(snapshot_blob);
@@ -8263,6 +8264,156 @@ int RaftLabTest::testReplicatedDBWiring(void) {
   }
 
   Log_info("TEST 90: ReplicatedDB wiring in Setup path PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 91: testReplicatedDBSnapshotCompression
+// ============================================================================
+// Create ReplicatedDB with compression enabled, put several large keys, create
+// snapshot, verify it is LZ4-compressed (check header byte), load it back,
+// verify all keys survive. Then test with compression disabled (uncompressed
+// header byte) and verify round-trip still works.
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
+  Init2(91, "ReplicatedDB snapshot compression (LZ4)");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  std::string db_path = "/tmp/raft_test_repldb_91_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  // Create ReplicatedDB (compression is enabled by default)
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+  Assert2(rdb->IsCompressionEnabled(), "Compression should be enabled by default");
+
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put several keys with large-ish values (to make compression meaningful)
+  std::string large_value(1024, 'A');  // 1KB of repeated 'A' - compresses well
+  Assert2(rdb->Put("comp_key1", large_value), "Put comp_key1 should succeed");
+  Assert2(rdb->Put("comp_key2", large_value), "Put comp_key2 should succeed");
+  Assert2(rdb->Put("comp_key3", "small_val"), "Put comp_key3 should succeed");
+
+  // Verify keys are present
+  std::string val;
+  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
+          "comp_key1 should have large_value");
+  Assert2(rdb->Get("comp_key2", &val) && val == large_value,
+          "comp_key2 should have large_value");
+  Assert2(rdb->Get("comp_key3", &val) && val == "small_val",
+          "comp_key3 should be small_val");
+
+  // --- Part 1: Compressed snapshot ---
+  std::string compressed_blob = rdb->CreateStateMachineSnapshot();
+  Assert2(!compressed_blob.empty(), "Compressed snapshot blob should be non-empty");
+
+  // Verify header byte is LZ4 (1)
+  uint8_t header = static_cast<uint8_t>(compressed_blob[0]);
+  Assert2(header == 1, "Compressed snapshot header should be 1 (LZ4), got %u", header);
+
+  // Verify the compressed blob has the original size field
+  Assert2(compressed_blob.size() >= 5,
+          "Compressed blob should have at least 5 bytes (header + orig_size)");
+  uint32_t orig_size = 0;
+  std::memcpy(&orig_size, compressed_blob.data() + 1, sizeof(orig_size));
+  Assert2(orig_size > 0, "Original size should be > 0, got %u", orig_size);
+  Log_info("TEST 91: Compressed blob: %zu bytes, original: %u bytes (ratio: %.1f%%)",
+           compressed_blob.size(), orig_size,
+           100.0 * static_cast<double>(compressed_blob.size()) / static_cast<double>(orig_size));
+
+  // Load the compressed snapshot back
+  rdb->LoadStateMachineSnapshot(compressed_blob);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after compressed snapshot load");
+
+  // Verify all keys survive
+  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
+          "comp_key1 should survive compressed snapshot round-trip");
+  Assert2(rdb->Get("comp_key2", &val) && val == large_value,
+          "comp_key2 should survive compressed snapshot round-trip");
+  Assert2(rdb->Get("comp_key3", &val) && val == "small_val",
+          "comp_key3 should survive compressed snapshot round-trip");
+
+  // Verify last_applied_index was preserved
+  Assert2(rdb->GetLastAppliedIndex() > 0,
+          "last_applied_index should be > 0 after compressed snapshot load");
+  Log_info("TEST 91: Compressed snapshot round-trip PASSED");
+
+  // --- Part 2: Build an uncompressed blob manually and load it ---
+  // Create a fresh snapshot to get the raw blob, then manually construct
+  // an uncompressed version by stripping the LZ4 header and decompressing
+  // We test backward compat by constructing an uncompressed blob
+  // First, create a new snapshot (which will be compressed)
+  std::string compressed2 = rdb->CreateStateMachineSnapshot();
+  Assert2(!compressed2.empty(), "Second compressed snapshot should be non-empty");
+  Assert2(static_cast<uint8_t>(compressed2[0]) == 1, "Should still be LZ4");
+
+  // Decompress to get raw blob, then wrap as uncompressed
+  uint32_t orig_size2 = 0;
+  std::memcpy(&orig_size2, compressed2.data() + 1, sizeof(orig_size2));
+  std::string raw_blob(orig_size2, '\0');
+  int decompressed = LZ4_decompress_safe(
+      compressed2.data() + 5, raw_blob.data(),
+      static_cast<int>(compressed2.size() - 5),
+      static_cast<int>(orig_size2));
+  Assert2(decompressed >= 0, "Manual decompression should succeed");
+
+  // Construct uncompressed blob: header(0) + raw_blob
+  std::string uncompressed_blob;
+  uncompressed_blob.resize(1 + raw_blob.size());
+  uncompressed_blob[0] = 0;  // uncompressed
+  std::memcpy(uncompressed_blob.data() + 1, raw_blob.data(), raw_blob.size());
+
+  // Load the uncompressed blob
+  rdb->LoadStateMachineSnapshot(uncompressed_blob);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open after uncompressed snapshot load");
+
+  // Verify all keys survive
+  Assert2(rdb->Get("comp_key1", &val) && val == large_value,
+          "comp_key1 should survive uncompressed snapshot round-trip");
+  Assert2(rdb->Get("comp_key2", &val) && val == large_value,
+          "comp_key2 should survive uncompressed snapshot round-trip");
+  Assert2(rdb->Get("comp_key3", &val) && val == "small_val",
+          "comp_key3 should survive uncompressed snapshot round-trip");
+  Log_info("TEST 91: Uncompressed (backward compat) snapshot round-trip PASSED");
+
+  // Restore the original learner action
+  config_->SetLearnerAction();
+
+  // Cleanup
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 91: ReplicatedDB snapshot compression PASSED!");
   Passed2();
 }
 

@@ -301,6 +301,9 @@ class RaftLabTest {
   // Test ReplicatedDB wiring in Setup() via MAKO_REPLICATED_DB=1
   int testReplicatedDBWiring(void);
 
+  // Test snapshot compression (LZ4) and backward-compatible decompression
+  int testReplicatedDBSnapshotCompression(void);
+
   void wait(uint64_t microseconds);
 
 };

@@ -94,6 +94,12 @@ Marshal& ReplicatedDBCommand::from_marshal(Marshal& m) {
 // @unsafe - Opens RocksDB, stores raw pointers
 ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
     : raft_(raft), db_path_(db_path) {
+  // @unsafe { std::getenv is not borrow-checked }
+  const char* comp_env = std::getenv("MAKO_SNAPSHOT_COMPRESSION");
+  if (comp_env && std::strcmp(comp_env, "0") == 0) {
+    compression_enabled_ = false;
+  }
+
   // @unsafe - RocksDB C API calls
   options_ = rocksdb_options_create();
   write_options_ = rocksdb_writeoptions_create();
@@ -521,30 +527,107 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
   }
   rmdir(cp_dir.c_str());
 
-  Log_info("[ReplicatedDB] Created snapshot: %u files, %zu bytes total",
+  Log_info("[ReplicatedDB] Created snapshot: %u files, %zu bytes raw",
            num_files, blob.size());
-  return blob;
+
+  // 4. Compress the blob with LZ4 if enabled
+  // @unsafe { LZ4 C API, memcpy }
+  std::string result;
+  size_t raw_size = blob.size();
+
+  if (compression_enabled_) {
+    int max_dst = LZ4_compressBound(static_cast<int>(blob.size()));
+    std::string compressed(max_dst, '\0');
+    int compressed_size = LZ4_compress(
+        blob.data(), compressed.data(), static_cast<int>(blob.size()));
+
+    if (compressed_size > 0) {
+      // Header: 1 byte (LZ4) + 4 bytes (original size) + compressed data
+      result.resize(1 + sizeof(uint32_t) + compressed_size);
+      result[0] = static_cast<char>(SNAPSHOT_LZ4);
+      uint32_t orig_size = static_cast<uint32_t>(blob.size());
+      std::memcpy(result.data() + 1, &orig_size, sizeof(orig_size));
+      std::memcpy(result.data() + 1 + sizeof(uint32_t),
+                  compressed.data(), compressed_size);
+      Log_info("[ReplicatedDB] Snapshot compressed: %zu -> %zu bytes (%.1f%%)",
+               raw_size, result.size(),
+               100.0 * static_cast<double>(result.size()) / static_cast<double>(raw_size));
+    } else {
+      // Compression failed, store uncompressed with header
+      Log_warn("[ReplicatedDB] LZ4 compression failed, storing uncompressed");
+      result.resize(1 + blob.size());
+      result[0] = static_cast<char>(SNAPSHOT_UNCOMPRESSED);
+      std::memcpy(result.data() + 1, blob.data(), blob.size());
+    }
+  } else {
+    // Compression disabled, store uncompressed with header
+    result.resize(1 + blob.size());
+    result[0] = static_cast<char>(SNAPSHOT_UNCOMPRESSED);
+    std::memcpy(result.data() + 1, blob.data(), blob.size());
+    Log_info("[ReplicatedDB] Snapshot stored uncompressed: %zu bytes", result.size());
+  }
+
+  return result;
 }
 
 // ===========================================================================
 // State Machine Snapshot: Load
 // ===========================================================================
 
-// @unsafe - Filesystem I/O, RocksDB close/reopen
+// @unsafe - Filesystem I/O, RocksDB close/reopen, LZ4 decompression
 void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   if (data.empty()) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: empty data");
     return;
   }
 
-  // 1. Parse the blob header
-  size_t offset = 0;
-  if (data.size() < sizeof(uint32_t)) {
+  // 0. Check compression header and decompress if needed
+  // @unsafe { LZ4 C API, memcpy }
+  if (data.size() < 1) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: data too small for header");
     return;
   }
+
+  uint8_t compression = static_cast<uint8_t>(data[0]);
+  std::string blob;
+
+  if (compression == SNAPSHOT_LZ4) {
+    // LZ4 compressed: header(1) + orig_size(4) + compressed_data
+    if (data.size() < 1 + sizeof(uint32_t)) {
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated LZ4 header");
+      return;
+    }
+    uint32_t orig_size = 0;
+    std::memcpy(&orig_size, data.data() + 1, sizeof(orig_size));
+    blob.resize(orig_size);
+    int decompressed = LZ4_decompress_safe(
+        data.data() + 1 + sizeof(uint32_t),
+        blob.data(),
+        static_cast<int>(data.size() - 1 - sizeof(uint32_t)),
+        static_cast<int>(orig_size));
+    if (decompressed < 0) {
+      Log_error("[ReplicatedDB] LZ4 decompression failed (code %d)", decompressed);
+      return;
+    }
+    Log_info("[ReplicatedDB] Snapshot decompressed: %zu -> %u bytes",
+             data.size(), orig_size);
+  } else if (compression == SNAPSHOT_UNCOMPRESSED) {
+    // Uncompressed: header(1) + raw blob
+    blob = data.substr(1);
+  } else {
+    Log_error("[ReplicatedDB] LoadStateMachineSnapshot: unknown compression byte 0x%02x",
+              compression);
+    return;
+  }
+
+  // 1. Parse the blob header
+  size_t offset = 0;
+  if (blob.size() < sizeof(uint32_t)) {
+    Log_error("[ReplicatedDB] LoadStateMachineSnapshot: blob too small for header");
+    return;
+  }
   uint32_t num_files = 0;
-  std::memcpy(&num_files, data.data() + offset, sizeof(num_files));
+  std::memcpy(&num_files, blob.data() + offset, sizeof(num_files));
   offset += sizeof(num_files);
 
   // Parse all file entries before modifying anything
@@ -556,34 +639,34 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   files.reserve(num_files);
 
   for (uint32_t i = 0; i < num_files; i++) {
-    if (offset + sizeof(uint32_t) > data.size()) {
+    if (offset + sizeof(uint32_t) > blob.size()) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name_len", i);
       return;
     }
     uint32_t name_len = 0;
-    std::memcpy(&name_len, data.data() + offset, sizeof(name_len));
+    std::memcpy(&name_len, blob.data() + offset, sizeof(name_len));
     offset += sizeof(name_len);
 
-    if (offset + name_len > data.size()) {
+    if (offset + name_len > blob.size()) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name", i);
       return;
     }
-    std::string name(data.data() + offset, name_len);
+    std::string name(blob.data() + offset, name_len);
     offset += name_len;
 
-    if (offset + sizeof(uint64_t) > data.size()) {
+    if (offset + sizeof(uint64_t) > blob.size()) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u size", i);
       return;
     }
     uint64_t file_size = 0;
-    std::memcpy(&file_size, data.data() + offset, sizeof(file_size));
+    std::memcpy(&file_size, blob.data() + offset, sizeof(file_size));
     offset += sizeof(file_size);
 
-    if (offset + file_size > data.size()) {
+    if (offset + file_size > blob.size()) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u data", i);
       return;
     }
-    std::string contents(data.data() + offset, file_size);
+    std::string contents(blob.data() + offset, file_size);
     offset += file_size;
 
     files.push_back({std::move(name), std::move(contents)});
