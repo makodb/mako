@@ -69,11 +69,11 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
     - [x] *medium* Implement `ConfigWatcher`. Background fiber on non-shard-0 nodes. Polls shard 0's `__version__` key periodically (default 1s). On version change, fetches full config and invokes update callback. Must handle shard-0 leader failures gracefully (retry with backoff). [26:04:14] Implemented in `config_watcher.h/.cc`. Background thread polls ConfigManager version, reloads ClusterConfig via `LoadFromConfigManager` on change. Optional `UpdateCallback`. Graceful error handling with try/catch and logging. Tests 97 (detects changes, poll count, multi-update) and 98 (callback invocation, Start/Stop background thread).
   - [x] *medium* Add linearizable reads
     - [x] *medium* Implement `ReadIndex` protocol for linearizable reads. Leader records current commitIndex, waits for a heartbeat round to confirm it's still leader, then serves the read from local RocksDB at that index. This avoids going through the Raft log for reads (no write amplification) while still providing linearizability. Add a `ReplicatedDB::LinearizableGet(key, *value)` method. [26:04:14] Implemented `RaftServer::ReadIndex()` which checks IsLeader(), records commitIndex as readIndex, waits for executeIndex to catch up with configurable timeout. `ReplicatedDB::LinearizableGet()` calls ReadIndex then reads from local RocksDB. Tests 99 (leader succeeds, follower fails, non-existent key) and 100 (leader change: old leader fails, new leader succeeds).
-  - [ ] *low* Add ReplicatedDB tests
-    - [ ] *low* Test basic Put/Get round-trip through Raft replication. Verify all replicas converge to the same state.
-    - [ ] *low* Test Delete operation. Verify key is removed on all replicas.
-    - [ ] *low* Test crash recovery: kill a replica, commit entries, restart replica, verify it catches up and has correct state.
-    - [ ] *low* Test snapshot: commit enough entries to trigger snapshot, verify lagging follower receives snapshot and has correct RocksDB state.
-    - [ ] *low* Test ConfigManager: set/get shard replicas, add/remove shards, verify version increments.
+  - [x] *low* Add ReplicatedDB tests [26:04:14]
+    - [x] *low* Test basic Put/Get round-trip through Raft replication. Verify all replicas converge to the same state. [26:04:14] Already covered by Tests 85, 87.
+    - [x] *low* Test Delete operation. Verify key is removed on all replicas. [26:04:14] Already covered by Test 86.
+    - [x] *low* Test crash recovery: kill a replica, commit entries, restart replica, verify it catches up and has correct state. [26:04:14] Implemented as Test 101 (testReplicatedDBCrashRecovery).
+    - [x] *low* Test snapshot: commit enough entries to trigger snapshot, verify lagging follower receives snapshot and has correct RocksDB state. [26:04:14] Already covered by Tests 88, 89.
+    - [x] *low* Test ConfigManager: set/get shard replicas, add/remove shards, verify version increments. [26:04:14] Already covered by Tests 92-94.
   - repeated task
     - [ ] for every day, run all Raft CI tests (`./docker_build.sh ci shard1ReplicationRaft`, `./docker_build.sh ci shard2ReplicationRaft`, `./docker_build.sh ci shard1ReplicationSimpleRaft`, `./docker_build.sh ci shard2ReplicationSimpleRaft`) and verify all pass. If any fail, investigate root cause and add a fix task above. [last done: 26:04:14, all 4 suites passed (shard1ReplicationRaft: replay_batch 8111, shard2ReplicationRaft: passed, shard1ReplicationSimpleRaft: passed, shard2ReplicationSimpleRaft: passed)]

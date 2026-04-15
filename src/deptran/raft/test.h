@@ -340,6 +340,9 @@ class RaftLabTest {
   // Test 100: LinearizableGet after leader change
   int testLinearizableGetAfterLeaderChange(void);
 
+  // Test 101: ReplicatedDB crash recovery
+  int testReplicatedDBCrashRecovery(void);
+
   void wait(uint64_t microseconds);
 
 };

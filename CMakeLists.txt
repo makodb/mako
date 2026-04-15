@@ -397,6 +397,7 @@ set(CXXFLAGS
   -MD
   -MP
   -I${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
+  -I${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include
   -Isrc
   -I${HOME}
   -DCONFIG_H=\"${CONFIG_H}\"
@@ -776,6 +777,7 @@ target_include_directories(txlog_core_obj PRIVATE
     src/mako/benchmarks
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     third-party/yaml-cpp/include
+    third-party/proxy/include
     ${Python3_INCLUDE_DIRS}
 )
 target_compile_options(txlog_core_obj PRIVATE ${BENCH_CXXFLAGS})
@@ -1021,6 +1023,7 @@ target_include_directories(mako PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
     "${HOME}"

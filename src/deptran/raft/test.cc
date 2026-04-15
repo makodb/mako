@@ -230,6 +230,13 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testLinearizableGetAfterLeaderChange()); // Test 100
   }
 
+  // ReplicatedDB crash recovery tests
+  if (!failed) {
+    Log_info("Running ReplicatedDB crash recovery tests");
+    failed =
+        TEST_EXPAND(testReplicatedDBCrashRecovery());          // Test 101
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -9434,6 +9441,204 @@ int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
   }
 
   Log_info("TEST 100: LinearizableGet after leader change PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 101: testReplicatedDBCrashRecovery
+// ============================================================================
+// Kill a follower replica, commit entries on remaining nodes, restart the killed
+// replica, verify it catches up and has correct RocksDB state.
+// @unsafe - Uses ReplicatedDB, Kill/Restart, RocksDB C API
+int RaftLabTest::testReplicatedDBCrashRecovery(void) {
+  Init2(101, "ReplicatedDB crash recovery");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* leader_svr = config_->GetServer(leader);
+  Assert2(leader_svr != nullptr, "Leader server is null");
+
+  // Find two followers: one to kill, one to verify replication
+  siteid_t follower_victim = static_cast<siteid_t>(-1);
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t sid = config_->getServerIdByIndex(i);
+    if (static_cast<int>(sid) != leader) {
+      follower_victim = sid;
+      break;
+    }
+  }
+  Assert2(follower_victim != static_cast<siteid_t>(-1), "No follower found");
+
+  auto* follower_svr = config_->GetServer(follower_victim);
+  Assert2(follower_svr != nullptr, "Follower server is null");
+
+  // Set up DB paths
+  std::string leader_db_path = "/tmp/raft_test_repldb_101_leader_" + std::to_string(leader);
+  std::string follower_db_path = "/tmp/raft_test_repldb_101_follower_" + std::to_string(follower_victim);
+
+  // Clean up previous DBs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  // Step 1: Create ReplicatedDB on leader
+  auto leader_rdb = std::make_unique<ReplicatedDB>(leader_svr, leader_db_path);
+  Assert2(leader_rdb->IsOpen(), "Leader ReplicatedDB should be open");
+
+  // @unsafe { RegLearnerAction }
+  leader_svr->RegLearnerAction([&leader_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    leader_rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Step 2: Put initial keys on leader
+  Assert2(leader_rdb->Put("k1", "v1"), "Put k1 should succeed");
+  Assert2(leader_rdb->Put("k2", "v2"), "Put k2 should succeed");
+  Log_info("TEST 101: Put k1=v1, k2=v2 on leader");
+
+  // Step 3: Wait for replication to all followers
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(1000000);  // 1 second
+
+  // Step 4: Create ReplicatedDB on follower and verify it has k1 and k2
+  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
+  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
+
+  // @unsafe { RegLearnerAction }
+  follower_svr->RegLearnerAction([&follower_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    follower_rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Wait for apply callback to fire for already-committed entries
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(500000);  // 500ms
+
+  // Verify follower has the keys via apply callback
+  bool found_k1 = false;
+  bool found_k2 = false;
+  for (int attempt = 0; attempt < 30; attempt++) {
+    std::string val;
+    found_k1 = follower_rdb->Get("k1", &val) && val == "v1";
+    found_k2 = follower_rdb->Get("k2", &val) && val == "v2";
+    if (found_k1 && found_k2) break;
+    // @unsafe { usleep }
+    usleep(100000);  // 100ms
+  }
+  Assert2(found_k1, "Follower should have k1=v1 before kill");
+  Assert2(found_k2, "Follower should have k2=v2 before kill");
+  Log_info("TEST 101: Follower verified k1, k2 before kill");
+
+  // Step 5: Kill the follower - destroy the ReplicatedDB first
+  follower_rdb.reset();
+  Log_info("TEST 101: Killing follower %d", follower_victim);
+  config_->Kill(follower_victim);
+
+  // Wait for the kill to take effect
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
+
+  // Step 6: Put more keys on leader while follower is dead
+  Assert2(leader_rdb->Put("k3", "v3"), "Put k3 should succeed while follower is dead");
+  Assert2(leader_rdb->Put("k4", "v4"), "Put k4 should succeed while follower is dead");
+  Log_info("TEST 101: Put k3=v3, k4=v4 on leader while follower is dead");
+
+  // Verify leader has all 4 keys
+  {
+    std::string val;
+    Assert2(leader_rdb->Get("k1", &val) && val == "v1", "Leader should have k1=v1");
+    Assert2(leader_rdb->Get("k2", &val) && val == "v2", "Leader should have k2=v2");
+    Assert2(leader_rdb->Get("k3", &val) && val == "v3", "Leader should have k3=v3");
+    Assert2(leader_rdb->Get("k4", &val) && val == "v4", "Leader should have k4=v4");
+  }
+  Log_info("TEST 101: Leader verified all 4 keys");
+
+  // Step 7: Restart the follower
+  Log_info("TEST 101: Restarting follower %d", follower_victim);
+  config_->Restart(follower_victim);
+
+  // Step 8: Wait for Raft to replicate missed entries to the restarted follower
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Step 9: Create a new ReplicatedDB on the restarted follower
+  // The follower's RocksDB already has k1 and k2 from before the kill.
+  // We need to set up the apply callback so new entries (k3, k4) get applied.
+  auto* restarted_svr = config_->GetServer(follower_victim);
+  Assert2(restarted_svr != nullptr, "Restarted follower server is null");
+
+  // Clean the old follower DB path - the restarted server needs a fresh DB
+  // because the old DB files are from the pre-crash state
+  // Actually, keep the old DB - it has k1 and k2, and the apply callback
+  // should be idempotent. We just need to re-open it.
+  auto restarted_rdb = std::make_unique<ReplicatedDB>(restarted_svr, follower_db_path);
+  Assert2(restarted_rdb->IsOpen(), "Restarted follower ReplicatedDB should be open");
+
+  // Register apply callback on the restarted server
+  // @unsafe { RegLearnerAction }
+  restarted_svr->RegLearnerAction([&restarted_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    restarted_rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Wait for apply callback to process the missed entries (k3, k4)
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(1000000);  // 1 second
+
+  // Step 10: Verify the restarted follower has all 4 keys
+  bool all_found = false;
+  for (int attempt = 0; attempt < 50; attempt++) {
+    std::string v1, v2, v3, v4;
+    bool has_k1 = restarted_rdb->Get("k1", &v1) && v1 == "v1";
+    bool has_k2 = restarted_rdb->Get("k2", &v2) && v2 == "v2";
+    bool has_k3 = restarted_rdb->Get("k3", &v3) && v3 == "v3";
+    bool has_k4 = restarted_rdb->Get("k4", &v4) && v4 == "v4";
+    if (has_k1 && has_k2 && has_k3 && has_k4) {
+      all_found = true;
+      break;
+    }
+    // @unsafe { usleep }
+    usleep(200000);  // 200ms
+  }
+  Assert2(all_found, "Restarted follower should have all 4 keys (k1-k4)");
+  Log_info("TEST 101: Restarted follower verified all 4 keys");
+
+  // Step 11: Verify the cluster can still commit with all 5 nodes
+  // Restore learner action first for the agreement check
+  config_->SetLearnerAction();
+
+  uint64_t agree_idx = config_->DoAgreement(10101, NSERVERS, true);
+  Assert2(agree_idx > 0, "Cluster should still commit with all 5 nodes after recovery");
+  Log_info("TEST 101: Cluster committed with all 5 nodes, index=%lu", agree_idx);
+
+  // Cleanup
+  leader_rdb.reset();
+  restarted_rdb.reset();
+
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 101: ReplicatedDB crash recovery PASSED!");
   Passed2();
 }
 
