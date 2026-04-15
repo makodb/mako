@@ -716,10 +716,10 @@ Sto::commit();                          // Atomic across both indexes
 
 ### Fundamental API Mismatches
 
-| Feature | RocksDB API | Masstree API | Why It Can't Be Shimmed |
-|---------|-------------|--------------|------------------------|
-| **Conflict model** | Pessimistic — `txn->Put()` acquires key lock, blocks concurrent writers. | Optimistic — no locks during execution, conflict detected at `commit()`. | RocksDB users expect `Put` to block on contention; Masstree users must handle `commit()` abort and retry. A shim can auto-retry, but the latency profile differs (blocking wait vs retry loop). |
-| **Merge operators** | `db->Merge(k, delta)` — user-defined atomic read-modify-write (e.g., counter increment, list append). | Not supported. Only full-value `Put`. | Cannot simulate with read-then-put (lost updates under concurrency). Would need a new `transMerge()` with Masstree-level atomic RMW. |
+| Feature | RocksDB API | Masstree API | Shim Approach |
+|---------|-------------|--------------|---------------|
+| **Conflict model** | Pessimistic — `txn->Put()` acquires key lock, blocks concurrent writers. | Optimistic — no locks during execution, conflict detected at `commit()`. | Shim can auto-retry on abort. Correct but different latency profile: RocksDB blocks, Masstree retries. Under low contention (the common case), retry rate is negligible. |
+| **Merge operators** | `db->Merge(k, delta)` — user-defined read-modify-write (e.g., counter increment, list append). Defers merge to read/compaction time for efficiency. | No native Merge. | Shim wraps as OCC transaction: `begin_txn → Get → apply_merge_fn → Put → commit`, retry on abort. Correct (OCC detects conflicting writes, no lost updates). Less efficient than RocksDB's deferred merge under high contention (each merge does a full read), but functionally equivalent. |
 
 ### Shim Architecture
 
@@ -746,7 +746,7 @@ Application (uses RocksDB API)
 
 ### Summary
 
-The core CRUD and transaction APIs map cleanly. The main shim work is the **Iterator** (stateful cursor over callback-based scans) and **Snapshots** (exposing MVCC timestamps). The two API-level mismatches that cannot be fully shimmed are the **conflict model** (pessimistic vs optimistic) and **merge operators** (no atomic RMW in Masstree).
+The core CRUD and transaction APIs map cleanly. The main shim work is the **Iterator** (stateful cursor over callback-based scans) and **Snapshots** (exposing MVCC timestamps). All RocksDB APIs can be bridged — the only semantic difference is the **conflict model** (pessimistic blocking vs optimistic retry), which is correct but has a different latency profile under contention.
 
 ---
 
