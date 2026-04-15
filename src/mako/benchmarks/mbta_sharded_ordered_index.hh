@@ -113,14 +113,8 @@ public:
   mako::Status Put(void *txn, const std::string &key, const std::string &value);
 
   /**
-   * Insert a key only if it does not already exist (RocksDB-style wrapper)
-   * Uses native transInsert path (not transPut) for correct insert OCC semantics.
-   * Duplicate detection is done via a Get check before the native insert.
-   * Note: transInsert silently succeeds for duplicates (returns bool but does not
-   * throw), so the return value from insert() is not used for dup detection.
-   * IMPORTANT: Value must be pre-encoded with mako::Encode() and must remain
-   * valid until commit_txn() is called.
-   * @return Status::OK() on success, Status::InvalidArgument if key already exists
+   * Insert a key (RocksDB-style wrapper). Delegates to put().
+   * @return Status::OK() on success
    */
   mako::Status Insert(void *txn, const std::string &key, const std::string &value);
 
@@ -335,16 +329,7 @@ inline mako::Status mbta_sharded_ordered_index::Insert(
     void *txn,
     const std::string &key,
     const std::string &value) {
-  // Check existence first: transInsert silently succeeds for duplicates
-  // (returns bool but wrapper discards it), so we detect dups via Get.
-  // The actual write uses the native insert() -> transInsert path for
-  // correct insert OCC semantics (vs transPut which would overwrite).
-  std::string unused;
-  bool found = get(txn, key, unused);
-  if (found) {
-    return mako::Status::InvalidArgument("Key already exists");
-  }
-  insert(txn, key, value);
+  put(txn, key, value);
   return mako::Status::OK();
 }
 

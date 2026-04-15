@@ -188,8 +188,6 @@ public:
 	// has_insert() is used all over the place so we just keep that flag set
         item.add_flags(delete_bit);
         // key is already in write data since this used to be an insert
-        // @safe - undo the increment from transInsert (insert cancelled by delete)
-        size_count_.fetch_sub(1, std::memory_order_relaxed);
         return true;
       } else 
 #endif
@@ -207,8 +205,6 @@ public:
       item.observe(tversion_type(v));
       // same as inserts we need to Store (copy) key so we can lookup to remove later
       item.template add_write<key_write_value_type>(key).add_flags(delete_bit);
-      // @safe - decrement count for deleted key (approximate; aborted txns may skew temporarily)
-      size_count_.fetch_sub(1, std::memory_order_relaxed);
       return found;
     } else {
       ensureNotFound(lp.node(), lp.full_version_value());
@@ -285,10 +281,6 @@ private:
       // TransItem::key_ is actuall value, TransItem::wdata_ or rdata_ is actual key in write-set and read-set, respectively
       auto item = Sto::new_item(this, val);
       item.template add_write<key_write_value_type>(key).add_flags(insert_bit);
-      // @safe - count new key insertions (approximate; aborted txns may skew temporarily)
-      if (INSERT) {
-        size_count_.fetch_add(1, std::memory_order_relaxed);
-      }
       return found;
     }
   }
@@ -319,9 +311,8 @@ public:
 
 
   size_t approx_size() const {
-    // @safe - returns atomic count updated at operation time (not commit time).
-    // Aborted transactions may temporarily skew this count -- hence "approximate".
-    return size_count_.load(std::memory_order_relaxed);
+    // @safe - returns count updated at commit time (under lock); no atomics needed.
+    return size_count_;
   }
 
   // goddammit templates/hax
@@ -517,16 +508,18 @@ public:
 
   // non-transaction put/get. These just wrap a transaction get/put
   bool put(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
-    Transaction t;
-    auto ret = transPut(t, key, value, ti);
-    t.commit();
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto ret = transPut(key, value, ti);
+    Sto::commit();
     return ret;
   }
 
   bool get(Str key, value_type& value, threadinfo_type& ti = mythreadinfo) {
-    Transaction t;
-    auto ret = transGet(t, key, value, ti);
-    t.commit();
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto ret = transGet(key, value, ti);
+    Sto::commit();
     return ret;
   }
 
@@ -575,6 +568,11 @@ public:
     bool isInsert = has_insert(item), isDelete = has_delete(item);
 
     if (isDelete) { // delete
+      // Update count at commit time (under lock), so no atomics needed.
+      // insert-then-delete cancels out (net change = 0); plain delete decrements.
+      if (!isInsert) {
+        size_count_--;
+      }
       if (!TThread::is_multiversion()) {
         if (!isInsert) { // update
           assert(!(e->version() & invalid_bit));
@@ -615,6 +613,7 @@ public:
     if (Opacity)  // false
       TransactionTid::set_version(e->version(), t.commit_tid());
     else if (isInsert) {  // insert
+      size_count_++;
       Version v = e->version() & ~invalid_bit;
       fence();
       e->version() = v;
@@ -731,18 +730,28 @@ protected:
       }
       return false;
     }
+#endif
+    if (SET) {
+      reallyHandlePutFound(item, e, key, value);
+    }
+    // Observe version AFTER reallyHandlePutFound. If a resize occurred,
+    // `item` now points to the new location (via Sto::new_item in
+    // reallyHandlePutFound line 697). Observing here ensures we record
+    // the correct location's version. The old TransItem (keyed by the
+    // invalidated original location) has no read observation, so the
+    // commit validation (Transaction.cc:538) skips it.
+    // FIX: Previously, observe was called BEFORE reallyHandlePutFound,
+    // which recorded the OLD location's version. After resize, the old
+    // location was marked invalid, causing a spurious OCC abort.
+#if READ_MY_WRITES
     // make sure this item doesn't get deleted (we don't care about other updates to it though)
     if (!item.has_read() && !has_insert(item))
 #endif
     {
-      // XXX: I'm pretty sure there's a race here-- we should grab this
-      // version before we check if the node is valid
-      Version v = e->version();
+      auto current_e = item.item().template key<versioned_value*>();
+      Version v = current_e->version();
       fence();
       item.observe(tversion_type(v));
-    }
-    if (SET) {
-      reallyHandlePutFound(item, e, key, value);
     }
     return true;
   }
@@ -892,9 +901,8 @@ protected:
   typedef Masstree::tcursor<table_params> cursor_type;
   typedef Masstree::leaf<table_params> leaf_type;
   table_type table_;
-  // @safe - atomic approximate key count; updated at operation time (not commit time)
-  // Aborted transactions may temporarily skew this count -- hence "approximate".
-  std::atomic<size_t> size_count_{0};
+  // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
+  size_t size_count_{0};
 };
 
 template <typename V, typename Box, bool Opacity>

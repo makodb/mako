@@ -148,12 +148,8 @@ public:
         return s;
     }
 
-    // @safe - Insert implemented via Get + Put
+    // @safe - Insert delegates to Put
     Status Insert(void* txn, const std::string& key, const std::string& value) override {
-        std::string unused;
-        Status s = Get(txn, key, unused);
-        if (s.ok()) return Status::InvalidArgument("Key already exists");
-        if (!s.IsNotFound()) return s;
         return Put(txn, key, value);
     }
 
@@ -281,17 +277,11 @@ public:
     void InitThread() override {}
 
     /**
-     * List all table names tracked by this database instance (implements IDatabase)
+     * Not applicable for remote tables: tables are identified by table_id,
+     * not by name, and are created on demand. Returns empty list.
      */
-    // @safe - Read-only iteration of tables_ map under mutex
     std::vector<std::string> ListTables() override {
-        std::lock_guard<std::mutex> lock(tables_mutex_);
-        std::vector<std::string> names;
-        names.reserve(tables_.size());
-        for (const auto& kv : tables_) {
-            names.push_back(kv.first);
-        }
-        return names;
+        return {};
     }
 
     // Internal: Send Put/Get/Delete request to server (used by RemoteTable)

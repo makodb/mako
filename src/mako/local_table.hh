@@ -81,21 +81,25 @@ public:
         return name_;
     }
 
-    // @safe - Bridges scan_callback::invoke to std::function
+    // @safe - Bridges scan_callback::invoke to std::function; tracks early termination
     class ScanAdapter : public abstract_ordered_index::scan_callback {
     public:
         explicit ScanAdapter(std::function<bool(const std::string&, const std::string&)> fn)
-            : fn_(std::move(fn)) {}
+            : fn_(std::move(fn)), stopped_(false) {}
         // @safe - Converts raw key pointer to std::string then calls user function
         bool invoke(const char* keyp, size_t keylen, const std::string& value) override {
             std::string key(keyp, keylen);
-            return fn_(key, value);
+            bool cont = fn_(key, value);
+            if (!cont) stopped_ = true;
+            return cont;
         }
+        bool stopped() const { return stopped_; }
     private:
         std::function<bool(const std::string&, const std::string&)> fn_;
+        bool stopped_;
     };
 
-    // @safe - Delegates to underlying index scan
+    // @safe - Scans all shards via shard_for_index iteration with early termination
     Status Scan(void* txn,
                 const std::string& start_key,
                 const std::string* end_key,
@@ -106,7 +110,11 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            index_->scan(txn, start_key, end_key, adapter);
+            for (size_t i = 0; !adapter.stopped(); i++) {
+                abstract_ordered_index* shard = index_->shard_for_index(i);
+                if (!shard) break;
+                shard->scan(txn, start_key, end_key, adapter);
+            }
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("Transaction aborted");
