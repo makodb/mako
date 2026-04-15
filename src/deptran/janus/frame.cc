@@ -42,7 +42,7 @@ TxLogServer *JanusFrame::CreateScheduler() {
   return sched;
 }
 
-vector<rusty::Box<rrr::Service>>
+vector<rrr::ServiceProxy>
 JanusFrame::CreateRpcServices(uint32_t site_id,
                               TxLogServer *sched,
                               rusty::Arc<rrr::PollThread> poll_thread_worker) {

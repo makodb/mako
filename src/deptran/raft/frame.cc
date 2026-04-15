@@ -227,16 +227,16 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
 }
 
 // @safe - external calls marked @external [safe]
-vector<rusty::Box<rrr::Service>>
+vector<rrr::ServiceProxy>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
                                    rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<rusty::Box<Service>>();
+  auto result = std::vector<rrr::ServiceProxy>();
   switch (config->replica_proto_) {
     // Fix 2: Pass poll_thread_worker to RaftServiceImpl so it can be
     // retrieved during Restart() to ensure inbound/outbound use same thread
-    case MODE_RAFT:result.push_back(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone()));
+    case MODE_RAFT:result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone())));
     default:break;
   }
   return result;

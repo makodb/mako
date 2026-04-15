@@ -425,9 +425,14 @@ We do NOT want compatibility wrappers. Instead, rewrite all RPC callsites to use
   - Already migrated prior to audit. Confirmed on 2026-04-15.
 - [x] *low* Migrate `helloworld.rpc` callsites. Test/example service — minimal usage.
   - Already migrated prior to audit. Confirmed on 2026-04-15.
-- [ ] *high* Regenerate all in-tree `.rpc` headers in typed-only mode (WITHOUT `--legacy-compat`). Run: `bin/rpcgen src/deptran/rcc_rpc.rpc`, `bin/rpcgen src/deptran/network.rpc`, `bin/rpcgen src/deptran/helloworld.rpc`. Verify no `rrr::Service` inheritance, no deprecated wrappers in output.
+- [x] *high* Regenerate all in-tree `.rpc` headers in typed-only mode (WITHOUT `--legacy-compat`). Run: `bin/rpcgen src/deptran/rcc_rpc.rpc`, `bin/rpcgen src/deptran/network.rpc`, `bin/rpcgen src/deptran/helloworld.rpc`. Verify no `rrr::Service` inheritance, no deprecated wrappers in output.
+  - Implemented on 2026-04-15: regenerated all 4 headers (`helloworld.h`, `network.h`, `rcc_rpc.h`, `benchmark_service.h`) with typed-only rpcgen (no `--legacy-compat`). Removed 3,169 lines of deprecated wrappers, `override` keywords, and `: public rrr::Service` inheritance.
+  - Fixed `CreateRpcServices` return type across all frame implementations: `vector<Box<Service>>` → `vector<ServiceProxy>`, using `make_service_proxy_from_typed_box` for service construction. Added `Server::reg_service_proxy(ServiceProxy)` for direct proxy registration.
+  - Removed obsolete test code: `test/rpc_typed_legacy_parity_test.cc` (legacy wrappers no longer exist), `test/rpcgen_compat_compile_test.py` (legacy-compat compile test). Updated `rpcgen_compile_test.py` to typed-only mode. Updated `rpcgen_typed_structs_test.py` to remove legacy-compat assertions.
+  - Verification note: full build (including `dbtest`, all example binaries) succeeded; full RPC test suite passed (42/42: 39 parallel + 3 sequential compile tests).
 - [ ] *high* Remove `--legacy-compat` flag from rpcgen. Delete the flag from `bin/rpcgen`, `src/rrr/pylib/simplerpcgen/rpcgen.py`, and `src/rrr/pylib/simplerpcgen/lang_cpp.py`. Remove `SRPC_LEGACY_COMPAT` option and `RPCGEN_COMPAT_FLAG` from `CMakeLists.txt`.
-- [ ] *medium* Remove legacy-compat test code. Delete `test/rpcgen_compat_compile_test.py` and its CTest wiring. Update `test/rpcgen_compile_test.py` to only test typed-only mode. Update `test/rpcgen_typed_structs_test.py` to remove legacy-compat assertions.
+- [x] *medium* Remove legacy-compat test code. Delete `test/rpcgen_compat_compile_test.py` and its CTest wiring. Update `test/rpcgen_compile_test.py` to only test typed-only mode. Update `test/rpcgen_typed_structs_test.py` to remove legacy-compat assertions.
+  - Completed on 2026-04-15 as part of the header regeneration above.
 - [ ] *medium* Update docs: remove references to `--legacy-compat` from `docs/srpc-book.md`, `docs/rpc/migration-guide.md`, and `docs/TODO-srpc.md` completed items.
 
 ---

@@ -638,26 +638,6 @@ def main() -> int:
         if generated.count("struct RpcPingRequest {") != 2:
             raise AssertionError("expected per-service RpcPingRequest structs (one in each service)")
 
-    print("rpcgen typed-only mode verified")
-
-    # --- Test 2: Legacy-compat mode (--legacy-compat) ---
-    with tempfile.TemporaryDirectory() as tmpdir:
-        rpc_path = Path(tmpdir) / "typed_structs_fixture.rpc"
-        rpc_path.write_text(RPC_FIXTURE, encoding="utf-8")
-
-        run_rpcgen(repo_root, rpc_path, legacy_compat=True)
-        header_path = rpc_path.with_suffix(".h")
-        if not header_path.exists():
-            raise AssertionError(f"missing generated header (legacy-compat): {header_path}")
-
-        generated = header_path.read_text(encoding="utf-8")
-        verify_legacy_compat_service(generated)
-        verify_legacy_compat_proxy(generated)
-
-        if generated.count("struct RpcPingRequest {") != 2:
-            raise AssertionError("expected per-service RpcPingRequest structs in legacy-compat mode")
-
-    print("rpcgen legacy-compat mode verified")
     print("rpcgen typed request/response struct emission verified")
     return 0
 

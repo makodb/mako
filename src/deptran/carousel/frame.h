@@ -25,7 +25,7 @@ class FrameCarousel : public Frame {
   shared_ptr<Tx> CreateTx(epoch_t epoch, txnid_t tid,
                           bool ro, TxLogServer *mgr) override;
 
-  vector<rusty::Box<rrr::Service>> CreateRpcServices(uint32_t site_id,
+  vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
                                            rusty::Arc<rrr::PollThread> poll_thread_worker) override;  
 };

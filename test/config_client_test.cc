@@ -71,7 +71,7 @@ protected:
 
         server_ = new rrr::Server(poll_thread_.as_ref().unwrap().clone());
         // Note: service_ will be owned by the Box after this call
-        server_->reg_service(rusty::Box<rrr::Service>(service_));
+        server_->reg_service(rusty::Box<ConfigServiceImpl>(service_));
 
         // Start server
         int result = server_->start(server_addr_.c_str());

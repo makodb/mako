@@ -116,7 +116,7 @@ def main() -> int:
             extra_includes.append(repo_root / "src/deptran")
             per_file_timeout = 300.0  # rcc_rpc.h is ~14K lines
 
-        for mode_name, legacy_compat in [("typed-only", False), ("legacy-compat", True)]:
+        for mode_name, legacy_compat in [("typed-only", False)]:
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_rpc = Path(tmpdir) / rpc_src.name
                 tmp_rpc.write_text(rpc_src.read_text())

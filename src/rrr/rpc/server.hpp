@@ -668,6 +668,12 @@ public:
         }
     }
 
+    void reg_service_proxy(ServiceProxy proxy) {
+        pending_services_.push(std::move(proxy));
+        size_t svc_index = pending_services_.size() - 1;
+        pending_services_[svc_index]->__reg_to__(*this, svc_index);
+    }
+
     // @safe - Registers typed service implementation without inheriting Service.
     // Must be called before start().
     template <ServiceLike T>

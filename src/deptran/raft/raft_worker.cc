@@ -148,7 +148,7 @@ void RaftWorker::SetupService() {
                                                    rep_sched_,
                                                    poll_worker);
     for (auto& svc : services) {
-      rpc_server_->reg_service(std::move(svc));
+      rpc_server_->reg_service_proxy(std::move(svc));
     }
   }
 

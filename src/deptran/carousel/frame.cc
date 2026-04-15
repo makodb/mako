@@ -52,7 +52,7 @@ shared_ptr<Tx> FrameCarousel::CreateTx(epoch_t epoch, txnid_t tid,
   return sp_tx;
 }
 
-vector<rusty::Box<rrr::Service>>
+vector<rrr::ServiceProxy>
 FrameCarousel::CreateRpcServices(uint32_t site_id,
                               TxLogServer *sched,
                               rusty::Arc<rrr::PollThread> poll_thread_worker) {

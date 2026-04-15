@@ -352,11 +352,11 @@ Workload * Frame::CreateTxGenerator() {
   return gen;
 }
 
-vector<rusty::Box<rrr::Service>> Frame::CreateRpcServices(uint32_t site_id,
+vector<rrr::ServiceProxy> Frame::CreateRpcServices(uint32_t site_id,
                                                 TxLogServer *dtxn_sched,
                                                 rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<rusty::Box<Service>>();
+  auto result = std::vector<rrr::ServiceProxy>();
   switch(mode_) {
     case MODE_MDCC:
     case MODE_2PL:
@@ -368,7 +368,7 @@ vector<rusty::Box<rrr::Service>> Frame::CreateRpcServices(uint32_t site_id,
     case MODE_RCC:
     case MODE_NOTX:
     default:
-      result.push_back(rusty::make_box<ClassicServiceImpl>(dtxn_sched, poll_thread_worker));
+      result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<ClassicServiceImpl>(dtxn_sched, poll_thread_worker)));
       break;
   }
   return result;
