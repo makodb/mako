@@ -642,26 +642,11 @@ struct MultiVersionValue {
 
 ---
 
-## 13. RocksDB Compatibility Analysis
+## 13. RocksDB API Compatibility Analysis
 
-This section compares **Masstree as a single-node storage engine** with RocksDB's single-node API. Distributed concerns (sharding, replication, speculative durability) are covered in [mako-book.md](mako-book.md).
-
-### Storage Model Comparison
-
-| Aspect | Masstree | RocksDB |
-|--------|----------|---------|
-| **Structure** | Trie of B+-trees (in-memory) | LSM-tree (disk-based with memtable) |
-| **Primary medium** | RAM | SSD/HDD with RAM cache |
-| **Read path** | Tree traversal, lock-free | Memtable → L0 → L1 → ... LN |
-| **Write path** | In-place update with version counter | Append to WAL + memtable, flush to SST |
-| **Concurrency** | Optimistic (version-based, lock-free reads) | Pessimistic (key-level locks in TransactionDB) |
-| **Key ordering** | Sorted (via B+-tree + trie layers) | Sorted (via LSM-tree) |
-| **Persistence** | None (in-memory only) | Built-in (WAL + SST files) |
-| **Range queries** | `scan()` with callback | `Iterator` with `Seek/Next/Prev` |
+This section compares the **API surface** of Masstree (via MassTrans) with RocksDB's API, focusing on what a compatibility shim needs to bridge. Storage-layer differences (in-memory vs LSM, persistence, compaction) and distributed concerns (sharding, replication) are out of scope here — see [mako-book.md](mako-book.md) for those.
 
 ### API Mapping: What Maps Directly
-
-These Masstree operations have direct RocksDB equivalents:
 
 | RocksDB | Masstree (via MassTrans) | Notes |
 |---------|------------------------|-------|
@@ -669,7 +654,7 @@ These Masstree operations have direct RocksDB equivalents:
 | `db->Get(ro, k, &v)` | `transGet(k, v)` | Lock-free read in Masstree |
 | `db->Delete(wo, k)` | `transDelete(k)` | Marks as removed, RCU-deferred |
 | `txn->Put/Get/Delete` | `transPut/Get/Delete` | Both support transactions |
-| `db->Write(WriteBatch)` | Multiple `transPut/Delete` in one txn | Masstree txn = atomic batch |
+| `db->Write(WriteBatch)` | Multiple ops in one Masstree txn | Masstree txn = atomic batch |
 
 ### Bridgeable Gaps (shim layer)
 
@@ -682,20 +667,17 @@ These Masstree operations have direct RocksDB equivalents:
 | **Slice type** | `Slice(data, len)` — zero-copy, binary-safe | Masstree uses `Str` (pointer + length) internally | `Str` is already a slice type. Shim maps `Slice` ↔ `Str`. Nearly zero-overhead. |
 | **Column Families** | Logical namespaces within one DB | Separate Masstree instances via `open_index()` | Map each CF to a separate Masstree. CF creation = `open_index()`. |
 | **Snapshots** | `db->GetSnapshot()` → point-in-time reads | MVCC version chains exist but not exposed as snapshots | Record current MVCC timestamp. Reads traverse version chain to find visible version. Requires exposing MVCC traversal. ~150 LOC. |
-| **Properties/Stats** | `db->GetProperty("rocksdb.stats", &s)` | No stats API | Return stubs. Add real stats (tree size, node count) incrementally. |
+| **Properties/Stats** | `db->GetProperty("rocksdb.stats", &s)` | No stats API | Return stubs initially. Add real stats (tree size, node count, txn abort rate) incrementally. |
+| **ReadOptions / WriteOptions** | Per-operation options (`sync`, `snapshot`, `verify_checksums`, etc.) | No per-op options | Accept the structs, use `snapshot` field if snapshots are implemented, ignore the rest. |
 
-### Fundamental Mismatches
+### Fundamental API Mismatches
 
-| Feature | RocksDB | Masstree | Why It Can't Be Shimmed |
-|---------|---------|----------|------------------------|
-| **Persistence** | Built-in (WAL + SST). Data survives crash. | In-memory only. Data lost on crash. | Masstree has no disk format. Persistence must be added externally (e.g., Raft log replay, RocksDB backing). This is the largest gap. |
-| **Conflict model** | Pessimistic — `Put` acquires key lock, blocks concurrent writers. | Optimistic — no locks during execution, conflict detected at `commit()`. | RocksDB users expect `Put` to block; Masstree users must handle commit failures and retry. A shim can auto-retry, but latency profile differs. |
-| **Merge operators** | `db->Merge(k, delta)` — user-defined atomic read-modify-write. | Not supported. Only full-value `Put`. | Cannot simulate with `Put` (lost updates under concurrency). Would need a new `transMerge()` with Masstree-level atomic RMW support. |
-| **Compaction** | `CompactRange()`, `CompactFiles()`, compaction filters, tiered storage. | N/A — in-memory tree, no LSM structure. | Meaningless for Masstree. Shim accepts calls as no-ops. |
-| **Write-ahead log** | Built-in WAL for crash recovery. Configurable (`disableWAL`, `sync`). | None. | Must be provided externally. In Mako, the Raft log serves this purpose. |
-| **Block cache / compression** | Configurable block cache, compression (Snappy, LZ4, ZSTD). | All data uncompressed in RAM. | Not applicable for in-memory store. Memory usage = data size. |
+| Feature | RocksDB API | Masstree API | Why It Can't Be Shimmed |
+|---------|-------------|--------------|------------------------|
+| **Conflict model** | Pessimistic — `txn->Put()` acquires key lock, blocks concurrent writers. | Optimistic — no locks during execution, conflict detected at `commit()`. | RocksDB users expect `Put` to block on contention; Masstree users must handle `commit()` abort and retry. A shim can auto-retry, but the latency profile differs (blocking wait vs retry loop). |
+| **Merge operators** | `db->Merge(k, delta)` — user-defined atomic read-modify-write (e.g., counter increment, list append). | Not supported. Only full-value `Put`. | Cannot simulate with read-then-put (lost updates under concurrency). Would need a new `transMerge()` with Masstree-level atomic RMW. |
 
-### Shim Architecture (Single-Node)
+### Shim Architecture
 
 ```
 Application (uses RocksDB API)
@@ -720,12 +702,7 @@ Application (uses RocksDB API)
 
 ### Summary
 
-Masstree can serve as a **high-performance in-memory replacement** for RocksDB's read/write/scan operations. The shim layer is straightforward for the core API. The two fundamental gaps are:
-
-1. **No persistence** — Masstree is purely in-memory. Crash recovery must come from an external source (Raft log, WAL, checkpointing).
-2. **Optimistic vs pessimistic concurrency** — Different conflict semantics. Auto-retry in the shim is possible but changes the latency profile.
-
-For the distributed multi-shard mapping (how Mako's sharding, replication, and speculative execution layer maps to RocksDB's TransactionDB interface), see [mako-book.md](mako-book.md).
+The core CRUD and transaction APIs map cleanly. The main shim work is the **Iterator** (stateful cursor over callback-based scans) and **Snapshots** (exposing MVCC timestamps). The two API-level mismatches that cannot be fully shimmed are the **conflict model** (pessimistic vs optimistic) and **merge operators** (no atomic RMW in Masstree).
 
 ---
 
