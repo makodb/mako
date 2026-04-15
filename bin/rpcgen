@@ -10,8 +10,6 @@ def main():
     argparser = argparse.ArgumentParser(prog=sys.argv[0])
     argparser.add_argument("--cpp", action="store_true", help="generate C++ stub files")
     argparser.add_argument("--python", action="store_true", help="generate Python stub files")
-    argparser.add_argument("--legacy-compat", action="store_true",
-                           help="emit legacy pointer-style proxy/service wrappers alongside typed APIs")
     argparser.add_argument("rpc_file")
     opt = argparser.parse_args()
     languages = set()
@@ -21,7 +19,7 @@ def main():
         languages.add("python")
     if len(languages) == 0:
         languages.add("cpp")
-    rpcgen(opt.rpc_file, languages, legacy_compat=opt.legacy_compat)
+    rpcgen(opt.rpc_file, languages)
 
 if __name__ == "__main__":
     main()

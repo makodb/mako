@@ -334,7 +334,7 @@ def generate_rpc_table(rpc_source, existing_codes=None):
             used_codes.add(rpc_code)
     return rpc_table
 
-def rpcgen(rpc_fpath, languages, legacy_compat=False):
+def rpcgen(rpc_fpath, languages):
     with open(rpc_fpath) as f:
         rpc_src = f.read()
 
@@ -364,8 +364,7 @@ def rpcgen(rpc_fpath, languages, legacy_compat=False):
 
     if "cpp" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".h"
-        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer,
-                            legacy_compat=legacy_compat)
+        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer)
 
     if "python" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".py"

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Compile-test generated RPC headers in both typed-only and legacy-compat modes.
+"""Compile-test generated RPC headers in typed-only mode.
 
 For each in-tree .rpc source, this test:
-  1. Runs rpcgen to produce a header (typed-only, then legacy-compat).
+  1. Runs rpcgen to produce a header.
   2. Wraps the header in a minimal translation unit.
   3. Compiles with -fsyntax-only to verify the output is valid C++.
 
@@ -24,11 +24,8 @@ RPC_SOURCES = [
 ]
 
 
-def run_rpcgen(repo_root: Path, rpc_path: Path, legacy_compat: bool) -> Path:
-    cmd = [str(repo_root / "bin/rpcgen"), "--cpp"]
-    if legacy_compat:
-        cmd.append("--legacy-compat")
-    cmd.append(str(rpc_path))
+def run_rpcgen(repo_root: Path, rpc_path: Path) -> Path:
+    cmd = [str(repo_root / "bin/rpcgen"), "--cpp", str(rpc_path)]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
     if proc.returncode != 0:
         raise RuntimeError(
@@ -116,29 +113,26 @@ def main() -> int:
             extra_includes.append(repo_root / "src/deptran")
             per_file_timeout = 300.0  # rcc_rpc.h is ~14K lines
 
-        for mode_name, legacy_compat in [("typed-only", False)]:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmp_rpc = Path(tmpdir) / rpc_src.name
-                tmp_rpc.write_text(rpc_src.read_text())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_rpc = Path(tmpdir) / rpc_src.name
+            tmp_rpc.write_text(rpc_src.read_text())
 
-                header = run_rpcgen(repo_root, tmp_rpc, legacy_compat)
-                if not header.exists():
-                    failures.append(
-                        f"{rpc_rel} [{mode_name}]: header not generated"
-                    )
-                    continue
+            header = run_rpcgen(repo_root, tmp_rpc)
+            if not header.exists():
+                failures.append(f"{rpc_rel}: header not generated")
+                continue
 
-                ok, err = compile_header(
-                    cxx, repo_root, header, extra_includes,
-                    timeout_sec=per_file_timeout,
-                )
-                tested += 1
-                label = f"{rpc_rel} [{mode_name}]"
-                if ok:
-                    print(f"  PASS: {label}")
-                else:
-                    failures.append(f"{label}:\n{err}")
-                    print(f"  FAIL: {label}")
+            ok, err = compile_header(
+                cxx, repo_root, header, extra_includes,
+                timeout_sec=per_file_timeout,
+            )
+            tested += 1
+            label = rpc_rel
+            if ok:
+                print(f"  PASS: {label}")
+            else:
+                failures.append(f"{label}:\n{err}")
+                print(f"  FAIL: {label}")
 
     if tested == 0:
         print("ERROR: no headers were tested")

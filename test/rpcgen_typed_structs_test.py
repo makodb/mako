@@ -24,11 +24,8 @@ service Beta {
 """
 
 
-def run_rpcgen(repo_root: Path, rpc_path: Path, legacy_compat: bool = False) -> None:
-    cmd = [str(repo_root / "bin/rpcgen"), "--cpp"]
-    if legacy_compat:
-        cmd.append("--legacy-compat")
-    cmd.append(str(rpc_path))
+def run_rpcgen(repo_root: Path, rpc_path: Path) -> None:
+    cmd = [str(repo_root / "bin/rpcgen"), "--cpp", str(rpc_path)]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
     if proc.returncode != 0:
         raise RuntimeError(
@@ -524,70 +521,6 @@ def verify_beta_proxy_block(block: str) -> None:
         raise AssertionError("legacy beta proxy sync wrappers should not be generated")
 
 
-def verify_legacy_compat_service(generated: str) -> None:
-    """Verify legacy-compat mode adds : public rrr::Service and override keywords."""
-    if "class AlphaService : public rrr::Service {" not in generated:
-        raise AssertionError("legacy-compat mode must emit ': public rrr::Service' on service class")
-    if "class BetaService : public rrr::Service {" not in generated:
-        raise AssertionError("legacy-compat mode must emit ': public rrr::Service' on Beta service")
-
-    alpha_block = section_between(
-        generated,
-        "class AlphaService : public rrr::Service {",
-        "class AlphaProxy {",
-    )
-    assert_contains(alpha_block, "__reg_to__(rrr::Server& svr, size_t svc_index) override {")
-    assert_contains(alpha_block, "__dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {")
-
-    # Typed service signatures must still be present
-    assert_contains(alpha_block, "virtual rusty::Result<RpcPingResponse, rrr::i32> ping(const RpcPingRequest& req);")
-
-
-def verify_legacy_compat_proxy(generated: str) -> None:
-    """Verify legacy-compat mode generates deprecated pointer-style proxy wrappers."""
-    alpha_proxy = section_between(
-        generated,
-        "class AlphaProxy {",
-        "class BetaService",
-    )
-    beta_proxy = section_between(
-        generated,
-        "class BetaProxy {",
-        "} // namespace typed_structs_fixture",
-    )
-
-    # Typed APIs still present
-    assert_contains(alpha_proxy, "rusty::Result<RpcPingResponse, rrr::i32> ping(const RpcPingRequest& req)")
-    assert_contains(alpha_proxy, "async_ping(const RpcPingRequest& req")
-
-    # Legacy deprecated async wrapper
-    assert_contains(alpha_proxy, '[[deprecated("use typed async_ping(const RpcPingRequest&) instead")]]')
-    assert_contains(alpha_proxy, "rrr::FutureResult async_ping(const rrr::i32& id, const rrr::FutureAttr&")
-    # Legacy deprecated sync wrapper with output pointer
-    assert_contains(alpha_proxy, '[[deprecated("use typed ping(const RpcPingRequest&) instead")]]')
-    assert_contains(alpha_proxy, "rrr::i32 ping(const rrr::i32& id, std::string* msg)")
-
-    # Multi-arg method legacy wrappers
-    assert_contains(alpha_proxy, "rrr::i32 multi(const rrr::i32& left, const std::string& right, rrr::i64* sum, rrr::i8* ok)")
-
-    # Beta proxy also gets legacy wrappers
-    assert_contains(beta_proxy, "rrr::i32 ping(const rrr::i32& other_id, std::string* echoed)")
-
-    # Raw methods should NOT get legacy wrappers (they already use pointer style)
-    if '[[deprecated' in section_between(alpha_proxy, "passthrough", "};") if "passthrough" in alpha_proxy else "":
-        raise AssertionError("raw methods should not get deprecated legacy wrappers")
-
-
-def verify_typed_only_no_legacy(generated: str) -> None:
-    """Verify typed-only mode does NOT emit legacy artifacts."""
-    if ": public rrr::Service" in generated:
-        raise AssertionError("typed-only mode must not emit ': public rrr::Service'")
-    if "override {" in generated:
-        raise AssertionError("typed-only mode must not emit 'override' keyword")
-    if "[[deprecated" in generated:
-        raise AssertionError("typed-only mode must not emit deprecated legacy wrappers")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate rpcgen typed struct emission.")
     parser.add_argument("--repo", required=True, help="Repository root path")
@@ -597,12 +530,11 @@ def main() -> int:
     if not repo_root.exists():
         raise RuntimeError(f"repo path does not exist: {repo_root}")
 
-    # --- Test 1: Typed-only mode (default, no --legacy-compat) ---
     with tempfile.TemporaryDirectory() as tmpdir:
         rpc_path = Path(tmpdir) / "typed_structs_fixture.rpc"
         rpc_path.write_text(RPC_FIXTURE, encoding="utf-8")
 
-        run_rpcgen(repo_root, rpc_path, legacy_compat=False)
+        run_rpcgen(repo_root, rpc_path)
         header_path = rpc_path.with_suffix(".h")
         if not header_path.exists():
             raise AssertionError(f"missing generated header: {header_path}")
@@ -633,7 +565,6 @@ def main() -> int:
         verify_beta_service_block(beta_block)
         verify_alpha_proxy_block(alpha_proxy_block)
         verify_beta_proxy_block(beta_proxy_block)
-        verify_typed_only_no_legacy(generated)
 
         if generated.count("struct RpcPingRequest {") != 2:
             raise AssertionError("expected per-service RpcPingRequest structs (one in each service)")

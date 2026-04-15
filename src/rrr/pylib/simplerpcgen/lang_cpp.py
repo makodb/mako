@@ -189,64 +189,8 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
         f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
     f.writeln("}")
 
-def emit_legacy_proxy_wrappers(service, func, f):
-    """Generate legacy pointer-style proxy wrappers that delegate to typed APIs."""
-    in_fields = typed_struct_fields(func.input, "in")
-    out_fields = typed_struct_fields(func.output, "out")
-    request_struct_name = typed_request_struct_name(func)
-    response_struct_name = typed_response_struct_name(func)
-
-    # Build legacy parameter lists
-    async_func_params = []
-    async_call_assigns = []
-    for field_type, field_name in in_fields:
-        async_func_params.append("const %s& %s" % (field_type, field_name))
-        async_call_assigns.append((field_name, field_name))
-
-    sync_func_params = list(async_func_params)
-    for field_type, field_name in out_fields:
-        sync_func_params.append("%s* %s" % (field_type, field_name))
-
-    # Legacy async wrapper: async_method(in_args..., fu_attr) -> FutureResult
-    f.writeln("[[deprecated(\"use typed async_%s(const %s&) instead\")]]" % (func.name, request_struct_name))
-    f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (
-        func.name, ", ".join(async_func_params + [""])))
-    with f.indent():
-        f.writeln("%s __req__;" % request_struct_name)
-        for src_name, dst_name in async_call_assigns:
-            f.writeln("__req__.%s = %s;" % (dst_name, src_name))
-        f.writeln("auto __typed_result__ = this->async_%s(__req__, __fu_attr__);" % func.name)
-        f.writeln("if (__typed_result__.is_err()) {")
-        with f.indent():
-            f.writeln("return rrr::FutureResult::Err(__typed_result__.unwrap_err());")
-        f.writeln("}")
-        f.writeln("return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());")
-    f.writeln("}")
-
-    # Legacy sync wrapper: method(in_args..., out_args*) -> i32
-    f.writeln("[[deprecated(\"use typed %s(const %s&) instead\")]]" % (func.name, request_struct_name))
-    f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
-    with f.indent():
-        f.writeln("%s __req__;" % request_struct_name)
-        for src_name, dst_name in async_call_assigns:
-            f.writeln("__req__.%s = %s;" % (dst_name, src_name))
-        f.writeln("auto __typed_result__ = this->%s(__req__);" % func.name)
-        f.writeln("if (__typed_result__.is_err()) {")
-        with f.indent():
-            f.writeln("return __typed_result__.unwrap_err();")
-        f.writeln("}")
-        if len(out_fields) > 0:
-            f.writeln("auto __resp__ = __typed_result__.unwrap();")
-            for _, field_name in out_fields:
-                f.writeln("if (%s) *%s = __resp__.%s;" % (field_name, field_name, field_name))
-        f.writeln("return 0;")
-    f.writeln("}")
-
-def emit_service_and_proxy(service, f, rpc_table, legacy_compat=False):
-    if legacy_compat:
-        f.writeln("class %sService : public rrr::Service {" % service.name)
-    else:
-        f.writeln("class %sService {" % service.name)
+def emit_service_and_proxy(service, f, rpc_table):
+    f.writeln("class %sService {" % service.name)
     f.writeln("public:")
     with f.indent():
         f.writeln("// Typed request/response scaffolding generated from RPC signature lists.")
@@ -263,8 +207,7 @@ def emit_service_and_proxy(service, f, rpc_table, legacy_compat=False):
         f.writeln("};")
         f.writeln("// Registers RPC IDs with server using service index")
         f.writeln("// @safe")
-        override_kw = " override" if legacy_compat else ""
-        f.writeln("int __reg_to__(rrr::Server& svr, size_t svc_index)%s {" % override_kw)
+        f.writeln("int __reg_to__(rrr::Server& svr, size_t svc_index) {")
         with f.indent():
             f.writeln("int ret = 0;")
             for func in service.functions:
@@ -280,7 +223,7 @@ def emit_service_and_proxy(service, f, rpc_table, legacy_compat=False):
             f.writeln("return ret;")
         f.writeln("}")
         f.writeln("// @safe - Dispatch for RPC requests")
-        f.writeln("void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn)%s {" % override_kw)
+        f.writeln("void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {")
         with f.indent():
             f.writeln("switch (rpc_id) {")
             for func in service.functions:
@@ -435,8 +378,6 @@ def emit_service_and_proxy(service, f, rpc_table, legacy_compat=False):
                 emit_typed_proxy_future_wrapper(func, f)
                 emit_typed_proxy_async_signature(service, func, typed_async_call_params, f)
                 emit_typed_proxy_sync_signature(func, f)
-                if legacy_compat:
-                    emit_legacy_proxy_wrappers(service, func, f)
             else:
                 async_func_params = []
                 async_call_params = []
@@ -488,7 +429,7 @@ def emit_service_and_proxy(service, f, rpc_table, legacy_compat=False):
     f.writeln()
 
 
-def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, legacy_compat=False):
+def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
     with open(fpath, "w") as f:
         f = SourceFile(f)
         f.writeln("#pragma once")
@@ -510,7 +451,7 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, le
             emit_struct(struct, f)
 
         for service in rpc_source.services:
-            emit_service_and_proxy(service, f, rpc_table, legacy_compat=legacy_compat)
+            emit_service_and_proxy(service, f, rpc_table)
 
         if rpc_source.namespace != None:
             f.writeln(" ".join(["}"] * len(rpc_source.namespace)) + " // namespace " + "::".join(rpc_source.namespace))
