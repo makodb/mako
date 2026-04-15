@@ -521,6 +521,48 @@ def verify_beta_proxy_block(block: str) -> None:
         raise AssertionError("legacy beta proxy sync wrappers should not be generated")
 
 
+def verify_no_pointer_out_params(generated: str) -> None:
+    """Borrow-check guard: no public T* out-param signatures in typed output.
+
+    Scans the generated header for patterns that indicate legacy pointer-style
+    out-parameters in public method signatures.  Internal wrapper code (private
+    section, marshal operators) is allowed to use pointers.
+    """
+    import re
+    violations = []
+
+    # Forbidden pattern 1: deprecated wrappers should not exist
+    if "[[deprecated" in generated:
+        violations.append("found [[deprecated]] attribute in generated output")
+
+    # Forbidden pattern 2: legacy sync proxy signature `i32 method(args..., T* out)`
+    # Match: `rrr::i32 methodname(` followed later by `type* name)` on the same logical line.
+    # Exclude: private wrapper methods (__name__wrapper__), marshal operators, raw handlers.
+    for i, line in enumerate(generated.splitlines(), 1):
+        stripped = line.strip()
+        # Skip private wrappers, comments, marshal operators, struct fields
+        if ("__wrapper__" in stripped or stripped.startswith("//") or
+            "operator" in stripped or "friend " in stripped or
+            stripped.startswith("m <<")):
+            continue
+        # Look for public method signatures with pointer out-params:
+        # Pattern: `type* name)` or `type* name,` in a function declaration
+        # But NOT in Box<T>, Arc<T>, shared_ptr<T>, or similar template params
+        match = re.search(r'(?:rrr::i32|void)\s+\w+\([^)]*\w+\*\s+\w+[,)]', stripped)
+        if match and "Box<" not in stripped and "Arc<" not in stripped:
+            # Allow raw handler signatures (Box<Request> req, WeakServerConnection)
+            if "passthrough" in stripped or "rusty::Box" in stripped:
+                continue
+            violations.append(f"line {i}: pointer out-param in public signature: {stripped.strip()}")
+
+    if violations:
+        raise AssertionError(
+            "borrow-check guard failed — pointer out-params in typed output:\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )
+
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate rpcgen typed struct emission.")
     parser.add_argument("--repo", required=True, help="Repository root path")
@@ -565,6 +607,7 @@ def main() -> int:
         verify_beta_service_block(beta_block)
         verify_alpha_proxy_block(alpha_proxy_block)
         verify_beta_proxy_block(beta_proxy_block)
+        verify_no_pointer_out_params(generated)
 
         if generated.count("struct RpcPingRequest {") != 2:
             raise AssertionError("expected per-service RpcPingRequest structs (one in each service)")

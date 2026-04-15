@@ -397,7 +397,9 @@ compatibility wrappers for incremental rollout.
 - [x] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.
   - Implemented on 2026-04-15: extended `test_rpc_docs_symbols` with 8 typed API required symbols (request/response structs, Result return pattern, async methods, ServiceLike, ServiceFacade, typed registration) and 4 stale forbidden symbols (`--legacy-compat`, `SRPC_LEGACY_COMPAT`, `[[deprecated(`, `RPCGEN_COMPAT_FLAG`). Updated srpc-book.md "Generated Client Usage" example from pointer-style to typed request/response pattern.
   - Verification note: full RPC-focused suite passed (42/42 tests).
-- [ ] Add borrow-check guard for generated typed APIs (no public `T* out` signatures in typed mode output).
+- [x] Add borrow-check guard for generated typed APIs (no public `T* out` signatures in typed mode output).
+  - Implemented on 2026-04-15: added `verify_no_pointer_out_params()` guard to `test/rpcgen_typed_structs_test.py` that scans generated header output for forbidden patterns: `[[deprecated]]` attributes and legacy pointer-out-param signatures (`type* name` in public method declarations). Excludes private wrappers, marshal operators, and raw handler signatures. Verified with positive (clean typed output) and negative (pointer-out + deprecated) test cases.
+  - Verification note: full RPC-focused suite passed (44/44 tests: 40 parallel + 4 docs/compile).
 - [x] Re-run full RPC-focused suite in both CI modes: typed-default and compatibility-wrapper mode.
   - Legacy-compat mode has been removed. Full RPC-focused suite passes in typed-only mode (42/42 tests, verified on 2026-04-15 across multiple commits).
 
