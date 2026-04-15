@@ -224,6 +224,34 @@ bool ReplicatedDB::Delete(const std::string& key) {
   return committed.load() > 0;
 }
 
+// @unsafe - Submits BATCH command through Raft, blocks until committed
+bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
+  if (!db_ || !raft_ || ops.empty()) return false;
+
+  auto cmd = ReplicatedDBCommand::CreateBatch(ops);
+  auto cmd_base = std::dynamic_pointer_cast<Marshallable>(cmd);
+
+  uint64_t index = 0, term = 0;
+  bool is_leader = raft_->Start(cmd_base, &index, &term);
+  if (!is_leader) {
+    Log_debug("[ReplicatedDB] Batch failed: not leader");
+    return false;
+  }
+
+  // Block until committed using atomic flag
+  // @unsafe - atomic operations and callback registration
+  std::atomic<int> committed{0};
+  raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
+    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+  });
+
+  while (committed.load() == 0) {
+    usleep(100);
+  }
+
+  return committed.load() > 0;
+}
+
 // @unsafe - Direct RocksDB read (stale read, no Raft involvement)
 bool ReplicatedDB::Get(const std::string& key, std::string* value) {
   if (!db_ || !value) return false;

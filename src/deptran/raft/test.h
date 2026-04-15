@@ -304,6 +304,20 @@ class RaftLabTest {
   // Test snapshot compression (LZ4) and backward-compatible decompression
   int testReplicatedDBSnapshotCompression(void);
 
+  // ===========================================================================
+  // CONFIG MANAGER TESTS
+  // ===========================================================================
+  // Integration tests for ConfigManager on top of ReplicatedDB
+
+  // Test basic ConfigManager operations: set/get shard count, replicas, version increments
+  int testConfigManagerBasic(void);
+
+  // Test shard lifecycle: AddShard, verify config, RemoveShard, verify removal
+  int testConfigManagerShardLifecycle(void);
+
+  // Test epoch management: get initial epoch, advance twice, verify
+  int testConfigManagerEpoch(void);
+
   void wait(uint64_t microseconds);
 
 };

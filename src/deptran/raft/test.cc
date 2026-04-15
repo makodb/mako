@@ -8,6 +8,7 @@
 #include "rpc/snapshot_format.hpp"
 #include "rpc/file_snapshot_manager.hpp"
 #include "replicated_db.h"
+#include "config_manager.h"
 
 namespace janus {
 
@@ -192,6 +193,15 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testReplicatedDBSnapshotTransfer()) // Test 89
         || TEST_EXPAND(testReplicatedDBWiring())      // Test 90
         || TEST_EXPAND(testReplicatedDBSnapshotCompression()); // Test 91
+  }
+
+  // ConfigManager tests (require running Raft cluster + ReplicatedDB)
+  if (!failed) {
+    Log_info("Running ConfigManager tests");
+    failed =
+        TEST_EXPAND(testConfigManagerBasic())          // Test 92
+        || TEST_EXPAND(testConfigManagerShardLifecycle()) // Test 93
+        || TEST_EXPAND(testConfigManagerEpoch());      // Test 94
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -8414,6 +8424,289 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
   }
 
   Log_info("TEST 91: ReplicatedDB snapshot compression PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 92: testConfigManagerBasic
+// ============================================================================
+// Create ConfigManager on leader's ReplicatedDB, set/get shard count,
+// set/get replicas, verify version increments with each write.
+// @unsafe - Uses ConfigManager/ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testConfigManagerBasic(void) {
+  Init2(92, "ConfigManager basic operations");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  // Create ReplicatedDB with a temp path
+  std::string db_path = "/tmp/raft_test_cfgmgr_92_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // Register apply callback
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Create ConfigManager
+  ConfigManager cfg(rdb.get());
+
+  // Initial version should be 0 (no writes yet)
+  Assert2(cfg.GetVersion() == 0, "Initial version should be 0, got %lu", cfg.GetVersion());
+
+  // Set shard count
+  bool ok = cfg.SetShardCount(3);
+  Assert2(ok, "SetShardCount should succeed");
+  Assert2(cfg.GetShardCount() == 3, "Shard count should be 3, got %u", cfg.GetShardCount());
+  Assert2(cfg.GetVersion() == 1, "Version should be 1 after first write, got %lu", cfg.GetVersion());
+
+  // Set shard replicas
+  std::vector<std::string> replicas = {"site-a", "site-b", "site-c"};
+  ok = cfg.SetShardReplicas(0, replicas);
+  Assert2(ok, "SetShardReplicas should succeed");
+
+  auto got_replicas = cfg.GetShardReplicas(0);
+  Assert2(got_replicas.size() == 3, "Should have 3 replicas, got %zu", got_replicas.size());
+  Assert2(got_replicas[0] == "site-a", "Replica 0 should be 'site-a', got '%s'", got_replicas[0].c_str());
+  Assert2(got_replicas[1] == "site-b", "Replica 1 should be 'site-b', got '%s'", got_replicas[1].c_str());
+  Assert2(got_replicas[2] == "site-c", "Replica 2 should be 'site-c', got '%s'", got_replicas[2].c_str());
+  Assert2(cfg.GetVersion() == 2, "Version should be 2, got %lu", cfg.GetVersion());
+
+  // Set shard leader
+  ok = cfg.SetShardLeader(0, "site-a");
+  Assert2(ok, "SetShardLeader should succeed");
+  Assert2(cfg.GetShardLeader(0) == "site-a", "Leader should be 'site-a'");
+  Assert2(cfg.GetVersion() == 3, "Version should be 3, got %lu", cfg.GetVersion());
+
+  // Set shard status
+  ok = cfg.SetShardStatus(0, "active");
+  Assert2(ok, "SetShardStatus should succeed");
+  Assert2(cfg.GetShardStatus(0) == "active", "Status should be 'active'");
+  Assert2(cfg.GetVersion() == 4, "Version should be 4, got %lu", cfg.GetVersion());
+
+  // Set node addr and status
+  ok = cfg.SetNodeAddr("site-a", "10.0.0.1:8080");
+  Assert2(ok, "SetNodeAddr should succeed");
+  Assert2(cfg.GetNodeAddr("site-a") == "10.0.0.1:8080", "Node addr mismatch");
+  Assert2(cfg.GetVersion() == 5, "Version should be 5, got %lu", cfg.GetVersion());
+
+  ok = cfg.SetNodeStatus("site-a", "alive");
+  Assert2(ok, "SetNodeStatus should succeed");
+  Assert2(cfg.GetNodeStatus("site-a") == "alive", "Node status should be 'alive'");
+  Assert2(cfg.GetVersion() == 6, "Version should be 6, got %lu", cfg.GetVersion());
+
+  // Non-existent keys should return defaults
+  Assert2(cfg.GetShardLeader(999) == "", "Non-existent shard leader should be empty");
+  Assert2(cfg.GetNodeAddr("nonexistent") == "", "Non-existent node addr should be empty");
+  auto empty_replicas = cfg.GetShardReplicas(999);
+  Assert2(empty_replicas.empty(), "Non-existent shard replicas should be empty");
+
+  // Restore learner action and cleanup
+  config_->SetLearnerAction();
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 92: ConfigManager basic operations PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 93: testConfigManagerShardLifecycle
+// ============================================================================
+// AddShard, verify it appears in config, RemoveShard, verify it's gone.
+// @unsafe - Uses ConfigManager/ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testConfigManagerShardLifecycle(void) {
+  Init2(93, "ConfigManager shard lifecycle");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  std::string db_path = "/tmp/raft_test_cfgmgr_93_" + std::to_string(leader);
+
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  ConfigManager cfg(rdb.get());
+
+  // Initial state: no shards
+  Assert2(cfg.GetShardCount() == 0, "Initial shard count should be 0");
+
+  // Add shard 0
+  std::vector<std::string> replicas0 = {"node-1", "node-2", "node-3"};
+  bool ok = cfg.AddShard(0, replicas0);
+  Assert2(ok, "AddShard(0) should succeed");
+  Assert2(cfg.GetShardCount() == 1, "Shard count should be 1 after AddShard, got %u", cfg.GetShardCount());
+  Assert2(cfg.GetShardStatus(0) == "active", "Shard 0 status should be 'active'");
+
+  auto got = cfg.GetShardReplicas(0);
+  Assert2(got.size() == 3, "Shard 0 should have 3 replicas");
+  Assert2(got[0] == "node-1" && got[1] == "node-2" && got[2] == "node-3",
+          "Shard 0 replicas mismatch");
+
+  // Add shard 1
+  std::vector<std::string> replicas1 = {"node-4", "node-5"};
+  ok = cfg.AddShard(1, replicas1);
+  Assert2(ok, "AddShard(1) should succeed");
+  Assert2(cfg.GetShardCount() == 2, "Shard count should be 2, got %u", cfg.GetShardCount());
+  Assert2(cfg.GetShardStatus(1) == "active", "Shard 1 status should be 'active'");
+
+  uint64_t version_before_remove = cfg.GetVersion();
+
+  // Remove shard 0
+  ok = cfg.RemoveShard(0);
+  Assert2(ok, "RemoveShard(0) should succeed");
+  Assert2(cfg.GetShardCount() == 1, "Shard count should be 1 after RemoveShard, got %u", cfg.GetShardCount());
+
+  // Shard 0 keys should be gone
+  auto removed_replicas = cfg.GetShardReplicas(0);
+  Assert2(removed_replicas.empty(), "Shard 0 replicas should be empty after removal");
+  Assert2(cfg.GetShardStatus(0) == "", "Shard 0 status should be empty after removal");
+  Assert2(cfg.GetShardLeader(0) == "", "Shard 0 leader should be empty after removal");
+
+  // Shard 1 should still be intact
+  auto shard1_replicas = cfg.GetShardReplicas(1);
+  Assert2(shard1_replicas.size() == 2, "Shard 1 should still have 2 replicas");
+
+  // Version should have advanced
+  Assert2(cfg.GetVersion() > version_before_remove, "Version should advance after RemoveShard");
+
+  // Restore and cleanup
+  config_->SetLearnerAction();
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 93: ConfigManager shard lifecycle PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 94: testConfigManagerEpoch
+// ============================================================================
+// Get epoch (should be 0 initially), advance twice, verify it's 2.
+// @unsafe - Uses ConfigManager/ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testConfigManagerEpoch(void) {
+  Init2(94, "ConfigManager epoch management");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  std::string db_path = "/tmp/raft_test_cfgmgr_94_" + std::to_string(leader);
+
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  ConfigManager cfg(rdb.get());
+
+  // Initial epoch should be 0
+  Assert2(cfg.GetEpoch() == 0, "Initial epoch should be 0, got %lu", cfg.GetEpoch());
+
+  // Advance epoch once
+  bool ok = cfg.AdvanceEpoch();
+  Assert2(ok, "AdvanceEpoch should succeed");
+  Assert2(cfg.GetEpoch() == 1, "Epoch should be 1 after first advance, got %lu", cfg.GetEpoch());
+
+  uint64_t version_after_first = cfg.GetVersion();
+
+  // Advance epoch again
+  ok = cfg.AdvanceEpoch();
+  Assert2(ok, "Second AdvanceEpoch should succeed");
+  Assert2(cfg.GetEpoch() == 2, "Epoch should be 2 after second advance, got %lu", cfg.GetEpoch());
+
+  // Version should have incremented for each advance
+  Assert2(cfg.GetVersion() > version_after_first, "Version should advance with each epoch change");
+
+  // Restore and cleanup
+  config_->SetLearnerAction();
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 94: ConfigManager epoch management PASSED!");
   Passed2();
 }
 

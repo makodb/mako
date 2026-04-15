@@ -851,6 +851,9 @@ file(GLOB RAFT_BORROW_SRC
 #     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
+#   - config_manager.cc: includes replicated_db.h which includes <rocksdb/c.h>
+#     third-party header that generates false positive violations from header code.
+list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*config_manager\\.cc$")
 
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})

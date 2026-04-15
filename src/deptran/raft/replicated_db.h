@@ -81,6 +81,9 @@ public:
     // @unsafe - Submits delete command via Raft, blocks until committed
     bool Delete(const std::string& key);
 
+    // @unsafe - Submits batch command via Raft, blocks until committed
+    bool Batch(const std::vector<KVOperation>& ops);
+
     // Read operation (local RocksDB, stale reads)
     // @unsafe - Direct RocksDB read
     bool Get(const std::string& key, std::string* value);
