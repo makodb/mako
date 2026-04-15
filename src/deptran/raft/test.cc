@@ -9,6 +9,7 @@
 #include "rpc/file_snapshot_manager.hpp"
 #include "replicated_db.h"
 #include "config_manager.h"
+#include "cluster_config.h"
 
 namespace janus {
 
@@ -202,6 +203,14 @@ int RaftLabTest::Run(void) {
         TEST_EXPAND(testConfigManagerBasic())          // Test 92
         || TEST_EXPAND(testConfigManagerShardLifecycle()) // Test 93
         || TEST_EXPAND(testConfigManagerEpoch());      // Test 94
+  }
+
+  // ClusterConfig tests (require running Raft cluster + ReplicatedDB + ConfigManager)
+  if (!failed) {
+    Log_info("Running ClusterConfig tests");
+    failed =
+        TEST_EXPAND(testClusterConfigRouting())                 // Test 95
+        || TEST_EXPAND(testClusterConfigLoadFromConfigManager()); // Test 96
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -8707,6 +8716,216 @@ int RaftLabTest::testConfigManagerEpoch(void) {
   }
 
   Log_info("TEST 94: ConfigManager epoch management PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 95: testClusterConfigRouting
+// ============================================================================
+// Create ClusterConfig with 3 shards, verify GetShardForKey distributes keys,
+// verify determinism (same key always maps to same shard), verify range.
+// @unsafe - Uses ClusterConfig with mutex
+int RaftLabTest::testClusterConfigRouting(void) {
+  Init2(95, "ClusterConfig routing");
+
+  // Create a ClusterConfig and configure 3 shards
+  ClusterConfig cc;
+
+  // Before setting shard count, GetShardForKey should return 0
+  Assert2(cc.GetShardForKey("anykey") == 0,
+          "GetShardForKey with 0 shards should return 0");
+
+  cc.SetShardCount(3);
+  Assert2(cc.GetShardCount() == 3, "Shard count should be 3");
+
+  // Set up shard info
+  for (uint32_t i = 0; i < 3; i++) {
+    ShardInfo info;
+    info.id = i;
+    info.replicas = {"replica-a-" + std::to_string(i), "replica-b-" + std::to_string(i)};
+    info.leader = "replica-a-" + std::to_string(i);
+    info.status = "active";
+    cc.UpdateShard(i, info);
+  }
+
+  // Verify determinism: same key always maps to same shard
+  for (int trial = 0; trial < 10; trial++) {
+    uint32_t shard1 = cc.GetShardForKey("test-key-alpha");
+    uint32_t shard2 = cc.GetShardForKey("test-key-alpha");
+    Assert2(shard1 == shard2,
+            "Same key should always map to same shard: got %u and %u", shard1, shard2);
+  }
+
+  // Verify all returned shards are in valid range [0, shard_count)
+  std::set<uint32_t> seen_shards;
+  for (int i = 0; i < 1000; i++) {
+    std::string key = "key-" + std::to_string(i);
+    uint32_t shard = cc.GetShardForKey(key);
+    Assert2(shard < 3, "Shard %u should be < 3 for key '%s'", shard, key.c_str());
+    seen_shards.insert(shard);
+  }
+
+  // With 1000 keys and 3 shards, we should see all shards represented
+  Assert2(seen_shards.size() == 3,
+          "Expected all 3 shards to be used, but only saw %zu", seen_shards.size());
+
+  // Verify accessors work for the shards we set up
+  auto replicas = cc.GetShardReplicas(0);
+  Assert2(replicas.size() == 2, "Shard 0 should have 2 replicas, got %zu", replicas.size());
+  Assert2(replicas[0] == "replica-a-0", "Shard 0 replica 0 mismatch");
+
+  Assert2(cc.GetShardLeader(0) == "replica-a-0", "Shard 0 leader mismatch");
+  Assert2(cc.GetShardStatus(0) == "active", "Shard 0 status mismatch");
+
+  // Non-existent shard should return empty
+  Assert2(cc.GetShardReplicas(999).empty(), "Non-existent shard replicas should be empty");
+  Assert2(cc.GetShardLeader(999) == "", "Non-existent shard leader should be empty");
+
+  // Version and epoch defaults
+  Assert2(cc.GetVersion() == 0, "Default version should be 0");
+  Assert2(cc.GetEpoch() == 0, "Default epoch should be 0");
+
+  // Set and verify version/epoch
+  cc.SetVersion(42);
+  cc.SetEpoch(7);
+  Assert2(cc.GetVersion() == 42, "Version should be 42, got %lu", cc.GetVersion());
+  Assert2(cc.GetEpoch() == 7, "Epoch should be 7, got %lu", cc.GetEpoch());
+
+  Log_info("TEST 95: ClusterConfig routing PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 96: testClusterConfigLoadFromConfigManager
+// ============================================================================
+// Create ConfigManager on leader, add 2 shards with replicas/leader/status,
+// advance epoch, then load into ClusterConfig and verify all fields match.
+// @unsafe - Uses ConfigManager/ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testClusterConfigLoadFromConfigManager(void) {
+  Init2(96, "ClusterConfig LoadFromConfigManager");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  // Create ReplicatedDB with a temp path
+  std::string db_path = "/tmp/raft_test_clusterconfig_96_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // Register apply callback
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Create ConfigManager and populate config
+  ConfigManager cfg(rdb.get());
+
+  // Add 2 shards via AddShard (which sets replicas, status, and increments shard_count)
+  bool ok = cfg.AddShard(0, {"site-a", "site-b", "site-c"});
+  Assert2(ok, "AddShard(0) should succeed");
+
+  ok = cfg.AddShard(1, {"site-d", "site-e", "site-f"});
+  Assert2(ok, "AddShard(1) should succeed");
+
+  // Set leaders
+  ok = cfg.SetShardLeader(0, "site-a");
+  Assert2(ok, "SetShardLeader(0) should succeed");
+
+  ok = cfg.SetShardLeader(1, "site-d");
+  Assert2(ok, "SetShardLeader(1) should succeed");
+
+  // Advance epoch twice
+  ok = cfg.AdvanceEpoch();
+  Assert2(ok, "First AdvanceEpoch should succeed");
+  ok = cfg.AdvanceEpoch();
+  Assert2(ok, "Second AdvanceEpoch should succeed");
+
+  // Record expected values
+  uint64_t expected_version = cfg.GetVersion();
+  uint64_t expected_epoch = cfg.GetEpoch();
+  uint32_t expected_shard_count = cfg.GetShardCount();
+
+  Assert2(expected_shard_count == 2, "Should have 2 shards, got %u", expected_shard_count);
+  Assert2(expected_epoch == 2, "Epoch should be 2, got %lu", expected_epoch);
+
+  // Load into ClusterConfig
+  ClusterConfig cc;
+  ok = cc.LoadFromConfigManager(&cfg);
+  Assert2(ok, "LoadFromConfigManager should succeed");
+
+  // Verify all fields match
+  Assert2(cc.GetShardCount() == expected_shard_count,
+          "ClusterConfig shard count mismatch: expected %u, got %u",
+          expected_shard_count, cc.GetShardCount());
+  Assert2(cc.GetVersion() == expected_version,
+          "ClusterConfig version mismatch: expected %lu, got %lu",
+          expected_version, cc.GetVersion());
+  Assert2(cc.GetEpoch() == expected_epoch,
+          "ClusterConfig epoch mismatch: expected %lu, got %lu",
+          expected_epoch, cc.GetEpoch());
+
+  // Verify shard 0
+  auto replicas0 = cc.GetShardReplicas(0);
+  Assert2(replicas0.size() == 3, "Shard 0 should have 3 replicas, got %zu", replicas0.size());
+  Assert2(replicas0[0] == "site-a", "Shard 0 replica 0 should be 'site-a', got '%s'", replicas0[0].c_str());
+  Assert2(replicas0[1] == "site-b", "Shard 0 replica 1 should be 'site-b', got '%s'", replicas0[1].c_str());
+  Assert2(replicas0[2] == "site-c", "Shard 0 replica 2 should be 'site-c', got '%s'", replicas0[2].c_str());
+  Assert2(cc.GetShardLeader(0) == "site-a", "Shard 0 leader should be 'site-a'");
+  Assert2(cc.GetShardStatus(0) == "active", "Shard 0 status should be 'active'");
+
+  // Verify shard 1
+  auto replicas1 = cc.GetShardReplicas(1);
+  Assert2(replicas1.size() == 3, "Shard 1 should have 3 replicas, got %zu", replicas1.size());
+  Assert2(replicas1[0] == "site-d", "Shard 1 replica 0 should be 'site-d', got '%s'", replicas1[0].c_str());
+  Assert2(cc.GetShardLeader(1) == "site-d", "Shard 1 leader should be 'site-d'");
+  Assert2(cc.GetShardStatus(1) == "active", "Shard 1 status should be 'active'");
+
+  // Verify routing works with loaded config
+  uint32_t shard = cc.GetShardForKey("test-key");
+  Assert2(shard < 2, "Routed shard should be < 2, got %u", shard);
+
+  // Verify determinism
+  Assert2(cc.GetShardForKey("test-key") == shard,
+          "Same key should map to same shard after reload");
+
+  // Verify null ConfigManager is handled
+  ClusterConfig cc2;
+  Assert2(!cc2.LoadFromConfigManager(nullptr),
+          "LoadFromConfigManager(nullptr) should return false");
+
+  // Restore and cleanup
+  config_->SetLearnerAction();
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 96: ClusterConfig LoadFromConfigManager PASSED!");
   Passed2();
 }
 

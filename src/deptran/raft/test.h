@@ -318,6 +318,14 @@ class RaftLabTest {
   // Test epoch management: get initial epoch, advance twice, verify
   int testConfigManagerEpoch(void);
 
+  // ClusterConfig tests
+
+  // Test hash-based key routing: same key always maps to same shard, keys distribute across shards
+  int testClusterConfigRouting(void);
+
+  // Test loading ClusterConfig from ConfigManager: set up shards via ConfigManager, load into ClusterConfig, verify
+  int testClusterConfigLoadFromConfigManager(void);
+
   void wait(uint64_t microseconds);
 
 };
