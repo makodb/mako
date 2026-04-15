@@ -95,13 +95,29 @@ public:
     };
 
     // @safe - Scans local shard only via mbta_sharded_ordered_index::scan().
-    // Cross-shard scan requires RPC; local shard determined by BenchmarkConfig::getShardIndex().
+    // In multi-shard deployments, returns NotImplemented — full cross-shard scan
+    // is pending and will be built on top of Shuai's upcoming changes.
     Status Scan(void* txn,
                 const std::string& start_key,
                 const std::string* end_key,
                 std::function<bool(const std::string& key, const std::string& value)> callback) override {
         if (!index_) {
-            return Status::InvalidArgument("Invalid table");
+            return Status::InvalidArgument("Scan: invalid table");
+        }
+        if (!callback) {
+            return Status::InvalidArgument("Scan: callback must not be null");
+        }
+        if (end_key != nullptr && *end_key <= start_key) {
+            return Status::InvalidArgument(
+                "Scan: end_key must be strictly greater than start_key");
+        }
+        // Multi-shard scan is not yet implemented. In single-shard mode the local
+        // shard is the only shard, so the scan is correct. In multi-shard mode keys
+        // are distributed across shards and a local-only scan would silently return
+        // incomplete results, so we reject it explicitly.
+        if (index_->shard_for_index(1) != nullptr) {
+            return Status::NotSupported(
+                "Scan across multiple shards is not yet implemented");
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
@@ -109,19 +125,31 @@ public:
             index_->scan(txn, start_key, end_key, adapter);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
-            return Status::IOError("Transaction aborted");
+            return Status::IOError("Scan: transaction aborted");
         } catch (...) {
-            return Status::IOError("Unknown error in Scan");
+            return Status::IOError("Scan: unknown error");
         }
     }
 
-    // @safe - Delegates to underlying index rscan
+    // @safe - Delegates to underlying index rscan.
+    // In multi-shard deployments, returns NotImplemented for the same reason as Scan.
     Status ReverseScan(void* txn,
                        const std::string& start_key,
                        const std::string* end_key,
                        std::function<bool(const std::string& key, const std::string& value)> callback) override {
         if (!index_) {
-            return Status::InvalidArgument("Invalid table");
+            return Status::InvalidArgument("ReverseScan: invalid table");
+        }
+        if (!callback) {
+            return Status::InvalidArgument("ReverseScan: callback must not be null");
+        }
+        if (end_key != nullptr && *end_key >= start_key) {
+            return Status::InvalidArgument(
+                "ReverseScan: end_key must be strictly less than start_key");
+        }
+        if (index_->shard_for_index(1) != nullptr) {
+            return Status::NotSupported(
+                "ReverseScan across multiple shards is not yet implemented");
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
@@ -129,9 +157,9 @@ public:
             index_->rscan(txn, start_key, end_key, adapter);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
-            return Status::IOError("Transaction aborted");
+            return Status::IOError("ReverseScan: transaction aborted");
         } catch (...) {
-            return Status::IOError("Unknown error in ReverseScan");
+            return Status::IOError("ReverseScan: unknown error");
         }
     }
 

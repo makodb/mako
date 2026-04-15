@@ -14,8 +14,8 @@ This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` inter
 | `Get` | Read a value by key | No bloom-filter hint or short-circuit path | |
 | `Delete` | Remove a key | No range delete | |
 | `GetName` | Return the table name | — | |
-| `Scan` | Forward range scan [start, end) | Local shard only; no stateful iterator | Reverted to local-shard after discussion with Shuai; cross-shard support will be built on top of his upcoming changes |
-| `ReverseScan` | Reverse range scan descending | Local shard only; no stateful iterator | Same as Scan |
+| `Scan` | Forward range scan [start, end); returns `NotSupported` if `num_shards > 1` | No stateful iterator; cross-shard not yet implemented | Reverted to local-shard after discussion with Shuai; cross-shard support will be built on top of his upcoming changes. Multi-shard scan is non-trivial because keys are hash-distributed, not range-distributed — results across shards have no global ordering guarantee |
+| `ReverseScan` | Reverse range scan descending; returns `NotSupported` if `num_shards > 1` | No stateful iterator; cross-shard not yet implemented | Same as Scan |
 | `Exists` | Check key presence without reading value | Does a full Get internally; no bloom-filter hint | Chosen over a separate existence flag to reuse the OCC read-set tracking already done by Get |
 | `Insert` | Insert only if key absent | Aborts transaction on duplicate | Uses `transInsert` instead of `transPut` — non-obvious distinction; `transInsert` registers the key in the OCC write-set so a concurrent insert on the same key causes abort rather than silent overwrite |
 | `GetApproximateSize` | Approximate key count for the local shard | Local shard only; count may be stale | Counter updated under lock in `install()` (commit phase) rather than atomics in the hot path, as reviewer noted atomics are too expensive for an approximate metric |
@@ -118,7 +118,9 @@ Forward range scan. Iterates keys from `start_key` (inclusive) up to `end_key` (
 
 Values passed to the callback are already stripped of internal metadata — no decoding needed.
 
-**Returns:** `Status::OK()` on success, `Status::IOError()` if the transaction was aborted.
+**Current limitation:** Only works in single-shard deployments. Returns `Status::NotSupported` if more than one shard is present. Cross-shard scan is not yet implemented — it will be built on top of Shuai's upcoming changes. Note that when implemented, cross-shard scan cannot guarantee globally ordered results because keys are hash-distributed across shards, not range-distributed.
+
+**Returns:** `Status::OK()` on success, `Status::NotSupported()` in multi-shard mode, `Status::InvalidArgument()` for an invalid range or null callback, `Status::IOError()` if the transaction was aborted.
 
 **Example:**
 ```cpp
@@ -150,7 +152,9 @@ virtual Status ReverseScan(void* txn,
 
 Reverse range scan. Iterates keys from `start_key` (inclusive) down to `end_key` (exclusive), delivering results in descending key order. Callback semantics are identical to `Scan`.
 
-**Returns:** `Status::OK()` on success, `Status::IOError()` if the transaction was aborted.
+**Current limitation:** Same as `Scan` — returns `Status::NotSupported` in multi-shard deployments.
+
+**Returns:** `Status::OK()` on success, `Status::NotSupported()` in multi-shard mode, `Status::InvalidArgument()` for an invalid range or null callback, `Status::IOError()` if the transaction was aborted.
 
 **Example:**
 ```cpp
