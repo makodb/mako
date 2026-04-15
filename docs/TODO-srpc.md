@@ -365,7 +365,7 @@ compatibility wrappers for incremental rollout.
   - Extended on 2026-04-12 to assert legacy proxy wrapper delegation direction (legacy async/sync signatures now marshal typed request structs and route through typed async/sync overloads for non-raw methods).
   - Extended on 2026-04-12 to assert non-deferred service dispatch wrapper generation uses typed service calls and propagates typed `Err(i32)` as RPC error replies, while keeping deferred wrapper shape unchanged.
   - Extended on 2026-04-12 to assert deferred service dispatch wrapper typed-first behavior with explicit `Err(i32)` propagation and `ENOTSUP` fallback to legacy deferred handler path.
-- [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
+- [x] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
 - [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.

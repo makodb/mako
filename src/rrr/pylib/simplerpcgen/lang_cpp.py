@@ -190,7 +190,7 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
     f.writeln("}")
 
 def emit_service_and_proxy(service, f, rpc_table):
-    f.writeln("class %sService {" % service.name)
+    f.writeln("class %sService : public rrr::Service {" % service.name)
     f.writeln("public:")
     with f.indent():
         f.writeln("// Typed request/response scaffolding generated from RPC signature lists.")

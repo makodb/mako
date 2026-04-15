@@ -311,7 +311,7 @@ def load_existing_rpc_codes(header_fpath):
                 continue
             m_enum = re.match(r'^\s*([A-Z0-9_]+)\s*=\s*(0x[0-9a-fA-F]+)\s*,\s*$', line)
             if m_enum:
-                key = "%s.%s" % (current_service, m_enum.group(1))
+                key = "%s.%s" % (current_service.upper(), m_enum.group(1))
                 codes[key] = int(m_enum.group(2), 16)
     return codes
 
@@ -323,7 +323,7 @@ def generate_rpc_table(rpc_source, existing_codes=None):
     used_codes = set(existing_codes.values())
     for service in rpc_source.services:
         for func in service.functions:
-            existing_key = "%s.%s" % (service.name, func.name.upper())
+            existing_key = "%s.%s" % (service.name.upper(), func.name.upper())
             if existing_key in existing_codes:
                 rpc_code = existing_codes[existing_key]
             else:
