@@ -2,8 +2,17 @@
 
 #include "reactor/epoll_wrapper.h"
 
+#ifdef RR
+#pragma push_macro("RR")
+#undef RR
+#define RRR_RESTORE_RR_MACRO 1
+#endif
 #include <proxy/proxy.h>
 #include <proxy/proxy_macros.h>
+#ifdef RRR_RESTORE_RR_MACRO
+#pragma pop_macro("RR")
+#undef RRR_RESTORE_RR_MACRO
+#endif
 
 namespace rrr {
 

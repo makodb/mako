@@ -1822,6 +1822,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_pollable_proxy_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_pollable_proxy_facade COMMAND test_rpc_pollable_proxy_facade)
 
+    # PollThread proxy-backed storage guard tests (Phase 1 leaf 2)
+    add_executable(test_rpc_pollthread_proxy_storage test/rpc_pollthread_proxy_storage_test.cc)
+    target_include_directories(test_rpc_pollthread_proxy_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_pollthread_proxy_storage PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_pollthread_proxy_storage ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_pollthread_proxy_storage COMMAND test_rpc_pollthread_proxy_storage)
+
     find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
     add_test(
         NAME test_rpc_docs_snippet_compile

@@ -432,8 +432,10 @@ class Pollable {
 ```
 
 Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
-(`PollableFacade` + `PollableArcAdapter`). Core poll-thread ownership remains
-`Arc<Pollable>` until later migration leaves switch storage/callsites to proxy types.
+(`PollableFacade` + `PollableArcAdapter`). Poll-thread command payloads and primary
+storage are now proxy-backed (`pro::proxy<PollableFacade>`). A temporary
+`Arc<Pollable>` bridge is still retained internally for existing epoll wrapper
+userdata/update hooks until the next migration leaf removes those assumptions.
 
 ### Epoll Abstraction
 
@@ -465,7 +467,8 @@ pt->shutdown();                         // Stop poll loop
 ```cpp srpc-no-compile
 class PollThreadWorker {
     Epoll poll_;
-    unordered_map<int, Arc<Pollable>> fd_to_pollable_;
+    unordered_map<int, PollableProxy> fd_to_pollable_;
+    unordered_map<int, Arc<Pollable>> fd_to_legacy_pollable_; // temporary epoll bridge
     mpsc::Receiver<PollCommand> receiver_;  // Commands from main thread
 
     void poll_loop() {
@@ -486,10 +489,10 @@ The poll thread and main thread communicate via an mpsc (multi-producer, single-
 
 | Command | Description |
 |---------|-------------|
-| `CmdAddPollable` | Register new Pollable with epoll |
+| `CmdAddPollable` | Register new Pollable proxy (plus temporary legacy Arc bridge) with epoll |
 | `CmdRemovePollable` | Remove from epoll (keep Arc alive) |
-| `CmdClosePollable` | Remove + drop Arc |
-| `CmdUpdateMode` | Change poll_mode for an FD |
+| `CmdClosePollable` | Remove + close via proxy dispatch, then drop ownership |
+| `CmdUpdateMode` | Change poll_mode for an FD (fd-based lookup, no raw pointer payload) |
 | `CmdAddJob` / `CmdRemoveJob` | Periodic job management |
 | `CmdShutdown` | Stop poll loop |
 
