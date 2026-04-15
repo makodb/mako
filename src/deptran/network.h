@@ -169,7 +169,7 @@ public:
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(TXN_RMW, svc_index)) != 0) {
             goto err;
@@ -204,7 +204,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case TXN_RMW: __txn_rmw__wrapper__(std::move(req), weak_sconn); break;
         case TXN_READ: __txn_read__wrapper__(std::move(req), weak_sconn); break;
@@ -410,6 +410,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_txn_rmw(const RpcTxnRmwRequest&) instead")]]
+    rrr::FutureResult async_txn_rmw(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnRmwRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_rmw(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_rmw(const RpcTxnRmwRequest&) instead")]]
+    rrr::i32 txn_rmw(const std::vector<rrr::i64>& _req) {
+        RpcTxnRmwRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_rmw(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class txn_readTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -451,6 +471,26 @@ public:
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_txn_read(const RpcTxnReadRequest&) instead")]]
+    rrr::FutureResult async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnReadRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_read(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_read(const RpcTxnReadRequest&) instead")]]
+    rrr::i32 txn_read(const std::vector<rrr::i64>& _req) {
+        RpcTxnReadRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_read(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class txn_new_orderTypedFuture {
     private:
@@ -494,6 +534,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_txn_new_order(const RpcTxnNewOrderRequest&) instead")]]
+    rrr::FutureResult async_txn_new_order(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnNewOrderRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_new_order(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_new_order(const RpcTxnNewOrderRequest&) instead")]]
+    rrr::i32 txn_new_order(const std::vector<int32_t>& _req) {
+        RpcTxnNewOrderRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_new_order(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class txn_paymentTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -535,6 +595,26 @@ public:
             return rusty::Result<RpcTxnPaymentResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_txn_payment(const RpcTxnPaymentRequest&) instead")]]
+    rrr::FutureResult async_txn_payment(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnPaymentRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_payment(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_payment(const RpcTxnPaymentRequest&) instead")]]
+    rrr::i32 txn_payment(const std::vector<int32_t>& _req) {
+        RpcTxnPaymentRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_payment(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class txn_deliveryTypedFuture {
     private:
@@ -578,6 +658,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_txn_delivery(const RpcTxnDeliveryRequest&) instead")]]
+    rrr::FutureResult async_txn_delivery(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnDeliveryRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_delivery(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_delivery(const RpcTxnDeliveryRequest&) instead")]]
+    rrr::i32 txn_delivery(const std::vector<int32_t>& _req) {
+        RpcTxnDeliveryRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_delivery(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class txn_order_statusTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -620,6 +720,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_txn_order_status(const RpcTxnOrderStatusRequest&) instead")]]
+    rrr::FutureResult async_txn_order_status(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnOrderStatusRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_order_status(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_order_status(const RpcTxnOrderStatusRequest&) instead")]]
+    rrr::i32 txn_order_status(const std::vector<int32_t>& _req) {
+        RpcTxnOrderStatusRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_order_status(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class txn_stock_levelTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -661,6 +781,26 @@ public:
             return rusty::Result<RpcTxnStockLevelResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_txn_stock_level(const RpcTxnStockLevelRequest&) instead")]]
+    rrr::FutureResult async_txn_stock_level(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnStockLevelRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_stock_level(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_stock_level(const RpcTxnStockLevelRequest&) instead")]]
+    rrr::i32 txn_stock_level(const std::vector<int32_t>& _req) {
+        RpcTxnStockLevelRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_stock_level(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 

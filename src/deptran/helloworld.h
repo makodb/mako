@@ -40,7 +40,7 @@ public:
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(TXN_READ, svc_index)) != 0) {
             goto err;
@@ -51,7 +51,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case TXN_READ: __txn_read__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
@@ -132,6 +132,28 @@ public:
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_txn_read(const RpcTxnReadRequest&) instead")]]
+    rrr::FutureResult async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTxnReadRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->async_txn_read(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed txn_read(const RpcTxnReadRequest&) instead")]]
+    rrr::i32 txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val) {
+        RpcTxnReadRequest __req__;
+        __req__._req = _req;
+        auto __typed_result__ = this->txn_read(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (val) *val = __resp__.val;
+        return 0;
     }
 };
 

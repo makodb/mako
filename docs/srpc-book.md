@@ -1046,6 +1046,8 @@ Current codegen is typed-first for non-raw RPC methods:
   map `Err(i32)` to RPC error replies.
 - Generated proxy sync/async methods use typed request/response objects end-to-end.
 - `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
+- All in-tree generated headers (`rcc_rpc.h`, `network.h`, `helloworld.h`) are
+  generated with `--legacy-compat` and all callsites use typed APIs.
 
 #### Migration Knob (`--legacy-compat`)
 

@@ -584,23 +584,23 @@ public:
     }
 
     enum {
-        FORWARD = 0x60ced3dd,
-        PREPARE = 0x4c76b9f4,
-        ACCEPT = 0x1c233ffb,
-        DECIDE = 0x69afde38,
-        HEARTBEAT = 0x6ec35e75,
-        FORWARDTOLEARNERSERVER = 0x4ff5c3c9,
-        BULKPREPARE = 0x1f7a5d82,
-        BULKACCEPT = 0x1a9452ae,
-        BULKPREPARE2 = 0x255d920c,
-        SYNCLOG = 0x50c70c16,
-        SYNCCOMMIT = 0x352d6525,
-        SYNCNOOPS = 0x1885869d,
-        BULKDECIDE = 0x409f083a,
+        FORWARD = 0x59f9f2b7,
+        PREPARE = 0x5686a451,
+        ACCEPT = 0x6aa3abed,
+        DECIDE = 0x616ddafc,
+        HEARTBEAT = 0x6c35c93b,
+        FORWARDTOLEARNERSERVER = 0x33295296,
+        BULKPREPARE = 0x65d6e27e,
+        BULKACCEPT = 0x67704f29,
+        BULKPREPARE2 = 0x5dac6871,
+        SYNCLOG = 0x6ec9dd8e,
+        SYNCCOMMIT = 0x2dc149f6,
+        SYNCNOOPS = 0x6d3159a9,
+        BULKDECIDE = 0x67f0731b,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(FORWARD, svc_index)) != 0) {
             goto err;
@@ -659,7 +659,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case FORWARD: __Forward__wrapper__(std::move(req), weak_sconn); break;
         case PREPARE: __Prepare__wrapper__(std::move(req), weak_sconn); break;
@@ -1028,6 +1028,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Forward(const RpcForwardRequest&) instead")]]
+    rrr::FutureResult async_Forward(const MarshallDeputy& cmd, const uint64_t& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcForwardRequest __req__;
+        __req__.cmd = cmd;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_Forward(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Forward(const RpcForwardRequest&) instead")]]
+    rrr::i32 Forward(const MarshallDeputy& cmd, const uint64_t& dep_id, uint64_t* coro_id) {
+        RpcForwardRequest __req__;
+        __req__.cmd = cmd;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->Forward(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (coro_id) *coro_id = __resp__.coro_id;
+        return 0;
+    }
     class PrepareTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1072,6 +1096,31 @@ public:
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::FutureResult async_Prepare(const uint64_t& slot, const ballot_t& ballot, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcPrepareRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        auto __typed_result__ = this->async_Prepare(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::i32 Prepare(const uint64_t& slot, const ballot_t& ballot, ballot_t* max_ballot, uint64_t* coro_id) {
+        RpcPrepareRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        auto __typed_result__ = this->Prepare(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        return 0;
     }
     class AcceptTypedFuture {
     private:
@@ -1120,6 +1169,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Accept(const RpcAcceptRequest&) instead")]]
+    rrr::FutureResult async_Accept(const uint64_t& slot, const uint64_t& time, const ballot_t& ballot, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAcceptRequest __req__;
+        __req__.slot = slot;
+        __req__.time = time;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Accept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Accept(const RpcAcceptRequest&) instead")]]
+    rrr::i32 Accept(const uint64_t& slot, const uint64_t& time, const ballot_t& ballot, const MarshallDeputy& cmd, ballot_t* max_ballot, uint64_t* coro_id) {
+        RpcAcceptRequest __req__;
+        __req__.slot = slot;
+        __req__.time = time;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Accept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        return 0;
+    }
     class DecideTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1164,6 +1242,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Decide(const RpcDecideRequest&) instead")]]
+    rrr::FutureResult async_Decide(const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcDecideRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Decide(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Decide(const RpcDecideRequest&) instead")]]
+    rrr::i32 Decide(const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd) {
+        RpcDecideRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Decide(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class HeartbeatTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1207,6 +1309,29 @@ public:
             return rusty::Result<RpcHeartbeatResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Heartbeat(const RpcHeartbeatRequest&) instead")]]
+    rrr::FutureResult async_Heartbeat(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcHeartbeatRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Heartbeat(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Heartbeat(const RpcHeartbeatRequest&) instead")]]
+    rrr::i32 Heartbeat(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val) {
+        RpcHeartbeatRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Heartbeat(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        return 0;
     }
     class ForwardToLearnerServerTypedFuture {
     private:
@@ -1255,6 +1380,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_ForwardToLearnerServer(const RpcForwardToLearnerServerRequest&) instead")]]
+    rrr::FutureResult async_ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcForwardToLearnerServerRequest __req__;
+        __req__.par_id = par_id;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_ForwardToLearnerServer(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed ForwardToLearnerServer(const RpcForwardToLearnerServerRequest&) instead")]]
+    rrr::i32 ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot) {
+        RpcForwardToLearnerServerRequest __req__;
+        __req__.par_id = par_id;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->ForwardToLearnerServer(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret_slot) *ret_slot = __resp__.ret_slot;
+        if (ret_ballot) *ret_ballot = __resp__.ret_ballot;
+        return 0;
+    }
     class BulkPrepareTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1299,6 +1453,29 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_BulkPrepare(const RpcBulkPrepareRequest&) instead")]]
+    rrr::FutureResult async_BulkPrepare(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcBulkPrepareRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_BulkPrepare(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed BulkPrepare(const RpcBulkPrepareRequest&) instead")]]
+    rrr::i32 BulkPrepare(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val) {
+        RpcBulkPrepareRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->BulkPrepare(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        return 0;
+    }
     class BulkAcceptTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1342,6 +1519,29 @@ public:
             return rusty::Result<RpcBulkAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_BulkAccept(const RpcBulkAcceptRequest&) instead")]]
+    rrr::FutureResult async_BulkAccept(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcBulkAcceptRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_BulkAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed BulkAccept(const RpcBulkAcceptRequest&) instead")]]
+    rrr::i32 BulkAccept(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val) {
+        RpcBulkAcceptRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->BulkAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        return 0;
     }
     class BulkPrepare2TypedFuture {
     private:
@@ -1388,6 +1588,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_BulkPrepare2(const RpcBulkPrepare2Request&) instead")]]
+    rrr::FutureResult async_BulkPrepare2(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcBulkPrepare2Request __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_BulkPrepare2(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed BulkPrepare2(const RpcBulkPrepare2Request&) instead")]]
+    rrr::i32 BulkPrepare2(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val, MarshallDeputy* ret) {
+        RpcBulkPrepare2Request __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->BulkPrepare2(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        if (ret) *ret = __resp__.ret;
+        return 0;
+    }
     class SyncLogTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1433,6 +1657,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_SyncLog(const RpcSyncLogRequest&) instead")]]
+    rrr::FutureResult async_SyncLog(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcSyncLogRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_SyncLog(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed SyncLog(const RpcSyncLogRequest&) instead")]]
+    rrr::i32 SyncLog(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val, MarshallDeputy* ret) {
+        RpcSyncLogRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->SyncLog(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        if (ret) *ret = __resp__.ret;
+        return 0;
+    }
     class SyncCommitTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1476,6 +1724,29 @@ public:
             return rusty::Result<RpcSyncCommitResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_SyncCommit(const RpcSyncCommitRequest&) instead")]]
+    rrr::FutureResult async_SyncCommit(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcSyncCommitRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_SyncCommit(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed SyncCommit(const RpcSyncCommitRequest&) instead")]]
+    rrr::i32 SyncCommit(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val) {
+        RpcSyncCommitRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->SyncCommit(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        return 0;
     }
     class SyncNoOpsTypedFuture {
     private:
@@ -1521,6 +1792,29 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_SyncNoOps(const RpcSyncNoOpsRequest&) instead")]]
+    rrr::FutureResult async_SyncNoOps(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcSyncNoOpsRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_SyncNoOps(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed SyncNoOps(const RpcSyncNoOpsRequest&) instead")]]
+    rrr::i32 SyncNoOps(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val) {
+        RpcSyncNoOpsRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->SyncNoOps(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        return 0;
+    }
     class BulkDecideTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1565,6 +1859,29 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_BulkDecide(const RpcBulkDecideRequest&) instead")]]
+    rrr::FutureResult async_BulkDecide(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcBulkDecideRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_BulkDecide(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed BulkDecide(const RpcBulkDecideRequest&) instead")]]
+    rrr::i32 BulkDecide(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val) {
+        RpcBulkDecideRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->BulkDecide(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ballot) *ballot = __resp__.ballot;
+        if (val) *val = __resp__.val;
+        return 0;
+    }
 };
 
 class MongodbService : public rrr::Service {
@@ -1592,11 +1909,11 @@ public:
     }
 
     enum {
-        COMMIT = 0x185ae18f,
+        COMMIT = 0x2a6ce678,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(COMMIT, svc_index)) != 0) {
             goto err;
@@ -1607,7 +1924,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case COMMIT: __Commit__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
@@ -1686,6 +2003,26 @@ public:
             return rusty::Result<RpcCommitResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Commit(const RpcCommitRequest&) instead")]]
+    rrr::FutureResult async_Commit(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCommitRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Commit(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Commit(const RpcCommitRequest&) instead")]]
+    rrr::i32 Commit(const MarshallDeputy& cmd) {
+        RpcCommitRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Commit(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 
@@ -1795,13 +2132,13 @@ public:
     }
 
     enum {
-        PREPARE = 0x32dd0fe6,
-        SUGGEST = 0x57709ade,
-        DECIDE = 0x15cfae7f,
+        PREPARE = 0x12807923,
+        SUGGEST = 0x5311ef4c,
+        DECIDE = 0x6b1a26b8,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(PREPARE, svc_index)) != 0) {
             goto err;
@@ -1820,7 +2157,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case PREPARE: __Prepare__wrapper__(std::move(req), weak_sconn); break;
         case SUGGEST: __Suggest__wrapper__(std::move(req), weak_sconn); break;
@@ -1958,6 +2295,31 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::FutureResult async_Prepare(const uint64_t& slot, const ballot_t& ballot, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcPrepareRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        auto __typed_result__ = this->async_Prepare(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::i32 Prepare(const uint64_t& slot, const ballot_t& ballot, ballot_t* max_ballot, uint64_t* coro_id) {
+        RpcPrepareRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        auto __typed_result__ = this->Prepare(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        return 0;
+    }
     class SuggestTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -2008,6 +2370,41 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Suggest(const RpcSuggestRequest&) instead")]]
+    rrr::FutureResult async_Suggest(const uint64_t& slot, const uint64_t& time, const ballot_t& ballot, const uint64_t& sender, const std::vector<uint64_t>& skip_commits, const std::vector<uint64_t>& skip_potentials, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcSuggestRequest __req__;
+        __req__.slot = slot;
+        __req__.time = time;
+        __req__.ballot = ballot;
+        __req__.sender = sender;
+        __req__.skip_commits = skip_commits;
+        __req__.skip_potentials = skip_potentials;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Suggest(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Suggest(const RpcSuggestRequest&) instead")]]
+    rrr::i32 Suggest(const uint64_t& slot, const uint64_t& time, const ballot_t& ballot, const uint64_t& sender, const std::vector<uint64_t>& skip_commits, const std::vector<uint64_t>& skip_potentials, const MarshallDeputy& cmd, ballot_t* max_ballot, uint64_t* coro_id) {
+        RpcSuggestRequest __req__;
+        __req__.slot = slot;
+        __req__.time = time;
+        __req__.ballot = ballot;
+        __req__.sender = sender;
+        __req__.skip_commits = skip_commits;
+        __req__.skip_potentials = skip_potentials;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Suggest(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        return 0;
+    }
     class DecideTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -2051,6 +2448,30 @@ public:
             return rusty::Result<RpcDecideResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Decide(const RpcDecideRequest&) instead")]]
+    rrr::FutureResult async_Decide(const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcDecideRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Decide(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Decide(const RpcDecideRequest&) instead")]]
+    rrr::i32 Decide(const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd) {
+        RpcDecideRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Decide(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 
@@ -2313,17 +2734,17 @@ public:
     }
 
     enum {
-        HEARTBEAT = 0x68878498,
-        FORWARD = 0x2922f191,
-        VOTE = 0x5df8a751,
-        VOTE2FPGA = 0x3db14d86,
-        APPENDENTRIES = 0x630d43c9,
-        APPENDENTRIES2 = 0x111a5cc6,
-        DECIDE = 0x3ed8dc11,
+        HEARTBEAT = 0x1fac8043,
+        FORWARD = 0x41694497,
+        VOTE = 0x52ce2808,
+        VOTE2FPGA = 0x2134a8ea,
+        APPENDENTRIES = 0x4052eadc,
+        APPENDENTRIES2 = 0x20d8d7fa,
+        DECIDE = 0x28480d53,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(HEARTBEAT, svc_index)) != 0) {
             goto err;
@@ -2358,7 +2779,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case HEARTBEAT: __Heartbeat__wrapper__(std::move(req), weak_sconn); break;
         case FORWARD: __Forward__wrapper__(std::move(req), weak_sconn); break;
@@ -2602,6 +3023,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Heartbeat(const RpcHeartbeatRequest&) instead")]]
+    rrr::FutureResult async_Heartbeat(const uint64_t& leaderPrevLogIndex, const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcHeartbeatRequest __req__;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_Heartbeat(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Heartbeat(const RpcHeartbeatRequest&) instead")]]
+    rrr::i32 Heartbeat(const uint64_t& leaderPrevLogIndex, const DepId& dep_id, uint64_t* followerPrevLogIndex) {
+        RpcHeartbeatRequest __req__;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->Heartbeat(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (followerPrevLogIndex) *followerPrevLogIndex = __resp__.followerPrevLogIndex;
+        return 0;
+    }
     class ForwardTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -2644,6 +3089,28 @@ public:
             return rusty::Result<RpcForwardResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Forward(const RpcForwardRequest&) instead")]]
+    rrr::FutureResult async_Forward(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcForwardRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Forward(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Forward(const RpcForwardRequest&) instead")]]
+    rrr::i32 Forward(const MarshallDeputy& cmd, uint64_t* cmt_idx) {
+        RpcForwardRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Forward(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (cmt_idx) *cmt_idx = __resp__.cmt_idx;
+        return 0;
     }
     class VoteTypedFuture {
     private:
@@ -2692,6 +3159,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Vote(const RpcVoteRequest&) instead")]]
+    rrr::FutureResult async_Vote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term, const parid_t& par_id, const ballot_t& cur_term, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcVoteRequest __req__;
+        __req__.lst_log_idx = lst_log_idx;
+        __req__.lst_log_term = lst_log_term;
+        __req__.par_id = par_id;
+        __req__.cur_term = cur_term;
+        auto __typed_result__ = this->async_Vote(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Vote(const RpcVoteRequest&) instead")]]
+    rrr::i32 Vote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term, const parid_t& par_id, const ballot_t& cur_term, ballot_t* max_ballot, bool_t* vote_granted) {
+        RpcVoteRequest __req__;
+        __req__.lst_log_idx = lst_log_idx;
+        __req__.lst_log_term = lst_log_term;
+        __req__.par_id = par_id;
+        __req__.cur_term = cur_term;
+        auto __typed_result__ = this->Vote(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (vote_granted) *vote_granted = __resp__.vote_granted;
+        return 0;
+    }
     class Vote2FPGATypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -2738,6 +3234,35 @@ public:
             return rusty::Result<RpcVote2FPGAResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Vote2FPGA(const RpcVote2FPGARequest&) instead")]]
+    rrr::FutureResult async_Vote2FPGA(const uint64_t& lst_log_idx, const ballot_t& lst_log_term, const parid_t& par_id, const ballot_t& cur_term, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcVote2FPGARequest __req__;
+        __req__.lst_log_idx = lst_log_idx;
+        __req__.lst_log_term = lst_log_term;
+        __req__.par_id = par_id;
+        __req__.cur_term = cur_term;
+        auto __typed_result__ = this->async_Vote2FPGA(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Vote2FPGA(const RpcVote2FPGARequest&) instead")]]
+    rrr::i32 Vote2FPGA(const uint64_t& lst_log_idx, const ballot_t& lst_log_term, const parid_t& par_id, const ballot_t& cur_term, ballot_t* max_ballot, bool_t* vote_granted) {
+        RpcVote2FPGARequest __req__;
+        __req__.lst_log_idx = lst_log_idx;
+        __req__.lst_log_term = lst_log_term;
+        __req__.par_id = par_id;
+        __req__.cur_term = cur_term;
+        auto __typed_result__ = this->Vote2FPGA(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (vote_granted) *vote_granted = __resp__.vote_granted;
+        return 0;
     }
     class AppendEntriesTypedFuture {
     private:
@@ -2791,6 +3316,44 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_AppendEntries(const RpcAppendEntriesRequest&) instead")]]
+    rrr::FutureResult async_AppendEntries(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const DepId& dep_id, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAppendEntriesRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_AppendEntries(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed AppendEntries(const RpcAppendEntriesRequest&) instead")]]
+    rrr::i32 AppendEntries(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const DepId& dep_id, const MarshallDeputy& cmd, uint64_t* followerAppendOK, uint64_t* followerCurrentTerm, uint64_t* followerLastLogIndex) {
+        RpcAppendEntriesRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->AppendEntries(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (followerAppendOK) *followerAppendOK = __resp__.followerAppendOK;
+        if (followerCurrentTerm) *followerCurrentTerm = __resp__.followerCurrentTerm;
+        if (followerLastLogIndex) *followerLastLogIndex = __resp__.followerLastLogIndex;
+        return 0;
+    }
     class AppendEntries2TypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -2843,6 +3406,44 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_AppendEntries2(const RpcAppendEntries2Request&) instead")]]
+    rrr::FutureResult async_AppendEntries2(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const DepId& dep_id, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAppendEntries2Request __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_AppendEntries2(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed AppendEntries2(const RpcAppendEntries2Request&) instead")]]
+    rrr::i32 AppendEntries2(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const DepId& dep_id, const MarshallDeputy& cmd, uint64_t* followerAppendOK, uint64_t* followerCurrentTerm, uint64_t* followerLastLogIndex) {
+        RpcAppendEntries2Request __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->AppendEntries2(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (followerAppendOK) *followerAppendOK = __resp__.followerAppendOK;
+        if (followerCurrentTerm) *followerCurrentTerm = __resp__.followerCurrentTerm;
+        if (followerLastLogIndex) *followerLastLogIndex = __resp__.followerLastLogIndex;
+        return 0;
+    }
     class DecideTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -2887,6 +3488,32 @@ public:
             return rusty::Result<RpcDecideResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Decide(const RpcDecideRequest&) instead")]]
+    rrr::FutureResult async_Decide(const uint64_t& slot, const ballot_t& ballot, const DepId& dep_id, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcDecideRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Decide(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Decide(const RpcDecideRequest&) instead")]]
+    rrr::i32 Decide(const uint64_t& slot, const ballot_t& ballot, const DepId& dep_id, const MarshallDeputy& cmd) {
+        RpcDecideRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Decide(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 
@@ -3257,20 +3884,20 @@ public:
     }
 
     enum {
-        VOTE = 0x12f8b05f,
-        VOTEDURABLE = 0x48484d12,
-        APPENDENTRIES = 0x1cfaf4b9,
-        EMPTYAPPENDENTRIES = 0x2df1e365,
-        APPENDENTRIESDURABLE = 0x683a3dbb,
-        TIMEOUTNOW = 0x44928dde,
-        NOTIFYRESTART = 0x1d849a47,
-        INSTALLSNAPSHOT = 0x50842a09,
-        ADDSERVER = 0x552337fd,
-        REMOVESERVER = 0x301d35a9,
+        VOTE = 0x52b2e43a,
+        VOTEDURABLE = 0x21bbfb8d,
+        APPENDENTRIES = 0x20d19e65,
+        EMPTYAPPENDENTRIES = 0x17a93bf6,
+        APPENDENTRIESDURABLE = 0x4d7146e9,
+        TIMEOUTNOW = 0x66a30cfc,
+        NOTIFYRESTART = 0x31419829,
+        INSTALLSNAPSHOT = 0x2235bce7,
+        ADDSERVER = 0x66d3f46a,
+        REMOVESERVER = 0x5c0cab14,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(VOTE, svc_index)) != 0) {
             goto err;
@@ -3317,7 +3944,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case VOTE: __Vote__wrapper__(std::move(req), weak_sconn); break;
         case VOTEDURABLE: __VoteDurable__wrapper__(std::move(req), weak_sconn); break;
@@ -3642,6 +4269,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Vote(const RpcVoteRequest&) instead")]]
+    rrr::FutureResult async_Vote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term, const siteid_t& site_id, const ballot_t& cur_term, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcVoteRequest __req__;
+        __req__.lst_log_idx = lst_log_idx;
+        __req__.lst_log_term = lst_log_term;
+        __req__.site_id = site_id;
+        __req__.cur_term = cur_term;
+        auto __typed_result__ = this->async_Vote(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Vote(const RpcVoteRequest&) instead")]]
+    rrr::i32 Vote(const uint64_t& lst_log_idx, const ballot_t& lst_log_term, const siteid_t& site_id, const ballot_t& cur_term, ballot_t* max_ballot, bool_t* vote_granted) {
+        RpcVoteRequest __req__;
+        __req__.lst_log_idx = lst_log_idx;
+        __req__.lst_log_term = lst_log_term;
+        __req__.site_id = site_id;
+        __req__.cur_term = cur_term;
+        auto __typed_result__ = this->Vote(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (vote_granted) *vote_granted = __resp__.vote_granted;
+        return 0;
+    }
     class VoteDurableTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -3685,6 +4341,30 @@ public:
             return rusty::Result<RpcVoteDurableResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_VoteDurable(const RpcVoteDurableRequest&) instead")]]
+    rrr::FutureResult async_VoteDurable(const ballot_t& term, const siteid_t& voter_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcVoteDurableRequest __req__;
+        __req__.term = term;
+        __req__.voter_id = voter_id;
+        auto __typed_result__ = this->async_VoteDurable(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed VoteDurable(const RpcVoteDurableRequest&) instead")]]
+    rrr::i32 VoteDurable(const ballot_t& term, const siteid_t& voter_id, bool_t* acknowledged) {
+        RpcVoteDurableRequest __req__;
+        __req__.term = term;
+        __req__.voter_id = voter_id;
+        auto __typed_result__ = this->VoteDurable(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (acknowledged) *acknowledged = __resp__.acknowledged;
+        return 0;
     }
     class AppendEntriesTypedFuture {
     private:
@@ -3740,6 +4420,47 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_AppendEntries(const RpcAppendEntriesRequest&) instead")]]
+    rrr::FutureResult async_AppendEntries(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const siteid_t& leaderSiteId, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const MarshallDeputy& cmd, const uint64_t& leaderNextLogTerm, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAppendEntriesRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderSiteId = leaderSiteId;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.cmd = cmd;
+        __req__.leaderNextLogTerm = leaderNextLogTerm;
+        auto __typed_result__ = this->async_AppendEntries(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed AppendEntries(const RpcAppendEntriesRequest&) instead")]]
+    rrr::i32 AppendEntries(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const siteid_t& leaderSiteId, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const MarshallDeputy& cmd, const uint64_t& leaderNextLogTerm, uint64_t* followerAppendOK, uint64_t* followerCurrentTerm, uint64_t* followerLastLogIndex, uint64_t* followerAckType) {
+        RpcAppendEntriesRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderSiteId = leaderSiteId;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.cmd = cmd;
+        __req__.leaderNextLogTerm = leaderNextLogTerm;
+        auto __typed_result__ = this->AppendEntries(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (followerAppendOK) *followerAppendOK = __resp__.followerAppendOK;
+        if (followerCurrentTerm) *followerCurrentTerm = __resp__.followerCurrentTerm;
+        if (followerLastLogIndex) *followerLastLogIndex = __resp__.followerLastLogIndex;
+        if (followerAckType) *followerAckType = __resp__.followerAckType;
+        return 0;
+    }
     class EmptyAppendEntriesTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -3793,6 +4514,45 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_EmptyAppendEntries(const RpcEmptyAppendEntriesRequest&) instead")]]
+    rrr::FutureResult async_EmptyAppendEntries(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const siteid_t& leaderSiteId, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const bool_t& trigger_election_now, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcEmptyAppendEntriesRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderSiteId = leaderSiteId;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.trigger_election_now = trigger_election_now;
+        auto __typed_result__ = this->async_EmptyAppendEntries(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed EmptyAppendEntries(const RpcEmptyAppendEntriesRequest&) instead")]]
+    rrr::i32 EmptyAppendEntries(const uint64_t& slot, const ballot_t& ballot, const uint64_t& leaderCurrentTerm, const siteid_t& leaderSiteId, const uint64_t& leaderPrevLogIndex, const uint64_t& leaderPrevLogTerm, const uint64_t& leaderCommitIndex, const bool_t& trigger_election_now, uint64_t* followerAppendOK, uint64_t* followerCurrentTerm, uint64_t* followerLastLogIndex, uint64_t* followerAckType) {
+        RpcEmptyAppendEntriesRequest __req__;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.leaderCurrentTerm = leaderCurrentTerm;
+        __req__.leaderSiteId = leaderSiteId;
+        __req__.leaderPrevLogIndex = leaderPrevLogIndex;
+        __req__.leaderPrevLogTerm = leaderPrevLogTerm;
+        __req__.leaderCommitIndex = leaderCommitIndex;
+        __req__.trigger_election_now = trigger_election_now;
+        auto __typed_result__ = this->EmptyAppendEntries(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (followerAppendOK) *followerAppendOK = __resp__.followerAppendOK;
+        if (followerCurrentTerm) *followerCurrentTerm = __resp__.followerCurrentTerm;
+        if (followerLastLogIndex) *followerLastLogIndex = __resp__.followerLastLogIndex;
+        if (followerAckType) *followerAckType = __resp__.followerAckType;
+        return 0;
+    }
     class AppendEntriesDurableTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -3837,6 +4597,32 @@ public:
             return rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_AppendEntriesDurable(const RpcAppendEntriesDurableRequest&) instead")]]
+    rrr::FutureResult async_AppendEntriesDurable(const ballot_t& term, const siteid_t& follower_id, const uint64_t& lastLogIndex, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAppendEntriesDurableRequest __req__;
+        __req__.term = term;
+        __req__.follower_id = follower_id;
+        __req__.lastLogIndex = lastLogIndex;
+        auto __typed_result__ = this->async_AppendEntriesDurable(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed AppendEntriesDurable(const RpcAppendEntriesDurableRequest&) instead")]]
+    rrr::i32 AppendEntriesDurable(const ballot_t& term, const siteid_t& follower_id, const uint64_t& lastLogIndex, bool_t* acknowledged) {
+        RpcAppendEntriesDurableRequest __req__;
+        __req__.term = term;
+        __req__.follower_id = follower_id;
+        __req__.lastLogIndex = lastLogIndex;
+        auto __typed_result__ = this->AppendEntriesDurable(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (acknowledged) *acknowledged = __resp__.acknowledged;
+        return 0;
     }
     class TimeoutNowTypedFuture {
     private:
@@ -3883,6 +4669,31 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_TimeoutNow(const RpcTimeoutNowRequest&) instead")]]
+    rrr::FutureResult async_TimeoutNow(const uint64_t& leaderTerm, const siteid_t& leaderSiteId, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTimeoutNowRequest __req__;
+        __req__.leaderTerm = leaderTerm;
+        __req__.leaderSiteId = leaderSiteId;
+        auto __typed_result__ = this->async_TimeoutNow(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed TimeoutNow(const RpcTimeoutNowRequest&) instead")]]
+    rrr::i32 TimeoutNow(const uint64_t& leaderTerm, const siteid_t& leaderSiteId, uint64_t* followerTerm, bool_t* success) {
+        RpcTimeoutNowRequest __req__;
+        __req__.leaderTerm = leaderTerm;
+        __req__.leaderSiteId = leaderSiteId;
+        auto __typed_result__ = this->TimeoutNow(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (followerTerm) *followerTerm = __resp__.followerTerm;
+        if (success) *success = __resp__.success;
+        return 0;
+    }
     class NotifyRestartTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -3925,6 +4736,28 @@ public:
             return rusty::Result<RpcNotifyRestartResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_NotifyRestart(const RpcNotifyRestartRequest&) instead")]]
+    rrr::FutureResult async_NotifyRestart(const siteid_t& restartedSiteId, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcNotifyRestartRequest __req__;
+        __req__.restartedSiteId = restartedSiteId;
+        auto __typed_result__ = this->async_NotifyRestart(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed NotifyRestart(const RpcNotifyRestartRequest&) instead")]]
+    rrr::i32 NotifyRestart(const siteid_t& restartedSiteId, bool_t* acknowledged) {
+        RpcNotifyRestartRequest __req__;
+        __req__.restartedSiteId = restartedSiteId;
+        auto __typed_result__ = this->NotifyRestart(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (acknowledged) *acknowledged = __resp__.acknowledged;
+        return 0;
     }
     class InstallSnapshotTypedFuture {
     private:
@@ -3973,6 +4806,36 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_InstallSnapshot(const RpcInstallSnapshotRequest&) instead")]]
+    rrr::FutureResult async_InstallSnapshot(const uint64_t& term, const uint64_t& leader_id, const uint64_t& last_included_index, const uint64_t& last_included_term, const std::string& data, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcInstallSnapshotRequest __req__;
+        __req__.term = term;
+        __req__.leader_id = leader_id;
+        __req__.last_included_index = last_included_index;
+        __req__.last_included_term = last_included_term;
+        __req__.data = data;
+        auto __typed_result__ = this->async_InstallSnapshot(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed InstallSnapshot(const RpcInstallSnapshotRequest&) instead")]]
+    rrr::i32 InstallSnapshot(const uint64_t& term, const uint64_t& leader_id, const uint64_t& last_included_index, const uint64_t& last_included_term, const std::string& data, uint64_t* term_out) {
+        RpcInstallSnapshotRequest __req__;
+        __req__.term = term;
+        __req__.leader_id = leader_id;
+        __req__.last_included_index = last_included_index;
+        __req__.last_included_term = last_included_term;
+        __req__.data = data;
+        auto __typed_result__ = this->InstallSnapshot(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (term_out) *term_out = __resp__.term_out;
+        return 0;
+    }
     class AddServerTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -4020,6 +4883,34 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_AddServer(const RpcAddServerRequest&) instead")]]
+    rrr::FutureResult async_AddServer(const uint64_t& term, const uint64_t& new_server_id, const std::string& new_server_addr, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAddServerRequest __req__;
+        __req__.term = term;
+        __req__.new_server_id = new_server_id;
+        __req__.new_server_addr = new_server_addr;
+        auto __typed_result__ = this->async_AddServer(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed AddServer(const RpcAddServerRequest&) instead")]]
+    rrr::i32 AddServer(const uint64_t& term, const uint64_t& new_server_id, const std::string& new_server_addr, bool_t* success, std::string* error_msg, uint64_t* leader_hint) {
+        RpcAddServerRequest __req__;
+        __req__.term = term;
+        __req__.new_server_id = new_server_id;
+        __req__.new_server_addr = new_server_addr;
+        auto __typed_result__ = this->AddServer(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (success) *success = __resp__.success;
+        if (error_msg) *error_msg = __resp__.error_msg;
+        if (leader_hint) *leader_hint = __resp__.leader_hint;
+        return 0;
+    }
     class RemoveServerTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -4065,6 +4956,32 @@ public:
             return rusty::Result<RpcRemoveServerResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_RemoveServer(const RpcRemoveServerRequest&) instead")]]
+    rrr::FutureResult async_RemoveServer(const uint64_t& term, const uint64_t& server_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRemoveServerRequest __req__;
+        __req__.term = term;
+        __req__.server_id = server_id;
+        auto __typed_result__ = this->async_RemoveServer(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RemoveServer(const RpcRemoveServerRequest&) instead")]]
+    rrr::i32 RemoveServer(const uint64_t& term, const uint64_t& server_id, bool_t* success, std::string* error_msg, uint64_t* leader_hint) {
+        RpcRemoveServerRequest __req__;
+        __req__.term = term;
+        __req__.server_id = server_id;
+        auto __typed_result__ = this->RemoveServer(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (success) *success = __resp__.success;
+        if (error_msg) *error_msg = __resp__.error_msg;
+        if (leader_hint) *leader_hint = __resp__.leader_hint;
+        return 0;
     }
 };
 
@@ -4246,15 +5163,15 @@ public:
     }
 
     enum {
-        FORWARD = 0x1f7fbdc0,
-        PREPARE = 0x188cc5bf,
-        FASTACCEPT = 0x6366c94a,
-        ACCEPT = 0x21ae08c5,
-        COMMIT = 0x611733e6,
+        FORWARD = 0x1435bb3b,
+        PREPARE = 0x30a4e7e5,
+        FASTACCEPT = 0x64a97f91,
+        ACCEPT = 0x37106b70,
+        COMMIT = 0x19ac1ab1,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(FORWARD, svc_index)) != 0) {
             goto err;
@@ -4281,7 +5198,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case FORWARD: __Forward__wrapper__(std::move(req), weak_sconn); break;
         case PREPARE: __Prepare__wrapper__(std::move(req), weak_sconn); break;
@@ -4468,6 +5385,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Forward(const RpcForwardRequest&) instead")]]
+    rrr::FutureResult async_Forward(const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcForwardRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Forward(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Forward(const RpcForwardRequest&) instead")]]
+    rrr::i32 Forward(const MarshallDeputy& cmd) {
+        RpcForwardRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Forward(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class PrepareTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -4516,6 +5453,37 @@ public:
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::FutureResult async_Prepare(const uint8_t& is_pilot, const uint64_t& slot, const ballot_t& ballot, const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcPrepareRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_Prepare(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::i32 Prepare(const uint8_t& is_pilot, const uint64_t& slot, const ballot_t& ballot, const DepId& dep_id, MarshallDeputy* ret_cmd, ballot_t* max_ballot, uint64_t* dep, status_t* status) {
+        RpcPrepareRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->Prepare(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret_cmd) *ret_cmd = __resp__.ret_cmd;
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (dep) *dep = __resp__.dep;
+        if (status) *status = __resp__.status;
+        return 0;
     }
     class FastAcceptTypedFuture {
     private:
@@ -4566,6 +5534,39 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_FastAccept(const RpcFastAcceptRequest&) instead")]]
+    rrr::FutureResult async_FastAccept(const uint8_t& is_pilot, const uint64_t& slot, const ballot_t& ballot, const uint64_t& dep, const MarshallDeputy& cmd, const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFastAcceptRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep = dep;
+        __req__.cmd = cmd;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_FastAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed FastAccept(const RpcFastAcceptRequest&) instead")]]
+    rrr::i32 FastAccept(const uint8_t& is_pilot, const uint64_t& slot, const ballot_t& ballot, const uint64_t& dep, const MarshallDeputy& cmd, const DepId& dep_id, ballot_t* max_ballot, uint64_t* ret_dep) {
+        RpcFastAcceptRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep = dep;
+        __req__.cmd = cmd;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->FastAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        if (ret_dep) *ret_dep = __resp__.ret_dep;
+        return 0;
+    }
     class AcceptTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -4614,6 +5615,38 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Accept(const RpcAcceptRequest&) instead")]]
+    rrr::FutureResult async_Accept(const uint8_t& is_pilot, const uint64_t& slot, const ballot_t& ballot, const uint64_t& dep, const MarshallDeputy& cmd, const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAcceptRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep = dep;
+        __req__.cmd = cmd;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_Accept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Accept(const RpcAcceptRequest&) instead")]]
+    rrr::i32 Accept(const uint8_t& is_pilot, const uint64_t& slot, const ballot_t& ballot, const uint64_t& dep, const MarshallDeputy& cmd, const DepId& dep_id, ballot_t* max_ballot) {
+        RpcAcceptRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.ballot = ballot;
+        __req__.dep = dep;
+        __req__.cmd = cmd;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->Accept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (max_ballot) *max_ballot = __resp__.max_ballot;
+        return 0;
+    }
     class CommitTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -4658,6 +5691,32 @@ public:
             return rusty::Result<RpcCommitResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Commit(const RpcCommitRequest&) instead")]]
+    rrr::FutureResult async_Commit(const uint8_t& is_pilot, const uint64_t& slot, const uint64_t& dep, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCommitRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.dep = dep;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Commit(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Commit(const RpcCommitRequest&) instead")]]
+    rrr::i32 Commit(const uint8_t& is_pilot, const uint64_t& slot, const uint64_t& dep, const MarshallDeputy& cmd) {
+        RpcCommitRequest __req__;
+        __req__.is_pilot = is_pilot;
+        __req__.slot = slot;
+        __req__.dep = dep;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Commit(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 
@@ -6234,62 +7293,62 @@ public:
     }
 
     enum {
-        MSGSTRING = 0x308fed12,
-        MSGMARSHALL = 0x2c799cb0,
-        REELECT = 0x39d79d39,
-        RULESPECULATIVEEXECUTE = 0x3e8c2aea,
-        DISPATCH = 0x2a6b3d39,
-        PREPARE = 0x4ed62fe3,
-        COMMIT = 0x48feb6e5,
-        ABORT = 0x29efb610,
-        EARLYABORT = 0x4385bb5b,
-        UPGRADEEPOCH = 0x5c39e73c,
-        TRUNCATEEPOCH = 0x59df5f1e,
-        ISLEADER = 0x22f1f568,
-        ISFPGALEADER = 0x694afc07,
-        SIMPLECMD = 0x2d777de2,
-        FAILOVERPAUSESOCKETOUT = 0x5eeaab22,
-        FAILOVERRESUMESOCKETOUT = 0x1dc63612,
-        RPC_NULL = 0x32622fb7,
-        TAPIRACCEPT = 0x296c713b,
-        TAPIRFASTACCEPT = 0x46e158c0,
-        TAPIRDECIDE = 0x6a5382e7,
-        CAROUSELREADANDPREPARE = 0x4054342d,
-        CAROUSELACCEPT = 0x52bd2219,
-        CAROUSELFASTACCEPT = 0x5b10905a,
-        CAROUSELDECIDE = 0x57de5dbe,
-        RCCDISPATCH = 0x2880398d,
-        RCCFINISH = 0x69db63cd,
-        RCCINQUIRE = 0x2ea82f92,
-        RCCDISPATCHRO = 0x5a292c03,
-        RCCINQUIREVALIDATION = 0x66dd1bb3,
-        RCCNOTIFYGLOBALVALIDATION = 0x46325908,
-        JANUSDISPATCH = 0x18c525ef,
-        RCCCOMMIT = 0x1ccb256c,
-        JANUSCOMMIT = 0x46d7bf8a,
-        JANUSCOMMITWOGRAPH = 0x5051f329,
-        JANUSINQUIRE = 0x2deed61b,
-        RCCPREACCEPT = 0x26510935,
-        JANUSPREACCEPT = 0x1c109b0a,
-        JANUSPREACCEPTWOGRAPH = 0x2772df28,
-        RCCACCEPT = 0x6ae35888,
-        JANUSACCEPT = 0x42a0d9d5,
-        PREACCEPTFEBRUUS = 0x30311d79,
-        ACCEPTFEBRUUS = 0x6fbf46c3,
-        COMMITFEBRUUS = 0x4917e9d2,
-        JETPACKBEGINRECOVERY = 0x685d1a6a,
-        JETPACKPULLIDSET = 0x174d3662,
-        JETPACKPULLCMD = 0x485d13e1,
-        JETPACKRECORDCMD = 0x380e4332,
-        JETPACKPREPARE = 0x36592ae9,
-        JETPACKACCEPT = 0x148562a8,
-        JETPACKCOMMIT = 0x4cf1b6ff,
-        JETPACKPULLRECSETINS = 0x46463818,
-        JETPACKFINISHRECOVERY = 0x16c48c9d,
+        MSGSTRING = 0x21ce954a,
+        MSGMARSHALL = 0x15d47a97,
+        REELECT = 0x184ef22b,
+        RULESPECULATIVEEXECUTE = 0x34a35277,
+        DISPATCH = 0x42b89161,
+        PREPARE = 0x12313a17,
+        COMMIT = 0x59284b0f,
+        ABORT = 0x28e2f218,
+        EARLYABORT = 0x28b88e7c,
+        UPGRADEEPOCH = 0x34c69d2b,
+        TRUNCATEEPOCH = 0x52735ed8,
+        ISLEADER = 0x61df212b,
+        ISFPGALEADER = 0x587a4c85,
+        SIMPLECMD = 0x279b9df0,
+        FAILOVERPAUSESOCKETOUT = 0x113bb1a3,
+        FAILOVERRESUMESOCKETOUT = 0x12747a03,
+        RPC_NULL = 0x30c16c46,
+        TAPIRACCEPT = 0x1a79041e,
+        TAPIRFASTACCEPT = 0x23a264a5,
+        TAPIRDECIDE = 0x37ff0a66,
+        CAROUSELREADANDPREPARE = 0x61f999be,
+        CAROUSELACCEPT = 0x1c056c36,
+        CAROUSELFASTACCEPT = 0x3622986c,
+        CAROUSELDECIDE = 0x5dae847e,
+        RCCDISPATCH = 0x423efaf6,
+        RCCFINISH = 0x59386749,
+        RCCINQUIRE = 0x46d9abf4,
+        RCCDISPATCHRO = 0x1b07fa9f,
+        RCCINQUIREVALIDATION = 0x2efcbb69,
+        RCCNOTIFYGLOBALVALIDATION = 0x10e1189d,
+        JANUSDISPATCH = 0x5104eb95,
+        RCCCOMMIT = 0x6a375f78,
+        JANUSCOMMIT = 0x6203cfef,
+        JANUSCOMMITWOGRAPH = 0x15b98069,
+        JANUSINQUIRE = 0x6acf714e,
+        RCCPREACCEPT = 0x5d094f79,
+        JANUSPREACCEPT = 0x504568b7,
+        JANUSPREACCEPTWOGRAPH = 0x2034b659,
+        RCCACCEPT = 0x62eb1238,
+        JANUSACCEPT = 0x179a542f,
+        PREACCEPTFEBRUUS = 0x36385ac6,
+        ACCEPTFEBRUUS = 0x3548a7a3,
+        COMMITFEBRUUS = 0x413d1b83,
+        JETPACKBEGINRECOVERY = 0x58f36b71,
+        JETPACKPULLIDSET = 0x667c4cca,
+        JETPACKPULLCMD = 0x24b707b7,
+        JETPACKRECORDCMD = 0x1d5f072d,
+        JETPACKPREPARE = 0x41b07d16,
+        JETPACKACCEPT = 0x16c306c4,
+        JETPACKCOMMIT = 0x35c9216d,
+        JETPACKPULLRECSETINS = 0x3d5b8815,
+        JETPACKFINISHRECOVERY = 0x36eda683,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(MSGSTRING, svc_index)) != 0) {
             goto err;
@@ -6504,7 +7563,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case MSGSTRING: __MsgString__wrapper__(std::move(req), weak_sconn); break;
         case MSGMARSHALL: __MsgMarshall__wrapper__(std::move(req), weak_sconn); break;
@@ -7815,6 +8874,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_MsgString(const RpcMsgStringRequest&) instead")]]
+    rrr::FutureResult async_MsgString(const std::string& arg, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcMsgStringRequest __req__;
+        __req__.arg = arg;
+        auto __typed_result__ = this->async_MsgString(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed MsgString(const RpcMsgStringRequest&) instead")]]
+    rrr::i32 MsgString(const std::string& arg, std::string* ret) {
+        RpcMsgStringRequest __req__;
+        __req__.arg = arg;
+        auto __typed_result__ = this->MsgString(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret) *ret = __resp__.ret;
+        return 0;
+    }
     class MsgMarshallTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -7858,6 +8939,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_MsgMarshall(const RpcMsgMarshallRequest&) instead")]]
+    rrr::FutureResult async_MsgMarshall(const MarshallDeputy& arg, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcMsgMarshallRequest __req__;
+        __req__.arg = arg;
+        auto __typed_result__ = this->async_MsgMarshall(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed MsgMarshall(const RpcMsgMarshallRequest&) instead")]]
+    rrr::i32 MsgMarshall(const MarshallDeputy& arg, MarshallDeputy* ret) {
+        RpcMsgMarshallRequest __req__;
+        __req__.arg = arg;
+        auto __typed_result__ = this->MsgMarshall(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret) *ret = __resp__.ret;
+        return 0;
+    }
     class ReElectTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -7899,6 +9002,26 @@ public:
             return rusty::Result<RpcReElectResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_ReElect(const RpcReElectRequest&) instead")]]
+    rrr::FutureResult async_ReElect(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcReElectRequest __req__;
+        auto __typed_result__ = this->async_ReElect(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed ReElect(const RpcReElectRequest&) instead")]]
+    rrr::i32 ReElect(bool_t* success) {
+        RpcReElectRequest __req__;
+        auto __typed_result__ = this->ReElect(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (success) *success = __resp__.success;
+        return 0;
     }
     class RuleSpeculativeExecuteTypedFuture {
     private:
@@ -7944,6 +9067,30 @@ public:
             return rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest&) instead")]]
+    rrr::FutureResult async_RuleSpeculativeExecute(const MarshallDeputy& md, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRuleSpeculativeExecuteRequest __req__;
+        __req__.md = md;
+        auto __typed_result__ = this->async_RuleSpeculativeExecute(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest&) instead")]]
+    rrr::i32 RuleSpeculativeExecute(const MarshallDeputy& md, bool_t* accepted, int32_t* result, bool_t* is_leader) {
+        RpcRuleSpeculativeExecuteRequest __req__;
+        __req__.md = md;
+        auto __typed_result__ = this->RuleSpeculativeExecute(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (accepted) *accepted = __resp__.accepted;
+        if (result) *result = __resp__.result;
+        if (is_leader) *is_leader = __resp__.is_leader;
+        return 0;
     }
     class DispatchTypedFuture {
     private:
@@ -7993,6 +9140,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Dispatch(const RpcDispatchRequest&) instead")]]
+    rrr::FutureResult async_Dispatch(const rrr::i64& tid, const DepId& dep_id, const MarshallDeputy& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcDispatchRequest __req__;
+        __req__.tid = tid;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_Dispatch(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Dispatch(const RpcDispatchRequest&) instead")]]
+    rrr::i32 Dispatch(const rrr::i64& tid, const DepId& dep_id, const MarshallDeputy& cmd, rrr::i32* res, TxnOutput* output, uint64_t* coro_id, MarshallDeputy* view_data) {
+        RpcDispatchRequest __req__;
+        __req__.tid = tid;
+        __req__.dep_id = dep_id;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->Dispatch(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (output) *output = __resp__.output;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        if (view_data) *view_data = __resp__.view_data;
+        return 0;
+    }
     class PrepareTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8039,6 +9215,34 @@ public:
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::FutureResult async_Prepare(const rrr::i64& tid, const std::vector<rrr::i32>& sids, const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcPrepareRequest __req__;
+        __req__.tid = tid;
+        __req__.sids = sids;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_Prepare(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Prepare(const RpcPrepareRequest&) instead")]]
+    rrr::i32 Prepare(const rrr::i64& tid, const std::vector<rrr::i32>& sids, const DepId& dep_id, rrr::i32* res, bool_t* slow, uint64_t* coro_id) {
+        RpcPrepareRequest __req__;
+        __req__.tid = tid;
+        __req__.sids = sids;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->Prepare(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (slow) *slow = __resp__.slow;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        return 0;
     }
     class CommitTypedFuture {
     private:
@@ -8088,6 +9292,34 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Commit(const RpcCommitRequest&) instead")]]
+    rrr::FutureResult async_Commit(const rrr::i64& tid, const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCommitRequest __req__;
+        __req__.tid = tid;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_Commit(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Commit(const RpcCommitRequest&) instead")]]
+    rrr::i32 Commit(const rrr::i64& tid, const DepId& dep_id, rrr::i32* res, bool_t* slow, uint64_t* coro_id, Profiling* profile, MarshallDeputy* view_data) {
+        RpcCommitRequest __req__;
+        __req__.tid = tid;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->Commit(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (slow) *slow = __resp__.slow;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        if (profile) *profile = __resp__.profile;
+        if (view_data) *view_data = __resp__.view_data;
+        return 0;
+    }
     class AbortTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8136,6 +9368,34 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_Abort(const RpcAbortRequest&) instead")]]
+    rrr::FutureResult async_Abort(const rrr::i64& tid, const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAbortRequest __req__;
+        __req__.tid = tid;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_Abort(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed Abort(const RpcAbortRequest&) instead")]]
+    rrr::i32 Abort(const rrr::i64& tid, const DepId& dep_id, rrr::i32* res, bool_t* slow, uint64_t* coro_id, Profiling* profile, MarshallDeputy* view_data) {
+        RpcAbortRequest __req__;
+        __req__.tid = tid;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->Abort(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (slow) *slow = __resp__.slow;
+        if (coro_id) *coro_id = __resp__.coro_id;
+        if (profile) *profile = __resp__.profile;
+        if (view_data) *view_data = __resp__.view_data;
+        return 0;
+    }
     class EarlyAbortTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8178,6 +9438,28 @@ public:
             return rusty::Result<RpcEarlyAbortResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_EarlyAbort(const RpcEarlyAbortRequest&) instead")]]
+    rrr::FutureResult async_EarlyAbort(const rrr::i64& tid, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcEarlyAbortRequest __req__;
+        __req__.tid = tid;
+        auto __typed_result__ = this->async_EarlyAbort(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed EarlyAbort(const RpcEarlyAbortRequest&) instead")]]
+    rrr::i32 EarlyAbort(const rrr::i64& tid, rrr::i32* res) {
+        RpcEarlyAbortRequest __req__;
+        __req__.tid = tid;
+        auto __typed_result__ = this->EarlyAbort(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
     }
     class UpgradeEpochTypedFuture {
     private:
@@ -8222,6 +9504,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_UpgradeEpoch(const RpcUpgradeEpochRequest&) instead")]]
+    rrr::FutureResult async_UpgradeEpoch(const uint32_t& curr_epoch, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcUpgradeEpochRequest __req__;
+        __req__.curr_epoch = curr_epoch;
+        auto __typed_result__ = this->async_UpgradeEpoch(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed UpgradeEpoch(const RpcUpgradeEpochRequest&) instead")]]
+    rrr::i32 UpgradeEpoch(const uint32_t& curr_epoch, int32_t* res) {
+        RpcUpgradeEpochRequest __req__;
+        __req__.curr_epoch = curr_epoch;
+        auto __typed_result__ = this->UpgradeEpoch(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class TruncateEpochTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8263,6 +9567,26 @@ public:
             return rusty::Result<RpcTruncateEpochResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_TruncateEpoch(const RpcTruncateEpochRequest&) instead")]]
+    rrr::FutureResult async_TruncateEpoch(const uint32_t& old_epoch, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTruncateEpochRequest __req__;
+        __req__.old_epoch = old_epoch;
+        auto __typed_result__ = this->async_TruncateEpoch(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed TruncateEpoch(const RpcTruncateEpochRequest&) instead")]]
+    rrr::i32 TruncateEpoch(const uint32_t& old_epoch) {
+        RpcTruncateEpochRequest __req__;
+        __req__.old_epoch = old_epoch;
+        auto __typed_result__ = this->TruncateEpoch(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class IsLeaderTypedFuture {
     private:
@@ -8307,6 +9631,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_IsLeader(const RpcIsLeaderRequest&) instead")]]
+    rrr::FutureResult async_IsLeader(const locid_t& cur_pause, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcIsLeaderRequest __req__;
+        __req__.cur_pause = cur_pause;
+        auto __typed_result__ = this->async_IsLeader(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed IsLeader(const RpcIsLeaderRequest&) instead")]]
+    rrr::i32 IsLeader(const locid_t& cur_pause, bool_t* is_leader) {
+        RpcIsLeaderRequest __req__;
+        __req__.cur_pause = cur_pause;
+        auto __typed_result__ = this->IsLeader(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (is_leader) *is_leader = __resp__.is_leader;
+        return 0;
+    }
     class IsFPGALeaderTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8349,6 +9695,28 @@ public:
             return rusty::Result<RpcIsFPGALeaderResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_IsFPGALeader(const RpcIsFPGALeaderRequest&) instead")]]
+    rrr::FutureResult async_IsFPGALeader(const locid_t& cur_pause, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcIsFPGALeaderRequest __req__;
+        __req__.cur_pause = cur_pause;
+        auto __typed_result__ = this->async_IsFPGALeader(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed IsFPGALeader(const RpcIsFPGALeaderRequest&) instead")]]
+    rrr::i32 IsFPGALeader(const locid_t& cur_pause, bool_t* is_leader) {
+        RpcIsFPGALeaderRequest __req__;
+        __req__.cur_pause = cur_pause;
+        auto __typed_result__ = this->IsFPGALeader(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (is_leader) *is_leader = __resp__.is_leader;
+        return 0;
     }
     class SimpleCmdTypedFuture {
     private:
@@ -8393,6 +9761,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_SimpleCmd(const RpcSimpleCmdRequest&) instead")]]
+    rrr::FutureResult async_SimpleCmd(const SimpleCommand& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcSimpleCmdRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_SimpleCmd(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed SimpleCmd(const RpcSimpleCmdRequest&) instead")]]
+    rrr::i32 SimpleCmd(const SimpleCommand& cmd, rrr::i32* res) {
+        RpcSimpleCmdRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->SimpleCmd(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class FailoverPauseSocketOutTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8434,6 +9824,26 @@ public:
             return rusty::Result<RpcFailoverPauseSocketOutResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_FailoverPauseSocketOut(const RpcFailoverPauseSocketOutRequest&) instead")]]
+    rrr::FutureResult async_FailoverPauseSocketOut(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFailoverPauseSocketOutRequest __req__;
+        auto __typed_result__ = this->async_FailoverPauseSocketOut(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed FailoverPauseSocketOut(const RpcFailoverPauseSocketOutRequest&) instead")]]
+    rrr::i32 FailoverPauseSocketOut(rrr::i32* res) {
+        RpcFailoverPauseSocketOutRequest __req__;
+        auto __typed_result__ = this->FailoverPauseSocketOut(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
     }
     class FailoverResumeSocketOutTypedFuture {
     private:
@@ -8477,6 +9887,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest&) instead")]]
+    rrr::FutureResult async_FailoverResumeSocketOut(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFailoverResumeSocketOutRequest __req__;
+        auto __typed_result__ = this->async_FailoverResumeSocketOut(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest&) instead")]]
+    rrr::i32 FailoverResumeSocketOut(rrr::i32* res) {
+        RpcFailoverResumeSocketOutRequest __req__;
+        auto __typed_result__ = this->FailoverResumeSocketOut(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class rpc_nullTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8517,6 +9947,24 @@ public:
             return rusty::Result<RpcRpcNullResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_rpc_null(const RpcRpcNullRequest&) instead")]]
+    rrr::FutureResult async_rpc_null(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRpcNullRequest __req__;
+        auto __typed_result__ = this->async_rpc_null(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed rpc_null(const RpcRpcNullRequest&) instead")]]
+    rrr::i32 rpc_null() {
+        RpcRpcNullRequest __req__;
+        auto __typed_result__ = this->rpc_null(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class TapirAcceptTypedFuture {
     private:
@@ -8562,6 +10010,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_TapirAccept(const RpcTapirAcceptRequest&) instead")]]
+    rrr::FutureResult async_TapirAccept(const uint64_t& cmd_id, const int64_t& ballot, const int32_t& decision, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTapirAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.ballot = ballot;
+        __req__.decision = decision;
+        auto __typed_result__ = this->async_TapirAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed TapirAccept(const RpcTapirAcceptRequest&) instead")]]
+    rrr::i32 TapirAccept(const uint64_t& cmd_id, const int64_t& ballot, const int32_t& decision) {
+        RpcTapirAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.ballot = ballot;
+        __req__.decision = decision;
+        auto __typed_result__ = this->TapirAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class TapirFastAcceptTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8606,6 +10078,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_TapirFastAccept(const RpcTapirFastAcceptRequest&) instead")]]
+    rrr::FutureResult async_TapirFastAccept(const uint64_t& cmd_id, const std::vector<SimpleCommand>& txn_cmds, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTapirFastAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.txn_cmds = txn_cmds;
+        auto __typed_result__ = this->async_TapirFastAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed TapirFastAccept(const RpcTapirFastAcceptRequest&) instead")]]
+    rrr::i32 TapirFastAccept(const uint64_t& cmd_id, const std::vector<SimpleCommand>& txn_cmds, rrr::i32* res) {
+        RpcTapirFastAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.txn_cmds = txn_cmds;
+        auto __typed_result__ = this->TapirFastAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class TapirDecideTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8648,6 +10144,28 @@ public:
             return rusty::Result<RpcTapirDecideResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_TapirDecide(const RpcTapirDecideRequest&) instead")]]
+    rrr::FutureResult async_TapirDecide(const uint64_t& cmd_id, const rrr::i32& commit, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcTapirDecideRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.commit = commit;
+        auto __typed_result__ = this->async_TapirDecide(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed TapirDecide(const RpcTapirDecideRequest&) instead")]]
+    rrr::i32 TapirDecide(const uint64_t& cmd_id, const rrr::i32& commit) {
+        RpcTapirDecideRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.commit = commit;
+        auto __typed_result__ = this->TapirDecide(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class CarouselReadAndPrepareTypedFuture {
     private:
@@ -8695,6 +10213,33 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_CarouselReadAndPrepare(const RpcCarouselReadAndPrepareRequest&) instead")]]
+    rrr::FutureResult async_CarouselReadAndPrepare(const rrr::i64& tid, const MarshallDeputy& cmd, const bool_t& leader, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCarouselReadAndPrepareRequest __req__;
+        __req__.tid = tid;
+        __req__.cmd = cmd;
+        __req__.leader = leader;
+        auto __typed_result__ = this->async_CarouselReadAndPrepare(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed CarouselReadAndPrepare(const RpcCarouselReadAndPrepareRequest&) instead")]]
+    rrr::i32 CarouselReadAndPrepare(const rrr::i64& tid, const MarshallDeputy& cmd, const bool_t& leader, rrr::i32* res, TxnOutput* output) {
+        RpcCarouselReadAndPrepareRequest __req__;
+        __req__.tid = tid;
+        __req__.cmd = cmd;
+        __req__.leader = leader;
+        auto __typed_result__ = this->CarouselReadAndPrepare(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (output) *output = __resp__.output;
+        return 0;
+    }
     class CarouselAcceptTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8738,6 +10283,30 @@ public:
             return rusty::Result<RpcCarouselAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_CarouselAccept(const RpcCarouselAcceptRequest&) instead")]]
+    rrr::FutureResult async_CarouselAccept(const uint64_t& cmd_id, const int64_t& ballot, const int32_t& decision, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCarouselAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.ballot = ballot;
+        __req__.decision = decision;
+        auto __typed_result__ = this->async_CarouselAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed CarouselAccept(const RpcCarouselAcceptRequest&) instead")]]
+    rrr::i32 CarouselAccept(const uint64_t& cmd_id, const int64_t& ballot, const int32_t& decision) {
+        RpcCarouselAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.ballot = ballot;
+        __req__.decision = decision;
+        auto __typed_result__ = this->CarouselAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class CarouselFastAcceptTypedFuture {
     private:
@@ -8783,6 +10352,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_CarouselFastAccept(const RpcCarouselFastAcceptRequest&) instead")]]
+    rrr::FutureResult async_CarouselFastAccept(const uint64_t& cmd_id, const std::vector<SimpleCommand>& txn_cmds, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCarouselFastAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.txn_cmds = txn_cmds;
+        auto __typed_result__ = this->async_CarouselFastAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed CarouselFastAccept(const RpcCarouselFastAcceptRequest&) instead")]]
+    rrr::i32 CarouselFastAccept(const uint64_t& cmd_id, const std::vector<SimpleCommand>& txn_cmds, rrr::i32* res) {
+        RpcCarouselFastAcceptRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.txn_cmds = txn_cmds;
+        auto __typed_result__ = this->CarouselFastAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class CarouselDecideTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8825,6 +10418,28 @@ public:
             return rusty::Result<RpcCarouselDecideResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_CarouselDecide(const RpcCarouselDecideRequest&) instead")]]
+    rrr::FutureResult async_CarouselDecide(const uint64_t& cmd_id, const rrr::i32& commit, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCarouselDecideRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.commit = commit;
+        auto __typed_result__ = this->async_CarouselDecide(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed CarouselDecide(const RpcCarouselDecideRequest&) instead")]]
+    rrr::i32 CarouselDecide(const uint64_t& cmd_id, const rrr::i32& commit) {
+        RpcCarouselDecideRequest __req__;
+        __req__.cmd_id = cmd_id;
+        __req__.commit = commit;
+        auto __typed_result__ = this->CarouselDecide(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class RccDispatchTypedFuture {
     private:
@@ -8871,6 +10486,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_RccDispatch(const RpcRccDispatchRequest&) instead")]]
+    rrr::FutureResult async_RccDispatch(const std::vector<SimpleCommand>& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccDispatchRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_RccDispatch(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccDispatch(const RpcRccDispatchRequest&) instead")]]
+    rrr::i32 RccDispatch(const std::vector<SimpleCommand>& cmd, rrr::i32* res, TxnOutput* output, MarshallDeputy* md_graph) {
+        RpcRccDispatchRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->RccDispatch(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (output) *output = __resp__.output;
+        if (md_graph) *md_graph = __resp__.md_graph;
+        return 0;
+    }
     class RccFinishTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -8914,6 +10553,30 @@ public:
             return rusty::Result<RpcRccFinishResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_RccFinish(const RpcRccFinishRequest&) instead")]]
+    rrr::FutureResult async_RccFinish(const cmdid_t& id, const MarshallDeputy& md_graph, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccFinishRequest __req__;
+        __req__.id = id;
+        __req__.md_graph = md_graph;
+        auto __typed_result__ = this->async_RccFinish(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccFinish(const RpcRccFinishRequest&) instead")]]
+    rrr::i32 RccFinish(const cmdid_t& id, const MarshallDeputy& md_graph, std::map<uint32_t, std::map<int32_t, Value>>* outputs) {
+        RpcRccFinishRequest __req__;
+        __req__.id = id;
+        __req__.md_graph = md_graph;
+        auto __typed_result__ = this->RccFinish(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (outputs) *outputs = __resp__.outputs;
+        return 0;
     }
     class RccInquireTypedFuture {
     private:
@@ -8959,6 +10622,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_RccInquire(const RpcRccInquireRequest&) instead")]]
+    rrr::FutureResult async_RccInquire(const txnid_t& txn_id, const int32_t& rank, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccInquireRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        auto __typed_result__ = this->async_RccInquire(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccInquire(const RpcRccInquireRequest&) instead")]]
+    rrr::i32 RccInquire(const txnid_t& txn_id, const int32_t& rank, std::map<uint64_t, parent_set_t>* out_0) {
+        RpcRccInquireRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        auto __typed_result__ = this->RccInquire(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (out_0) *out_0 = __resp__.out_0;
+        return 0;
+    }
     class RccDispatchRoTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9001,6 +10688,28 @@ public:
             return rusty::Result<RpcRccDispatchRoResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_RccDispatchRo(const RpcRccDispatchRoRequest&) instead")]]
+    rrr::FutureResult async_RccDispatchRo(const SimpleCommand& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccDispatchRoRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_RccDispatchRo(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccDispatchRo(const RpcRccDispatchRoRequest&) instead")]]
+    rrr::i32 RccDispatchRo(const SimpleCommand& cmd, std::map<rrr::i32, Value>* output) {
+        RpcRccDispatchRoRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->RccDispatchRo(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (output) *output = __resp__.output;
+        return 0;
     }
     class RccInquireValidationTypedFuture {
     private:
@@ -9046,6 +10755,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_RccInquireValidation(const RpcRccInquireValidationRequest&) instead")]]
+    rrr::FutureResult async_RccInquireValidation(const txid_t& tx_id, const int32_t& rank, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccInquireValidationRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.rank = rank;
+        auto __typed_result__ = this->async_RccInquireValidation(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccInquireValidation(const RpcRccInquireValidationRequest&) instead")]]
+    rrr::i32 RccInquireValidation(const txid_t& tx_id, const int32_t& rank, int32_t* res) {
+        RpcRccInquireValidationRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.rank = rank;
+        auto __typed_result__ = this->RccInquireValidation(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class RccNotifyGlobalValidationTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9089,6 +10822,30 @@ public:
             return rusty::Result<RpcRccNotifyGlobalValidationResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_RccNotifyGlobalValidation(const RpcRccNotifyGlobalValidationRequest&) instead")]]
+    rrr::FutureResult async_RccNotifyGlobalValidation(const txid_t& tx_id, const int32_t& rank, const int32_t& res, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccNotifyGlobalValidationRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.rank = rank;
+        __req__.res = res;
+        auto __typed_result__ = this->async_RccNotifyGlobalValidation(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccNotifyGlobalValidation(const RpcRccNotifyGlobalValidationRequest&) instead")]]
+    rrr::i32 RccNotifyGlobalValidation(const txid_t& tx_id, const int32_t& rank, const int32_t& res) {
+        RpcRccNotifyGlobalValidationRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.rank = rank;
+        __req__.res = res;
+        auto __typed_result__ = this->RccNotifyGlobalValidation(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class JanusDispatchTypedFuture {
     private:
@@ -9134,6 +10891,30 @@ public:
             return rusty::Result<RpcJanusDispatchResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JanusDispatch(const RpcJanusDispatchRequest&) instead")]]
+    rrr::FutureResult async_JanusDispatch(const std::vector<SimpleCommand>& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJanusDispatchRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_JanusDispatch(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JanusDispatch(const RpcJanusDispatchRequest&) instead")]]
+    rrr::i32 JanusDispatch(const std::vector<SimpleCommand>& cmd, rrr::i32* res, TxnOutput* output, MarshallDeputy* ret_graph) {
+        RpcJanusDispatchRequest __req__;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->JanusDispatch(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (output) *output = __resp__.output;
+        if (ret_graph) *ret_graph = __resp__.ret_graph;
+        return 0;
     }
     class RccCommitTypedFuture {
     private:
@@ -9182,6 +10963,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_RccCommit(const RpcRccCommitRequest&) instead")]]
+    rrr::FutureResult async_RccCommit(const cmdid_t& id, const rank_t& rank, const int32_t& need_validation, const parent_set_t& parents, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccCommitRequest __req__;
+        __req__.id = id;
+        __req__.rank = rank;
+        __req__.need_validation = need_validation;
+        __req__.parents = parents;
+        auto __typed_result__ = this->async_RccCommit(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccCommit(const RpcRccCommitRequest&) instead")]]
+    rrr::i32 RccCommit(const cmdid_t& id, const rank_t& rank, const int32_t& need_validation, const parent_set_t& parents, int32_t* res, TxnOutput* output) {
+        RpcRccCommitRequest __req__;
+        __req__.id = id;
+        __req__.rank = rank;
+        __req__.need_validation = need_validation;
+        __req__.parents = parents;
+        auto __typed_result__ = this->RccCommit(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (output) *output = __resp__.output;
+        return 0;
+    }
     class JanusCommitTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9229,6 +11039,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JanusCommit(const RpcJanusCommitRequest&) instead")]]
+    rrr::FutureResult async_JanusCommit(const cmdid_t& id, const rank_t& rank, const int32_t& need_validation, const MarshallDeputy& graph, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJanusCommitRequest __req__;
+        __req__.id = id;
+        __req__.rank = rank;
+        __req__.need_validation = need_validation;
+        __req__.graph = graph;
+        auto __typed_result__ = this->async_JanusCommit(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JanusCommit(const RpcJanusCommitRequest&) instead")]]
+    rrr::i32 JanusCommit(const cmdid_t& id, const rank_t& rank, const int32_t& need_validation, const MarshallDeputy& graph, int32_t* res, TxnOutput* output) {
+        RpcJanusCommitRequest __req__;
+        __req__.id = id;
+        __req__.rank = rank;
+        __req__.need_validation = need_validation;
+        __req__.graph = graph;
+        auto __typed_result__ = this->JanusCommit(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (output) *output = __resp__.output;
+        return 0;
+    }
     class JanusCommitWoGraphTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9275,6 +11114,33 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JanusCommitWoGraph(const RpcJanusCommitWoGraphRequest&) instead")]]
+    rrr::FutureResult async_JanusCommitWoGraph(const cmdid_t& id, const rank_t& rank, const int32_t& need_validation, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJanusCommitWoGraphRequest __req__;
+        __req__.id = id;
+        __req__.rank = rank;
+        __req__.need_validation = need_validation;
+        auto __typed_result__ = this->async_JanusCommitWoGraph(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JanusCommitWoGraph(const RpcJanusCommitWoGraphRequest&) instead")]]
+    rrr::i32 JanusCommitWoGraph(const cmdid_t& id, const rank_t& rank, const int32_t& need_validation, int32_t* res, TxnOutput* output) {
+        RpcJanusCommitWoGraphRequest __req__;
+        __req__.id = id;
+        __req__.rank = rank;
+        __req__.need_validation = need_validation;
+        auto __typed_result__ = this->JanusCommitWoGraph(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (output) *output = __resp__.output;
+        return 0;
+    }
     class JanusInquireTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9318,6 +11184,30 @@ public:
             return rusty::Result<RpcJanusInquireResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JanusInquire(const RpcJanusInquireRequest&) instead")]]
+    rrr::FutureResult async_JanusInquire(const epoch_t& epoch, const txnid_t& txn_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJanusInquireRequest __req__;
+        __req__.epoch = epoch;
+        __req__.txn_id = txn_id;
+        auto __typed_result__ = this->async_JanusInquire(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JanusInquire(const RpcJanusInquireRequest&) instead")]]
+    rrr::i32 JanusInquire(const epoch_t& epoch, const txnid_t& txn_id, MarshallDeputy* ret_graph) {
+        RpcJanusInquireRequest __req__;
+        __req__.epoch = epoch;
+        __req__.txn_id = txn_id;
+        auto __typed_result__ = this->JanusInquire(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret_graph) *ret_graph = __resp__.ret_graph;
+        return 0;
     }
     class RccPreAcceptTypedFuture {
     private:
@@ -9364,6 +11254,33 @@ public:
             return rusty::Result<RpcRccPreAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_RccPreAccept(const RpcRccPreAcceptRequest&) instead")]]
+    rrr::FutureResult async_RccPreAccept(const cmdid_t& txn_id, const rank_t& rank, const std::vector<SimpleCommand>& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccPreAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_RccPreAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccPreAccept(const RpcRccPreAcceptRequest&) instead")]]
+    rrr::i32 RccPreAccept(const cmdid_t& txn_id, const rank_t& rank, const std::vector<SimpleCommand>& cmd, rrr::i32* res, parent_set_t* x) {
+        RpcRccPreAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->RccPreAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (x) *x = __resp__.x;
+        return 0;
     }
     class JanusPreAcceptTypedFuture {
     private:
@@ -9412,6 +11329,35 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JanusPreAccept(const RpcJanusPreAcceptRequest&) instead")]]
+    rrr::FutureResult async_JanusPreAccept(const cmdid_t& txn_id, const rank_t& rank, const std::vector<SimpleCommand>& cmd, const MarshallDeputy& graph, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJanusPreAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.cmd = cmd;
+        __req__.graph = graph;
+        auto __typed_result__ = this->async_JanusPreAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JanusPreAccept(const RpcJanusPreAcceptRequest&) instead")]]
+    rrr::i32 JanusPreAccept(const cmdid_t& txn_id, const rank_t& rank, const std::vector<SimpleCommand>& cmd, const MarshallDeputy& graph, rrr::i32* res, MarshallDeputy* ret_graph) {
+        RpcJanusPreAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.cmd = cmd;
+        __req__.graph = graph;
+        auto __typed_result__ = this->JanusPreAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (ret_graph) *ret_graph = __resp__.ret_graph;
+        return 0;
+    }
     class JanusPreAcceptWoGraphTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9457,6 +11403,33 @@ public:
             return rusty::Result<RpcJanusPreAcceptWoGraphResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JanusPreAcceptWoGraph(const RpcJanusPreAcceptWoGraphRequest&) instead")]]
+    rrr::FutureResult async_JanusPreAcceptWoGraph(const cmdid_t& txn_id, const rank_t& rank, const std::vector<SimpleCommand>& cmd, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJanusPreAcceptWoGraphRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->async_JanusPreAcceptWoGraph(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JanusPreAcceptWoGraph(const RpcJanusPreAcceptWoGraphRequest&) instead")]]
+    rrr::i32 JanusPreAcceptWoGraph(const cmdid_t& txn_id, const rank_t& rank, const std::vector<SimpleCommand>& cmd, rrr::i32* res, MarshallDeputy* ret_graph) {
+        RpcJanusPreAcceptWoGraphRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.cmd = cmd;
+        auto __typed_result__ = this->JanusPreAcceptWoGraph(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        if (ret_graph) *ret_graph = __resp__.ret_graph;
+        return 0;
     }
     class RccAcceptTypedFuture {
     private:
@@ -9504,6 +11477,34 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_RccAccept(const RpcRccAcceptRequest&) instead")]]
+    rrr::FutureResult async_RccAccept(const cmdid_t& txn_id, const rrr::i32& rank, const ballot_t& ballot, const parent_set_t& p, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcRccAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.ballot = ballot;
+        __req__.p = p;
+        auto __typed_result__ = this->async_RccAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed RccAccept(const RpcRccAcceptRequest&) instead")]]
+    rrr::i32 RccAccept(const cmdid_t& txn_id, const rrr::i32& rank, const ballot_t& ballot, const parent_set_t& p, rrr::i32* res) {
+        RpcRccAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.ballot = ballot;
+        __req__.p = p;
+        auto __typed_result__ = this->RccAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class JanusAcceptTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9550,6 +11551,34 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JanusAccept(const RpcJanusAcceptRequest&) instead")]]
+    rrr::FutureResult async_JanusAccept(const cmdid_t& txn_id, const rrr::i32& rank, const ballot_t& ballot, const MarshallDeputy& graph, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJanusAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.ballot = ballot;
+        __req__.graph = graph;
+        auto __typed_result__ = this->async_JanusAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JanusAccept(const RpcJanusAcceptRequest&) instead")]]
+    rrr::i32 JanusAccept(const cmdid_t& txn_id, const rrr::i32& rank, const ballot_t& ballot, const MarshallDeputy& graph, rrr::i32* res) {
+        RpcJanusAcceptRequest __req__;
+        __req__.txn_id = txn_id;
+        __req__.rank = rank;
+        __req__.ballot = ballot;
+        __req__.graph = graph;
+        auto __typed_result__ = this->JanusAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class PreAcceptFebruusTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9593,6 +11622,29 @@ public:
             return rusty::Result<RpcPreAcceptFebruusResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_PreAcceptFebruus(const RpcPreAcceptFebruusRequest&) instead")]]
+    rrr::FutureResult async_PreAcceptFebruus(const txid_t& tx_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcPreAcceptFebruusRequest __req__;
+        __req__.tx_id = tx_id;
+        auto __typed_result__ = this->async_PreAcceptFebruus(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed PreAcceptFebruus(const RpcPreAcceptFebruusRequest&) instead")]]
+    rrr::i32 PreAcceptFebruus(const txid_t& tx_id, rrr::i32* ret, uint64_t* timestamp) {
+        RpcPreAcceptFebruusRequest __req__;
+        __req__.tx_id = tx_id;
+        auto __typed_result__ = this->PreAcceptFebruus(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret) *ret = __resp__.ret;
+        if (timestamp) *timestamp = __resp__.timestamp;
+        return 0;
     }
     class AcceptFebruusTypedFuture {
     private:
@@ -9639,6 +11691,32 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_AcceptFebruus(const RpcAcceptFebruusRequest&) instead")]]
+    rrr::FutureResult async_AcceptFebruus(const txid_t& tx_id, const ballot_t& ballot, const uint64_t& timestamp, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAcceptFebruusRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.ballot = ballot;
+        __req__.timestamp = timestamp;
+        auto __typed_result__ = this->async_AcceptFebruus(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed AcceptFebruus(const RpcAcceptFebruusRequest&) instead")]]
+    rrr::i32 AcceptFebruus(const txid_t& tx_id, const ballot_t& ballot, const uint64_t& timestamp, rrr::i32* ret) {
+        RpcAcceptFebruusRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.ballot = ballot;
+        __req__.timestamp = timestamp;
+        auto __typed_result__ = this->AcceptFebruus(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret) *ret = __resp__.ret;
+        return 0;
+    }
     class CommitFebruusTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9683,6 +11761,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_CommitFebruus(const RpcCommitFebruusRequest&) instead")]]
+    rrr::FutureResult async_CommitFebruus(const txid_t& tx_id, const uint64_t& timestamp, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcCommitFebruusRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.timestamp = timestamp;
+        auto __typed_result__ = this->async_CommitFebruus(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed CommitFebruus(const RpcCommitFebruusRequest&) instead")]]
+    rrr::i32 CommitFebruus(const txid_t& tx_id, const uint64_t& timestamp, rrr::i32* ret) {
+        RpcCommitFebruusRequest __req__;
+        __req__.tx_id = tx_id;
+        __req__.timestamp = timestamp;
+        auto __typed_result__ = this->CommitFebruus(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ret) *ret = __resp__.ret;
+        return 0;
+    }
     class JetpackBeginRecoveryTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9726,6 +11828,30 @@ public:
             return rusty::Result<RpcJetpackBeginRecoveryResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest&) instead")]]
+    rrr::FutureResult async_JetpackBeginRecovery(const MarshallDeputy& old_view, const MarshallDeputy& new_view, const epoch_t& new_view_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackBeginRecoveryRequest __req__;
+        __req__.old_view = old_view;
+        __req__.new_view = new_view;
+        __req__.new_view_id = new_view_id;
+        auto __typed_result__ = this->async_JetpackBeginRecovery(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest&) instead")]]
+    rrr::i32 JetpackBeginRecovery(const MarshallDeputy& old_view, const MarshallDeputy& new_view, const epoch_t& new_view_id) {
+        RpcJetpackBeginRecoveryRequest __req__;
+        __req__.old_view = old_view;
+        __req__.new_view = new_view;
+        __req__.new_view_id = new_view_id;
+        auto __typed_result__ = this->JetpackBeginRecovery(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class JetpackPullIdSetTypedFuture {
     private:
@@ -9775,6 +11901,35 @@ public:
             return rusty::Result<RpcJetpackPullIdSetResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JetpackPullIdSet(const RpcJetpackPullIdSetRequest&) instead")]]
+    rrr::FutureResult async_JetpackPullIdSet(const epoch_t& jepoch, const epoch_t& oepoch, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackPullIdSetRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        auto __typed_result__ = this->async_JetpackPullIdSet(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackPullIdSet(const RpcJetpackPullIdSetRequest&) instead")]]
+    rrr::i32 JetpackPullIdSet(const epoch_t& jepoch, const epoch_t& oepoch, bool_t* ok, epoch_t* reply_jepoch, epoch_t* reply_oepoch, MarshallDeputy* reply_old_view, MarshallDeputy* reply_new_view, MarshallDeputy* id_set) {
+        RpcJetpackPullIdSetRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        auto __typed_result__ = this->JetpackPullIdSet(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ok) *ok = __resp__.ok;
+        if (reply_jepoch) *reply_jepoch = __resp__.reply_jepoch;
+        if (reply_oepoch) *reply_oepoch = __resp__.reply_oepoch;
+        if (reply_old_view) *reply_old_view = __resp__.reply_old_view;
+        if (reply_new_view) *reply_new_view = __resp__.reply_new_view;
+        if (id_set) *id_set = __resp__.id_set;
+        return 0;
     }
     class JetpackPullCmdTypedFuture {
     private:
@@ -9826,6 +11981,37 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JetpackPullCmd(const RpcJetpackPullCmdRequest&) instead")]]
+    rrr::FutureResult async_JetpackPullCmd(const epoch_t& jepoch, const epoch_t& oepoch, const MarshallDeputy& key_batch, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackPullCmdRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.key_batch = key_batch;
+        auto __typed_result__ = this->async_JetpackPullCmd(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackPullCmd(const RpcJetpackPullCmdRequest&) instead")]]
+    rrr::i32 JetpackPullCmd(const epoch_t& jepoch, const epoch_t& oepoch, const MarshallDeputy& key_batch, bool_t* ok, epoch_t* reply_jepoch, epoch_t* reply_oepoch, MarshallDeputy* reply_old_view, MarshallDeputy* reply_new_view, MarshallDeputy* cmd_batch) {
+        RpcJetpackPullCmdRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.key_batch = key_batch;
+        auto __typed_result__ = this->JetpackPullCmd(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ok) *ok = __resp__.ok;
+        if (reply_jepoch) *reply_jepoch = __resp__.reply_jepoch;
+        if (reply_oepoch) *reply_oepoch = __resp__.reply_oepoch;
+        if (reply_old_view) *reply_old_view = __resp__.reply_old_view;
+        if (reply_new_view) *reply_new_view = __resp__.reply_new_view;
+        if (cmd_batch) *cmd_batch = __resp__.cmd_batch;
+        return 0;
+    }
     class JetpackRecordCmdTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9871,6 +12057,34 @@ public:
             return rusty::Result<RpcJetpackRecordCmdResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JetpackRecordCmd(const RpcJetpackRecordCmdRequest&) instead")]]
+    rrr::FutureResult async_JetpackRecordCmd(const epoch_t& jepoch, const epoch_t& oepoch, const int32_t& sid, const int32_t& rid, const MarshallDeputy& cmd_batch, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackRecordCmdRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.sid = sid;
+        __req__.rid = rid;
+        __req__.cmd_batch = cmd_batch;
+        auto __typed_result__ = this->async_JetpackRecordCmd(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackRecordCmd(const RpcJetpackRecordCmdRequest&) instead")]]
+    rrr::i32 JetpackRecordCmd(const epoch_t& jepoch, const epoch_t& oepoch, const int32_t& sid, const int32_t& rid, const MarshallDeputy& cmd_batch) {
+        RpcJetpackRecordCmdRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.sid = sid;
+        __req__.rid = rid;
+        __req__.cmd_batch = cmd_batch;
+        auto __typed_result__ = this->JetpackRecordCmd(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class JetpackPrepareTypedFuture {
     private:
@@ -9925,6 +12139,40 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JetpackPrepare(const RpcJetpackPrepareRequest&) instead")]]
+    rrr::FutureResult async_JetpackPrepare(const epoch_t& jepoch, const epoch_t& oepoch, const ballot_t& max_seen_ballot, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackPrepareRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.max_seen_ballot = max_seen_ballot;
+        auto __typed_result__ = this->async_JetpackPrepare(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackPrepare(const RpcJetpackPrepareRequest&) instead")]]
+    rrr::i32 JetpackPrepare(const epoch_t& jepoch, const epoch_t& oepoch, const ballot_t& max_seen_ballot, bool_t* ok, epoch_t* reply_jepoch, epoch_t* reply_oepoch, MarshallDeputy* reply_old_view, MarshallDeputy* reply_new_view, ballot_t* reply_max_seen_ballot, ballot_t* accepted_ballot, int32_t* replied_sid, int32_t* replied_set_size) {
+        RpcJetpackPrepareRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.max_seen_ballot = max_seen_ballot;
+        auto __typed_result__ = this->JetpackPrepare(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ok) *ok = __resp__.ok;
+        if (reply_jepoch) *reply_jepoch = __resp__.reply_jepoch;
+        if (reply_oepoch) *reply_oepoch = __resp__.reply_oepoch;
+        if (reply_old_view) *reply_old_view = __resp__.reply_old_view;
+        if (reply_new_view) *reply_new_view = __resp__.reply_new_view;
+        if (reply_max_seen_ballot) *reply_max_seen_ballot = __resp__.reply_max_seen_ballot;
+        if (accepted_ballot) *accepted_ballot = __resp__.accepted_ballot;
+        if (replied_sid) *replied_sid = __resp__.replied_sid;
+        if (replied_set_size) *replied_set_size = __resp__.replied_set_size;
+        return 0;
+    }
     class JetpackAcceptTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -9977,6 +12225,41 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JetpackAccept(const RpcJetpackAcceptRequest&) instead")]]
+    rrr::FutureResult async_JetpackAccept(const epoch_t& jepoch, const epoch_t& oepoch, const ballot_t& max_seen_ballot, const int32_t& sid, const int32_t& set_size, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackAcceptRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.max_seen_ballot = max_seen_ballot;
+        __req__.sid = sid;
+        __req__.set_size = set_size;
+        auto __typed_result__ = this->async_JetpackAccept(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackAccept(const RpcJetpackAcceptRequest&) instead")]]
+    rrr::i32 JetpackAccept(const epoch_t& jepoch, const epoch_t& oepoch, const ballot_t& max_seen_ballot, const int32_t& sid, const int32_t& set_size, bool_t* ok, epoch_t* reply_jepoch, epoch_t* reply_oepoch, MarshallDeputy* reply_old_view, MarshallDeputy* reply_new_view, ballot_t* reply_max_seen_ballot) {
+        RpcJetpackAcceptRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.max_seen_ballot = max_seen_ballot;
+        __req__.sid = sid;
+        __req__.set_size = set_size;
+        auto __typed_result__ = this->JetpackAccept(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ok) *ok = __resp__.ok;
+        if (reply_jepoch) *reply_jepoch = __resp__.reply_jepoch;
+        if (reply_oepoch) *reply_oepoch = __resp__.reply_oepoch;
+        if (reply_old_view) *reply_old_view = __resp__.reply_old_view;
+        if (reply_new_view) *reply_new_view = __resp__.reply_new_view;
+        if (reply_max_seen_ballot) *reply_max_seen_ballot = __resp__.reply_max_seen_ballot;
+        return 0;
+    }
     class JetpackCommitTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -10021,6 +12304,32 @@ public:
             return rusty::Result<RpcJetpackCommitResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JetpackCommit(const RpcJetpackCommitRequest&) instead")]]
+    rrr::FutureResult async_JetpackCommit(const epoch_t& jepoch, const epoch_t& oepoch, const int32_t& sid, const int32_t& set_size, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackCommitRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.sid = sid;
+        __req__.set_size = set_size;
+        auto __typed_result__ = this->async_JetpackCommit(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackCommit(const RpcJetpackCommitRequest&) instead")]]
+    rrr::i32 JetpackCommit(const epoch_t& jepoch, const epoch_t& oepoch, const int32_t& sid, const int32_t& set_size) {
+        RpcJetpackCommitRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.sid = sid;
+        __req__.set_size = set_size;
+        auto __typed_result__ = this->JetpackCommit(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class JetpackPullRecSetInsTypedFuture {
     private:
@@ -10073,6 +12382,39 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_JetpackPullRecSetIns(const RpcJetpackPullRecSetInsRequest&) instead")]]
+    rrr::FutureResult async_JetpackPullRecSetIns(const epoch_t& jepoch, const epoch_t& oepoch, const int32_t& sid, const int32_t& rid, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackPullRecSetInsRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.sid = sid;
+        __req__.rid = rid;
+        auto __typed_result__ = this->async_JetpackPullRecSetIns(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackPullRecSetIns(const RpcJetpackPullRecSetInsRequest&) instead")]]
+    rrr::i32 JetpackPullRecSetIns(const epoch_t& jepoch, const epoch_t& oepoch, const int32_t& sid, const int32_t& rid, bool_t* ok, epoch_t* reply_jepoch, epoch_t* reply_oepoch, MarshallDeputy* reply_old_view, MarshallDeputy* reply_new_view, MarshallDeputy* cmd) {
+        RpcJetpackPullRecSetInsRequest __req__;
+        __req__.jepoch = jepoch;
+        __req__.oepoch = oepoch;
+        __req__.sid = sid;
+        __req__.rid = rid;
+        auto __typed_result__ = this->JetpackPullRecSetIns(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (ok) *ok = __resp__.ok;
+        if (reply_jepoch) *reply_jepoch = __resp__.reply_jepoch;
+        if (reply_oepoch) *reply_oepoch = __resp__.reply_oepoch;
+        if (reply_old_view) *reply_old_view = __resp__.reply_old_view;
+        if (reply_new_view) *reply_new_view = __resp__.reply_new_view;
+        if (cmd) *cmd = __resp__.cmd;
+        return 0;
+    }
     class JetpackFinishRecoveryTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -10114,6 +12456,26 @@ public:
             return rusty::Result<RpcJetpackFinishRecoveryResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_JetpackFinishRecovery(const RpcJetpackFinishRecoveryRequest&) instead")]]
+    rrr::FutureResult async_JetpackFinishRecovery(const epoch_t& oepoch, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcJetpackFinishRecoveryRequest __req__;
+        __req__.oepoch = oepoch;
+        auto __typed_result__ = this->async_JetpackFinishRecovery(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed JetpackFinishRecovery(const RpcJetpackFinishRecoveryRequest&) instead")]]
+    rrr::i32 JetpackFinishRecovery(const epoch_t& oepoch) {
+        RpcJetpackFinishRecoveryRequest __req__;
+        __req__.oepoch = oepoch;
+        auto __typed_result__ = this->JetpackFinishRecovery(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 
@@ -10199,14 +12561,14 @@ public:
     }
 
     enum {
-        SERVER_SHUTDOWN = 0x43cfef11,
-        SERVER_READY = 0x3be584dc,
-        SERVER_HEART_BEAT_WITH_DATA = 0x60ef3b6c,
-        SERVER_HEART_BEAT = 0x346a983d,
+        SERVER_SHUTDOWN = 0x6630e87c,
+        SERVER_READY = 0x1691dad0,
+        SERVER_HEART_BEAT_WITH_DATA = 0x1c4541ac,
+        SERVER_HEART_BEAT = 0x586cf4a6,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(SERVER_SHUTDOWN, svc_index)) != 0) {
             goto err;
@@ -10229,7 +12591,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case SERVER_SHUTDOWN: __server_shutdown__wrapper__(std::move(req), weak_sconn); break;
         case SERVER_READY: __server_ready__wrapper__(std::move(req), weak_sconn); break;
@@ -10369,6 +12731,24 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_server_shutdown(const RpcServerShutdownRequest&) instead")]]
+    rrr::FutureResult async_server_shutdown(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcServerShutdownRequest __req__;
+        auto __typed_result__ = this->async_server_shutdown(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed server_shutdown(const RpcServerShutdownRequest&) instead")]]
+    rrr::i32 server_shutdown() {
+        RpcServerShutdownRequest __req__;
+        auto __typed_result__ = this->server_shutdown(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class server_readyTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -10410,6 +12790,26 @@ public:
             return rusty::Result<RpcServerReadyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_server_ready(const RpcServerReadyRequest&) instead")]]
+    rrr::FutureResult async_server_ready(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcServerReadyRequest __req__;
+        auto __typed_result__ = this->async_server_ready(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed server_ready(const RpcServerReadyRequest&) instead")]]
+    rrr::i32 server_ready(rrr::i32* res) {
+        RpcServerReadyRequest __req__;
+        auto __typed_result__ = this->server_ready(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
     }
     class server_heart_beat_with_dataTypedFuture {
     private:
@@ -10453,6 +12853,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_server_heart_beat_with_data(const RpcServerHeartBeatWithDataRequest&) instead")]]
+    rrr::FutureResult async_server_heart_beat_with_data(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcServerHeartBeatWithDataRequest __req__;
+        auto __typed_result__ = this->async_server_heart_beat_with_data(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed server_heart_beat_with_data(const RpcServerHeartBeatWithDataRequest&) instead")]]
+    rrr::i32 server_heart_beat_with_data(ServerResponse* res) {
+        RpcServerHeartBeatWithDataRequest __req__;
+        auto __typed_result__ = this->server_heart_beat_with_data(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class server_heart_beatTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -10493,6 +12913,24 @@ public:
             return rusty::Result<RpcServerHeartBeatResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_server_heart_beat(const RpcServerHeartBeatRequest&) instead")]]
+    rrr::FutureResult async_server_heart_beat(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcServerHeartBeatRequest __req__;
+        auto __typed_result__ = this->async_server_heart_beat(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed server_heart_beat(const RpcServerHeartBeatRequest&) instead")]]
+    rrr::i32 server_heart_beat() {
+        RpcServerHeartBeatRequest __req__;
+        auto __typed_result__ = this->server_heart_beat(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 
@@ -10665,18 +13103,18 @@ public:
     }
 
     enum {
-        CLIENT_GET_TXN_NAMES = 0x6020d03d,
-        CLIENT_SHUTDOWN = 0x37b50fb7,
-        CLIENT_FORCE_STOP = 0x5389b846,
-        CLIENT_RESPONSE = 0x4f2003f5,
-        CLIENT_READY = 0x38001a82,
-        CLIENT_READY_BLOCK = 0x2ba5afb6,
-        CLIENT_START = 0x21fd140c,
-        DISPATCHTXN = 0x5ec62d18,
+        CLIENT_GET_TXN_NAMES = 0x643416fc,
+        CLIENT_SHUTDOWN = 0x55feb5c4,
+        CLIENT_FORCE_STOP = 0x2c7f6255,
+        CLIENT_RESPONSE = 0x6e8788fb,
+        CLIENT_READY = 0x17440886,
+        CLIENT_READY_BLOCK = 0x6801155f,
+        CLIENT_START = 0x1445ca86,
+        DISPATCHTXN = 0x2572734a,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(CLIENT_GET_TXN_NAMES, svc_index)) != 0) {
             goto err;
@@ -10715,7 +13153,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case CLIENT_GET_TXN_NAMES: __client_get_txn_names__wrapper__(std::move(req), weak_sconn); break;
         case CLIENT_SHUTDOWN: __client_shutdown__wrapper__(std::move(req), weak_sconn); break;
@@ -10941,6 +13379,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_client_get_txn_names(const RpcClientGetTxnNamesRequest&) instead")]]
+    rrr::FutureResult async_client_get_txn_names(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcClientGetTxnNamesRequest __req__;
+        auto __typed_result__ = this->async_client_get_txn_names(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed client_get_txn_names(const RpcClientGetTxnNamesRequest&) instead")]]
+    rrr::i32 client_get_txn_names(std::map<rrr::i32, std::string>* txn_names) {
+        RpcClientGetTxnNamesRequest __req__;
+        auto __typed_result__ = this->client_get_txn_names(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (txn_names) *txn_names = __resp__.txn_names;
+        return 0;
+    }
     class client_shutdownTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -10982,6 +13440,24 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_client_shutdown(const RpcClientShutdownRequest&) instead")]]
+    rrr::FutureResult async_client_shutdown(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcClientShutdownRequest __req__;
+        auto __typed_result__ = this->async_client_shutdown(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed client_shutdown(const RpcClientShutdownRequest&) instead")]]
+    rrr::i32 client_shutdown() {
+        RpcClientShutdownRequest __req__;
+        auto __typed_result__ = this->client_shutdown(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class client_force_stopTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11022,6 +13498,24 @@ public:
             return rusty::Result<RpcClientForceStopResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_client_force_stop(const RpcClientForceStopRequest&) instead")]]
+    rrr::FutureResult async_client_force_stop(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcClientForceStopRequest __req__;
+        auto __typed_result__ = this->async_client_force_stop(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed client_force_stop(const RpcClientForceStopRequest&) instead")]]
+    rrr::i32 client_force_stop() {
+        RpcClientForceStopRequest __req__;
+        auto __typed_result__ = this->client_force_stop(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class client_responseTypedFuture {
     private:
@@ -11066,6 +13560,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_client_response(const RpcClientResponseRequest&) instead")]]
+    rrr::FutureResult async_client_response(const DepId& dep_id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcClientResponseRequest __req__;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->async_client_response(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed client_response(const RpcClientResponseRequest&) instead")]]
+    rrr::i32 client_response(const DepId& dep_id, ClientResponse* res) {
+        RpcClientResponseRequest __req__;
+        __req__.dep_id = dep_id;
+        auto __typed_result__ = this->client_response(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class client_readyTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11107,6 +13623,26 @@ public:
             return rusty::Result<RpcClientReadyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_client_ready(const RpcClientReadyRequest&) instead")]]
+    rrr::FutureResult async_client_ready(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcClientReadyRequest __req__;
+        auto __typed_result__ = this->async_client_ready(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed client_ready(const RpcClientReadyRequest&) instead")]]
+    rrr::i32 client_ready(rrr::i32* res) {
+        RpcClientReadyRequest __req__;
+        auto __typed_result__ = this->client_ready(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
     }
     class client_ready_blockTypedFuture {
     private:
@@ -11150,6 +13686,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_client_ready_block(const RpcClientReadyBlockRequest&) instead")]]
+    rrr::FutureResult async_client_ready_block(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcClientReadyBlockRequest __req__;
+        auto __typed_result__ = this->async_client_ready_block(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed client_ready_block(const RpcClientReadyBlockRequest&) instead")]]
+    rrr::i32 client_ready_block(rrr::i32* res) {
+        RpcClientReadyBlockRequest __req__;
+        auto __typed_result__ = this->client_ready_block(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (res) *res = __resp__.res;
+        return 0;
+    }
     class client_startTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11190,6 +13746,24 @@ public:
             return rusty::Result<RpcClientStartResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_client_start(const RpcClientStartRequest&) instead")]]
+    rrr::FutureResult async_client_start(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcClientStartRequest __req__;
+        auto __typed_result__ = this->async_client_start(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed client_start(const RpcClientStartRequest&) instead")]]
+    rrr::i32 client_start() {
+        RpcClientStartRequest __req__;
+        auto __typed_result__ = this->client_start(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class DispatchTxnTypedFuture {
     private:
@@ -11233,6 +13807,28 @@ public:
             return rusty::Result<RpcDispatchTxnResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_DispatchTxn(const RpcDispatchTxnRequest&) instead")]]
+    rrr::FutureResult async_DispatchTxn(const TxDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcDispatchTxnRequest __req__;
+        __req__.req = req;
+        auto __typed_result__ = this->async_DispatchTxn(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed DispatchTxn(const RpcDispatchTxnRequest&) instead")]]
+    rrr::i32 DispatchTxn(const TxDispatchRequest& req, TxReply* result) {
+        RpcDispatchTxnRequest __req__;
+        __req__.req = req;
+        auto __typed_result__ = this->DispatchTxn(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (result) *result = __resp__.result;
+        return 0;
     }
 };
 
@@ -11408,17 +14004,17 @@ public:
     }
 
     enum {
-        GETCONFIG = 0x420ed8a8,
-        GETCONFIGVERSION = 0x25c6baf5,
-        HASCONFIG = 0x113f6f32,
-        SETSHARDINGPOLICY = 0x5633c7b5,
-        GETSHARDINGPOLICY = 0x4e6f6de5,
-        GETSHARDINGPOLICYVERSION = 0x180c105b,
-        HASSHARDINGPOLICY = 0x2992a81b,
+        GETCONFIG = 0x568059fa,
+        GETCONFIGVERSION = 0x1954a0df,
+        HASCONFIG = 0x11d0d00e,
+        SETSHARDINGPOLICY = 0x156af9b4,
+        GETSHARDINGPOLICY = 0x2f1fd8ab,
+        GETSHARDINGPOLICYVERSION = 0x1aada5fe,
+        HASSHARDINGPOLICY = 0x1bb98a03,
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(GETCONFIG, svc_index)) != 0) {
             goto err;
@@ -11453,7 +14049,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case GETCONFIG: __GetConfig__wrapper__(std::move(req), weak_sconn); break;
         case GETCONFIGVERSION: __GetConfigVersion__wrapper__(std::move(req), weak_sconn); break;
@@ -11669,6 +14265,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_GetConfig(const RpcGetConfigRequest&) instead")]]
+    rrr::FutureResult async_GetConfig(const uint64_t& client_version, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcGetConfigRequest __req__;
+        __req__.client_version = client_version;
+        auto __typed_result__ = this->async_GetConfig(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed GetConfig(const RpcGetConfigRequest&) instead")]]
+    rrr::i32 GetConfig(const uint64_t& client_version, uint64_t* current_version, rrr::i32* has_update, std::string* config_data) {
+        RpcGetConfigRequest __req__;
+        __req__.client_version = client_version;
+        auto __typed_result__ = this->GetConfig(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (current_version) *current_version = __resp__.current_version;
+        if (has_update) *has_update = __resp__.has_update;
+        if (config_data) *config_data = __resp__.config_data;
+        return 0;
+    }
     class GetConfigVersionTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11710,6 +14330,26 @@ public:
             return rusty::Result<RpcGetConfigVersionResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_GetConfigVersion(const RpcGetConfigVersionRequest&) instead")]]
+    rrr::FutureResult async_GetConfigVersion(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcGetConfigVersionRequest __req__;
+        auto __typed_result__ = this->async_GetConfigVersion(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed GetConfigVersion(const RpcGetConfigVersionRequest&) instead")]]
+    rrr::i32 GetConfigVersion(uint64_t* version) {
+        RpcGetConfigVersionRequest __req__;
+        auto __typed_result__ = this->GetConfigVersion(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (version) *version = __resp__.version;
+        return 0;
     }
     class HasConfigTypedFuture {
     private:
@@ -11753,6 +14393,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_HasConfig(const RpcHasConfigRequest&) instead")]]
+    rrr::FutureResult async_HasConfig(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcHasConfigRequest __req__;
+        auto __typed_result__ = this->async_HasConfig(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed HasConfig(const RpcHasConfigRequest&) instead")]]
+    rrr::i32 HasConfig(rrr::i32* has_config) {
+        RpcHasConfigRequest __req__;
+        auto __typed_result__ = this->HasConfig(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (has_config) *has_config = __resp__.has_config;
+        return 0;
+    }
     class SetShardingPolicyTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11795,6 +14455,28 @@ public:
             return rusty::Result<RpcSetShardingPolicyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_SetShardingPolicy(const RpcSetShardingPolicyRequest&) instead")]]
+    rrr::FutureResult async_SetShardingPolicy(const std::string& policy_data, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcSetShardingPolicyRequest __req__;
+        __req__.policy_data = policy_data;
+        auto __typed_result__ = this->async_SetShardingPolicy(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed SetShardingPolicy(const RpcSetShardingPolicyRequest&) instead")]]
+    rrr::i32 SetShardingPolicy(const std::string& policy_data, rrr::i32* success) {
+        RpcSetShardingPolicyRequest __req__;
+        __req__.policy_data = policy_data;
+        auto __typed_result__ = this->SetShardingPolicy(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (success) *success = __resp__.success;
+        return 0;
     }
     class GetShardingPolicyTypedFuture {
     private:
@@ -11841,6 +14523,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_GetShardingPolicy(const RpcGetShardingPolicyRequest&) instead")]]
+    rrr::FutureResult async_GetShardingPolicy(const uint64_t& client_version, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcGetShardingPolicyRequest __req__;
+        __req__.client_version = client_version;
+        auto __typed_result__ = this->async_GetShardingPolicy(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed GetShardingPolicy(const RpcGetShardingPolicyRequest&) instead")]]
+    rrr::i32 GetShardingPolicy(const uint64_t& client_version, uint64_t* current_version, rrr::i32* has_update, std::string* policy_data) {
+        RpcGetShardingPolicyRequest __req__;
+        __req__.client_version = client_version;
+        auto __typed_result__ = this->GetShardingPolicy(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (current_version) *current_version = __resp__.current_version;
+        if (has_update) *has_update = __resp__.has_update;
+        if (policy_data) *policy_data = __resp__.policy_data;
+        return 0;
+    }
     class GetShardingPolicyVersionTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11883,6 +14589,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_GetShardingPolicyVersion(const RpcGetShardingPolicyVersionRequest&) instead")]]
+    rrr::FutureResult async_GetShardingPolicyVersion(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcGetShardingPolicyVersionRequest __req__;
+        auto __typed_result__ = this->async_GetShardingPolicyVersion(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed GetShardingPolicyVersion(const RpcGetShardingPolicyVersionRequest&) instead")]]
+    rrr::i32 GetShardingPolicyVersion(uint64_t* version) {
+        RpcGetShardingPolicyVersionRequest __req__;
+        auto __typed_result__ = this->GetShardingPolicyVersion(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (version) *version = __resp__.version;
+        return 0;
+    }
     class HasShardingPolicyTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11924,6 +14650,26 @@ public:
             return rusty::Result<RpcHasShardingPolicyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_HasShardingPolicy(const RpcHasShardingPolicyRequest&) instead")]]
+    rrr::FutureResult async_HasShardingPolicy(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcHasShardingPolicyRequest __req__;
+        auto __typed_result__ = this->async_HasShardingPolicy(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed HasShardingPolicy(const RpcHasShardingPolicyRequest&) instead")]]
+    rrr::i32 HasShardingPolicy(rrr::i32* has_policy) {
+        RpcHasShardingPolicyRequest __req__;
+        auto __typed_result__ = this->HasShardingPolicy(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (has_policy) *has_policy = __resp__.has_policy;
+        return 0;
     }
 };
 
