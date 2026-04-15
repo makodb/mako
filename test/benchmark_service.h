@@ -30,7 +30,7 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
     return m;
 }
 
-class BenchmarkService: public rrr::Service {
+class BenchmarkService {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcFastPrimeRequest {
@@ -290,7 +290,7 @@ public:
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(FAST_PRIME, svc_index)) != 0) {
             goto err;
@@ -336,8 +336,8 @@ public:
         svr.unreg(SLEEP);
         return ret;
     }
-    // @safe - Virtual dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
+    // @safe - Dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         switch (rpc_id) {
         case FAST_PRIME: __fast_prime__wrapper__(std::move(req), weak_sconn); break;
         case FAST_DOT_PROD: __fast_dot_prod__wrapper__(std::move(req), weak_sconn); break;

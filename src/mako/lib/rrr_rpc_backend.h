@@ -37,15 +37,15 @@ class RrrRpcBackend;
  * TransportBackendService: Service implementation for RrrRpcBackend
  *
  * Handles a range of RPC IDs and forwards them to the backend's RequestHandler.
- * This is a proper Service subclass that avoids std::function type erasure.
+ * Service implementation that avoids std::function type erasure.
  */
-class TransportBackendService : public rrr::Service {
+class TransportBackendService {
 public:
     TransportBackendService(RrrRpcBackend* backend, rrr::i32 rpc_start, rrr::i32 rpc_end)
         : backend_(backend), rpc_start_(rpc_start), rpc_end_(rpc_end) {}
 
     // @safe - with @unsafe block for loop
-    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) {
         // @unsafe - loop iteration
         {
             for (rrr::i32 rpc_id = rpc_start_; rpc_id <= rpc_end_; ++rpc_id) {
@@ -64,7 +64,7 @@ public:
 
     // @safe
     void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
-                      rrr::WeakServerConnection weak_sconn) override;
+                      rrr::WeakServerConnection weak_sconn);
 
 private:
     RrrRpcBackend* backend_;

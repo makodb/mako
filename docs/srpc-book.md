@@ -1098,7 +1098,7 @@ struct GetUserResponse {
 template <typename T>
 using RpcResult = rusty::Result<T, rrr::i32>;
 
-class MyServiceService: public rrr::Service {
+class MyServiceService {
 public:
     // Service boundary (no output pointers)
     virtual RpcResult<GetUserResponse> get_user(const GetUserRequest& req) = 0;

@@ -544,18 +544,18 @@ def main() -> int:
         generated = header_path.read_text(encoding="utf-8")
         alpha_block = section_between(
             generated,
-            "class AlphaService: public rrr::Service {",
+            "class AlphaService {",
             "class AlphaProxy {",
         )
         beta_block = section_between(
             generated,
-            "class BetaService: public rrr::Service {",
+            "class BetaService {",
             "class BetaProxy {",
         )
         alpha_proxy_block = section_between(
             generated,
             "class AlphaProxy {",
-            "class BetaService: public rrr::Service {",
+            "class BetaService {",
         )
         beta_proxy_block = section_between(
             generated,

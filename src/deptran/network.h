@@ -8,7 +8,7 @@
 
 namespace network_client {
 
-class NetworkClientService: public rrr::Service {
+class NetworkClientService {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcTxnRmwRequest {
@@ -169,7 +169,7 @@ public:
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(TXN_RMW, svc_index)) != 0) {
             goto err;
@@ -203,8 +203,8 @@ public:
         svr.unreg(TXN_STOCK_LEVEL);
         return ret;
     }
-    // @safe - Virtual dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
+    // @safe - Dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         switch (rpc_id) {
         case TXN_RMW: __txn_rmw__wrapper__(std::move(req), weak_sconn); break;
         case TXN_READ: __txn_read__wrapper__(std::move(req), weak_sconn); break;

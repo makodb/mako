@@ -190,7 +190,7 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
     f.writeln("}")
 
 def emit_service_and_proxy(service, f, rpc_table):
-    f.writeln("class %sService: public rrr::Service {" % service.name)
+    f.writeln("class %sService {" % service.name)
     f.writeln("public:")
     with f.indent():
         f.writeln("// Typed request/response scaffolding generated from RPC signature lists.")
@@ -207,7 +207,7 @@ def emit_service_and_proxy(service, f, rpc_table):
         f.writeln("};")
         f.writeln("// Registers RPC IDs with server using service index")
         f.writeln("// @safe")
-        f.writeln("int __reg_to__(rrr::Server& svr, size_t svc_index) override {")
+        f.writeln("int __reg_to__(rrr::Server& svr, size_t svc_index) {")
         with f.indent():
             f.writeln("int ret = 0;")
             for func in service.functions:
@@ -222,8 +222,8 @@ def emit_service_and_proxy(service, f, rpc_table):
                 f.writeln("svr.unreg(%s);" % func.name.upper())
             f.writeln("return ret;")
         f.writeln("}")
-        f.writeln("// @safe - Virtual dispatch for RPC requests")
-        f.writeln("void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {")
+        f.writeln("// @safe - Dispatch for RPC requests")
+        f.writeln("void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {")
         with f.indent():
             f.writeln("switch (rpc_id) {")
             for func in service.functions:

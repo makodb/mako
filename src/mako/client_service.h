@@ -23,7 +23,7 @@ namespace mako {
  * - GET (24): Get a value by key
  * - DELETE_KEY (25): Delete a key
  */
-class MakoClientService : public rrr::Service {
+class MakoClientService {
 public:
     // RPC IDs - matching existing message types in common.h
     static const rrr::i32 BEGIN_TXN = 20;    // clientBeginTxnReqType
@@ -42,7 +42,7 @@ public:
         : receiver_(receiver), next_txn_counter_(0) {}
 
     // @safe - Virtual destructor
-    ~MakoClientService() override = default;
+    ~MakoClientService() = default;
 
     /**
      * Register RPC handlers with the server
@@ -51,7 +51,7 @@ public:
      * @return 0 on success, error code on failure
      */
     // @safe - Registers RPC IDs with server
-    int __reg_to__(rrr::Server& server, size_t svc_index) override;
+    int __reg_to__(rrr::Server& server, size_t svc_index);
 
     /**
      * Dispatch incoming RPC request to appropriate handler
@@ -61,7 +61,7 @@ public:
      */
     // @safe - Routes requests to handlers
     void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
-                      rrr::WeakServerConnection sconn) override;
+                      rrr::WeakServerConnection sconn);
 
     // ========================================================================
     // RPC Handlers
