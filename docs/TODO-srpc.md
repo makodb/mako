@@ -384,7 +384,12 @@ compatibility wrappers for incremental rollout.
   - Implemented on 2026-04-15 in `test/rpcgen_compat_compile_test.py` + CTest wiring `test_rpc_rpcgen_compat_compile`: generates a self-contained `.rpc` fixture with diverse method shapes (with/without output params, zero-output, multi-input/multi-output, deferred), then compiles a C++ source exercising the legacy pointer-style proxy API patterns (async calls with individual args, sync calls with output pointers) via the `[[deprecated]]` wrappers.
   - Scope: 1 new test file (~150 LOC) + 7 lines CMakeLists.txt wiring.
   - Verification note: compat compile test passes; full RPC-focused suite passed (42/42 tests passed).
-- [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
+- [x] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
+  - Implemented on 2026-04-15 in `test/rpc_typed_legacy_parity_test.cc` + CTest wiring `test_rpc_typed_legacy_parity`: sets up real server+client using `BenchmarkService` (regenerated with `--legacy-compat`), then for each method shape calls both the typed API (`proxy.method(RpcRequest)`) and the legacy pointer-style API (`proxy.method(args..., &out)`) and asserts identical error codes and response values.
+  - Covers 7 parity tests: `fast_prime` sync (10 inputs), `fast_prime` async, `fast_add` sync (v32 args), `fast_dot_prod` sync (struct args), `fast_nop` sync (string-only, no output), `fast_vec` async (vector output), `prime` sync (non-fast method).
+  - Also regenerated `test/benchmark_service.h` with `--legacy-compat` to add `[[deprecated]]` wrappers and `override` keywords (purely additive, no existing test breakage).
+  - Scope: 1 new test file (~185 LOC) + 5 lines CMakeLists.txt wiring + benchmark_service.h regeneration.
+  - Verification note: all 7 parity tests pass; full RPC-focused suite passed (43/43 tests passed).
 - [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.
 - [ ] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.
 - [ ] Add borrow-check guard for generated typed APIs (no public `T* out` signatures in typed mode output).

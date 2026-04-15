@@ -290,7 +290,7 @@ public:
     };
     // Registers RPC IDs with server using service index
     // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
         if ((ret = svr.reg_rpc(FAST_PRIME, svc_index)) != 0) {
             goto err;
@@ -337,7 +337,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
         switch (rpc_id) {
         case FAST_PRIME: __fast_prime__wrapper__(std::move(req), weak_sconn); break;
         case FAST_DOT_PROD: __fast_dot_prod__wrapper__(std::move(req), weak_sconn); break;
@@ -668,6 +668,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_fast_prime(const RpcFastPrimeRequest&) instead")]]
+    rrr::FutureResult async_fast_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFastPrimeRequest __req__;
+        __req__.n = n;
+        auto __typed_result__ = this->async_fast_prime(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed fast_prime(const RpcFastPrimeRequest&) instead")]]
+    rrr::i32 fast_prime(const rrr::i32& n, rrr::i8* flag) {
+        RpcFastPrimeRequest __req__;
+        __req__.n = n;
+        auto __typed_result__ = this->fast_prime(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (flag) *flag = __resp__.flag;
+        return 0;
+    }
     class fast_dot_prodTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -711,6 +733,30 @@ public:
             return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_fast_dot_prod(const RpcFastDotProdRequest&) instead")]]
+    rrr::FutureResult async_fast_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFastDotProdRequest __req__;
+        __req__.p1 = p1;
+        __req__.p2 = p2;
+        auto __typed_result__ = this->async_fast_dot_prod(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed fast_dot_prod(const RpcFastDotProdRequest&) instead")]]
+    rrr::i32 fast_dot_prod(const point3& p1, const point3& p2, double* v) {
+        RpcFastDotProdRequest __req__;
+        __req__.p1 = p1;
+        __req__.p2 = p2;
+        auto __typed_result__ = this->fast_dot_prod(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (v) *v = __resp__.v;
+        return 0;
     }
     class fast_addTypedFuture {
     private:
@@ -756,6 +802,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_fast_add(const RpcFastAddRequest&) instead")]]
+    rrr::FutureResult async_fast_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFastAddRequest __req__;
+        __req__.a = a;
+        __req__.b = b;
+        auto __typed_result__ = this->async_fast_add(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed fast_add(const RpcFastAddRequest&) instead")]]
+    rrr::i32 fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
+        RpcFastAddRequest __req__;
+        __req__.a = a;
+        __req__.b = b;
+        auto __typed_result__ = this->fast_add(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (a_add_b) *a_add_b = __resp__.a_add_b;
+        return 0;
+    }
     class fast_nopTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -797,6 +867,26 @@ public:
             return rusty::Result<RpcFastNopResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_fast_nop(const RpcFastNopRequest&) instead")]]
+    rrr::FutureResult async_fast_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFastNopRequest __req__;
+        __req__.in_0 = in_0;
+        auto __typed_result__ = this->async_fast_nop(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed fast_nop(const RpcFastNopRequest&) instead")]]
+    rrr::i32 fast_nop(const std::string& in_0) {
+        RpcFastNopRequest __req__;
+        __req__.in_0 = in_0;
+        auto __typed_result__ = this->fast_nop(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
     class fast_vecTypedFuture {
     private:
@@ -841,6 +931,28 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_fast_vec(const RpcFastVecRequest&) instead")]]
+    rrr::FutureResult async_fast_vec(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcFastVecRequest __req__;
+        __req__.n = n;
+        auto __typed_result__ = this->async_fast_vec(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed fast_vec(const RpcFastVecRequest&) instead")]]
+    rrr::i32 fast_vec(const rrr::i32& n, std::vector<rrr::i64>* v) {
+        RpcFastVecRequest __req__;
+        __req__.n = n;
+        auto __typed_result__ = this->fast_vec(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (v) *v = __resp__.v;
+        return 0;
+    }
     class primeTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -883,6 +995,28 @@ public:
             return rusty::Result<RpcPrimeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_prime(const RpcPrimeRequest&) instead")]]
+    rrr::FutureResult async_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcPrimeRequest __req__;
+        __req__.n = n;
+        auto __typed_result__ = this->async_prime(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed prime(const RpcPrimeRequest&) instead")]]
+    rrr::i32 prime(const rrr::i32& n, rrr::i8* flag) {
+        RpcPrimeRequest __req__;
+        __req__.n = n;
+        auto __typed_result__ = this->prime(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (flag) *flag = __resp__.flag;
+        return 0;
     }
     class dot_prodTypedFuture {
     private:
@@ -928,6 +1062,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_dot_prod(const RpcDotProdRequest&) instead")]]
+    rrr::FutureResult async_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcDotProdRequest __req__;
+        __req__.p1 = p1;
+        __req__.p2 = p2;
+        auto __typed_result__ = this->async_dot_prod(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed dot_prod(const RpcDotProdRequest&) instead")]]
+    rrr::i32 dot_prod(const point3& p1, const point3& p2, double* v) {
+        RpcDotProdRequest __req__;
+        __req__.p1 = p1;
+        __req__.p2 = p2;
+        auto __typed_result__ = this->dot_prod(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (v) *v = __resp__.v;
+        return 0;
+    }
     class addTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -972,6 +1130,30 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_add(const RpcAddRequest&) instead")]]
+    rrr::FutureResult async_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcAddRequest __req__;
+        __req__.a = a;
+        __req__.b = b;
+        auto __typed_result__ = this->async_add(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed add(const RpcAddRequest&) instead")]]
+    rrr::i32 add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
+        RpcAddRequest __req__;
+        __req__.a = a;
+        __req__.b = b;
+        auto __typed_result__ = this->add(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        auto __resp__ = __typed_result__.unwrap();
+        if (a_add_b) *a_add_b = __resp__.a_add_b;
+        return 0;
+    }
     class nopTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1014,6 +1196,26 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
+    [[deprecated("use typed async_nop(const RpcNopRequest&) instead")]]
+    rrr::FutureResult async_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcNopRequest __req__;
+        __req__.in_0 = in_0;
+        auto __typed_result__ = this->async_nop(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed nop(const RpcNopRequest&) instead")]]
+    rrr::i32 nop(const std::string& in_0) {
+        RpcNopRequest __req__;
+        __req__.in_0 = in_0;
+        auto __typed_result__ = this->nop(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
+    }
     class sleepTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1055,6 +1257,26 @@ public:
             return rusty::Result<RpcSleepResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
+    }
+    [[deprecated("use typed async_sleep(const RpcSleepRequest&) instead")]]
+    rrr::FutureResult async_sleep(const double& sec, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        RpcSleepRequest __req__;
+        __req__.sec = sec;
+        auto __typed_result__ = this->async_sleep(__req__, __fu_attr__);
+        if (__typed_result__.is_err()) {
+            return rrr::FutureResult::Err(__typed_result__.unwrap_err());
+        }
+        return rrr::FutureResult::Ok(__typed_result__.unwrap().raw_future());
+    }
+    [[deprecated("use typed sleep(const RpcSleepRequest&) instead")]]
+    rrr::i32 sleep(const double& sec) {
+        RpcSleepRequest __req__;
+        __req__.sec = sec;
+        auto __typed_result__ = this->sleep(__req__);
+        if (__typed_result__.is_err()) {
+            return __typed_result__.unwrap_err();
+        }
+        return 0;
     }
 };
 
