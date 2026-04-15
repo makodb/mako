@@ -143,7 +143,7 @@ namespace {
 
 rusty::Arc<RpcServiceContext> make_test_rpc_context() {
     std::unordered_map<i32, size_t> rpc_to_service;
-    rusty::Vec<rusty::RefCell<rusty::Box<Service>>> services;
+    rusty::Vec<rusty::RefCell<ServiceProxy>> services;
     return rusty::Arc<RpcServiceContext>::make(
         std::move(rpc_to_service),
         std::move(services),

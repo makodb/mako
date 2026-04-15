@@ -25,6 +25,18 @@
 #include "reactor/reactor.h"
 #include "utils.hpp"
 
+#ifdef RR
+#pragma push_macro("RR")
+#undef RR
+#define RRR_RESTORE_RR_MACRO 1
+#endif
+#include <proxy/proxy.h>
+#include <proxy/proxy_macros.h>
+#ifdef RRR_RESTORE_RR_MACRO
+#pragma pop_macro("RR")
+#undef RRR_RESTORE_RR_MACRO
+#endif
+
 // External safety annotations for system functions and STL operations
 // Note: Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
 // now have in-place annotations in their respective headers.
@@ -184,6 +196,35 @@ public:
     virtual void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
 };
 
+PRO_DEF_MEM_DISPATCH(ServiceMemRegTo, __reg_to__);
+PRO_DEF_MEM_DISPATCH(ServiceMemDispatch, __dispatch__);
+
+struct ServiceFacade : pro::facade_builder
+    ::add_convention<ServiceMemRegTo, int(Server&, size_t)>
+    ::add_convention<ServiceMemDispatch, void(i32, rusty::Box<Request>, WeakServerConnection)>
+    ::build {};
+
+using ServiceProxy = pro::proxy<ServiceFacade>;
+
+// Compatibility bridge for the Service-to-proxy migration.
+class ServiceBoxAdapter {
+ public:
+  explicit ServiceBoxAdapter(rusty::Box<Service> svc) : svc_(std::move(svc)) {}
+
+  int __reg_to__(Server& server, size_t svc_index) { return svc_->__reg_to__(server, svc_index); }
+
+  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
+    svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
+  }
+
+ private:
+  rusty::Box<Service> svc_;
+};
+
+inline ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
+  return pro::make_proxy<ServiceFacade, ServiceBoxAdapter>(std::move(svc));
+}
+
 /**
  * Shared context for RPC service dispatch.
  *
@@ -197,12 +238,12 @@ public:
  * NOTE: RefCell is single-threaded. All RPC dispatches must occur on the same thread.
  */
 struct RpcServiceContext {
-    // Maps RPC ID to service index for virtual dispatch (immutable after setup)
+    // Maps RPC ID to service index for dispatch (immutable after setup)
     const std::unordered_map<i32, size_t> rpc_to_service;
 
-    // Owned services wrapped in RefCell for interior mutability
+    // Owned service proxies wrapped in RefCell for interior mutability
     // RefCell allows mutable access through const reference (borrow_mut)
-    const rusty::Vec<rusty::RefCell<rusty::Box<Service>>> services;
+    const rusty::Vec<rusty::RefCell<ServiceProxy>> services;
 
     // Server address for logging (immutable after setup)
     const std::string addr;
@@ -215,7 +256,7 @@ struct RpcServiceContext {
 
     // Constructor taking ownership of all data
     RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
-                      rusty::Vec<rusty::RefCell<rusty::Box<Service>>> svcs,
+                      rusty::Vec<rusty::RefCell<ServiceProxy>> svcs,
                       std::string address,
                       std::shared_ptr<std::atomic<int>> pending_counter,
                       std::shared_ptr<std::atomic<bool>> drop_heartbeats,
@@ -535,7 +576,7 @@ class Server: public NoCopy {
  public:
     // Pending registration data (before start() is called)
     // These are moved into RpcServiceContext in start()
-    rusty::Vec<rusty::Box<Service>> pending_services_;
+    rusty::Vec<ServiceProxy> pending_services_;
     std::unordered_map<i32, size_t> pending_rpc_to_service_;
 
     // Shared context containing RPC dispatch info and services
@@ -575,14 +616,12 @@ public:
     // @unsafe - Starts server on specified address (raw pointer dereference)
     int start(const char* bind_addr);
 
-    // @safe - Registers service and transfers ownership to Server
-    // Server owns the service via Box<Service>, ensuring it outlives all RPC handlers.
-    // Accepts Box<Derived> which converts to Box<Service> via move constructor.
+    // @safe - Registers legacy virtual service and transfers ownership to Server.
     // Must be called before start().
     void reg_service(rusty::Box<Service> svc) {
         // @unsafe
         {
-        pending_services_.push(std::move(svc));
+        pending_services_.push(make_service_proxy_from_box(std::move(svc)));
         // Get index AFTER push - this is the position of the service we just added
         size_t svc_index = pending_services_.size() - 1;
         // Register handlers using the index (service is safely stored in pending_services_)

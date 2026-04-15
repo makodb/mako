@@ -3,7 +3,6 @@
 import argparse
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 
@@ -213,17 +212,24 @@ int main() {{
     raise ValueError(f"unknown snippet compile profile: {profile}")
 
 
-def compile_snippet(cxx: str, repo_root: Path, idx: int, line_no: int, profile: str, snippet: str):
+def compile_snippet(
+    cxx: str,
+    repo_root: Path,
+    idx: int,
+    line_no: int,
+    profile: str,
+    snippet: str,
+    timeout_sec: float,
+):
     unit = build_compile_unit(profile, idx, snippet)
-
-    with tempfile.NamedTemporaryFile("w", suffix=".cc", delete=False) as f:
-        path = Path(f.name)
-        f.write(unit)
-
     cmd = [
         cxx,
         "-std=c++23",
+        "-w",
         "-fsyntax-only",
+        "-x",
+        "c++",
+        "-",
         "-I",
         str(repo_root),
         "-I",
@@ -232,10 +238,24 @@ def compile_snippet(cxx: str, repo_root: Path, idx: int, line_no: int, profile: 
         str(repo_root / "third-party/rusty-cpp/include"),
         "-I",
         str(repo_root / "third-party/proxy/include"),
-        str(path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    path.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=unit,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return (
+            False,
+            f"snippet tagged at line {line_no} timed out during compile\n"
+            f"profile: {profile}\n"
+            f"timeout_sec: {timeout_sec}\n"
+            f"command: {' '.join(cmd)}\n"
+            f"{exc.stdout or ''}{exc.stderr or ''}",
+        )
     if proc.returncode != 0:
         return (
             False,
@@ -253,6 +273,12 @@ def main():
     parser.add_argument("--repo", required=True, help="Repository root path")
     parser.add_argument("--cxx", default="g++", help="C++ compiler executable")
     parser.add_argument("--min-snippets", type=int, default=1, help="Minimum required tagged snippets")
+    parser.add_argument(
+        "--snippet-timeout-sec",
+        type=float,
+        default=60.0,
+        help="Per-snippet compile timeout in seconds",
+    )
     args = parser.parse_args()
 
     repo_root = Path(args.repo).resolve()
@@ -303,7 +329,15 @@ def main():
 
     failures = []
     for idx, (line_no, profile, snippet) in enumerate(snippets, start=1):
-        ok, message = compile_snippet(args.cxx, repo_root, idx, line_no, profile, snippet)
+        ok, message = compile_snippet(
+            args.cxx,
+            repo_root,
+            idx,
+            line_no,
+            profile,
+            snippet,
+            args.snippet_timeout_sec,
+        )
         if not ok:
             failures.append(message)
 

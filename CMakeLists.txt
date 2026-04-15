@@ -1837,15 +1837,29 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_pollthread_proxy_storage ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_pollthread_proxy_storage COMMAND test_rpc_pollthread_proxy_storage)
 
+    # Service proxy facade guard tests (Phase 2 leaf 1)
+    add_executable(test_rpc_service_proxy_facade test/rpc_service_proxy_facade_test.cc)
+    target_include_directories(test_rpc_service_proxy_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_service_proxy_facade PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_service_proxy_facade ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_service_proxy_facade COMMAND test_rpc_service_proxy_facade)
+
     find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
+    find_program(CLANGXX_EXECUTABLE clang++)
+    if(CLANGXX_EXECUTABLE)
+        set(RPC_DOCS_SNIPPET_CXX ${CLANGXX_EXECUTABLE})
+    else()
+        set(RPC_DOCS_SNIPPET_CXX ${CMAKE_CXX_COMPILER})
+    endif()
     add_test(
         NAME test_rpc_docs_snippet_compile
         COMMAND ${PYTHON3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/test/rpc_docs_snippet_compile_test.py
                 --book ${CMAKE_SOURCE_DIR}/docs/srpc-book.md
                 --repo ${CMAKE_SOURCE_DIR}
-                --cxx ${CMAKE_CXX_COMPILER}
+                --cxx ${RPC_DOCS_SNIPPET_CXX}
                 --min-snippets 9
+                --snippet-timeout-sec 60
     )
     add_test(
         NAME test_rpc_rpcgen_typed_structs

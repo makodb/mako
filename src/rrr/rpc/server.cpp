@@ -248,7 +248,7 @@ bool ServerConnection::handle_read() {
                 }
                 reply(*req, ENOENT);
             } else {
-                // Service found - dispatch via virtual method using RefCell
+                // Service found - dispatch via proxy facade using RefCell
                 size_t svc_index = it->second;
                 auto weak_this = weak_self_;
                 auto ctx = ctx_.clone();  // Clone Arc for the coroutine
@@ -604,10 +604,10 @@ int Server::start(const char* bind_addr) {
     return -1;
   }
 
-  // Wrap each service in RefCell for interior mutability
-  rusty::Vec<rusty::RefCell<rusty::Box<Service>>> wrapped_services;
+  // Wrap each service in RefCell for interior mutability.
+  rusty::Vec<rusty::RefCell<ServiceProxy>> wrapped_services;
   for (size_t i = 0; i < pending_services_.size(); ++i) {
-    wrapped_services.push(rusty::RefCell<rusty::Box<Service>>(std::move(pending_services_[i])));
+    wrapped_services.push(rusty::RefCell<ServiceProxy>(std::move(pending_services_[i])));
   }
 
   // Create immutable RpcServiceContext from pending registration data

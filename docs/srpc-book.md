@@ -709,6 +709,10 @@ public:
 };
 ```
 
+Migration note: `Server` now stores services internally as `pro::proxy<ServiceFacade>`.
+Legacy `Service` inheritance remains fully supported via a compatibility adapter,
+so existing generated/handwritten services continue to work unchanged.
+
 ### Server Lifecycle
 
 ```cpp srpc-compile-server
@@ -754,9 +758,9 @@ The `RpcServiceContext` maps RPC IDs to service implementations:
 
 ```cpp srpc-no-compile
 class RpcServiceContext {
-    // Map rpc_id -> Service implementation
-    // Uses rusty::Arc for thread-safe sharing
-    // Uses rusty::RefCell for single-threaded dispatch
+    // Map rpc_id -> service index (rpc_id_sp_map)
+    // Services are stored as Vec<RefCell<ServiceProxy>>
+    // (legacy Service subclasses are adapted to ServiceProxy on registration)
 };
 ```
 
