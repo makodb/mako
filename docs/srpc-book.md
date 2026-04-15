@@ -432,10 +432,9 @@ class Pollable {
 ```
 
 Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
-(`PollableFacade` + `PollableArcAdapter`). Poll-thread command payloads and primary
-storage are now proxy-backed (`pro::proxy<PollableFacade>`). A temporary
-`Arc<Pollable>` bridge is still retained internally for existing epoll wrapper
-userdata/update hooks until the next migration leaf removes those assumptions.
+(`PollableFacade` + `PollableArcAdapter`). Poll-thread command payloads, storage,
+and event dispatch now run through proxy-backed state (`pro::proxy<PollableFacade>`),
+and epoll integration is fd-based (no `Pollable*` userdata/update assumptions).
 
 ### Epoll Abstraction
 
@@ -443,10 +442,10 @@ RRR wraps Linux epoll and macOS kqueue behind a unified `Epoll` class:
 
 ```cpp srpc-no-compile
 class Epoll {
-    void add(Pollable* p);        // Register FD for monitoring
-    void remove(Pollable* p);     // Unregister FD
-    void update(Pollable* p);     // Change poll mode
-    int wait(epoll_event* events, int maxevents, int timeout_ms);
+    void add(int fd, int mode);                    // Register FD for monitoring
+    void remove(int fd);                           // Unregister FD
+    void update(int fd, int new_mode, int old_mode); // Change poll mode
+    void wait(fn(int fd, int ready_events));       // Report readiness by FD
 };
 ```
 
@@ -468,7 +467,6 @@ pt->shutdown();                         // Stop poll loop
 class PollThreadWorker {
     Epoll poll_;
     unordered_map<int, PollableProxy> fd_to_pollable_;
-    unordered_map<int, Arc<Pollable>> fd_to_legacy_pollable_; // temporary epoll bridge
     mpsc::Receiver<PollCommand> receiver_;  // Commands from main thread
 
     void poll_loop() {
@@ -476,7 +474,7 @@ class PollThreadWorker {
             process_channel_commands();  // Add/remove/close/update_mode
             epoll_wait(...);
             for each ready fd:
-                call handle_read() / handle_write();
+                lookup proxy by fd, then call handle_read() / handle_write();
             trigger_jobs();
         }
     }
@@ -489,8 +487,8 @@ The poll thread and main thread communicate via an mpsc (multi-producer, single-
 
 | Command | Description |
 |---------|-------------|
-| `CmdAddPollable` | Register new Pollable proxy (plus temporary legacy Arc bridge) with epoll |
-| `CmdRemovePollable` | Remove from epoll (keep Arc alive) |
+| `CmdAddPollable` | Register new Pollable proxy with epoll |
+| `CmdRemovePollable` | Remove from epoll and worker ownership without forcing `close()` |
 | `CmdClosePollable` | Remove + close via proxy dispatch, then drop ownership |
 | `CmdUpdateMode` | Change poll_mode for an FD (fd-based lookup, no raw pointer payload) |
 | `CmdAddJob` / `CmdRemoveJob` | Periodic job management |

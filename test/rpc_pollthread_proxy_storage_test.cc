@@ -31,8 +31,17 @@ bool wait_until(const std::function<bool()>& pred, int timeout_ms) {
 
 class CountingPollable : public Pollable {
  public:
-  CountingPollable(int fd, int mode, std::atomic<int>* write_count, std::atomic<int>* close_count)
-      : fd_(fd), mode_(mode), write_count_(write_count), close_count_(close_count) {}
+  CountingPollable(
+      int fd,
+      int mode,
+      std::atomic<int>* read_count,
+      std::atomic<int>* write_count,
+      std::atomic<int>* close_count)
+      : fd_(fd),
+        mode_(mode),
+        read_count_(read_count),
+        write_count_(write_count),
+        close_count_(close_count) {}
 
   int fd() const override { return fd_; }
   int poll_mode() const override { return mode_; }
@@ -40,6 +49,9 @@ class CountingPollable : public Pollable {
   bool handle_read() override {
     char buf[32];
     (void)::read(fd_, buf, sizeof(buf));
+    if (read_count_ != nullptr) {
+      read_count_->fetch_add(1, std::memory_order_relaxed);
+    }
     return true;
   }
   int handle_write() override {
@@ -66,6 +78,7 @@ class CountingPollable : public Pollable {
  private:
   int fd_;
   mutable int mode_;
+  std::atomic<int>* read_count_;
   std::atomic<int>* write_count_;
   std::atomic<int>* close_count_;
 };
@@ -82,7 +95,7 @@ TEST(RpcPollThreadProxyStorageTest, RequestCloseInvokesCloseAfterCallerArcReleas
   int tracked_fd = -1;
   {
     auto pollable = rusty::Arc<CountingPollable>::new_(
-        CountingPollable(sv[0], PollMode::READ, nullptr, &close_count));
+        CountingPollable(sv[0], PollMode::READ, nullptr, nullptr, &close_count));
     tracked_fd = pollable->fd();
     poll_thread->add(pollable.clone());
   }
@@ -107,7 +120,7 @@ TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughPro
 
   std::atomic<int> write_count{0};
   auto pollable = rusty::Arc<CountingPollable>::new_(
-      CountingPollable(sv[0], PollMode::READ, &write_count, nullptr));
+      CountingPollable(sv[0], PollMode::READ, nullptr, &write_count, nullptr));
   Pollable& poll_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*pollable));
 
   poll_thread->add(pollable.clone());
@@ -127,6 +140,65 @@ TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughPro
   poll_ref.close();
   poll_thread->shutdown();
   ::close(sv[1]);
+}
+
+TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
+  auto poll_thread = PollThread::create();
+
+  int first_sv[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, first_sv), 0);
+  ASSERT_EQ(::fcntl(first_sv[0], F_SETFL, O_NONBLOCK), 0);
+  ASSERT_EQ(::fcntl(first_sv[1], F_SETFL, O_NONBLOCK), 0);
+
+  std::atomic<int> first_read_count{0};
+  std::atomic<int> first_close_count{0};
+  auto first_pollable = rusty::Arc<CountingPollable>::new_(
+      CountingPollable(first_sv[0], PollMode::READ, &first_read_count, nullptr, &first_close_count));
+  const int reused_fd = first_pollable->fd();
+  poll_thread->add(first_pollable.clone());
+
+  ASSERT_GT(::write(first_sv[1], "a", 1), 0);
+  ASSERT_TRUE(wait_until([&] { return first_read_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+
+  poll_thread->request_close(reused_fd);
+  ASSERT_TRUE(wait_until([&] { return first_close_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+  ::close(first_sv[1]);
+
+  int second_sv[2] = {-1, -1};
+  bool got_reused_fd = false;
+  for (int i = 0; i < 128; ++i) {
+    int tmp[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, tmp), 0);
+    ASSERT_EQ(::fcntl(tmp[0], F_SETFL, O_NONBLOCK), 0);
+    ASSERT_EQ(::fcntl(tmp[1], F_SETFL, O_NONBLOCK), 0);
+    if (tmp[0] == reused_fd) {
+      second_sv[0] = tmp[0];
+      second_sv[1] = tmp[1];
+      got_reused_fd = true;
+      break;
+    }
+    ::close(tmp[0]);
+    ::close(tmp[1]);
+  }
+  ASSERT_TRUE(got_reused_fd);
+
+  const int first_reads_after_close = first_read_count.load(std::memory_order_relaxed);
+
+  std::atomic<int> second_read_count{0};
+  std::atomic<int> second_close_count{0};
+  auto second_pollable = rusty::Arc<CountingPollable>::new_(
+      CountingPollable(second_sv[0], PollMode::READ, &second_read_count, nullptr, &second_close_count));
+  poll_thread->add(second_pollable.clone());
+
+  ASSERT_GT(::write(second_sv[1], "b", 1), 0);
+  ASSERT_TRUE(wait_until([&] { return second_read_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+  EXPECT_EQ(first_read_count.load(std::memory_order_relaxed), first_reads_after_close);
+
+  poll_thread->request_close(reused_fd);
+  ASSERT_TRUE(wait_until([&] { return second_close_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+
+  poll_thread->shutdown();
+  ::close(second_sv[1]);
 }
 
 }  // namespace

@@ -281,7 +281,6 @@ class PollThreadWorker;
 // Using std::variant for type-safe discriminated union
 struct CmdAddPollable {
     PollableProxy pollable;
-    rusty::Arc<Pollable> legacy_arc;
 };
 struct CmdRemovePollable { int fd; };
 struct CmdClosePollable { int fd; };  // Close socket and drop Arc (thread-safe close)
@@ -359,8 +358,8 @@ public:
     // SAFETY: Dereferences raw pointer current_worker_ and calls do_add_pollable
     static void add_pollable_from_current_thread(rusty::Arc<Pollable> poll) {
         verify(current_worker_ != nullptr);
-        auto poll_proxy = make_pollable_proxy_from_arc(poll.clone());
-        current_worker_->do_add_pollable(std::move(poll_proxy), std::move(poll));
+        auto poll_proxy = make_pollable_proxy_from_arc(std::move(poll));
+        current_worker_->do_add_pollable(std::move(poll_proxy));
     }
 
     // @unsafe - Update poll mode directly (bypasses channel)
@@ -386,7 +385,7 @@ private:
     void trigger_job();
 
     // Internal implementations (single-threaded, no races)
-    void do_add_pollable(PollableProxy poll, rusty::Arc<Pollable> legacy_arc);
+    void do_add_pollable(PollableProxy poll);
     void do_remove_pollable(int fd);
     void do_close_pollable(int fd);  // Close socket and drop Arc
     void do_update_mode(int fd, int new_mode);
@@ -405,8 +404,6 @@ private:
 
     // Pollable state - single owner in worker thread
     std::unordered_map<int, PollableProxy> fd_to_pollable_;
-    // Transitional bridge for epoll wrapper API until Leaf 3 removes Arc-based hooks.
-    std::unordered_map<int, rusty::Arc<Pollable>> fd_to_legacy_pollable_;
     std::unordered_map<int, int> mode_;  // fd -> mode
     std::unordered_set<int> pending_remove_;
 

@@ -473,7 +473,6 @@ PollThreadWorker::PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> rece
     : receiver_(std::move(receiver)),
       poll_(),
       fd_to_pollable_(),
-      fd_to_legacy_pollable_(),
       mode_(),
       pending_remove_(),
       jobs_(),
@@ -494,9 +493,26 @@ void PollThreadWorker::poll_loop() {
     trigger_job();
 
     // Wait for events (epoll_wait with short timeout)
-    // Pass callback to handle mode updates from handle_write() return values
-    poll_.Wait([this](Pollable* poll, int new_mode) {
-      do_update_mode(poll->fd(), new_mode);
+    // Dispatch through proxy storage by fd; no Pollable* userdata assumptions.
+    poll_.Wait([this](int fd, int ready_events) {
+      auto poll_it = fd_to_pollable_.find(fd);
+      if (poll_it == fd_to_pollable_.end()) {
+        return;
+      }
+      auto& poll = poll_it->second;
+
+      if (ready_events & PollReady::READABLE) {
+        poll->handle_read();
+      }
+      if (ready_events & PollReady::WRITABLE) {
+        int new_mode = poll->handle_write();
+        if (new_mode != PollMode::NO_CHANGE) {
+          do_update_mode(fd, new_mode);
+        }
+      }
+      if (ready_events & PollReady::ERROR) {
+        poll->handle_error();
+      }
     });
 
     // Process commands from channel (non-blocking try_recv)
@@ -530,17 +546,15 @@ void PollThreadWorker::poll_loop() {
     for (int fd : closed_fds) {
       auto proxy_it = fd_to_pollable_.find(fd);
       if (proxy_it != fd_to_pollable_.end()) {
-        auto legacy_it = fd_to_legacy_pollable_.find(fd);
         // Remove from epoll if still registered
-        if (mode_.find(fd) != mode_.end() && legacy_it != fd_to_legacy_pollable_.end()) {
-          poll_.Remove(legacy_it->second);
+        if (mode_.find(fd) != mode_.end()) {
+          poll_.Remove(fd);
         }
 
         // Invoke close callback before erasing map entry so cleanup hooks run.
         proxy_it->second->close();
 
         fd_to_pollable_.erase(proxy_it);
-        fd_to_legacy_pollable_.erase(fd);
         mode_.erase(fd);
       }
     }
@@ -549,13 +563,11 @@ void PollThreadWorker::poll_loop() {
   Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
   // Shutdown cleanup - remove all registered pollables
   for (auto& [fd, poll] : fd_to_pollable_) {
-    auto legacy_it = fd_to_legacy_pollable_.find(fd);
-    if (mode_.find(fd) != mode_.end() && legacy_it != fd_to_legacy_pollable_.end()) {
-      poll_.Remove(legacy_it->second);
+    if (mode_.find(fd) != mode_.end()) {
+      poll_.Remove(fd);
     }
   }
   fd_to_pollable_.clear();
-  fd_to_legacy_pollable_.clear();
   mode_.clear();
   pending_remove_.clear();
   Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
@@ -576,7 +588,7 @@ void PollThreadWorker::process_commands() {
     std::visit([this](auto&& arg) {
       using T = std::decay_t<decltype(arg)>;
       if constexpr (std::is_same_v<T, CmdAddPollable>) {
-        do_add_pollable(std::move(arg.pollable), std::move(arg.legacy_arc));
+        do_add_pollable(std::move(arg.pollable));
       } else if constexpr (std::is_same_v<T, CmdRemovePollable>) {
         do_remove_pollable(arg.fd);
       } else if constexpr (std::is_same_v<T, CmdClosePollable>) {
@@ -616,8 +628,7 @@ void PollThreadWorker::trigger_job() {
   }
 }
 
-// @unsafe - Uses raw pointer cast for epoll userdata
-void PollThreadWorker::do_add_pollable(PollableProxy poll, rusty::Arc<Pollable> legacy_arc) {
+void PollThreadWorker::do_add_pollable(PollableProxy poll) {
   int fd = poll->fd();
   int poll_mode = poll->poll_mode();
 
@@ -628,12 +639,9 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll, rusty::Arc<Pollable> 
 
   // Store in maps
   fd_to_pollable_.insert_or_assign(fd, std::move(poll));
-  fd_to_legacy_pollable_.insert_or_assign(fd, legacy_arc.clone());
   mode_[fd] = poll_mode;
 
-  // userdata = raw Pollable* for lookup (temporary bridge until Leaf 3)
-  void* userdata = const_cast<void*>(static_cast<const void*>(legacy_arc.get()));
-  poll_.Add(legacy_arc, userdata);
+  poll_.Add(fd, poll_mode);
 }
 
 // @unsafe - uses STL operations
@@ -655,11 +663,10 @@ void PollThreadWorker::do_close_pollable(int fd) {
   if (proxy_it == fd_to_pollable_.end()) {
     return;
   }
-  auto legacy_it = fd_to_legacy_pollable_.find(fd);
 
   // Remove from epoll if still registered
-  if (mode_.find(fd) != mode_.end() && legacy_it != fd_to_legacy_pollable_.end()) {
-    poll_.Remove(legacy_it->second);
+  if (mode_.find(fd) != mode_.end()) {
+    poll_.Remove(fd);
   }
 
   // Close the socket via Pollable's close() method
@@ -667,7 +674,6 @@ void PollThreadWorker::do_close_pollable(int fd) {
 
   // Erase from maps, dropping storage references
   fd_to_pollable_.erase(proxy_it);
-  fd_to_legacy_pollable_.erase(fd);
   mode_.erase(fd);
 }
 
@@ -685,13 +691,7 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode) {
   mode_[fd] = new_mode;
 
   if (new_mode != old_mode) {
-    auto legacy_it = fd_to_legacy_pollable_.find(fd);
-    if (legacy_it == fd_to_legacy_pollable_.end()) {
-      return;
-    }
-    auto& legacy_poll = legacy_it->second;
-    void* userdata = const_cast<void*>(static_cast<const void*>(legacy_poll.get()));
-    poll_.Update(*legacy_poll, userdata, new_mode, old_mode);
+    poll_.Update(fd, new_mode, old_mode);
   }
 }
 
@@ -716,15 +716,13 @@ void PollThreadWorker::process_pending_removals() {
     if (proxy_it == fd_to_pollable_.end()) {
       continue;
     }
-    auto legacy_it = fd_to_legacy_pollable_.find(fd);
 
     // Check if fd was NOT reused (still in mode map)
-    if (mode_.find(fd) != mode_.end() && legacy_it != fd_to_legacy_pollable_.end()) {
-      poll_.Remove(legacy_it->second);
+    if (mode_.find(fd) != mode_.end()) {
+      poll_.Remove(fd);
     }
 
     fd_to_pollable_.erase(proxy_it);
-    fd_to_legacy_pollable_.erase(fd);
     mode_.erase(fd);
   }
 }
@@ -832,8 +830,8 @@ void PollThread::shutdown() const {
 }
 
 void PollThread::add(rusty::Arc<Pollable> poll) const {
-  auto poll_proxy = make_pollable_proxy_from_arc(poll.clone());
-  sender_.send(CmdAddPollable{std::move(poll_proxy), std::move(poll)});
+  auto poll_proxy = make_pollable_proxy_from_arc(std::move(poll));
+  sender_.send(CmdAddPollable{std::move(poll_proxy)});
 }
 
 void PollThread::remove(Pollable& poll) const {
