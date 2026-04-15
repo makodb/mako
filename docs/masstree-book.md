@@ -642,4 +642,90 @@ struct MultiVersionValue {
 
 ---
 
+## 13. RocksDB Compatibility Analysis
+
+Mako aims to provide a **RocksDB-compatible interface** so applications can migrate from single-node RocksDB to Mako's distributed, replicated store. This section analyzes the interface gaps and what a shim layer can (and cannot) bridge.
+
+### What Mako Already Provides
+
+Mako's `DB` / `ITable` API (in `db.hh`) already mirrors the RocksDB shape:
+
+```cpp
+// Mako (current)                     // RocksDB equivalent
+DB::Open(options, path, &db)          DB::Open(options, path, &db)
+db->BeginTransaction()                txn_db->BeginTransaction(wo, to)
+table->Put(txn, key, value)           txn->Put(key, value)
+table->Get(txn, key, &value)          txn->Get(ro, key, &value)
+table->Delete(txn, key)               txn->Delete(key)
+db->Commit(txn)                       txn->Commit()
+db->Rollback(txn)                     txn->Rollback()
+```
+
+### Gap Analysis
+
+#### Bridgeable with a Shim Layer (straightforward)
+
+| Feature | RocksDB API | Mako Gap | Shim Approach |
+|---------|------------|----------|---------------|
+| **WriteBatch** | `batch.Put(); batch.Delete(); db->Write(batch)` | No batch API | Collect ops, wrap in a single Mako transaction. Semantics match: both are atomic. |
+| **Non-Txn Put/Get** | `db->Put(wo, k, v)` without explicit transaction | Mako requires explicit transactions | Shim auto-wraps each call in `BeginTransaction()`/`Commit()`. One-shot transactions. |
+| **Status codes** | Returns `Status` object (`ok()`, `IsNotFound()`, etc.) | Mako uses bool/exceptions | Shim translates. `transGet` returning false → `Status::NotFound()`. Abort exception → `Status::Busy()`. |
+| **Slice type** | `Slice(data, len)` — zero-copy binary-safe | Mako uses `std::string` | Shim converts `Slice` → `string` on input, `string` → `Slice` on output. Small overhead but correct. |
+| **WriteOptions** | `sync`, `disableWAL`, etc. | No per-op options | Shim accepts `WriteOptions` but ignores most fields. `sync=true` could block until Raft commits. |
+| **ReadOptions** | `snapshot`, `verify_checksums`, `fill_cache` | No per-op options | Shim accepts `ReadOptions`, uses `snapshot` field if snapshots are implemented (see below). |
+| **Properties** | `db->GetProperty("rocksdb.stats", &s)` | No stats API | Shim returns empty/stub values. Add real stats incrementally. |
+| **Batch Delete** | Via WriteBatch | Per-key only | Same as WriteBatch shim — collect deletes in a transaction. |
+
+#### Bridgeable with Moderate Effort
+
+| Feature | RocksDB API | Mako Gap | Approach |
+|---------|------------|----------|----------|
+| **Iterator** | `NewIterator()` → stateful `Seek/Next/Prev/Valid/key/value` | Callback-only `scan()` | Implement `MakoIterator` that pre-fetches a batch of results via `transQuery`, caches them, and exposes `Seek/Next/Prev`. Re-fetches when cache is exhausted. Not zero-copy but correct. **~200 LOC.** |
+| **Snapshots** | `db->GetSnapshot()` → read at a point-in-time | No snapshot API | Leverage Mako's MVCC. A snapshot records the current watermark timestamp. Reads at that snapshot use the MVCC chain to find the correct version. **~150 LOC** but requires MVCC chain traversal to be exposed. |
+| **Column Families** | Cheap logical namespaces within one DB | Separate Masstree indexes | Map each column family to a separate `ITable` (each backed by its own Masstree). Column family creation = `open_index()`. Column family options are stored but mostly ignored. **~100 LOC.** |
+
+#### Fundamental Mismatches (cannot be fully shimmed)
+
+| Feature | RocksDB Behavior | Mako Behavior | Why It Can't Be Shimmed |
+|---------|-----------------|---------------|------------------------|
+| **Conflict model** | **Pessimistic**: locks keys at read/write time. Two concurrent writers to the same key → one blocks. | **Optimistic**: no locks during execution, conflict detected at commit. Two concurrent writers → one aborts at commit. | Different failure semantics. RocksDB users expect `Put` to block; Mako users must handle `Commit()` failures. A shim can translate abort→retry, but latency characteristics differ. |
+| **Merge operators** | `db->Merge(k, delta)` applies user-defined merge function (e.g., counter increment, list append) | Not supported | Requires Masstree-level support for read-modify-write in a single atomic step. Cannot be simulated with Put (lost updates under concurrency). Would need a new `transMerge()` operation. |
+| **Compaction control** | `CompactRange()`, `CompactFiles()`, compaction filters | In-memory tree, no compaction concept | Masstree doesn't have an LSM-tree structure. Compaction is meaningless. Shim can accept calls but they're no-ops. |
+| **Persistence guarantees** | `sync=true` means data is on disk when `Put` returns | Speculative: data may not be on disk when `Commit` returns | Fundamental Mako design choice. Shim can offer `sync=true` by waiting for watermark advancement, but this defeats speculative performance. |
+| **Key ordering across restarts** | Guaranteed — LSM-tree preserves order on disk | In-memory — lost on crash (unless recovered from Raft log) | Mako's persistence is via Raft log replay, not Masstree-on-disk. After restart, key order is reconstructed. Functionally equivalent but different mechanism. |
+
+### Recommended Shim Architecture
+
+```
+Application (uses RocksDB API)
+         |
++--------v---------+
+| RocksDB Shim     |  ← Translates API calls
+|  - WriteBatch    |     Wraps in transactions
+|  - Iterator      |     Pre-fetch + cache
+|  - Snapshot      |     MVCC timestamp capture
+|  - Status codes  |     Exception → Status
+|  - Options       |     Accept, mostly ignore
++--------+---------+
+         |
++--------v---------+
+| Mako DB/ITable   |  ← Existing Mako API
+|  - BeginTxn      |
+|  - Put/Get/Del   |
+|  - Commit        |
++------------------+
+```
+
+### What Applications Should Know
+
+Applications migrating from RocksDB to Mako should be aware of:
+
+1. **Transactions are optimistic.** `Put` won't block, but `Commit` may fail. Wrap operations in retry loops.
+2. **No merge operators.** Use read-modify-write in a transaction instead (with retry on abort).
+3. **Speculative durability.** By default, `Commit` returns before replication. Use watermark-await for strong durability.
+4. **Range scans are eager.** The iterator shim pre-fetches results. Very large scans should use bounded ranges.
+5. **Column families are separate trees.** No cross-column-family atomic writes (use a multi-table transaction instead).
+
+---
+
 *This document is based on the Masstree paper (EuroSys'12) and the implementation in `src/mako/masstree/`. For Mako-specific transaction and replication details, see [mako-book.md](mako-book.md).*
