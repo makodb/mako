@@ -255,6 +255,7 @@ set(ERPC_LDFLAGS_ETH
 # Options
 option(DEBUG "Enable debug mode" OFF)
 option(CHECK_INVARIANTS "Enable invariant checking" OFF)
+option(SRPC_LEGACY_COMPAT "Generate legacy pointer-style RPC wrappers alongside typed APIs" ON)
 option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing coroutine" OFF)
@@ -681,10 +682,15 @@ endif()
 
 
 # Add rpc defined in Janus
+if(SRPC_LEGACY_COMPAT)
+  set(RPCGEN_COMPAT_FLAG "--legacy-compat")
+else()
+  set(RPCGEN_COMPAT_FLAG "")
+endif()
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
          ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp --python ${RPCGEN_COMPAT_FLAG} src/deptran/rcc_rpc.rpc
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )

@@ -295,7 +295,7 @@ def load_existing_rpc_codes(header_fpath):
     with open(header_fpath) as f:
         for raw_line in f:
             line = raw_line.rstrip("\n")
-            m_service = re.match(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)Service\s*:\s*public\s+rrr::Service\s*\{', line)
+            m_service = re.match(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)Service\s*(?::\s*public\s+rrr::Service\s*)?\{', line)
             if m_service:
                 current_service = m_service.group(1)
                 in_enum = False
@@ -334,7 +334,7 @@ def generate_rpc_table(rpc_source, existing_codes=None):
             used_codes.add(rpc_code)
     return rpc_table
 
-def rpcgen(rpc_fpath, languages):
+def rpcgen(rpc_fpath, languages, legacy_compat=False):
     with open(rpc_fpath) as f:
         rpc_src = f.read()
 
@@ -364,7 +364,8 @@ def rpcgen(rpc_fpath, languages):
 
     if "cpp" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".h"
-        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer)
+        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer,
+                            legacy_compat=legacy_compat)
 
     if "python" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".py"

@@ -1024,8 +1024,11 @@ service MyService {
 The `rpcgen` tool generates client and server stubs:
 
 ```bash
-# Generate C++ code from .rpc definition
-python3 pylib/simplerpc/rpcgen.py my_service.rpc
+# Generate C++ code from .rpc definition (typed-only, default)
+bin/rpcgen --cpp my_service.rpc
+
+# Generate with legacy compatibility wrappers (during migration)
+bin/rpcgen --cpp --legacy-compat my_service.rpc
 ```
 
 This produces:
@@ -1042,9 +1045,33 @@ Current codegen is typed-first for non-raw RPC methods:
 - Generated service wrappers decode `MethodRequest`, call the typed handler, and
   map `Err(i32)` to RPC error replies.
 - Generated proxy sync/async methods use typed request/response objects end-to-end.
-- The old generated pointer-style (`T* out`) non-raw service/proxy wrappers and
-  the generated `ENOTSUP` fallback bridge have been removed.
 - `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
+
+#### Migration Knob (`--legacy-compat`)
+
+The `--legacy-compat` flag (CMake option: `SRPC_LEGACY_COMPAT`, default ON during
+rollout) controls backward-compatible generation:
+
+| Feature | Typed-only (default) | `--legacy-compat` |
+|---------|---------------------|-------------------|
+| Service base class | None | `: public rrr::Service` |
+| `__reg_to__`/`__dispatch__` | Concrete methods | `override` methods |
+| Typed APIs | Generated | Generated |
+| Legacy pointer-style proxy | Not generated | `[[deprecated]]` wrappers |
+
+Legacy proxy wrappers delegate to typed APIs:
+
+```cpp srpc-no-compile
+// Generated with --legacy-compat; calls typed async_echo() internally
+[[deprecated("use typed async_echo(const RpcEchoRequest&) instead")]]
+FutureResult async_echo(const i32& id, const string& msg, const FutureAttr& = {});
+
+[[deprecated("use typed echo(const RpcEchoRequest&) instead")]]
+i32 echo(const i32& id, const string& msg, string* reply);
+```
+
+To switch a service from legacy-compat to typed-only: remove `--legacy-compat`,
+regenerate the header, and update callsites to use typed request/response structs.
 
 ### Generated Client Usage
 
