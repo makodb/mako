@@ -10,6 +10,7 @@
 #include "replicated_db.h"
 #include "config_manager.h"
 #include "cluster_config.h"
+#include "config_watcher.h"
 
 namespace janus {
 
@@ -211,6 +212,14 @@ int RaftLabTest::Run(void) {
     failed =
         TEST_EXPAND(testClusterConfigRouting())                 // Test 95
         || TEST_EXPAND(testClusterConfigLoadFromConfigManager()); // Test 96
+  }
+
+  // ConfigWatcher tests (require running Raft cluster + ReplicatedDB + ConfigManager)
+  if (!failed) {
+    Log_info("Running ConfigWatcher tests");
+    failed =
+        TEST_EXPAND(testConfigWatcherDetectsChanges())   // Test 97
+        || TEST_EXPAND(testConfigWatcherCallback());     // Test 98
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -8926,6 +8935,245 @@ int RaftLabTest::testClusterConfigLoadFromConfigManager(void) {
   }
 
   Log_info("TEST 96: ClusterConfig LoadFromConfigManager PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 97: testConfigWatcherDetectsChanges
+// ============================================================================
+// Create ConfigManager + ClusterConfig + ConfigWatcher. Add a shard via
+// ConfigManager. Call Poll(). Verify ClusterConfig was updated with the new
+// shard. Verify poll_count incremented.
+// @unsafe - Uses ConfigManager/ReplicatedDB/ConfigWatcher which wraps RocksDB and Raft
+int RaftLabTest::testConfigWatcherDetectsChanges(void) {
+  Init2(97, "ConfigWatcher detects changes");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  // Create ReplicatedDB with a temp path
+  std::string db_path = "/tmp/raft_test_configwatcher_97_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // Register apply callback
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Create ConfigManager and ConfigWatcher
+  ConfigManager cfg(rdb.get());
+  ClusterConfig cc;
+  ConfigWatcher watcher(&cfg, &cc);
+
+  // Initially, poll should return false (version 0, nothing in DB yet)
+  bool updated = watcher.Poll();
+  Assert2(!updated, "First poll with empty DB should return false (version 0 == 0)");
+  Assert2(watcher.GetPollCount() == 1, "Poll count should be 1 after first poll");
+  Assert2(cc.GetShardCount() == 0, "ClusterConfig should have 0 shards initially");
+
+  // Add a shard via ConfigManager (this increments __version__)
+  bool ok = cfg.AddShard(0, {"node-a", "node-b", "node-c"});
+  Assert2(ok, "AddShard(0) should succeed");
+
+  ok = cfg.SetShardLeader(0, "node-a");
+  Assert2(ok, "SetShardLeader(0) should succeed");
+
+  // Now poll should detect the version change and update ClusterConfig
+  updated = watcher.Poll();
+  Assert2(updated, "Poll should detect version change after AddShard");
+  Assert2(watcher.GetPollCount() == 2, "Poll count should be 2");
+
+  // Verify ClusterConfig was updated
+  Assert2(cc.GetShardCount() == 1, "ClusterConfig should have 1 shard after update");
+  auto replicas = cc.GetShardReplicas(0);
+  Assert2(replicas.size() == 3, "Shard 0 should have 3 replicas, got %zu", replicas.size());
+  Assert2(replicas[0] == "node-a", "Replica 0 should be 'node-a'");
+  Assert2(replicas[1] == "node-b", "Replica 1 should be 'node-b'");
+  Assert2(replicas[2] == "node-c", "Replica 2 should be 'node-c'");
+  Assert2(cc.GetShardLeader(0) == "node-a", "Leader should be 'node-a'");
+
+  // Verify last_version was updated
+  Assert2(watcher.GetLastVersion() > 0, "Last version should be > 0");
+
+  // Poll again without changes - should return false
+  updated = watcher.Poll();
+  Assert2(!updated, "Poll with no changes should return false");
+  Assert2(watcher.GetPollCount() == 3, "Poll count should be 3");
+
+  // Add another shard - poll should detect again
+  ok = cfg.AddShard(1, {"node-d", "node-e"});
+  Assert2(ok, "AddShard(1) should succeed");
+
+  updated = watcher.Poll();
+  Assert2(updated, "Poll should detect second shard addition");
+  Assert2(watcher.GetPollCount() == 4, "Poll count should be 4");
+  Assert2(cc.GetShardCount() == 2, "ClusterConfig should have 2 shards after second update");
+
+  // Restore and cleanup
+  config_->SetLearnerAction();
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 97: ConfigWatcher detects changes PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 98: testConfigWatcherCallback
+// ============================================================================
+// Same setup but with a callback. Verify callback is invoked with correct
+// config on update. Verify callback is NOT invoked when nothing changed.
+// @unsafe - Uses ConfigManager/ReplicatedDB/ConfigWatcher which wraps RocksDB and Raft
+int RaftLabTest::testConfigWatcherCallback(void) {
+  Init2(98, "ConfigWatcher callback");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  // Create ReplicatedDB with a temp path
+  std::string db_path = "/tmp/raft_test_configwatcher_98_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // Register apply callback
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Create ConfigManager, ClusterConfig, and ConfigWatcher
+  ConfigManager cfg(rdb.get());
+  ClusterConfig cc;
+  ConfigWatcher watcher(&cfg, &cc);
+
+  // Track callback invocations
+  int callback_count = 0;
+  uint32_t last_callback_shard_count = 0;
+
+  // @unsafe { SetUpdateCallback stores std::function }
+  watcher.SetUpdateCallback([&callback_count, &last_callback_shard_count](
+      const ClusterConfig& config) {
+    callback_count++;
+    last_callback_shard_count = config.GetShardCount();
+  });
+
+  // Poll with no changes - callback should NOT be invoked
+  watcher.Poll();
+  Assert2(callback_count == 0, "Callback should not fire when no changes");
+
+  // Add a shard and poll - callback SHOULD be invoked
+  bool ok = cfg.AddShard(0, {"replica-x", "replica-y"});
+  Assert2(ok, "AddShard(0) should succeed");
+
+  bool updated = watcher.Poll();
+  Assert2(updated, "Poll should detect version change");
+  Assert2(callback_count == 1, "Callback should have been invoked once, got %d", callback_count);
+  Assert2(last_callback_shard_count == 1,
+          "Callback should see 1 shard, got %u", last_callback_shard_count);
+
+  // Poll again without changes - callback should NOT be invoked again
+  watcher.Poll();
+  Assert2(callback_count == 1, "Callback count should still be 1 after no-change poll, got %d",
+          callback_count);
+
+  // Add another shard - callback should fire again
+  ok = cfg.AddShard(1, {"replica-z"});
+  Assert2(ok, "AddShard(1) should succeed");
+
+  updated = watcher.Poll();
+  Assert2(updated, "Poll should detect second change");
+  Assert2(callback_count == 2, "Callback should have been invoked twice, got %d", callback_count);
+  Assert2(last_callback_shard_count == 2,
+          "Callback should see 2 shards, got %u", last_callback_shard_count);
+
+  // Test Start/Stop background polling
+  // Add a shard, then start watcher, give it time to detect, then stop
+  ok = cfg.AddShard(2, {"replica-w"});
+  Assert2(ok, "AddShard(2) should succeed");
+
+  watcher.Start();
+  Assert2(watcher.IsRunning(), "Watcher should be running after Start()");
+
+  // Wait for the background thread to poll at least once
+  // @unsafe { std::this_thread::sleep_for }
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  watcher.Stop();
+  Assert2(!watcher.IsRunning(), "Watcher should not be running after Stop()");
+
+  // Background thread should have detected the change
+  Assert2(callback_count == 3, "Callback should have been invoked 3 times after background poll, got %d",
+          callback_count);
+  Assert2(last_callback_shard_count == 3,
+          "Callback should see 3 shards after background poll, got %u", last_callback_shard_count);
+
+  // Verify Start is idempotent (calling Start when already running is safe)
+  // We already stopped, so Start again and immediately stop
+  watcher.Start();
+  Assert2(watcher.IsRunning(), "Watcher should be running after second Start()");
+  watcher.Stop();
+  Assert2(!watcher.IsRunning(), "Watcher should not be running after second Stop()");
+
+  // Restore and cleanup
+  config_->SetLearnerAction();
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 98: ConfigWatcher callback PASSED!");
   Passed2();
 }
 

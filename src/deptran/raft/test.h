@@ -326,6 +326,14 @@ class RaftLabTest {
   // Test loading ClusterConfig from ConfigManager: set up shards via ConfigManager, load into ClusterConfig, verify
   int testClusterConfigLoadFromConfigManager(void);
 
+  // ConfigWatcher tests
+
+  // Test that ConfigWatcher detects version changes and updates ClusterConfig
+  int testConfigWatcherDetectsChanges(void);
+
+  // Test that ConfigWatcher invokes callback on update and not when nothing changed
+  int testConfigWatcherCallback(void);
+
   void wait(uint64_t microseconds);
 
 };
