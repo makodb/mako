@@ -677,6 +677,7 @@ void PollThreadWorker::do_close_pollable(int fd) {
   mode_.erase(fd);
 }
 
+// @unsafe - Uses raw pointers for epoll userdata and calls Epoll::Update
 void PollThreadWorker::do_update_mode(int fd, int new_mode) {
   if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
     return;

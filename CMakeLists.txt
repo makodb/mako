@@ -67,6 +67,9 @@ set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable RustyCpp borrow checking")
 if(ENABLE_BORROW_CHECKING)
     enable_borrow_checking()
+    set(BORROW_CHECKER_INCLUDE_PATHS
+        "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include"
+        CACHE STRING "Additional include paths for borrow checker" FORCE)
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -973,6 +976,7 @@ if(DEPTRAN_BORROW_SRC)
         src/bench
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         third-party/yaml-cpp/include
+        third-party/proxy/include
     )
     target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
@@ -1293,6 +1297,7 @@ if(NOT TARGET rrr)
             src
             src/rrr
             ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+            third-party/proxy/include
         )
         target_compile_options(rrr_borrow PUBLIC ${BENCH_CXXFLAGS})
 
