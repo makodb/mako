@@ -1,6 +1,38 @@
 # Mako RocksDB-Compatible Interface
 
-This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/mako/idb.hh`. These interfaces allow writing code that works with both local (`mako::DB`) and remote (`mako::RemoteDB`) database implementations.
+This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/mako/idb.hh`.
+
+---
+
+## Interface Summary
+
+### ITable
+
+| Method | What it does | What it lacks | Why this implementation |
+|--------|-------------|---------------|------------------------|
+| `Put` | Write a key-value pair | No blind-write shortcut; value must be `mako::Encode()`'d | |
+| `Get` | Read a value by key | No bloom-filter hint or short-circuit path | |
+| `Delete` | Remove a key | No range delete | |
+| `GetName` | Return the table name | — | |
+| `Scan` | Forward range scan [start, end) | Local shard only; no stateful iterator | Reverted to local-shard after discussion with Shuai; cross-shard support will be built on top of his upcoming changes |
+| `ReverseScan` | Reverse range scan descending | Local shard only; no stateful iterator | Same as Scan |
+| `Exists` | Check key presence without reading value | Does a full Get internally; no bloom-filter hint | Chosen over a separate existence flag to reuse the OCC read-set tracking already done by Get |
+| `Insert` | Insert only if key absent | Aborts transaction on duplicate | Uses `transInsert` instead of `transPut` — non-obvious distinction; `transInsert` registers the key in the OCC write-set so a concurrent insert on the same key causes abort rather than silent overwrite |
+| `GetApproximateSize` | Approximate key count for the local shard | Local shard only; count may be stale | Counter updated under lock in `install()` (commit phase) rather than atomics in the hot path, as reviewer noted atomics are too expensive for an approximate metric |
+
+### IDatabase
+
+| Method | What it does | What it lacks | Why this implementation |
+|--------|-------------|---------------|------------------------|
+| `BeginTransaction` | Start a transaction, return opaque handle | No isolation-level choice | |
+| `Commit` | Commit all writes in the transaction | No auto-retry on OCC abort | |
+| `Rollback` | Discard all writes since `BeginTransaction` | No savepoints | |
+| `GetTable` | Get or create a table proxy by name | Remote table must already exist on the server | |
+| `ListTables` | List names of tables opened in this session | Only reflects tables opened via `GetTable`; not a full schema query | Remote DB has no name→table mapping, so listing all tables is not possible; local DB returns only opened tables for the same interface consistency |
+| `Connect` / `Disconnect` / `IsConnected` | Connection lifecycle management | No-op for local DB | Exists on `IDatabase` so the same client code works for both local and remote without branching |
+| `InitThread` | Initialize per-thread database context | Required for local DB; no-op for `RemoteDB` | |
+
+---
 
 ## ITable API
 
@@ -182,11 +214,11 @@ db->Commit(txn);
 virtual Status GetApproximateSize(size_t* size) = 0;
 ```
 
-Return an approximate count of keys in the table. Does not require a transaction handle.
+Return an approximate count of keys in the **local shard** of this table. Does not require a transaction handle.
 
-The count is maintained via an atomic counter (`std::atomic<size_t>`) updated at operation time (not commit time). Aborted transactions may temporarily skew the count — hence "approximate".
+The count is tracked via a plain `size_t` updated under lock in the commit phase (`install()`). Only reflects data in the local shard — for a cluster-wide count, a remote RPC scan would be needed (not yet implemented).
 
-**Returns:** `Status::OK()` with `*size` set to the approximate key count.
+**Returns:** `Status::OK()` with `*size` set to the approximate local key count.
 
 **Example:**
 ```cpp
@@ -390,7 +422,7 @@ for (const auto& n : names) {
 | WriteBatch | Atomic multi-table batch | Not supported; use `BeginTransaction/Commit` |
 | Prefix iterators / bloom filters | Configurable prefix extractors | Not supported |
 | Compaction filters | Background key eviction hooks | Not supported |
-| GetApproximateSize | Returns real approximate count | Atomic counter updated at operation time; aborted txns may temporarily skew count |
+| GetApproximateSize | Returns real approximate count | Local shard only; counter updated under lock at commit time (install phase) |
 | Persistence | WAL + SST files | In-memory (RocksDB persistence is a separate Mako layer) |
 | Range deletions | `DeleteRange()` | Not supported; delete individually |
 | Transactions | Optimistic or pessimistic | Masstree-native OCC with MVCC |

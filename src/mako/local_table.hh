@@ -81,25 +81,21 @@ public:
         return name_;
     }
 
-    // @safe - Bridges scan_callback::invoke to std::function; tracks early termination
+    // @safe - Bridges scan_callback::invoke to std::function
     class ScanAdapter : public abstract_ordered_index::scan_callback {
     public:
         explicit ScanAdapter(std::function<bool(const std::string&, const std::string&)> fn)
-            : fn_(std::move(fn)), stopped_(false) {}
+            : fn_(std::move(fn)) {}
         // @safe - Converts raw key pointer to std::string then calls user function
         bool invoke(const char* keyp, size_t keylen, const std::string& value) override {
-            std::string key(keyp, keylen);
-            bool cont = fn_(key, value);
-            if (!cont) stopped_ = true;
-            return cont;
+            return fn_(std::string(keyp, keylen), value);
         }
-        bool stopped() const { return stopped_; }
     private:
         std::function<bool(const std::string&, const std::string&)> fn_;
-        bool stopped_;
     };
 
-    // @safe - Scans all shards via shard_for_index iteration with early termination
+    // @safe - Scans local shard only via mbta_sharded_ordered_index::scan().
+    // Cross-shard scan requires RPC; local shard determined by BenchmarkConfig::getShardIndex().
     Status Scan(void* txn,
                 const std::string& start_key,
                 const std::string* end_key,
@@ -110,11 +106,7 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            for (size_t i = 0; !adapter.stopped(); i++) {
-                abstract_ordered_index* shard = index_->shard_for_index(i);
-                if (!shard) break;
-                shard->scan(txn, start_key, end_key, adapter);
-            }
+            index_->scan(txn, start_key, end_key, adapter);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("Transaction aborted");
@@ -178,8 +170,9 @@ public:
         }
     }
 
-    // @safe - Returns approximate size from underlying index
-    // Note: Currently always returns 0 (Masstree approx_size() not yet implemented)
+    // @safe - Returns approximate size of the local shard only
+    // Note: index_->size() sums over all local shard_tables_, but only one shard
+    // holds actual data (the local shard). See GetApproximateSize doc in idb.hh.
     Status GetApproximateSize(size_t* size) override {
         if (!index_ || !size) {
             return Status::InvalidArgument("Invalid argument");

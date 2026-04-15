@@ -67,56 +67,31 @@ public:
      */
     virtual const std::string& GetName() const = 0;
 
-    /**
-     * Forward range scan
-     * @param txn       - Transaction handle from BeginTransaction()
-     * @param start_key - First key to scan (inclusive)
-     * @param end_key   - Last key to scan (exclusive), or nullptr for end of table
-     * @param callback  - Called for each key-value pair; return true to continue, false to stop
-     * @return Status::OK() on success
-     */
+    // Forward scan [start_key, end_key). end_key=nullptr means end of table.
+    // Local shard only — cross-shard scan requires RPC (not yet implemented).
+    // Callback returns false to stop early.
     virtual Status Scan(void* txn,
                         const std::string& start_key,
                         const std::string* end_key,
                         std::function<bool(const std::string& key, const std::string& value)> callback) = 0;
 
-    /**
-     * Reverse range scan
-     * @param txn       - Transaction handle from BeginTransaction()
-     * @param start_key - First key to scan descending from (inclusive)
-     * @param end_key   - Last key to scan descending to (exclusive), or nullptr for start of table
-     * @param callback  - Called for each key-value pair in descending order; return true to continue
-     * @return Status::OK() on success
-     */
+    // Reverse scan (start_key, end_key] descending. end_key=nullptr means start of table.
+    // Local shard only. Callback returns false to stop early.
     virtual Status ReverseScan(void* txn,
                                const std::string& start_key,
                                const std::string* end_key,
                                std::function<bool(const std::string& key, const std::string& value)> callback) = 0;
 
-    /**
-     * Check key existence without reading the value
-     * @param txn    - Transaction handle from BeginTransaction()
-     * @param key    - Key to check
-     * @param exists - Output: true if key exists, false if not
-     * @return Status::OK() on success (including when key is absent), error on failure
-     */
+    // Key existence check. Returns OK even when key is absent (exists=false).
+    // Implemented via Get internally; does not expose the value.
     virtual Status Exists(void* txn, const std::string& key, bool* exists) = 0;
 
-    /**
-     * Insert a key only if it does not already exist
-     * @param txn   - Transaction handle from BeginTransaction()
-     * @param key   - Key to insert
-     * @param value - Value to insert (encoded with mako::Encode())
-     * @return Status::OK() on success, Status::InvalidArgument if key already exists
-     */
+    // Insert only if key does not exist (OCC transInsert semantics, unlike Put which overwrites).
+    // Aborts the transaction if the key is already present.
     virtual Status Insert(void* txn, const std::string& key, const std::string& value) = 0;
 
-    /**
-     * Get approximate number of keys in the table (no transaction required)
-     * @param size - Output: approximate key count
-     * @return Status::OK() on success
-     * Note: Currently always returns 0 (Masstree approx_size() not yet implemented)
-     */
+    // Approximate key count for the LOCAL shard only; no transaction needed.
+    // Value may be stale. For cluster-wide count, RPC to other shards is required (not yet implemented).
     virtual Status GetApproximateSize(size_t* size) = 0;
 };
 
