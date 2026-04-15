@@ -665,10 +665,54 @@ This section compares the **API surface** of Masstree (via MassTrans) with Rocks
 | **Non-Txn Put/Get** | `db->Put(wo, k, v)` without explicit txn | Masstree requires txn context | Auto-wrap in one-shot `Sto::start_transaction()` / `commit()`. |
 | **Status codes** | Returns `Status` (`ok()`, `IsNotFound()`, etc.) | MassTrans returns bool / throws `abstract_abort_exception` | Translate: false → `NotFound`, exception → `Busy`. |
 | **Slice type** | `Slice(data, len)` — zero-copy, binary-safe | Masstree uses `Str` (pointer + length) internally | `Str` is already a slice type. Shim maps `Slice` ↔ `Str`. Nearly zero-overhead. |
-| **Column Families** | Logical namespaces within one DB | Separate Masstree instances via `open_index()` | Map each CF to a separate Masstree. CF creation = `open_index()`. |
+| **Column Families** | Logical namespaces within one DB (see below) | Separate Masstree instances via `open_index()` | Map each CF to a separate Masstree. Cross-CF atomic writes via multi-index OCC transaction. |
 | **Snapshots** | `db->GetSnapshot()` → point-in-time reads | MVCC version chains exist but not exposed as snapshots | Record current MVCC timestamp. Reads traverse version chain to find visible version. Requires exposing MVCC traversal. ~150 LOC. |
 | **Properties/Stats** | `db->GetProperty("rocksdb.stats", &s)` | No stats API | Return stubs initially. Add real stats (tree size, node count, txn abort rate) incrementally. |
 | **ReadOptions / WriteOptions** | Per-operation options (`sync`, `snapshot`, `verify_checksums`, etc.) | No per-op options | Accept the structs, use `snapshot` field if snapshots are implemented, ignore the rest. |
+
+### Column Families: RocksDB Model → Masstree Mapping
+
+In RocksDB, a **column family** is a logical namespace within a single DB. Each column family has its own memtable and SST files but shares the WAL with other column families. The key properties are:
+
+- A DB always has a `default` column family.
+- You can create/drop column families at runtime.
+- Each column family can have different options (compression, compaction style, etc.).
+- A `WriteBatch` can atomically write to **multiple column families** in one call.
+- `Get`/`Put`/`Delete` take a `ColumnFamilyHandle*` to specify the target.
+
+```cpp
+// RocksDB column family usage
+ColumnFamilyHandle* cf;
+db->CreateColumnFamily(cf_options, "my_cf", &cf);
+db->Put(write_options, cf, "key", "value");       // Write to specific CF
+db->Get(read_options, cf, "key", &value);          // Read from specific CF
+
+WriteBatch batch;
+batch.Put(cf1, "k1", "v1");                        // Cross-CF atomic write
+batch.Put(cf2, "k2", "v2");
+db->Write(write_options, &batch);
+```
+
+**Masstree mapping**: Each column family maps to a **separate Masstree instance** (a separate `MassTrans` / `open_index()` call). This is a natural fit:
+
+```
+RocksDB DB with 3 column families:
+  "default"  →  Masstree instance 0 (open_index("default"))
+  "metadata" →  Masstree instance 1 (open_index("metadata"))
+  "logs"     →  Masstree instance 2 (open_index("logs"))
+```
+
+**Cross-CF atomicity**: RocksDB's `WriteBatch` can write to multiple CFs atomically. In Masstree, this maps to a **single OCC transaction spanning multiple indexes**. Mako's STO framework supports multi-index transactions — the read/write set can include entries from different Masstree instances, and `commit()` validates and installs all of them atomically.
+
+```cpp
+// Masstree equivalent of cross-CF atomic write
+auto txn = Sto::start_transaction();
+index_default->transPut("k1", "v1");   // CF "default"
+index_metadata->transPut("k2", "v2");  // CF "metadata"
+Sto::commit();                          // Atomic across both indexes
+```
+
+**What doesn't map**: Per-CF options (compression, compaction style) are RocksDB-specific and have no Masstree equivalent. The shim accepts these options but ignores them — all Masstree instances use the same in-memory configuration.
 
 ### Fundamental API Mismatches
 
