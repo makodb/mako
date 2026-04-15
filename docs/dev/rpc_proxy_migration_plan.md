@@ -28,9 +28,6 @@ Replace C++ virtual inheritance in `src/rrr/` with the [proxy library](https://g
 | 8 | `NoCopy` | `base/basetypes.hpp` | 0 | 2 (Server, Counter) | N/A (semantic only) |
 | 9 | `RefCounted` | `base/basetypes.hpp` | 1 | Legacy | N/A (manual ref count) |
 
-Not migrating:
-- **RpcException** (`rpc/errors.hpp`): Inherits `std::exception` — standard library contract, leave as-is.
-
 **In-scope total: ~53 virtual methods across 9 hierarchies.**
 
 ## Phased Plan

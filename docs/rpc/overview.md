@@ -286,10 +286,10 @@ Order order;
 proxy.get_order(order_id, &order);
 
 // Error handling
-try {
-    proxy.risky_operation();
-} catch (rrr::RpcException& e) {
-    printf("RPC failed: %s\n", e.what());
+auto fu = proxy.async_risky_operation();
+fu->wait();
+if (fu->get_error_code() != 0) {
+    printf("RPC failed: error_code=%d\n", fu->get_error_code());
 }
 ```
 
@@ -334,13 +334,17 @@ proxy.method();
 // Retry logic
 int retry_rpc(MyServiceProxy& proxy, int max_retries = 3) {
     for (int i = 0; i < max_retries; i++) {
-        try {
-            return proxy.operation();
-        } catch (rrr::RpcException& e) {
-            if (i == max_retries - 1) throw;
-            usleep(100000 * (1 << i));  // Exponential backoff
+        auto fu = proxy.async_operation();
+        fu->wait();
+        if (fu->get_error_code() == 0) {
+            return 0;
         }
+        if (i == max_retries - 1) {
+            return fu->get_error_code();
+        }
+        usleep(100000 * (1 << i));  // Exponential backoff
     }
+    return 0;
 }
 
 // Scatter-gather pattern
@@ -411,7 +415,8 @@ public:
         if (it != orders_.end()) {
             *order = it->second;
         } else {
-            throw rrr::RpcException("Order not found");
+            // Return app-level status via out params / error code path.
+            *order = Order{};
         }
     }
 };

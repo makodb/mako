@@ -378,13 +378,18 @@ compatibility wrappers for incremental rollout.
 
 ## Delete dead RpcException class
 
-- [ ] *high* Delete `RpcException` from `src/rrr/rpc/errors.hpp` (lines 178-261). It inherits `std::exception` but is never thrown or caught anywhere in the codebase — only referenced in a doc comment. The `RpcError` enum and helper functions (`is_retryable_error()`, `is_connection_error()`, etc.) are the actual error handling mechanism. Remove the class, remove the doc comment example, and grep for any test references. We do not use C++ exceptions — use error codes or `Result<Err>` for recoverable errors and `assert(0)` / `verify(0)` for non-recoverable errors.
+- [x] *high* Delete `RpcException` from `src/rrr/rpc/errors.hpp` (lines 178-261). It inherits `std::exception` but is never thrown or caught anywhere in the codebase — only referenced in a doc comment. The `RpcError` enum and helper functions (`is_retryable_error()`, `is_connection_error()`, etc.) are the actual error handling mechanism. Remove the class, remove the doc comment example, and grep for any test references. We do not use C++ exceptions — use error codes or `Result<Err>` for recoverable errors and `assert(0)` / `verify(0)` for non-recoverable errors.
+  - Implemented on 2026-04-15 in `src/rrr/rpc/errors.hpp`: removed `RpcException` entirely and retained only enum/helper-based error handling APIs.
+  - Scope analysis: completed within the small-change budget (<500 LOC) across header/test/docs updates; no additional decomposition required.
+  - Test updates: removed `RpcException`-specific test blocks from `test/rpc_errors_test.cc` and `test/rpc_error_integration_test.cc`, adding replacement fallback-coverage for unknown enum values in `rpc_errors_test`.
+  - Verification note: repository grep confirms no `RpcException` references remain in `src/` or `test/` (`rg -n "RpcException" src test` => no matches).
+  - Verification note: full RPC-focused suite passed after the change (`ctest --test-dir build_rpc -R '^(test_rpc.*|rpc_chaos_test|test_load_balancer|test_idempotency|test_completion_tracker|test_transport_backend|stress_transport_backend|test_transport_integration|test_erpc_integration)$'`, 39/39 passed).
 
 ---
 
 ## Replace inheritance with proxy (ngcpp/proxy) in `src/rrr/`
 
-Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/proxy) for polymorphism without vtables. NoCopy is excluded (it disables copy construction, not polymorphism). RpcException is excluded (inherits std::exception — standard library contract). Plan: `docs/dev/rpc_proxy_migration_plan.md`
+Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/proxy) for polymorphism without vtables. NoCopy is excluded (it disables copy construction, not polymorphism). Plan: `docs/dev/rpc_proxy_migration_plan.md`
 
 - [x] *high* Add proxy library as git submodule: `git submodule add https://github.com/ngcpp/proxy third-party/proxy`. Add include path to CMakeLists.txt. Upgrade project from C++17 to C++20 (`-std=c++20`). Proxy requires GCC 13.1+ or Clang 16+. Verify compilation.
   - Implemented on 2026-04-15 in a temp worktree: added `third-party/proxy` submodule, introduced `PROXY_INCLUDE_DIR` in `CMakeLists.txt`, and wired it into `mako`, `rrr`, and shared test include paths.

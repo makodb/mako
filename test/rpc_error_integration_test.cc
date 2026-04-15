@@ -1,6 +1,6 @@
 /**
  * Integration tests for RPC error types with actual RPC operations.
- * Tests structured error handling during various failure scenarios.
+ * Tests structured error-code handling during various failure scenarios.
  */
 
 #include <gtest/gtest.h>
@@ -190,55 +190,6 @@ TEST_F(ErrorIntegrationTest, CategoryToString) {
     EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::TIMEOUT), "TIMEOUT");
     EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::PROTOCOL), "PROTOCOL");
     EXPECT_STREQ(rpc_error_category_to_string(RpcErrorCategory::APPLICATION), "APPLICATION");
-}
-
-// ============================================================================
-// RpcException Tests
-// ============================================================================
-
-TEST_F(ErrorIntegrationTest, RpcExceptionConstruction) {
-    RpcException ex(RpcError::NOT_CONNECTED, "Connection to server failed");
-
-    EXPECT_EQ(ex.code(), RpcError::NOT_CONNECTED);
-    EXPECT_EQ(ex.category(), RpcErrorCategory::CONNECTION);
-    EXPECT_EQ(ex.message(), "Connection to server failed");
-}
-
-TEST_F(ErrorIntegrationTest, RpcExceptionWhat) {
-    RpcException ex(RpcError::SERVICE_UNAVAILABLE, "Backend down");
-
-    std::string what_str(ex.what());
-    EXPECT_EQ(what_str, "[APPLICATION] SERVICE_UNAVAILABLE: Backend down");
-}
-
-TEST_F(ErrorIntegrationTest, RpcExceptionRetryable) {
-    RpcException retryable(RpcError::REQUEST_TIMEOUT);
-    EXPECT_TRUE(retryable.is_retryable());
-
-    RpcException non_retryable(RpcError::INVALID_ARGUMENT);
-    EXPECT_FALSE(non_retryable.is_retryable());
-}
-
-TEST_F(ErrorIntegrationTest, RpcExceptionCanBeThrown) {
-    try {
-        throw RpcException(RpcError::CONNECTION_REFUSED, "Server refused connection");
-        FAIL() << "Exception should have been thrown";
-    } catch (const RpcException& ex) {
-        EXPECT_EQ(ex.code(), RpcError::CONNECTION_REFUSED);
-        EXPECT_EQ(ex.category(), RpcErrorCategory::CONNECTION);
-    } catch (...) {
-        FAIL() << "Unexpected exception type";
-    }
-}
-
-TEST_F(ErrorIntegrationTest, RpcExceptionInheritanceFromStdException) {
-    try {
-        throw RpcException(RpcError::REQUEST_TIMEOUT, "Request timed out");
-    } catch (const std::exception& ex) {
-        // Should be caught as std::exception
-        std::string what_str(ex.what());
-        EXPECT_TRUE(what_str.find("REQUEST_TIMEOUT") != std::string::npos);
-    }
 }
 
 // ============================================================================

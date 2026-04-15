@@ -474,20 +474,11 @@ enum class RpcError : int32_t {
 };
 ```
 
-### RpcException Class
+### Error Handling Model
 
-```cpp
-class RpcException : public std::exception {
-public:
-    RpcException(RpcError error, const std::string& message = "");
-
-    RpcError error() const;
-    RpcErrorCategory category() const;
-    const char* what() const noexcept override;
-
-    bool is_retryable() const;
-};
-```
+RPC surfaces structured `RpcError` values and helper predicates
+(`is_connection_error`, `is_timeout_error`, `is_retryable_error`) instead of
+an RPC-specific exception type.
 
 ### Helper Functions
 

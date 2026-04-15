@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <exception>
 #include <cstdint>
 
 namespace rrr {
@@ -159,105 +158,5 @@ inline bool is_retryable_error(RpcError err) {
             return false;
     }
 }
-
-/**
- * RPC Exception with structured error information.
- *
- * Usage:
- *   throw RpcException(RpcError::CONNECTION_REFUSED, "Server at 127.0.0.1:8080");
- *
- *   try {
- *       // RPC call
- *   } catch (const RpcException& e) {
- *       if (e.is_retryable()) {
- *           // Retry logic
- *       }
- *   }
- */
-// @unsafe - Inherits std::exception, which rusty-cpp does not model as @interface.
-class RpcException : public std::exception {
-private:
-    RpcError code_;
-    std::string message_;
-    mutable std::string what_message_;  // Cached what() result
-
-public:
-    // @safe - Constructor with error code only
-    explicit RpcException(RpcError code)
-        : code_(code)
-        , message_()
-    {
-        build_what_message();
-    }
-
-    // @safe - Constructor with error code and message
-    RpcException(RpcError code, const std::string& message)
-        : code_(code)
-        , message_(message)
-    {
-        build_what_message();
-    }
-
-    // @safe - Constructor with error code and C-string message
-    RpcException(RpcError code, const char* message)
-        : code_(code)
-        , message_(message ? message : "")
-    {
-        build_what_message();
-    }
-
-    // @unsafe - std::string::c_str is currently modeled as non-safe.
-    const char* what() const noexcept override {
-        // @unsafe
-        { return what_message_.c_str(); }
-    }
-
-    // @safe - Get error code
-    RpcError code() const noexcept {
-        return code_;
-    }
-
-    // @safe - Get error category
-    RpcErrorCategory category() const noexcept {
-        return get_error_category(code_);
-    }
-
-    // @safe - Get additional message
-    // @lifetime: (&'a) -> &'a
-    const std::string& message() const noexcept {
-        return message_;
-    }
-
-    // @safe - Check if error is retryable
-    bool is_retryable() const noexcept {
-        return is_retryable_error(code_);
-    }
-
-    // @safe - Check if error is connection-related
-    bool is_connection_error() const noexcept {
-        return rrr::is_connection_error(code_);
-    }
-
-    // @safe - Check if error is timeout-related
-    bool is_timeout() const noexcept {
-        return is_timeout_error(code_);
-    }
-
-private:
-    // @unsafe - std::string mutation operators are currently modeled as non-safe.
-    void build_what_message() {
-        // @unsafe
-        {
-            what_message_ = "[";
-            what_message_ += rpc_error_category_to_string(category());
-            what_message_ += "] ";
-            what_message_ += rpc_error_to_string(code_);
-            if (!message_.empty()) {
-                what_message_ += ": ";
-                what_message_ += message_;
-            }
-        }
-    }
-};
 
 } // namespace rrr

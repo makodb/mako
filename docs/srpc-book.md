@@ -968,6 +968,8 @@ enum class RpcError {
 ```
 
 `TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in `request_options.hpp`.
+SRPC handles failures through `RpcError` values and helper predicates rather
+than an RPC-specific exception class.
 
 ---
 

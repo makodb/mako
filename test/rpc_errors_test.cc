@@ -1,6 +1,6 @@
 /**
- * Unit tests for RPC Error Types
- * Tests error categories, codes, exceptions, and helper functions.
+ * Unit tests for RPC error types.
+ * Tests categories, codes, and helper functions.
  */
 
 #include <gtest/gtest.h>
@@ -153,107 +153,14 @@ TEST(RpcErrorTest, IsRetryableError) {
     EXPECT_FALSE(is_retryable_error(RpcError::INTERNAL_ERROR));
 }
 
-// ============================================================================
-// RpcException Tests
-// ============================================================================
-
-TEST(RpcExceptionTest, ConstructWithCodeOnly) {
-    RpcException ex(RpcError::NOT_CONNECTED);
-
-    EXPECT_EQ(ex.code(), RpcError::NOT_CONNECTED);
-    EXPECT_EQ(ex.category(), RpcErrorCategory::CONNECTION);
-    EXPECT_TRUE(ex.message().empty());
-
-    std::string what_str(ex.what());
-    EXPECT_NE(what_str.find("CONNECTION"), std::string::npos);
-    EXPECT_NE(what_str.find("NOT_CONNECTED"), std::string::npos);
+TEST(RpcErrorTest, UnknownCategoryStringFallsBackToUnknown) {
+    auto unknown = static_cast<RpcErrorCategory>(999);
+    EXPECT_STREQ(rpc_error_category_to_string(unknown), "UNKNOWN");
 }
 
-TEST(RpcExceptionTest, ConstructWithCodeAndMessage) {
-    RpcException ex(RpcError::CONNECTION_REFUSED, "Server at 127.0.0.1:8080");
-
-    EXPECT_EQ(ex.code(), RpcError::CONNECTION_REFUSED);
-    EXPECT_EQ(ex.message(), "Server at 127.0.0.1:8080");
-
-    std::string what_str(ex.what());
-    EXPECT_NE(what_str.find("CONNECTION_REFUSED"), std::string::npos);
-    EXPECT_NE(what_str.find("Server at 127.0.0.1:8080"), std::string::npos);
-}
-
-TEST(RpcExceptionTest, ConstructWithCString) {
-    RpcException ex(RpcError::RPC_FAILED, "Operation failed");
-
-    EXPECT_EQ(ex.code(), RpcError::RPC_FAILED);
-    EXPECT_EQ(ex.message(), "Operation failed");
-}
-
-TEST(RpcExceptionTest, ConstructWithNullCString) {
-    RpcException ex(RpcError::RPC_FAILED, nullptr);
-
-    EXPECT_EQ(ex.code(), RpcError::RPC_FAILED);
-    EXPECT_TRUE(ex.message().empty());
-}
-
-TEST(RpcExceptionTest, IsRetryable) {
-    RpcException retryable(RpcError::CONNECTION_RESET);
-    EXPECT_TRUE(retryable.is_retryable());
-
-    RpcException not_retryable(RpcError::PERMISSION_DENIED);
-    EXPECT_FALSE(not_retryable.is_retryable());
-}
-
-TEST(RpcExceptionTest, IsConnectionError) {
-    RpcException conn_err(RpcError::NOT_CONNECTED);
-    EXPECT_TRUE(conn_err.is_connection_error());
-
-    RpcException other_err(RpcError::REQUEST_TIMEOUT);
-    EXPECT_FALSE(other_err.is_connection_error());
-}
-
-TEST(RpcExceptionTest, IsTimeout) {
-    RpcException timeout_err(RpcError::REQUEST_TIMEOUT);
-    EXPECT_TRUE(timeout_err.is_timeout());
-
-    RpcException other_err(RpcError::NOT_CONNECTED);
-    EXPECT_FALSE(other_err.is_timeout());
-}
-
-TEST(RpcExceptionTest, WhatFormatting) {
-    RpcException ex(RpcError::SERVICE_UNAVAILABLE, "Backend down");
-
-    std::string what_str(ex.what());
-    // Format should be: [CATEGORY] ERROR_CODE: message
-    EXPECT_EQ(what_str, "[APPLICATION] SERVICE_UNAVAILABLE: Backend down");
-}
-
-TEST(RpcExceptionTest, WhatFormattingNoMessage) {
-    RpcException ex(RpcError::INTERNAL_ERROR);
-
-    std::string what_str(ex.what());
-    // Format should be: [CATEGORY] ERROR_CODE
-    EXPECT_EQ(what_str, "[INTERNAL] INTERNAL_ERROR");
-}
-
-TEST(RpcExceptionTest, ThrowAndCatch) {
-    try {
-        throw RpcException(RpcError::CONNECTION_REFUSED, "Test error");
-    } catch (const RpcException& e) {
-        EXPECT_EQ(e.code(), RpcError::CONNECTION_REFUSED);
-        EXPECT_EQ(e.message(), "Test error");
-    } catch (...) {
-        FAIL() << "Should have caught RpcException";
-    }
-}
-
-TEST(RpcExceptionTest, CatchAsStdException) {
-    try {
-        throw RpcException(RpcError::UNKNOWN_ERROR);
-    } catch (const std::exception& e) {
-        std::string what_str(e.what());
-        EXPECT_NE(what_str.find("UNKNOWN_ERROR"), std::string::npos);
-    } catch (...) {
-        FAIL() << "Should have caught as std::exception";
-    }
+TEST(RpcErrorTest, UnknownErrorStringFallsBackToUnknown) {
+    auto unknown = static_cast<RpcError>(999999);
+    EXPECT_STREQ(rpc_error_to_string(unknown), "UNKNOWN");
 }
 
 // ============================================================================
