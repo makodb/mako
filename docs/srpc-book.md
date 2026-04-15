@@ -712,6 +712,19 @@ public:
 Migration note: `Server` now stores services internally as `pro::proxy<ServiceFacade>`.
 Legacy `Service` inheritance remains fully supported via a compatibility adapter,
 so existing generated/handwritten services continue to work unchanged.
+The server also accepts non-inheritance typed services, as long as they expose
+`__reg_to__(Server&, size_t)` and `__dispatch__(i32, rusty::Box<Request>, WeakServerConnection)`.
+
+```cpp srpc-no-compile
+class MyTypedService {
+public:
+    int __reg_to__(Server& svr, size_t svc_index);
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn);
+};
+
+Server server(rusty::None);
+server.reg_service(rusty::make_box<MyTypedService>());
+```
 
 ### Server Lifecycle
 

@@ -15,6 +15,7 @@
 #include <memory>
 #include <atomic>
 #include <chrono>
+#include <concepts>
 
 #include <sys/socket.h>
 #include <netdb.h>
@@ -223,6 +224,38 @@ class ServiceBoxAdapter {
 
 inline ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
   return pro::make_proxy<ServiceFacade, ServiceBoxAdapter>(std::move(svc));
+}
+
+template <typename T>
+concept ServiceLike = requires(
+    T& svc,
+    Server& server,
+    size_t svc_index,
+    i32 rpc_id,
+    rusty::Box<Request> req,
+    WeakServerConnection weak_sconn) {
+  { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
+  { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) } -> std::same_as<void>;
+};
+
+template <ServiceLike T>
+class ServiceTypedBoxAdapter {
+ public:
+  explicit ServiceTypedBoxAdapter(rusty::Box<T> svc) : svc_(std::move(svc)) {}
+
+  int __reg_to__(Server& server, size_t svc_index) { return svc_->__reg_to__(server, svc_index); }
+
+  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
+    svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
+  }
+
+ private:
+  rusty::Box<T> svc_;
+};
+
+template <ServiceLike T>
+inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
+  return pro::make_proxy<ServiceFacade, ServiceTypedBoxAdapter<T>>(std::move(svc));
 }
 
 /**
@@ -629,6 +662,19 @@ public:
         }
     }
 
+    // @safe - Registers typed service implementation without inheriting Service.
+    // Must be called before start().
+    template <ServiceLike T>
+      requires (!std::derived_from<T, Service>)
+    void reg_service(rusty::Box<T> svc) {
+        // @unsafe
+        {
+        pending_services_.push(make_service_proxy_from_typed_box<T>(std::move(svc)));
+        size_t svc_index = pending_services_.size() - 1;
+        pending_services_[svc_index]->__reg_to__(*this, svc_index);
+        }
+    }
+
     /**
      * The svc_func need to do this:
      *
@@ -646,7 +692,7 @@ public:
      *  }
      */
     // @safe - Registers an RPC ID to be handled by the service at svc_index
-    // The actual dispatch is done via virtual Service::__dispatch__
+    // The actual dispatch is done via ServiceFacade::__dispatch__
     // No pointers or type erasure - just maps rpc_id to service index
     // Must be called before start().
     int reg_rpc(i32 rpc_id, size_t svc_index) {

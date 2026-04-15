@@ -429,7 +429,14 @@ Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/pr
     - Added targeted guard coverage in `test/rpc_service_proxy_facade_test.cc` and wired CTest target `test_rpc_service_proxy_facade` (adapter forwarding + `Server::reg_service(...)` path verification).
     - Compatibility fallout fix in `test/test_rpc_extended.cc`: updated local `RpcServiceContext` fixture construction to use proxy-backed service storage type.
     - Verification note: full RPC-focused suite passed after the leaf (`ctest --test-dir build_rpc --output-on-failure -j16 -R '^(test_rpc.*|rpc_chaos_test|test_load_balancer|test_idempotency|test_completion_tracker|test_transport_backend|stress_transport_backend|test_transport_integration|test_erpc_integration)$'`, 41/41 passed).
-  - [ ] Leaf 2: add direct typed service adapter and `Server::reg_service` template overloads so non-`Service` implementations can register without inheriting `Service` (legacy overload retained for compatibility).
+  - [x] Leaf 2: add direct typed service adapter and `Server::reg_service` template overloads so non-`Service` implementations can register without inheriting `Service` (legacy overload retained for compatibility).
+    - Implemented on 2026-04-15 in `src/rrr/rpc/server.hpp`: added `ServiceLike` concept, `ServiceTypedBoxAdapter`, and `make_service_proxy_from_typed_box(...)`, plus templated `Server::reg_service(rusty::Box<T>)` for non-`Service` typed services while retaining legacy `reg_service(rusty::Box<Service>)`.
+    - Added comprehensive guard coverage in `test/rpc_service_proxy_facade_test.cc`:
+      - direct typed adapter forwarding (`TypedBoxAdapterForwardsRegistrationAndDispatch`);
+      - server registration path for non-inheritance services (`ServerRegistrationAcceptsTypedServiceWithoutInheritance`);
+      - legacy registration coverage retained.
+    - Scope analysis: completed within small-change budget (<500 LOC including tests/docs); no additional decomposition required.
+    - Verification note: full RPC-focused suite passed after this leaf (`ctest --test-dir build_rpc --output-on-failure -j16 -R '^(test_rpc.*|rpc_chaos_test|test_load_balancer|test_idempotency|test_completion_tracker|test_transport_backend|stress_transport_backend|test_transport_integration|test_erpc_integration)$'`, 41/41 passed).
   - [ ] Leaf 3: update rpcgen C++ service generation to remove `: public rrr::Service` in generated classes and register via direct proxy-backed service path.
   - [ ] Leaf 4: migrate in-tree handwritten/generated service implementations (`benchmark_service`, `network`, `helloworld`, `mako client service`, python bridge) to non-`Service` inheritance path and remove temporary compatibility glue that is no longer needed.
   - [ ] Leaf 5: close Phase 2 DoD with full RPC-focused suite evidence and docs alignment (`docs/srpc-book.md` + migration notes) for service proxy semantics.
