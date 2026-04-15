@@ -198,7 +198,7 @@ struct MarshallableFacade : pro::facade_builder
 
 ## Prerequisites
 
-- **C++20**: The proxy library requires C++20. Verify the project compiles with `-std=c++20` (currently uses C++17).
+- **C++20**: The proxy library requires C++20. `mako` is already configured with `CMAKE_CXX_STANDARD 23` (as of 2026-04-15), so no language-standard bump is needed for proxy adoption.
 - **Compiler**: GCC 13.1+, Clang 16+, or MSVC 19.31+. Check current compiler version.
 - **Header-only**: No build system changes beyond adding the submodule and include path.
 

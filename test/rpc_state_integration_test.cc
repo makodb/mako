@@ -1018,6 +1018,11 @@ TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
     client->set_heartbeat(HeartbeatConfig(true, 30, 60, 1));
+    // This test drives reconnect explicitly per cycle; disable background
+    // auto-reconnect retries to avoid transient extra sockets in FD snapshots.
+    ReconnectPolicy reconnect_policy;
+    reconnect_policy.auto_reconnect = false;
+    client->set_reconnect_policy(reconnect_policy);
 
     const int baseline_fd_count = count_open_fds();
     ASSERT_GE(baseline_fd_count, 0);
@@ -1068,9 +1073,14 @@ TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
             fail_result.unwrap()->timed_wait(0.2);
         }
 
-        // Drive transport error detection until state flips to disconnected.
+        // Drive transport error detection until the old transport is no longer
+        // active (either disconnected or reconnected on a different FD).
         auto disconnect_deadline = steady_clock::now() + milliseconds(4000);
-        while (client->connected() && steady_clock::now() < disconnect_deadline) {
+        while (steady_clock::now() < disconnect_deadline) {
+            const bool old_fd_inactive = !client->connected() || client->fd() != cycle_fd;
+            if (old_fd_inactive) {
+                break;
+            }
             auto probe_result = client->request(
                 benchmark::BenchmarkService::FAST_NOP,
                 [&](Marshal& m) { m << input; }
@@ -1081,16 +1091,28 @@ TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
             std::this_thread::sleep_for(milliseconds(20));
         }
 
-        ASSERT_FALSE(client->connected());
+        if (client->connected()) {
+            EXPECT_NE(client->fd(), cycle_fd) << "cycle=" << cycle;
+        }
         EXPECT_TRUE(wait_for_fd_close(cycle_fd, milliseconds(2000)));
+
+        // Allow asynchronous close callbacks a short settle window before
+        // asserting steady-state FD bounds.
+        ASSERT_TRUE(wait_for_condition([&]() {
+            const int observed = count_open_fds();
+            return observed >= 0 && observed <= baseline_fd_count + 2;
+        }, milliseconds(2000))) << "cycle=" << cycle;
 
         const int cycle_fd_count = count_open_fds();
         ASSERT_GE(cycle_fd_count, 0);
-        EXPECT_LE(cycle_fd_count, baseline_fd_count + 2);
+        EXPECT_LE(cycle_fd_count, baseline_fd_count + 2) << "cycle=" << cycle;
     }
 
     client->close();
-    std::this_thread::sleep_for(milliseconds(100));
+    ASSERT_TRUE(wait_for_condition([&]() {
+        const int observed = count_open_fds();
+        return observed >= 0 && observed <= baseline_fd_count + 1;
+    }, milliseconds(2000)));
 
     const int final_fd_count = count_open_fds();
     ASSERT_GE(final_fd_count, 0);

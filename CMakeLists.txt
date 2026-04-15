@@ -22,13 +22,18 @@ set(BUILD_SHARED_LIBS ON)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Check compiler and version
+# Check compiler and version.
+# The ngcpp/proxy dependency requires GCC >= 13.1 or Clang >= 16.
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 12.0)
-        message(FATAL_ERROR "GCC version 12 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13.1)
+        message(FATAL_ERROR "GCC version 13.1 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
+    endif()
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16.0)
+        message(FATAL_ERROR "Clang version 16.0 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
     endif()
 else()
-    message(WARNING "You are not using GCC. Current compiler: ${CMAKE_CXX_COMPILER_ID}")
+    message(WARNING "Compiler ${CMAKE_CXX_COMPILER_ID} is unvalidated for ngcpp/proxy (requires GCC >= 13.1 or Clang >= 16).")
 endif()
 
 # Auto-detect the latest available libclang for rusty-cpp-checker.
@@ -75,6 +80,7 @@ set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
 set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
 set(BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(ERPC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc")
+set(PROXY_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include")
 message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
@@ -1016,6 +1022,7 @@ target_include_directories(mako PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
     "${HOME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
+    "${PROXY_INCLUDE_DIR}"
 )
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
@@ -1224,6 +1231,7 @@ if(NOT TARGET rrr)
         src
         src/rrr
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+        ${PROXY_INCLUDE_DIR}
     )
     target_compile_options(rrr PUBLIC ${BENCH_CXXFLAGS})
     target_link_libraries(rrr pthread)
@@ -1398,6 +1406,7 @@ if(BUILD_TESTS)
         src/mako
         test
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+        ${PROXY_INCLUDE_DIR}
     )
 
     # Common test compile options
@@ -1795,6 +1804,13 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_rpc_docs_symbols ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_docs_symbols COMMAND test_rpc_docs_symbols)
+
+    # ngcpp/proxy dependency smoke test
+    add_executable(test_rpc_proxy_dependency test/rpc_proxy_dependency_test.cc)
+    target_include_directories(test_rpc_proxy_dependency PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_proxy_dependency PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_proxy_dependency ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_proxy_dependency COMMAND test_rpc_proxy_dependency)
 
     find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
     add_test(
