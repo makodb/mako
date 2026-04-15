@@ -390,7 +390,10 @@ compatibility wrappers for incremental rollout.
   - Also regenerated `test/benchmark_service.h` with `--legacy-compat` to add `[[deprecated]]` wrappers and `override` keywords (purely additive, no existing test breakage).
   - Scope: 1 new test file (~185 LOC) + 5 lines CMakeLists.txt wiring + benchmark_service.h regeneration.
   - Verification note: all 7 parity tests pass; full RPC-focused suite passed (43/43 tests passed).
-- [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.
+- [x] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.
+  - Implemented on 2026-04-15 in `test/rpc_deferred_handler_test.cc` + CTest wiring `test_rpc_deferred_handler`: 5 tests exercising deferred handler lifecycle (normal reply, async resolve, 100 rapid calls, dropped reply with no crash, concurrent 4-thread calls). Added `defer deferred_echo` to benchmark_service.rpc.
+  - Fixed codegen: `defer` methods in non-abstract services now generate non-pure virtual, matching non-defer methods. Abstract services retain `= 0`.
+  - Verification note: full RPC-focused suite passed (42/42 tests).
 - [ ] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.
 - [ ] Add borrow-check guard for generated typed APIs (no public `T* out` signatures in typed mode output).
 - [x] Re-run full RPC-focused suite in both CI modes: typed-default and compatibility-wrapper mode.

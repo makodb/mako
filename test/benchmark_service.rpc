@@ -22,6 +22,7 @@ service Benchmark {
     add(v32 a, v32 b | v32 a_add_b);
     nop(string);
     sleep(double sec);
+    defer deferred_echo(i32 val | i32 result);
 };
 
 %%

@@ -276,6 +276,30 @@ public:
         return m;
     }
 
+    struct RpcDeferredEchoRequest {
+        rrr::i32 val;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDeferredEchoRequest& o) {
+        m << o.val;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDeferredEchoRequest& o) {
+        m >> o.val;
+        return m;
+    }
+
+    struct RpcDeferredEchoResponse {
+        rrr::i32 result;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDeferredEchoResponse& o) {
+        m << o.result;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDeferredEchoResponse& o) {
+        m >> o.result;
+        return m;
+    }
+
     enum {
         FAST_PRIME = 0x4f4daa5a,
         FAST_DOT_PROD = 0x36ff5226,
@@ -287,6 +311,7 @@ public:
         ADD = 0x1e8ff45b,
         NOP = 0x327203ee,
         SLEEP = 0x22cb72f2,
+        DEFERRED_ECHO = 0x412ef56f,
     };
     // Registers RPC IDs with server using service index
     // @safe
@@ -322,6 +347,9 @@ public:
         if ((ret = svr.reg_rpc(SLEEP, svc_index)) != 0) {
             goto err;
         }
+        if ((ret = svr.reg_rpc(DEFERRED_ECHO, svc_index)) != 0) {
+            goto err;
+        }
         return 0;
     err:
         svr.unreg(FAST_PRIME);
@@ -334,6 +362,7 @@ public:
         svr.unreg(ADD);
         svr.unreg(NOP);
         svr.unreg(SLEEP);
+        svr.unreg(DEFERRED_ECHO);
         return ret;
     }
     // @safe - Dispatch for RPC requests
@@ -349,6 +378,7 @@ public:
         case ADD: __add__wrapper__(std::move(req), weak_sconn); break;
         case NOP: __nop__wrapper__(std::move(req), weak_sconn); break;
         case SLEEP: __sleep__wrapper__(std::move(req), weak_sconn); break;
+        case DEFERRED_ECHO: __deferred_echo__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
         }
     }
@@ -373,6 +403,8 @@ public:
     virtual rusty::Result<RpcNopResponse, rrr::i32> nop(const RpcNopRequest& req);
     // @safe
     virtual rusty::Result<RpcSleepResponse, rrr::i32> sleep(const RpcSleepRequest& req);
+    // @safe
+    virtual void deferred_echo(const RpcDeferredEchoRequest& req, RpcDeferredEchoResponse& resp, rrr::DeferredReply defer);
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
@@ -597,6 +629,23 @@ private:
             // req automatically cleaned up by rusty::Box
         }
     }
+    // @safe
+    void __deferred_echo__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcDeferredEchoRequest __typed_req__;
+            req->m >> __typed_req__.val;
+            auto __typed_resp__ = std::make_shared<RpcDeferredEchoResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                    m << __typed_resp__->result;
+                },
+                []() {});
+            this->deferred_echo(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
 };
 
 class BenchmarkProxy {
@@ -625,6 +674,8 @@ public:
     using RpcNopResponse = BenchmarkService::RpcNopResponse;
     using RpcSleepRequest = BenchmarkService::RpcSleepRequest;
     using RpcSleepResponse = BenchmarkService::RpcSleepResponse;
+    using RpcDeferredEchoRequest = BenchmarkService::RpcDeferredEchoRequest;
+    using RpcDeferredEchoResponse = BenchmarkService::RpcDeferredEchoResponse;
     class fast_primeTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1053,6 +1104,49 @@ public:
         auto __typed_fu_result__ = this->async_sleep(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcSleepResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class deferred_echoTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit deferred_echoTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcDeferredEchoResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcDeferredEchoResponse __typed_resp__;
+            __fu__->get_reply() >> __typed_resp__.result;
+            return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<deferred_echoTypedFuture, rrr::i32> async_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::DEFERRED_ECHO, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.val;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Ok(deferred_echoTypedFuture(__fu_result__.unwrap()));
+    }
+    rusty::Result<RpcDeferredEchoResponse, rrr::i32> deferred_echo(const RpcDeferredEchoRequest& req) {
+        auto __typed_fu_result__ = this->async_deferred_echo(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

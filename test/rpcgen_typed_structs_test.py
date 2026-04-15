@@ -139,7 +139,7 @@ def verify_alpha_service_block(block: str) -> None:
     assert_contains(
         block,
         "// @safe\n"
-        "    virtual void stream(const RpcStreamRequest& req, RpcStreamResponse& resp, rrr::DeferredReply defer) = 0;",
+        "    virtual void stream(const RpcStreamRequest& req, RpcStreamResponse& resp, rrr::DeferredReply defer);",
     )
     assert_contains(
         block,

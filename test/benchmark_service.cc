@@ -126,3 +126,11 @@ BenchmarkService::sleep(const RpcSleepRequest& req) {
     }
     return rusty::Result<RpcSleepResponse, i32>::Ok(RpcSleepResponse{});
 }
+
+void BenchmarkService::deferred_echo(
+    const RpcDeferredEchoRequest& req,
+    RpcDeferredEchoResponse& resp,
+    rrr::DeferredReply defer) {
+    resp.result = req.val * 2;
+    defer.reply();
+}

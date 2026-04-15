@@ -1881,6 +1881,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_callbacks ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_callbacks COMMAND test_rpc_callbacks)
 
+    # Deferred Handler Regression Tests
+    add_executable(test_rpc_deferred_handler test/rpc_deferred_handler_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_deferred_handler PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_deferred_handler PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_deferred_handler ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_deferred_handler COMMAND test_rpc_deferred_handler)
+
     # Request Queue Tests (Phase 2.1)
     add_executable(test_rpc_request_queue test/rpc_request_queue_test.cc)
     target_include_directories(test_rpc_request_queue PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

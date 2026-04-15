@@ -84,11 +84,18 @@ def emit_typed_service_signature(service, func, f):
 
     if func.attr == "defer":
         f.writeln("// @safe")
-        f.writeln("virtual void %s(const %s& req, %s& resp, rrr::DeferredReply defer) = 0;" % (
-            func.name,
-            request_struct_name,
-            response_struct_name,
-        ))
+        if service.abstract or func.abstract:
+            f.writeln("virtual void %s(const %s& req, %s& resp, rrr::DeferredReply defer) = 0;" % (
+                func.name,
+                request_struct_name,
+                response_struct_name,
+            ))
+        else:
+            f.writeln("virtual void %s(const %s& req, %s& resp, rrr::DeferredReply defer);" % (
+                func.name,
+                request_struct_name,
+                response_struct_name,
+            ))
         return
 
     f.writeln("// @safe")
