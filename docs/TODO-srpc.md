@@ -380,7 +380,10 @@ compatibility wrappers for incremental rollout.
   - Implemented on 2026-04-15 in `test/rpcgen_compile_test.py` + CTest wiring `test_rpc_rpcgen_compile`: for each in-tree `.rpc` source (`helloworld`, `network`, `rcc_rpc`), the test generates headers in both typed-only and legacy-compat modes via `bin/rpcgen`, then compiles each with `-fsyntax-only -std=c++23` to verify valid C++ output.
   - Scope: 1 new test file (~130 LOC) + 7 lines CMakeLists.txt wiring.
   - Verification note: all 6 compile checks pass (3 files × 2 modes); full RPC-focused suite passed (41/41 built tests passed, `test_rpc_rocksdb_log_storage` not built due to RocksDB dependency).
-- [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
+- [x] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
+  - Implemented on 2026-04-15 in `test/rpcgen_compat_compile_test.py` + CTest wiring `test_rpc_rpcgen_compat_compile`: generates a self-contained `.rpc` fixture with diverse method shapes (with/without output params, zero-output, multi-input/multi-output, deferred), then compiles a C++ source exercising the legacy pointer-style proxy API patterns (async calls with individual args, sync calls with output pointers) via the `[[deprecated]]` wrappers.
+  - Scope: 1 new test file (~150 LOC) + 7 lines CMakeLists.txt wiring.
+  - Verification note: compat compile test passes; full RPC-focused suite passed (42/42 tests passed).
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
 - [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.
 - [ ] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.

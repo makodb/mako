@@ -1880,6 +1880,13 @@ if(BUILD_TESTS)
                 --repo ${CMAKE_SOURCE_DIR}
                 --cxx ${RPC_DOCS_SNIPPET_CXX}
     )
+    add_test(
+        NAME test_rpc_rpcgen_compat_compile
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/test/rpcgen_compat_compile_test.py
+                --repo ${CMAKE_SOURCE_DIR}
+                --cxx ${RPC_DOCS_SNIPPET_CXX}
+    )
 
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)
