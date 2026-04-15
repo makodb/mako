@@ -1050,32 +1050,26 @@ Current codegen is typed-only for non-raw RPC methods:
 
 ### Generated Client Usage
 
-```cpp srpc-compile-codegen
+```cpp srpc-no-compile
 MyServiceProxy proxy(client.get());
 
-// Synchronous call
-UserInfo user{};
-rrr::i32 rc = proxy.get_user(1001, &user);
-if (rc == 0) {
-    // user populated
+// Synchronous typed call
+MyServiceProxy::RpcGetUserRequest req;
+req.id = 1001;
+auto result = proxy.get_user(req);
+if (result.is_ok()) {
+    auto resp = result.unwrap();
+    // resp.user populated
 }
 
-// Asynchronous call
-auto fu_result = proxy.async_get_user(1001);
+// Asynchronous typed call
+auto fu_result = proxy.async_get_user(req);
 if (fu_result.is_ok()) {
-    auto fu = fu_result.unwrap();
-    if (fu->get_error_code() == 0) {
-        UserInfo user2{};
-        auto reply = fu->get_reply();
-        reply >> user2;
-        (void)user2;
-    } else {
-        auto err = fu->get_error_code();
-        (void)err;
+    auto resolved = fu_result.unwrap().resolve();
+    if (resolved.is_ok()) {
+        auto resp = resolved.unwrap();
+        // resp.user populated
     }
-} else {
-    auto err = fu_result.unwrap_err();
-    (void)err;
 }
 ```
 

@@ -37,6 +37,7 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
     ASSERT_FALSE(book.empty()) << "failed to read " << kSrpcBookPath;
 
     const std::vector<std::string> required = {
+        // Reliability API symbols
         "LoadBalancingStrategy::ROUND_ROBIN",
         "keepalive.idle_sec",
         "keepalive.interval_sec",
@@ -56,16 +57,25 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "client->request(",
         "server.reg_service(",
         "server.graceful_shutdown(",
-        "proxy.get_user(1001, &user)",
         "const ConnectionMetrics& metrics = client.metrics();",
         "metrics.in_flight_requests()",
         "metrics.reconnect_count()",
         "### Implemented vs Planned (Shipping Status)",
         "| Connection state machine | Implemented |",
         "| Planned-only reliability APIs in this chapter | Planned |",
+        // Typed request/response API symbols
+        "Rpc<MethodPascalCase>Request",
+        "Rpc<MethodPascalCase>Response",
+        "Result<MethodResponse, rrr::i32> Method(const MethodRequest&)",
+        "async_Method(const MethodRequest&",
+        "ServiceLike",
+        "ServiceFacade",
+        "Server::reg_service(Box<T>)",
+        "RpcResult<GetUserResponse> get_user(const GetUserRequest& req)",
     };
 
     const std::vector<std::string> forbidden = {
+        // Stale reliability API symbols
         "set_load_balancing(",
         "LoadBalancing::",
         "keepalive.idle_time",
@@ -98,7 +108,11 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "server.stop()",
         "__reg_to__(Server* server)",
         "__dispatch__(Request* req)",
-        "UserInfo user = proxy.get_user(1001);",
+        // Stale legacy-compat / pointer-style API symbols
+        "--legacy-compat",
+        "SRPC_LEGACY_COMPAT",
+        "[[deprecated(",
+        "RPCGEN_COMPAT_FLAG",
     };
 
     for (const auto& needle : required) {

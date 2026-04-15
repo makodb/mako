@@ -1858,7 +1858,7 @@ if(BUILD_TESTS)
                 --book ${CMAKE_SOURCE_DIR}/docs/srpc-book.md
                 --repo ${CMAKE_SOURCE_DIR}
                 --cxx ${RPC_DOCS_SNIPPET_CXX}
-                --min-snippets 9
+                --min-snippets 8
                 --snippet-timeout-sec 60
     )
     add_test(

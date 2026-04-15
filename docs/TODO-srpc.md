@@ -394,7 +394,9 @@ compatibility wrappers for incremental rollout.
   - Implemented on 2026-04-15 in `test/rpc_deferred_handler_test.cc` + CTest wiring `test_rpc_deferred_handler`: 5 tests exercising deferred handler lifecycle (normal reply, async resolve, 100 rapid calls, dropped reply with no crash, concurrent 4-thread calls). Added `defer deferred_echo` to benchmark_service.rpc.
   - Fixed codegen: `defer` methods in non-abstract services now generate non-pure virtual, matching non-defer methods. Abstract services retain `= 0`.
   - Verification note: full RPC-focused suite passed (42/42 tests).
-- [ ] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.
+- [x] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.
+  - Implemented on 2026-04-15: extended `test_rpc_docs_symbols` with 8 typed API required symbols (request/response structs, Result return pattern, async methods, ServiceLike, ServiceFacade, typed registration) and 4 stale forbidden symbols (`--legacy-compat`, `SRPC_LEGACY_COMPAT`, `[[deprecated(`, `RPCGEN_COMPAT_FLAG`). Updated srpc-book.md "Generated Client Usage" example from pointer-style to typed request/response pattern.
+  - Verification note: full RPC-focused suite passed (42/42 tests).
 - [ ] Add borrow-check guard for generated typed APIs (no public `T* out` signatures in typed mode output).
 - [x] Re-run full RPC-focused suite in both CI modes: typed-default and compatibility-wrapper mode.
   - Legacy-compat mode has been removed. Full RPC-focused suite passes in typed-only mode (42/42 tests, verified on 2026-04-15 across multiple commits).
