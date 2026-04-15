@@ -714,12 +714,12 @@ Sto::commit();                          // Atomic across both indexes
 
 **What doesn't map**: Per-CF options (compression, compaction style) are RocksDB-specific and have no Masstree equivalent. The shim accepts these options but ignores them — all Masstree instances use the same in-memory configuration.
 
-### Fundamental API Mismatches
+### Bridgeable with Different Performance Profile
 
 | Feature | RocksDB API | Masstree API | Shim Approach |
 |---------|-------------|--------------|---------------|
-| **Conflict model** | Pessimistic — `txn->Put()` acquires key lock, blocks concurrent writers. | Optimistic — no locks during execution, conflict detected at `commit()`. | Shim can auto-retry on abort. Correct but different latency profile: RocksDB blocks, Masstree retries. Under low contention (the common case), retry rate is negligible. |
-| **Merge operators** | `db->Merge(k, delta)` — user-defined read-modify-write (e.g., counter increment, list append). Defers merge to read/compaction time for efficiency. | No native Merge. | Shim wraps as OCC transaction: `begin_txn → Get → apply_merge_fn → Put → commit`, retry on abort. Correct (OCC detects conflicting writes, no lost updates). Less efficient than RocksDB's deferred merge under high contention (each merge does a full read), but functionally equivalent. |
+| **Merge operators** | `db->Merge(k, delta)` — user-defined read-modify-write (e.g., counter increment, list append). Defers merge to read/compaction time for efficiency. | No native Merge. | Shim wraps as OCC transaction: `begin_txn → Get → apply_merge_fn → Put → commit`, retry on abort. Correct — OCC detects conflicting writes, no lost updates. Less efficient than RocksDB's deferred merge under high contention (each merge does a full read), but functionally equivalent. |
+| **Conflict model** | Pessimistic — `txn->Put()` acquires key lock, blocks concurrent writers. | Optimistic — no locks during execution, conflict detected at `commit()`. | Shim can auto-retry on abort. Correct but different latency profile: RocksDB blocks on contention, Masstree retries. Under low contention (the common case), retry rate is negligible. |
 
 ### Shim Architecture
 
