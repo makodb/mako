@@ -242,6 +242,6 @@ int main(int argc, char **argv) {
     {
         poll_thread_worker_.as_ref().unwrap()->shutdown();
     }
-    thrpool->release();
+    delete thrpool;
     return 0;
 }
