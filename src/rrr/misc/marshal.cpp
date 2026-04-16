@@ -566,6 +566,15 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   return m;
 }
 
+// @safe - Ensures sp_proxy_ is created from sp_data_
+// SAFETY: Creates proxy lazily on first access
+void MarshallDeputy::ensure_proxy_() {
+  if (!sp_proxy_ && sp_data_ != nullptr) {
+    sp_proxy_ = std::make_shared<MarshallableProxy>(
+        make_marshallable_proxy(sp_data_));
+  }
+}
+
 Marshal &Marshallable::to_marshal(Marshal &m) const {
   verify(0);
   return m;

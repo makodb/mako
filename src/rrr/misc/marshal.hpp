@@ -103,6 +103,9 @@ class MarshallDeputy {
     // @safe - Uses shared_ptr<Marshallable> for polymorphic type erasure
     // SAFETY: Reference counting with built-in polymorphism support
     std::shared_ptr<rrr::Marshallable> sp_data_;
+    // @safe - Type-erased proxy for Marshallable operations via pro::proxy
+    // SAFETY: Created lazily via ensure_proxy_(), uses std::shared_ptr for ownership
+    std::shared_ptr<MarshallableProxy> sp_proxy_;
     int32_t kind_{0};
     enum Kind {
       UNKNOWN=0,
@@ -161,6 +164,14 @@ class MarshallDeputy {
       }
     }
 
+    // @safe - Copy constructor for proxy support
+    // SAFETY: Copies both sp_data_ and sp_proxy_, creates proxy if needed
+    MarshallDeputy(const MarshallDeputy& other)
+        : bypass_to_socket_(other.bypass_to_socket_),
+          sp_data_(other.sp_data_),
+          sp_proxy_(other.sp_proxy_),
+          kind_(other.kind_) {}
+
     // virtual void reset_write_offsets(){
     //   written_to_socket = 0;
     //   sp_data_->reset_write_offsets();
@@ -173,9 +184,18 @@ class MarshallDeputy {
       verify(sp_data_ == nullptr);
       sp_data_ = m;
       kind_ = m->kind();
+      sp_proxy_.reset();  // Reset proxy so it gets recreated on next use
     }
 
+    // @safe - Ensures sp_proxy_ is created from sp_data_
+    // SAFETY: Creates proxy lazily on first access
+    void ensure_proxy_();
+
     virtual size_t entity_size() const {
+      // Use proxy dispatch if available, otherwise fall back to sp_data_
+      if (sp_proxy_) {
+        return sizeof(int32_t) + sp_proxy_->entity_size();
+      }
       return sizeof(int32_t) + sp_data_->entity_size();
     }
 
@@ -213,7 +233,14 @@ class MarshallDeputy {
           Log_error("MarshallDeputy::write_to_fd called with null sp_data_ (kind=%d)", kind_);
           return 0;
         }
-        sz = sp_data_->write_to_fd(fd, written_to_socket - sizeof(kind_));
+        // Ensure proxy exists before using it
+        ensure_proxy_();
+        // Use proxy dispatch for write_to_fd
+        if (sp_proxy_) {
+          sz = sp_proxy_->write_to_fd(fd, written_to_socket - sizeof(kind_));
+        } else {
+          sz = sp_data_->write_to_fd(fd, written_to_socket - sizeof(kind_));
+        }
         // }
 	      //std::cout << sz << std::endl;
         //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
@@ -1150,3 +1177,7 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) 
 }
 
 } // namespace rrr
+
+// Include marshallable_proxy.h at the end to make MarshallableProxy available
+// This breaks the circular dependency by using forward declarations in marshallable_proxy.h
+#include "marshallable_proxy.h"
