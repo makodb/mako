@@ -1,11 +1,6 @@
 #pragma once
 
-// Forward declarations - actual types come from marshal.hpp
-// This breaks the circular dependency between marshallable_proxy.h and marshal.hpp
-namespace rrr {
-class Marshal;
-class Marshallable;
-}  // namespace rrr
+#include "marshal.hpp"
 
 #ifdef RR
 #pragma push_macro("RR")
