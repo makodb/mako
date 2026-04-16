@@ -139,9 +139,11 @@ public:
  * This prevents accidentally deleting the object.
  * You are only allowed to cleanup with release() call.
  * This is thread safe.
- * 
- * SAFETY: Uses atomic reference counting for thread-safe memory management.
- * The protected destructor pattern ensures controlled deallocation.
+ *
+ * DEPRECATED: This class is here for compatibility only.
+ * New code should use rusty::Arc<T> for shared ownership.
+ * The ref_copy()/release() pattern is replaced by Arc::clone() and implicit drop.
+ * Existing subclasses (Row, snapshot_group, RowData in threading.hpp) are being migrated.
  */
 // @safe - Thread-safe reference counting with atomics
 class RefCounted {

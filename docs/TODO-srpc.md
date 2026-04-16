@@ -538,4 +538,10 @@ Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/pr
   - [ ] Leaf 3: Migrate `MarshallDeputy::sp_data_` from `shared_ptr<Marshallable>` to proxy-backed storage via adapter. Factory pattern creates `shared_ptr<Marshallable>` then wraps in proxy. ~150 LOC.
   - [ ] Leaf 4: Update derived classes to not inherit `Marshallable`; register via typed proxy adapters. Update factory lambdas. ~200 LOC across many files (may need sub-decomposition).
   - [ ] Leaf 5: Remove legacy `MarshallableArcAdapter` compatibility bridge. Close Phase 3 DoD. ~50 LOC.
-- [ ] *low* Phase 4: Remove `RefCounted` base class. Defined in `base/basetypes.hpp`, 1 pure virtual method (abstract destructor). Legacy manual ref counting — replace all usages with `rusty::Arc<T>`. ~30 LOC.
+- [ ] *low* Phase 4: Migrate `RefCounted` base class usage to `rusty::Arc<T>`. Defined in `base/basetypes.hpp`. Has 3 remaining subclasses (`Row` in memdb/, `snapshot_group` in memdb/, `ThreadPool` and `RunLater` in threading.hpp). All are already documented as being migrated. Note: RefCounted class itself will be kept as deprecated for compatibility since its interface is distinct from Arc (ref_copy/release vs clone). Subclasses should migrate to Arc or be reviewed for removal. Scope: medium (~200 LOC across migration of subclasses). Decomposed into leaves below.
+  - [x] Leaf 1: Add deprecation notice to RefCounted class doc comment. Document that new code should use Arc<T>.
+    - Implemented on 2026-04-16: added deprecation notice to RefCounted class comment in basetypes.hpp.
+  - [ ] Leaf 2: Audit and migrate ThreadPool and RunLater in threading.hpp to use Arc<T> internally. ~100 LOC.
+  - [ ] Leaf 3: Audit and migrate Row in memdb/row.h. Requires checking all callers of ref_count/ref_copy/release on Row objects. ~100 LOC.
+  - [ ] Leaf 4: Audit and migrate snapshot_group in memdb/snapshot.h. ~50 LOC.
+  - [ ] Leaf 5: Verify no remaining ref_copy/release calls on RefCounted subclasses. Close Phase 4 DoD.
