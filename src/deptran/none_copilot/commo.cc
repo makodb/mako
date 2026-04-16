@@ -60,8 +60,8 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     dispatch_quota.set(dispatch_quota.value_ + 1);
     
     // Handle WRONG_LEADER response with view data
-    if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-      auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+    if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+      auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
       if (sp_view_data) {
         UpdatePartitionView(par_id, sp_view_data);
       }
@@ -120,8 +120,8 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     dispatch_quota.set(dispatch_quota.value_ + 1);
     
     // Handle WRONG_LEADER response with view data
-    if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-      auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+    if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+      auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
       if (sp_view_data) {
         UpdatePartitionView(par_id, sp_view_data);
       }

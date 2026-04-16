@@ -55,7 +55,7 @@ void FpgaRaftServiceImpl::Forward(const MarshallDeputy& cmd,
                                   uint64_t* cmt_idx,
                                   rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
+  sched_->OnForward(const_cast<MarshallDeputy&>(cmd).inner(),
                     cmt_idx,
                     [defer = std::move(defer)]() mutable { defer.reply(); });
 }
@@ -155,7 +155,7 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
         leaderPrevLogTerm,
         leaderCommitIndex,
         dep_id,
-        const_cast<MarshallDeputy&>(cmd).sp_data_,
+        const_cast<MarshallDeputy&>(cmd).inner(),
         followerAppendOK,
         followerCurrentTerm,
         followerLastLogIndex,
@@ -173,7 +173,7 @@ void FpgaRaftServiceImpl::Decide(const uint64_t& slot,
   Fiber::create_run([this, slot, ballot, cmd, defer = std::move(defer)]() mutable {
     sched_->OnCommit(slot,
                      ballot,
-                     const_cast<MarshallDeputy&>(cmd).sp_data_);
+                     const_cast<MarshallDeputy&>(cmd).inner());
     defer.reply();
   });
 }

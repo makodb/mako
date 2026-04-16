@@ -60,7 +60,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
     auto cmd_ptr = std::make_shared<TpcCommitCommand>();
     MarshallDeputy md(cmd_ptr);
     md.kind_ = MarshallDeputy::CMD_TPC_COMMIT;
-    sched_->OnCommit(x, 100, md.sp_data_, true);
+    sched_->OnCommit(x, 100, md.inner(), true);
   }
   sched_->g_mutex.unlock();
 
@@ -82,7 +82,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
         sender,
         skip_commits,
         skip_potentials,
-        const_cast<MarshallDeputy&>(cmd).sp_data_,
+        const_cast<MarshallDeputy&>(cmd).inner(),
         max_ballot,
         coro_id,
         [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -94,9 +94,9 @@ void MenciusServiceImpl::Decide(const uint64_t& slot,
                                 const MarshallDeputy& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  auto x = cmd.sp_data_;
+  auto x = cmd.inner();
 
-  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd.sp_data_);
+  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd.inner());
   sched_->c_mutex.lock();
   sched_->unexecuted_keys_[parsed_cmd.key_] += 1;
   sched_->c_mutex.unlock();

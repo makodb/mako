@@ -32,7 +32,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
           callback(res, output, rgraph);
         } else if (md.kind_ == MarshallDeputy::RCC_GRAPH) {
           // Arc returns const reference, use const_cast for mutation
-          auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.sp_data_));
+          auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.inner()));
           callback(res, output, graph);
         } else {
           verify(0);
@@ -70,7 +70,7 @@ void JanusCommo::SendInquire(parid_t pid,
     MarshallDeputy md;
     fu->get_reply() >> md;
     // Arc returns const reference, use const_cast for mutation
-    auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.sp_data_));
+    auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.inner()));
     callback(graph);
   };
   fuattr.callback = cb;
@@ -108,7 +108,7 @@ void JanusCommo::BroadcastPreAccept(
       MarshallDeputy md;
       fu->get_reply() >> res >> md;
       // Arc returns const reference, use const_cast for mutation
-      auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.sp_data_));
+      auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.inner()));
       // Convert back to shared_ptr for callback (bridge pattern)
       auto sp = std::make_shared<RccGraph>(graph);
       callback(res, sp);

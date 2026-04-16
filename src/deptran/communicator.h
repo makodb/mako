@@ -150,7 +150,7 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
     if (y) {
       vote_yes();
       // If ok=true, jepoch and oepoch are not larger than local, so we can update id_sets
-      auto vec_rec_data = std::dynamic_pointer_cast<VecRecData>(id_set.sp_data_);
+      auto vec_rec_data = std::dynamic_pointer_cast<VecRecData>(id_set.inner());
       if (vec_rec_data) {
         id_sets_.push_back(vec_rec_data);
       }
@@ -201,7 +201,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& batch_md) {
     if (y) {
       vote_yes();
-      auto batch = std::dynamic_pointer_cast<KeyCmdBatchData>(batch_md.sp_data_);
+      auto batch = std::dynamic_pointer_cast<KeyCmdBatchData>(batch_md.inner());
       if (batch) {
         for (size_t i = 0; i < batch->Size(); i++) {
           auto it = key_index_.find(batch->GetKey(i));
@@ -347,8 +347,8 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
     if (y) {
       vote_yes();
       // Store the recovered command if we get one
-      if (!recovered_cmd_ && cmd.sp_data_) {
-        recovered_cmd_ = cmd.sp_data_;
+      if (!recovered_cmd_ && cmd.inner()) {
+        recovered_cmd_ = cmd.inner();
       }
     } else {
       vote_no();

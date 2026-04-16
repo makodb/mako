@@ -139,7 +139,7 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
     fuattr.callback = [](rusty::Arc<Future> fu) {};
 
 		MarshallDeputy md(cmd);
-		verify(md.sp_data_ != nullptr);
+		verify(md.inner() != nullptr);
 
 		DepId di;
 		di.str = "dep";
@@ -241,7 +241,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
       e->FeedResponse(y, index, ip);
     };
     MarshallDeputy md(cmd);
-		verify(md.sp_data_ != nullptr);
+		verify(md.inner() != nullptr);
 		outbound++;
 		DepId di;
 		di.str = "dep";

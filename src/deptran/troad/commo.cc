@@ -31,7 +31,7 @@ void TroadCommo::SendDispatch(vector<TxPieceData>& cmd,
 //          verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
         } else if (md.kind_ == MarshallDeputy::RCC_GRAPH) {
-          RccGraph& graph = dynamic_cast<RccGraph&>(*md.sp_data_);
+          RccGraph& graph = dynamic_cast<RccGraph&>(*md.inner());
           callback(res, output, graph);
         } else {
           verify(0);
@@ -71,7 +71,7 @@ void TroadCommo::SendInquire(parid_t pid,
     MarshallDeputy md;
     fu->get_reply() >> md;
     verify(0);
-//    auto graph = dynamic_cast<RccGraph&>(*md.sp_data_);
+//    auto graph = dynamic_cast<RccGraph&>(*md.inner());
 //    callback(graph);
   };
   fuattr.callback = cb;
@@ -112,7 +112,7 @@ void TroadCommo::BroadcastPreAccept(
       int32_t res;
       MarshallDeputy md;
       fu->get_reply() >> res >> md;
-      auto sp = dynamic_pointer_cast<RccGraph>(md.sp_data_);
+      auto sp = dynamic_pointer_cast<RccGraph>(md.inner());
       verify(sp);
       callback(res, sp);
     };
@@ -165,7 +165,7 @@ TroadCommo::BroadcastPreAccept(
       int32_t res;
       auto sp = std::make_shared<parent_set_t>();
       fu->get_reply() >> res >> *sp;
-//      auto sp = dynamic_pointer_cast<RccGraph>(md.sp_data_);
+//      auto sp = dynamic_pointer_cast<RccGraph>(md.inner());
 //      verify(sp);
       if (res == SUCCESS) {
         ev->vote_yes();
@@ -212,7 +212,7 @@ TroadCommo::BroadcastPreAccept(
       int32_t res;
       MarshallDeputy md;
       fu->get_reply() >> res >> md;
-      auto sp = dynamic_pointer_cast<RccGraph>(md.sp_data_);
+      auto sp = dynamic_pointer_cast<RccGraph>(md.inner());
       verify(sp);
       if (res == SUCCESS) {
         ev->vote_yes();

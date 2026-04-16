@@ -125,7 +125,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
         e->FeedRetCmd(ballot,
                       dep,
                       is_pilot, slot_id,
-                      const_cast<MarshallDeputy&>(md).sp_data_,
+                      const_cast<MarshallDeputy&>(md).inner(),
                       static_cast<enum Status>(status));
       } // Feed command before feeding response, since if there is a committed command,
         // the prepare event will be ready in advance without waiting for a quorum.

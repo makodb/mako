@@ -327,7 +327,7 @@ class KeyCmdBatchData : public Marshallable {
       m >> keys_[i];
       MarshallDeputy deputy;
       m >> deputy;
-      commands_[i] = deputy.sp_data_;
+      commands_[i] = deputy.inner();
     }
     return m;
   }

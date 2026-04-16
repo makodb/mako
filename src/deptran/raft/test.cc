@@ -7550,8 +7550,8 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
 
   MarshallDeputy md2;
   m2 >> md2;
-  Assert2(md2.sp_data_ != nullptr, "MarshallDeputy should have deserialized data");
-  auto cmd4 = std::dynamic_pointer_cast<ReplicatedDBCommand>(md2.sp_data_);
+  Assert2(md2.inner() != nullptr, "MarshallDeputy should have deserialized data");
+  auto cmd4 = std::dynamic_pointer_cast<ReplicatedDBCommand>(md2.inner());
   Assert2(cmd4 != nullptr, "Should dynamic_cast to ReplicatedDBCommand");
   Assert2(cmd4->op_ == ReplicatedDBOp::DELETE,
           "Deputy round-trip op should be DELETE");

@@ -33,7 +33,7 @@ void CopilotServiceImpl::Forward(const MarshallDeputy& cmd,
                                  rrr::DeferredReply defer) {
   verify(sched_);
   Fiber::create_run([this, cmd, defer = std::move(defer)]() mutable {
-    sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
+    sched_->OnForward(const_cast<MarshallDeputy&>(cmd).inner(),
                       [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
@@ -73,14 +73,14 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
   struct timeval tp;
   gettimeofday(&tp, NULL);
   Log_info("[1+] [tx=%d] on FastAccept %.3f",
-           dynamic_pointer_cast<TpcBatchCommand>(const_cast<MarshallDeputy&>(cmd).sp_data_)->cmds_.at(0)->tx_id_,
+           dynamic_pointer_cast<TpcBatchCommand>(const_cast<MarshallDeputy&>(cmd).inner())->cmds_.at(0)->tx_id_,
            tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   sched_->OnFastAccept(is_pilot,
                        slot,
                        ballot,
                        dep,
-                       const_cast<MarshallDeputy&>(cmd).sp_data_,
+                       const_cast<MarshallDeputy&>(cmd).inner(),
                        dep_id,
                        max_ballot,
                        ret_dep,
@@ -100,7 +100,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                    slot,
                    ballot,
                    dep,
-                   const_cast<MarshallDeputy&>(cmd).sp_data_,
+                   const_cast<MarshallDeputy&>(cmd).inner(),
                    dep_id,
                    max_ballot,
                    [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -112,7 +112,7 @@ void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const MarshallDeputy& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_);
-  sched_->OnCommit(is_pilot, slot, dep, const_cast<MarshallDeputy&>(cmd).sp_data_);
+  sched_->OnCommit(is_pilot, slot, dep, const_cast<MarshallDeputy&>(cmd).inner());
   defer.reply();
 }
 

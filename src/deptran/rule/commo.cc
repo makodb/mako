@@ -210,8 +210,8 @@ void CommunicatorRule::BroadcastDispatch(
         fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
         
         // Handle WRONG_LEADER response with view data
-        if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-          auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+        if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+          auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
           if (sp_view_data) {
             UpdatePartitionView(par_id, sp_view_data);
           }

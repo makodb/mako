@@ -229,11 +229,11 @@ void RaftWorker::ShutDown() {
   }
 
   if (hb_thread_pool_g) {
-    hb_thread_pool_g.reset();
+    // Arc auto-releases on destruction
   }
 
   if (thread_pool_g) {
-    thread_pool_g.reset();
+    // Arc auto-releases on destruction
   }
 
   // Services are now owned by rpc_server_ and deleted with it

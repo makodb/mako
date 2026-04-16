@@ -306,7 +306,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
     } else{
       //Log_info("Valid value received for prepare %d", bt);
       if(valid == 1)
-        this->vec_md.push_back(make_pair(bt, md.sp_data_));
+        this->vec_md.push_back(make_pair(bt, md.inner()));
       // Weihai: comment, this line will cause an seg fault
       //else
       //  this->vec_md.push_back(make_pair(bt, cmd_));

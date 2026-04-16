@@ -528,8 +528,8 @@ void Communicator::BroadcastDispatch(
         fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
         
         // Handle WRONG_LEADER response with view data
-        if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-          auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+        if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+          auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
           if (sp_view_data) {
             UpdatePartitionView(par_id, sp_view_data);
           }
@@ -577,7 +577,7 @@ void Communicator::BroadcastDispatch(
 
   WAN_WAIT;
 #ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md.sp_data_).first, SimpleRWCommand::GetCmdID(md.sp_data_).second);
+  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md.inner()).first, SimpleRWCommand::GetCmdID(md.inner()).second);
 #endif
 #ifdef LATENCY_LOG_DEBUG
   Log_info("!!!!!!!! Before proxy->async_Dispatch(cmd_id, di, md, fuattr);");
@@ -642,7 +642,7 @@ void Communicator::SyncBroadcastDispatch(
 
   WAN_WAIT;
 #ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md.sp_data_).first, SimpleRWCommand::GetCmdID(md.sp_data_).second);
+  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md.inner()).first, SimpleRWCommand::GetCmdID(md.inner()).second);
 #endif
   int32_t ret;
   TxnOutput outputs;
@@ -661,8 +661,8 @@ void Communicator::SyncBroadcastDispatch(
   view_md = dispatch_response.view_data;
   
   // Handle WRONG_LEADER response with view data
-  if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-    auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+  if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+    auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
     if (sp_view_data) {
       UpdatePartitionView(par_id, sp_view_data);
     }
@@ -726,8 +726,8 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 	  			}
           else{
             // Handle WRONG_LEADER response with view data
-            if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-              auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+            if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+              auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
               if (sp_view_data) {
                 UpdatePartitionView(par_id, sp_view_data);
               }
@@ -1008,8 +1008,8 @@ Communicator::SendCommit(Coordinator* coo,
       cmd->reply_.res_ = res;
       
       // Extract and attach view data if present
-      if (view_md.sp_data_ != nullptr) {
-        auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+      if (view_md.inner() != nullptr) {
+        auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
         if (sp_view_data) {
           cmd->reply_.sp_view_data_ = sp_view_data;
           Log_info("[VIEW_PROPAGATE] Received view data in Commit response for tx_id=%lu: %s", 
@@ -1146,8 +1146,8 @@ Communicator::SendAbort(Coordinator* coo,
       cmd->reply_.res_ = res;
 
       // Extract and attach view data if present
-      if (view_md.sp_data_ != nullptr) {
-        auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+      if (view_md.inner() != nullptr) {
+        auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.inner());
         if (sp_view_data) {
           cmd->reply_.sp_view_data_ = sp_view_data;
           Log_info("[VIEW_PROPAGATE] Received view data in Abort response for tx_id=%lu: %s",

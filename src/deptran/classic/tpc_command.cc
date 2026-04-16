@@ -63,8 +63,8 @@ Marshal& TpcPrepareCommand::from_marshal(Marshal& m) {
   m >> md;
   if (!cmd_) {
     // Use the shared_ptr directly from MarshallDeputy
-    if (md.sp_data_ != nullptr) {
-      cmd_ = md.sp_data_;
+    if (md.inner() != nullptr) {
+      cmd_ = md.inner();
     }
   } else {
     verify(0);
@@ -95,7 +95,7 @@ Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
   MarshallDeputy md;
   m >> md;
   if (!cmd_)
-    cmd_ = md.sp_data_;
+    cmd_ = md.inner();
   else
     verify(0);
   // Unmarshal view data if present
@@ -104,7 +104,7 @@ Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
   if (has_view_data) {
     MarshallDeputy view_md;
     m >> view_md;
-    sp_view_data_ = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+    sp_view_data_ = dynamic_pointer_cast<ViewData>(view_md.inner());
   }
   return m;
 }

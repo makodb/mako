@@ -11,7 +11,7 @@ void MongodbServiceImpl::Commit(const MongodbService::RpcCommitRequest& rpc_req,
                                 MongodbService::RpcCommitResponse& rpc_resp,
                                 rrr::DeferredReply defer) {
   (void)rpc_resp;
-  sched_->RuleWitnessGC(const_cast<MarshallDeputy&>(rpc_req.cmd).sp_data_);
+  sched_->RuleWitnessGC(const_cast<MarshallDeputy&>(rpc_req.cmd).inner());
   defer.reply();
 }
 

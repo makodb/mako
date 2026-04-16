@@ -269,7 +269,7 @@ void PaxosWorker::WaitForShutdown() {
     hb_rpc_server_->wait_for_shutdown();
     delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
-    hb_thread_pool_g.reset();
+    // Arc auto-releases on destruction
 
     // Use for_each_service to access services owned by rpc_server_
     if (rpc_server_ != nullptr) {
@@ -295,7 +295,7 @@ void PaxosWorker::ShutDown() {
   // Services are now owned by rpc_server_ and will be deleted with it
   delete rpc_server_;
   rpc_server_ = nullptr;
-  thread_pool_g.reset();
+  // Arc auto-releases on destruction
   for (auto c : created_coordinators_) {
     delete c;
   }

@@ -110,7 +110,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
     sched_->OnAccept(slot,
 		     time,
                      ballot,
-                     const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                     const_cast<MarshallDeputy&>(md_cmd).inner(),
                      max_ballot,
                      coro_id,
                      [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -128,7 +128,7 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
                                    const MarshallDeputy& md_cmd,
                                    rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  auto x = md_cmd.sp_data_;
+  auto x = md_cmd.inner();
   sched_->OnCommit(slot, ballot,x);
   defer.reply();
 }
@@ -141,7 +141,7 @@ void MultiPaxosServiceImpl::BulkPrepare(const MarshallDeputy& md_cmd,
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
     //std::cout << "send a BulkPrepare\n";
-    sched_->OnBulkPrepare(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnBulkPrepare(const_cast<MarshallDeputy&>(md_cmd).inner(),
                           ballot,
                           valid,
                           [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -155,7 +155,7 @@ void MultiPaxosServiceImpl::Heartbeat(const MarshallDeputy& md_cmd,
                                        rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnHeartbeat(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnHeartbeat(const_cast<MarshallDeputy&>(md_cmd).inner(),
                           ballot,
                           valid,
                           [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -172,7 +172,7 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
   auto p = dynamic_pointer_cast<BulkPaxosCmd>(ret->sp_data_);
   //Log_info("The marshallable flag is %d", p->bypass_to_socket_);
   Fiber::create_run([&] () {
-    sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).inner(),
                           ballot,
                           valid,
                           p,
@@ -186,7 +186,7 @@ void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
                                        rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnBulkAccept(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnBulkAccept(const_cast<MarshallDeputy&>(md_cmd).inner(),
                          ballot,
                          valid,
                         [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -201,7 +201,7 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
   // Log_info("BulkDecide RPC handler called");
   Fiber::create_run([&] () {
     // Log_info("BulkDecide coroutine executing, calling OnBulkCommit");
-    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).inner(),
                          ballot,
                          valid,
                          [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -220,7 +220,7 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
   ret->set_marshallable(std::make_shared<SyncLogResponse>());
   auto response = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
   Fiber::create_run([&] () {
-    sched_->OnSyncLog(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnSyncLog(const_cast<MarshallDeputy&>(md_cmd).inner(),
                       ballot,
                       valid,
                       response,
@@ -245,7 +245,7 @@ void MultiPaxosServiceImpl::SyncCommit(const MarshallDeputy& md_cmd,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnSyncCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnSyncCommit(const_cast<MarshallDeputy&>(md_cmd).inner(),
                          ballot,
                          valid,
                          [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -259,7 +259,7 @@ void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
                                       rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnSyncNoOps(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnSyncNoOps(const_cast<MarshallDeputy&>(md_cmd).inner(),
                          ballot,
                          valid,
                          [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -276,7 +276,7 @@ void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
     *ret_slot = slot;
     *ret_ballot = ballot;
     Fiber::create_run([&] () {
-      sched_->OnForwardToLearner(par_id, slot, ballot, const_cast<MarshallDeputy&>(cmd).sp_data_,
+      sched_->OnForwardToLearner(par_id, slot, ballot, const_cast<MarshallDeputy&>(cmd).inner(),
                                [defer = std::move(defer)]() mutable { defer.reply(); });
     });
 }

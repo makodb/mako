@@ -52,7 +52,7 @@ Marshal& TpcPrepareCarouselCommand::from_marshal(Marshal& m) {
   MarshallDeputy md;
   m >> md;
   if (!cmd_)
-    cmd_ = md.sp_data_;
+    cmd_ = md.inner();
   else
     verify(0);
   return m;

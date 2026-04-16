@@ -175,6 +175,10 @@ class MarshallDeputy {
       kind_ = m->kind();
     }
 
+    // @safe - Accessor for underlying shared_ptr (for call sites that need direct access)
+    std::shared_ptr<rrr::Marshallable>& inner() { return sp_data_; }
+    const std::shared_ptr<rrr::Marshallable>& inner() const { return sp_data_; }
+
     virtual size_t entity_size() const {
       return sizeof(int32_t) + sp_data_->entity_size();
     }

@@ -32,7 +32,7 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
           verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
         } else if (md.kind_ == MarshallDeputy::RCC_GRAPH) {
-          RccGraph& graph = dynamic_cast<RccGraph&>(*md.sp_data_);
+          RccGraph& graph = dynamic_cast<RccGraph&>(*md.inner());
           callback(res, output, graph);
         } else {
           verify(0);
@@ -122,7 +122,7 @@ void RccCommo::SendInquire(parid_t pid,
     }
     MarshallDeputy md;
     fu->get_reply() >> md;
-    RccGraph& graph = dynamic_cast<RccGraph&>(*md.sp_data_);
+    RccGraph& graph = dynamic_cast<RccGraph&>(*md.inner());
     callback(graph);
   };
   fuattr.callback = cb;

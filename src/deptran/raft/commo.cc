@@ -92,7 +92,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
     } else {
       // send a regular AppendEntries
       MarshallDeputy md(cmd);
-      verify(md.sp_data_ != nullptr);
+      verify(md.inner() != nullptr);
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
       RaftProxy::RpcAppendEntriesRequest req{};
@@ -187,7 +187,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
     } else {
       // send a regular AppendEntries
       MarshallDeputy md(cmd);
-      verify(md.sp_data_ != nullptr);
+      verify(md.inner() != nullptr);
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
       RaftProxy::RpcAppendEntriesRequest req{};

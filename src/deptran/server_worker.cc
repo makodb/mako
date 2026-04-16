@@ -261,7 +261,7 @@ void ServerWorker::WaitForShutdown() {
     hb_rpc_server_->wait_for_shutdown();
     delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
-    hb_thread_pool_g.reset();
+    // Arc auto-releases on destruction (hb_thread_pool_g goes out of scope with ServerWorker)
 
     // Use for_each_service to access services owned by rpc_server_
     if (rpc_server_ != nullptr) {
