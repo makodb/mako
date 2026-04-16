@@ -546,7 +546,9 @@ Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/pr
 - [ ] *low* Phase 4: Migrate `RefCounted` base class usage to `rusty::Arc<T>`. Defined in `base/basetypes.hpp`. Has 3 remaining subclasses (`Row` in memdb/, `snapshot_group` in memdb/, `ThreadPool` and `RunLater` in threading.hpp). All are already documented as being migrated. Note: RefCounted class itself will be kept as deprecated for compatibility since its interface is distinct from Arc (ref_copy/release vs clone). Subclasses should migrate to Arc or be reviewed for removal. Scope: medium (~200 LOC across migration of subclasses). Decomposed into leaves below.
   - [x] Leaf 1: Add deprecation notice to RefCounted class doc comment. Document that new code should use Arc<T>.
     - Implemented on 2026-04-16: added deprecation notice to RefCounted class comment in basetypes.hpp.
-  - [ ] Leaf 2: Audit and migrate ThreadPool and RunLater in threading.hpp to use Arc<T> internally. ~100 LOC.
+  - [x] Leaf 2: Audit and migrate ThreadPool and RunLater in threading.hpp to use Arc<T> internally. ~100 LOC.
+    - Implemented on 2026-04-16: changed ThreadPool and RunLater to inherit from NoCopy instead of RefCounted, made destructors public, added Arc::make() factory methods. Updated worker classes (raft_worker, paxos_worker, server_worker) to use Arc<ThreadPool> instead of raw pointers. Changed release() calls to reset().
+    - Verification: build succeeds (rrr/mako targets compile), test_marshal passes (23/23 tests). Borrow-check failures in unrelated files (masstree, kvthread) predate this change.
   - [ ] Leaf 3: Audit and migrate Row in memdb/row.h. Requires checking all callers of ref_count/ref_copy/release on Row objects. ~100 LOC.
   - [ ] Leaf 4: Audit and migrate snapshot_group in memdb/snapshot.h. ~50 LOC.
   - [ ] Leaf 5: Verify no remaining ref_copy/release calls on RefCounted subclasses. Close Phase 4 DoD.

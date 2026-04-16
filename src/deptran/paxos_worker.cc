@@ -192,7 +192,7 @@ void PaxosWorker::SetupService() {
   svr_poll_thread_worker_ = rusty::Some(PollThread::create());
 
   uint32_t num_threads = 1;
-  thread_pool_g = new base::ThreadPool(num_threads);
+  thread_pool_g = base::ThreadPool::make(num_threads);
 
   // init rrr::Server first (before registering services)
   rpc_server_ = new rrr::Server(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone()));
@@ -240,7 +240,7 @@ void PaxosWorker::SetupHeartbeat() {
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
-  hb_thread_pool_g = new rrr::ThreadPool(1);
+  hb_thread_pool_g = base::ThreadPool::make(1);
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
 
   // Create shared status and pass clone to service
@@ -269,7 +269,7 @@ void PaxosWorker::WaitForShutdown() {
     hb_rpc_server_->wait_for_shutdown();
     delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
-    hb_thread_pool_g->release();
+    hb_thread_pool_g.reset();
 
     // Use for_each_service to access services owned by rpc_server_
     if (rpc_server_ != nullptr) {
@@ -295,7 +295,7 @@ void PaxosWorker::ShutDown() {
   // Services are now owned by rpc_server_ and will be deleted with it
   delete rpc_server_;
   rpc_server_ = nullptr;
-  thread_pool_g->release();
+  thread_pool_g.reset();
   for (auto c : created_coordinators_) {
     delete c;
   }

@@ -137,7 +137,7 @@ void RaftWorker::SetupService() {
 
   // Create thread pool
   uint32_t num_threads = 1;
-  thread_pool_g = new base::ThreadPool(num_threads);
+  thread_pool_g = base::ThreadPool::make(num_threads);
 
   // Create RPC server first (before registering services)
   rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
@@ -189,7 +189,7 @@ void RaftWorker::SetupHeartbeat() {
   // Setup heartbeat/control RPC server
   // ServerControlServiceImpl constructor takes (status, timeout, recorder)
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_thread_pool_g = new base::ThreadPool(1);
+  hb_thread_pool_g = base::ThreadPool::make(1);
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
 
   // Create shared status and pass clone to service
@@ -229,13 +229,11 @@ void RaftWorker::ShutDown() {
   }
 
   if (hb_thread_pool_g) {
-    hb_thread_pool_g->release();
-    hb_thread_pool_g = nullptr;
+    hb_thread_pool_g.reset();
   }
 
   if (thread_pool_g) {
-    thread_pool_g->release();
-    thread_pool_g = nullptr;
+    thread_pool_g.reset();
   }
 
   // Services are now owned by rpc_server_ and deleted with it
