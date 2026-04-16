@@ -552,5 +552,7 @@ Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/pr
   - [x] Leaf 3: Audit and migrate Row in memdb/row.h. Requires checking all callers of ref_count/ref_copy/release on Row objects. ~100 LOC.
     - Implemented on 2026-04-16: changed Row and derived classes (CoarseLockedRow, FineLockedRow, VersionedRow) to inherit from NoCopy instead of RefCounted. Made destructors public for Arc<Row> compatibility. Added compatibility shims (ref_copy/release/ref_count) returning safe values for gradual migration. Fixed test/rpcbench.cc thrpool->release() bug introduced by ThreadPool migration.
     - Verification: build succeeds (txlog_core_obj, mako, memdb targets), RPC tests pass (test_marshal, test_rpc_errors, test_rpc_pollthread_proxy_storage, test_rpc_service_proxy_facade, rpcbench).
-  - [ ] Leaf 4: Audit and migrate snapshot_group in memdb/snapshot.h. ~50 LOC.
+  - [x] Leaf 4: Audit and migrate snapshot_group in memdb/snapshot.h. ~50 LOC.
+    - Implemented on 2026-04-16: changed snapshot_group to inherit from NoCopy instead of RefCounted. Added deprecation notice, made destructor public, added compatibility shims (ref_copy/release) returning safe values.
+    - Verification: build succeeds (txlog_core_obj, mako, memdb targets), RPC tests pass (test_marshal, test_rpc_errors, test_rpc_pollthread_proxy_storage, test_rpc_service_proxy_facade, rpcbench).
   - [ ] Leaf 5: Verify no remaining ref_copy/release calls on RefCounted subclasses. Close Phase 4 DoD.
