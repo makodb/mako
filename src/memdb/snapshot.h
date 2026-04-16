@@ -97,8 +97,12 @@ public:
 // A group of snapshots. Each snapshot in the group points to it, so they can share data.
 // There could be at most one writer in the group. Members are ordered in a doubly linked list:
 // S1 <= S2 <= S3 <= ... <= Sw (increasing version, writer at tail if exists)
+//
+// DEPRECATED: snapshot_group inherits from RefCounted for legacy compatibility.
+// New code should use rusty::Arc<snapshot_group> for shared ownership.
+// Migration status: in progress (Phase 4 Leaf 4).
 template <class Key, class Value, class Container, class Snapshot>
-struct snapshot_group: public RefCounted {
+struct snapshot_group: public NoCopy {
     Container data;
 
     // the writer of the group, nullptr means nobody can write to the group
@@ -110,9 +114,16 @@ struct snapshot_group: public RefCounted {
 
     snapshot_group(Snapshot* w): writer(w), gc_insert_counter(0), gc_erase_counter(0) {}
 
-    // protected dtor as required by RefCounted
-protected:
+    // public dtor for Arc compatibility
     ~snapshot_group() {}
+
+    // DEPRECATED: Compatibility shim for legacy ref_copy() calls.
+    // New code should use Arc<snapshot_group>::clone() or avoid copying.
+    snapshot_group* ref_copy() { return this; }
+
+    // DEPRECATED: Compatibility shim for legacy release() calls.
+    // New code should use Arc<snapshot_group> with implicit drop.
+    int release() { return 0; }
 };
 
 template <class Key, class Value>
