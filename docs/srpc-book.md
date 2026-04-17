@@ -878,8 +878,10 @@ struct TypedMarshallableAdapterTraits<MyTypedData> {
 In-tree deptran payloads (`VecPieceData`, `VecRecData`, `ViewData`,
 `KeyCmdBatchData`, `TpcPrepareCommand`, `TpcCommitCommand`,
 `TpcEmptyCommand`, `TpcNoopCommand`, `TpcBatchCommand`,
-`ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`) use this trait-backed
-typed-adapter path and no longer inherit `Marshallable` directly.
+`ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`, `BulkPrepareLog`,
+`PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`, `SyncLogResponse`,
+`SyncNoOpRequest`) use this trait-backed typed-adapter path and no longer
+inherit `Marshallable` directly.
 
 For `MarshallDeputy` round-trip support, register a typed initializer (no raw
 pointer factory needed). This works for both direct `Marshallable` classes and

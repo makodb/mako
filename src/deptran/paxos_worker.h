@@ -146,17 +146,16 @@ namespace janus {
   }
 };
 
-class BulkPrepareLog : public Marshallable {
+class BulkPrepareLog {
   public:
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_BLK_PREP_PXS;
   vector<pair<uint32_t,slotid_t>> min_prepared_slots;
   uint32_t leader_id;
   int epoch;
 
-  BulkPrepareLog(): Marshallable(MarshallDeputy::CMD_BLK_PREP_PXS){
+  BulkPrepareLog() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
       m << (int32_t) min_prepared_slots.size();
       for(auto i : min_prepared_slots){
           m << i;
@@ -166,7 +165,7 @@ class BulkPrepareLog : public Marshallable {
       return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     int32_t sz;
     m >> sz;
     for(int i = 0; i < sz; i++){
@@ -181,17 +180,16 @@ class BulkPrepareLog : public Marshallable {
 
 };
 
-class PaxosPrepCmd : public Marshallable {
+class PaxosPrepCmd {
   public:
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_PREP_PXS;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   int leader_id;
 
-  PaxosPrepCmd(): Marshallable(MarshallDeputy::CMD_PREP_PXS){
+  PaxosPrepCmd() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
       m << (int32_t) slots.size();
       for(auto i : slots){
           m << i;
@@ -204,7 +202,7 @@ class PaxosPrepCmd : public Marshallable {
       return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     int32_t sz;
     m >> sz;
     for(int i = 0; i < sz; i++){
@@ -224,22 +222,21 @@ class PaxosPrepCmd : public Marshallable {
 
 };
 
-class HeartBeatLog : public Marshallable {
+class HeartBeatLog {
   public:
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_HRTBT_PXS;
   uint32_t leader_id;
   int epoch;
 
-  HeartBeatLog(): Marshallable(MarshallDeputy::CMD_HRTBT_PXS){
+  HeartBeatLog() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
       m << leader_id;
       m << epoch;
       return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     m >> leader_id;
     m >> epoch;
     return m;
@@ -247,16 +244,15 @@ class HeartBeatLog : public Marshallable {
 
 };
 
-class SyncLogRequest : public Marshallable {
+class SyncLogRequest {
   public:
+    static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCREQ_PXS;
     int leader_id;
     ballot_t epoch;
     vector<slotid_t> sync_commit_slot;
-    SyncLogRequest(): Marshallable(MarshallDeputy::CMD_SYNCREQ_PXS){
+    SyncLogRequest() = default;
 
-    }
-
-    Marshal& to_marshal(Marshal& m) const override {
+    Marshal& to_marshal(Marshal& m) const {
       m << leader_id;
       m << epoch;
       m << (int32_t)sync_commit_slot.size();
@@ -266,7 +262,7 @@ class SyncLogRequest : public Marshallable {
       return m;
     }
 
-    Marshal& from_marshal(Marshal& m) override {
+    Marshal& from_marshal(Marshal& m) {
       m >> leader_id;
       m >> epoch;
       int32_t sz;
@@ -280,15 +276,14 @@ class SyncLogRequest : public Marshallable {
     }
 };
 
-class SyncLogResponse : public Marshallable {
+class SyncLogResponse {
   public:
+    static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCRESP_PXS;
     vector<shared_ptr<MarshallDeputy>> sync_data;
     vector<vector<slotid_t>> missing_slots;
-    SyncLogResponse(): Marshallable(MarshallDeputy::CMD_SYNCRESP_PXS){
+    SyncLogResponse() = default;
 
-    }
-
-    Marshal& to_marshal(Marshal& m) const override {
+    Marshal& to_marshal(Marshal& m) const {
       m << (int32_t)sync_data.size();
       for(int i = 0; i < sync_data.size(); i++){
         m << *sync_data[i];
@@ -303,7 +298,7 @@ class SyncLogResponse : public Marshallable {
       return m;
     }
 
-    Marshal& from_marshal(Marshal& m) override {
+    Marshal& from_marshal(Marshal& m) {
       int32_t sz;
       m >> sz;
       for(int i = 0; i < sz; i++){
@@ -328,16 +323,15 @@ class SyncLogResponse : public Marshallable {
     }
 };
 
-class SyncNoOpRequest : public Marshallable{
+class SyncNoOpRequest {
   public:
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCNOOP_PXS;
   int leader_id;
   ballot_t epoch;
   vector<slotid_t> sync_slots;
-  SyncNoOpRequest(): Marshallable(MarshallDeputy::CMD_SYNCNOOP_PXS){
+  SyncNoOpRequest() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
     m << leader_id;
     m << epoch;
     m << (int32_t)sync_slots.size();
@@ -347,7 +341,7 @@ class SyncNoOpRequest : public Marshallable{
     return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     m >> leader_id;
     m >> epoch;
     int32_t sz;
@@ -837,3 +831,55 @@ public:
 };
 
 } // namespace janus
+
+namespace rrr {
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::BulkPrepareLog> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::BulkPrepareLog,
+                               MarshallDeputy::CMD_BLK_PREP_PXS>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::PaxosPrepCmd> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::PaxosPrepCmd,
+                               MarshallDeputy::CMD_PREP_PXS>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::HeartBeatLog> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::HeartBeatLog,
+                               MarshallDeputy::CMD_HRTBT_PXS>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::SyncLogRequest> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::SyncLogRequest,
+                               MarshallDeputy::CMD_SYNCREQ_PXS>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::SyncLogResponse> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::SyncLogResponse,
+                               MarshallDeputy::CMD_SYNCRESP_PXS>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::SyncNoOpRequest> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::SyncNoOpRequest,
+                               MarshallDeputy::CMD_SYNCNOOP_PXS>;
+};
+
+}  // namespace rrr

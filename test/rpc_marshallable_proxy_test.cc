@@ -6,6 +6,7 @@
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"
 #include "deptran/rcc/dep_graph.h"
+#include "deptran/paxos_worker.h"
 
 using namespace rrr;
 
@@ -59,6 +60,12 @@ static_assert(!std::is_base_of_v<Marshallable, janus::TpcBatchCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::ReplicatedDBCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::EmptyGraph>);
 static_assert(!std::is_base_of_v<Marshallable, janus::RccGraph>);
+static_assert(!std::is_base_of_v<Marshallable, janus::BulkPrepareLog>);
+static_assert(!std::is_base_of_v<Marshallable, janus::PaxosPrepCmd>);
+static_assert(!std::is_base_of_v<Marshallable, janus::HeartBeatLog>);
+static_assert(!std::is_base_of_v<Marshallable, janus::SyncLogRequest>);
+static_assert(!std::is_base_of_v<Marshallable, janus::SyncLogResponse>);
+static_assert(!std::is_base_of_v<Marshallable, janus::SyncNoOpRequest>);
 
 class TestMarshallable : public Marshallable {
  public:
@@ -102,6 +109,18 @@ void EnsureTypedOnlyPayloadInitializer() {
     return true;
   }();
   (void)initialized;
+}
+
+template <typename T>
+std::shared_ptr<T> RoundTripTypedDeputyPayload(const std::shared_ptr<T>& src) {
+  MarshallDeputy outgoing(src);
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+
+  return marshallable_cast<T>(incoming);
 }
 
 std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
@@ -490,4 +509,100 @@ TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesTypedAdapter) {
   auto decoded = marshallable_cast<janus::RccGraph>(incoming);
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded->size(), 0u);
+}
+
+TEST(MarshallableProxyFacadeTest,
+     PaxosControlPayloadsUseTypedAdapterConstructionPath) {
+  auto bulk_prepare = std::make_shared<janus::BulkPrepareLog>();
+  auto prep_cmd = std::make_shared<janus::PaxosPrepCmd>();
+  auto heartbeat = std::make_shared<janus::HeartBeatLog>();
+  auto sync_req = std::make_shared<janus::SyncLogRequest>();
+  auto sync_resp = std::make_shared<janus::SyncLogResponse>();
+  auto sync_noop = std::make_shared<janus::SyncNoOpRequest>();
+
+  EXPECT_EQ(wrap_typed_marshallable(bulk_prepare)->kind(),
+            MarshallDeputy::CMD_BLK_PREP_PXS);
+  EXPECT_EQ(wrap_typed_marshallable(prep_cmd)->kind(),
+            MarshallDeputy::CMD_PREP_PXS);
+  EXPECT_EQ(wrap_typed_marshallable(heartbeat)->kind(),
+            MarshallDeputy::CMD_HRTBT_PXS);
+  EXPECT_EQ(wrap_typed_marshallable(sync_req)->kind(),
+            MarshallDeputy::CMD_SYNCREQ_PXS);
+  EXPECT_EQ(wrap_typed_marshallable(sync_resp)->kind(),
+            MarshallDeputy::CMD_SYNCRESP_PXS);
+  EXPECT_EQ(wrap_typed_marshallable(sync_noop)->kind(),
+            MarshallDeputy::CMD_SYNCNOOP_PXS);
+}
+
+TEST(MarshallableProxyFacadeTest,
+     PaxosControlPayloadsRoundTripViaTypedAdapters) {
+  EnsureTestMarshallableInitializer();
+
+  auto bulk_prepare = std::make_shared<janus::BulkPrepareLog>();
+  bulk_prepare->min_prepared_slots = {{0u, 10}, {1u, 20}};
+  bulk_prepare->leader_id = 3;
+  bulk_prepare->epoch = 7;
+  auto bulk_prepare_decoded = RoundTripTypedDeputyPayload(bulk_prepare);
+  ASSERT_NE(bulk_prepare_decoded, nullptr);
+  EXPECT_EQ(bulk_prepare_decoded->leader_id, 3u);
+  EXPECT_EQ(bulk_prepare_decoded->epoch, 7);
+  ASSERT_EQ(bulk_prepare_decoded->min_prepared_slots.size(), 2u);
+  EXPECT_EQ(bulk_prepare_decoded->min_prepared_slots[1].second, 20);
+
+  auto prep_cmd = std::make_shared<janus::PaxosPrepCmd>();
+  prep_cmd->slots = {5, 6};
+  prep_cmd->ballots = {11, 12};
+  prep_cmd->leader_id = 2;
+  auto prep_cmd_decoded = RoundTripTypedDeputyPayload(prep_cmd);
+  ASSERT_NE(prep_cmd_decoded, nullptr);
+  EXPECT_EQ(prep_cmd_decoded->leader_id, 2);
+  ASSERT_EQ(prep_cmd_decoded->slots.size(), 2u);
+  ASSERT_EQ(prep_cmd_decoded->ballots.size(), 2u);
+  EXPECT_EQ(prep_cmd_decoded->slots[0], 5);
+  EXPECT_EQ(prep_cmd_decoded->ballots[1], 12);
+
+  auto heartbeat = std::make_shared<janus::HeartBeatLog>();
+  heartbeat->leader_id = 9;
+  heartbeat->epoch = 13;
+  auto heartbeat_decoded = RoundTripTypedDeputyPayload(heartbeat);
+  ASSERT_NE(heartbeat_decoded, nullptr);
+  EXPECT_EQ(heartbeat_decoded->leader_id, 9u);
+  EXPECT_EQ(heartbeat_decoded->epoch, 13);
+
+  auto sync_req = std::make_shared<janus::SyncLogRequest>();
+  sync_req->leader_id = 1;
+  sync_req->epoch = 44;
+  sync_req->sync_commit_slot = {100, 120, 140};
+  auto sync_req_decoded = RoundTripTypedDeputyPayload(sync_req);
+  ASSERT_NE(sync_req_decoded, nullptr);
+  EXPECT_EQ(sync_req_decoded->leader_id, 1);
+  EXPECT_EQ(sync_req_decoded->epoch, 44);
+  ASSERT_EQ(sync_req_decoded->sync_commit_slot.size(), 3u);
+  EXPECT_EQ(sync_req_decoded->sync_commit_slot[2], 140);
+
+  auto sync_resp = std::make_shared<janus::SyncLogResponse>();
+  sync_resp->sync_data.push_back(
+      std::make_shared<MarshallDeputy>(std::make_shared<TestMarshallable>(55)));
+  sync_resp->missing_slots = {{4, 8}, {15}};
+  auto sync_resp_decoded = RoundTripTypedDeputyPayload(sync_resp);
+  ASSERT_NE(sync_resp_decoded, nullptr);
+  ASSERT_EQ(sync_resp_decoded->sync_data.size(), 1u);
+  auto nested =
+      marshallable_cast<TestMarshallable>(sync_resp_decoded->sync_data[0].get());
+  ASSERT_NE(nested, nullptr);
+  EXPECT_EQ(nested->value, 55);
+  ASSERT_EQ(sync_resp_decoded->missing_slots.size(), 2u);
+  ASSERT_EQ(sync_resp_decoded->missing_slots[0].size(), 2u);
+  EXPECT_EQ(sync_resp_decoded->missing_slots[0][1], 8);
+
+  auto sync_noop = std::make_shared<janus::SyncNoOpRequest>();
+  sync_noop->leader_id = 6;
+  sync_noop->epoch = 77;
+  sync_noop->sync_slots = {21, 22};
+  auto sync_noop_decoded = RoundTripTypedDeputyPayload(sync_noop);
+  ASSERT_NE(sync_noop_decoded, nullptr);
+  EXPECT_EQ(sync_noop_decoded->leader_id, 6);
+  EXPECT_EQ(sync_noop_decoded->epoch, 77);
+  ASSERT_EQ(sync_noop_decoded->sync_slots.size(), 2u);
+  EXPECT_EQ(sync_noop_decoded->sync_slots[1], 22);
 }

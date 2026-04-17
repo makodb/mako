@@ -289,7 +289,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   prep_cmd->ballots = cmd_temp1->ballots;
   prep_cmd->leader_id = cmd_temp1->leader_id;
 
-  auto prep_cmd_marshallable = dynamic_pointer_cast<Marshallable>(prep_cmd);
+  auto prep_cmd_marshallable = wrap_typed_marshallable(prep_cmd);
 
   //std::vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md;
   auto ess_cc = es_cc;
@@ -398,7 +398,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     commit_cmd->ballots = cmd_temp1->ballots;
     commit_cmd->leader_id = cmd_temp1->leader_id;
 
-    auto commit_cmd_marshallable = dynamic_pointer_cast<Marshallable>(commit_cmd);
+    auto commit_cmd_marshallable = wrap_typed_marshallable(commit_cmd);
 
     auto ess_cc = es_cc;
     // Log_info("About to call BroadcastBulkDecide from Commit()");

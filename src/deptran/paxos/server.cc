@@ -124,7 +124,8 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
                                rusty::Function<void()> cb) {
 
 
-  auto bp_log = dynamic_pointer_cast<BulkPrepareLog>(cmd);
+  auto bp_log = marshallable_cast<BulkPrepareLog>(cmd);
+  verify(bp_log != nullptr);
   es->state_lock();
   if(bp_log->epoch < es->cur_epoch){
     //es->state_unlock();
@@ -208,7 +209,8 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
                               i32* valid,
                               rusty::Function<void()> cb){
 
-  auto hb_log = dynamic_pointer_cast<HeartBeatLog>(cmd);
+  auto hb_log = marshallable_cast<HeartBeatLog>(cmd);
+  verify(hb_log != nullptr);
   es->state_lock();
   if(hb_log->epoch < es->cur_epoch){
     es->state_unlock();
@@ -267,7 +269,8 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                                shared_ptr<BulkPaxosCmd> ret_cmd,
                                rusty::Function<void()> cb){
   //pthread_setname_np(pthread_self(), "Follower server thread");
-  auto bcmd = dynamic_pointer_cast<PaxosPrepCmd>(cmd);
+  auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd);
+  verify(bcmd != nullptr);
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
@@ -359,7 +362,8 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
   //    }
   // }
   //cb();
-  auto bcmd = dynamic_pointer_cast<SyncLogRequest>(cmd);
+  auto bcmd = marshallable_cast<SyncLogRequest>(cmd);
+  verify(bcmd != nullptr);
   es->state_lock();
   if(bcmd->epoch < es->cur_epoch){
     //es->state_unlock();
@@ -595,7 +599,8 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
-  auto bcmd = dynamic_pointer_cast<PaxosPrepCmd>(cmd);
+  auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd);
+  verify(bcmd != nullptr);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
@@ -709,7 +714,8 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                rusty::Function<void()> cb){
 
-  auto bcmd = dynamic_pointer_cast<SyncNoOpRequest>(cmd);
+  auto bcmd = marshallable_cast<SyncNoOpRequest>(cmd);
+  verify(bcmd != nullptr);
   *valid = 1;
   ballot_t cur_b = bcmd->epoch;
   int req_leader = bcmd->leader_id;

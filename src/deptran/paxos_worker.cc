@@ -324,7 +324,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
 
 // marker:ansh
 int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
-    auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
+  auto sp_m = wrap_typed_marshallable(bp_log);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
   coord->par_id_ = site_info_->partition_id_;
@@ -351,7 +351,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
 // marker:ansh
 int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
   void(0);
-  auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
+  auto sp_m = wrap_typed_marshallable(hb_log);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
   coord->par_id_ = site_info_->partition_id_;
@@ -368,7 +368,7 @@ int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
 }
 
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
-  auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
+  auto sp_m = wrap_typed_marshallable(sync_log_req);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
   coord->par_id_ = site_info_->partition_id_;
@@ -460,7 +460,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
 }
 
 int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
-  auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
+  auto sp_m = wrap_typed_marshallable(sync_log_req);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
   coord->par_id_ = site_info_->partition_id_;
