@@ -170,7 +170,7 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
   if (!db_ || !raft_) return false;
 
   auto cmd = ReplicatedDBCommand::CreatePut(key, value);
-  auto cmd_base = std::dynamic_pointer_cast<Marshallable>(cmd);
+  auto cmd_base = wrap_typed_marshallable(cmd);
 
   uint64_t index = 0, term = 0;
   bool is_leader = raft_->Start(cmd_base, &index, &term);
@@ -199,7 +199,7 @@ bool ReplicatedDB::Delete(const std::string& key) {
   if (!db_ || !raft_) return false;
 
   auto cmd = ReplicatedDBCommand::CreateDelete(key);
-  auto cmd_base = std::dynamic_pointer_cast<Marshallable>(cmd);
+  auto cmd_base = wrap_typed_marshallable(cmd);
 
   uint64_t index = 0, term = 0;
   bool is_leader = raft_->Start(cmd_base, &index, &term);
@@ -227,7 +227,7 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
   if (!db_ || !raft_ || ops.empty()) return false;
 
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
-  auto cmd_base = std::dynamic_pointer_cast<Marshallable>(cmd);
+  auto cmd_base = wrap_typed_marshallable(cmd);
 
   uint64_t index = 0, term = 0;
   bool is_leader = raft_->Start(cmd_base, &index, &term);
@@ -310,9 +310,9 @@ void ReplicatedDB::ApplyEntry(int slot, shared_ptr<Marshallable> cmd) {
     return;
   }
 
-  auto db_cmd = std::dynamic_pointer_cast<ReplicatedDBCommand>(cmd);
+  auto db_cmd = marshallable_cast<ReplicatedDBCommand>(cmd);
   if (!db_cmd) {
-    Log_error("[ReplicatedDB] Failed to cast Marshallable to ReplicatedDBCommand at index %lu", index);
+    Log_error("[ReplicatedDB] Failed to cast payload to ReplicatedDBCommand at index %lu", index);
     last_applied_index_ = index;
     PersistLastAppliedIndex();
     return;

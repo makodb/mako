@@ -4,6 +4,7 @@
 #include "misc/marshallable_proxy.h"
 #include "deptran/classic/tpc_command.h"
 #include "deptran/procedure.h"
+#include "deptran/raft/replicated_db.h"
 
 using namespace rrr;
 
@@ -54,6 +55,7 @@ static_assert(!std::is_base_of_v<Marshallable, janus::TpcCommitCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcEmptyCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcNoopCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcBatchCommand>);
+static_assert(!std::is_base_of_v<Marshallable, janus::ReplicatedDBCommand>);
 
 class TestMarshallable : public Marshallable {
  public:
@@ -428,4 +430,26 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   MarshallDeputy noop_deputy(noop_cmd);
   EXPECT_EQ(noop_deputy.kind_, MarshallDeputy::CMD_NOOP);
   ASSERT_NE(marshallable_cast<janus::TpcNoopCommand>(noop_deputy), nullptr);
+}
+
+TEST(MarshallableProxyFacadeTest,
+     ReplicatedDbCommandRoundTripUsesTypedAdapter) {
+  auto put_cmd = janus::ReplicatedDBCommand::CreatePut("k1", "v1");
+  ASSERT_NE(put_cmd, nullptr);
+
+  MarshallDeputy outgoing(put_cmd);
+  EXPECT_EQ(outgoing.kind_, MarshallDeputy::CMD_REPLICATED_DB);
+
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+  EXPECT_EQ(incoming.kind_, MarshallDeputy::CMD_REPLICATED_DB);
+
+  auto decoded = marshallable_cast<janus::ReplicatedDBCommand>(incoming);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->op_, janus::ReplicatedDBOp::PUT);
+  EXPECT_EQ(decoded->key_, "k1");
+  EXPECT_EQ(decoded->value_, "v1");
 }

@@ -26,16 +26,15 @@ struct KVOperation {
     std::string value;  // empty for DELETE
 };
 
-// @unsafe - Inherits from non-borrow-checked Marshallable
-class ReplicatedDBCommand : public Marshallable {
+class ReplicatedDBCommand {
 public:
+    static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_REPLICATED_DB;
     ReplicatedDBOp op_ = ReplicatedDBOp::PUT;
     std::string key_;
     std::string value_;
     std::vector<KVOperation> batch_ops_;  // Only used when op_ == BATCH
 
-    // @unsafe - Calls Marshallable constructor (non-borrow-checked)
-    ReplicatedDBCommand() : Marshallable(MarshallDeputy::CMD_REPLICATED_DB) {}
+    ReplicatedDBCommand() = default;
 
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
     static shared_ptr<ReplicatedDBCommand> CreatePut(const std::string& key, const std::string& value);
@@ -44,10 +43,8 @@ public:
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
     static shared_ptr<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
 
-    // @unsafe - Marshallable interface (non-borrow-checked I/O)
-    Marshal& to_marshal(Marshal& m) const override;
-    // @unsafe - Marshallable interface (non-borrow-checked I/O)
-    Marshal& from_marshal(Marshal& m) override;
+    Marshal& to_marshal(Marshal& m) const;
+    Marshal& from_marshal(Marshal& m);
 };
 
 /**
@@ -153,3 +150,15 @@ private:
 };
 
 } // namespace janus
+
+namespace rrr {
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::ReplicatedDBCommand> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::ReplicatedDBCommand,
+                               MarshallDeputy::CMD_REPLICATED_DB>;
+};
+
+}  // namespace rrr

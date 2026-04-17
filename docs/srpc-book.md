@@ -877,9 +877,9 @@ struct TypedMarshallableAdapterTraits<MyTypedData> {
 
 In-tree deptran payloads (`VecPieceData`, `VecRecData`, `ViewData`,
 `KeyCmdBatchData`, `TpcPrepareCommand`, `TpcCommitCommand`,
-`TpcEmptyCommand`, `TpcNoopCommand`, `TpcBatchCommand`) use this
-trait-backed typed-adapter path and no longer inherit `Marshallable`
-directly.
+`TpcEmptyCommand`, `TpcNoopCommand`, `TpcBatchCommand`,
+`ReplicatedDBCommand`) use this trait-backed typed-adapter path and no
+longer inherit `Marshallable` directly.
 
 For `MarshallDeputy` round-trip support, register a typed initializer (no raw
 pointer factory needed). This works for both direct `Marshallable` classes and
@@ -910,9 +910,9 @@ MarshallDeputy* maybe_null = nullptr;
 auto empty = marshallable_cast<ViewData>(maybe_null); // nullptr-safe
 ```
 
-For classic typed payloads stored behind `shared_ptr<Marshallable>` (for
-example `TpcCommitCommand::cmd_`), use `marshallable_cast<T>(...)` instead of
-raw `dynamic_pointer_cast<T>(...)`.
+For typed payloads stored behind `shared_ptr<Marshallable>` (for example
+`TpcCommitCommand::cmd_` or raft replicated-db log commands), use
+`marshallable_cast<T>(...)` instead of raw `dynamic_pointer_cast<T>(...)`.
 
 ### Bookmarks
 
