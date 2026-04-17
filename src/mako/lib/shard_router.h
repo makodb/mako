@@ -23,7 +23,7 @@ namespace mako {
 
 // Number of tables pre-allocated per shard (for table-ID-based routing fallback)
 // This must match NUM_TABLES_PER_SHARD in lib/common.h
-constexpr int SHARD_ROUTER_NUM_TABLES_PER_SHARD = 200;
+constexpr int SHARD_ROUTER_NUM_TABLES_PER_SHARD = 512;
 
 /**
  * @brief Compute the shard index for a given table and key.

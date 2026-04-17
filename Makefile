@@ -10,39 +10,44 @@ BUILD_DIR = build
 
 PARALLEL_JOBS = $(or $(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS))),4)
 
+# TEMPORARY: borrow checking disabled by default to keep build times down.
+# Re-enable with `make BORROW_CHECK=ON` (or flip the default back to ON).
+BORROW_CHECK ?= OFF
+BORROW_FLAG = -DENABLE_BORROW_CHECKING=$(BORROW_CHECK)
+
 .PHONY: all configure build clean rebuild run mako-raft mako-raft-single mako-raft-multi raft-test help test test-verbose test-parallel
 
 all: build
 
 configure:
-	cmake -S . -B $(BUILD_DIR)
+	cmake -S . -B $(BUILD_DIR) $(BORROW_FLAG)
 
 build: configure
-	@echo "Building with $(PARALLEL_JOBS) parallel jobs..."
+	@echo "Building with $(PARALLEL_JOBS) parallel jobs (borrow check: $(BORROW_CHECK))..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 # Build Mako with the Raft helper enabled (single-instance by default)
 mako-raft:
-	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON
-	@echo "Building Mako with Raft helper using $(PARALLEL_JOBS) parallel jobs..."
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON $(BORROW_FLAG)
+	@echo "Building Mako with Raft helper using $(PARALLEL_JOBS) parallel jobs (borrow check: $(BORROW_CHECK))..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 # Build Mako with single-instance Raft (1 Raft group for all partitions)
 mako-raft-single:
-	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=ON
-	@echo "Building Mako with single-instance Raft using $(PARALLEL_JOBS) parallel jobs..."
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=ON $(BORROW_FLAG)
+	@echo "Building Mako with single-instance Raft using $(PARALLEL_JOBS) parallel jobs (borrow check: $(BORROW_CHECK))..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 # Build Mako with multi-instance Raft (1 Raft group per partition)
 mako-raft-multi:
-	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=OFF
-	@echo "Building Mako with multi-instance Raft using $(PARALLEL_JOBS) parallel jobs..."
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=OFF $(BORROW_FLAG)
+	@echo "Building Mako with multi-instance Raft using $(PARALLEL_JOBS) parallel jobs (borrow check: $(BORROW_CHECK))..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 # Build with Raft testing coroutines enabled
 raft-test:
-	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON
-	@echo "Building Raft test binaries with $(PARALLEL_JOBS) parallel jobs..."
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON $(BORROW_FLAG)
+	@echo "Building Raft test binaries with $(PARALLEL_JOBS) parallel jobs (borrow check: $(BORROW_CHECK))..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 clean:

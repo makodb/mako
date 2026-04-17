@@ -20,7 +20,8 @@ else
 fi
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR" || exit 1
 BENCH_ROOT="${SCRIPT_DIR}/results/benchmarks/paxos"
 RESULTS_DIR="${BENCH_ROOT}/batch_sweep_${TIMESTAMP}"
 LOGS_DIR="${RESULTS_DIR}/logs"

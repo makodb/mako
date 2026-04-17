@@ -47,7 +47,7 @@ namespace mako
     };
 
     const int ADVANCER_MARKER_NUM = 2;
-    const int NUM_TABLES_PER_SHARD = 200; // for pre-allocated
+    const int NUM_TABLES_PER_SHARD = 512; // for pre-allocated (was 200; raised to support >22 warehouses/shard, e.g. 24w TPC-C needs 216)
 
   #if defined(MEGA_BENCHMARK)
     const int mega_batch_size = 100; // no more than max_batch_size?

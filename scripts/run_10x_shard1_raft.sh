@@ -1,30 +1,27 @@
 #!/bin/bash
 
-# Run shard1Replication (Paxos) 10 times and produce a detailed benchmark report.
-# Usage: bash run_10x_shard1_paxos.sh [num_runs]
+# Run shard1ReplicationRaft 10 times and produce a detailed benchmark report.
+# Usage: bash run_10x_shard1_raft.sh [num_runs]
 #   num_runs: number of benchmark runs (default: 10)
-#
-# NOTE: This script mirrors run_10x_shard1_raft.sh exactly in structure,
-# metrics, and statistics — only the CI command and log filenames differ.
-# This ensures Paxos vs Raft results are directly comparable in the thesis.
 
 set -o pipefail
 
 NUM_RUNS=${1:-10}
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BENCH_ROOT="${SCRIPT_DIR}/results/benchmarks/paxos"
-RESULTS_DIR="${BENCH_ROOT}/shard1_paxos_${TIMESTAMP}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+BENCH_ROOT="${SCRIPT_DIR}/results/benchmarks/raft"
+RESULTS_DIR="${BENCH_ROOT}/shard1_raft_${TIMESTAMP}"
 REPORT_FILE="${RESULTS_DIR}/report.txt"
 CSV_FILE="${RESULTS_DIR}/results.csv"
-LATEST_LINK="${BENCH_ROOT}/shard1_paxos_latest"
+LATEST_LINK="${BENCH_ROOT}/shard1_raft_latest"
 
-# ci.sh shard1Replication calls examples/test_1shard_replication.sh which produces:
-# test_1shard_replication.sh_shard0-{node}-{trd}.log in CWD
-LEADER_LOG="${SCRIPT_DIR}/test_1shard_replication.sh_shard0-localhost-6.log"
-FOLLOWER_LOG="${SCRIPT_DIR}/test_1shard_replication.sh_shard0-p1-6.log"
-FOLLOWER_P2_LOG="${SCRIPT_DIR}/test_1shard_replication.sh_shard0-p2-6.log"
-LEARNER_LOG="${SCRIPT_DIR}/test_1shard_replication.sh_shard0-learner-6.log"
+# ci_mako_raft.sh's test script uses bash/shard_raft.sh and produces logs
+# named: test_1shard_replication_raft.sh_shard0-{node}-{trd}.log
+# These are written in the CWD (repo root), not in the test script's directory.
+LEADER_LOG="${SCRIPT_DIR}/test_1shard_replication_raft.sh_shard0-localhost-6.log"
+FOLLOWER_LOG="${SCRIPT_DIR}/test_1shard_replication_raft.sh_shard0-p1-6.log"
+FOLLOWER_P2_LOG="${SCRIPT_DIR}/test_1shard_replication_raft.sh_shard0-p2-6.log"
 
 mkdir -p "$RESULTS_DIR"
 
@@ -32,8 +29,8 @@ mkdir -p "$RESULTS_DIR"
 ln -sfn "$RESULTS_DIR" "$LATEST_LINK"
 
 echo "============================================================"
-echo "  Mako Paxos Benchmark"
-echo "  Configuration: 1 shard, 6 threads, 4 replicas (3+learner), TPC-C"
+echo "  Mako Single-Raft Benchmark"
+echo "  Configuration: 1 shard, 6 threads, 3 replicas, TPC-C"
 echo "  Runs: $NUM_RUNS"
 echo "  Started: $(date)"
 echo "  Results: $RESULTS_DIR/"
@@ -93,23 +90,24 @@ for run in $(seq 1 "$NUM_RUNS"); do
     echo "  Run $run / $NUM_RUNS  ($(date +%H:%M:%S))"
     echo "------------------------------------------------------------"
 
-    # Clean up leftover processes
+    # Clean up leftover processes (ci_mako_raft.sh does its own cleanup too,
+    # but belt-and-suspenders for between-run hygiene)
     pkill -9 -f "build/dbtest" 2>/dev/null || true
+    pkill -9 -f "build/simpleRaft" 2>/dev/null || true
     # Wait for processes to die and ports to leave TIME_WAIT
     sleep 5
 
     # Remove stale log files so we don't accidentally read old data
-    rm -f "$LEADER_LOG" "$FOLLOWER_LOG" "$FOLLOWER_P2_LOG" "$LEARNER_LOG" 2>/dev/null
+    rm -f "$LEADER_LOG" "$FOLLOWER_LOG" "$FOLLOWER_P2_LOG" 2>/dev/null
 
-    # Run the test (Paxos)
-    bash ./ci/ci.sh shard1Replication > "${RESULTS_DIR}/run_${run}.log" 2>&1
+    # Run the test
+    bash ./ci/ci_mako_raft.sh shard1ReplicationRaft > "${RESULTS_DIR}/run_${run}.log" 2>&1
     exit_code=$?
 
     # Preserve raw logs for this run
     cp "$LEADER_LOG" "${RESULTS_DIR}/run_${run}_leader.log" 2>/dev/null || true
     cp "$FOLLOWER_LOG" "${RESULTS_DIR}/run_${run}_follower_p1.log" 2>/dev/null || true
     cp "$FOLLOWER_P2_LOG" "${RESULTS_DIR}/run_${run}_follower_p2.log" 2>/dev/null || true
-    cp "$LEARNER_LOG" "${RESULTS_DIR}/run_${run}_learner.log" 2>/dev/null || true
 
     # ---- Extract all metrics from leader log ----
     throughput=""
@@ -158,7 +156,8 @@ for run in $(seq 1 "$NUM_RUNS"); do
     disp_lat="${avg_latency:-N/A}"
     disp_replay_p1="${replay_p1:-N/A}"
 
-    # Count as successful if we got throughput data
+    # Count as successful if we got throughput data (regardless of CI exit code,
+    # which may fail on the -nan abort ratio bug)
     if [ -n "$throughput" ]; then
         echo "    Throughput:  $disp_tp ops/sec"
         echo "    Avg Latency: $disp_lat ms"
@@ -192,6 +191,7 @@ for run in $(seq 1 "$NUM_RUNS"); do
 
     # Clean up between runs
     pkill -9 -f "build/dbtest" 2>/dev/null || true
+    pkill -9 -f "build/simpleRaft" 2>/dev/null || true
     sleep 5
 done
 
@@ -261,12 +261,12 @@ compute_stats() {
 # ==========================================================================
 {
 echo "============================================================"
-echo "  MAKO PAXOS BENCHMARK REPORT"
+echo "  MAKO SINGLE-RAFT BENCHMARK REPORT"
 echo "============================================================"
 echo ""
 echo "  Date:           $(date)"
 echo "  Configuration:  1 shard, 6 threads (warehouses), TPC-C"
-echo "  Replication:    Multi-Paxos (4 replicas: 3 voters + 1 learner)"
+echo "  Replication:    Raft (single instance, 3 replicas)"
 echo "  Transport:      rrr/rpc (TCP/IP)"
 echo "  Host:           $(hostname)"
 echo "  Runs:           $NUM_RUNS total ($successful_runs passed, $failed_runs failed)"
@@ -379,7 +379,6 @@ echo "  CSV data:        ${RESULTS_DIR}/results.csv"
 echo "  Run logs:        ${RESULTS_DIR}/run_*.log"
 echo "  Leader logs:     ${RESULTS_DIR}/run_*_leader.log"
 echo "  Follower logs:   ${RESULTS_DIR}/run_*_follower_p*.log"
-echo "  Learner logs:    ${RESULTS_DIR}/run_*_learner.log"
 
 } 2>&1 | tee "$REPORT_FILE"
 

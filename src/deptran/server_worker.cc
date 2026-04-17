@@ -54,9 +54,8 @@ void ServerWorker::SetupBase() {
     rep_sched_->site_id_ = site_info_->id;
     rep_sched_->rep_frame_ = rep_frame_;
 
-    // Note: RAFT_TEST_CORO mode uses RaftPersistence (src/deptran/raft/) controlled
-    // by MAKO_RAFT_PERSISTENCE env var, not the mako-dev RecoveryManager system.
-    // InitializeRecovery() is intentionally not called here.
+    // Phase 2.1: Initialize recovery for replication servers
+    InitializeRecovery(site_info_->partition_id_, site_info_->locale_id);
 
     // Start election timer after site_id_ is properly initialized
     // if (RaftServer* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {

@@ -145,7 +145,7 @@ void create_stub_servers() {
     auto* rpc_server = new rrr::Server(rusty::Some(poll_thread.clone()));
 
     // Register RaftServiceImpl pointing to the single RaftServer
-    rpc_server->reg_service(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
+    rpc_server->reg_service(rusty::make_box<RaftServiceImpl>(rep_sched));
 
     // Bind to the site's port
     int ret = rpc_server->start(bind_addr.c_str());
