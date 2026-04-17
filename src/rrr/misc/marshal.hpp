@@ -319,6 +319,7 @@ class MarshallDeputy {
       set_marshallable_state(make_initializer_state(std::move(m)));
     }
 
+    // @unsafe - Template delegates to non-borrow-checked set_marshallable
     template <typename T>
     void set_marshallable(std::shared_ptr<T> typed)
       requires (!std::is_base_of_v<rrr::Marshallable, T> &&
@@ -388,6 +389,7 @@ class MarshallDeputy {
     ~MarshallDeputy() = default;
 
   private:
+    // @unsafe - Constructs MarInitializerState with shared_ptr / proxy operations
     static MarInitializerState make_initializer_state(
         std::shared_ptr<rrr::Marshallable> m) {
       verify(m != nullptr);
@@ -399,6 +401,7 @@ class MarshallDeputy {
       return state;
     }
 
+    // @unsafe - Moves shared_ptr state into MarshallDeputy internal fields
     void set_marshallable_state(MarInitializerState state) {
       verify(sp_data_ == nullptr);
       verify(inner_sp_data_ == nullptr);
