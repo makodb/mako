@@ -119,7 +119,7 @@ src/rrr/
     reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
     request_options.hpp # Per-request configuration
-    pollable_proxy.h    # Pollable proxy facade + Arc adapters (legacy + typed)
+    pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
     utils.hpp/cpp       # RPC utilities
 
