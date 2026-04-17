@@ -68,7 +68,12 @@ class MongodbServer : public TxLogServer {
 #endif
     WAN_WAIT
     verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
-    shared_ptr<TxPieceData> cmd_content = *(((VecPieceData*)(dynamic_pointer_cast<TpcCommitCommand>(cmd)->cmd_.get()))->sp_vec_piece_data_->begin());
+    auto commit_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+    verify(commit_cmd != nullptr);
+    auto vec_piece_data = marshallable_cast<VecPieceData>(commit_cmd->cmd_);
+    verify(vec_piece_data != nullptr);
+    shared_ptr<TxPieceData> cmd_content =
+        *(vec_piece_data->sp_vec_piece_data_->begin());
     cmd_content->mongodb_finished = Reactor::create_sp_event<ThreadSafeIntEvent>();
 #ifdef MONGODB_DEBUG
     Log_info("%.2f Before MongodbRequest <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);

@@ -265,16 +265,17 @@ struct ResponseData {
   double first_seen_time_ = 0;
   bool done_{false};
   pair<int, int> append_response(const shared_ptr<Marshallable>& cmd) {
-    VecPieceData *vecPiece;
+    shared_ptr<VecPieceData> vec_piece;
     if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) { // original through tx svr
       shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-      vecPiece = (VecPieceData*)(tpc_cmd->cmd_.get());
+      vec_piece = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
     } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) { // jetpack broadcast
-      vecPiece = dynamic_pointer_cast<VecPieceData>(cmd).get();
+      vec_piece = marshallable_cast<VecPieceData>(cmd);
     } else {
       verify(0);
     }
-    shared_ptr<CmdData> md = vecPiece->sp_vec_piece_data_->at(0);
+    verify(vec_piece != nullptr);
+    shared_ptr<CmdData> md = vec_piece->sp_vec_piece_data_->at(0);
     pair<int, int> cmd_id = {md->client_id_, md->cmd_id_in_client_};
     responses_[cmd_id].push_back(cmd);
     accept_count_++;

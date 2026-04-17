@@ -14,7 +14,7 @@ void SchedulerClassic::MergeCommands(vector<shared_ptr<TxPieceData>>& ops,
                                      shared_ptr<Marshallable> cmd2) {
 
   verify(0);
-//  auto& sp_v2 = dynamic_pointer_cast<VecPieceData>(cmd2)->sp_vec_piece_data_;
+//  auto& sp_v2 = marshallable_cast<VecPieceData>(cmd2)->sp_vec_piece_data_;
 //  verify(sp_v2);
 //  for (auto& cmd: *sp_v2) {
 //    verify(std::all_of(sp_v1->begin(), sp_v1->end(), [&cmd] (TxPieceData& d) {
@@ -90,8 +90,9 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
   Log_info("cmd<%d, %d> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
 #endif
   
-  auto sp_vec_piece =
-      dynamic_pointer_cast<VecPieceData>(cmd)->sp_vec_piece_data_;
+  auto vec_piece_data = marshallable_cast<VecPieceData>(cmd);
+  verify(vec_piece_data != nullptr);
+  auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
   verify(sp_vec_piece);
   // auto tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(cmd_id));
   auto tx = dynamic_pointer_cast<TxClassic>(GetTx(cmd_id));
@@ -114,7 +115,8 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
     tx->cmd_ = cmd;
   } else if (tx->cmd_ != cmd) {
     auto present_cmd =
-        dynamic_pointer_cast<VecPieceData>(tx->cmd_)->sp_vec_piece_data_;
+        marshallable_cast<VecPieceData>(tx->cmd_)->sp_vec_piece_data_;
+    verify(present_cmd);
     for (auto& sp_piece_data : *sp_vec_piece) {
       present_cmd->push_back(sp_piece_data);
     }
@@ -248,7 +250,9 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
     shared_ptr<Coordinator> coo{CreateRepCoord(dep_id.id)};
     coo->svr_workers_g = svr_workers_g;
 
-    double client_ms = ((VecPieceData*)(cmd->cmd_.get()))->time_sent_from_client_;
+    auto commit_vec_piece = marshallable_cast<VecPieceData>(cmd->cmd_);
+    verify(commit_vec_piece != nullptr);
+    double client_ms = commit_vec_piece->time_sent_from_client_;
     struct timeval tp;
     gettimeofday(&tp, NULL);
     double start_ms = tp.tv_sec * 1000 + tp.tv_usec / 1000.0;

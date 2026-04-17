@@ -73,7 +73,12 @@ class MongodbConnectionThreadPool {
       durations_[thread_id]->append(duration.count());
 
       // finished_queue_.push(cmd);
-      shared_ptr<TxPieceData> cmd_content = *(((VecPieceData*)(dynamic_pointer_cast<TpcCommitCommand>(cmd)->cmd_.get()))->sp_vec_piece_data_->begin());
+      auto commit_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+      verify(commit_cmd != nullptr);
+      auto vec_piece_data = marshallable_cast<VecPieceData>(commit_cmd->cmd_);
+      verify(vec_piece_data != nullptr);
+      shared_ptr<TxPieceData> cmd_content =
+          *(vec_piece_data->sp_vec_piece_data_->begin());
 #ifdef MONGODB_DEBUG
       Log_info("Before cmd_content->mongodb_finished->set(1);");
 #endif

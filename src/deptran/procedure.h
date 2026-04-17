@@ -153,17 +153,15 @@ typedef SimpleCommand TxPieceData;
 
 typedef map<parid_t, vector<shared_ptr<SimpleCommand>>> ReadyPiecesData;
 
-class VecPieceData : public Marshallable {
+class VecPieceData {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece_data_{};
   double time_sent_from_client_ = -1e9; // <0 means null, unit is ms
   bool_t is_recovery_command_ = false; // Flag to indicate this is a recovery command
-  VecPieceData() : Marshallable(MarshallDeputy::CMD_VEC_PIECE) {
+  VecPieceData() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
     verify(sp_vec_piece_data_);
     m << (int32_t) sp_vec_piece_data_->size();
     for (auto sp : *sp_vec_piece_data_) {
@@ -175,7 +173,7 @@ class VecPieceData : public Marshallable {
     return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     verify(!sp_vec_piece_data_);
     sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<TxPieceData>>>();
     int32_t sz;
@@ -192,15 +190,13 @@ class VecPieceData : public Marshallable {
   }
 };
 
-class VecRecData : public Marshallable {
+class VecRecData {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<key_t>> key_data_{};
-  VecRecData() : Marshallable(MarshallDeputy::CMD_REC_VEC) {
+  VecRecData() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
     verify(key_data_);
     m << (int32_t) key_data_->size();
     for (const key_t& k: *key_data_) {
@@ -210,7 +206,7 @@ class VecRecData : public Marshallable {
     return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     verify(!key_data_);
     key_data_ = std::make_shared<vector<key_t>>();
     int32_t sz;
@@ -225,22 +221,22 @@ class VecRecData : public Marshallable {
   }
 };
 
-class ViewData : public Marshallable {
+class ViewData {
  public:
   View view_;
   parid_t partition_id_ = 0; // partition id for which this view applies
   
-  ViewData() : Marshallable(MarshallDeputy::CMD_VIEW_DATA) {}
+  ViewData() = default;
   
-  ViewData(const View& view) : Marshallable(MarshallDeputy::CMD_VIEW_DATA), view_(view) {}
+  explicit ViewData(const View& view) : view_(view) {}
   
-  ViewData(const View& view, parid_t pid) : Marshallable(MarshallDeputy::CMD_VIEW_DATA), view_(view), partition_id_(pid) {}
+  ViewData(const View& view, parid_t pid) : view_(view), partition_id_(pid) {}
   
   // Get the embedded View
   const View& GetView() const { return view_; }
   View& GetView() { return view_; }
   
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
     m << view_.n_;
     m << view_.view_id_;
     m << view_.timestamp_;
@@ -252,7 +248,7 @@ class ViewData : public Marshallable {
     return m;
   }
   
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     m >> view_.n_;
     m >> view_.view_id_;
     m >> view_.timestamp_;
@@ -275,12 +271,12 @@ class ViewData : public Marshallable {
   }
 };
 
-class KeyCmdBatchData : public Marshallable {
+class KeyCmdBatchData {
  public:
   std::vector<key_t> keys_;
   std::vector<shared_ptr<Marshallable>> commands_;
 
-  KeyCmdBatchData() : Marshallable(MarshallDeputy::CMD_KEY_CMD_BATCH) {}
+  KeyCmdBatchData() = default;
 
   void AddEntry(key_t key, const shared_ptr<Marshallable>& cmd) {
     if (!cmd) {
@@ -305,7 +301,7 @@ class KeyCmdBatchData : public Marshallable {
     return commands_[idx];
   }
 
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
     verify(keys_.size() == commands_.size());
     int32_t sz = commands_.size();
     m << sz;
@@ -318,7 +314,7 @@ class KeyCmdBatchData : public Marshallable {
     return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
     int32_t sz = 0;
     m >> sz;
     keys_.resize(sz);
@@ -462,3 +458,39 @@ class TxData: public CmdData {
 };
 
 } // namespace rcc
+
+namespace rrr {
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::VecPieceData> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::VecPieceData,
+                               MarshallDeputy::CMD_VEC_PIECE>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::VecRecData> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::VecRecData,
+                               MarshallDeputy::CMD_REC_VEC>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::ViewData> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::ViewData,
+                               MarshallDeputy::CMD_VIEW_DATA>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::KeyCmdBatchData> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::KeyCmdBatchData,
+                               MarshallDeputy::CMD_KEY_CMD_BATCH>;
+};
+
+}  // namespace rrr

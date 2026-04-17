@@ -635,7 +635,9 @@ class RaftServer : public TxLogServer {
 #ifndef RAFT_TEST_CORO
       if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
         auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-        auto sp_vec_piece = dynamic_pointer_cast<VecPieceData>(p_cmd->cmd_)->sp_vec_piece_data_;
+        auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
+        verify(vec_piece_data != nullptr);
+        auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
 
         // Check if this is Mako data (STR values) vs Janus data (I32 values)
         bool is_mako_data = false;

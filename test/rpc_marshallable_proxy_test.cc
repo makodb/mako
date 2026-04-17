@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "rrr.hpp"
 #include "misc/marshallable_proxy.h"
+#include "deptran/procedure.h"
 
 using namespace rrr;
 
@@ -251,4 +252,79 @@ TEST(MarshallableProxyFacadeTest, TypedPayloadInitializerStateContainsAdapter) {
           state.marshallable);
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ((*state.proxy)->inner(), state.marshallable);
+}
+
+TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataUsesTypedAdapterPath) {
+  auto payload = std::make_shared<janus::VecPieceData>();
+  payload->sp_vec_piece_data_ =
+      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
+  payload->time_sent_from_client_ = 42.5;
+  payload->is_recovery_command_ = 1;
+
+  auto wrapped = wrap_typed_marshallable(payload);
+  ASSERT_NE(wrapped, nullptr);
+  EXPECT_EQ(wrapped->kind(), MarshallDeputy::CMD_VEC_PIECE);
+
+  MarshallDeputy deputy(payload);
+  EXPECT_EQ(deputy.kind_, MarshallDeputy::CMD_VEC_PIECE);
+  auto decoded = marshallable_cast<janus::VecPieceData>(deputy);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded, payload);
+  EXPECT_DOUBLE_EQ(decoded->time_sent_from_client_, 42.5);
+  EXPECT_EQ(decoded->is_recovery_command_, 1);
+}
+
+TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
+  janus::ViewData src;
+  src.view_.n_ = 3;
+  src.view_.view_id_ = 9;
+  src.view_.timestamp_ = 12345;
+  src.view_.leaders_ = {1, 2, 1};
+  src.partition_id_ = 7;
+
+  Marshal m;
+  src.to_marshal(m);
+
+  janus::ViewData dst;
+  dst.from_marshal(m);
+
+  EXPECT_EQ(dst.view_.n_, 3);
+  EXPECT_EQ(dst.view_.view_id_, 9);
+  EXPECT_EQ(dst.view_.timestamp_, 12345);
+  ASSERT_EQ(dst.view_.leaders_.size(), 3u);
+  EXPECT_EQ(dst.view_.leaders_[0], 1);
+  EXPECT_EQ(dst.view_.leaders_[1], 2);
+  EXPECT_EQ(dst.view_.leaders_[2], 1);
+  EXPECT_EQ(dst.partition_id_, 7);
+}
+
+TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
+  auto vec_rec = std::make_shared<janus::VecRecData>();
+  vec_rec->key_data_ = std::make_shared<std::vector<key_t>>();
+  vec_rec->key_data_->push_back(11);
+  vec_rec->key_data_->push_back(12);
+
+  MarshallDeputy vec_rec_deputy(vec_rec);
+  EXPECT_EQ(vec_rec_deputy.kind_, MarshallDeputy::CMD_REC_VEC);
+  auto decoded_vec_rec = marshallable_cast<janus::VecRecData>(vec_rec_deputy);
+  ASSERT_NE(decoded_vec_rec, nullptr);
+  ASSERT_NE(decoded_vec_rec->key_data_, nullptr);
+  ASSERT_EQ(decoded_vec_rec->key_data_->size(), 2u);
+  EXPECT_EQ((*decoded_vec_rec->key_data_)[0], 11);
+  EXPECT_EQ((*decoded_vec_rec->key_data_)[1], 12);
+
+  auto batch = std::make_shared<janus::KeyCmdBatchData>();
+  auto nested = std::make_shared<TestMarshallable>(77);
+  batch->AddEntry(1001, nested);
+
+  MarshallDeputy batch_deputy(batch);
+  EXPECT_EQ(batch_deputy.kind_, MarshallDeputy::CMD_KEY_CMD_BATCH);
+  auto decoded_batch = marshallable_cast<janus::KeyCmdBatchData>(batch_deputy);
+  ASSERT_NE(decoded_batch, nullptr);
+  ASSERT_EQ(decoded_batch->Size(), 1u);
+  EXPECT_EQ(decoded_batch->GetKey(0), 1001);
+  auto nested_decoded =
+      marshallable_cast<TestMarshallable>(decoded_batch->GetCommand(0));
+  ASSERT_NE(nested_decoded, nullptr);
+  EXPECT_EQ(nested_decoded->value, 77);
 }

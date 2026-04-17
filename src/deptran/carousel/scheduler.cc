@@ -125,8 +125,9 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
   }
   // validate write set.
   verify(tx->cmd_ != nullptr);
-  auto& txn_cmds =
-      dynamic_pointer_cast<VecPieceData>(tx->cmd_)->sp_vec_piece_data_;  
+  auto vec_piece_data = marshallable_cast<VecPieceData>(tx->cmd_);
+  verify(vec_piece_data != nullptr);
+  auto& txn_cmds = vec_piece_data->sp_vec_piece_data_;
   auto ver_write = ((*txn_cmds)[0])->timestamp_;
   for (auto& pair1 : tx->write_bufs_) {
     Row* r = pair1.first;

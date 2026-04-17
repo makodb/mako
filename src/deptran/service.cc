@@ -328,7 +328,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   // Check if this is a recovery command
   bool is_recovery = false;
   if (sp && sp->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    auto vec_piece_data = dynamic_pointer_cast<VecPieceData>(sp);
+    auto vec_piece_data = marshallable_cast<VecPieceData>(sp);
     if (vec_piece_data && vec_piece_data->is_recovery_command_) {
       is_recovery = true;
     }

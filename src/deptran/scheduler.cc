@@ -402,10 +402,12 @@ UniqueCmdID TxLogServer::GetUniqueCmdID(shared_ptr<Marshallable> cmd) {
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
   if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
     shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-    VecPieceData *cmd_cast = (VecPieceData*)(tpc_cmd->cmd_.get());
+    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
   } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    shared_ptr<VecPieceData> cmd_cast = dynamic_pointer_cast<VecPieceData>(cmd);
+    shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
+    verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
   } else {
     verify(0);
@@ -1063,7 +1065,7 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
   
   // Check if the inner command is VecPieceData
   if (inner_cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    auto vec_piece_data = dynamic_pointer_cast<VecPieceData>(inner_cmd);
+    auto vec_piece_data = marshallable_cast<VecPieceData>(inner_cmd);
     if (vec_piece_data && vec_piece_data->sp_vec_piece_data_) {
       // Mark this as a recovery command
       vec_piece_data->is_recovery_command_ = true;

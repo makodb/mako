@@ -170,7 +170,7 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   auto vpd_p = std::make_shared<VecPieceData>();
   vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
   cmdptr->tx_id_ = cmd;
-  cmdptr->cmd_ = vpd_p;
+  cmdptr->cmd_ = wrap_typed_marshallable(vpd_p);
   auto cmdptr_m = dynamic_pointer_cast<Marshallable>(cmdptr);
   // call Start()
   // Log_info("Start: Calling Start() on server %d for command %d", svr, cmd);
@@ -314,7 +314,7 @@ shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t svr, int cmd) {
       auto vpd_p = std::make_shared<VecPieceData>();
       vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
       cmdptr->tx_id_ = cmd;
-      cmdptr->cmd_ = vpd_p;
+      cmdptr->cmd_ = wrap_typed_marshallable(vpd_p);
       Log_debug("Starting agreement for cmd id %d", cmdptr->tx_id_);
       auto cmdptr_m = dynamic_pointer_cast<Marshallable>(cmdptr);
       auto it = replicas.find(svr);

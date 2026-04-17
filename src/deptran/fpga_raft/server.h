@@ -184,7 +184,9 @@ class FpgaRaftServer : public TxLogServer {
 
     if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
       auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-      auto sp_vec_piece = dynamic_pointer_cast<VecPieceData>(p_cmd->cmd_)->sp_vec_piece_data_;
+      auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
+      verify(vec_piece_data != nullptr);
+      auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
 			vector<struct KeyValue> kv_vector;
 			int index = 0;
 			for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){

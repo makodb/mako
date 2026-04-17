@@ -431,7 +431,7 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
 #endif
 
   vpd->sp_vec_piece_data_->push_back(simple_cmd);
-  tpc_cmd->cmd_ = vpd;
+  tpc_cmd->cmd_ = wrap_typed_marshallable(vpd);
 
   Log_debug("[RAFT-LOG-CMD] Created TpcCommitCommand tx_id=%lu with %d bytes (Mako/test payload)",
             tx_id, length);
@@ -631,7 +631,8 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   auto tpc_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
   if (tpc_cmd && tpc_cmd->cmd_) {
     // Extract VecPieceData that contains the raw bytes
-    auto vpd = std::dynamic_pointer_cast<VecPieceData>(tpc_cmd->cmd_);
+    auto vpd = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(vpd != nullptr);
     if (vpd && vpd->sp_vec_piece_data_ && !vpd->sp_vec_piece_data_->empty()) {
       // Get the first SimpleCommand
       auto simple_cmd = (*vpd->sp_vec_piece_data_)[0];
@@ -666,7 +667,8 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   // SINGLE-RAFT: Extract par_id from the committed entry's SimpleCommand::partition_id_
   uint32_t par_id = 0;
   if (tpc_cmd && tpc_cmd->cmd_) {
-    auto vpd_inner = std::dynamic_pointer_cast<VecPieceData>(tpc_cmd->cmd_);
+    auto vpd_inner = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(vpd_inner != nullptr);
     if (vpd_inner && vpd_inner->sp_vec_piece_data_ && !vpd_inner->sp_vec_piece_data_->empty()) {
       par_id = (*vpd_inner->sp_vec_piece_data_)[0]->partition_id_;
     }

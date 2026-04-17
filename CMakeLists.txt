@@ -1884,9 +1884,17 @@ if(BUILD_TESTS)
 
     # Marshallable Proxy Facade Tests
     add_executable(test_rpc_marshallable_proxy test/rpc_marshallable_proxy_test.cc)
-    target_include_directories(test_rpc_marshallable_proxy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_include_directories(test_rpc_marshallable_proxy PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/src/deptran)
     target_compile_options(test_rpc_marshallable_proxy PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_marshallable_proxy ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_marshallable_proxy
+        txlog_core
+        ${RPC_TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread)
     add_test(NAME test_rpc_marshallable_proxy COMMAND test_rpc_marshallable_proxy)
 
     # Deferred Handler Regression Tests

@@ -27,18 +27,21 @@ SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd): Marshallable(Mar
     shared_ptr<TpcBatchCommand> batch_cmd = dynamic_pointer_cast<TpcBatchCommand>(cmd);
     verify(batch_cmd->Size() == 1);
     shared_ptr<TpcCommitCommand> tpc_cmd = batch_cmd->cmds_[0];
-    VecPieceData *cmd_cast = (VecPieceData*)(tpc_cmd->cmd_.get());
+    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(cmd_cast != nullptr);
     is_recovery_command_ = cmd_cast->is_recovery_command_;
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
   } else if (likely(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT)) {
     shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-    VecPieceData *cmd_cast = (VecPieceData*)(tpc_cmd->cmd_.get());
+    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(cmd_cast != nullptr);
     is_recovery_command_ = cmd_cast->is_recovery_command_;
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
   } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    shared_ptr<VecPieceData> cmd_cast = dynamic_pointer_cast<VecPieceData>(cmd);
+    shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
+    verify(cmd_cast != nullptr);
     is_recovery_command_ = cmd_cast->is_recovery_command_;
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
@@ -173,12 +176,13 @@ double SimpleRWCommand::GetCommandMsTime(shared_ptr<Marshallable> cmd) {
   shared_ptr<VecPieceData> cmd_cast{nullptr};
   if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
     shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-    cmd_cast = dynamic_pointer_cast<VecPieceData>(tpc_cmd->cmd_);
+    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
   } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    cmd_cast = dynamic_pointer_cast<VecPieceData>(cmd);
+    cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
     verify(0);
   }
+  verify(cmd_cast != nullptr);
   return cmd_cast->time_sent_from_client_;
 }
 
@@ -196,11 +200,13 @@ bool SimpleRWCommand::NeedRecordConflictInOriginalPath(shared_ptr<Marshallable> 
   shared_ptr<TxPieceData> vector0;
   if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
     shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-    VecPieceData *cmd_cast = (VecPieceData*)(tpc_cmd->cmd_.get());
+    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
   } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    shared_ptr<VecPieceData> cmd_cast = dynamic_pointer_cast<VecPieceData>(cmd);
+    shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
+    verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
   } else if (cmd->kind_ == MarshallDeputy::CONTAINER_CMD){ // This only verified it's CmdData, but I assume it is SimpleCommand
