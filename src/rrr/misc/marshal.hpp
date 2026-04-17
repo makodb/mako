@@ -18,6 +18,18 @@
 #include "base/all.hpp"
 #include "rusty/arc.hpp"
 
+#ifdef RR
+#pragma push_macro("RR")
+#undef RR
+#define RRR_RESTORE_RR_MACRO 1
+#endif
+#include <proxy/proxy.h>
+#include <proxy/proxy_macros.h>
+#ifdef RRR_RESTORE_RR_MACRO
+#pragma pop_macro("RR")
+#undef RRR_RESTORE_RR_MACRO
+#endif
+
 // External safety annotations for pure functions
 // @external: {
 //   std::min: [safe]
@@ -81,11 +93,59 @@ class Marshallable {
   // }
 };
 
+PRO_DEF_MEM_DISPATCH(MarshallableMemToMarshal, to_marshal);
+PRO_DEF_MEM_DISPATCH(MarshallableMemFromMarshal, from_marshal);
+PRO_DEF_MEM_DISPATCH(MarshallableMemEntitySize, entity_size);
+PRO_DEF_MEM_DISPATCH(MarshallableMemWriteToFd, write_to_fd);
+PRO_DEF_MEM_DISPATCH(MarshallableMemKind, kind);
+PRO_DEF_MEM_DISPATCH(MarshallableMemInner, inner);
+
+struct MarshallableFacade : pro::facade_builder
+    ::add_convention<MarshallableMemToMarshal, Marshal&(Marshal&) const>
+    ::add_convention<MarshallableMemFromMarshal, Marshal&(Marshal&)>
+    ::add_convention<MarshallableMemEntitySize, size_t() const>
+    ::add_convention<MarshallableMemWriteToFd, size_t(int, size_t) const>
+    ::add_convention<MarshallableMemKind, int32_t() const>
+    ::add_convention<MarshallableMemInner, std::shared_ptr<Marshallable>() const>
+    ::build {};
+
+using MarshallableProxy = pro::proxy<MarshallableFacade>;
+
+class MarshallableSharedPtrAdapter {
+ public:
+  explicit MarshallableSharedPtrAdapter(std::shared_ptr<Marshallable> m)
+      : m_(std::move(m)) {}
+
+  Marshal& to_marshal(Marshal& out) const { return m_->to_marshal(out); }
+  Marshal& from_marshal(Marshal& in) { return m_->from_marshal(in); }
+  size_t entity_size() const { return m_->entity_size(); }
+  size_t write_to_fd(int fd, size_t written) const {
+    return m_->write_to_fd(fd, written);
+  }
+  int32_t kind() const { return m_->kind(); }
+
+  std::shared_ptr<Marshallable> inner() const { return m_; }
+
+ private:
+  std::shared_ptr<Marshallable> m_;
+};
+
+inline MarshallableProxy make_marshallable_proxy(
+    std::shared_ptr<Marshallable> m) {
+  return pro::make_proxy<MarshallableFacade>(
+      MarshallableSharedPtrAdapter(std::move(m)));
+}
+
+inline std::shared_ptr<Marshallable> marshallable_proxy_inner(
+    const MarshallableProxy& proxy) {
+  return proxy->inner();
+}
+
 // @safe - Type-erasing wrapper for polymorphic Marshallable objects
-// NOTE: Uses std::shared_ptr<Marshallable> for polymorphism support:
+// NOTE: Stores a proxy facade over shared_ptr<Marshallable>:
 //   1. Polymorphism requirement - Marshallable is abstract base with many derived types
 //   2. Type erasure pattern - kind_ determines actual type at runtime
-//   3. Shared ownership needed across serialization/deserialization boundary
+//   3. Shared ownership is still available through inner() for dynamic casts
 class MarshallDeputy {
   public:
     typedef std::unordered_map<int32_t, std::function<Marshallable*()>> MarContainer;
@@ -100,9 +160,10 @@ class MarshallDeputy {
   public:
     bool bypass_to_socket_ = false;
     // size_t written_to_socket = 0;
-    // @safe - Uses shared_ptr<Marshallable> for polymorphic type erasure
-    // SAFETY: Reference counting with built-in polymorphism support
-    std::shared_ptr<rrr::Marshallable> sp_data_;
+    // @safe - Proxy-backed marshallable storage (shared_ptr keeps MarshallDeputy copyable).
+    std::shared_ptr<rrr::MarshallableProxy> sp_data_;
+    // Compatibility mirror for legacy call sites needing shared_ptr& from inner().
+    std::shared_ptr<rrr::Marshallable> inner_sp_data_;
     int32_t kind_{0};
     enum Kind {
       UNKNOWN=0,
@@ -140,12 +201,8 @@ class MarshallDeputy {
      */
     // @safe - Constructor accepts shared_ptr<Marshallable> with polymorphism support
     // SAFETY: Moves ownership, proper null checking in usage
-    explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
-      kind_ = sp_data_->kind();
-      if(sp_data_->bypass_to_socket_){
-        bypass_to_socket_ = true;
-      }
-      //written_to_socket = 0;
+    explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m) {
+      set_marshallable(std::move(m));
     }
 
     // @unsafe - Template constructor for derived types
@@ -154,11 +211,8 @@ class MarshallDeputy {
     explicit MarshallDeputy(std::shared_ptr<T> sp_m)
       requires std::is_base_of_v<rrr::Marshallable, T>
     {
-      sp_data_ = sp_m;
-      kind_ = sp_data_->kind();
-      if(sp_data_->bypass_to_socket_){
-        bypass_to_socket_ = true;
-      }
+      set_marshallable(
+          std::static_pointer_cast<rrr::Marshallable>(std::move(sp_m)));
     }
 
     // virtual void reset_write_offsets(){
@@ -167,20 +221,30 @@ class MarshallDeputy {
     // }
 
     rrr::Marshal& create_actual_object_from(rrr::Marshal& m);
-    // @unsafe - Setter accepts shared_ptr<Marshallable> with polymorphism support
-    // SAFETY: Validates nullptr before setting, updates kind_ atomically, calls std::shared_ptr::operator=
+    // @unsafe - Setter accepts shared_ptr<Marshallable> and wraps it in proxy storage.
     void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
       verify(sp_data_ == nullptr);
-      sp_data_ = m;
-      kind_ = m->kind();
+      verify(inner_sp_data_ == nullptr);
+      verify(m != nullptr);
+      inner_sp_data_ = std::move(m);
+      kind_ = inner_sp_data_->kind();
+      bypass_to_socket_ = inner_sp_data_->bypass_to_socket_;
+      sp_data_ = std::make_shared<rrr::MarshallableProxy>(
+          make_marshallable_proxy(inner_sp_data_));
     }
 
-    // @safe - Accessor for underlying shared_ptr (for call sites that need direct access)
-    std::shared_ptr<rrr::Marshallable>& inner() { return sp_data_; }
-    const std::shared_ptr<rrr::Marshallable>& inner() const { return sp_data_; }
+    bool has_marshallable() const { return sp_data_ != nullptr; }
+
+    // @safe - Accessor for underlying shared_ptr (keeps legacy shared_ptr& API stable).
+    std::shared_ptr<rrr::Marshallable>& inner() { return inner_sp_data_; }
+
+    const std::shared_ptr<rrr::Marshallable>& inner() const {
+      return inner_sp_data_;
+    }
 
     virtual size_t entity_size() const {
-      return sizeof(int32_t) + sp_data_->entity_size();
+      verify(has_marshallable());
+      return sizeof(int32_t) + data_proxy()->entity_size();
     }
 
     // @unsafe
@@ -213,11 +277,11 @@ class MarshallDeputy {
         // sp_data_->reset_write_offset();
         // @unsafe {
         // Safety check: sp_data_ must not be null when writing
-        if (sp_data_ == nullptr) {
+        if (!has_marshallable()) {
           Log_error("MarshallDeputy::write_to_fd called with null sp_data_ (kind=%d)", kind_);
           return 0;
         }
-        sz = sp_data_->write_to_fd(fd, written_to_socket - sizeof(kind_));
+        sz = data_proxy()->write_to_fd(fd, written_to_socket - sizeof(kind_));
         // }
 	      //std::cout << sz << std::endl;
         //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
@@ -228,6 +292,17 @@ class MarshallDeputy {
     }
 
     ~MarshallDeputy() = default;
+
+  private:
+    rrr::MarshallableProxy& data_proxy() {
+      verify(sp_data_ != nullptr);
+      return *sp_data_;
+    }
+
+    const rrr::MarshallableProxy& data_proxy() const {
+      verify(sp_data_ != nullptr);
+      return *sp_data_;
+    }
 };
 
 class Marshal: public NoCopy {
@@ -422,7 +497,7 @@ private:
         int cnt;
         if(data->shared_data){
           // Safety check: marshallable_entity must have valid sp_data_
-          if (data->marshallable_entity.sp_data_ == nullptr) {
+          if (!data->marshallable_entity.has_marshallable()) {
             Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
             return -1;
           }
@@ -1141,14 +1216,14 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
 // @lifetime: (&'a, const MarshallDeputy&) -> &'a
 inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) {
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
-  verify(rhs.sp_data_ != nullptr);
+  verify(rhs.has_marshallable());
   if(rhs.bypass_to_socket_){
     m.bypass_copying(rhs, rhs.entity_size());
   }else{
     //Log_info("size is %d", rhs.entity_size());
     m << rhs.kind_;
-    verify(rhs.sp_data_ != nullptr); // must be non-empty
-    rhs.sp_data_->to_marshal(m);
+    verify(rhs.has_marshallable()); // must be non-empty
+    rhs.inner()->to_marshal(m);
   }
   return m;
 }

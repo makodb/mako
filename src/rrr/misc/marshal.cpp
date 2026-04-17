@@ -540,7 +540,7 @@ Marshal &Marshallable::from_marshal(Marshal &m) {
 // @unsafe - Calls std::shared_ptr::get and get_initializer
 // @lifetime: (&'a mut) -> &'a mut
 Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
-  verify(sp_data_ == nullptr);
+  verify(!has_marshallable());
   switch (kind_) {
     case UNKNOWN:
       verify(0);
@@ -551,18 +551,18 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
       // Call initializer function which returns raw Marshallable*
       Marshallable* raw_ptr = func();
       verify(raw_ptr);
-      // Wrap in shared_ptr to take ownership
-      sp_data_ = std::shared_ptr<Marshallable>(raw_ptr);
+      set_marshallable(std::shared_ptr<Marshallable>(raw_ptr));
       break;
   }
-  verify(sp_data_ != nullptr);
+  auto object = inner();
+  verify(object != nullptr);
   // Use get() to get pointer access
-  Marshallable* mut_data = sp_data_.get();
+  Marshallable* mut_data = object.get();
   verify(mut_data);  // Should succeed - we just created it
   mut_data->from_marshal(m);
-  verify(sp_data_->kind());
+  verify(object->kind());
   verify(kind_);
-  verify(sp_data_->kind() == kind_);
+  verify(object->kind() == kind_);
   return m;
 }
 

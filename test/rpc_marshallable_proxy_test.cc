@@ -6,12 +6,14 @@ using namespace rrr;
 
 namespace {
 
+constexpr int32_t kTestMarshallableKind = 420042;
+
 class TestMarshallable : public Marshallable {
  public:
   int32_t value = 0;
 
   explicit TestMarshallable(int32_t v = 0)
-      : Marshallable(42), value(v) {}
+      : Marshallable(kTestMarshallableKind), value(v) {}
 
   Marshal& to_marshal(Marshal& m) const override {
     m << kind_ << value;
@@ -32,6 +34,16 @@ class TestMarshallable : public Marshallable {
   }
 };
 
+void EnsureTestMarshallableInitializer() {
+  static bool initialized = []() {
+    MarshallDeputy::reg_initializer(
+        kTestMarshallableKind,
+        []() -> Marshallable* { return new TestMarshallable(); });
+    return true;
+  }();
+  (void)initialized;
+}
+
 }  // namespace
 
 TEST(MarshallableProxyFacadeTest, AdapterForwardsToMarshal) {
@@ -43,7 +55,7 @@ TEST(MarshallableProxyFacadeTest, AdapterForwardsToMarshal) {
 
   int32_t out_kind = 0, out_val = 0;
   m >> out_kind >> out_val;
-  EXPECT_EQ(out_kind, 42);
+  EXPECT_EQ(out_kind, kTestMarshallableKind);
   EXPECT_EQ(out_val, 99);
 }
 
@@ -53,10 +65,11 @@ TEST(MarshallableProxyFacadeTest, AdapterForwardsFromMarshal) {
 
   Marshal m;
   int32_t kind = 42, val = 77;
+  kind = kTestMarshallableKind;
   m << kind << val;
 
   proxy->from_marshal(m);
-  EXPECT_EQ(sp->kind_, 42);
+  EXPECT_EQ(sp->kind_, kTestMarshallableKind);
   EXPECT_EQ(sp->value, 77);
 }
 
@@ -64,7 +77,7 @@ TEST(MarshallableProxyFacadeTest, AdapterForwardsKind) {
   auto sp = std::make_shared<TestMarshallable>(0);
   auto proxy = make_marshallable_proxy(sp);
 
-  EXPECT_EQ(proxy->kind(), 42);
+  EXPECT_EQ(proxy->kind(), kTestMarshallableKind);
 }
 
 TEST(MarshallableProxyFacadeTest, AdapterForwardsEntitySize) {
@@ -79,7 +92,7 @@ TEST(MarshallableProxyFacadeTest, ProxyIsMoveOnly) {
   auto proxy = make_marshallable_proxy(sp);
 
   auto moved = std::move(proxy);
-  EXPECT_EQ(moved->kind(), 42);
+  EXPECT_EQ(moved->kind(), kTestMarshallableKind);
 
   Marshal m;
   moved->to_marshal(m);
@@ -99,6 +112,40 @@ TEST(MarshallableProxyFacadeTest, RoundTripThroughProxy) {
   auto dst_proxy = make_marshallable_proxy(dst);
   dst_proxy->from_marshal(m);
 
-  EXPECT_EQ(dst->kind_, 42);
+  EXPECT_EQ(dst->kind_, kTestMarshallableKind);
   EXPECT_EQ(dst->value, 123);
+}
+
+TEST(MarshallableProxyFacadeTest, DeputyDefaultsToNoMarshallable) {
+  MarshallDeputy deputy;
+  EXPECT_FALSE(deputy.has_marshallable());
+  EXPECT_EQ(deputy.inner(), nullptr);
+}
+
+TEST(MarshallableProxyFacadeTest, DeputyStoresProxyAndPreservesInnerSharedPtr) {
+  auto sp = std::make_shared<TestMarshallable>(88);
+  MarshallDeputy deputy(sp);
+
+  EXPECT_TRUE(deputy.has_marshallable());
+  EXPECT_EQ(deputy.kind_, kTestMarshallableKind);
+  EXPECT_EQ(std::dynamic_pointer_cast<TestMarshallable>(deputy.inner()), sp);
+}
+
+TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
+  EnsureTestMarshallableInitializer();
+
+  auto src = std::make_shared<TestMarshallable>(321);
+  MarshallDeputy outgoing(src);
+
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+
+  EXPECT_TRUE(incoming.has_marshallable());
+  auto decoded = std::dynamic_pointer_cast<TestMarshallable>(incoming.inner());
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->kind_, kTestMarshallableKind);
+  EXPECT_EQ(decoded->value, 321);
 }

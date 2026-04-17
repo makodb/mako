@@ -465,7 +465,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
         //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
-        instance->accepted_cmd_ = bcmd->cmds[i].get()->sp_data_;
+        instance->accepted_cmd_ = bcmd->cmds[i].get()->inner();
         max_accepted_slot_ = slot_id;
         n_accept_++;
         *valid &= 1;
@@ -544,7 +544,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
         verify(instance->max_ballot_accepted_ <= ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
-        instance->committed_cmd_ = bcmd->cmds[i].get()->sp_data_;
+        instance->committed_cmd_ = bcmd->cmds[i].get()->inner();
         *valid &= 1;
         if (slot_id > max_committed_slot_) {
             max_committed_slot_ = slot_id;

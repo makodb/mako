@@ -124,7 +124,7 @@ struct LogEntry {
         if (has_command) {
             MarshallDeputy md;
             m >> md;
-            command = md.sp_data_;
+            command = md.inner();
         } else {
             command = nullptr;
         }

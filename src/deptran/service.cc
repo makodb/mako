@@ -690,7 +690,7 @@ void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,
 //  std::lock_guard<std::mutex> guard(this->mtx_);
   RccServer* sched = (RccServer*) dtxn_sched_;
   p_md_graph->set_marshallable(std::make_shared<RccGraph>());
-  auto p = dynamic_pointer_cast<RccGraph>(p_md_graph->sp_data_);
+  auto p = dynamic_pointer_cast<RccGraph>(p_md_graph->inner());
   *res = sched->OnDispatch(cmd, output, p);
   defer.reply();
 }
@@ -847,7 +847,7 @@ void ClassicServiceImpl::JanusPreAccept(const cmdid_t& txnid,
 //  std::lock_guard<std::mutex> guard(mtx_);
   p_md_res_graph->set_marshallable(std::make_shared<RccGraph>());
   auto sp_graph = dynamic_pointer_cast<RccGraph>(md_graph.inner());
-  auto ret_sp_graph = dynamic_pointer_cast<RccGraph>(p_md_res_graph->sp_data_);
+  auto ret_sp_graph = dynamic_pointer_cast<RccGraph>(p_md_res_graph->inner());
   verify(sp_graph);
   verify(ret_sp_graph);
   auto sched = (SchedulerJanus*) dtxn_sched_;
@@ -864,7 +864,7 @@ void ClassicServiceImpl::JanusPreAcceptWoGraph(const cmdid_t& txnid,
 //  std::lock_guard<std::mutex> guard(mtx_);
   res_graph->set_marshallable(std::make_shared<RccGraph>());
   auto* p_sched = (SchedulerJanus*) dtxn_sched_;
-  auto sp_ret_graph = dynamic_pointer_cast<RccGraph>(res_graph->sp_data_);
+  auto sp_ret_graph = dynamic_pointer_cast<RccGraph>(res_graph->inner());
   *res = p_sched->OnPreAccept(txnid, rank, cmds, nullptr, sp_ret_graph);
   defer.reply();
 }
@@ -942,7 +942,7 @@ void ClassicServiceImpl::JetpackPullIdSet(const epoch_t& jepoch,
                                           MarshallDeputy* id_set, 
                                           rrr::DeferredReply defer) {
   id_set->set_marshallable(std::make_shared<VecRecData>());
-  shared_ptr<VecRecData> sp_ret_id_set = dynamic_pointer_cast<VecRecData>(id_set->sp_data_);
+  shared_ptr<VecRecData> sp_ret_id_set = dynamic_pointer_cast<VecRecData>(id_set->inner());
   dtxn_sched()->OnJetpackPullIdSet(jepoch, oepoch, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_id_set);
   defer.reply();
 }
@@ -1037,7 +1037,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               MarshallDeputy* cmd, 
                                               rrr::DeferredReply defer) {
   cmd->set_marshallable(std::make_shared<TpcCommitCommand>());
-  shared_ptr<Marshallable> sp_ret_cmd = dynamic_pointer_cast<Marshallable>(cmd->sp_data_);
+  shared_ptr<Marshallable> sp_ret_cmd = dynamic_pointer_cast<Marshallable>(cmd->inner());
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_cmd);
   defer.reply();
 }

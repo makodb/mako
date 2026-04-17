@@ -401,7 +401,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       es_pww->step_down(ballot);
     else{
       if(!done){
-        auto x = dynamic_pointer_cast<SyncLogResponse>(md->sp_data_);
+        auto x = dynamic_pointer_cast<SyncLogResponse>(md->inner());
         responses.emplace_back(x);
       } else{
         return;
@@ -414,7 +414,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     map<pair<int,slotid_t>, shared_ptr<MarshallDeputy>> commited_slots;
     for(int i = 0; i < responses.size(); i++){
       for(int j = 0; j < responses[i]->sync_data.size(); j++){
-        auto bp_cmd = dynamic_pointer_cast<BulkPaxosCmd>(responses[i]->sync_data[j]->sp_data_);
+        auto bp_cmd = dynamic_pointer_cast<BulkPaxosCmd>(responses[i]->sync_data[j]->inner());
         for(int k = 0; k < bp_cmd->slots.size(); k++){
           commited_slots[make_pair(j, bp_cmd->slots[k])] = bp_cmd->cmds[k];
         }
