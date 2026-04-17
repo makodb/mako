@@ -238,8 +238,8 @@ int main(int argc, char **argv) {
         delete[] client_th;
     }
 
-    // Shutdown PollThread with proper locking
-    {
+    // In server mode, ownership is moved into Server; in client mode, we own it here.
+    if (poll_thread_worker_.is_some()) {
         poll_thread_worker_.as_ref().unwrap()->shutdown();
     }
     delete thrpool;
