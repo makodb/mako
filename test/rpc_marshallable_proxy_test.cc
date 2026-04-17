@@ -128,7 +128,7 @@ TEST(MarshallableProxyFacadeTest, DeputyStoresProxyAndPreservesInnerSharedPtr) {
 
   EXPECT_TRUE(deputy.has_marshallable());
   EXPECT_EQ(deputy.kind_, kTestMarshallableKind);
-  EXPECT_EQ(std::dynamic_pointer_cast<TestMarshallable>(deputy.inner()), sp);
+  EXPECT_EQ(marshallable_cast<TestMarshallable>(deputy), sp);
 }
 
 TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
@@ -144,8 +144,20 @@ TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
   m >> incoming;
 
   EXPECT_TRUE(incoming.has_marshallable());
-  auto decoded = std::dynamic_pointer_cast<TestMarshallable>(incoming.inner());
+  auto decoded = marshallable_cast<TestMarshallable>(incoming);
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded->kind_, kTestMarshallableKind);
   EXPECT_EQ(decoded->value, 321);
+}
+
+TEST(MarshallableProxyFacadeTest, MarshallableCastFromSharedPtrKeepsType) {
+  std::shared_ptr<Marshallable> base = std::make_shared<TestMarshallable>(17);
+  auto typed = marshallable_cast<TestMarshallable>(base);
+  ASSERT_NE(typed, nullptr);
+  EXPECT_EQ(typed->value, 17);
+}
+
+TEST(MarshallableProxyFacadeTest, MarshallableCastFromNullDeputyPointerIsNull) {
+  MarshallDeputy* deputy = nullptr;
+  EXPECT_EQ(marshallable_cast<TestMarshallable>(deputy), nullptr);
 }

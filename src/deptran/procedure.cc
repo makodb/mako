@@ -145,7 +145,7 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
   if (has_view_data) {
     MarshallDeputy view_md;
     m >> view_md;
-    reply.sp_view_data_ = dynamic_pointer_cast<ViewData>(view_md.inner());
+    reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
     reply.sp_view_data_ = nullptr;
   }

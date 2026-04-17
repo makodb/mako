@@ -104,7 +104,7 @@ Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
   if (has_view_data) {
     MarshallDeputy view_md;
     m >> view_md;
-    sp_view_data_ = dynamic_pointer_cast<ViewData>(view_md.inner());
+    sp_view_data_ = marshallable_cast<ViewData>(view_md);
   }
   return m;
 }

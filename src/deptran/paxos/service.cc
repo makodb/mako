@@ -169,7 +169,7 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
                                        rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   ret->set_marshallable(std::make_shared<BulkPaxosCmd>());
-  auto p = dynamic_pointer_cast<BulkPaxosCmd>(ret->inner());
+  auto p = marshallable_cast<BulkPaxosCmd>(ret);
   //Log_info("The marshallable flag is %d", p->bypass_to_socket_);
   Fiber::create_run([&] () {
     sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).inner(),
@@ -218,7 +218,7 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   ret->set_marshallable(std::make_shared<SyncLogResponse>());
-  auto response = dynamic_pointer_cast<SyncLogResponse>(ret->inner());
+  auto response = marshallable_cast<SyncLogResponse>(ret);
   Fiber::create_run([&] () {
     sched_->OnSyncLog(const_cast<MarshallDeputy&>(md_cmd).inner(),
                       ballot,

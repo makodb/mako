@@ -1162,8 +1162,8 @@ void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
   auto config = Config::GetConfig();
   
   // Extract ViewData from MarshallDeputy parameters
-  auto sp_old_view_data = dynamic_pointer_cast<ViewData>(old_view.inner());
-  auto sp_new_view_data = dynamic_pointer_cast<ViewData>(new_view.inner());
+  auto sp_old_view_data = marshallable_cast<ViewData>(old_view);
+  auto sp_new_view_data = marshallable_cast<ViewData>(new_view);
   
   // Update the views if extraction was successful
   if (sp_old_view_data) {

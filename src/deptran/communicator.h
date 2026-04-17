@@ -150,7 +150,7 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
     if (y) {
       vote_yes();
       // If ok=true, jepoch and oepoch are not larger than local, so we can update id_sets
-      auto vec_rec_data = std::dynamic_pointer_cast<VecRecData>(id_set.inner());
+      auto vec_rec_data = marshallable_cast<VecRecData>(id_set);
       if (vec_rec_data) {
         id_sets_.push_back(vec_rec_data);
       }
@@ -201,7 +201,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& batch_md) {
     if (y) {
       vote_yes();
-      auto batch = std::dynamic_pointer_cast<KeyCmdBatchData>(batch_md.inner());
+      auto batch = marshallable_cast<KeyCmdBatchData>(batch_md);
       if (batch) {
         for (size_t i = 0; i < batch->Size(); i++) {
           auto it = key_index_.find(batch->GetKey(i));

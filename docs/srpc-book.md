@@ -843,6 +843,23 @@ struct MyData : public Marshallable {
 };
 ```
 
+When extracting a typed payload from `MarshallDeputy`, use the centralized
+`marshallable_cast<T>(...)` helper (declared in `src/rrr/misc/marshal.hpp`) so
+call sites do not open-code `dynamic_pointer_cast` on `inner()`:
+
+```cpp srpc-no-compile
+MarshallDeputy md;
+m >> md;
+
+auto view = marshallable_cast<ViewData>(md);
+if (view) {
+    // use view
+}
+
+MarshallDeputy* maybe_null = nullptr;
+auto empty = marshallable_cast<ViewData>(maybe_null); // nullptr-safe
+```
+
 ### Bookmarks
 
 For recording sizes without seeking:

@@ -305,6 +305,40 @@ class MarshallDeputy {
     }
 };
 
+// Centralized cast helpers for marshallable payload extraction. These isolate
+// call sites from direct dynamic_pointer_cast usage on MarshallDeputy::inner().
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(
+    const std::shared_ptr<Marshallable>& value) {
+  return std::dynamic_pointer_cast<T>(value);
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(const MarshallDeputy& deputy) {
+  return marshallable_cast<T>(deputy.inner());
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(MarshallDeputy& deputy) {
+  return marshallable_cast<T>(deputy.inner());
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(const MarshallDeputy* deputy) {
+  if (deputy == nullptr) {
+    return nullptr;
+  }
+  return marshallable_cast<T>(*deputy);
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(MarshallDeputy* deputy) {
+  if (deputy == nullptr) {
+    return nullptr;
+  }
+  return marshallable_cast<T>(*deputy);
+}
+
 class Marshal: public NoCopy {
 private:
   // Migrated from RefCounted to std::shared_ptr for automatic reference counting

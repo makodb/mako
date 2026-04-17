@@ -112,7 +112,7 @@ void TroadCommo::BroadcastPreAccept(
       int32_t res;
       MarshallDeputy md;
       fu->get_reply() >> res >> md;
-      auto sp = dynamic_pointer_cast<RccGraph>(md.inner());
+      auto sp = marshallable_cast<RccGraph>(md);
       verify(sp);
       callback(res, sp);
     };
@@ -212,7 +212,7 @@ TroadCommo::BroadcastPreAccept(
       int32_t res;
       MarshallDeputy md;
       fu->get_reply() >> res >> md;
-      auto sp = dynamic_pointer_cast<RccGraph>(md.inner());
+      auto sp = marshallable_cast<RccGraph>(md);
       verify(sp);
       if (res == SUCCESS) {
         ev->vote_yes();
