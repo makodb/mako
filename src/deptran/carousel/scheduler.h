@@ -8,6 +8,7 @@
 namespace janus {
 
 class SimpleCommand;
+class TpcPrepareCarouselCommand;
 class SchedulerCarousel : public SchedulerClassic {
  public:
 /*
@@ -34,8 +35,9 @@ class SchedulerCarousel : public SchedulerClassic {
   void GeneralPrint(const char* msg, txnid_t tx_id, Row* row, uint64_t* key_hash);
 
   bool OnPrepare(cmdid_t);
-  bool DoPrepare(txnid_t tx_id, Marshallable* cmd = nullptr);
-  bool DoPrepareResult(txnid_t tx_id, Marshallable& cmd);
+  bool DoPrepare(txnid_t tx_id, TpcPrepareCarouselCommand* cmd = nullptr);
+  bool DoPrepareResult(txnid_t tx_id,
+                       const TpcPrepareCarouselCommand& cmd);
   void DoCommit(Tx& tx) override;
   void Next(Marshallable&) override;
   int PrepareReplicated(Marshallable& cmd) ;

@@ -3,6 +3,7 @@
 #include "rrr.hpp"
 #include "misc/marshallable_proxy.h"
 #include "deptran/classic/tpc_command.h"
+#include "deptran/carousel/tx.h"
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"
 #include "deptran/rcc/dep_graph.h"
@@ -57,6 +58,8 @@ static_assert(!std::is_base_of_v<Marshallable, janus::TpcCommitCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcEmptyCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcNoopCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcBatchCommand>);
+static_assert(
+    !std::is_base_of_v<Marshallable, janus::TpcPrepareCarouselCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::ReplicatedDBCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::EmptyGraph>);
 static_assert(!std::is_base_of_v<Marshallable, janus::RccGraph>);
@@ -278,6 +281,28 @@ TEST(MarshallableProxyFacadeTest, MarshallableCastFromSharedPtrKeepsType) {
   EXPECT_EQ(typed->value, 17);
 }
 
+TEST(MarshallableProxyFacadeTest, MarshallableCastFromMarshallableRefKeepsType) {
+  TestMarshallable payload(23);
+  Marshallable& base = payload;
+  auto typed = marshallable_cast<TestMarshallable>(base);
+  ASSERT_NE(typed, nullptr);
+  EXPECT_EQ(typed.get(), &payload);
+  EXPECT_EQ(typed->value, 23);
+}
+
+TEST(MarshallableProxyFacadeTest,
+     MarshallableCastFromMarshallablePointerHandlesNullAndValue) {
+  Marshallable* null_base = nullptr;
+  EXPECT_EQ(marshallable_cast<TestMarshallable>(null_base), nullptr);
+
+  TestMarshallable payload(29);
+  Marshallable* base = &payload;
+  auto typed = marshallable_cast<TestMarshallable>(base);
+  ASSERT_NE(typed, nullptr);
+  EXPECT_EQ(typed.get(), &payload);
+  EXPECT_EQ(typed->value, 29);
+}
+
 TEST(MarshallableProxyFacadeTest, MarshallableCastFromNullDeputyPointerIsNull) {
   MarshallDeputy* deputy = nullptr;
   EXPECT_EQ(marshallable_cast<TestMarshallable>(deputy), nullptr);
@@ -454,6 +479,40 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   MarshallDeputy noop_deputy(noop_cmd);
   EXPECT_EQ(noop_deputy.kind_, MarshallDeputy::CMD_NOOP);
   ASSERT_NE(marshallable_cast<janus::TpcNoopCommand>(noop_deputy), nullptr);
+}
+
+TEST(MarshallableProxyFacadeTest,
+     DeptranTpcPrepareCarouselRoundTripUsesTypedAdapter) {
+  EnsureTestMarshallableInitializer();
+  auto src = std::make_shared<janus::TpcPrepareCarouselCommand>();
+  src->tx_id_ = 456;
+  src->ret_ = 12;
+  src->pending_write_row_map_.emplace(101, 3);
+  src->pending_read_row_map_.emplace(202, 4);
+  src->cmd_ = std::make_shared<TestMarshallable>(64);
+
+  MarshallDeputy outgoing(src);
+  EXPECT_EQ(outgoing.kind_, MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL);
+
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+  EXPECT_EQ(incoming.kind_, MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL);
+
+  auto decoded = marshallable_cast<janus::TpcPrepareCarouselCommand>(incoming);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->tx_id_, 456);
+  EXPECT_EQ(decoded->ret_, 12);
+  ASSERT_EQ(decoded->pending_write_row_map_.size(), 1u);
+  ASSERT_EQ(decoded->pending_read_row_map_.size(), 1u);
+  EXPECT_EQ(decoded->pending_write_row_map_.at(101), 3);
+  EXPECT_EQ(decoded->pending_read_row_map_.at(202), 4);
+
+  auto nested = marshallable_cast<TestMarshallable>(decoded->cmd_);
+  ASSERT_NE(nested, nullptr);
+  EXPECT_EQ(nested->value, 64);
 }
 
 TEST(MarshallableProxyFacadeTest,

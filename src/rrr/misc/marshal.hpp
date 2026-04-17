@@ -445,6 +445,41 @@ inline std::shared_ptr<T> marshallable_cast(
   }
 }
 
+inline std::shared_ptr<Marshallable> marshallable_ref_as_shared(
+    Marshallable* value) {
+  if (value == nullptr) {
+    return nullptr;
+  }
+  return std::shared_ptr<Marshallable>(value, [](Marshallable*) {});
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(Marshallable& value) {
+  return marshallable_cast<T>(marshallable_ref_as_shared(&value));
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(const Marshallable& value) {
+  return marshallable_cast<T>(
+      marshallable_ref_as_shared(const_cast<Marshallable*>(&value)));
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(Marshallable* value) {
+  if (value == nullptr) {
+    return nullptr;
+  }
+  return marshallable_cast<T>(*value);
+}
+
+template <typename T>
+inline std::shared_ptr<T> marshallable_cast(const Marshallable* value) {
+  if (value == nullptr) {
+    return nullptr;
+  }
+  return marshallable_cast<T>(*value);
+}
+
 template <typename T>
 inline std::shared_ptr<T> marshallable_cast(const MarshallDeputy& deputy) {
   return marshallable_cast<T>(deputy.inner());

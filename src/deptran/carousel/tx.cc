@@ -7,6 +7,10 @@ namespace janus {
 
 using mdb::Value;
 
+static int volatile x1 =
+    MarshallDeputy::reg_initializer<TpcPrepareCarouselCommand>(
+        MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL);
+
 TxCarousel::~TxCarousel() {
 }
 

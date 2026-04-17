@@ -40,18 +40,32 @@ class TxCarousel : public TxClassic {
   virtual ~TxCarousel();
 };
 
-class TpcPrepareCarouselCommand : public Marshallable {
+class TpcPrepareCarouselCommand {
  public:
-  TpcPrepareCarouselCommand() : Marshallable(MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL) {
-  }
+  static constexpr int32_t kMarshallKind =
+      MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL;
+
+  TpcPrepareCarouselCommand() = default;
   txnid_t tx_id_ = 0;
   int32_t ret_ = -1;
   // TODO: yidawu try to use pointer
   unordered_map<uint64_t, int> pending_write_row_map_;
   unordered_map<uint64_t, int> pending_read_row_map_;
   shared_ptr<Marshallable> cmd_{nullptr};
-  Marshal& to_marshal(Marshal&) const override;
-  Marshal& from_marshal(Marshal&) override;
+  Marshal& to_marshal(Marshal&) const;
+  Marshal& from_marshal(Marshal&);
 };
 
 } // namespace janus
+
+namespace rrr {
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::TpcPrepareCarouselCommand> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::TpcPrepareCarouselCommand,
+                               MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL>;
+};
+
+}  // namespace rrr

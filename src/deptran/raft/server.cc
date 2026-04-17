@@ -2030,8 +2030,8 @@ bool RaftServer::RequestVote() {
 
     // auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
     // auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    // verify(empty_cmd->kind_ == MarshallDeputy::CMD_TPC_EMPTY);
-    // auto sp_m = dynamic_pointer_cast<Marshallable>(empty_cmd);
+    // verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
+    // auto sp_m = wrap_typed_marshallable(empty_cmd);
     // ((CoordinatorRaft*)co)->Submit(sp_m);
     
     if(IsLeader()) {

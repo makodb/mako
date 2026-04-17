@@ -69,7 +69,8 @@ void SchedulerCarousel::GeneralPrint(const char* msg, txnid_t tx_id, Row* row, u
 }
 
 
-bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
+bool SchedulerCarousel::DoPrepare(txnid_t tx_id,
+                                  TpcPrepareCarouselCommand* cmd) {
   Log_debug("receive fast accept for cmd_id: %llx", tx_id);
   std::lock_guard<std::recursive_mutex> lock(mtx_);  
   auto tx = dynamic_pointer_cast<TxCarousel>(GetOrCreateTx(tx_id));
@@ -188,10 +189,9 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
 
   if (cmd != nullptr) {
     lock_.unlock();
-    auto prepare_cmd = (TpcPrepareCarouselCommand*)(cmd);    
     // Make a copy of result for followers.
-    prepare_cmd->pending_write_row_map_ = write_hash_keys;
-    prepare_cmd->pending_read_row_map_ = read_hash_keys;
+    cmd->pending_write_row_map_ = write_hash_keys;
+    cmd->pending_read_row_map_ = read_hash_keys;
 /*    
     prepare_cmd->pending_write_row_map_.insert(pending_write_row_map_.begin(),
       pending_write_row_map_.end());
@@ -206,11 +206,12 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
 }
 
 
-bool SchedulerCarousel::DoPrepareResult(txnid_t tx_id, Marshallable& cmd) {
+bool SchedulerCarousel::DoPrepareResult(
+    txnid_t tx_id,
+    const TpcPrepareCarouselCommand& cmd) {
   Log_debug("receive fast accept for cmd_id: %llx", tx_id);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto tx = dynamic_pointer_cast<TxCarousel>(GetOrCreateTx(tx_id));
-  auto& prepare_cmd = dynamic_cast<TpcPrepareCarouselCommand&>(cmd);  
   lock_guard<SpinLock> l(lock_);
   // TODO: yidawu do the swap anyway, double check
   /*if (prepared_trans_ids_.find(tx->tid_) != prepared_trans_ids_.end()) {
@@ -250,10 +251,10 @@ bool SchedulerCarousel::DoPrepareResult(txnid_t tx_id, Marshallable& cmd) {
   }*/
 
   // Make a copy from leader to followers.
-  for (auto write_it:prepare_cmd.pending_write_row_map_) {
+  for (auto write_it: cmd.pending_write_row_map_) {
     pending_write_row_map_.emplace(write_it.first, write_it.second);
   }
-  for (auto read_it:prepare_cmd.pending_read_row_map_) {
+  for (auto read_it: cmd.pending_read_row_map_) {
     auto it = pending_read_row_map_.find(read_it.first);
     if (it != pending_read_row_map_.end()) {
       it->second = it->second +1; 
@@ -400,8 +401,7 @@ void SchedulerCarousel::DoCommit(Tx& tx_input) {
 }
 
 int SchedulerCarousel::PrepareReplicated(Marshallable& cmd) {
-  auto prepare_cmd = marshallable_cast<TpcPrepareCommand>(
-      std::shared_ptr<Marshallable>(&cmd, [](Marshallable*) {}));
+  auto prepare_cmd = marshallable_cast<TpcPrepareCommand>(cmd);
   verify(prepare_cmd != nullptr);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto tx_id = prepare_cmd->tx_id_;
@@ -417,18 +417,19 @@ int SchedulerCarousel::PrepareReplicated(Marshallable& cmd) {
 }
 
 int SchedulerCarousel::PrepareCarouselReplicated(Marshallable& cmd) {
-  auto& prepare_cmd = dynamic_cast<TpcPrepareCarouselCommand&>(cmd);
+  auto prepare_cmd = marshallable_cast<TpcPrepareCarouselCommand>(cmd);
+  verify(prepare_cmd != nullptr);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  auto tx_id = prepare_cmd.tx_id_;
+  auto tx_id = prepare_cmd->tx_id_;
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
   if (!sp_tx->cmd_) {
-    sp_tx->cmd_ = prepare_cmd.cmd_;
+    sp_tx->cmd_ = prepare_cmd->cmd_;
   }
   
   if (sp_tx->is_leader_hint_) {
     sp_tx->prepare_result->set(true);
   } else {
-    sp_tx->prepare_result->set(DoPrepareResult(sp_tx->tid_, prepare_cmd));
+    sp_tx->prepare_result->set(DoPrepareResult(sp_tx->tid_, *prepare_cmd));
   }
   Log_debug("prepare request replicated and executed for %" PRIx64 ", result: %x, sid: %x",
       sp_tx->tid_, sp_tx->prepare_result->get(), (int)this->site_id_);
@@ -437,8 +438,7 @@ int SchedulerCarousel::PrepareCarouselReplicated(Marshallable& cmd) {
 }
 
 int SchedulerCarousel::CommitReplicated(Marshallable& cmd) {
-    auto tpc_commit_cmd = marshallable_cast<TpcCommitCommand>(
-        std::shared_ptr<Marshallable>(&cmd, [](Marshallable*) {}));
+    auto tpc_commit_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_commit_cmd != nullptr);
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     auto tx_id = tpc_commit_cmd->tx_id_;
@@ -460,17 +460,18 @@ int SchedulerCarousel::CommitReplicated(Marshallable& cmd) {
 
 bool SchedulerCarousel::OnPrepare(cmdid_t tx_id) {
   auto sp_prepare_crs_cmd = std::make_shared<TpcPrepareCarouselCommand>();
-  verify(sp_prepare_crs_cmd->kind_ == MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL);
+  verify(TpcPrepareCarouselCommand::kMarshallKind ==
+         MarshallDeputy::CMD_TPC_PREPARE_CAROUSEL);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 /*
   if (using_basic_) {
     auto sp_prepare_cmd = std::make_shared<TpcPrepareCommand>();
-    verify(sp_prepare_cmd->kind_ == MarshallDeputy::CMD_TPC_PREPARE);
+    verify(TpcPrepareCommand::kMarshallKind == MarshallDeputy::CMD_TPC_PREPARE);
     // replicate the command to the rep group.
     auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
     sp_prepare_cmd->tx_id_ = tx_id;
     sp_prepare_cmd->cmd_ = sp_tx->cmd_;
-    auto sp_m = dynamic_pointer_cast<Marshallable>(sp_prepare_cmd);
+    auto sp_m = wrap_typed_marshallable(sp_prepare_cmd);
     sp_tx->is_leader_hint_ = true;
     CreateRepCoord(0)->Submit(sp_m);
     sp_tx->prepare_result->wait();
@@ -483,7 +484,7 @@ bool SchedulerCarousel::OnPrepare(cmdid_t tx_id) {
       auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
       sp_prepare_crs_cmd->tx_id_ = tx_id;
       sp_prepare_crs_cmd->cmd_ = sp_tx->cmd_;
-      auto sp_m = dynamic_pointer_cast<Marshallable>(sp_prepare_crs_cmd);
+      auto sp_m = wrap_typed_marshallable(sp_prepare_crs_cmd);
       sp_tx->is_leader_hint_ = true;
       CreateRepCoord(0)->Submit(sp_m);
       sp_tx->prepare_result->wait();
@@ -510,8 +511,7 @@ void SchedulerCarousel::Next(Marshallable& cmd) {
     CommitReplicated(cmd);
   } else if (cmd.kind_ == MarshallDeputy::CMD_TPC_EMPTY) {
     // do nothing
-    auto c = marshallable_cast<TpcEmptyCommand>(
-        std::shared_ptr<Marshallable>(&cmd, [](Marshallable*) {}));
+    auto c = marshallable_cast<TpcEmptyCommand>(cmd);
     verify(c != nullptr);
     c->Done();
   } else {

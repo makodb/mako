@@ -878,6 +878,7 @@ struct TypedMarshallableAdapterTraits<MyTypedData> {
 In-tree deptran payloads (`VecPieceData`, `VecRecData`, `ViewData`,
 `KeyCmdBatchData`, `TpcPrepareCommand`, `TpcCommitCommand`,
 `TpcEmptyCommand`, `TpcNoopCommand`, `TpcBatchCommand`,
+`TpcPrepareCarouselCommand`,
 `ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`, `BulkPrepareLog`,
 `PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`, `SyncLogResponse`,
 `SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`) use this trait-backed
@@ -915,6 +916,8 @@ auto empty = marshallable_cast<ViewData>(maybe_null); // nullptr-safe
 For typed payloads stored behind `shared_ptr<Marshallable>` (for example
 `TpcCommitCommand::cmd_` or raft replicated-db log commands), use
 `marshallable_cast<T>(...)` instead of raw `dynamic_pointer_cast<T>(...)`.
+The helper also accepts `Marshallable&` / `Marshallable*` for callback paths
+that receive only base-class references.
 The same pattern applies to RCC graph envelopes (`RccGraph` via
 `MarshallDeputy::RCC_GRAPH`).
 
