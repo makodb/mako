@@ -4,6 +4,40 @@
 
 using namespace rrr;
 
+namespace marshallable_proxy_test_types {
+
+constexpr int32_t kTypedOnlyPayloadKind = 420043;
+
+struct TypedOnlyPayload {
+  int32_t value = 0;
+
+  Marshal& to_marshal(Marshal& m) const {
+    m << value;
+    return m;
+  }
+
+  Marshal& from_marshal(Marshal& m) {
+    m >> value;
+    return m;
+  }
+};
+
+using TypedOnlyPayloadAdapter =
+    rrr::TypedMarshallableAdapter<TypedOnlyPayload, kTypedOnlyPayloadKind>;
+
+}  // namespace marshallable_proxy_test_types
+
+namespace rrr {
+
+template <>
+struct TypedMarshallableAdapterTraits<
+    marshallable_proxy_test_types::TypedOnlyPayload> {
+  static constexpr bool kEnabled = true;
+  using Adapter = marshallable_proxy_test_types::TypedOnlyPayloadAdapter;
+};
+
+}  // namespace rrr
+
 namespace {
 
 constexpr int32_t kTestMarshallableKind = 420042;
@@ -37,6 +71,16 @@ class TestMarshallable : public Marshallable {
 void EnsureTestMarshallableInitializer() {
   static bool initialized = []() {
     MarshallDeputy::reg_initializer<TestMarshallable>(kTestMarshallableKind);
+    return true;
+  }();
+  (void)initialized;
+}
+
+void EnsureTypedOnlyPayloadInitializer() {
+  static bool initialized = []() {
+    MarshallDeputy::reg_initializer<
+        marshallable_proxy_test_types::TypedOnlyPayload>(
+        marshallable_proxy_test_types::kTypedOnlyPayloadKind);
     return true;
   }();
   (void)initialized;
@@ -171,4 +215,40 @@ TEST(MarshallableProxyFacadeTest, MarshallableCastFromSharedPtrKeepsType) {
 TEST(MarshallableProxyFacadeTest, MarshallableCastFromNullDeputyPointerIsNull) {
   MarshallDeputy* deputy = nullptr;
   EXPECT_EQ(marshallable_cast<TestMarshallable>(deputy), nullptr);
+}
+
+TEST(MarshallableProxyFacadeTest, TypedPayloadRoundTripsViaDeputyAdapter) {
+  EnsureTypedOnlyPayloadInitializer();
+  auto payload = std::make_shared<marshallable_proxy_test_types::TypedOnlyPayload>();
+  payload->value = 913;
+
+  MarshallDeputy outgoing(payload);
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+
+  auto decoded =
+      marshallable_cast<marshallable_proxy_test_types::TypedOnlyPayload>(
+          incoming);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->value, 913);
+}
+
+TEST(MarshallableProxyFacadeTest, TypedPayloadInitializerStateContainsAdapter) {
+  EnsureTypedOnlyPayloadInitializer();
+  auto initializer = MarshallDeputy::get_initializer(
+      marshallable_proxy_test_types::kTypedOnlyPayloadKind);
+  auto state = initializer();
+
+  EXPECT_EQ(state.kind, marshallable_proxy_test_types::kTypedOnlyPayloadKind);
+  ASSERT_NE(state.marshallable, nullptr);
+  ASSERT_NE(state.proxy, nullptr);
+
+  auto decoded =
+      marshallable_cast<marshallable_proxy_test_types::TypedOnlyPayload>(
+          state.marshallable);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ((*state.proxy)->inner(), state.marshallable);
 }

@@ -141,6 +141,61 @@ inline std::shared_ptr<Marshallable> marshallable_proxy_inner(
   return proxy->inner();
 }
 
+template <typename T>
+struct TypedMarshallableAdapterTraits {
+  static constexpr bool kEnabled = false;
+};
+
+template <typename T>
+inline constexpr bool kHasTypedMarshallableAdapter =
+    TypedMarshallableAdapterTraits<T>::kEnabled;
+
+template <typename T>
+inline constexpr bool kAlwaysFalse = false;
+
+// Adapter that makes a non-Marshallable payload type marshallable.
+template <typename T, int32_t KindV>
+class TypedMarshallableAdapter : public Marshallable {
+ public:
+  TypedMarshallableAdapter()
+      : Marshallable(KindV), typed_(std::make_shared<T>()) {}
+
+  explicit TypedMarshallableAdapter(std::shared_ptr<T> typed)
+      : Marshallable(KindV), typed_(std::move(typed)) {
+    verify(typed_ != nullptr);
+  }
+
+  std::shared_ptr<T> typed() const { return typed_; }
+
+  Marshal& to_marshal(Marshal& out) const override {
+    return typed_->to_marshal(out);
+  }
+
+  Marshal& from_marshal(Marshal& in) override {
+    return typed_->from_marshal(in);
+  }
+
+ private:
+  std::shared_ptr<T> typed_;
+};
+
+template <typename T>
+inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
+    std::shared_ptr<T> typed) {
+  verify(typed != nullptr);
+  if constexpr (kHasTypedMarshallableAdapter<T>) {
+    using Adapter = typename TypedMarshallableAdapterTraits<T>::Adapter;
+    static_assert(std::is_base_of_v<Marshallable, Adapter>,
+                  "Typed adapter must inherit rrr::Marshallable");
+    return std::static_pointer_cast<Marshallable>(
+        std::make_shared<Adapter>(std::move(typed)));
+  } else {
+    static_assert(kAlwaysFalse<T>,
+                  "No typed marshallable adapter registered for this payload");
+    return nullptr;
+  }
+}
+
 // @safe - Type-erasing wrapper for polymorphic Marshallable objects
 // NOTE: Stores a proxy facade over shared_ptr<Marshallable>:
 //   1. Polymorphism requirement - Marshallable is abstract base with many derived types
@@ -164,12 +219,26 @@ class MarshallDeputy {
     // @unsafe - Registers typed default-constructible marshallable.
     template <typename T>
     static int reg_initializer(int32_t cmd_type)
-      requires std::is_base_of_v<rrr::Marshallable, T> &&
-               std::is_default_constructible_v<T>
+      requires std::is_default_constructible_v<T>
     {
-      return reg_initializer(cmd_type, []() {
-        return make_initializer_state(std::make_shared<T>());
-      });
+      if constexpr (std::is_base_of_v<rrr::Marshallable, T>) {
+        return reg_initializer(cmd_type, []() {
+          return make_initializer_state(std::make_shared<T>());
+        });
+      } else if constexpr (kHasTypedMarshallableAdapter<T>) {
+        return reg_initializer(cmd_type, [cmd_type]() {
+          auto typed = std::make_shared<T>();
+          auto wrapped = wrap_typed_marshallable(std::move(typed));
+          auto state = make_initializer_state(std::move(wrapped));
+          verify(state.kind == cmd_type);
+          return state;
+        });
+      } else {
+        static_assert(
+            kAlwaysFalse<T>,
+            "reg_initializer<T>() requires T to be Marshallable or trait-enabled");
+        return 0;
+      }
     }
     static MarInitializerFn get_initializer(int32_t);
 
@@ -231,6 +300,14 @@ class MarshallDeputy {
           std::static_pointer_cast<rrr::Marshallable>(std::move(sp_m)));
     }
 
+    template<typename T>
+    explicit MarshallDeputy(std::shared_ptr<T> sp_t)
+      requires (!std::is_base_of_v<rrr::Marshallable, T> &&
+                kHasTypedMarshallableAdapter<T>)
+    {
+      set_marshallable(std::move(sp_t));
+    }
+
     // virtual void reset_write_offsets(){
     //   written_to_socket = 0;
     //   sp_data_->reset_write_offsets();
@@ -240,6 +317,14 @@ class MarshallDeputy {
     // @unsafe - Setter accepts shared_ptr<Marshallable> and wraps it in proxy storage.
     void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
       set_marshallable_state(make_initializer_state(std::move(m)));
+    }
+
+    template <typename T>
+    void set_marshallable(std::shared_ptr<T> typed)
+      requires (!std::is_base_of_v<rrr::Marshallable, T> &&
+                kHasTypedMarshallableAdapter<T>)
+    {
+      set_marshallable(wrap_typed_marshallable(std::move(typed)));
     }
 
     bool has_marshallable() const { return sp_data_ != nullptr; }
@@ -344,7 +429,20 @@ class MarshallDeputy {
 template <typename T>
 inline std::shared_ptr<T> marshallable_cast(
     const std::shared_ptr<Marshallable>& value) {
-  return std::dynamic_pointer_cast<T>(value);
+  if constexpr (std::is_base_of_v<Marshallable, T>) {
+    return std::dynamic_pointer_cast<T>(value);
+  } else if constexpr (kHasTypedMarshallableAdapter<T>) {
+    using Adapter = typename TypedMarshallableAdapterTraits<T>::Adapter;
+    auto adapter = std::dynamic_pointer_cast<Adapter>(value);
+    if (adapter == nullptr) {
+      return nullptr;
+    }
+    return adapter->typed();
+  } else {
+    static_assert(kAlwaysFalse<T>,
+                  "marshallable_cast<T>() requires T to be Marshallable or trait-enabled");
+    return nullptr;
+  }
 }
 
 template <typename T>

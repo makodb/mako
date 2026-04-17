@@ -1,6 +1,7 @@
 #include <sstream>
 
 #include <sys/time.h>
+#include <atomic>
 #include <mutex>
 
 #include "marshal.hpp"
@@ -492,6 +493,8 @@ std::mutex mdi_mutex_g;
 // SAFETY: Each thread has its own copy, no locking needed for access
 thread_local MarshallDeputy::MarContainer mc_th_;
 thread_local bool mc_th_initialized_ = false;
+std::atomic<uint64_t> mc_version_g{0};
+thread_local uint64_t mc_th_version_ = 0;
 
 // @unsafe - Registers initializer with mutex locking and map insertion
 int MarshallDeputy::reg_initializer(int32_t cmd_type,
@@ -500,6 +503,7 @@ int MarshallDeputy::reg_initializer(int32_t cmd_type,
   auto& container = get_initializers();
   auto pair = container.insert(std::make_pair(cmd_type, init));
   verify(pair.second);
+  mc_version_g.fetch_add(1, std::memory_order_release);
   md_mutex_g.unlock();
   return 0;
 }
@@ -507,12 +511,14 @@ int MarshallDeputy::reg_initializer(int32_t cmd_type,
 // @unsafe - Calls std::mutex::lock, std::unordered_map::find, std::function constructor
 MarshallDeputy::MarInitializerFn
 MarshallDeputy::get_initializer(int32_t type) {
-  if (!mc_th_initialized_) {
+  if (!mc_th_initialized_ ||
+      mc_th_version_ != mc_version_g.load(std::memory_order_acquire)) {
     md_mutex_g.lock();
     auto& global_container = get_initializers();
     // Copy the container into thread-local storage
     mc_th_ = global_container;
     mc_th_initialized_ = true;
+    mc_th_version_ = mc_version_g.load(std::memory_order_relaxed);
     md_mutex_g.unlock();
   }
   auto it = mc_th_.find(type);

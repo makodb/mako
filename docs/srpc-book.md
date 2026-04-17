@@ -824,7 +824,7 @@ v32 large_val(1000); // Encoded in 2 bytes
 
 ### Custom Types (Marshallable)
 
-To serialize custom types, implement `Marshallable`:
+To serialize custom types, either implement `Marshallable` directly:
 
 ```cpp srpc-no-compile
 struct MyData : public Marshallable {
@@ -843,12 +843,48 @@ struct MyData : public Marshallable {
 };
 ```
 
+Or keep the payload type free of inheritance and bind it through a typed
+adapter trait:
+
+```cpp srpc-no-compile
+struct MyTypedData {
+    i32 id;
+    std::string name;
+
+    Marshal& to_marshal(Marshal& m) const {
+        m << id << name;
+        return m;
+    }
+
+    Marshal& from_marshal(Marshal& m) {
+        m >> id >> name;
+        return m;
+    }
+};
+
+constexpr int32_t kMyTypedDataKind = 420999;
+using MyTypedDataAdapter =
+    rrr::TypedMarshallableAdapter<MyTypedData, kMyTypedDataKind>;
+
+namespace rrr {
+template <>
+struct TypedMarshallableAdapterTraits<MyTypedData> {
+    static constexpr bool kEnabled = true;
+    using Adapter = MyTypedDataAdapter;
+};
+} // namespace rrr
+```
+
 For `MarshallDeputy` round-trip support, register a typed initializer (no raw
-pointer factory needed):
+pointer factory needed). This works for both direct `Marshallable` classes and
+trait-enabled typed payloads:
 
 ```cpp srpc-no-compile
 static int volatile my_data_init =
     MarshallDeputy::reg_initializer<MyData>(MyMarshallableKind);
+
+static int volatile my_typed_data_init =
+    MarshallDeputy::reg_initializer<MyTypedData>(kMyTypedDataKind);
 ```
 
 When extracting a typed payload from `MarshallDeputy`, use the centralized
