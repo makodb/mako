@@ -1757,21 +1757,27 @@ public:
      * If called before connect(), the config is stored and applied at connect time.
      * If called after connect(), the config is applied immediately.
      */
-    // @safe - Uses Cell for interior mutability
+    // @safe - Uses Cell for interior mutability; RefCell ops wrapped @unsafe
     void set_heartbeat(const HeartbeatConfig& config) const {
         pending_heartbeat_config_.set(config);
 
+        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_heartbeat_config(config);
         }
+        }
     }
 
-    // @safe - Get current heartbeat configuration
+    // @safe - RefCell ops wrapped @unsafe
     HeartbeatConfig heartbeat_config() const {
+        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->heartbeat_config();
+        }
         }
         return pending_heartbeat_config_.get();
     }
@@ -1781,30 +1787,39 @@ public:
      * If called before connect(), the config is stored and applied at connect time.
      * If called after connect(), the config is applied immediately.
      */
-    // @safe - Uses Cell for interior mutability
+    // @safe - Uses Cell for interior mutability; RefCell ops wrapped @unsafe
     void set_circuit_breaker(const CircuitBreakerConfig& config) const {
         pending_circuit_breaker_config_.set(config);
 
+        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_circuit_breaker_config(config);
         }
+        }
     }
 
-    // @safe - Get current circuit breaker configuration
+    // @safe - RefCell ops wrapped @unsafe
     CircuitBreakerConfig circuit_breaker_config() const {
+        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->circuit_breaker_config();
         }
+        }
         return pending_circuit_breaker_config_.get();
     }
 
-    // @safe - Get current circuit breaker state
+    // @safe - RefCell ops wrapped @unsafe
     CircuitState circuit_breaker_state() const {
+        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->circuit_breaker_state();
+        }
         }
         return CircuitState::CLOSED;
     }
