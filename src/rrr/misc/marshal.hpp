@@ -413,11 +413,13 @@ class MarshallDeputy {
       bypass_to_socket_ = inner_sp_data_->bypass_to_socket_;
     }
 
+    // @unsafe - Returns reference to internal shared_ptr target (no @lifetime annotation)
     rrr::MarshallableProxy& data_proxy() {
       verify(sp_data_ != nullptr);
       return *sp_data_;
     }
 
+    // @unsafe - Returns reference to internal shared_ptr target (no @lifetime annotation)
     const rrr::MarshallableProxy& data_proxy() const {
       verify(sp_data_ != nullptr);
       return *sp_data_;

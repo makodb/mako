@@ -26,7 +26,8 @@ struct KVOperation {
     std::string value;  // empty for DELETE
 };
 
-class ReplicatedDBCommand {
+// @unsafe - Inherits from Marshallable (external, non-borrow-checked base)
+class ReplicatedDBCommand : public Marshallable {
 public:
     static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_REPLICATED_DB;
     ReplicatedDBOp op_ = ReplicatedDBOp::PUT;
@@ -34,7 +35,7 @@ public:
     std::string value_;
     std::vector<KVOperation> batch_ops_;  // Only used when op_ == BATCH
 
-    ReplicatedDBCommand() = default;
+    ReplicatedDBCommand() : Marshallable(kMarshallKind) {}
 
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
     static shared_ptr<ReplicatedDBCommand> CreatePut(const std::string& key, const std::string& value);
@@ -43,8 +44,8 @@ public:
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
     static shared_ptr<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
 
-    Marshal& to_marshal(Marshal& m) const;
-    Marshal& from_marshal(Marshal& m);
+    Marshal& to_marshal(Marshal& m) const override;
+    Marshal& from_marshal(Marshal& m) override;
 };
 
 /**

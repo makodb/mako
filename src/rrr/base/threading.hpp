@@ -485,10 +485,10 @@ public:
     // return 0 when queuing ok, otherwise EPERM
     int run_async(const std::function<void()>&);
 
-    // @safe - Factory to create Arc-wrapped ThreadPool
-    // Uses make() for variadic template to forward constructor arguments
+    // @unsafe - Factory uses rusty::Arc::make (non-borrow-checked)
     template<typename... Args>
     static rusty::Arc<ThreadPool> make(Args&&... args) {
+        // @unsafe { rusty::Arc::make is not borrow-checked }
         return rusty::Arc<ThreadPool>::make(std::forward<Args>(args)...);
     }
 };
@@ -518,10 +518,10 @@ public:
 
     double max_wait() const;
 
-    // @safe - Factory to create Arc-wrapped RunLater
-    // Uses make() for variadic template to forward constructor arguments
+    // @unsafe - Factory uses rusty::Arc::make (non-borrow-checked)
     template<typename... Args>
     static rusty::Arc<RunLater> make(Args&&... args) {
+        // @unsafe { rusty::Arc::make is not borrow-checked }
         return rusty::Arc<RunLater>::make(std::forward<Args>(args)...);
     }
 };
