@@ -168,7 +168,7 @@ using Scc = vector<V*>;
 
 // V is vertex type
 template<typename V>
-class Graph : public Marshallable {
+class Graph {
  public:
   typedef std::vector<V *> VertexList;
   bool managing_memory_{true};
@@ -183,8 +183,7 @@ class Graph : public Marshallable {
     return vertex_index_;
   };
 
-  Graph(bool managing_memory = true) : Marshallable(MarshallDeputy::UNKNOWN),
-                                       managing_memory_(managing_memory) {}
+  Graph(bool managing_memory = true) : managing_memory_(managing_memory) {}
   Graph(const VertexList &vertices) : Graph() {
     AddV(vertices);
   }
@@ -963,7 +962,7 @@ class Graph : public Marshallable {
     }
   }
 
-  Marshal &to_marshal(Marshal &m) const override {
+  Marshal &to_marshal(Marshal &m) const {
     verify(managing_memory_);
     uint64_t n = size();
     verify(n >= 0 && n < 10000);
@@ -988,7 +987,7 @@ class Graph : public Marshallable {
     return m;
   }
 
-  Marshal &from_marshal(Marshal &m) override {
+  Marshal &from_marshal(Marshal &m) {
     verify(managing_memory_);
     verify(size() == 0);
     uint64_t n;

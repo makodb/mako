@@ -31,8 +31,9 @@ void TroadCommo::SendDispatch(vector<TxPieceData>& cmd,
 //          verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
         } else if (md.kind_ == MarshallDeputy::RCC_GRAPH) {
-          RccGraph& graph = dynamic_cast<RccGraph&>(*md.inner());
-          callback(res, output, graph);
+          auto sp_graph = marshallable_cast<RccGraph>(md);
+          verify(sp_graph);
+          callback(res, output, *sp_graph);
         } else {
           verify(0);
         }

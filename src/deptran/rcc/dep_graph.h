@@ -15,16 +15,19 @@ namespace janus {
 //typedef RccDTxn RccDTxn;
 typedef vector<RccTx*> RccScc;
 
-class EmptyGraph : public Marshallable {
+class EmptyGraph {
  public:
-  EmptyGraph() : Marshallable(MarshallDeputy::EMPTY_GRAPH) {};
-  virtual Marshal& to_marshal(Marshal& m) const {return m;};
-  virtual Marshal& from_marshal(Marshal& m) {return m;};
+  static constexpr int32_t kMarshallKind = MarshallDeputy::EMPTY_GRAPH;
+
+  EmptyGraph() = default;
+  Marshal& to_marshal(Marshal& m) const { return m; }
+  Marshal& from_marshal(Marshal& m) { return m; }
 };
 
 class RccServer;
 class RccGraph : public Graph<RccTx> {
  public:
+  static constexpr int32_t kMarshallKind = MarshallDeputy::RCC_GRAPH;
 //    Graph<PieInfo> pie_gra_;
 //  Graph <TxnInfo> txn_gra_;
   RccServer* sched_{nullptr};
@@ -34,9 +37,7 @@ class RccGraph : public Graph<RccTx> {
 //  std::vector<RococoProxy *> rpc_proxies_;
 //  std::vector<std::string> server_addrs_;
 
-  RccGraph() : Graph<RccTx>() {
-    kind_ = MarshallDeputy::RCC_GRAPH;
-  }
+  RccGraph() : Graph<RccTx>() {}
 
   virtual ~RccGraph() {
     // XXX hopefully some memory leak here does not hurt. :(
@@ -76,3 +77,21 @@ class RccGraph : public Graph<RccTx> {
 
 };
 } // namespace janus
+
+namespace rrr {
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::EmptyGraph> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::EmptyGraph, MarshallDeputy::EMPTY_GRAPH>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::RccGraph> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedMarshallableAdapter<janus::RccGraph, MarshallDeputy::RCC_GRAPH>;
+};
+
+}  // namespace rrr

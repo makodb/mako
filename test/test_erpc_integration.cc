@@ -160,12 +160,22 @@ protected:
     int client_port_;
     int session_num_{-1};
 
+    void StopServerThread() {
+        stop_server_ = true;
+        if (server_thread_.joinable()) {
+            server_thread_.join();
+        }
+    }
+
     void SetUp() override {
+        std::string last_error;
         int attempts = 0;
         while (attempts < 10) {
             server_running_ = false;
             server_failed_ = false;
             stop_server_ = false;
+            session_num_ = -1;
+            last_error.clear();
 
             int base = reserve_erpc_ports(ERPC_PORT_STRIDE);
             server_port_ = base;
@@ -179,67 +189,71 @@ protected:
                 std::this_thread::sleep_for(milliseconds(10));
             }
 
-            if (server_running_) {
-                break;
+            if (!server_running_) {
+                StopServerThread();
+                attempts++;
+                continue;
             }
 
-            stop_server_ = true;
-            if (server_thread_.joinable()) {
-                server_thread_.join();
+            try {
+                // Create client
+                std::string client_uri = "127.0.0.1:" + std::to_string(client_port_);
+                client_nexus_ = std::make_unique<erpc::Nexus>(client_uri);
+                client_ctx_.rpc = new erpc::Rpc<erpc::CTransport>(
+                    client_nexus_.get(),
+                    static_cast<void*>(&client_ctx_),
+                    0,  // rpc_id
+                    sm_handler,
+                    0   // phy_port
+                );
+
+                // Connect to server
+                std::string server_uri = "127.0.0.1:" + std::to_string(server_port_);
+                session_num_ = client_ctx_.rpc->create_session(server_uri, 100);
+
+                // Wait for connection - SM packets are processed asynchronously
+                int wait_count = 0;
+                while (!client_ctx_.rpc->is_connected(session_num_) && wait_count < 500) {
+                    client_ctx_.rpc->run_event_loop(1);  // 1ms timeout with event processing
+                    std::this_thread::sleep_for(milliseconds(1));
+                    wait_count++;
+                }
+                if (client_ctx_.rpc->is_connected(session_num_)) {
+                    return;
+                }
+                last_error = "Failed to connect to server after retries";
+            } catch (const std::exception& e) {
+                last_error = e.what();
             }
+
+            if (client_ctx_.rpc) {
+                delete client_ctx_.rpc;
+                client_ctx_.rpc = nullptr;
+            }
+            client_nexus_.reset();
+            StopServerThread();
             attempts++;
         }
 
-        ASSERT_TRUE(server_running_) << "Failed to start eRPC server after retries";
-
-        // Create client
-        std::string client_uri = "127.0.0.1:" + std::to_string(client_port_);
-        client_nexus_ = std::make_unique<erpc::Nexus>(client_uri);
-        client_ctx_.rpc = new erpc::Rpc<erpc::CTransport>(
-            client_nexus_.get(),
-            static_cast<void*>(&client_ctx_),
-            0,  // rpc_id
-            sm_handler,
-            0   // phy_port
-        );
-
-        // Connect to server
-        std::string server_uri = "127.0.0.1:" + std::to_string(server_port_);
-        session_num_ = client_ctx_.rpc->create_session(server_uri, 100);
-
-        // Wait for connection - SM packets are processed asynchronously
-        // Need to give time for the SM thread to process
-        int wait_count = 0;
-        while (!client_ctx_.rpc->is_connected(session_num_) && wait_count < 500) {
-            client_ctx_.rpc->run_event_loop(1);  // 1ms timeout with event processing
-            std::this_thread::sleep_for(milliseconds(1));
-            wait_count++;
-        }
-        ASSERT_TRUE(client_ctx_.rpc->is_connected(session_num_))
-            << "Failed to connect to server after " << wait_count << " iterations";
+        FAIL() << "Failed to initialize eRPC test fixture after retries: " << last_error;
     }
 
     void TearDown() override {
         // Stop server
-        stop_server_ = true;
-
         // Clean up client
         if (client_ctx_.rpc) {
             delete client_ctx_.rpc;
             client_ctx_.rpc = nullptr;
         }
 
-        // Wait for server thread
-        if (server_thread_.joinable()) {
-            server_thread_.join();
-        }
+        StopServerThread();
     }
 
     void RunServer() {
         std::string server_uri = "127.0.0.1:" + std::to_string(server_port_);
         try {
             server_nexus_ = std::make_unique<erpc::Nexus>(server_uri);
-        } catch (const std::system_error&) {
+        } catch (const std::exception&) {
             server_failed_ = true;
             return;
         }

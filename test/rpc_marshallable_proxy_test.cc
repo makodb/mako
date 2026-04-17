@@ -5,6 +5,7 @@
 #include "deptran/classic/tpc_command.h"
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"
+#include "deptran/rcc/dep_graph.h"
 
 using namespace rrr;
 
@@ -56,6 +57,8 @@ static_assert(!std::is_base_of_v<Marshallable, janus::TpcEmptyCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcNoopCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::TpcBatchCommand>);
 static_assert(!std::is_base_of_v<Marshallable, janus::ReplicatedDBCommand>);
+static_assert(!std::is_base_of_v<Marshallable, janus::EmptyGraph>);
+static_assert(!std::is_base_of_v<Marshallable, janus::RccGraph>);
 
 class TestMarshallable : public Marshallable {
  public:
@@ -452,4 +455,39 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(decoded->op_, janus::ReplicatedDBOp::PUT);
   EXPECT_EQ(decoded->key_, "k1");
   EXPECT_EQ(decoded->value_, "v1");
+}
+
+TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesTypedAdapter) {
+  auto payload = std::make_shared<janus::EmptyGraph>();
+  ASSERT_NE(payload, nullptr);
+
+  MarshallDeputy outgoing(payload);
+  EXPECT_EQ(outgoing.kind_, MarshallDeputy::EMPTY_GRAPH);
+
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+  EXPECT_EQ(incoming.kind_, MarshallDeputy::EMPTY_GRAPH);
+  ASSERT_NE(marshallable_cast<janus::EmptyGraph>(incoming), nullptr);
+}
+
+TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesTypedAdapter) {
+  auto payload = std::make_shared<janus::RccGraph>();
+  ASSERT_NE(payload, nullptr);
+
+  MarshallDeputy outgoing(payload);
+  EXPECT_EQ(outgoing.kind_, MarshallDeputy::RCC_GRAPH);
+
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+  EXPECT_EQ(incoming.kind_, MarshallDeputy::RCC_GRAPH);
+
+  auto decoded = marshallable_cast<janus::RccGraph>(incoming);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->size(), 0u);
 }

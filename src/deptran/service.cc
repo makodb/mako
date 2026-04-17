@@ -699,7 +699,9 @@ void ClassicServiceImpl::RccFinish(const cmdid_t& cmd_id,
                                    const MarshallDeputy& md_graph,
                                    TxnOutput* output,
                                    rrr::DeferredReply defer) {
-  const RccGraph& graph = dynamic_cast<const RccGraph&>(*md_graph.inner());
+  auto sp_graph = marshallable_cast<RccGraph>(md_graph);
+  verify(sp_graph);
+  const RccGraph& graph = *sp_graph;
   verify(graph.size() > 0);
   verify(0);
 //  std::lock_guard<std::mutex> guard(mtx_);
