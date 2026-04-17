@@ -6,15 +6,11 @@
 namespace janus {
 
 static int volatile gx =
-  MarshallDeputy::reg_initializer(MarshallDeputy::RCC_GRAPH,
-                                   []() -> Marshallable* {
-                                     return new RccGraph();
-                                   });
+  MarshallDeputy::reg_initializer<RccGraph>(
+      MarshallDeputy::RCC_GRAPH);
 static int volatile gxx =
-  MarshallDeputy::reg_initializer(MarshallDeputy::EMPTY_GRAPH,
-                                   []() -> Marshallable* {
-                                     return new EmptyGraph();
-                                   });
+  MarshallDeputy::reg_initializer<EmptyGraph>(
+      MarshallDeputy::EMPTY_GRAPH);
 
 shared_ptr<RccTx> RccGraph::FindOrCreateRccVertex(txnid_t txn_id,
                                                   RccServer *sched) {

@@ -5,34 +5,24 @@
 using namespace janus;
 
 static int volatile x1 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_PREPARE,
-                                     [] () -> Marshallable* {
-                                       return new TpcPrepareCommand();
-                                     });
+    MarshallDeputy::reg_initializer<TpcPrepareCommand>(
+        MarshallDeputy::CMD_TPC_PREPARE);
 
 static int volatile x2 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_COMMIT,
-                                     [] () -> Marshallable* {
-                                       return new TpcCommitCommand();
-                                     });
+    MarshallDeputy::reg_initializer<TpcCommitCommand>(
+        MarshallDeputy::CMD_TPC_COMMIT);
 
 static int volatile x3 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_EMPTY,
-                                     [] () -> Marshallable* {
-                                       return new TpcEmptyCommand;
-                                     });
+    MarshallDeputy::reg_initializer<TpcEmptyCommand>(
+        MarshallDeputy::CMD_TPC_EMPTY);
 
 static int volatile x4 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_NOOP,
-                                     [] () -> Marshallable* {
-                                       return new TpcNoopCommand;
-                                     });
+    MarshallDeputy::reg_initializer<TpcNoopCommand>(
+        MarshallDeputy::CMD_NOOP);
 
 static int volatile x5 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_BATCH,
-                                      [] () -> Marshallable* {
-                                       return new TpcBatchCommand;
-                                     });
+    MarshallDeputy::reg_initializer<TpcBatchCommand>(
+        MarshallDeputy::CMD_TPC_BATCH);
 
 
 Marshal& TpcPrepareCommand::to_marshal(Marshal& m) const {

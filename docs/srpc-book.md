@@ -843,6 +843,14 @@ struct MyData : public Marshallable {
 };
 ```
 
+For `MarshallDeputy` round-trip support, register a typed initializer (no raw
+pointer factory needed):
+
+```cpp srpc-no-compile
+static int volatile my_data_init =
+    MarshallDeputy::reg_initializer<MyData>(MyMarshallableKind);
+```
+
 When extracting a typed payload from `MarshallDeputy`, use the centralized
 `marshallable_cast<T>(...)` helper (declared in `src/rrr/misc/marshal.hpp`) so
 call sites do not open-code `dynamic_pointer_cast` on `inner()`:

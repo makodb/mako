@@ -148,14 +148,30 @@ inline std::shared_ptr<Marshallable> marshallable_proxy_inner(
 //   3. Shared ownership is still available through inner() for dynamic casts
 class MarshallDeputy {
   public:
-    typedef std::unordered_map<int32_t, std::function<Marshallable*()>> MarContainer;
+    struct MarInitializerState {
+      std::shared_ptr<rrr::Marshallable> marshallable;
+      std::shared_ptr<rrr::MarshallableProxy> proxy;
+      int32_t kind{0};
+    };
+    typedef std::function<MarInitializerState()> MarInitializerFn;
+    typedef std::unordered_map<int32_t, MarInitializerFn> MarContainer;
     // @safe - Returns reference to global factory registry
     // SAFETY: Protected by mutex, returns reference to static container
     // @lifetime: () -> &'static
     static MarContainer& get_initializers();
-    // @unsafe - Registers initializer with mutex locking
-    static int reg_initializer(int32_t, std::function<Marshallable*()>);
-    static std::function<Marshallable*()> get_initializer(int32_t);
+    // @unsafe - Registers proxy-backed initializer metadata factory.
+    static int reg_initializer(int32_t, MarInitializerFn);
+    // @unsafe - Registers typed default-constructible marshallable.
+    template <typename T>
+    static int reg_initializer(int32_t cmd_type)
+      requires std::is_base_of_v<rrr::Marshallable, T> &&
+               std::is_default_constructible_v<T>
+    {
+      return reg_initializer(cmd_type, []() {
+        return make_initializer_state(std::make_shared<T>());
+      });
+    }
+    static MarInitializerFn get_initializer(int32_t);
 
   public:
     bool bypass_to_socket_ = false;
@@ -223,14 +239,7 @@ class MarshallDeputy {
     rrr::Marshal& create_actual_object_from(rrr::Marshal& m);
     // @unsafe - Setter accepts shared_ptr<Marshallable> and wraps it in proxy storage.
     void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
-      verify(sp_data_ == nullptr);
-      verify(inner_sp_data_ == nullptr);
-      verify(m != nullptr);
-      inner_sp_data_ = std::move(m);
-      kind_ = inner_sp_data_->kind();
-      bypass_to_socket_ = inner_sp_data_->bypass_to_socket_;
-      sp_data_ = std::make_shared<rrr::MarshallableProxy>(
-          make_marshallable_proxy(inner_sp_data_));
+      set_marshallable_state(make_initializer_state(std::move(m)));
     }
 
     bool has_marshallable() const { return sp_data_ != nullptr; }
@@ -294,6 +303,31 @@ class MarshallDeputy {
     ~MarshallDeputy() = default;
 
   private:
+    static MarInitializerState make_initializer_state(
+        std::shared_ptr<rrr::Marshallable> m) {
+      verify(m != nullptr);
+      MarInitializerState state;
+      state.kind = m->kind();
+      state.marshallable = std::move(m);
+      state.proxy = std::make_shared<rrr::MarshallableProxy>(
+          make_marshallable_proxy(state.marshallable));
+      return state;
+    }
+
+    void set_marshallable_state(MarInitializerState state) {
+      verify(sp_data_ == nullptr);
+      verify(inner_sp_data_ == nullptr);
+      verify(state.marshallable != nullptr);
+      verify(state.proxy != nullptr);
+      verify(state.kind != UNKNOWN);
+      verify(state.kind == state.marshallable->kind());
+      verify(state.kind == (*state.proxy)->kind());
+      inner_sp_data_ = std::move(state.marshallable);
+      sp_data_ = std::move(state.proxy);
+      kind_ = state.kind;
+      bypass_to_socket_ = inner_sp_data_->bypass_to_socket_;
+    }
+
     rrr::MarshallableProxy& data_proxy() {
       verify(sp_data_ != nullptr);
       return *sp_data_;

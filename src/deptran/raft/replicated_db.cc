@@ -10,10 +10,8 @@ using namespace janus;
 
 // @unsafe - Static registration with Marshallable factory
 static int volatile x_replicated_db =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_REPLICATED_DB,
-                                     []() -> Marshallable* {
-                                       return new ReplicatedDBCommand();
-                                     });
+    MarshallDeputy::reg_initializer<ReplicatedDBCommand>(
+        MarshallDeputy::CMD_REPLICATED_DB);
 
 // ===========================================================================
 // ReplicatedDBCommand factory methods and serialization

@@ -18,47 +18,31 @@ std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
 static int volatile xx =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CONTAINER_CMD,
-                                   []() -> Marshallable* {
-                                     return new LogEntry();
-                                   });
+    MarshallDeputy::reg_initializer<LogEntry>(
+        MarshallDeputy::CONTAINER_CMD);
 static int volatile xxx =
-      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_BLK_PXS,
-                                     []() -> Marshallable* {
-                                       return new BulkPaxosCmd();
-                                     });
+      MarshallDeputy::reg_initializer<BulkPaxosCmd>(
+          MarshallDeputy::CMD_BLK_PXS);
 static int volatile x4 =
-      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_BLK_PREP_PXS,
-                                     []() -> Marshallable* {
-                                       return new BulkPrepareLog();
-                                     });
+      MarshallDeputy::reg_initializer<BulkPrepareLog>(
+          MarshallDeputy::CMD_BLK_PREP_PXS);
 static int volatile x5 =
-      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_HRTBT_PXS,
-                                     []() -> Marshallable* {
-                                       return new HeartBeatLog();
-                                     });
+      MarshallDeputy::reg_initializer<HeartBeatLog>(
+          MarshallDeputy::CMD_HRTBT_PXS);
 
 static int volatile x6 =
-      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCREQ_PXS,
-                                     []() -> Marshallable* {
-                                       return new SyncLogRequest();
-                                     });
+      MarshallDeputy::reg_initializer<SyncLogRequest>(
+          MarshallDeputy::CMD_SYNCREQ_PXS);
 
 static int volatile x7 =
-      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCRESP_PXS,
-                                     []() -> Marshallable* {
-                                       return new SyncLogResponse();
-                                     });
+      MarshallDeputy::reg_initializer<SyncLogResponse>(
+          MarshallDeputy::CMD_SYNCRESP_PXS);
 static int volatile x8 =
-      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCNOOP_PXS,
-                                     []() -> Marshallable* {
-                                       return new SyncNoOpRequest();
-                                     });
+      MarshallDeputy::reg_initializer<SyncNoOpRequest>(
+          MarshallDeputy::CMD_SYNCNOOP_PXS);
 static int volatile x9 =
-      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_PREP_PXS,
-                                     []() -> Marshallable* {
-                                       return new PaxosPrepCmd();
-                                     });
+      MarshallDeputy::reg_initializer<PaxosPrepCmd>(
+          MarshallDeputy::CMD_PREP_PXS);
 
 static int shared_ptr_apprch = 1;
 Marshal& LogEntry::to_marshal(Marshal& m) const {

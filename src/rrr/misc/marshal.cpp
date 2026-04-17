@@ -495,7 +495,7 @@ thread_local bool mc_th_initialized_ = false;
 
 // @unsafe - Registers initializer with mutex locking and map insertion
 int MarshallDeputy::reg_initializer(int32_t cmd_type,
-                                   function<Marshallable*()> init) {
+                                   MarInitializerFn init) {
   md_mutex_g.lock();
   auto& container = get_initializers();
   auto pair = container.insert(std::make_pair(cmd_type, init));
@@ -505,7 +505,7 @@ int MarshallDeputy::reg_initializer(int32_t cmd_type,
 }
 
 // @unsafe - Calls std::mutex::lock, std::unordered_map::find, std::function constructor
-function<Marshallable*()>
+MarshallDeputy::MarInitializerFn
 MarshallDeputy::get_initializer(int32_t type) {
   if (!mc_th_initialized_) {
     md_mutex_g.lock();
@@ -537,7 +537,7 @@ Marshal &Marshallable::from_marshal(Marshal &m) {
   return m;
 }
 
-// @unsafe - Calls std::shared_ptr::get and get_initializer
+// @unsafe - Calls initializer factory and unmarshals into proxied payload.
 // @lifetime: (&'a mut) -> &'a mut
 Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   verify(!has_marshallable());
@@ -548,10 +548,10 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
     default:
       auto func = get_initializer(kind_);
       verify(func);
-      // Call initializer function which returns raw Marshallable*
-      Marshallable* raw_ptr = func();
-      verify(raw_ptr);
-      set_marshallable(std::shared_ptr<Marshallable>(raw_ptr));
+      auto state = func();
+      verify(state.kind != UNKNOWN);
+      verify(state.kind == kind_);
+      set_marshallable_state(std::move(state));
       break;
   }
   auto object = inner();

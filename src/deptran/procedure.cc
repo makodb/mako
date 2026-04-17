@@ -8,28 +8,20 @@
 namespace janus {
 
 static int volatile x1 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_VEC_PIECE,
-                                   [] () -> Marshallable* {
-                                     return new VecPieceData();
-                                   });
+    MarshallDeputy::reg_initializer<VecPieceData>(
+        MarshallDeputy::CMD_VEC_PIECE);
 
 static int volatile x2 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_REC_VEC,
-                                   [] () -> Marshallable* {
-                                     return new VecRecData;
-                                   });
+    MarshallDeputy::reg_initializer<VecRecData>(
+        MarshallDeputy::CMD_REC_VEC);
 
 static int volatile x3 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_VIEW_DATA,
-                                   [] () -> Marshallable* {
-                                     return new ViewData;
-                                   });
+    MarshallDeputy::reg_initializer<ViewData>(
+        MarshallDeputy::CMD_VIEW_DATA);
 
 static int volatile x4 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_KEY_CMD_BATCH,
-                                   [] () -> Marshallable* {
-                                     return new KeyCmdBatchData;
-                                   });
+    MarshallDeputy::reg_initializer<KeyCmdBatchData>(
+        MarshallDeputy::CMD_KEY_CMD_BATCH);
 
 TxWorkspace::TxWorkspace() {
   values_ = std::make_shared<map<int32_t, Value>>();

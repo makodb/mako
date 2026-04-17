@@ -550,7 +550,13 @@ Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/pr
       - Added test coverage in `test/rpc_marshallable_proxy_test.cc` for shared-ptr cast preservation and null `MarshallDeputy*` handling.
       - Scope analysis: completed within small-change budget (<500 LOC, net ~120 LOC including tests/docs).
       - Verification note: full RPC-focused suite passed serially after this leaf (`ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_transport_backend|stress_transport_backend|test_transport_integration|test_erpc_integration)$'` -> 44/44 passed).
-    - [ ] Leaf 4b: refactor `MarshallDeputy` initializer registry to support typed proxy-backed initializers (factory returns proxy-owned instance metadata instead of raw `Marshallable*`). ~200 LOC.
+    - [x] Leaf 4b: refactor `MarshallDeputy` initializer registry to support typed proxy-backed initializers (factory returns proxy-owned instance metadata instead of raw `Marshallable*`). ~200 LOC.
+      - Implemented on 2026-04-17 in `src/rrr/misc/marshal.hpp` + `src/rrr/misc/marshal.cpp`: changed initializer registry type from raw-pointer factories to typed metadata factories returning `MarInitializerState` (`shared_ptr<Marshallable>`, `shared_ptr<MarshallableProxy>`, `kind`).
+      - Added typed registration API `MarshallDeputy::reg_initializer<T>(kind)` for default-constructible marshallable types, and migrated all in-tree static registrations in `deptran/` + `test/` to this API.
+      - Refactored `MarshallDeputy::create_actual_object_from` to consume proxy-backed initializer state directly (`set_marshallable_state(...)`) instead of constructing temporary raw pointers.
+      - Added focused guard coverage in `test/rpc_marshallable_proxy_test.cc` (`InitializerReturnsProxyBackedMetadata`) to assert metadata contract (`kind`, proxy, and inner shared_ptr identity).
+      - Scope analysis: completed within small-change budget (<500 LOC, net ~220 LOC including tests/docs).
+      - Verification note: full RPC-focused suite passed serially after this leaf (`ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_transport_backend|stress_transport_backend|test_transport_integration|test_erpc_integration)$'` -> 44/44 passed).
     - [ ] Leaf 4c: migrate classic command payload types (`Tpc*`, `Vec*`, `ViewData`, `KeyCmdBatchData`) off `: public Marshallable` onto typed proxy adapters, including factory registration updates. ~300-400 LOC.
     - [ ] Leaf 4d: migrate replication/RCC marshallable types (`Graph`/`EmptyGraph`, paxos log payloads, `ReplicatedDBCommand`) and remaining typed-cast callsites. ~300-400 LOC.
     - [ ] Leaf 4e: remove legacy inheritance assumptions/compatibility glue in marshalling paths and close Leaf 4 DoD with full RPC suite evidence. ~100 LOC.

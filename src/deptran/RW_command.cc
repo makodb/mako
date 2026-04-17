@@ -8,10 +8,8 @@
 namespace janus {
 
 static int volatile x =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_KV,
-                                     [] () -> Marshallable* {
-                                       return new SimpleRWCommand;
-                                     });
+    MarshallDeputy::reg_initializer<SimpleRWCommand>(
+        MarshallDeputy::CMD_KV);
 
 SimpleRWCommand::SimpleRWCommand(): Marshallable(MarshallDeputy::CMD_KV) {
   //Log_info("[copilot+] SimpleRWCommand Empty created");

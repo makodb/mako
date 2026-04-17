@@ -36,9 +36,7 @@ class TestMarshallable : public Marshallable {
 
 void EnsureTestMarshallableInitializer() {
   static bool initialized = []() {
-    MarshallDeputy::reg_initializer(
-        kTestMarshallableKind,
-        []() -> Marshallable* { return new TestMarshallable(); });
+    MarshallDeputy::reg_initializer<TestMarshallable>(kTestMarshallableKind);
     return true;
   }();
   (void)initialized;
@@ -148,6 +146,19 @@ TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded->kind_, kTestMarshallableKind);
   EXPECT_EQ(decoded->value, 321);
+}
+
+TEST(MarshallableProxyFacadeTest, InitializerReturnsProxyBackedMetadata) {
+  EnsureTestMarshallableInitializer();
+
+  auto initializer = MarshallDeputy::get_initializer(kTestMarshallableKind);
+  auto state = initializer();
+  ASSERT_NE(state.marshallable, nullptr);
+  ASSERT_NE(state.proxy, nullptr);
+  EXPECT_EQ(state.kind, kTestMarshallableKind);
+  EXPECT_EQ(state.marshallable->kind(), kTestMarshallableKind);
+  EXPECT_EQ((*state.proxy)->kind(), kTestMarshallableKind);
+  EXPECT_EQ((*state.proxy)->inner(), state.marshallable);
 }
 
 TEST(MarshallableProxyFacadeTest, MarshallableCastFromSharedPtrKeepsType) {
