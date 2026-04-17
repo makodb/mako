@@ -910,6 +910,10 @@ MarshallDeputy* maybe_null = nullptr;
 auto empty = marshallable_cast<ViewData>(maybe_null); // nullptr-safe
 ```
 
+For classic typed payloads stored behind `shared_ptr<Marshallable>` (for
+example `TpcCommitCommand::cmd_`), use `marshallable_cast<T>(...)` instead of
+raw `dynamic_pointer_cast<T>(...)`.
+
 ### Bookmarks
 
 For recording sizes without seeking:

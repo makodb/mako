@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <type_traits>
 #include "rrr.hpp"
 #include "misc/marshallable_proxy.h"
 #include "deptran/classic/tpc_command.h"
@@ -43,6 +44,16 @@ struct TypedMarshallableAdapterTraits<
 namespace {
 
 constexpr int32_t kTestMarshallableKind = 420042;
+
+static_assert(!std::is_base_of_v<Marshallable, janus::VecPieceData>);
+static_assert(!std::is_base_of_v<Marshallable, janus::VecRecData>);
+static_assert(!std::is_base_of_v<Marshallable, janus::ViewData>);
+static_assert(!std::is_base_of_v<Marshallable, janus::KeyCmdBatchData>);
+static_assert(!std::is_base_of_v<Marshallable, janus::TpcPrepareCommand>);
+static_assert(!std::is_base_of_v<Marshallable, janus::TpcCommitCommand>);
+static_assert(!std::is_base_of_v<Marshallable, janus::TpcEmptyCommand>);
+static_assert(!std::is_base_of_v<Marshallable, janus::TpcNoopCommand>);
+static_assert(!std::is_base_of_v<Marshallable, janus::TpcBatchCommand>);
 
 class TestMarshallable : public Marshallable {
  public:

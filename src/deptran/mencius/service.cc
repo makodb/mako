@@ -59,7 +59,6 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
   for (auto x: skip_commits) {
     auto cmd_ptr = std::make_shared<TpcCommitCommand>();
     MarshallDeputy md(wrap_typed_marshallable(cmd_ptr));
-    md.kind_ = MarshallDeputy::CMD_TPC_COMMIT;
     sched_->OnCommit(x, 100, md.inner(), true);
   }
   sched_->g_mutex.unlock();
