@@ -599,7 +599,7 @@ public:
         BULKDECIDE = 0x6d2a686a,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(FORWARD, svc_index)) != 0) {
@@ -1595,7 +1595,7 @@ public:
         COMMIT = 0x14833777,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(COMMIT, svc_index)) != 0) {
@@ -1800,7 +1800,7 @@ public:
         DECIDE = 0x548a454d,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(PREPARE, svc_index)) != 0) {
@@ -2322,7 +2322,7 @@ public:
         DECIDE = 0x1aa37b6f,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(HEARTBEAT, svc_index)) != 0) {
@@ -3269,7 +3269,7 @@ public:
         REMOVESERVER = 0x4fedb68e,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(VOTE, svc_index)) != 0) {
@@ -4253,7 +4253,7 @@ public:
         COMMIT = 0x611b68e0,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(FORWARD, svc_index)) != 0) {
@@ -6288,7 +6288,7 @@ public:
         JETPACKFINISHRECOVERY = 0x43a351b1,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(MSGSTRING, svc_index)) != 0) {
@@ -10205,7 +10205,7 @@ public:
         SERVER_HEART_BEAT = 0x2043a469,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(SERVER_SHUTDOWN, svc_index)) != 0) {
@@ -10675,7 +10675,7 @@ public:
         DISPATCHTXN = 0x68faa557,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(CLIENT_GET_TXN_NAMES, svc_index)) != 0) {
@@ -11417,7 +11417,7 @@ public:
         HASSHARDINGPOLICY = 0x52327670,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(GETCONFIG, svc_index)) != 0) {

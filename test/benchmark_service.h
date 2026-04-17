@@ -314,7 +314,7 @@ public:
         DEFERRED_ECHO = 0x412ef56f,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(FAST_PRIME, svc_index)) != 0) {

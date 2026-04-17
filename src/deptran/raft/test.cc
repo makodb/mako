@@ -7543,8 +7543,8 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   // Test MarshallDeputy round-trip (tests factory registration)
   // @unsafe { MarshallDeputy uses non-borrow-checked factory }
   auto cmd3 = ReplicatedDBCommand::CreateDelete("deputy_test_key");
-  shared_ptr<Marshallable> base_ptr = std::static_pointer_cast<Marshallable>(cmd3);
-  MarshallDeputy md(base_ptr);
+  MarshallDeputy md;
+  md.set_marshallable(cmd3);
   rrr::Marshal m2;
   m2 << md;
 

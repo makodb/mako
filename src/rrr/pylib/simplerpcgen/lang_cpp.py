@@ -213,7 +213,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                 f.writeln("%s = %s," % (func.name.upper(), hex(rpc_code)))
         f.writeln("};")
         f.writeln("// Registers RPC IDs with server using service index")
-        f.writeln("// @safe")
+        f.writeln("// @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)")
         f.writeln("int __reg_to__(rrr::Server& svr, size_t svc_index) {")
         with f.indent():
             f.writeln("int ret = 0;")

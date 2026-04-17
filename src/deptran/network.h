@@ -168,7 +168,7 @@ public:
         TXN_STOCK_LEVEL = 0x69916666,
     };
     // Registers RPC IDs with server using service index
-    // @safe
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(TXN_RMW, svc_index)) != 0) {

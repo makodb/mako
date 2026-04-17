@@ -86,6 +86,8 @@ void Fiber::sleep(uint64_t microseconds) {
  */
 rusty::Rc<Reactor>
 Reactor::get_reactor() {
+  // @unsafe { Option operator=, unwrap, Rc::make are not borrow-checked }
+  {
   if (sp_reactor_th_.is_none()) {
     Log_debug("create a coroutine scheduler");
     if (!REUSING_CORO)
@@ -94,6 +96,7 @@ Reactor::get_reactor() {
     (*sp_reactor_th_.as_ref().unwrap()).thread_id_.set(std::this_thread::get_id());
   }
   return sp_reactor_th_.as_ref().unwrap().clone();
+  }
 }
 
 rusty::Rc<Reactor>
@@ -176,6 +179,8 @@ void Reactor::set_running_coroutine(const rusty::Rc<Fiber>& coro) const {
 
 // @safe - Registers coroutine in the active set
 void Reactor::register_coroutine(const rusty::Rc<Fiber>& coro) const {
+  // @unsafe { RefCell::borrow_mut, BTreeSet::insert are not borrow-checked }
+  {
   // BTreeSet::insert returns bool (true if newly inserted)
   auto coros_guard = coros_.borrow_mut();
   bool inserted = coros_guard->insert(coro.clone());
@@ -183,10 +188,9 @@ void Reactor::register_coroutine(const rusty::Rc<Fiber>& coro) const {
     Log_error("[DEBUG] RegisterCoroutine: Failed to insert coroutine into coros_ set!");
     Log_error("[DEBUG] coros_ len: %zu, REUSING_CORO: %d", coros_guard->len(), REUSING_CORO);
   }
-  // @unsafe
-  { verify(inserted); }
-  // @unsafe
-  { verify(coros_guard->len() > 0); }
+  verify(inserted);
+  verify(coros_guard->len() > 0);
+  }
 }
 
 // =============================================================================
@@ -238,13 +242,13 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
   return coro;
 }
 
-// @safe - Uses RefCell for safe interior mutability
+// @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
 void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
   int64_t time_now = 0;  // Initialize to 0
   // @unsafe - Time::now is external
   { time_now = Time::now(true); }
 
-  // Borrow timeout_events_ for all operations
+  // @unsafe { RefCell::borrow_mut is not borrow-checked }
   auto guard = timeout_events_.borrow_mut();
 
   // First pass: update status of timed-out events
@@ -403,10 +407,11 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
   } while (looping_.get());
 }
 
-// @safe - Continues execution of a paused coroutine
+// @safe - Continues execution of a paused coroutine; RefCell ops wrapped @unsafe
 void Reactor::continue_coro(rusty::Rc<Fiber> coro) const {
   // Save current running coroutine for nesting support
   rusty::Option<rusty::Rc<Fiber>> old_coro;
+  // @unsafe { RefCell::borrow, Option operator=, unwrap are not borrow-checked }
   {
     auto guard = sp_running_coro_th_.borrow();
     old_coro = (*guard).is_some()
@@ -414,7 +419,8 @@ void Reactor::continue_coro(rusty::Rc<Fiber> coro) const {
       : rusty::Option<rusty::Rc<Fiber>>{};
   }
 
-  *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
+  // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
+  { *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone()); }
 
   // @unsafe - Fiber::finished() is not marked @safe
   {
@@ -441,7 +447,8 @@ void Reactor::continue_coro(rusty::Rc<Fiber> coro) const {
     }
   }
 
-  *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
+  // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
+  { *sp_running_coro_th_.borrow_mut() = std::move(old_coro); }
 }
 
 // @unsafe - Uses RefCell interior mutability (rusty-cpp doesn't fully support RefCell semantics)
@@ -628,9 +635,15 @@ void PollThreadWorker::trigger_job() {
   }
 }
 
+// @unsafe - PollableProxy accessors and Epoll::Add are not borrow-checked
 void PollThreadWorker::do_add_pollable(PollableProxy poll) {
-  int fd = poll->fd();
-  int poll_mode = poll->poll_mode();
+  int fd;
+  int poll_mode;
+  // @unsafe { PollableProxy::fd, poll_mode are not borrow-checked }
+  {
+    fd = poll->fd();
+    poll_mode = poll->poll_mode();
+  }
 
   // Check if already exists
   if (fd_to_pollable_.find(fd) != fd_to_pollable_.end()) {
@@ -641,7 +654,8 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll) {
   fd_to_pollable_.insert_or_assign(fd, std::move(poll));
   mode_[fd] = poll_mode;
 
-  poll_.Add(fd, poll_mode);
+  // @unsafe { Epoll::Add is not borrow-checked }
+  { poll_.Add(fd, poll_mode); }
 }
 
 // @unsafe - uses STL operations
@@ -842,12 +856,15 @@ void PollThread::request_close(int fd) const {
   sender_.send(CmdClosePollable{fd});
 }
 
-// @safe - Sends update mode command via channel
+// @safe - Sends update mode command via channel (send wrapped @unsafe)
 // SAFETY: Channel send is thread-safe
 void PollThread::update_mode(int fd, int new_mode) const {
+  // @unsafe { mpsc::Sender::send is not borrow-checked }
+  {
   auto result = sender_.send(CmdUpdateMode{fd, new_mode});
   if (result.is_err()) {
     Log_error("PollThread::update_mode: send failed! Channel disconnected?");
+  }
   }
 }
 
