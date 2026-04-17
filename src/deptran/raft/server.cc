@@ -4,7 +4,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
-#include "rpc/file_snapshot_manager.hpp"
+#include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
 #include <limits>
 
@@ -404,7 +404,7 @@ void RaftServer::InitializeSnapshotManager() {
   }
 
   // Build snapshot config
-  rrr::SnapshotConfig snap_config;
+  janus::raft::SnapshotConfig snap_config;
   // @unsafe { getenv is not borrow-checked }
   const char* custom_path = std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
   if (custom_path && custom_path[0] != '\0') {
@@ -412,7 +412,7 @@ void RaftServer::InitializeSnapshotManager() {
                                std::to_string(site_id_) + "_partition_" +
                                std::to_string(partition_id_);
   } else {
-    snap_config = rrr::SnapshotConfig::for_replica(partition_id_, loc_id_);
+    snap_config = janus::raft::SnapshotConfig::for_replica(partition_id_, loc_id_);
   }
 
   // Check for custom snapshot interval
@@ -423,7 +423,7 @@ void RaftServer::InitializeSnapshotManager() {
   }
 
   // Create the FileSnapshotManager
-  auto manager = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+  auto manager = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
   SetSnapshotManager(manager);
 
   // If a snapshot exists, load its metadata into snapidx_/snapterm_
@@ -1510,7 +1510,7 @@ void RaftServer::HeartbeatLoop() {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
             Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d next_index=%lu < min_active_slot_=%lu, sending InstallSnapshot",
                      site_id_, site_id, it->second, min_active_slot_);
-            rrr::SnapshotMetadata snap_meta;
+            janus::raft::SnapshotMetadata snap_meta;
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
               uint64_t snap_last_idx = snap_meta.last_included_index;

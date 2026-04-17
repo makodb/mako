@@ -10,7 +10,7 @@
 #include <rusty/arc.hpp>
 #include "log_storage.hpp"
 #include "rpc/recovery_manager.hpp"
-#include "rpc/snapshot_manager.hpp"
+#include "snapshot_manager.hpp"
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -122,7 +122,7 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   // SNAPSHOT SUPPORT (Phase 3.1)
   // ============================================================================
-  std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
+  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
   uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
 
   // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
@@ -774,7 +774,7 @@ class RaftServer : public TxLogServer {
    * @param manager Shared pointer to SnapshotManager implementation
    */
   // @safe - moves shared_ptr into member field
-  void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager> manager) {
+  void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
     snapshot_manager_ = std::move(manager);
   }
 
@@ -783,7 +783,7 @@ class RaftServer : public TxLogServer {
    * @return Shared pointer to SnapshotManager, or nullptr if not set
    */
   // @safe - returns copy of shared_ptr
-  std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
+  std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
   }
 

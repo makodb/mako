@@ -30,7 +30,8 @@
 #include "snapshot_format.hpp"
 #include "snapshot_manager.hpp"
 
-namespace rrr {
+namespace janus {
+namespace raft {
 
 /**
  * File-based snapshot writer.
@@ -528,4 +529,5 @@ class FileSnapshotManager : public SnapshotManager {
   }
 };
 
-}  // namespace rrr
+}  // namespace raft
+}  // namespace janus

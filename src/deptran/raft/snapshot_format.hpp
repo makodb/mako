@@ -24,7 +24,8 @@
 
 #include "base/misc.hpp"
 
-namespace rrr {
+namespace janus {
+namespace raft {
 
 /**
  * Compression type for snapshot data.
@@ -370,4 +371,5 @@ class SnapshotFormat {
   }
 };
 
-}  // namespace rrr
+}  // namespace raft
+}  // namespace janus

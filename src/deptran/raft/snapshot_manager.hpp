@@ -21,7 +21,8 @@
 
 #include "base/misc.hpp"  // For Log_info, Log_error
 
-namespace rrr {
+namespace janus {
+namespace raft {
 
 // Type aliases matching existing codebase
 // Use preprocessor guards to avoid conflict with macro definitions in constants.h
@@ -291,4 +292,5 @@ struct SnapshotConfig {
   }
 };
 
-}  // namespace rrr
+}  // namespace raft
+}  // namespace janus

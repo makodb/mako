@@ -5,7 +5,7 @@
 #include "../scheduler.h"
 #include "../paxos_worker.h"
 #include "deptran/raft/log_storage.hpp"
-#include "rrr/rpc/snapshot_manager.hpp"
+#include "deptran/raft/snapshot_manager.hpp"
 
 namespace janus {
 class Command;
@@ -78,14 +78,14 @@ class PaxosServer : public TxLogServer {
   // ========================================================================
   // SNAPSHOT SUPPORT (Phase 3.1)
   // ========================================================================
-  std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;
+  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;
 
   // @unsafe - Moves ownership of snapshot manager
-  void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager> manager) {
+  void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
     snapshot_manager_ = std::move(manager);
   }
   // @safe - Read-only access
-  std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
+  std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
   }
 
