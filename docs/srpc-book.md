@@ -1286,16 +1286,52 @@ Events hold weak references to fibers to avoid reference cycles:
 ### RPC Benchmark Tool
 
 ```bash
-# Start server
-./build/rpc_bench -s -p 8100
+# Build benchmark binary
+cmake --build build --target rpcbench -j
 
-# Run client benchmark
-./build/rpc_bench -c -h 127.0.0.1 -p 8100 \
-    -t 4           \  # 4 threads
-    -n 100         \  # 100 outstanding requests per thread
-    -m 64          \  # 64 byte messages
-    -d 30             # 30 second duration
+# Terminal 1: start one server
+./build/rpcbench -s 127.0.0.1:18848
+
+# Terminal 2: run one client process with 10 client threads
+./build/rpcbench -c 127.0.0.1:18848 -t 10 -n 10
 ```
+
+### Measured Run (1 Server, 10 Clients)
+
+Run date (UTC): `2026-04-17T19:56:43Z`
+
+Environment:
+
+| Parameter | Value |
+|-----------|-------|
+| Host kernel | Linux 6.17.4-2-pve x86_64 |
+| CPU | AMD Ryzen Threadripper 2990WX 32-Core Processor |
+| Logical CPUs | 64 |
+| Benchmark binary | `build/rpcbench` |
+
+Benchmark config from `rpcbench` logs:
+
+| Parameter | Value |
+|-----------|-------|
+| Server address | `127.0.0.1:18848` |
+| Client threads (`-t`) | 10 |
+| Duration (`-n`) | 10 seconds |
+| Packet byte size (`-b`) | 10 |
+| Epoll instances (`-e`) | 2 |
+| Outgoing requests (`-o`) | 1000 |
+| Worker threads (`-w`) | 16 |
+| Fast mode (`-f`) | false |
+| Vector mode (`-v`) | 0 |
+
+Throughput result (client log):
+
+- Per-second QPS samples: `40973, 40878, 38488, 37671, 47329, 38409, 42591, 46540, 42460`
+- Average QPS reported by benchmark: `41704.33`
+- Min/Max sampled QPS: `37671 / 47329`
+
+Note: after benchmark completion, stopping the server by signal currently ends with
+`std::runtime_error: Called unwrap on None` in `test/rpcbench.cc`. This happens during
+shutdown and does not affect the client-side throughput numbers above.
 
 ### Tuning Parameters
 
