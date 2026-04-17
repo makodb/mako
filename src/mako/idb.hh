@@ -141,6 +141,12 @@ public:
      */
     virtual ITable* GetTable(const std::string& name) = 0;
 
+    /**
+     * List all tables currently known to the database.
+     * Default implementation returns empty vector; concrete backends should override.
+     */
+    virtual std::vector<std::string> ListTables() { return {}; }
+
     // =========================================================================
     // Connection Management (optional for local DB)
     // =========================================================================
