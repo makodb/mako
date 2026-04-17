@@ -66,6 +66,8 @@ static_assert(!std::is_base_of_v<Marshallable, janus::HeartBeatLog>);
 static_assert(!std::is_base_of_v<Marshallable, janus::SyncLogRequest>);
 static_assert(!std::is_base_of_v<Marshallable, janus::SyncLogResponse>);
 static_assert(!std::is_base_of_v<Marshallable, janus::SyncNoOpRequest>);
+static_assert(!std::is_base_of_v<Marshallable, janus::LogEntry>);
+static_assert(!std::is_base_of_v<Marshallable, janus::BulkPaxosCmd>);
 
 class TestMarshallable : public Marshallable {
  public:
@@ -605,4 +607,44 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(sync_noop_decoded->epoch, 77);
   ASSERT_EQ(sync_noop_decoded->sync_slots.size(), 2u);
   EXPECT_EQ(sync_noop_decoded->sync_slots[1], 22);
+}
+
+TEST(MarshallableProxyFacadeTest, PaxosLogEntryRoundTripUsesTypedAdapter) {
+  auto log_entry = std::make_shared<janus::LogEntry>();
+  log_entry->length = 5;
+  log_entry->log_entry = "abcde";
+
+  auto decoded = RoundTripTypedDeputyPayload(log_entry);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->length, 5);
+  EXPECT_EQ(decoded->log_entry, "abcde");
+}
+
+TEST(MarshallableProxyFacadeTest, PaxosBulkPaxosCmdRoundTripUsesTypedAdapter) {
+  EnsureTestMarshallableInitializer();
+
+  auto payload = std::make_shared<janus::BulkPaxosCmd>();
+  payload->leader_id = 4;
+  payload->slots = {10, 11};
+  payload->ballots = {20, 21};
+  payload->cmds.push_back(
+      std::make_shared<MarshallDeputy>(std::make_shared<TestMarshallable>(88)));
+  payload->cmds.push_back(
+      std::make_shared<MarshallDeputy>(std::make_shared<TestMarshallable>(99)));
+
+  auto decoded = RoundTripTypedDeputyPayload(payload);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->leader_id, 4);
+  ASSERT_EQ(decoded->slots.size(), 2u);
+  ASSERT_EQ(decoded->ballots.size(), 2u);
+  ASSERT_EQ(decoded->cmds.size(), 2u);
+  EXPECT_EQ(decoded->slots[1], 11);
+  EXPECT_EQ(decoded->ballots[0], 20);
+
+  auto nested0 = marshallable_cast<TestMarshallable>(decoded->cmds[0].get());
+  auto nested1 = marshallable_cast<TestMarshallable>(decoded->cmds[1].get());
+  ASSERT_NE(nested0, nullptr);
+  ASSERT_NE(nested1, nullptr);
+  EXPECT_EQ(nested0->value, 88);
+  EXPECT_EQ(nested1->value, 99);
 }

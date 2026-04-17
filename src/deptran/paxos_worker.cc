@@ -94,8 +94,9 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   // if (site_info_->proc_name.compare("learner")==0){
   //   Log_info("receive a slot_id:%d",slot_id);
   // }
-  auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
-  int len = sp_log_entry.length;
+  auto sp_log_entry = marshallable_cast<LogEntry>(cmd);
+  verify(sp_log_entry != nullptr);
+  int len = sp_log_entry->length;
 
   //Log_info("apply a log, par_id:%d, epoch:%d, slot_id:%d, len:%d,",site_info_->partition_id_, cur_epoch, slot_id, len);
   if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
@@ -118,15 +119,16 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
         }
       }
 
-      auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
-      int len = sp_log_entry.length;
-      if(sp_log_entry.length == 0){
+      auto sp_log_entry = marshallable_cast<LogEntry>(cmd);
+      verify(sp_log_entry != nullptr);
+      int len = sp_log_entry->length;
+      if(sp_log_entry->length == 0){
 	      Log_info("Recieved a zero length log");
       }
       //Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
       //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
       if (len > 0) {
-         const char *log = sp_log_entry.log_entry.c_str() ;
+         const char *log = sp_log_entry->log_entry.c_str() ;
          
          // Single timestamp system: get encoded value (timestamp * 10 + status)
          int encoded_value = callback_par_id_return_(log, 
@@ -137,10 +139,10 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
          status = encoded_value % 10;  // Extract status from last digit
          uint32_t timestamp = encoded_value / 10;  // Extract timestamp
          //Log_info("XXXXX: partition_id: %d, id: %d, proc_name: %s, role: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
-         //Log_info("received a message: %d, status: %d, timestamp: %u", sp_log_entry.length, status, timestamp);
+         //Log_info("received a message: %d, status: %d, timestamp: %u", sp_log_entry->length, status, timestamp);
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
          //Log_info("par_id: %d, append a log into un_replay_logs, size: %lld, status: %d, first[0]: %llu, received: %d", 
-         //         site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry.length);
+         //         site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry->length);
          if (status == janus::PaxosStatus::STATUS_SAFETY_FAIL) {
              char *dest = (char *)malloc(len) ;
              memcpy(dest, log, len) ;
@@ -154,7 +156,7 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
          }
       } else {
         // the ending signal
-        const char *log = sp_log_entry.log_entry.c_str() ;
+        const char *log = sp_log_entry->log_entry.c_str() ;
         int ending_status = callback_par_id_return_(log, len, site_info_->partition_id_, slot_id, un_replay_logs_) ;
       }
     } else {
@@ -306,7 +308,7 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
         MarshallDeputy* md =  new MarshallDeputy(mpc.get()->cmd_);
         sp_cmd->cmds.push_back(shared_ptr<MarshallDeputy>(md));
     }
-    auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
+    auto sp_m = wrap_typed_marshallable(sp_cmd);
     _BulkSubmit(sp_m, entries.size());
     //Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
 }
@@ -440,7 +442,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       //      std::cout << sync_cmds[i]->slots[kk] << " ";
       //std::cout << std::endl;
       auto pw = pxs_workers_g[i];
-      auto send_cmd = dynamic_pointer_cast<Marshallable>(sync_cmds[i]);
+      auto send_cmd = wrap_typed_marshallable(sync_cmds[i]);
       auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i, 
                                                            send_cmd,
                                                            [es_pww](ballot_t ballot, int valid){
@@ -652,7 +654,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
   // Use std::string for payload to avoid mismatched allocation/deallocation
   sp_cmd->log_entry = std::string(log_entry, length);
   sp_cmd->length = length;
-  auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
+  auto sp_m = wrap_typed_marshallable(sp_cmd);
   _Submit(sp_m);
 }
 

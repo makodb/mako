@@ -356,27 +356,27 @@ class SyncNoOpRequest {
 };
 
 
-class LogEntry : public Marshallable {
+class LogEntry {
 public:
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CONTAINER_CMD;
+  bool bypass_to_socket_ = false;
   char* operation_ = nullptr;
   int length = 0;
   std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
   shared_ptr<char> operation_test;
   mutable char len_v64[9];
 
-  LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = false;
-  }
+  LogEntry() = default;
 
-  virtual ~LogEntry() {
+  ~LogEntry() {
     if (operation_ != nullptr) delete operation_;
     operation_ = nullptr;
     //free(operation_test.get());
   }
 
-  virtual Marshal& to_marshal(Marshal&) const override;
-  virtual Marshal& from_marshal(Marshal&) override;
-  size_t entity_size() const override {
+  Marshal& to_marshal(Marshal&) const;
+  Marshal& from_marshal(Marshal&);
+  size_t entity_size() const {
     return sizeof(int) + length_as_v64() + length;
   }
 
@@ -387,7 +387,7 @@ public:
     return bsize;
   }
 
-  size_t write_to_fd(int fd, size_t written_to_socket) const override {
+  size_t write_to_fd(int fd, size_t written_to_socket) const {
     size_t sz = 0, prev = written_to_socket;
     //Log_info("stepping here, writing length");
     if(written_to_socket < sizeof(int)){
@@ -441,23 +441,23 @@ inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
   return m;
 }
 */
-class BulkPaxosCmd : public  Marshallable {
+class BulkPaxosCmd {
 public:
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_BLK_PXS;
+  bool bypass_to_socket_ = false;
   int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   vector<shared_ptr<MarshallDeputy>> cmds{};
   mutable char *serialized_slots = nullptr;
 
-  BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = false;
-  }
-  virtual ~BulkPaxosCmd() {
+  BulkPaxosCmd() = default;
+  ~BulkPaxosCmd() {
       slots.clear();
       ballots.clear();
       cmds.clear();
   }
-  Marshal& to_marshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const {
       m << (int32_t) leader_id;
       m << (int32_t) slots.size();
       for(auto i : slots){
@@ -475,7 +475,7 @@ public:
       return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) {
       //return m;
       int32_t szs, szb, szc;
       m >> leader_id;
@@ -503,7 +503,7 @@ public:
       return m;
   }
 
-  size_t entity_size() const override {
+  size_t entity_size() const {
     size_t sz = 0;
     sz += 4*sizeof(int32_t);
     for(int i = 0; i < slots.size(); i++){
@@ -541,7 +541,7 @@ public:
     return total_sz;
   }
 
-  size_t write_to_fd(int fd, size_t written_to_socket) const override {
+  size_t write_to_fd(int fd, size_t written_to_socket) const {
     size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
     //Log_info("written here %d %d", to_write, written_to_socket);
     if(written_to_socket < to_write){
@@ -834,6 +834,41 @@ public:
 
 namespace rrr {
 
+template <typename T, int32_t KindV>
+class TypedPaxosLogEnvelopeAdapter : public Marshallable {
+ public:
+  TypedPaxosLogEnvelopeAdapter()
+      : Marshallable(KindV), typed_(std::make_shared<T>()) {
+    verify(typed_ != nullptr);
+    bypass_to_socket_ = typed_->bypass_to_socket_;
+  }
+
+  explicit TypedPaxosLogEnvelopeAdapter(std::shared_ptr<T> typed)
+      : Marshallable(KindV), typed_(std::move(typed)) {
+    verify(typed_ != nullptr);
+    bypass_to_socket_ = typed_->bypass_to_socket_;
+  }
+
+  std::shared_ptr<T> typed() const { return typed_; }
+
+  Marshal& to_marshal(Marshal& out) const override {
+    return typed_->to_marshal(out);
+  }
+
+  Marshal& from_marshal(Marshal& in) override {
+    return typed_->from_marshal(in);
+  }
+
+  size_t entity_size() const override { return typed_->entity_size(); }
+
+  size_t write_to_fd(int fd, size_t written) const override {
+    return typed_->write_to_fd(fd, written);
+  }
+
+ private:
+  std::shared_ptr<T> typed_;
+};
+
 template <>
 struct TypedMarshallableAdapterTraits<janus::BulkPrepareLog> {
   static constexpr bool kEnabled = true;
@@ -880,6 +915,22 @@ struct TypedMarshallableAdapterTraits<janus::SyncNoOpRequest> {
   using Adapter =
       TypedMarshallableAdapter<janus::SyncNoOpRequest,
                                MarshallDeputy::CMD_SYNCNOOP_PXS>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::LogEntry> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedPaxosLogEnvelopeAdapter<janus::LogEntry,
+                                   MarshallDeputy::CONTAINER_CMD>;
+};
+
+template <>
+struct TypedMarshallableAdapterTraits<janus::BulkPaxosCmd> {
+  static constexpr bool kEnabled = true;
+  using Adapter =
+      TypedPaxosLogEnvelopeAdapter<janus::BulkPaxosCmd,
+                                   MarshallDeputy::CMD_BLK_PXS>;
 };
 
 }  // namespace rrr

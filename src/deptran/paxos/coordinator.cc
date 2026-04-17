@@ -283,7 +283,8 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   // verify(n_prepare_ack_ == 0);
   // int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
   //return;
-  auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+  auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+  verify(cmd_temp1 != nullptr);
   auto prep_cmd = make_shared<PaxosPrepCmd>();
   prep_cmd->slots = cmd_temp1->slots;
   prep_cmd->ballots = cmd_temp1->ballots;
@@ -323,10 +324,11 @@ void BulkCoordinatorMultiPaxos::Prepare() {
         candidate_val = vec_md[i].second;
       }
     }
-    //auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
     if(candidate_val){
-      auto cmd_temp = dynamic_pointer_cast<BulkPaxosCmd>(candidate_val);
-      auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+      auto cmd_temp = marshallable_cast<BulkPaxosCmd>(candidate_val);
+      auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+      (void)cmd_temp;
+      (void)cmd_temp1;
       //cmd_temp1->cmds.clear();
       //cmd_temp1->cmds.push_back(cmd_temp->cmds[0]);
     }
@@ -345,7 +347,8 @@ void BulkCoordinatorMultiPaxos::Prepare() {
 
 void BulkCoordinatorMultiPaxos::Accept() {
     in_accept = true;
-    auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1 != nullptr);
     if(!in_submission_){
       return;
     }
@@ -392,7 +395,8 @@ void BulkCoordinatorMultiPaxos::Commit() {
     }
     in_commit = true;
 
-    auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1 != nullptr);
     auto commit_cmd = make_shared<PaxosPrepCmd>();
     commit_cmd->slots = cmd_temp1->slots;
     commit_cmd->ballots = cmd_temp1->ballots;

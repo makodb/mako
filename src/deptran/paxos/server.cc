@@ -400,7 +400,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
       }
     }
     //Log_info("The partition %d has missing slots size %d", i, ret_cmd->missing_slots[i].size());
-    auto sp_marshallable = dynamic_pointer_cast<Marshallable>(bp_cmd);
+    auto sp_marshallable = wrap_typed_marshallable(bp_cmd);
     MarshallDeputy bp_md_cmd(sp_marshallable);
     auto bp_sp_md = make_shared<MarshallDeputy>(bp_md_cmd);
     ret_cmd->sync_data.push_back(bp_sp_md);
@@ -413,7 +413,8 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
-  auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
+  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd);
+  verify(bcmd != nullptr);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
@@ -492,7 +493,8 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
   //mtx_.lock();
   //Log_info("here");
   //Log_info("multi-paxos scheduler decide for slot: %ld", bcmd->slots.size());
-  auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
+  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd);
+  verify(bcmd != nullptr);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
