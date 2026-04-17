@@ -25,7 +25,8 @@
 #include "misc/marshal.hpp"
 #include "base/logging.hpp"
 
-namespace rrr {
+namespace janus {
+namespace raft {
 
 /**
  * RocksDB-backed implementation of LogStorage.
@@ -701,4 +702,5 @@ public:
     }
 };
 
-}  // namespace rrr
+}  // namespace raft
+}  // namespace janus

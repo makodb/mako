@@ -414,7 +414,7 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
   // Try to recover Raft server
   if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
     auto result = recovery_manager.recover(
-        [raft_server, &storage](std::shared_ptr<rrr::LogStorage> s) {
+        [raft_server, &storage](std::shared_ptr<janus::raft::LogStorage> s) {
           raft_server->SetLogStorage(s);
         },
         [raft_server]() {
@@ -441,7 +441,7 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
   // Try to recover Paxos server
   if (auto* paxos_server = dynamic_cast<PaxosServer*>(rep_sched_)) {
     auto result = recovery_manager.recover(
-        [paxos_server, &storage](std::shared_ptr<rrr::LogStorage> s) {
+        [paxos_server, &storage](std::shared_ptr<janus::raft::LogStorage> s) {
           paxos_server->SetLogStorage(s);
         },
         [paxos_server]() {

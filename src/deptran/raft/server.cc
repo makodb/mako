@@ -216,7 +216,7 @@ void RaftServer::PersistLogEntryToLogStorage(slotid_t slot_id, const RaftData& d
     return;
   }
 
-  rrr::LogEntry entry(slot_id, data.term);
+  janus::raft::LogEntry entry(slot_id, data.term);
   entry.command = data.log_;
   entry.max_ballot_seen = data.max_ballot_seen_;
   entry.max_ballot_accepted = data.max_ballot_accepted_;
@@ -235,11 +235,11 @@ void RaftServer::PersistLogEntriesToLogStorage(const std::vector<std::pair<sloti
     return;
   }
 
-  std::vector<rrr::LogEntry> log_entries;
+  std::vector<janus::raft::LogEntry> log_entries;
   log_entries.reserve(entries.size());
 
   for (const auto& [slot_id, data] : entries) {
-    rrr::LogEntry entry(slot_id, data->term);
+    janus::raft::LogEntry entry(slot_id, data->term);
     entry.command = data->log_;
     entry.max_ballot_seen = data->max_ballot_seen_;
     entry.max_ballot_accepted = data->max_ballot_accepted_;
@@ -891,7 +891,7 @@ void RaftServer::Setup() {
     } else {
       // Use RecoveryManager to orchestrate recovery
       auto result = manager.recover(
-        [this](std::shared_ptr<rrr::LogStorage> s) { SetLogStorage(s); },
+        [this](std::shared_ptr<janus::raft::LogStorage> s) { SetLogStorage(s); },
         [this]() { return RecoverFromStorage(); },
         [this](rrr::RecoveryResult& r) {
           r.recovered_term = currentTerm;

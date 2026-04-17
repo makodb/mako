@@ -9,11 +9,12 @@
 #include <vector>
 #include <atomic>
 
-#include "rpc/log_storage.hpp"
-#include "rpc/memory_log_storage.hpp"
+#include "deptran/raft/log_storage.hpp"
+#include "deptran/raft/memory_log_storage.hpp"
 #include "misc/marshal.hpp"
 
 using namespace rrr;
+using namespace janus::raft;
 
 // ============================================================================
 // Test Marshallable Command for testing

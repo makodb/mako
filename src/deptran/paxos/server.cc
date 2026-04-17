@@ -801,7 +801,7 @@ void PaxosServer::PersistLogEntry(slotid_t slot_id, const PaxosData& data) {
     return;
   }
 
-  rrr::LogEntry entry;
+  janus::raft::LogEntry entry;
   entry.slot_id = slot_id;
   entry.term = cur_epoch;
   entry.max_ballot_seen = data.max_ballot_seen_;
@@ -828,11 +828,11 @@ void PaxosServer::PersistLogEntries(
     return;
   }
 
-  std::vector<rrr::LogEntry> log_entries;
+  std::vector<janus::raft::LogEntry> log_entries;
   log_entries.reserve(entries.size());
 
   for (const auto& [slot_id, data] : entries) {
-    rrr::LogEntry entry;
+    janus::raft::LogEntry entry;
     entry.slot_id = slot_id;
     entry.term = cur_epoch;
     entry.max_ballot_seen = data->max_ballot_seen_;

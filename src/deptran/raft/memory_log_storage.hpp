@@ -18,7 +18,8 @@
 
 #include "log_storage.hpp"
 
-namespace rrr {
+namespace janus {
+namespace raft {
 
 /**
  * In-memory implementation of LogStorage.
@@ -289,4 +290,5 @@ public:
     }
 };
 
-}  // namespace rrr
+}  // namespace raft
+}  // namespace janus

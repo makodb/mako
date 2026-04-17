@@ -8,7 +8,7 @@
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
-#include "rpc/log_storage.hpp"
+#include "log_storage.hpp"
 #include "rpc/recovery_manager.hpp"
 #include "rpc/snapshot_manager.hpp"
 
@@ -116,7 +116,7 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
-  std::shared_ptr<rrr::LogStorage> log_storage_;  // Optional persistent storage
+  std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
   bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
@@ -726,7 +726,7 @@ class RaftServer : public TxLogServer {
    * @param storage Shared pointer to LogStorage implementation
    */
   // @safe - moves shared_ptr into member field
-  void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage) {
+  void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) {
     log_storage_ = std::move(storage);
   }
 
@@ -735,7 +735,7 @@ class RaftServer : public TxLogServer {
    * @return Shared pointer to LogStorage, or nullptr if not set
    */
   // @safe - returns copy of shared_ptr
-  std::shared_ptr<rrr::LogStorage> GetLogStorage() const {
+  std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const {
     return log_storage_;
   }
 

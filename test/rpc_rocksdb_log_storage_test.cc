@@ -10,10 +10,11 @@
 #include <atomic>
 #include <filesystem>
 
-#include "rpc/rocksdb_log_storage.hpp"
+#include "deptran/raft/rocksdb_log_storage.hpp"
 #include "misc/marshal.hpp"
 
 using namespace rrr;
+using namespace janus::raft;
 
 // ============================================================================
 // Test Marshallable Command for testing

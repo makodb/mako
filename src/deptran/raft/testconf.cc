@@ -682,7 +682,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
     if (storage) {
       // Use RecoveryManager to orchestrate recovery
       auto result = manager.recover(
-        [frame](std::shared_ptr<rrr::LogStorage> s) { frame->svr_->SetLogStorage(s); },
+        [frame](std::shared_ptr<janus::raft::LogStorage> s) { frame->svr_->SetLogStorage(s); },
         [frame]() { return frame->svr_->RecoverFromStorage(); },
         [frame](rrr::RecoveryResult& r) {
           r.recovered_term = frame->svr_->currentTerm;

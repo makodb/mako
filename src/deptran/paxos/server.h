@@ -4,7 +4,7 @@
 #include "../constants.h"
 #include "../scheduler.h"
 #include "../paxos_worker.h"
-#include "rrr/rpc/log_storage.hpp"
+#include "deptran/raft/log_storage.hpp"
 #include "rrr/rpc/snapshot_manager.hpp"
 
 namespace janus {
@@ -50,7 +50,7 @@ class PaxosServer : public TxLogServer {
   // ========================================================================
   // LOG PERSISTENCE (Phase 1.4)
   // ========================================================================
-  std::shared_ptr<rrr::LogStorage> log_storage_;
+  std::shared_ptr<janus::raft::LogStorage> log_storage_;
 
   // Metadata keys for persistence
   static constexpr const char* META_EPOCH = "cur_epoch";
@@ -69,9 +69,9 @@ class PaxosServer : public TxLogServer {
 
  public:
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
-  void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage) { log_storage_ = std::move(storage); }
+  void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) { log_storage_ = std::move(storage); }
   // @safe - Read-only access
-  std::shared_ptr<rrr::LogStorage> GetLogStorage() const { return log_storage_; }
+  std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const { return log_storage_; }
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
   bool RecoverFromStorage();
 

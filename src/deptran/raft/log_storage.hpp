@@ -21,7 +21,14 @@
 
 #include "misc/marshal.hpp"
 
-namespace rrr {
+namespace janus {
+namespace raft {
+
+// Bring rrr:: marshalling types into janus::raft:: scope (they live in rrr::).
+using ::rrr::Marshal;
+using ::rrr::Marshallable;
+using ::rrr::MarshallDeputy;
+using ::rrr::i8;
 
 // Type aliases matching existing codebase
 // Use preprocessor guards to avoid conflict with macro definitions in constants.h
@@ -299,4 +306,5 @@ public:
     virtual bool clear() = 0;
 };
 
-}  // namespace rrr
+}  // namespace raft
+}  // namespace janus
