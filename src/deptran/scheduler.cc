@@ -401,7 +401,8 @@ int32_t TxLogServer::OnUpgradeEpoch(uint32_t old_epoch) {
 UniqueCmdID TxLogServer::GetUniqueCmdID(shared_ptr<Marshallable> cmd) {
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
   if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+    shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(tpc_cmd != nullptr);
     auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
     verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
@@ -594,10 +595,11 @@ int Witness::remove(const shared_ptr<Marshallable>& cmd) {
 #endif
     return removed;
   } else {
-    auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
+    auto cmds = marshallable_cast<TpcBatchCommand>(cmd);
+    verify(cmds != nullptr);
     int total_removed = 0;
     for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(c);
+      SimpleRWCommand parsed_cmd = SimpleRWCommand(wrap_typed_marshallable(c));
       bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
       if (removed) {
         witness_size_distribution_.mid_time_append(--witness_size_);
@@ -620,10 +622,11 @@ bool Witness::has_appeared(const shared_ptr<Marshallable>& cmd) {
     uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
     return candidates_[parsed_cmd.key_].has_appeared(cmd_id);
   } else {
-    auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
+    auto cmds = marshallable_cast<TpcBatchCommand>(cmd);
+    verify(cmds != nullptr);
     bool all_has_appeared = true;
     for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(c);
+      SimpleRWCommand parsed_cmd = SimpleRWCommand(wrap_typed_marshallable(c));
       uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
       if (!candidates_[parsed_cmd.key_].has_appeared(cmd_id)) {
         all_has_appeared = false;
@@ -1054,7 +1057,8 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
   // Extract the inner command if this is a TpcCommitCommand
   shared_ptr<Marshallable> inner_cmd = cmd;
   if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+    auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(tpc_cmd != nullptr);
     if (tpc_cmd && tpc_cmd->cmd_) {
       inner_cmd = tpc_cmd->cmd_;
 #ifdef JETPACK_RECOVERY_DEBUG

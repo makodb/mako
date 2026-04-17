@@ -434,8 +434,8 @@ void ClassicServiceImpl::SimpleCmd(
     const SimpleCommand& cmd, rrr::i32* res, rrr::DeferredReply defer) {
   Fiber::create_run([res, defer = std::move(defer), this]() mutable {
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    verify(empty_cmd->kind_ == MarshallDeputy::CMD_TPC_EMPTY);
-    auto sp_m = dynamic_pointer_cast<Marshallable>(empty_cmd);
+    verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
+    auto sp_m = wrap_typed_marshallable(empty_cmd);
     auto sched = (SchedulerClassic*)dtxn_sched_;
     sched->CreateRepCoord(0)->Submit(sp_m);
     empty_cmd->Wait();
@@ -1036,7 +1036,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               MarshallDeputy* reply_new_view,
                                               MarshallDeputy* cmd, 
                                               rrr::DeferredReply defer) {
-  cmd->set_marshallable(std::make_shared<TpcCommitCommand>());
+  cmd->set_marshallable(wrap_typed_marshallable(std::make_shared<TpcCommitCommand>()));
   shared_ptr<Marshallable> sp_ret_cmd = marshallable_cast<Marshallable>(cmd);
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_cmd);
   defer.reply();

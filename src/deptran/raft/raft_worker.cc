@@ -465,7 +465,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id);
 #endif
 
-  auto cmd = std::static_pointer_cast<Marshallable>(tpc_cmd);
+  auto cmd = wrap_typed_marshallable(tpc_cmd);
 
   uint64_t index = 0;
   uint64_t term = 0;
@@ -628,7 +628,7 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   int len = 0;
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
-  auto tpc_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
+  auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
   if (tpc_cmd && tpc_cmd->cmd_) {
     // Extract VecPieceData that contains the raw bytes
     auto vpd = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);

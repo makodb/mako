@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "rrr.hpp"
 #include "misc/marshallable_proxy.h"
+#include "deptran/classic/tpc_command.h"
 #include "deptran/procedure.h"
 
 using namespace rrr;
@@ -85,6 +86,33 @@ void EnsureTypedOnlyPayloadInitializer() {
     return true;
   }();
   (void)initialized;
+}
+
+std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
+    txnid_t tx_id,
+    int ret,
+    ballot_t term,
+    bool_t recovery) {
+  auto commit = std::make_shared<janus::TpcCommitCommand>();
+  commit->tx_id_ = tx_id;
+  commit->ret_ = ret;
+  commit->term = term;
+
+  auto vec_piece = std::make_shared<janus::VecPieceData>();
+  vec_piece->sp_vec_piece_data_ =
+      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
+  vec_piece->is_recovery_command_ = recovery;
+  commit->cmd_ = wrap_typed_marshallable(vec_piece);
+
+  auto view_data = std::make_shared<janus::ViewData>();
+  view_data->view_.n_ = 3;
+  view_data->view_.view_id_ = 19;
+  view_data->view_.timestamp_ = 777;
+  view_data->view_.leaders_ = {0, 1, 2};
+  view_data->partition_id_ = 11;
+  commit->sp_view_data_ = view_data;
+
+  return commit;
 }
 
 }  // namespace
@@ -327,4 +355,66 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
       marshallable_cast<TestMarshallable>(decoded_batch->GetCommand(0));
   ASSERT_NE(nested_decoded, nullptr);
   EXPECT_EQ(nested_decoded->value, 77);
+}
+
+TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
+  auto src = MakeTypedTpcCommitPayload(/*tx_id=*/321, /*ret=*/9, /*term=*/17,
+                                       /*recovery=*/1);
+
+  MarshallDeputy outgoing(src);
+  EXPECT_EQ(outgoing.kind_, MarshallDeputy::CMD_TPC_COMMIT);
+
+  Marshal m;
+  m << outgoing;
+
+  MarshallDeputy incoming;
+  m >> incoming;
+  EXPECT_EQ(incoming.kind_, MarshallDeputy::CMD_TPC_COMMIT);
+
+  auto decoded = marshallable_cast<janus::TpcCommitCommand>(incoming);
+  ASSERT_NE(decoded, nullptr);
+  EXPECT_EQ(decoded->tx_id_, 321);
+  EXPECT_EQ(decoded->ret_, 9);
+  EXPECT_EQ(decoded->term, 17);
+
+  auto decoded_vec_piece = marshallable_cast<janus::VecPieceData>(decoded->cmd_);
+  ASSERT_NE(decoded_vec_piece, nullptr);
+  EXPECT_EQ(decoded_vec_piece->is_recovery_command_, 1);
+
+  ASSERT_NE(decoded->sp_view_data_, nullptr);
+  EXPECT_EQ(decoded->sp_view_data_->partition_id_, 11);
+  EXPECT_EQ(decoded->sp_view_data_->view_.view_id_, 19);
+}
+
+TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
+  auto batch = std::make_shared<janus::TpcBatchCommand>();
+  std::vector<std::shared_ptr<janus::TpcCommitCommand>> commits{
+      MakeTypedTpcCommitPayload(/*tx_id=*/101, /*ret=*/1, /*term=*/3,
+                                /*recovery=*/0),
+      MakeTypedTpcCommitPayload(/*tx_id=*/202, /*ret=*/2, /*term=*/4,
+                                /*recovery=*/1)};
+  batch->AddCmds(commits);
+
+  MarshallDeputy batch_outgoing(batch);
+  EXPECT_EQ(batch_outgoing.kind_, MarshallDeputy::CMD_TPC_BATCH);
+  Marshal batch_marshaled;
+  batch_marshaled << batch_outgoing;
+
+  MarshallDeputy batch_incoming;
+  batch_marshaled >> batch_incoming;
+  auto decoded_batch = marshallable_cast<janus::TpcBatchCommand>(batch_incoming);
+  ASSERT_NE(decoded_batch, nullptr);
+  ASSERT_EQ(decoded_batch->Size(), 2u);
+  EXPECT_EQ(decoded_batch->cmds_.at(0)->tx_id_, 101);
+  EXPECT_EQ(decoded_batch->cmds_.at(1)->tx_id_, 202);
+
+  auto empty_cmd = std::make_shared<janus::TpcEmptyCommand>();
+  MarshallDeputy empty_deputy(empty_cmd);
+  EXPECT_EQ(empty_deputy.kind_, MarshallDeputy::CMD_TPC_EMPTY);
+  ASSERT_NE(marshallable_cast<janus::TpcEmptyCommand>(empty_deputy), nullptr);
+
+  auto noop_cmd = std::make_shared<janus::TpcNoopCommand>();
+  MarshallDeputy noop_deputy(noop_cmd);
+  EXPECT_EQ(noop_deputy.kind_, MarshallDeputy::CMD_NOOP);
+  ASSERT_NE(marshallable_cast<janus::TpcNoopCommand>(noop_deputy), nullptr);
 }

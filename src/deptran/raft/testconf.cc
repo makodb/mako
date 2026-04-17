@@ -42,7 +42,7 @@ void RaftTestConfig::SetLearnerAction(void) {
         [svr](int slot, std::shared_ptr<Marshallable> cmd) -> int {
           verify(cmd);
           verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
-          auto commit_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
+          auto commit_cmd = marshallable_cast<TpcCommitCommand>(cmd);
           verify(commit_cmd != nullptr);
           Log_debug("server %d committed value %d at slot %d",
                     svr, commit_cmd->tx_id_, slot);
@@ -171,7 +171,7 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
   cmdptr->tx_id_ = cmd;
   cmdptr->cmd_ = wrap_typed_marshallable(vpd_p);
-  auto cmdptr_m = dynamic_pointer_cast<Marshallable>(cmdptr);
+  auto cmdptr_m = wrap_typed_marshallable(cmdptr);
   // call Start()
   // Log_info("Start: Calling Start() on server %d for command %d", svr, cmd);
   bool result = it->second->svr_->Start(cmdptr_m, index, term);
@@ -316,7 +316,7 @@ shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t svr, int cmd) {
       cmdptr->tx_id_ = cmd;
       cmdptr->cmd_ = wrap_typed_marshallable(vpd_p);
       Log_debug("Starting agreement for cmd id %d", cmdptr->tx_id_);
-      auto cmdptr_m = dynamic_pointer_cast<Marshallable>(cmdptr);
+      auto cmdptr_m = wrap_typed_marshallable(cmdptr);
       auto it = replicas.find(svr);
       if (it != replicas.end()) {
         it->second->svr_->CreateRepCoord(0)->Submit(cmdptr_m, [svr, cmt_idx_p, it](){
@@ -741,7 +741,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
       [svr](int slot, std::shared_ptr<Marshallable> cmd) -> int {
         verify(cmd);
         verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
-        auto commit_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
+        auto commit_cmd = marshallable_cast<TpcCommitCommand>(cmd);
         verify(commit_cmd != nullptr);
         Log_debug("server %d committed value %d at slot %d",
                   svr, commit_cmd->tx_id_, slot);

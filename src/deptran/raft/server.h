@@ -634,7 +634,7 @@ class RaftServer : public TxLogServer {
     {
 #ifndef RAFT_TEST_CORO
       if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
-        auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+        auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
         auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
         verify(vec_piece_data != nullptr);
         auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;

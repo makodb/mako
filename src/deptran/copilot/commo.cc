@@ -207,7 +207,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[1-] [tx=%d] async_FastAccept called by Submit %.3f", dynamic_pointer_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[1-] [tx=%d] async_FastAccept called by Submit %.3f", marshallable_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
       CopilotProxy::RpcFastAcceptRequest req;
       req.is_pilot = is_pilot;

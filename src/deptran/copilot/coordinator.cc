@@ -125,7 +125,7 @@ start_prepare:
        * There are < [f+1]/2 replies r 2 S with fast-accepted as their
        * progress. Then pick no-op with an empty dependency.
        */
-      cmd_now_ = make_shared<TpcNoopCommand>();  // no-op
+      cmd_now_ = wrap_typed_marshallable(make_shared<TpcNoopCommand>());  // no-op
       dep_ = 0;
     } else if (n_fastac >= maxFail()) {
       /**
@@ -146,7 +146,7 @@ start_prepare:
       dep_ = curr_ins->dep_id;
     }
   } else if (sq_quorum->GetCmds(Status::NOT_ACCEPTED).size() >= maxFail() + 1) {
-    cmd_now_ = make_shared<TpcNoopCommand>();  // no-op
+    cmd_now_ = wrap_typed_marshallable(make_shared<TpcNoopCommand>());  // no-op
     dep_ = 0;
   } else {
     // retry with higher ballot number
@@ -175,7 +175,7 @@ void CoordinatorCopilot::FastAccept() {
       "Copilot coordinator %u broadcast FAST_ACCEPT, "
       "partition: %u, %s : %lu -> %lu",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
-      // dynamic_pointer_cast<TpcCommitCommand>(cmd_now_)->tx_id_);
+      // marshallable_cast<TpcCommitCommand>(cmd_now_)->tx_id_);
   begin = Time::now(true);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("FastAccept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
@@ -194,7 +194,7 @@ void CoordinatorCopilot::FastAccept() {
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", dynamic_pointer_cast<TpcBatchCommand>(cmd_now_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", marshallable_cast<TpcBatchCommand>(cmd_now_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   fac = Time::now(true) - begin;
 #ifdef DO_FINALIZE

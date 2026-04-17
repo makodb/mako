@@ -73,7 +73,7 @@ class MongodbConnectionThreadPool {
       durations_[thread_id]->append(duration.count());
 
       // finished_queue_.push(cmd);
-      auto commit_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+      auto commit_cmd = marshallable_cast<TpcCommitCommand>(cmd);
       verify(commit_cmd != nullptr);
       auto vec_piece_data = marshallable_cast<VecPieceData>(commit_cmd->cmd_);
       verify(vec_piece_data != nullptr);

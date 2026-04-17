@@ -26,7 +26,7 @@ int SchedulerCarousel::OnDecide(txid_t tx_id,
   auto cmd = std::make_shared<TpcCommitCommand>();
   cmd->tx_id_ = tx_id;
   cmd->ret_ = decision;
-  auto sp_m = dynamic_pointer_cast<Marshallable>(cmd);
+  auto sp_m = wrap_typed_marshallable(cmd);
   CreateRepCoord(0)->Submit(sp_m);
   auto tx = dynamic_pointer_cast<TxCarousel>(GetTx(tx_id));
   tx->commit_result->wait();
@@ -400,12 +400,14 @@ void SchedulerCarousel::DoCommit(Tx& tx_input) {
 }
 
 int SchedulerCarousel::PrepareReplicated(Marshallable& cmd) {
-  auto& prepare_cmd = dynamic_cast<TpcPrepareCommand&>(cmd);
+  auto prepare_cmd = marshallable_cast<TpcPrepareCommand>(
+      std::shared_ptr<Marshallable>(&cmd, [](Marshallable*) {}));
+  verify(prepare_cmd != nullptr);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  auto tx_id = prepare_cmd.tx_id_;
+  auto tx_id = prepare_cmd->tx_id_;
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
   if (!sp_tx->cmd_) {
-    sp_tx->cmd_ = prepare_cmd.cmd_;
+    sp_tx->cmd_ = prepare_cmd->cmd_;
   }
   sp_tx->prepare_result->set(DoPrepare(sp_tx->tid_));
   Log_debug("prepare request replicated and executed for %" PRIx64 ", result: %x, sid: %x",
@@ -435,11 +437,13 @@ int SchedulerCarousel::PrepareCarouselReplicated(Marshallable& cmd) {
 }
 
 int SchedulerCarousel::CommitReplicated(Marshallable& cmd) {
-    auto& tpc_commit_cmd = dynamic_cast<TpcCommitCommand&>(cmd);  
+    auto tpc_commit_cmd = marshallable_cast<TpcCommitCommand>(
+        std::shared_ptr<Marshallable>(&cmd, [](Marshallable*) {}));
+    verify(tpc_commit_cmd != nullptr);
     std::lock_guard<std::recursive_mutex> lock(mtx_);
-    auto tx_id = tpc_commit_cmd.tx_id_;
+    auto tx_id = tpc_commit_cmd->tx_id_;
     auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
-    int decision = tpc_commit_cmd.ret_;
+    int decision = tpc_commit_cmd->ret_;
     if (decision == CoordinatorCarousel::Decision::COMMIT) {
       sp_tx->committed_ = true;
       DoCommit(*sp_tx);
@@ -506,8 +510,10 @@ void SchedulerCarousel::Next(Marshallable& cmd) {
     CommitReplicated(cmd);
   } else if (cmd.kind_ == MarshallDeputy::CMD_TPC_EMPTY) {
     // do nothing
-    auto& c = dynamic_cast<TpcEmptyCommand&>(cmd);
-    c.Done();
+    auto c = marshallable_cast<TpcEmptyCommand>(
+        std::shared_ptr<Marshallable>(&cmd, [](Marshallable*) {}));
+    verify(c != nullptr);
+    c->Done();
   } else {
     verify(0);
   }

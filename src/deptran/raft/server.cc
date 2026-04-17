@@ -1583,7 +1583,7 @@ void RaftServer::HeartbeatLoop() {
                   Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%d) returned NULL, skipping", idx);
                   continue;
                 }
-                shared_ptr<TpcCommitCommand> curCmd = dynamic_pointer_cast<TpcCommitCommand>(curInstance->log_);
+                shared_ptr<TpcCommitCommand> curCmd = marshallable_cast<TpcCommitCommand>(curInstance->log_);
                 if (!curCmd) {
                   Log_info("[BATCH_SKIP] site=%d idx=%d: log entry is not TpcCommitCommand (kind=%d), using raw log",
                            site_id_, idx, curInstance->log_ ? curInstance->log_->kind_ : -1);
@@ -1596,7 +1596,7 @@ void RaftServer::HeartbeatLoop() {
               if (batch_buffer_.size() > 0) {
                 shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
                 batch_cmd->AddCmds(batch_buffer_);
-                cmd = dynamic_pointer_cast<Marshallable>(batch_cmd);
+                cmd = wrap_typed_marshallable(batch_cmd);
                 Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d",
                          site_id_, batch_buffer_.size(), site_id);
               }
@@ -2468,14 +2468,15 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         log_index_for_durable_ack = lastLogIndex;
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
-        auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
+        auto cmds = marshallable_cast<TpcBatchCommand>(cmd);
+        verify(cmds != nullptr);
         int cnt = 0;
         for (shared_ptr<TpcCommitCommand>& c: cmds->cmds_) {
           cnt++;
           lastLogIndex = leaderPrevLogIndex + cnt;
           auto instance = GetRaftInstance(lastLogIndex);
-          instance->log_ = c;
-          instance->term = dynamic_pointer_cast<TpcCommitCommand>(c)->term;
+          instance->log_ = wrap_typed_marshallable(c);
+          instance->term = c->term;
 
           // Capture entry for async persistence
           entries_to_persist.push_back({lastLogIndex, instance});
@@ -2594,7 +2595,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 #ifndef RAFT_TEST_CORO
       if (cmd != nullptr) {
         if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
-          auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+          auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
           auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
           verify(vec_piece_data != nullptr);
           auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
@@ -2691,7 +2692,7 @@ void RaftServer::removeCmd(slotid_t slot) {
   // @unsafe
   {
     if (it->second && it->second->log_) {
-      auto cmd = dynamic_pointer_cast<TpcCommitCommand>(it->second->log_);
+      auto cmd = marshallable_cast<TpcCommitCommand>(it->second->log_);
       if (cmd && tx_sched_) {
         tx_sched_->DestroyTx(cmd->tx_id_);
       }

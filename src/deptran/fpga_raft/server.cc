@@ -247,8 +247,8 @@ bool FpgaRaftServer::RequestVote() {
 
     auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    verify(empty_cmd->kind_ == MarshallDeputy::CMD_TPC_EMPTY);
-    auto sp_m = dynamic_pointer_cast<Marshallable>(empty_cmd);
+    verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
+    auto sp_m = wrap_typed_marshallable(empty_cmd);
     ((CoordinatorFpgaRaft*)co)->Submit(sp_m);
     
     //RequestVote2FPGA() ;
@@ -439,7 +439,7 @@ void FpgaRaftServer::StartTimer()
             *followerLastLogIndex = this->lastLogIndex;
             
 						if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
-              auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+              auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
               auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
               verify(vec_piece_data != nullptr);
               auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
@@ -567,7 +567,7 @@ void FpgaRaftServer::StartTimer()
   }
 
   void FpgaRaftServer::removeCmd(slotid_t slot) {
-    auto cmd = dynamic_pointer_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
+    auto cmd = marshallable_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
     if (!cmd)
       return;
     tx_sched_->DestroyTx(cmd->tx_id_);

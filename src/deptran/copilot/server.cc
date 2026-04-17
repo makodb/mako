@@ -82,9 +82,11 @@ bool CopilotServer::WaitMaxCommittedGT(uint8_t is_pilot, slotid_t slot, int time
 }
 
 bool CopilotServer::allCmdComitted(shared_ptr<Marshallable> batch_cmd) {
-  auto cmds = dynamic_pointer_cast<TpcBatchCommand>(batch_cmd);
+  auto cmds = marshallable_cast<TpcBatchCommand>(batch_cmd);
+  verify(cmds != nullptr);
   for (auto& c : cmds->cmds_) {
-    if (!tx_sched_->CheckCommitted(*c))
+    auto wrapped_cmd = wrap_typed_marshallable(c);
+    if (!tx_sched_->CheckCommitted(*wrapped_cmd))
       return false;
   }
   return true;
@@ -219,7 +221,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   log_infos_[is_pilot].current_slot = std::max(slot, log_infos_[is_pilot].current_slot);
   if (!ins) {
     // this entry is too old that it's already freed
-    ret_cmd->set_marshallable(make_shared<TpcNoopCommand>());
+    ret_cmd->set_marshallable(wrap_typed_marshallable(make_shared<TpcNoopCommand>()));
     *dep = 0;
     *status = Status::EXECUTED;
     *max_ballot = ballot;
@@ -247,7 +249,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   if (ins->cmd)
     ret_cmd->set_marshallable(ins->cmd);
   else
-    ret_cmd->set_marshallable(make_shared<TpcNoopCommand>());
+    ret_cmd->set_marshallable(wrap_typed_marshallable(make_shared<TpcNoopCommand>()));
   *dep = ins->dep_id;
   *status = ins->status;
 
@@ -349,7 +351,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[2-] [tx=%d] Before on FastAccept cb() %.3f", dynamic_pointer_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[2-] [tx=%d] Before on FastAccept cb() %.3f", marshallable_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   // Print("loc_id_ = " + std::to_string(loc_id_) + " After OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
@@ -602,10 +604,10 @@ void CopilotServer::updateMaxCmtdSlot(CopilotLogInfo& log_info, slotid_t slot) {
 void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
   auto cmd = log_info.logs[slot]->cmd;
   if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+    auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     tx_sched_->DestroyTx(tpc_cmd->tx_id_);
   } else if (cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH) {
-    auto batch_cmd = dynamic_pointer_cast<TpcBatchCommand>(cmd);
+    auto batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
     for (auto& c : batch_cmd->cmds_)
       tx_sched_->DestroyTx(c->tx_id_);
   }
@@ -988,7 +990,7 @@ bool CopilotServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshalla
     if (ins && ins->cmd) {
       // Copilots use batch cmds in copilot instance
       verify(ins->cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH);
-      shared_ptr<TpcBatchCommand> batch_cmd = dynamic_pointer_cast<TpcBatchCommand>(ins->cmd);
+      shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
       for (int i = 0; i < batch_cmd->Size(); i++)
         if (SimpleRWCommand::Conflict(batch_cmd->cmds_[i], cmd))
           return true;

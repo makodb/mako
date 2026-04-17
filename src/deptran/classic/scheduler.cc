@@ -164,10 +164,10 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
                 PRIx64, __FUNCTION__, this->site_id_, tx_id);
   if (Config::GetConfig()->IsReplicated()) {
     auto sp_prepare_cmd = std::make_shared<TpcPrepareCommand>();
-    verify(sp_prepare_cmd->kind_ == MarshallDeputy::CMD_TPC_PREPARE);
+    verify(TpcPrepareCommand::kMarshallKind == MarshallDeputy::CMD_TPC_PREPARE);
     sp_prepare_cmd->tx_id_ = tx_id;
     sp_prepare_cmd->cmd_ = sp_tx->cmd_;
-    auto sp_m = dynamic_pointer_cast<Marshallable>(sp_prepare_cmd);
+    auto sp_m = wrap_typed_marshallable(sp_prepare_cmd);
     sp_tx->is_leader_hint_ = true;
 		
 		struct timespec begin, end;
@@ -246,7 +246,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
     cmd->ret_ = commit_or_abort;
     cmd->cmd_ = sp_tx->cmd_;
     sp_tx->is_leader_hint_ = true;
-    shared_ptr<Marshallable> sp_m = dynamic_pointer_cast<Marshallable>(cmd);
+    shared_ptr<Marshallable> sp_m = wrap_typed_marshallable(cmd);
     shared_ptr<Coordinator> coo{CreateRepCoord(dep_id.id)};
     coo->svr_workers_g = svr_workers_g;
 
@@ -371,8 +371,10 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
 
 bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  auto &c = dynamic_cast<TpcCommitCommand&>(tpc_commit_cmd);
-  auto tx_id = c.tx_id_;
+  auto commit_cmd = marshallable_cast<TpcCommitCommand>(
+      std::shared_ptr<Marshallable>(&tpc_commit_cmd, [](Marshallable*) {}));
+  verify(commit_cmd != nullptr);
+  auto tx_id = commit_cmd->tx_id_;
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetTx(tx_id));
   if (!sp_tx)  // it's too old that it's already deleted
     return true;
@@ -381,18 +383,22 @@ bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
 
 int SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {
   if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_PREPARE) {
-    auto& c = dynamic_cast<TpcPrepareCommand&>(*cmd.get());
-    PrepareReplicated(c);
+    auto c = marshallable_cast<TpcPrepareCommand>(cmd);
+    verify(c != nullptr);
+    PrepareReplicated(*c);
   } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto& c = dynamic_cast<TpcCommitCommand&>(*cmd.get());
-    CommitReplicated(c);
+    auto c = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(c != nullptr);
+    CommitReplicated(*c);
   } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_EMPTY) {
     // do nothing
-    auto& c = dynamic_cast<TpcEmptyCommand&>(*cmd.get());
-    c.Done();
+    auto c = marshallable_cast<TpcEmptyCommand>(cmd);
+    verify(c != nullptr);
+    c->Done();
   } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_BATCH) {
-    auto& c = dynamic_cast<TpcBatchCommand&>(*cmd.get());
-    for (auto& cc : c.cmds_)
+    auto c = marshallable_cast<TpcBatchCommand>(cmd);
+    verify(c != nullptr);
+    for (auto& cc : c->cmds_)
       CommitReplicated(*cc);
   } else {
     verify(0);

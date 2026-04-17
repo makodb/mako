@@ -68,7 +68,7 @@ class MongodbServer : public TxLogServer {
 #endif
     WAN_WAIT
     verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
-    auto commit_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+    auto commit_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(commit_cmd != nullptr);
     auto vec_piece_data = marshallable_cast<VecPieceData>(commit_cmd->cmd_);
     verify(vec_piece_data != nullptr);
