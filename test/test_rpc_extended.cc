@@ -143,9 +143,11 @@ namespace {
 
 rusty::Arc<RpcServiceContext> make_test_rpc_context() {
     std::unordered_map<i32, size_t> rpc_to_service;
+    std::unordered_set<i32> fast_rpc_ids;
     rusty::Vec<rusty::RefCell<ServiceProxy>> services;
     return rusty::Arc<RpcServiceContext>::make(
         std::move(rpc_to_service),
+        std::move(fast_rpc_ids),
         std::move(services),
         "127.0.0.1:0",
         std::make_shared<std::atomic<int>>(0),
