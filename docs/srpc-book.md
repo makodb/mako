@@ -1419,6 +1419,53 @@ Aggregate summary:
 - Await vs callback: `-0.49%`
 - Server CPU utilization is effectively identical between modes in this setup.
 
+### Mode Comparison Update (10 Client Processes, `-e 1`)
+
+Run date (UTC): `2026-04-18T20:20:06Z`  
+Code commit (HEAD): `e3d65943cda0a5b3be014dea35095a6060ab4d02`
+
+Measured topology:
+- One server process (`rpcbench -s ... -e 1`)
+- Ten independent client processes (`10 x rpcbench -c ... -t 1 -e 1`)
+- Modes compared via `-m fast|fiber|async`
+- Packet size `-b 10` (default), worker threads `-w 16` (default)
+- Duration per trial (`-n`) = 20s
+- Server CPU measured with `pidstat -u -p <server_pid> 1`
+
+#### `-o 1` (single outstanding RPC per client process)
+
+| Mode | Trial | Throughput (avg qps, sum of 10 clients) | Server CPU avg % | Server CPU max % |
+|------|-------|-------------------------------------------|------------------|------------------|
+| fast | 1 | `74095.57` | `99.90` | `101.00` |
+| fast | 2 | `70273.97` | `99.85` | `101.00` |
+| fiber | 1 | `73691.00` | `99.90` | `101.00` |
+| fiber | 2 | `69536.29` | `99.90` | `101.00` |
+| async | 1 | `64415.00` | `99.95` | `101.00` |
+| async | 2 | `75005.19` | `99.95` | `101.00` |
+
+Aggregate summary (`-o 1`):
+- Fast mean: `72184.77 qps`
+- Fiber mean: `71613.64 qps` (`-0.79%` vs fast)
+- Async mean: `69710.10 qps` (`-3.43%` vs fast, `-2.66%` vs fiber)
+- Server CPU is saturated for all modes (~100% avg/max).
+
+#### `-o 1000` (1000 outstanding RPCs per client process)
+
+| Mode | Trial | Throughput (avg qps, sum of 10 clients) | Server CPU avg % | Server CPU max % |
+|------|-------|-------------------------------------------|------------------|------------------|
+| fast | 1 | `2327315.34` | `99.90` | `101.00` |
+| fast | 2 | `2329882.27` | `99.90` | `101.00` |
+| fiber | 1 | `1283867.41` | `100.00` | `101.00` |
+| fiber | 2 | `1322332.60` | `99.95` | `101.00` |
+| async | 1 | `1971063.29` | `99.95` | `101.00` |
+| async | 2 | `1987283.78` | `99.95` | `101.00` |
+
+Aggregate summary (`-o 1000`):
+- Fast mean: `2328598.80 qps`
+- Fiber mean: `1303100.00 qps` (`-44.04%` vs fast)
+- Async mean: `1979173.54 qps` (`-15.01%` vs fast, `+51.88%` vs fiber)
+- Server CPU is saturated for all modes (~100% avg/max).
+
 ### Tuning Parameters
 
 | Parameter | Default | Tuning Advice |
