@@ -2,7 +2,7 @@
 
 A comprehensive developer guide for RRR — the **S**imple **RPC** framework powering Mako.
 
-RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, stackful coroutines (fibers), an event-driven reactor, and binary serialization — all with Rust-inspired memory safety.
+RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, stackful fibers, an event-driven reactor, and binary serialization — all with Rust-inspired memory safety.
 
 ---
 
@@ -10,7 +10,7 @@ RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, 
 
 1. [Introduction](#1-introduction)
 2. [Architecture Overview](#2-architecture-overview)
-3. [Fibers (Stackful Coroutines)](#3-fibers-stackful-coroutines)
+3. [Fibers (Stackful)](#3-fibers-stackful)
 4. [The Reactor Pattern](#4-the-reactor-pattern)
 5. [Event System](#5-event-system)
 6. [I/O Layer: Polling and Connections](#6-io-layer-polling-and-connections)
@@ -47,7 +47,7 @@ Off-the-shelf RPC frameworks (gRPC, Thrift) are designed for general-purpose use
 
 | Feature | Description |
 |---------|-------------|
-| **Stackful Coroutines** | Lightweight fibers with custom x86_64 assembly context switching |
+| **Stackful Fibers** | Lightweight fibers with custom x86_64 assembly context switching |
 | **Reactor Pattern** | Event-driven I/O via epoll (Linux) / kqueue (macOS) |
 | **Binary RPC** | Compact wire format with code generation from `.rpc` definitions |
 | **Connection Pooling** | Health-aware pools with load balancing |
@@ -123,12 +123,11 @@ src/rrr/
     errors.hpp          # Error code definitions
     utils.hpp/cpp       # RPC utilities
 
-  reactor/            # Event loop and coroutine system
+  reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)
     fiber.h             # Modern fiber API (this_fiber namespace)
     fiber_impl.h/cc     # Fiber implementation + context switching
     fiber_context_x86_64.cc # Assembly context switching
-    coroutine.h         # Legacy coroutine interface (alias for Fiber)
     event.h             # Event synchronization primitives
     future.h            # Async result container
     epoll_wrapper.h     # Linux epoll / macOS kqueue abstraction
@@ -154,9 +153,9 @@ src/rrr/
 
 ---
 
-## 3. Fibers (Stackful Coroutines)
+## 3. Fibers (Stackful)
 
-Fibers are the fundamental concurrency primitive in RRR. They are **stackful coroutines** — lightweight execution contexts that can pause and resume from any function depth.
+Fibers are the fundamental concurrency primitive in RRR. They are **stackful execution contexts** that can pause and resume from any function depth.
 
 ### Why Fibers Instead of Threads?
 
@@ -205,7 +204,7 @@ auto fiber = Fiber::create_run([]() {
 });
 ```
 
-**Backward compatibility:** `Coroutine` is an alias for `Fiber`. Use `Fiber` in new code — it more accurately describes our stackful execution model (C++20 "coroutines" are stackless).
+**Backward compatibility:** Legacy aliases still exist for older APIs. Use `Fiber` naming in new code.
 
 ### Fiber Lifecycle
 
@@ -224,7 +223,7 @@ Running  (executing user function)
 Finished (function returns)
   |
   v
-Recycled (if REUSE_CORO enabled) or Destroyed
+Recycled (if fiber reuse is enabled) or Destroyed
 ```
 
 ### Implementation Details
@@ -262,22 +261,22 @@ The **Reactor** is the event loop that manages all fibers and I/O within a threa
 
 ```cpp srpc-no-compile
 // Get the thread-local reactor
-auto reactor = Reactor::GetReactor();
+auto reactor = Reactor::get_reactor();
 
 // Create fibers
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_fiber([]() {
     // Your concurrent task
     this_fiber::yield();  // Let others run
 });
 
 // Run event loop
-reactor->Loop(true);   // Run forever
-reactor->Loop(false);  // Process once
+reactor->loop(true);   // Run forever
+reactor->loop(false);  // Process once
 ```
 
 ### Event Loop Operation
 
-Each iteration of `Reactor::Loop()`:
+Each iteration of `Reactor::loop()`:
 
 1. **Process commands** from other threads (add/remove Pollables, Jobs)
 2. **epoll_wait()** to get ready file descriptors
@@ -293,13 +292,13 @@ Each iteration of `Reactor::Loop()`:
 ```cpp srpc-no-compile
 // WRONG - undefined behavior!
 std::thread t([reactor]() {
-    reactor->CreateRunCoroutine([]() { /* ... */ });  // BAD!
+    reactor->create_run_fiber([]() { /* ... */ });  // BAD!
 });
 
 // RIGHT - each thread has its own reactor
 std::thread t([]() {
-    auto reactor = Reactor::GetReactor();  // Thread-local
-    reactor->CreateRunCoroutine([]() { /* ... */ });
+    auto reactor = Reactor::get_reactor();  // Thread-local
+    reactor->create_run_fiber([]() { /* ... */ });
 });
 ```
 
@@ -318,7 +317,7 @@ class PollThread {
     Reactor* reactor_;
     void Run() {
         while (running_) {
-            reactor_->Loop(false);  // Process pending events
+            reactor_->loop(false);  // Process pending events
         }
     }
 };
@@ -349,7 +348,7 @@ class Event {
 #### IntEvent — Integer-based condition
 
 ```cpp srpc-no-compile
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 event->target_ = 42;  // Ready when value_ == 42
 
 // In another fiber:
@@ -362,7 +361,7 @@ event->Wait();  // Resumes when value_ == target_
 #### TimeoutEvent — Time-based trigger
 
 ```cpp srpc-no-compile
-auto timeout = Reactor::CreateSpEvent<TimeoutEvent>(1000000);  // 1 second
+auto timeout = Reactor::create_sp_event<TimeoutEvent>(1000000);  // 1 second
 timeout->Wait();
 std::cout << "1 second elapsed!" << std::endl;
 ```
@@ -370,18 +369,18 @@ std::cout << "1 second elapsed!" << std::endl;
 #### WaitAny (OrEvent) — Any of multiple events
 
 ```cpp srpc-no-compile
-auto e1 = Reactor::CreateSpEvent<IntEvent>();
-auto e2 = Reactor::CreateSpEvent<IntEvent>();
-auto any = Reactor::CreateSpEvent<WaitAny>(e1, e2);
+auto e1 = Reactor::create_sp_event<IntEvent>();
+auto e2 = Reactor::create_sp_event<IntEvent>();
+auto any = Reactor::create_sp_event<WaitAny>(e1, e2);
 any->Wait();  // Continues when EITHER event triggers
 ```
 
 #### WaitAll (AndEvent) — All events must be ready
 
 ```cpp srpc-no-compile
-auto e1 = Reactor::CreateSpEvent<IntEvent>();
-auto e2 = Reactor::CreateSpEvent<IntEvent>();
-auto all = Reactor::CreateSpEvent<WaitAll>(e1, e2);
+auto e1 = Reactor::create_sp_event<IntEvent>();
+auto e2 = Reactor::create_sp_event<IntEvent>();
+auto all = Reactor::create_sp_event<WaitAll>(e1, e2);
 all->Wait();  // Continues when BOTH events trigger
 ```
 
@@ -389,14 +388,14 @@ all->Wait();  // Continues when BOTH events trigger
 
 ```cpp srpc-no-compile
 auto events = {e1, e2, e3, e4, e5};
-auto quorum = Reactor::CreateSpEvent<WaitN>(events, 3);
+auto quorum = Reactor::create_sp_event<WaitN>(events, 3);
 quorum->Wait();  // Continues when 3 of 5 events trigger
 ```
 
 ### Wait with Timeout
 
 ```cpp srpc-no-compile
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 event->Wait(1000000);  // 1 second timeout
 
 if (event->status_ == Event::TIMEOUT) {
@@ -1115,6 +1114,9 @@ This produces:
 - Typed proxy sync/async APIs for non-raw methods:
   `Method(const MethodRequest&)` and
   `async_Method(const MethodRequest&, const FutureAttr&)`
+- Typed proxy coroutine APIs for non-raw methods:
+  `await_Method(const MethodRequest&, const FutureAttr&)` and
+  `co_await` support on `MethodTypedFuture`
 
 Current codegen is typed-only for non-raw RPC methods:
 - Generated service wrappers decode `MethodRequest`, call the typed handler, and
@@ -1148,6 +1150,16 @@ if (fu_result.is_ok()) {
         auto resp = resolved.unwrap();
         // resp.user populated
     }
+}
+
+// Coroutine typed call (C++20 co_await)
+rusty::Task<void> get_user_async(MyServiceProxy& proxy, const MyServiceProxy::RpcGetUserRequest& req) {
+    auto awaited = co_await proxy.await_get_user(req);
+    if (awaited.is_ok()) {
+        auto resp = awaited.unwrap();
+        (void)resp;
+    }
+    co_return;
 }
 ```
 
@@ -1342,9 +1354,70 @@ Throughput results:
 - Server max CPU (`pidstat`, `%CPU`): `86.00`
 
 Result summary:
-- After the coroutine-reuse fix in the client callback path, single-process (`-t 10`)
+- After the fiber-reuse fix in the client callback path, single-process (`-t 10`)
   is close to multi-process throughput (~4.7% lower), indicating the prior process-local
   bottleneck is largely removed.
+
+### Await API Benchmark (`-t 10`, `-o 1`, 60s Trials)
+
+Run date (UTC): `2026-04-18`
+
+Measured topology:
+- One server process (`rpcbench -s ... -f`)
+- One client process with 10 client threads (`-t 10`)
+- Single outstanding RPC per client thread (`-o 1`)
+- Duration per trial (`-n`) = 60s
+- Compared client modes:
+  - callback mode (default)
+  - await mode (`-a`)
+
+Server CPU measurement:
+- `pidstat -u -p <server_pid> 1`
+- Reported as average/max `%CPU` over the run
+
+| Mode | Trial | Throughput (avg qps) | Server CPU avg % | Server CPU max % |
+|------|-------|-----------------------|------------------|------------------|
+| callback | 1 | `69842.22` | `96.79` | `101.00` |
+| callback | 2 | `75653.46` | `96.77` | `101.00` |
+| await (`-a`) | 1 | `70659.36` | `96.77` | `101.00` |
+| await (`-a`) | 2 | `72430.24` | `96.76` | `101.00` |
+
+Aggregate summary:
+- Callback mean throughput: `72747.84 qps`
+- Await mean throughput: `71544.80 qps`
+- Await vs callback: `-1.65%`
+- Server CPU utilization is effectively identical between modes in this setup.
+
+### Await API Benchmark (`-t 10`, `-o 1000`, 60s Trials)
+
+Run date (UTC): `2026-04-18`
+Code commit (HEAD): `3080e880e17f685b04bb72d9e930ae318191bcdd`
+
+Measured topology:
+- One server process (`rpcbench -s ... -f`)
+- One client process with 10 client threads (`-t 10`)
+- 1000 outstanding RPC per client thread (`-o 1000`)
+- Duration per trial (`-n`) = 60s
+- Compared client modes:
+  - callback mode (default)
+  - await mode (`-a`)
+
+Server CPU measurement:
+- `pidstat -u -p <server_pid> 1`
+- Reported as average/max `%CPU` over the run
+
+| Mode | Trial | Throughput (avg qps) | Server CPU avg % | Server CPU max % |
+|------|-------|-----------------------|------------------|------------------|
+| callback | 1 | `2401442.25` | `96.81` | `101.00` |
+| callback | 2 | `2375803.75` | `96.79` | `101.00` |
+| await (`-a`) | 1 | `2347543.00` | `96.60` | `101.00` |
+| await (`-a`) | 2 | `2406166.25` | `96.63` | `101.00` |
+
+Aggregate summary:
+- Callback mean throughput: `2388623.00 qps`
+- Await mean throughput: `2376854.63 qps`
+- Await vs callback: `-0.49%`
+- Server CPU utilization is effectively identical between modes in this setup.
 
 ### Tuning Parameters
 
@@ -1382,19 +1455,19 @@ pool.health_check_interval_ms = 10000;  // Check health every 10s
 
 ```cpp srpc-no-compile
 class Reactor {
-    static Reactor* GetReactor();        // Thread-local main reactor
-    static Reactor* GetDiskReactor();    // Thread-local disk reactor
+    static Rc<Reactor> get_reactor();    // Thread-local main reactor
+    static Rc<Reactor> get_disk_reactor(); // Thread-local disk reactor
 
     // Fiber management
-    Rc<Fiber> CreateRunCoroutine(Func&& f);
-    void ContinueCoro(Rc<Fiber> fiber);
+    Rc<Fiber> create_run_fiber(Function<void()> f);
+    void continue_fiber(Rc<Fiber> fiber);
 
     // Event creation
     template<typename T, typename... Args>
-    static shared_ptr<T> CreateSpEvent(Args&&... args);
+    static shared_ptr<T> create_sp_event(Args&&... args);
 
     // Event loop
-    void Loop(bool forever = false);
+    void loop(bool forever = false);
 };
 ```
 
@@ -1408,9 +1481,6 @@ class Fiber {
     void continue_() const;
     bool finished() const;
 };
-
-// Alias
-using Coroutine = Fiber;
 ```
 
 ### this_fiber Namespace
@@ -1486,11 +1556,11 @@ class PollThread {
 
 ### Do
 
-- **One reactor per thread** — always use `Reactor::GetReactor()`
+- **One reactor per thread** — always use `Reactor::get_reactor()`
 - **Yield in long loops** — let other fibers run
 - **Use events for coordination** — don't busy-wait
 - **Use RAII guards** — `SpinMutexGuard`, `RefCell::borrow()`, etc.
-- **Prefer `Fiber` over `Coroutine`** — in new code
+- **Use `Fiber` naming consistently** — in new code
 - **Use `this_fiber::sleep_ms()`** — never `std::this_thread::sleep_for()`
 - **Close connections gracefully** — use the shutdown phases
 
@@ -1509,14 +1579,14 @@ class PollThread {
 **Fiber starvation:**
 ```cpp srpc-no-compile
 // BAD - blocks all other fibers
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_fiber([]() {
     while (true) {
         compute();  // Never yields!
     }
 });
 
 // GOOD - cooperative
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_fiber([]() {
     while (true) {
         compute();
         this_fiber::yield();  // Let others run
@@ -1527,7 +1597,7 @@ reactor->CreateRunCoroutine([]() {
 **Cross-thread event access:**
 ```cpp srpc-no-compile
 // BAD
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 std::thread t([event]() {
     event->Set(1);  // CRASH - wrong thread!
 });
@@ -1538,12 +1608,12 @@ std::thread t([event]() {
 **Forgetting the event loop:**
 ```cpp srpc-no-compile
 // BAD - fiber never executes
-reactor->CreateRunCoroutine([]() { /* ... */ });
+reactor->create_run_fiber([]() { /* ... */ });
 // No loop() call!
 
 // GOOD
-reactor->CreateRunCoroutine([]() { /* ... */ });
-reactor->Loop(true);
+reactor->create_run_fiber([]() { /* ... */ });
+reactor->loop(true);
 ```
 
 ---
@@ -1554,7 +1624,7 @@ reactor->Loop(true);
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Fibers never run | No event loop running | Call `reactor->Loop()` |
+| Fibers never run | No event loop running | Call `reactor->loop()` |
 | Fiber hangs forever | Event never triggered | Add timeout to `Wait()` |
 | Segfault in event | Cross-thread access | Keep events thread-local |
 | Connection refused | Server not listening | Check port and host config |
