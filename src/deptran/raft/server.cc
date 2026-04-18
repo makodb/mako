@@ -1675,11 +1675,18 @@ void RaftServer::HeartbeatLoop() {
             }
           } else if (resp.status == 0) {
             // case 2: AppendEntries rejected - log inconsistency
-            if (resp.last_log_index > 0 && resp.last_log_index < next_index - 1) {
+            if (resp.last_log_index > 0 && (resp.last_log_index + 1) < next_index) {
               uint64_t old_next = next_index;
               next_index = resp.last_log_index + 1;
               Log_info("[LOG-RECONCILE] Site %d: Fast backoff for follower %d: next_index %lu -> %lu (gap: %lu, follower reported last: %lu)",
                        site_id_, pending.follower_id, old_next, next_index, old_next - next_index, resp.last_log_index);
+            } else if (resp.last_log_index > 0 && (resp.last_log_index + 1) == next_index && next_index > 1) {
+              // Follower has prevLogIndex but still rejected, which indicates a term conflict.
+              // Step one slot further back so the next AppendEntries can overwrite conflict.
+              uint64_t old_next = next_index;
+              next_index--;
+              Log_info("[LOG-RECONCILE] Site %d: Term-conflict backoff for follower %d: next_index %lu -> %lu",
+                       site_id_, pending.follower_id, old_next, next_index);
             } else if (next_index > 10) {
               uint64_t old_next = next_index;
               next_index = next_index / 2;

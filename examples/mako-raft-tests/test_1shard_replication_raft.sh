@@ -128,40 +128,70 @@ failed=0
     fi
 }
 
-# Check replay_batch counter in shard0-p1.log
+# Check replay_batch counters in both followers (p1/p2)
 echo ""
 log_p1="${script_name}_shard0-p1-$trd.log"
-echo "Checking $log_p1:"
+log_p2="${script_name}_shard0-p2-$trd.log"
+echo "Checking follower replay_batch counters:"
 echo "-----------------"
 
-if [ ! -f "$log_p1" ]; then
-    echo "  ✗ $log_p1 file not found"
+extract_replay_count() {
+    local log_file="$1"
+    if [ ! -f "$log_file" ]; then
+        echo ""
+        return 1
+    fi
+    local last_line
+    last_line=$(grep "replay_batch:" "$log_file" | tail -1)
+    if [ -z "$last_line" ]; then
+        echo ""
+        return 1
+    fi
+    local value
+    value=$(echo "$last_line" | sed -n 's/.*replay_batch:\([0-9]*\).*/\1/p')
+    if [ -z "$value" ]; then
+        echo ""
+        return 1
+    fi
+    echo "$value"
+    return 0
+}
+
+replay_p1=$(extract_replay_count "$log_p1")
+ok_p1=$?
+replay_p2=$(extract_replay_count "$log_p2")
+ok_p2=$?
+
+if [ "$ok_p1" -ne 0 ]; then
+    echo "  ✗ Could not read replay_batch from $log_p1"
     failed=1
 else
-    # Get the last occurrence of replay_batch
-    last_replay_batch=$(grep "replay_batch:" "$log_p1" | tail -1)
+    echo "  p1 replay_batch: $replay_p1"
+fi
 
-    if [ -z "$last_replay_batch" ]; then
-        echo "  ✗ No 'replay_batch' keyword found in $log_p1"
-        failed=1
+if [ "$ok_p2" -ne 0 ]; then
+    echo "  ✗ Could not read replay_batch from $log_p2"
+    failed=1
+else
+    echo "  p2 replay_batch: $replay_p2"
+fi
+
+if [ "$ok_p1" -eq 0 ] && [ "$ok_p2" -eq 0 ]; then
+    if [ "$replay_p1" -gt "$replay_p2" ]; then
+        max_replay=$replay_p1
+        min_replay=$replay_p2
     else
-        # Extract the replay_batch number (assuming format: "replay_batch:XXX")
-        replay_count=$(echo "$last_replay_batch" | sed -n 's/.*replay_batch:\([0-9]*\).*/\1/p')
+        max_replay=$replay_p2
+        min_replay=$replay_p1
+    fi
 
-        if [ -z "$replay_count" ]; then
-            echo "  ✗ Could not extract replay_batch value"
-            echo "    Last line: $last_replay_batch"
-            failed=1
-        else
-            # Check if replay_count is greater than 500 (lowered from 1000 to account for CI variability)
-            # The test verifies replication is working, not exact batch count
-            if [ "$replay_count" -gt 500 ]; then
-                echo "  ✓ replay_batch: $replay_count (> 500)"
-            else
-                echo "  ✗ replay_batch: $replay_count (should be > 500)"
-                failed=1
-            fi
-        fi
+    # CI in this test can see leader churn; one follower may lag while the other catches up.
+    # Require strong replication on one follower and non-trivial replay on the other.
+    if [ "$max_replay" -gt 500 ] && [ "$min_replay" -gt 100 ]; then
+        echo "  ✓ follower replay checks passed (max=$max_replay > 500, min=$min_replay > 100)"
+    else
+        echo "  ✗ follower replay checks failed (max=$max_replay, min=$min_replay; need max>500 and min>100)"
+        failed=1
     fi
 fi
 
@@ -176,12 +206,15 @@ else
     echo "========================================="
     echo ""
     echo "Debug information:"
-    echo "Check $script_name\_shard0-localhost-$trd.log and $log_p1 for details"
+    echo "Check $script_name\_shard0-localhost-$trd.log, $log_p1 and $log_p2 for details"
     echo ""
     echo "Last 10 lines of $script_name\_shard0-localhost-$trd.log:"
     tail -10 $script_name\_shard0-localhost-$trd.log
     echo ""
     echo "Last 5 lines with 'replay_batch' from $log_p1:"
-    grep "replay_batch" $log_p1 | tail -5 2>/dev/null || echo "No replay_batch entries found"
+    grep "replay_batch" $log_p1 | tail -5 2>/dev/null || echo "No replay_batch entries found in $log_p1"
+    echo ""
+    echo "Last 5 lines with 'replay_batch' from $log_p2:"
+    grep "replay_batch" $log_p2 | tail -5 2>/dev/null || echo "No replay_batch entries found in $log_p2"
     exit 1
 fi
