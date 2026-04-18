@@ -1088,13 +1088,69 @@ struct UserInfo {
 
 // Service definition
 service MyService {
-    // 'defer' = dispatched to thread pool
+    // 'defer' = deferred reply API (you decide when to reply)
     defer get_user(i32 id | UserInfo user);
 
     // 'fast' = handled on network thread (low latency)
     fast ping(| i32 status);
 };
 ```
+
+### RPC Execution Attributes (`fast`, `defer`, `fiber`, `async`)
+
+These are server-side execution attributes in `.rpc` files. They control how
+the generated server wrapper runs your handler.
+
+Important distinction:
+- Server-side `async` (IDL attribute) is about handler execution style.
+- Client-side `async_Method(...)` / `await_Method(...)` proxy APIs are generated
+  for non-raw RPCs regardless of server attribute.
+
+```srpc-no-compile
+service ExecModes {
+    fast   ping(| i32 ok);
+    defer  write(i64 key, string val | i32 status);
+    fiber  lock_then_read(i64 key | string val);
+    async  fetch_remote(i64 key | string val);
+    read_local(i64 key | string val);  // default (no attribute)
+};
+```
+
+Generated server handler signatures:
+
+```cpp srpc-no-compile
+// fast / default / fiber
+virtual Result<RpcPingResponse, i32> ping(const RpcPingRequest& req);
+virtual Result<RpcReadLocalResponse, i32> read_local(const RpcReadLocalRequest& req);
+virtual Result<RpcLockThenReadResponse, i32> lock_then_read(const RpcLockThenReadRequest& req);
+
+// defer
+virtual void write(const RpcWriteRequest& req,
+                   RpcWriteResponse& resp,
+                   rrr::DeferredReply defer);
+
+// async (server-side stackless task)
+virtual rusty::Task<Result<RpcFetchRemoteResponse, i32>>
+fetch_remote(const RpcFetchRemoteRequest& req);
+```
+
+Execution model summary:
+
+| Attribute | Registration path | Handler runtime model | Reply model | Typical use |
+|-----------|-------------------|-----------------------|-------------|-------------|
+| `fast` | `reg_fast_rpc` | Runs directly on network/poll thread | Immediate typed `Result` | Very small, non-blocking handlers; minimum overhead |
+| `defer` | `reg_rpc` | Entered from regular RPC path; handler receives `DeferredReply` token | Explicit `defer.reply()` / `defer.reply_error()` when ready | Work whose reply is naturally delayed (callbacks, external completion) |
+| `fiber` | `reg_rpc` + generated `Fiber::create_run(...)` in wrapper | Runs in a stackful fiber context | Immediate typed `Result` from that fiber | Logic that benefits from `this_fiber::yield()` / event waits |
+| `async` | `reg_fast_rpc` + `spawn_stackless_task_with_result(...)` | C++20 stackless coroutine (`rusty::Task`) polled by reactor | Reply when task becomes ready | `co_await`-style flow without stackful fiber overhead |
+
+Notes:
+- In current implementation, both `fast` and `async` enter from the fast
+  dispatch path (network thread), while default / `defer` / `fiber` enter from
+  the regular RPC dispatch path.
+- `async` handlers that complete on first poll can reply inline; pending tasks
+  are resumed by reactor wakeups.
+- `defer` provides deferred reply semantics; it does not implicitly guarantee
+  thread-pool offload by itself.
 
 ### Code Generation
 
@@ -1481,8 +1537,8 @@ Aggregate summary (`-o 1000`):
 ### Fast vs Defer Dispatch
 
 In service definitions:
-- **`fast`**: Handler runs on the network thread. Use for trivial operations (ping, status) to avoid thread pool overhead.
-- **`defer`**: Handler runs in a thread pool. Use for anything that might block or take significant time.
+- **`fast`**: Handler runs on the network thread. Use for trivial operations (ping, status) to minimize scheduling overhead.
+- **`defer`**: Handler gets a `DeferredReply` token and decides when to reply (`defer.reply()` / `defer.reply_error()`). Use when completion is delayed by external work.
 
 ### Connection Pooling
 
