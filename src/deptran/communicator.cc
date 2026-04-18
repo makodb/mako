@@ -684,7 +684,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 	e->value_ = 0;
 	e->target_ = total;
   std::unordered_set<int> leaders{};
-  auto src_coroid = e->get_coro_id();
+  auto src_coroid = e->get_fiber_id();
   coo->coro_id_ = src_coroid;
   Log_info("The size of cmds_by_par is %d", cmds_by_par.size());
 
@@ -856,7 +856,7 @@ Communicator::SendPrepare(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
     e->add_event(qe);
-    auto src_coroid = qe->get_coro_id();
+    auto src_coroid = qe->get_fiber_id();
       
     qe->id_ = Communicator::global_id;
     qe->par_id_ = quorum_id++;
@@ -981,7 +981,7 @@ Communicator::SendCommit(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
     qe->id_ = Communicator::global_id;
-    auto src_coroid = qe->get_coro_id();
+    auto src_coroid = qe->get_fiber_id();
 
     e->add_event(qe);
 
@@ -1122,7 +1122,7 @@ Communicator::SendAbort(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
     qe->id_ = Communicator::global_id;
-    auto src_coroid = qe->get_coro_id();
+    auto src_coroid = qe->get_fiber_id();
 
     e->add_event(qe);
 

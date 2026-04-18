@@ -13,7 +13,7 @@ A comprehensive developer guide for the Mako distributed transactional datastore
 5. [Replication and Consensus](#5-replication-and-consensus)
 6. [Storage Engines](#6-storage-engines)
 7. [Networking and RPC](#7-networking-and-rpc)
-8. [Concurrency Model: Coroutines and the Reactor Pattern](#8-concurrency-model-coroutines-and-the-reactor-pattern)
+8. [Concurrency Model: Fibers and the Reactor Pattern](#8-concurrency-model-fibers-and-the-reactor-pattern)
 9. [Configuration Reference](#9-configuration-reference)
 10. [Build System](#10-build-system)
 11. [Testing](#11-testing)
@@ -100,7 +100,7 @@ Mako has a layered architecture:
 +------------------------------v-------------------------------+
 |            RPC Communication Layer (RRR)                       |
 |  +----------+----------+----------+----------+               |
-|  | TCP/IP   | Coroutines| Reactor  | Event    |               |
+|  | TCP/IP   | Fibers    | Reactor  | Event    |               |
 |  | Sockets  |           | Pattern  | Loop     |               |
 |  +----------+----------+----------+----------+               |
 |         (Optional: DPDK / RDMA / eRPC)                        |
@@ -139,7 +139,7 @@ Mako has a layered architecture:
 - Key classes: `Scheduler`, `TxnRegistry`, `MultiPaxos`
 
 **RRR Communication Layer** (`src/rrr/`):
-- Custom RPC framework with asynchronous, coroutine-based I/O
+- Custom RPC framework with asynchronous, fiber-based I/O
 - Reactor pattern for event-driven networking
 - Supports TCP/IP, DPDK, RDMA, eRPC
 
@@ -163,7 +163,7 @@ mako/
       masstree/       # Masstree storage engine
       lib/            # Transport backends, configuration
       benchmarks/     # Benchmark harness (TPC-C, TPC-A, RW)
-    rrr/              # RPC framework and coroutines
+    rrr/              # RPC framework and fibers
     bench/            # Benchmark workload implementations
     memdb/            # In-memory datastore
   config/             # YAML configuration files
@@ -652,11 +652,11 @@ The rrr/rpc backend includes production-grade reliability:
 
 ---
 
-## 8. Concurrency Model: Coroutines and the Reactor Pattern
+## 8. Concurrency Model: Fibers and the Reactor Pattern
 
-### Why Coroutines?
+### Why Fibers?
 
-| | Threads | Coroutines |
+| | Threads | Fibers |
 |---|---------|------------|
 | Stack size | 1-8 MB | 4-64 KB |
 | Context switch | ~1-10 us (kernel) | ~10-100 ns (user) |
@@ -664,21 +664,21 @@ The rrr/rpc backend includes production-grade reliability:
 | Practical limit | ~10,000 | 100,000+ |
 | Parallelism | True (multi-core) | Concurrent (single thread) |
 
-Mako uses **stackful coroutines** via Boost.Coroutine2 and a **reactor pattern** for event-driven I/O.
+Mako uses **stackful fibers** and a **reactor pattern** for event-driven I/O.
 
 ### Key Concepts
 
-**Reactor**: The event loop that manages all coroutines in a thread. One reactor per thread; never share across threads.
+**Reactor**: The event loop that manages all fibers in a thread. One reactor per thread; never share across threads.
 
 ```cpp
-auto reactor = Reactor::GetReactor();  // Thread-local
-reactor->CreateRunCoroutine([]() {
+auto reactor = Reactor::get_reactor();  // Thread-local
+reactor->create_run_fiber([]() {
     // Your concurrent task
 });
-reactor->Loop(true);  // Run event loop
+reactor->loop(true);  // Run event loop
 ```
 
-**Events**: Synchronization primitives for coroutines.
+**Events**: Synchronization primitives for fibers.
 
 | Type | Purpose |
 |------|---------|
@@ -687,11 +687,11 @@ reactor->Loop(true);  // Run event loop
 | `OrEvent` / `WaitAny` | Wait for ANY of multiple events |
 | `AndEvent` / `WaitAll` | Wait for ALL events |
 
-**Fiber API** (preferred for new code): Uses `Fiber` terminology with `this_fiber::yield()`, `this_fiber::sleep_ms()`, etc. `Coroutine` is aliased to `Fiber` for backward compatibility.
+**Fiber API** (preferred for new code): Uses `Fiber` terminology with `this_fiber::yield()`, `this_fiber::sleep_ms()`, etc.
 
 ### Thread Safety Advantage
 
-Coroutines within the same reactor never run simultaneously. This means shared data access is safe without locks:
+Fibers within the same reactor never run simultaneously. This means shared data access is safe without locks:
 
 ```cpp
 // SAFE - no locks needed within a reactor
@@ -710,10 +710,10 @@ public:
 ```
 Main Thread
   +-- Reactor Thread 1
-  |     +-- Shard 0 (thousands of coroutines)
-  |     +-- Event Loop (poll sockets, timers, wake coroutines)
+  |     +-- Shard 0 (thousands of fibers)
+  |     +-- Event Loop (poll sockets, timers, wake fibers)
   +-- Reactor Thread 2
-  |     +-- Shard 1 (thousands of coroutines)
+  |     +-- Shard 1 (thousands of fibers)
   |     +-- Event Loop
   +-- Background Threads
         +-- RocksDB Compaction
@@ -724,11 +724,11 @@ Main Thread
 
 ### Pitfalls
 
-1. **Never access events/coroutines across threads**
+1. **Never access events/fibers across threads**
 2. **Events are single-use** (don't Wait() twice on the same event)
-3. **One waiter per event** (no multiple coroutines waiting on same event)
+3. **One waiter per event** (no multiple fibers waiting on same event)
 4. **Always yield in long-running loops** (cooperative scheduling)
-5. **Always run the event loop** (coroutines that yield are dead until resumed)
+5. **Always run the event loop** (fibers that yield are dead until resumed)
 
 ---
 
@@ -840,7 +840,7 @@ Port assignment: Shard N uses base_port + N*100 (e.g., 31000, 31100, 31200).
 | Option | Default | Description |
 |--------|---------|-------------|
 | `MAKO_USE_RAFT` | OFF | Build with Raft replication |
-| `RAFT_TEST` | OFF | Enable Raft lab test coroutines |
+| `RAFT_TEST` | OFF | Enable Raft lab test fibers |
 | `ENABLE_BORROW_CHECKING` | OFF | Enable RustyCpp borrow checking |
 | `DEBUG` | OFF | Debug mode with `-DDEBUG` |
 
@@ -1031,7 +1031,7 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 
 4. **Memory-First Storage**: Keep hot data in memory. Disk is for durability, not reads. Read path never touches disk.
 
-5. **Cooperative Concurrency**: Coroutines, not threads. Thousands of concurrent operations per thread with no synchronization overhead.
+5. **Cooperative Concurrency**: Fibers, not threads. Thousands of concurrent operations per thread with no synchronization overhead.
 
 6. **Strong Types, Safe Memory**: RustyCpp smart pointers and borrow checking catch bugs at compile time.
 
@@ -1116,10 +1116,9 @@ perf report
 | **2PC** | Two-Phase Commit - protocol for coordinating distributed transactions |
 | **ACID** | Atomicity, Consistency, Isolation, Durability |
 | **Ballot** | Unique proposal identifier in Paxos, ordered for precedence |
-| **Coroutine** | Lightweight cooperative thread (also called Fiber in Mako) |
 | **Epoch** | Time period for garbage collection and failure recovery |
 | **eRPC** | High-performance RDMA-based RPC library |
-| **Fiber** | Preferred name for stackful coroutines in Mako (alias for Coroutine) |
+| **Fiber** | Lightweight cooperative thread used by Mako |
 | **Follower** | Replica that accepts proposals from the leader |
 | **Frame** | Protocol-specific transaction processing module |
 | **Janus** | OSDI'16 distributed transaction protocol in this codebase |
@@ -1133,9 +1132,9 @@ perf report
 | **OCC** | Optimistic Concurrency Control |
 | **Partition** | Logical data subdivision within a shard, each with its own Paxos group |
 | **Quorum** | Minimum replicas for progress: floor(N/2) + 1 |
-| **Reactor** | Event loop managing coroutines in a thread |
+| **Reactor** | Event loop managing fibers in a thread |
 | **RocksDB** | LSM-tree persistent storage backend |
-| **RRR** | "Repeatable Research Runtime" - Mako's custom RPC/coroutine framework |
+| **RRR** | "Repeatable Research Runtime" - Mako's custom RPC/fiber framework |
 | **RustyCpp** | Library providing Rust-like smart pointers and borrow checking for C++ |
 | **Safety Check** | Validation comparing transaction timestamp to watermark for follower replay |
 | **Scheduler** | Component managing transaction execution on a shard |

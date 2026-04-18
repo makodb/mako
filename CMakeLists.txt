@@ -257,7 +257,7 @@ option(DEBUG "Enable debug mode" OFF)
 option(CHECK_INVARIANTS "Enable invariant checking" OFF)
 option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
-option(RAFT_TEST "Enable Raft lab testing coroutine" OFF)
+option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 option(SINGLE_RAFT_INSTANCE "Single Raft instance for all partitions (OFF=multi-instance, one per partition)" ON)
 
 if(MAKO_USE_RAFT)
@@ -267,7 +267,7 @@ endif()
 
 if(RAFT_TEST)
   add_compile_definitions(RAFT_TEST_CORO=1)
-  message(STATUS "Raft lab testing coroutine enabled (note: REUSE_CORO is always enabled)")
+  message(STATUS "Raft lab testing fiber enabled (note: REUSE_FIBER is always enabled)")
 endif()
 
 if(SINGLE_RAFT_INSTANCE)
@@ -407,13 +407,13 @@ set(CXXFLAGS
   -DRUSTYCPP_DISABLE_ARC_LOG  # Disable Arc debug logging
 )
 
-# Enable coroutine reuse (required for Raft stability)
-list(APPEND CXXFLAGS -DREUSE_CORO)
-message(STATUS "Reuse coroutine enabled")
+# Enable fiber reuse (required for Raft stability)
+list(APPEND CXXFLAGS -DREUSE_FIBER)
+message(STATUS "Reuse fiber enabled")
 
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
-  message(STATUS "Raft lab testing coroutine enabled")
+  message(STATUS "Raft lab testing fiber enabled")
   list(APPEND CXXFLAGS -DRAFT_TEST_CORO)
 endif()
 
@@ -1670,13 +1670,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_reactor ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_reactor COMMAND test_reactor)
 
-    # Coroutine Tests (existing)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/coroutine.cc")
-        add_executable(test_coroutine test/coroutine.cc)
-        target_include_directories(test_coroutine PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-        target_compile_options(test_coroutine PRIVATE ${TEST_COMPILE_OPTIONS})
-        target_link_libraries(test_coroutine ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-        add_test(NAME test_coroutine COMMAND test_coroutine)
+    # Fiber Runtime Tests
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/fiber_runtime.cc")
+        add_executable(test_fiber_runtime test/fiber_runtime.cc)
+        target_include_directories(test_fiber_runtime PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+        target_compile_options(test_fiber_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(test_fiber_runtime ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+        add_test(NAME test_fiber_runtime COMMAND test_fiber_runtime)
     endif()
 
     # Extended RPC Tests
@@ -2243,7 +2243,7 @@ if(BUILD_TESTS)
     message(STATUS "    - test_future: Future/async operation tests")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
     message(STATUS "    - test_reactor: Reactor/event system tests")
-    message(STATUS "    - test_reactor_extended: Extended reactor tests (events, coroutines, load)")
+    message(STATUS "    - test_reactor_extended: Extended reactor tests (events, fibers, load)")
     message(STATUS "    - rpcbench: RPC performance benchmark test")
     message(STATUS "  Silo/STO Tests:")
     message(STATUS "    - test_silo_varint: Varint encoding/decoding (22 tests)")

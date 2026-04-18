@@ -345,7 +345,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
     view_data->set_marshallable(std::make_shared<ViewData>());
   }
   
-  auto coro_opt = Fiber::current_coroutine();
+  auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -357,7 +357,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   //   if (!sched->Dispatch(cmd_id, dep_id, sp, *output)) {
   //     *res = REJECT;
   //   }
-  //   auto coro_opt = Fiber::current_coroutine();
+  //   auto coro_opt = Fiber::current_fiber();
   //   if (coro_opt.is_some()) {
   //     *coro_id = coro_opt.unwrap()->id;
   //   }
@@ -472,7 +472,7 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   *slow = sched->slow_;
   *res = ret ? SUCCESS : REJECT;
   if(null_cmd) *res = REPEAT;
-  auto coro_opt = Fiber::current_coroutine();
+  auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -515,7 +515,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   //*profile = {0.0, 0.0, 0.0, 0.0};
   //Log_info("slow2: %d", sched->slow_);
   *slow = sched->slow_;
-  auto coro_opt = Fiber::current_coroutine();
+  auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -564,7 +564,7 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
   Log_info("slow3: %d", sched->slow_);
   *slow = sched->slow_;
   *res = SUCCESS;
-  auto coro_opt = Fiber::current_coroutine();
+  auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }

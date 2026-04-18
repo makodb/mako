@@ -2,7 +2,7 @@
  * @file fiber.h
  * @brief Modern fiber API following Boost.Fiber conventions.
  *
- * This file provides a cleaner API for working with stackful coroutines,
+ * This file provides a cleaner API for working with stackful fibers,
  * using "fiber" terminology that aligns with industry conventions.
  *
  * Key differences from C++20 coroutines:
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "coroutine.h"
+#include "fiber_impl.h"
 #include "event.h"  // For Event types
 #include "future.h"  // For Future/Promise
 #include "../base/basetypes.hpp"  // For rrr::Time
@@ -35,9 +35,9 @@
 namespace rrr {
 
 // =============================================================================
-// Fiber is the primary class for stackful coroutines
+// Fiber is the primary class for stackful fibers
 // =============================================================================
-// Fiber class is defined in fiber_impl.h (included via coroutine.h)
+// Fiber class is defined in fiber_impl.h.
 // WaitAll, WaitAny, WaitN are defined in event.h
 
 // =============================================================================

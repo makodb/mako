@@ -1,6 +1,9 @@
 #pragma once
 #include <algorithm>
+#include <atomic>
+#include <functional>
 #include <list>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <set>
@@ -9,18 +12,20 @@
 #include <unordered_set>
 #include <vector>
 #include <variant>
+#include <optional>
 #include <unistd.h>
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/mpsc.hpp>
+#include <rusty/async.hpp>
 #include <rusty/vecdeque.hpp>
 #include <rusty/btreeset.hpp>
 #include "base/misc.hpp"
 #include "event.h"
 #include "quorum_event.h"
-#include "coroutine.h"
+#include "fiber_impl.h"
 #include "epoll_wrapper.h"
 #include "rpc/pollable_proxy.h"
 
@@ -95,11 +100,11 @@ using std::make_unique;
 using std::make_shared;
 
 // Note: Fiber is the primary class (defined in fiber_impl.h)
-// The full definition is available via #include "coroutine.h" above
+// The full definition is available via #include "fiber_impl.h" above
 
 /**
  * @class Reactor
- * @brief Thread-local event loop and coroutine scheduler
+ * @brief Thread-local event loop and fiber scheduler
  *
  * MEMORY SAFETY MODEL:
  *
@@ -110,7 +115,7 @@ using std::make_shared;
  *
  * 2. INTERIOR MUTABILITY (RustyCpp Patterns)
  *    - Cell<T>: Used for primitive counters and flags (looping_, thread_id_, etc.)
- *    - RefCell<T>: Used for complex types (sp_running_coro_th_)
+ *    - RefCell<T>: Used for complex types (sp_running_fiber_th_)
  *    - mutable containers: STL containers with const method access
  *
  * 3. SMART POINTER USAGE
@@ -122,8 +127,8 @@ using std::make_shared;
  *    - All reactor operations are single-threaded (no locks needed)
  *
  * SAFETY INVARIANTS:
- * - One active coroutine per reactor at any time
- * - Events never outlive their coroutines (weak refs)
+ * - One active fiber per reactor at any time
+ * - Events never outlive their fibers (weak refs)
  * - Loop() only called from owning thread
  */
 class Reactor {
@@ -144,16 +149,16 @@ class Reactor {
   static rusty::Rc<Reactor> get_disk_reactor();
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
-  // Thread-local current coroutine with single-threaded Rc
+  // Thread-local current fiber with single-threaded Rc
   // Wrapped in RefCell for explicit interior mutability (Cell<T> requires trivially_copyable)
-  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_coro_th_;
+  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_;
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   // Using Cell for safe interior mutability (int is trivially copyable)
   rusty::Cell<int> server_id_{0};
 
   /**
-   * A reactor needs to keep reference to all coroutines created,
+   * A reactor needs to keep reference to all fibers created,
    * in case it is freed by the caller after a yield.
    */
   // Events managed with std::shared_ptr<Event> for polymorphism support
@@ -166,8 +171,8 @@ class Reactor {
   // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
   // Using RefCell for safe interior mutability in const methods
-  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> coros_{};
-  rusty::RefCell<std::vector<rusty::Rc<Fiber>>> available_coros_{};
+  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
+  rusty::RefCell<std::vector<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
   static thread_local std::unordered_map<std::string, std::vector<PollableProxy>> clients_;
   static thread_local std::unordered_set<std::string> dangling_ips_;
@@ -177,62 +182,139 @@ class Reactor {
   rusty::Cell<int> slow_count_{0};
   rusty::Cell<int> trying_count_{0};
   rusty::Cell<std::thread::id> thread_id_{};
-  // Jetpack coroutine counters - using Cell for interior mutability
-  rusty::Cell<int64_t> n_created_coroutines_{0};
-  rusty::Cell<int64_t> n_busy_coroutines_{0};
-  rusty::Cell<int64_t> n_active_coroutines_{0};
-  rusty::Cell<int64_t> n_active_coroutines_2_{0};
-  rusty::Cell<int64_t> n_idle_coroutines_{0};
+  // Jetpack fiber counters - using Cell for interior mutability
+  rusty::Cell<int64_t> n_created_fibers_{0};
+  rusty::Cell<int64_t> n_busy_fibers_{0};
+  rusty::Cell<int64_t> n_active_fibers_{0};
+  rusty::Cell<int64_t> n_active_fibers_2_{0};
+  rusty::Cell<int64_t> n_idle_fibers_{0};
+  // Stackless coroutine task slots managed by the reactor loop.
+  struct StacklessTaskEntry {
+    bool active = false;
+    bool queued = false;
+    std::function<bool(rusty::Context&)> poll_once;
+  };
+  rusty::RefCell<std::vector<StacklessTaskEntry>> stackless_tasks_{};
+  rusty::RefCell<std::vector<size_t>> free_stackless_task_slots_{};
+  rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
   static SpinLock trying_job_;
-#ifdef REUSE_CORO
-#define REUSING_CORO (true)
+#if defined(REUSE_FIBER) || defined(REUSE_CORO)
+#define REUSING_FIBER (true)
 #else
-#define REUSING_CORO (false)
+#define REUSING_FIBER (false)
 #endif
 
   // Checks and processes timeout events with std::shared_ptr<Event>
   void check_timeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
   /**
-   * @param ev. is usually allocated on coroutine stack. memory managed by user.
+   * @param ev. is usually allocated on a fiber stack. memory managed by user.
    */
-  // @safe - Creates and runs a new coroutine with rusty::Rc ownership
+  // @safe - Creates and runs a new fiber with rusty::Rc ownership
   // Refactored into smaller safe helper functions for clarity and safety.
-  // Jetpack: file/line parameters for debugging coroutine creation location
-  rusty::Rc<Fiber> create_run_coroutine(rusty::Function<void()> func,
+  // Jetpack: file/line parameters for debugging fiber creation location
+  rusty::Rc<Fiber> create_run_fiber(rusty::Function<void()> func,
                                             const char* file = "",
                                             int64_t line = 0) const;
 
  private:
-  // Helper functions for create_run_coroutine - each is @safe with internal @unsafe blocks
+  // Helper functions for create_run_fiber - each is @safe with internal @unsafe blocks
 
-  // @safe - Gets a recycled coroutine or creates a new one
-  rusty::Rc<Fiber> get_or_create_coroutine(rusty::Function<void()> func,
+  // @safe - Gets a recycled fiber or creates a new one
+  rusty::Rc<Fiber> get_or_create_fiber(rusty::Function<void()> func,
                                                const char* file,
                                                int64_t line) const;
 
-  // @safe - Saves current running coroutine to allow nesting
-  rusty::Option<rusty::Rc<Fiber>> save_running_coroutine() const;
+  // @safe - Saves current running fiber to allow nesting
+  rusty::Option<rusty::Rc<Fiber>> save_running_fiber() const;
 
-  // @safe - Restores previously saved running coroutine
-  void restore_running_coroutine(rusty::Option<rusty::Rc<Fiber>> old_coro) const;
+  // @safe - Restores previously saved running fiber
+  void restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const;
 
-  // @safe - Sets the current running coroutine
-  void set_running_coroutine(const rusty::Rc<Fiber>& coro) const;
+  // @safe - Sets the current running fiber
+  void set_running_fiber(const rusty::Rc<Fiber>& fiber) const;
 
-  // @safe - Registers coroutine in the active set
-  void register_coroutine(const rusty::Rc<Fiber>& coro) const;
+  // @safe - Registers a fiber in the active set
+  void register_fiber(const rusty::Rc<Fiber>& fiber) const;
+
+  // @safe - Queue a stackless task slot for polling if not already queued.
+  void enqueue_stackless_task(size_t idx) const;
+
+  // @safe - Register a stackless task poller and return slot index.
+  size_t register_stackless_poller(std::function<bool(rusty::Context&)> poller) const;
+
+  // @safe - Poll all queued stackless tasks once.
+  // Returns true if at least one stackless task was polled.
+  bool process_stackless_tasks() const;
 
  public:
   // @safe - Main event loop
   void loop(bool infinite = false, bool do_check_timeout = true) const;
-  // @safe - Continues execution of a paused coroutine
-  void continue_coro(rusty::Rc<Fiber> coro) const;
-  void recycle(rusty::Rc<Fiber>& coro) const;
+  // @safe - Continues execution of a paused fiber
+  void continue_fiber(rusty::Rc<Fiber> fiber) const;
+  void recycle(rusty::Rc<Fiber>& fiber) const;
   void display_waiting_ev() const;
+  // @safe - Spawn a stackless C++20 coroutine task managed by the reactor.
+  void spawn_stackless_task(rusty::Task<void> task) const;
+  // @safe - Spawn a stackless task with a completion callback when ready.
+  template <typename T, typename OnReady>
+  void spawn_stackless_task_with_result(rusty::Task<T> task, OnReady on_ready) const {
+    constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+    struct EarlyWakeState {
+      const Reactor* reactor = nullptr;
+      std::atomic<size_t> idx{kUnregisteredSlot};
+      std::atomic<bool> pending_wake{false};
+    };
+
+    auto early_wake = std::make_shared<EarlyWakeState>();
+    early_wake->reactor = this;
+
+    rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
+      size_t idx = early_wake->idx.load(std::memory_order_acquire);
+      if (idx == kUnregisteredSlot) {
+        early_wake->pending_wake.store(true, std::memory_order_release);
+        return;
+      }
+      early_wake->reactor->enqueue_stackless_task(idx);
+    }};
+    rusty::Context early_ctx{&early_waker};
+    auto early_poll = task.poll(early_ctx);
+    if (early_poll.is_ready()) {
+      on_ready(std::move(early_poll.value));
+      return;
+    }
+
+    struct TaskState {
+      rusty::Task<T> task;
+      std::optional<OnReady> on_ready;
+      std::shared_ptr<EarlyWakeState> early_wake;
+
+      TaskState(rusty::Task<T> t, OnReady cb, std::shared_ptr<EarlyWakeState> ew)
+          : task(std::move(t)), on_ready(std::move(cb)), early_wake(std::move(ew)) {}
+    };
+
+    auto state = std::make_shared<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
+    auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
+      auto poll_result = state->task.poll(ctx);
+      if (!poll_result.is_ready()) {
+        return false;
+      }
+      state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
+      if (state->on_ready.has_value()) {
+        auto cb = std::move(state->on_ready.value());
+        state->on_ready.reset();
+        cb(std::move(poll_result.value));
+      }
+      return true;
+    });
+    state->early_wake->idx.store(idx, std::memory_order_release);
+    if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
+      enqueue_stackless_task(idx);
+    }
+  }
 
   ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",
-              all_events_.borrow()->len(), coros_.borrow()->len());
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.len()=%zu",
+              all_events_.borrow()->len(), fibers_.borrow()->len());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
@@ -387,7 +469,7 @@ private:
     // Process incoming commands from channel
     void process_commands();
 
-    // Triggers ready jobs in coroutines
+    // Triggers ready jobs in fibers
     void trigger_job();
 
     // Internal implementations (single-threaded, no races)

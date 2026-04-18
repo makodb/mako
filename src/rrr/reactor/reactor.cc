@@ -12,7 +12,7 @@
 #include <atomic>
 #include "../base/all.hpp"
 #include "reactor.h"
-#include "coroutine.h"
+#include "fiber_impl.h"
 #include "event.h"
 #include "quorum_event.h"
 #include "epoll_wrapper.h"
@@ -29,15 +29,84 @@
 
 namespace rrr {
 
-const int64_t n_max_coroutine = 2000;
+const int64_t n_max_fiber = 2000;
+
+namespace {
+
+inline bool stackless_profile_enabled() {
+  static bool enabled = []() {
+    const char* env = std::getenv("MAKO_ASYNC_PROFILE");
+    return env != nullptr && env[0] != '\0' && env[0] != '0';
+  }();
+  return enabled;
+}
+
+struct StacklessProfileCounters {
+  std::atomic<uint64_t> reg_calls{0};
+  std::atomic<uint64_t> reg_scan_steps{0};
+  std::atomic<uint64_t> reg_reuse{0};
+  std::atomic<uint64_t> reg_new{0};
+  std::atomic<uint64_t> poll_calls{0};
+  std::atomic<uint64_t> poll_ready{0};
+  std::atomic<uint64_t> enqueue_calls{0};
+  std::atomic<size_t> max_slots{0};
+};
+
+StacklessProfileCounters g_stackless_profile;
+
+inline void stackless_profile_update_max_slots(size_t slots) {
+  size_t old = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
+  while (slots > old &&
+         !g_stackless_profile.max_slots.compare_exchange_weak(
+             old, slots, std::memory_order_relaxed, std::memory_order_relaxed)) {
+  }
+}
+
+inline void stackless_profile_report_periodic() {
+  if (!stackless_profile_enabled()) {
+    return;
+  }
+  static thread_local uint64_t last_report_us = 0;
+  uint64_t now_us = Time::now(true);
+  if (last_report_us == 0) {
+    last_report_us = now_us;
+    return;
+  }
+  if (now_us - last_report_us < 1000000) {
+    return;
+  }
+  last_report_us = now_us;
+
+  uint64_t reg_calls = g_stackless_profile.reg_calls.load(std::memory_order_relaxed);
+  uint64_t reg_scans = g_stackless_profile.reg_scan_steps.load(std::memory_order_relaxed);
+  uint64_t reg_reuse = g_stackless_profile.reg_reuse.load(std::memory_order_relaxed);
+  uint64_t reg_new = g_stackless_profile.reg_new.load(std::memory_order_relaxed);
+  uint64_t poll_calls = g_stackless_profile.poll_calls.load(std::memory_order_relaxed);
+  uint64_t poll_ready = g_stackless_profile.poll_ready.load(std::memory_order_relaxed);
+  uint64_t enqueue_calls = g_stackless_profile.enqueue_calls.load(std::memory_order_relaxed);
+  size_t max_slots = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
+
+  double avg_scan = (reg_calls > 0) ? static_cast<double>(reg_scans) / static_cast<double>(reg_calls) : 0.0;
+  Log_info("[async-prof] reg_calls=%llu avg_scan=%.2f reuse=%llu new=%llu max_slots=%zu poll_calls=%llu poll_ready=%llu enqueue_calls=%llu",
+           static_cast<unsigned long long>(reg_calls),
+           avg_scan,
+           static_cast<unsigned long long>(reg_reuse),
+           static_cast<unsigned long long>(reg_new),
+           max_slots,
+           static_cast<unsigned long long>(poll_calls),
+           static_cast<unsigned long long>(poll_ready),
+           static_cast<unsigned long long>(enqueue_calls));
+}
+
+}  // namespace
 
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
-thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> Reactor::sp_running_coro_th_{};
+thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> Reactor::sp_running_fiber_th_{};
 thread_local std::unordered_map<std::string, std::vector<PollableProxy>> Reactor::clients_{};
 
 // Thread-local storage for PollThreadWorker (raw pointer for direct access)
-// Safe because worker outlives all coroutines on its thread
+// Safe because worker outlives all fibers on its thread
 thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
 thread_local std::unordered_set<std::string> Reactor::dangling_ips_{};
 SpinLock Reactor::trying_job_;
@@ -48,7 +117,7 @@ SpinLock Reactor::trying_job_;
 rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
   // @unsafe - RefCell::borrow, Rc::clone
   {
-    auto guard = Reactor::sp_running_coro_th_.borrow();
+    auto guard = Reactor::sp_running_fiber_th_.borrow();
     if ((*guard).is_none()) {
       return rusty::None;
     }
@@ -60,10 +129,10 @@ rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
 rusty::Rc<Fiber>
 Fiber::create_run_impl(rusty::Function<void()> func, const char* file, int64_t line) {
   auto reactor_rc = Reactor::get_reactor();
-  // Rc gives const access, create_run_coroutine is const (safe: thread-local, single owner)
-  auto coro = reactor_rc->create_run_coroutine(std::move(func), file, line);
+  // Rc gives const access, create_run_fiber is const (safe: thread-local, single owner)
+  auto fiber = reactor_rc->create_run_fiber(std::move(func), file, line);
   // some events might be triggered in the last fiber.
-  return coro;
+  return fiber;
 }
 
 void Fiber::sleep(uint64_t microseconds) {
@@ -89,9 +158,9 @@ Reactor::get_reactor() {
   // @unsafe { Option operator=, unwrap, Rc::make are not borrow-checked }
   {
   if (sp_reactor_th_.is_none()) {
-    Log_debug("create a coroutine scheduler");
-    if (!REUSING_CORO)
-      Log_warn("reusing coroutine not enabled!");
+    Log_debug("create a fiber scheduler");
+    if (!REUSING_FIBER)
+      Log_warn("reusing fiber not enabled!");
     sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
     (*sp_reactor_th_.as_ref().unwrap()).thread_id_.set(std::this_thread::get_id());
   }
@@ -102,7 +171,7 @@ Reactor::get_reactor() {
 rusty::Rc<Reactor>
 Reactor::get_disk_reactor() {
   if (sp_disk_reactor_th_.is_none()) {
-    Log_debug("create a disk coroutine scheduler");
+    Log_debug("create a disk fiber scheduler");
     sp_disk_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
     (*sp_disk_reactor_th_.as_ref().unwrap()).thread_id_.set(std::this_thread::get_id());
   }
@@ -110,50 +179,50 @@ Reactor::get_disk_reactor() {
 }
 
 // =============================================================================
-// Helper functions for CreateRunCoroutine
+// Helper functions for create_run_fiber
 // =============================================================================
 
-// @safe - Gets a recycled coroutine or creates a new one
+// @safe - Gets a recycled fiber or creates a new one
 rusty::Rc<Fiber>
-Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
+Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int64_t line) const {
   // @unsafe
   {
-    auto available_guard = available_coros_.borrow_mut();
-    if (REUSING_CORO && available_guard->size() > 0) {
-      n_idle_coroutines_.set(n_idle_coroutines_.get() - 1);
-      auto coro = available_guard->back().clone();
+    auto available_guard = available_fibers_.borrow_mut();
+    if (REUSING_FIBER && available_guard->size() > 0) {
+      n_idle_fibers_.set(n_idle_fibers_.get() - 1);
+      auto fiber = available_guard->back().clone();
       available_guard->pop_back();
       // Use Cell/RefCell for interior mutability (safe: single-threaded)
-      const auto& coro_ref = *coro;
-      const_cast<Fiber&>(coro_ref).id = Fiber::global_id++;  // id is not Cell yet
-      *coro_ref.func_.borrow_mut() = std::move(func);
+      const auto& fiber_ref = *fiber;
+      const_cast<Fiber&>(fiber_ref).id = Fiber::global_id++;  // id is not Cell yet
+      *fiber_ref.func_.borrow_mut() = std::move(func);
       // Keep the existing task/stack so continue_() can resume from the fiber's yield point.
-      verify((*coro_ref.boost_coro_task_.borrow()).is_some());
-      coro_ref.status_.set(Fiber::RECYCLED);
-      return coro;
+      verify((*fiber_ref.fiber_task_.borrow()).is_some());
+      fiber_ref.status_.set(Fiber::RECYCLED);
+      return fiber;
     } else {
-      auto coro = rusty::Rc<Fiber>::make(std::move(func));
-      n_created_coroutines_.set(n_created_coroutines_.get() + 1);
-      if (n_created_coroutines_.get() % 1024 == 0) {
-        Log_debug("created %d, busy %d, idle %d coroutines on server %d, recent %s:%lld",
-                 (int)n_created_coroutines_.get(),
-                 (int)n_busy_coroutines_.get(),
-                 (int)n_idle_coroutines_.get(),
+      auto fiber = rusty::Rc<Fiber>::make(std::move(func));
+      n_created_fibers_.set(n_created_fibers_.get() + 1);
+      if (n_created_fibers_.get() % 1024 == 0) {
+        Log_debug("created %d, busy %d, idle %d fibers on server %d, recent %s:%lld",
+                 (int)n_created_fibers_.get(),
+                 (int)n_busy_fibers_.get(),
+                 (int)n_idle_fibers_.get(),
                  server_id_.get(),
                  file,
                  (long long)line);
       }
-      return coro;
+      return fiber;
     }
   }
 }
 
-// @safe - Saves current running coroutine to allow nesting
+// @safe - Saves current running fiber to allow nesting
 rusty::Option<rusty::Rc<Fiber>>
-Reactor::save_running_coroutine() const {
+Reactor::save_running_fiber() const {
   // @unsafe
   {
-    auto guard = sp_running_coro_th_.borrow();
+    auto guard = sp_running_fiber_th_.borrow();
     if ((*guard).is_some()) {
       return rusty::Some((*guard).as_ref().unwrap().clone());
     }
@@ -161,78 +230,202 @@ Reactor::save_running_coroutine() const {
   }
 }
 
-// @safe - Restores previously saved running coroutine
-void Reactor::restore_running_coroutine(rusty::Option<rusty::Rc<Fiber>> old_coro) const {
+// @safe - Restores previously saved running fiber
+void Reactor::restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const {
   // @unsafe
   {
-    *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
+    *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber);
   }
 }
 
-// @safe - Sets the current running coroutine
-void Reactor::set_running_coroutine(const rusty::Rc<Fiber>& coro) const {
+// @safe - Sets the current running fiber
+void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
   // @unsafe
   {
-    *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
+    *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone());
   }
 }
 
-// @safe - Registers coroutine in the active set
-void Reactor::register_coroutine(const rusty::Rc<Fiber>& coro) const {
+// @safe - Registers a fiber in the active set
+void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
   // @unsafe { RefCell::borrow_mut, BTreeSet::insert are not borrow-checked }
   {
   // BTreeSet::insert returns bool (true if newly inserted)
-  auto coros_guard = coros_.borrow_mut();
-  bool inserted = coros_guard->insert(coro.clone());
+  auto fibers_guard = fibers_.borrow_mut();
+  bool inserted = fibers_guard->insert(fiber.clone());
   if (!inserted) {
-    Log_error("[DEBUG] RegisterCoroutine: Failed to insert coroutine into coros_ set!");
-    Log_error("[DEBUG] coros_ len: %zu, REUSING_CORO: %d", coros_guard->len(), REUSING_CORO);
+    Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
+    Log_error("[DEBUG] fibers_ len: %zu, REUSING_FIBER: %d", fibers_guard->len(), REUSING_FIBER);
   }
   verify(inserted);
-  verify(coros_guard->len() > 0);
+  verify(fibers_guard->len() > 0);
   }
 }
 
+// @safe - Queue a stackless task slot for polling if not already queued.
+void Reactor::enqueue_stackless_task(size_t idx) const {
+  if (stackless_profile_enabled()) {
+    g_stackless_profile.enqueue_calls.fetch_add(1, std::memory_order_relaxed);
+  }
+  // @unsafe
+  {
+    auto tasks_guard = stackless_tasks_.borrow();
+    if (idx >= tasks_guard->size()) {
+      return;
+    }
+    if (!(*tasks_guard)[idx].active || (*tasks_guard)[idx].queued) {
+      return;
+    }
+  }
+  {
+    auto tasks_guard = stackless_tasks_.borrow_mut();
+    if (idx >= tasks_guard->size()) {
+      return;
+    }
+    auto& entry = (*tasks_guard)[idx];
+    if (!entry.active || entry.queued) {
+      return;
+    }
+    entry.queued = true;
+  }
+  ready_stackless_tasks_.borrow_mut()->push_back(idx);
+}
+
+// @safe - Register a stackless task poller and return slot index.
+size_t Reactor::register_stackless_poller(std::function<bool(rusty::Context&)> poller) const {
+  size_t scanned = 0;
+  {
+    auto free_guard = free_stackless_task_slots_.borrow_mut();
+    if (!free_guard->empty()) {
+      size_t idx = free_guard->back();
+      free_guard->pop_back();
+      auto tasks_guard = stackless_tasks_.borrow_mut();
+      if (idx < tasks_guard->size()) {
+        auto& entry = (*tasks_guard)[idx];
+        entry.active = true;
+        entry.queued = false;
+        entry.poll_once = std::move(poller);
+        if (stackless_profile_enabled()) {
+          g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
+          g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
+          g_stackless_profile.reg_reuse.fetch_add(1, std::memory_order_relaxed);
+        }
+        return idx;
+      }
+    }
+  }
+
+  auto tasks_guard = stackless_tasks_.borrow_mut();
+  StacklessTaskEntry entry;
+  entry.active = true;
+  entry.queued = false;
+  entry.poll_once = std::move(poller);
+  tasks_guard->push_back(std::move(entry));
+  if (stackless_profile_enabled()) {
+    g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
+    g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
+    g_stackless_profile.reg_new.fetch_add(1, std::memory_order_relaxed);
+    stackless_profile_update_max_slots(tasks_guard->size());
+  }
+  return tasks_guard->size() - 1;
+}
+
+// @safe - Poll all queued stackless tasks once.
+bool Reactor::process_stackless_tasks() const {
+  bool did_work = false;
+  for (;;) {
+    size_t idx = 0;
+    {
+      auto ready_guard = ready_stackless_tasks_.borrow_mut();
+      if (ready_guard->is_empty()) {
+        break;
+      }
+      idx = (*ready_guard)[0];
+      ready_guard->pop_front();
+    }
+
+    std::function<bool(rusty::Context&)> poll_fn;
+    {
+      auto tasks_guard = stackless_tasks_.borrow_mut();
+      if (idx >= tasks_guard->size()) {
+        continue;
+      }
+      auto& entry = (*tasks_guard)[idx];
+      entry.queued = false;
+      if (!entry.active || !entry.poll_once) {
+        continue;
+      }
+      poll_fn = entry.poll_once;
+    }
+
+    did_work = true;
+    if (stackless_profile_enabled()) {
+      g_stackless_profile.poll_calls.fetch_add(1, std::memory_order_relaxed);
+    }
+    rusty::Waker waker{[this, idx]() {
+      this->enqueue_stackless_task(idx);
+    }};
+    rusty::Context ctx{&waker};
+    bool ready = poll_fn(ctx);
+
+    if (ready) {
+      if (stackless_profile_enabled()) {
+        g_stackless_profile.poll_ready.fetch_add(1, std::memory_order_relaxed);
+      }
+      auto tasks_guard = stackless_tasks_.borrow_mut();
+      if (idx < tasks_guard->size()) {
+        auto& entry = (*tasks_guard)[idx];
+        entry.active = false;
+        entry.queued = false;
+        entry.poll_once = {};
+        free_stackless_task_slots_.borrow_mut()->push_back(idx);
+      }
+    }
+  }
+  stackless_profile_report_periodic();
+  return did_work;
+}
+
 // =============================================================================
-// Main CreateRunCoroutine - orchestrates the helper functions
+// Main create_run_fiber - orchestrates the helper functions
 // =============================================================================
 
 /**
  * @param func
  * @return
  */
-// @safe - Creates and runs coroutine using safe helper functions
+// @safe - Creates and runs a fiber using safe helper functions
 rusty::Rc<Fiber>
-Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
-  // Step 1: Get or create a coroutine
-  auto coro = get_or_create_coroutine(std::move(func), file, line);
+Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_t line) const {
+  // Step 1: Get or create a fiber
+  auto fiber = get_or_create_fiber(std::move(func), file, line);
 
   // @unsafe
   {
-    n_busy_coroutines_.set(n_busy_coroutines_.get() + 1);
+    n_busy_fibers_.set(n_busy_fibers_.get() + 1);
   }
 
-  // Step 2: Save current running coroutine context (for nesting)
-  auto old_coro = save_running_coroutine();
+  // Step 2: Save current running fiber context (for nesting)
+  auto old_fiber = save_running_fiber();
 
-  // Step 3: Set this as the running coroutine
-  set_running_coroutine(coro);
+  // Step 3: Set this as the running fiber
+  set_running_fiber(fiber);
 
-  // Step 4: Register in the active coroutines set
-  register_coroutine(coro);
+  // Step 4: Register in the active fibers set
+  register_fiber(fiber);
 
-  // Step 5: Run the coroutine
+  // Step 5: Run the fiber
   // @unsafe
   {
-    auto status = coro->status_.get();
+    auto status = fiber->status_.get();
     if (status == Fiber::INIT) {
-      coro->run();
+      fiber->run();
     } else {
       verify(status == Fiber::RECYCLED);
-      coro->continue_();
+      fiber->continue_();
     }
-    if (coro->finished()) {
-      recycle(coro);
+    if (fiber->finished()) {
+      recycle(fiber);
     }
   }
 
@@ -242,10 +435,10 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
     loop(false, true);
   }
 
-  // Step 7: Restore previous running coroutine
-  restore_running_coroutine(std::move(old_coro));
+  // Step 7: Restore previous running fiber
+  restore_running_fiber(std::move(old_fiber));
 
-  return coro;
+  return fiber;
 }
 
 // @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
@@ -309,6 +502,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
     bool found_ready_events = true;
     while (found_ready_events) {
       found_ready_events = false;
+      if (process_stackless_tasks()) {
+        found_ready_events = true;
+      }
       rusty::VecDeque<std::shared_ptr<Event>> ready_events;
 
       // Process waiting events using RefCell
@@ -380,28 +576,28 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       }
 
       // Process ready events
-      // @unsafe - Weak::upgrade, continue_coro with potential use-after-move patterns
+      // @unsafe - Weak::upgrade, continue_fiber with potential use-after-move patterns
       {
         for (size_t i = 0; i < ready_events.len(); ++i) {
           auto& ev = ready_events[i];
           if (ev->status_.get() == Event::DONE) {
             continue;
           }
-          auto option_coro = ev->wp_coro_.upgrade();
-          if (option_coro.is_none()) {
+          auto option_fiber = ev->wp_fiber_.upgrade();
+          if (option_fiber.is_none()) {
             continue;
           }
-          auto coro = option_coro.unwrap();
-          if (!coros_.borrow()->contains(coro)) {
+          auto fiber = option_fiber.unwrap();
+          if (!fibers_.borrow()->contains(fiber)) {
             continue;
           }
-          verify(coro->status_.get() == Fiber::PAUSED);
+          verify(fiber->status_.get() == Fiber::PAUSED);
           if (ev->status_.get() == Event::READY) {
             ev->status_.set(Event::DONE);
           } else {
             verify(ev->status_.get() == Event::TIMEOUT);
           }
-          continue_coro(coro);
+          continue_fiber(fiber);
         }
       }
 
@@ -413,69 +609,119 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
   } while (looping_.get());
 }
 
-// @safe - Continues execution of a paused coroutine; RefCell ops wrapped @unsafe
-void Reactor::continue_coro(rusty::Rc<Fiber> coro) const {
-  // Save current running coroutine for nesting support
-  rusty::Option<rusty::Rc<Fiber>> old_coro;
+// @safe - Continues execution of a paused fiber; RefCell ops wrapped @unsafe
+void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
+  // Save current running fiber for nesting support
+  rusty::Option<rusty::Rc<Fiber>> old_fiber;
   // @unsafe { RefCell::borrow, Option operator=, unwrap are not borrow-checked }
   {
-    auto guard = sp_running_coro_th_.borrow();
-    old_coro = (*guard).is_some()
+    auto guard = sp_running_fiber_th_.borrow();
+    old_fiber = (*guard).is_some()
       ? rusty::Some((*guard).as_ref().unwrap().clone())
       : rusty::Option<rusty::Rc<Fiber>>{};
   }
 
   // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
-  { *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone()); }
+  { *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone()); }
 
   // @unsafe - Fiber::finished() is not marked @safe
   {
-    auto guard = sp_running_coro_th_.borrow();
+    auto guard = sp_running_fiber_th_.borrow();
     verify(!(*guard).as_ref().unwrap()->finished());
   }
 
-  n_active_coroutines_.set(n_active_coroutines_.get() + 1);
+  n_active_fibers_.set(n_active_fibers_.get() + 1);
 
-  if (coro->status_.get() == Fiber::INIT) {
-    coro->run();
+  if (fiber->status_.get() == Fiber::INIT) {
+    fiber->run();
   } else {
-    // Don't hold borrow during continue_() as coroutine may call create_run()
+    // Don't hold borrow during continue_() as fiber may call create_run()
     // This fixes RefCell double-borrow crash during server restart
-    coro->continue_();
+    fiber->continue_();
   }
 
   // @unsafe - Fiber::finished() is not marked @safe
   {
-    auto guard = sp_running_coro_th_.borrow();
+    auto guard = sp_running_fiber_th_.borrow();
     if ((*guard).as_ref().unwrap()->finished()) {
-      auto coro_ref = (*guard).as_ref().unwrap().clone();
-      recycle(coro_ref);
+      auto fiber_ref = (*guard).as_ref().unwrap().clone();
+      recycle(fiber_ref);
     }
   }
 
   // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
-  { *sp_running_coro_th_.borrow_mut() = std::move(old_coro); }
+  { *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber); }
 }
 
 // @unsafe - Uses RefCell interior mutability (rusty-cpp doesn't fully support RefCell semantics)
-void Reactor::recycle(rusty::Rc<Fiber>& coro) const {
-  // This fixes the bug that coroutines are not recycling if they don't finish immediately.
-  if (REUSING_CORO) {
+void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
+  // This fixes the bug that fibers are not recycled if they don't finish immediately.
+  if (REUSING_FIBER) {
     // Use Cell/RefCell for interior mutability (safe: single-threaded)
-    const auto& coro_ref = *coro;
-    coro_ref.status_.set(Fiber::RECYCLED);
-    *coro_ref.func_.borrow_mut() = {};
-    n_idle_coroutines_.set(n_idle_coroutines_.get() + 1);
-    available_coros_.borrow_mut()->push_back(coro.clone());  // @unsafe
+    const auto& fiber_ref = *fiber;
+    fiber_ref.status_.set(Fiber::RECYCLED);
+    *fiber_ref.func_.borrow_mut() = {};
+    n_idle_fibers_.set(n_idle_fibers_.get() + 1);
+    available_fibers_.borrow_mut()->push_back(fiber.clone());  // @unsafe
   }
-  n_busy_coroutines_.set(n_busy_coroutines_.get() - 1);
-  // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, coro is still valid
-  { coros_.borrow_mut()->remove(coro); }
+  n_busy_fibers_.set(n_busy_fibers_.get() - 1);
+  // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, fiber is still valid
+  { fibers_.borrow_mut()->remove(fiber); }
 }
 
 void Reactor::display_waiting_ev() const {
   Log_info("waiting_events_: %zu, composite_events_: %zu",
            waiting_events_.borrow()->len(), composite_events_.borrow()->len());
+}
+
+// @safe - Spawn a stackless task and schedule first poll on this reactor.
+void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
+  verify(std::this_thread::get_id() == thread_id_.get());
+  constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+  struct EarlyWakeState {
+    const Reactor* reactor = nullptr;
+    std::atomic<size_t> idx{kUnregisteredSlot};
+    std::atomic<bool> pending_wake{false};
+  };
+
+  auto early_wake = std::make_shared<EarlyWakeState>();
+  early_wake->reactor = this;
+
+  rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
+    size_t idx = early_wake->idx.load(std::memory_order_acquire);
+    if (idx == kUnregisteredSlot) {
+      early_wake->pending_wake.store(true, std::memory_order_release);
+      return;
+    }
+    early_wake->reactor->enqueue_stackless_task(idx);
+  }};
+  rusty::Context early_ctx{&early_waker};
+  auto early_poll = task.poll(early_ctx);
+  if (early_poll.is_ready()) {
+    return;
+  }
+
+  struct TaskState {
+    rusty::Task<void> task;
+    std::shared_ptr<EarlyWakeState> early_wake;
+
+    TaskState(rusty::Task<void> t, std::shared_ptr<EarlyWakeState> ew)
+        : task(std::move(t)), early_wake(std::move(ew)) {}
+  };
+
+  auto state = std::make_shared<TaskState>(std::move(task), std::move(early_wake));
+  auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
+    auto poll_result = state->task.poll(ctx);
+    if (poll_result.is_ready()) {
+      state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
+      return true;
+    }
+    return false;
+  });
+  state->early_wake->idx.store(idx, std::memory_order_release);
+  if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
+    enqueue_stackless_task(idx);
+  }
 }
 
 // =============================================================================
@@ -539,7 +785,7 @@ void PollThreadWorker::poll_loop() {
     trigger_job();
     Reactor::get_reactor()->loop();
 
-    // Check for pending write updates (set by end_reply() during coroutine execution)
+    // Check for pending write updates (set by end_reply() during fiber execution)
     // @unsafe - const_cast needed because Arc provides const access, but we know the
     // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
     for (auto& [fd, poll] : fd_to_pollable_) {
@@ -787,7 +1033,7 @@ rusty::Arc<PollThread> PollThread::create() {
       auto worker = PollThreadWorker::create(std::move(rx));
       // Store raw pointer in TLS for direct access from same thread
       // The borrow_mut guard keeps RefCell borrowed during poll_loop()
-      // Using raw pointer avoids RefCell re-borrow issues in coroutines
+      // Using raw pointer avoids RefCell re-borrow issues in fibers
       auto guard = worker->borrow_mut();
       PollThreadWorker::current_worker_ = &*guard;
       guard->poll_loop();

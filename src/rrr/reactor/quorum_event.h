@@ -62,8 +62,8 @@ class QuorumEvent : public Event {
   /**
    * call finalize before/after wait() to cleanup the side-effect of the quorum-event
    * (e.g. free dangling RPCs). However, finalize should not block execution after wait.
-   * That is, finalize should be a background task, with respect to the main coroutine (
-   * the coroutine where wait() is called)
+   * That is, finalize should be a background task, with respect to the main fiber (
+   * the fiber where wait() is called)
    * TODO: find a proper way to achieve this
    *
    * @param timeout time to wait after event-ready to do finalize

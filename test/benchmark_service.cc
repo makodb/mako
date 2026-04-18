@@ -114,6 +114,16 @@ BenchmarkService::nop(const RpcNopRequest& req) {
     return rusty::Result<RpcNopResponse, i32>::Ok(RpcNopResponse{});
 }
 
+rusty::Task<rusty::Result<BenchmarkService::RpcAsyncNopResponse, i32>>
+BenchmarkService::async_nop(const RpcAsyncNopRequest& req) {
+    (void)req;
+    int cnt = g_nop_counter.next();
+    if (cnt % 200000 == 0) {
+        Log_info("%d async_nop requests", cnt);
+    }
+    co_return rusty::Result<RpcAsyncNopResponse, i32>::Ok(RpcAsyncNopResponse{});
+}
+
 rusty::Result<BenchmarkService::RpcSleepResponse, i32>
 BenchmarkService::sleep(const RpcSleepRequest& req) {
     int full_sec = static_cast<int>(req.sec);

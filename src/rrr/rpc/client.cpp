@@ -12,14 +12,14 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 
-#include "reactor/coroutine.h"
+#include "reactor/fiber_impl.h"
 #include "reactor/reactor.h"
 #include "client.hpp"
 #include "internal_protocol.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
-// Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
 // now have in-place annotations in their respective headers.
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
 //
@@ -87,23 +87,28 @@ void Future::timed_wait(double sec) const {
 // @unsafe - rusty-cpp false positive: should_callback IS initialized
 void Future::notify_ready(rusty::Arc<Future> self) const {
   bool should_callback = false;  // Initialized here
+  std::vector<std::function<void()>> completion_callbacks;
   {
     auto guard = state_.lock().unwrap();
     if (!guard->timed_out) {
       guard->ready = true;
     }
     should_callback = guard->ready;
+    completion_callbacks = std::move(guard->completion_callbacks);
   }  // Guard dropped here, releasing lock before notify
 
   ready_cond_.notify_all();
 
+  for (auto& callback : completion_callbacks) {
+    if (callback != nullptr) {
+      callback();
+    }
+  }
+
   // Execute callback outside lock to avoid deadlock
   if (should_callback && attr_.callback != nullptr) {
     auto x = attr_.callback;
-    // Fiber::CreateRun is now @safe
-    Fiber::create_run([x, self]() {
-      x(self);
-    }, __FILE__, __LINE__);
+    x(self);
   }
 }
 

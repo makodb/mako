@@ -4,7 +4,7 @@
 #include <iostream>
 #include <cerrno>
 #include <cstring>
-#include "coroutine.h"
+#include "fiber_impl.h"
 #include "event.h"
 #include "reactor.h"
 #include "epoll_wrapper.h"
@@ -12,10 +12,10 @@
 namespace rrr {
 using std::function;
 
-uint64_t Event::get_coro_id(){
-  auto coro_opt = Fiber::current_coroutine();
-  verify(coro_opt.is_some());
-  return coro_opt.unwrap()->id;
+uint64_t Event::get_fiber_id(){
+  auto fiber_opt = Fiber::current_fiber();
+  verify(fiber_opt.is_some());
+  return fiber_opt.unwrap()->id;
 }
 
 bool Event::is_slow() {
@@ -35,18 +35,18 @@ bool Event::is_slow() {
 //   } else {
 //     verify(status_ == INIT);
 //     status_= DEBUG;
-//     // the event may be created in a different coroutine.
+//     // the event may be created in a different fiber.
 //     // this value is set when wait is called.
-//     // for now only one coroutine can wait on an event.
-//     auto sp_coro = Fiber::current_coroutine();
-// //    verify(sp_coro);
+//     // for now only one fiber can wait on an event.
+//     auto sp_fiber = Fiber::current_fiber();
+// //    verify(sp_fiber);
 // //    verify(_dbg_p_scheduler_ == nullptr);
 // //    _dbg_p_scheduler_ = Reactor::get_reactor().get();
 //     auto& events = Reactor::get_reactor()->waiting_events_;
 //     events.push_back(shared_from_this());
-//     wp_coro_ = sp_coro;
+//     wp_fiber_ = sp_fiber;
 //     status_ = WAIT;
-//     sp_coro->yield_();
+//     sp_fiber->yield_();
 //   }
 // }
 
@@ -66,12 +66,12 @@ void Event::wait(uint64_t timeout) {
 //    }
 //    verify(status_ == INIT); // does not support multiple wait so far. maybe we can support it in the future.
 //    status_= DEBUG;
-    // the event may be created in a different coroutine.
+    // the event may be created in a different fiber.
     // this value is set when wait is called.
-    // for now only one coroutine can wait on an event.
-    auto coro_opt = Fiber::current_coroutine();
-    verify(coro_opt.is_some());  // Can't wait outside a coroutine
-    auto coro = coro_opt.unwrap();
+    // for now only one fiber can wait on an event.
+    auto fiber_opt = Fiber::current_fiber();
+    verify(fiber_opt.is_some());  // Can't wait outside a fiber
+    auto fiber = fiber_opt.unwrap();
 
     // Use RefCell borrow_mut() for safe interior mutability
     auto reactor_rc = Reactor::get_reactor();
@@ -113,11 +113,11 @@ void Event::wait(uint64_t timeout) {
 //      }
 //      events.insert(it, shared_from_this());
 
-    wp_coro_ = coro;
+    wp_fiber_ = fiber;
     status_.set(WAIT);
-    auto coro_status = coro->status_.get();
-    verify(coro_status != Fiber::FINISHED && coro_status != Fiber::RECYCLED);
-    coro->yield_();
+    auto fiber_status = fiber->status_.get();
+    verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
+    fiber->yield_();
 #ifdef EVENT_TIMEOUT_CHECK
     if (__debug_timeout_ && status_.get() == TIMEOUT) {
       Log_info("timeout");
@@ -141,8 +141,8 @@ bool Event::test() {
     if (status_.get() == INIT) {
       status_.set(DONE);
     } else if (status_.get() == WAIT) {
-      auto option_coro = wp_coro_.upgrade();
-      verify(option_coro.is_some());
+      auto option_fiber = wp_fiber_.upgrade();
+      verify(option_fiber.is_some());
       verify(status_.get() != DEBUG);
       status_.set(READY);
     } else if (status_.get() == READY) {
@@ -164,13 +164,13 @@ bool Event::test() {
 }
 
 Event::Event() {
-  auto coro_opt = Fiber::current_coroutine();
-  // It's OK if no coroutine is running - event might be created outside a coroutine
+  auto fiber_opt = Fiber::current_fiber();
+  // It's OK if no fiber is running - event might be created outside a fiber
   // and Wait() called later from within one
-  if (coro_opt.is_some()) {
-    wp_coro_ = coro_opt.unwrap();
+  if (fiber_opt.is_some()) {
+    wp_fiber_ = fiber_opt.unwrap();
   }
-  // Otherwise wp_coro_ stays as default empty weak pointer
+  // Otherwise wp_fiber_ stays as default empty weak pointer
 }
 
 bool IntEvent::test_trigger() {

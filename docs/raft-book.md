@@ -809,14 +809,14 @@ uint64_t window = server->GetLogRetentionWindow();
 |---------|-------------|--------|
 | `make -j32` | Default (Paxos) | `dbtest`, `deptran_server` |
 | `make mako-raft -j64` | Mako with Raft | `dbtest` + Raft test binaries |
-| `make raft-test -j32` | Raft lab tests only | `deptran_server` with test coroutines |
+| `make raft-test -j32` | Raft lab tests only | `deptran_server` with test fibers |
 
 ### CMake Flags
 
 | Flag | Default | Effect |
 |------|---------|--------|
 | `MAKO_USE_RAFT` | OFF | Use `raft_main_helper.cc`, build Raft executables |
-| `RAFT_TEST` | OFF | Enable `RAFT_TEST_CORO=1` for lab test coroutines |
+| `RAFT_TEST` | OFF | Enable `RAFT_TEST_CORO=1` for lab test fibers |
 
 ### Output Binaries (mako-raft build)
 
@@ -830,7 +830,7 @@ uint64_t window = server->GetLogRetentionWindow();
 | `build/testPreferredReplicaLogReplication` | Log replication test |
 | `build/testNoOps` | NO-OP and watermark test |
 
-**Warning**: `make raft-test` enables special coroutines for the lab harness. Normal configs (`1c1s3r1p.yml`, `12c1s3r1p.yml`) will **not work** with this build.
+**Warning**: `make raft-test` enables special fibers for the lab harness. Normal configs (`1c1s3r1p.yml`, `12c1s3r1p.yml`) will **not work** with this build.
 
 ---
 

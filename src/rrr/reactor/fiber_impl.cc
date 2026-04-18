@@ -21,7 +21,7 @@ Fiber::Fiber(rusty::Function<void()> func)
     : status_(INIT),
       needs_finalize_(false),
       func_(std::move(func)),
-      boost_coro_task_(rusty::None),
+      fiber_task_(rusty::None),
       id(Fiber::global_id++) {
 }
 
@@ -30,12 +30,12 @@ Fiber::~Fiber() {
 //  verify(0);
 }
 
-void Fiber::boost_run_wrapper(boost_coro_yield_t& yield) {
-  boost_coro_yield_.set(&yield);
+void Fiber::run_wrapper(fiber_yield_t& yield) {
+  fiber_yield_.set(&yield);
   verify(*func_.borrow());
   auto reactor = Reactor::get_reactor();
   while (true) {
-    auto sz = reactor->coros_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->len();
     verify(sz > 0);
     verify(*func_.borrow());
     (*func_.borrow_mut())();  // borrow_mut needed because operator() is non-const
@@ -46,7 +46,7 @@ void Fiber::boost_run_wrapper(boost_coro_yield_t& yield) {
       needs_finalize_.set(false);
     }
     auto reactor = Reactor::get_reactor();
-    reactor->n_active_coroutines_.set(reactor->n_active_coroutines_.get() - 1);
+    reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
     yield();
   }
 }
@@ -57,16 +57,16 @@ void Fiber::boost_run_wrapper(boost_coro_yield_t& yield) {
 void Fiber::run() const {
   // @unsafe
   {
-    verify((*boost_coro_task_.borrow()).is_none());
+    verify((*fiber_task_.borrow()).is_none());
     verify(status_.get() == INIT);
     status_.set(STARTED);
     auto reactor = Reactor::get_reactor();
-    auto sz = reactor->coros_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->len();
     verify(sz > 0);
-    auto task = std::bind(&Fiber::boost_run_wrapper, const_cast<Fiber*>(this), std::placeholders::_1);
-    *boost_coro_task_.borrow_mut() = rusty::Some(rusty::make_box<boost_coro_task_t>(std::move(task)));
-#ifdef USE_BOOST_COROUTINE1
-    (*(*boost_coro_task_.borrow()).as_ref().unwrap())();
+    auto task = std::bind(&Fiber::run_wrapper, const_cast<Fiber*>(this), std::placeholders::_1);
+    *fiber_task_.borrow_mut() = rusty::Some(rusty::make_box<fiber_task_t>(std::move(task)));
+#ifdef USE_FIBER_RUNTIME1
+    (*(*fiber_task_.borrow()).as_ref().unwrap())();
 #endif
   }
 }
@@ -76,14 +76,14 @@ void Fiber::run() const {
 void Fiber::yield_() const {
   // @unsafe
   {
-    auto* yield_ptr = boost_coro_yield_.get();
+    auto* yield_ptr = fiber_yield_.get();
     verify(yield_ptr != nullptr);
     auto s = status_.get();
     verify(s == STARTED || s == RESUMED || s == FINALIZING);
     status_.set(PAUSED);
     {
       auto reactor = Reactor::get_reactor();
-      reactor->n_active_coroutines_.set(reactor->n_active_coroutines_.get() - 1);
+      reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
     }
     (*yield_ptr)();
   }
@@ -96,9 +96,9 @@ void Fiber::continue_() const {
   {
     auto s = status_.get();
     verify(s == PAUSED || s == RECYCLED);
-    verify((*boost_coro_task_.borrow()).is_some());
+    verify((*fiber_task_.borrow()).is_some());
     status_.set(RESUMED);
-    (*(*boost_coro_task_.borrow_mut()).as_mut().unwrap())();
+    (*(*fiber_task_.borrow_mut()).as_mut().unwrap())();
   }
   // some events might have been triggered from last fiber,
   // but you have to manually call the scheduler to loop.

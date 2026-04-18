@@ -81,6 +81,7 @@ def emit_typed_service_signature(service, func, f):
     request_struct_name = typed_request_struct_name(func)
     response_struct_name = typed_response_struct_name(func)
     result_type = typed_result_type(func)
+    async_result_type = "rusty::Task<%s>" % result_type
 
     if func.attr == "defer":
         f.writeln("// @safe")
@@ -96,6 +97,14 @@ def emit_typed_service_signature(service, func, f):
                 request_struct_name,
                 response_struct_name,
             ))
+        return
+
+    if func.attr == "async":
+        f.writeln("// @safe")
+        if service.abstract or func.abstract:
+            f.writeln("virtual %s %s(const %s& req) = 0;" % (async_result_type, func.name, request_struct_name))
+            return
+        f.writeln("virtual %s %s(const %s& req);" % (async_result_type, func.name, request_struct_name))
         return
 
     f.writeln("// @safe")
@@ -170,6 +179,10 @@ def emit_typed_proxy_future_wrapper(func, f):
                 f.writeln("__fu__->get_reply() >> __typed_resp__.%s;" % field_name)
             f.writeln("return %s::Ok(__typed_resp__);" % result_type)
         f.writeln("}")
+        f.writeln("auto operator co_await() const {")
+        with f.indent():
+            f.writeln("return rrr::make_typed_future_awaitable(*this);")
+        f.writeln("}")
     f.writeln("};")
 
 def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
@@ -196,6 +209,15 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
         f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
     f.writeln("}")
 
+def emit_typed_proxy_await_signature(func, f):
+    request_struct_name = typed_request_struct_name(func)
+    wrapper_name = typed_proxy_future_wrapper_name(func)
+
+    f.writeln("rrr::TypedFutureResultAwaiter<%s> await_%s(const %s& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (wrapper_name, func.name, request_struct_name))
+    with f.indent():
+        f.writeln("return rrr::make_typed_future_result_awaitable(this->async_%s(req, __fu_attr__));" % func.name)
+    f.writeln("}")
+
 def emit_service_and_proxy(service, f, rpc_table):
     f.writeln("class %sService {" % service.name)
     f.writeln("public:")
@@ -218,7 +240,7 @@ def emit_service_and_proxy(service, f, rpc_table):
         with f.indent():
             f.writeln("int ret = 0;")
             for func in service.functions:
-                reg_api = "reg_fast_rpc" if func.attr in ("fast", "prefix") else "reg_rpc"
+                reg_api = "reg_fast_rpc" if func.attr in ("fast", "prefix", "async") else "reg_rpc"
                 f.writeln("if ((ret = svr.%s(%s, svc_index)) != 0) {" % (reg_api, func.name.upper()))
                 with f.indent():
                     f.writeln("goto err;")
@@ -324,6 +346,41 @@ def emit_service_and_proxy(service, f, rpc_table):
                             f.writeln("}")
                         f.writeln("});")
                         f.writeln("(void)__fiber__;")
+                    elif func.attr == "async":
+                        request_struct_name = typed_request_struct_name(func)
+                        output_fields = typed_struct_fields(func.output, "out")
+                        input_fields = typed_struct_fields(func.input, "in")
+                        f.writeln("%s __typed_req__;" % request_struct_name)
+                        for _, field_name in input_fields:
+                            f.writeln("req->m >> __typed_req__.%s;" % field_name)
+                        f.writeln("auto __async_req__ = std::move(req);")
+                        f.writeln("auto __async_weak_sconn__ = weak_sconn;")
+                        f.writeln("auto __async_task__ = this->%s(__typed_req__);" % func.name)
+                        f.writeln("rrr::Reactor::get_reactor()->spawn_stackless_task_with_result(std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {")
+                        with f.indent():
+                            f.writeln("auto sconn_opt = __async_weak_sconn__.upgrade();")
+                            f.writeln("if (sconn_opt.is_some()) {")
+                            with f.indent():
+                                f.writeln("auto sconn = sconn_opt.unwrap();")
+                                f.writeln("if (__typed_result__.is_err()) {")
+                                with f.indent():
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err());")
+                                f.writeln("} else {")
+                                with f.indent():
+                                    if len(output_fields) == 0:
+                                        f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                        f.writeln("(void)__typed_resp__;")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__);")
+                                    else:
+                                        f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, 0, [&](rrr::Marshal& m) {")
+                                        with f.indent():
+                                            for _, field_name in output_fields:
+                                                f.writeln("m << __typed_resp__.%s;" % field_name)
+                                        f.writeln("});")
+                                f.writeln("}")
+                            f.writeln("}")
+                        f.writeln("});")
                     else: # normal and fast rpc
                         request_struct_name = typed_request_struct_name(func)
                         output_fields = typed_struct_fields(func.output, "out")
@@ -385,6 +442,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                     typed_async_call_params += "req.%s" % field_name,
                 emit_typed_proxy_future_wrapper(func, f)
                 emit_typed_proxy_async_signature(service, func, typed_async_call_params, f)
+                emit_typed_proxy_await_signature(func, f)
                 emit_typed_proxy_sync_signature(func, f)
             else:
                 async_func_params = []
@@ -444,6 +502,7 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
         f.writeln()
 #        f.writeln('#include "rpc/server.h"')
         f.writeln('#include "rrr.hpp"')
+        f.writeln('#include <rusty/async.hpp>')
         f.writeln()
         f.writeln("#include <errno.h>")
         f.writeln("#include <memory>")

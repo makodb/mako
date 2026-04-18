@@ -170,7 +170,7 @@ TEST_F(FiberTest, YieldInsideFiberContext) {
     EXPECT_EQ(1, step);
 
     // Explicitly continue the fiber to complete it
-    reactor->continue_coro(fiber);
+    reactor->continue_fiber(fiber);
 
     // Fiber should have completed
     EXPECT_EQ(2, step);

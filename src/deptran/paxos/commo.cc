@@ -20,7 +20,7 @@ MultiPaxosCommo::SendForward(parid_t par_id,
                              uint64_t dep_id,
                              shared_ptr<Marshallable> cmd) {
   auto e = Reactor::create_sp_event<PaxosPrepareQuorumEvent>(1, 1);
-  auto src_coroid = e->get_coro_id();
+  auto src_coroid = e->get_fiber_id();
   auto leader_id = LeaderProxyForPartition(par_id).first;
   auto leader_proxy = (MultiPaxosProxy*) LeaderProxyForPartition(par_id).second;
 

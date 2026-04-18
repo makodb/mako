@@ -78,3 +78,6 @@ cmake-build/*
 
 # Misc build/test artifacts
 /Testing/
+
+# Local assistant workspace
+/.claude/

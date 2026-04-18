@@ -13,7 +13,7 @@
 #include <rusty/mutex.hpp>
 #include "reactor/reactor.h"
 #include "reactor/event.h"
-#include "reactor/coroutine.h"
+#include "reactor/fiber.h"
 #include "reactor/epoll_wrapper.h"
 
 using namespace rrr;
@@ -384,56 +384,56 @@ TEST_F(ReactorTest, EventCreation) {
     EXPECT_EQ(event.value_, 1);
 }
 
-TEST_F(ReactorTest, CoroutineBasic) {
+TEST_F(ReactorTest, FiberBasic) {
     auto reactor = Reactor::get_reactor();
     
     std::atomic<int> value{0};
     
-    reactor->create_run_coroutine([&value]() {
+    reactor->create_run_fiber([&value]() {
         value = 1;
     });
     
-    // CreateRunCoroutine already runs the event loop internally
+    // CreateRunFiber already runs the event loop internally
     // No need for a separate thread
     
     EXPECT_EQ(value, 1);
 }
 
-TEST_F(ReactorTest, CoroutineWithYield) {
+TEST_F(ReactorTest, FiberWithYield) {
     auto reactor = Reactor::get_reactor();
     
     std::atomic<int> value{0};
     
-    auto sp_coro = reactor->create_run_coroutine([&value]() {
+    auto sp_fiber = reactor->create_run_fiber([&value]() {
         value = 1;
-        Fiber::current_coroutine().unwrap()->yield_();
+        Fiber::current_fiber().unwrap()->yield_();
         value = 2;
     });
     
-    // After initial run, the coroutine yields at value=1
+    // After initial run, the fiber yields at value=1
     EXPECT_EQ(value, 1);
-    EXPECT_FALSE(sp_coro->finished());
+    EXPECT_FALSE(sp_fiber->finished());
     
-    // Manually continue the coroutine
-    reactor->continue_coro(sp_coro);
+    // Manually continue the fiber
+    reactor->continue_fiber(sp_fiber);
     
     // After continuation, value should be 2
     EXPECT_EQ(value, 2);
-    EXPECT_TRUE(sp_coro->finished());
+    EXPECT_TRUE(sp_fiber->finished());
 }
 
-TEST_F(ReactorTest, MultipleCoroutines) {
+TEST_F(ReactorTest, MultipleFibers) {
     auto reactor = Reactor::get_reactor();
     
     std::atomic<int> counter{0};
     
     for (int i = 0; i < 5; i++) {
-        reactor->create_run_coroutine([&counter]() {
+        reactor->create_run_fiber([&counter]() {
             counter++;
         });
     }
     
-    // All coroutines should have been executed
+    // All fibers should have been executed
     EXPECT_EQ(counter, 5);
 }
 

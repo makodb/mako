@@ -21,7 +21,7 @@
 #include "misc/netinfo.hpp"
 
 #include "reactor/reactor.h"
-#include "reactor/coroutine.h"
+#include "reactor/fiber_impl.h"
 #include "reactor/event.h"
 #include "reactor/epoll_wrapper.h"
 

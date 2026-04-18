@@ -4,7 +4,7 @@
 #include <chrono>
 #include "reactor/reactor.h"
 #include "reactor/event.h"
-#include "reactor/coroutine.h"
+#include "reactor/fiber.h"
 
 using namespace rrr;
 using namespace std::chrono;
@@ -22,7 +22,7 @@ TEST(AndEventTest, BasicAndEvent) {
     
     std::atomic<bool> and_triggered{false};
     
-    reactor->create_run_coroutine([and_event, &and_triggered]() {
+    reactor->create_run_fiber([and_event, &and_triggered]() {
         and_event->wait();
         and_triggered = true;
     });
@@ -50,7 +50,7 @@ TEST(AndEventTest, ThreeEventAnd) {
     
     std::atomic<int> completion_value{0};
     
-    reactor->create_run_coroutine([and_event, event1, event2, event3, &completion_value]() {
+    reactor->create_run_fiber([and_event, event1, event2, event3, &completion_value]() {
         and_event->wait();
         // All three events should have their values set
         completion_value = event1->value_ + event2->value_ + event3->value_;
@@ -82,7 +82,7 @@ TEST(AndEventTest, AndWithTimeout) {
     std::atomic<bool> timed_out{false};
     std::atomic<bool> completed{false};
     
-    reactor->create_run_coroutine([and_event, &timed_out, &completed]() {
+    reactor->create_run_fiber([and_event, &timed_out, &completed]() {
         // Wait with 50ms timeout
         and_event->wait(50000);
         completed = true;
@@ -115,7 +115,7 @@ TEST(AndEventTest, VariadicConstructor) {
     
     std::atomic<bool> completed{false};
     
-    reactor->create_run_coroutine([and_event, &completed]() {
+    reactor->create_run_fiber([and_event, &completed]() {
         and_event->wait();
         completed = true;
     });
@@ -141,7 +141,7 @@ TEST(AndEventTest, MixedEventTypes) {
     
     std::atomic<bool> completed{false};
     
-    reactor->create_run_coroutine([and_event, &completed]() {
+    reactor->create_run_fiber([and_event, &completed]() {
         and_event->wait();
         completed = true;
     });

@@ -6,7 +6,7 @@
 #include <unordered_set>
 #include "reactor/reactor.h"
 #include "reactor/event.h"
-#include "reactor/coroutine.h"
+#include "reactor/fiber.h"
 
 using namespace rrr;
 using namespace std::chrono;
@@ -32,14 +32,14 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         std::atomic<bool> completed{false};
         std::atomic<int> final_status{-1};
         
-        // Create a coroutine that will handle both setting and waiting
-        auto setter_coro = reactor->create_run_coroutine([sp_event]() {
+        // Create a fiber that will handle both setting and waiting
+        auto setter_fiber = reactor->create_run_fiber([sp_event]() {
             // Just set the event immediately
             sp_event->set(1);
         });
         
-        // Create the waiter coroutine
-        reactor->create_run_coroutine([sp_event, &completed, &final_status]() {
+        // Create the waiter fiber
+        reactor->create_run_fiber([sp_event, &completed, &final_status]() {
             // Event should already be set, so this should complete immediately
             sp_event->wait(100000);
             completed = true;
@@ -59,7 +59,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         std::atomic<bool> completed{false};
         std::atomic<int> final_status{-1};
         
-        reactor->create_run_coroutine([sp_event, &completed, &final_status]() {
+        reactor->create_run_fiber([sp_event, &completed, &final_status]() {
             // Wait with very short timeout
             sp_event->wait(1000); // 1ms
             completed = true;
@@ -84,7 +84,7 @@ TEST_F(TimeoutRaceTest, DoubleListBehavior) {
     std::atomic<int> loop_count{0};
     std::atomic<bool> completed{false};
     
-    reactor->create_run_coroutine([sp_event, &completed]() {
+    reactor->create_run_fiber([sp_event, &completed]() {
         sp_event->wait(50000); // 50ms timeout
         completed = true;
     });
@@ -118,13 +118,13 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
     for (int i = 0; i < num_events; i++) {
         auto sp_event = Reactor::create_sp_event<IntEvent>();
         
-        reactor->create_run_coroutine([sp_event, i, &timeout_count, &ready_count]() {
+        reactor->create_run_fiber([sp_event, i, &timeout_count, &ready_count]() {
             // Half will be set ready, half will timeout
             if (i % 2 == 0) {
-                // Create inner coroutine to set event ready
+                // Create inner fiber to set event ready
                 auto reactor = Reactor::get_reactor();
-                reactor->create_run_coroutine([sp_event]() {
-                    Fiber::current_coroutine().unwrap()->yield_();
+                reactor->create_run_fiber([sp_event]() {
+                    Fiber::current_fiber().unwrap()->yield_();
                     sp_event->set(1);
                 });
             }
@@ -165,7 +165,7 @@ TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
         auto sp_event = Reactor::create_sp_event<IntEvent>();
         events.push_back(sp_event);
         
-        reactor->create_run_coroutine([sp_event, &completed_count]() {
+        reactor->create_run_fiber([sp_event, &completed_count]() {
             sp_event->wait(10000); // 10ms timeout
             completed_count++;
         });
@@ -194,10 +194,10 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
     for (int iter = 0; iter < num_iterations; iter++) {
         auto sp_event = Reactor::create_sp_event<IntEvent>();
         
-        reactor->create_run_coroutine([sp_event, iter, &timeout_count, &ready_count]() {
+        reactor->create_run_fiber([sp_event, iter, &timeout_count, &ready_count]() {
             // Randomly decide to set ready or let timeout
             if (iter % 3 == 0) {
-                // Set it ready immediately (same coroutine)
+                // Set it ready immediately (same fiber)
                 sp_event->set(1);
             }
             
@@ -232,8 +232,8 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     std::atomic<bool> first_done{false};
     std::atomic<bool> second_done{false};
     
-    // First coroutine waits with timeout
-    reactor->create_run_coroutine([sp_event, &first_done]() {
+    // First fiber waits with timeout
+    reactor->create_run_fiber([sp_event, &first_done]() {
         sp_event->wait(5000); // 5ms timeout
         first_done = true;
         EXPECT_EQ(sp_event->status_.get(), Event::TIMEOUT);
@@ -246,7 +246,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     EXPECT_TRUE(first_done);
     
     // Try to use the same event again (should see it's already TIMEOUT)
-    reactor->create_run_coroutine([sp_event, &second_done]() {
+    reactor->create_run_fiber([sp_event, &second_done]() {
         // Event is already in TIMEOUT state
         // The behavior here is interesting - what happens?
         if (sp_event->status_.get() == Event::TIMEOUT) {
@@ -260,13 +260,13 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
             second_done = true;
         }
 
-        std::cout << "Second coroutine completed with event status: "
+        std::cout << "Second fiber completed with event status: "
                   << static_cast<int>(sp_event->status_.get()) << std::endl;
     });
     
     reactor->loop(false);
     
-    // The second coroutine should complete
+    // The second fiber should complete
     EXPECT_TRUE(second_done);
     
     // This test reveals that events cannot be reused after timeout/done

@@ -11,14 +11,14 @@
 #include <sys/types.h>
 #include <netinet/tcp.h>
 
-#include "reactor/coroutine.h"
+#include "reactor/fiber_impl.h"
 #include "reactor/reactor.h"
 #include "server.hpp"
 #include "internal_protocol.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
-// Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
 // now have in-place annotations in their respective headers.
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
 //
@@ -255,9 +255,9 @@ bool ServerConnection::handle_read() {
                     auto guard = ctx_->services[svc_index].borrow_mut();
                     (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
                 } else {
-                    auto ctx = ctx_.clone();  // Clone Arc for the coroutine
+                    auto ctx = ctx_.clone();  // Clone Arc for the fiber
                     Fiber::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
-                        // Borrow inside coroutine - guard released when lambda exits
+                        // Borrow inside fiber - guard released when lambda exits
                         // (*guard) dereferences RefMut to get Box<Service>&
                         // (*guard)-> calls Box::operator-> to get Service*
                         auto guard = ctx->services[svc_index].borrow_mut();

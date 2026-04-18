@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rrr.hpp"
+#include <rusty/async.hpp>
 
 #include <errno.h>
 #include <memory>
@@ -255,6 +256,27 @@ public:
         return m;
     }
 
+    struct RpcAsyncNopRequest {
+        std::string in_0;
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAsyncNopRequest& o) {
+        m << o.in_0;
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAsyncNopRequest& o) {
+        m >> o.in_0;
+        return m;
+    }
+
+    struct RpcAsyncNopResponse {
+    };
+    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAsyncNopResponse& o) {
+        return m;
+    }
+    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAsyncNopResponse& o) {
+        return m;
+    }
+
     struct RpcSleepRequest {
         double sec;
     };
@@ -310,6 +332,7 @@ public:
         DOT_PROD = 0x1f7d12f4,
         ADD = 0x1e8ff45b,
         NOP = 0x327203ee,
+        ASYNC_NOP = 0x22654490,
         SLEEP = 0x22cb72f2,
         DEFERRED_ECHO = 0x412ef56f,
     };
@@ -344,6 +367,9 @@ public:
         if ((ret = svr.reg_rpc(NOP, svc_index)) != 0) {
             goto err;
         }
+        if ((ret = svr.reg_fast_rpc(ASYNC_NOP, svc_index)) != 0) {
+            goto err;
+        }
         if ((ret = svr.reg_rpc(SLEEP, svc_index)) != 0) {
             goto err;
         }
@@ -361,6 +387,7 @@ public:
         svr.unreg(DOT_PROD);
         svr.unreg(ADD);
         svr.unreg(NOP);
+        svr.unreg(ASYNC_NOP);
         svr.unreg(SLEEP);
         svr.unreg(DEFERRED_ECHO);
         return ret;
@@ -377,6 +404,7 @@ public:
         case DOT_PROD: __dot_prod__wrapper__(std::move(req), weak_sconn); break;
         case ADD: __add__wrapper__(std::move(req), weak_sconn); break;
         case NOP: __nop__wrapper__(std::move(req), weak_sconn); break;
+        case ASYNC_NOP: __async_nop__wrapper__(std::move(req), weak_sconn); break;
         case SLEEP: __sleep__wrapper__(std::move(req), weak_sconn); break;
         case DEFERRED_ECHO: __deferred_echo__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
@@ -401,6 +429,8 @@ public:
     virtual rusty::Result<RpcAddResponse, rrr::i32> add(const RpcAddRequest& req);
     // @safe
     virtual rusty::Result<RpcNopResponse, rrr::i32> nop(const RpcNopRequest& req);
+    // @safe
+    virtual rusty::Task<rusty::Result<RpcAsyncNopResponse, rrr::i32>> async_nop(const RpcAsyncNopRequest& req);
     // @safe
     virtual rusty::Result<RpcSleepResponse, rrr::i32> sleep(const RpcSleepRequest& req);
     // @safe
@@ -609,6 +639,30 @@ private:
         }
     }
     // @safe
+    void __async_nop__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcAsyncNopRequest __typed_req__;
+            req->m >> __typed_req__.in_0;
+            auto __async_req__ = std::move(req);
+            auto __async_weak_sconn__ = weak_sconn;
+            auto __async_task__ = this->async_nop(__typed_req__);
+            rrr::Reactor::get_reactor()->spawn_stackless_task_with_result(std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {
+                auto sconn_opt = __async_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        (void)__typed_resp__;
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__);
+                    }
+                }
+            });
+        }
+    }
+    // @safe
     void __sleep__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
         {
@@ -672,6 +726,8 @@ public:
     using RpcAddResponse = BenchmarkService::RpcAddResponse;
     using RpcNopRequest = BenchmarkService::RpcNopRequest;
     using RpcNopResponse = BenchmarkService::RpcNopResponse;
+    using RpcAsyncNopRequest = BenchmarkService::RpcAsyncNopRequest;
+    using RpcAsyncNopResponse = BenchmarkService::RpcAsyncNopResponse;
     using RpcSleepRequest = BenchmarkService::RpcSleepRequest;
     using RpcSleepResponse = BenchmarkService::RpcSleepResponse;
     using RpcDeferredEchoRequest = BenchmarkService::RpcDeferredEchoRequest;
@@ -702,6 +758,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.flag;
             return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<fast_primeTypedFuture, rrr::i32> async_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -711,6 +770,9 @@ public:
             return rusty::Result<fast_primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_primeTypedFuture, rrr::i32>::Ok(fast_primeTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<fast_primeTypedFuture> await_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_fast_prime(req, __fu_attr__));
     }
     rusty::Result<RpcFastPrimeResponse, rrr::i32> fast_prime(const RpcFastPrimeRequest& req) {
         auto __typed_fu_result__ = this->async_fast_prime(req);
@@ -745,6 +807,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.v;
             return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<fast_dot_prodTypedFuture, rrr::i32> async_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -755,6 +820,9 @@ public:
             return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_dot_prodTypedFuture, rrr::i32>::Ok(fast_dot_prodTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<fast_dot_prodTypedFuture> await_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_fast_dot_prod(req, __fu_attr__));
     }
     rusty::Result<RpcFastDotProdResponse, rrr::i32> fast_dot_prod(const RpcFastDotProdRequest& req) {
         auto __typed_fu_result__ = this->async_fast_dot_prod(req);
@@ -789,6 +857,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.a_add_b;
             return rusty::Result<RpcFastAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<fast_addTypedFuture, rrr::i32> async_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -799,6 +870,9 @@ public:
             return rusty::Result<fast_addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_addTypedFuture, rrr::i32>::Ok(fast_addTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<fast_addTypedFuture> await_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_fast_add(req, __fu_attr__));
     }
     rusty::Result<RpcFastAddResponse, rrr::i32> fast_add(const RpcFastAddRequest& req) {
         auto __typed_fu_result__ = this->async_fast_add(req);
@@ -832,6 +906,9 @@ public:
             RpcFastNopResponse __typed_resp__;
             return rusty::Result<RpcFastNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<fast_nopTypedFuture, rrr::i32> async_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -841,6 +918,9 @@ public:
             return rusty::Result<fast_nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_nopTypedFuture, rrr::i32>::Ok(fast_nopTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<fast_nopTypedFuture> await_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_fast_nop(req, __fu_attr__));
     }
     rusty::Result<RpcFastNopResponse, rrr::i32> fast_nop(const RpcFastNopRequest& req) {
         auto __typed_fu_result__ = this->async_fast_nop(req);
@@ -875,6 +955,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.v;
             return rusty::Result<RpcFastVecResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<fast_vecTypedFuture, rrr::i32> async_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -884,6 +967,9 @@ public:
             return rusty::Result<fast_vecTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<fast_vecTypedFuture, rrr::i32>::Ok(fast_vecTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<fast_vecTypedFuture> await_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_fast_vec(req, __fu_attr__));
     }
     rusty::Result<RpcFastVecResponse, rrr::i32> fast_vec(const RpcFastVecRequest& req) {
         auto __typed_fu_result__ = this->async_fast_vec(req);
@@ -918,6 +1004,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.flag;
             return rusty::Result<RpcPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<primeTypedFuture, rrr::i32> async_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -927,6 +1016,9 @@ public:
             return rusty::Result<primeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<primeTypedFuture, rrr::i32>::Ok(primeTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<primeTypedFuture> await_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_prime(req, __fu_attr__));
     }
     rusty::Result<RpcPrimeResponse, rrr::i32> prime(const RpcPrimeRequest& req) {
         auto __typed_fu_result__ = this->async_prime(req);
@@ -961,6 +1053,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.v;
             return rusty::Result<RpcDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<dot_prodTypedFuture, rrr::i32> async_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -971,6 +1066,9 @@ public:
             return rusty::Result<dot_prodTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<dot_prodTypedFuture, rrr::i32>::Ok(dot_prodTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<dot_prodTypedFuture> await_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_dot_prod(req, __fu_attr__));
     }
     rusty::Result<RpcDotProdResponse, rrr::i32> dot_prod(const RpcDotProdRequest& req) {
         auto __typed_fu_result__ = this->async_dot_prod(req);
@@ -1005,6 +1103,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.a_add_b;
             return rusty::Result<RpcAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<addTypedFuture, rrr::i32> async_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -1015,6 +1116,9 @@ public:
             return rusty::Result<addTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<addTypedFuture, rrr::i32>::Ok(addTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<addTypedFuture> await_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_add(req, __fu_attr__));
     }
     rusty::Result<RpcAddResponse, rrr::i32> add(const RpcAddRequest& req) {
         auto __typed_fu_result__ = this->async_add(req);
@@ -1048,6 +1152,9 @@ public:
             RpcNopResponse __typed_resp__;
             return rusty::Result<RpcNopResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<nopTypedFuture, rrr::i32> async_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -1058,10 +1165,61 @@ public:
         }
         return rusty::Result<nopTypedFuture, rrr::i32>::Ok(nopTypedFuture(__fu_result__.unwrap()));
     }
+    rrr::TypedFutureResultAwaiter<nopTypedFuture> await_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_nop(req, __fu_attr__));
+    }
     rusty::Result<RpcNopResponse, rrr::i32> nop(const RpcNopRequest& req) {
         auto __typed_fu_result__ = this->async_nop(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcNopResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class async_nopTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit async_nopTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcAsyncNopResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcAsyncNopResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcAsyncNopResponse __typed_resp__;
+            return rusty::Result<RpcAsyncNopResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<async_nopTypedFuture, rrr::i32> async_async_nop(const RpcAsyncNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::ASYNC_NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << req.in_0;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<async_nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<async_nopTypedFuture, rrr::i32>::Ok(async_nopTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<async_nopTypedFuture> await_async_nop(const RpcAsyncNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_async_nop(req, __fu_attr__));
+    }
+    rusty::Result<RpcAsyncNopResponse, rrr::i32> async_nop(const RpcAsyncNopRequest& req) {
+        auto __typed_fu_result__ = this->async_async_nop(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcAsyncNopResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
@@ -1090,6 +1248,9 @@ public:
             RpcSleepResponse __typed_resp__;
             return rusty::Result<RpcSleepResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<sleepTypedFuture, rrr::i32> async_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -1099,6 +1260,9 @@ public:
             return rusty::Result<sleepTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<sleepTypedFuture, rrr::i32>::Ok(sleepTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<sleepTypedFuture> await_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_sleep(req, __fu_attr__));
     }
     rusty::Result<RpcSleepResponse, rrr::i32> sleep(const RpcSleepRequest& req) {
         auto __typed_fu_result__ = this->async_sleep(req);
@@ -1133,6 +1297,9 @@ public:
             __fu__->get_reply() >> __typed_resp__.result;
             return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Ok(__typed_resp__);
         }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
     };
     rusty::Result<deferred_echoTypedFuture, rrr::i32> async_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(BenchmarkService::DEFERRED_ECHO, __fu_attr__, [&](rrr::Marshal& __m__) {
@@ -1142,6 +1309,9 @@ public:
             return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<deferred_echoTypedFuture, rrr::i32>::Ok(deferred_echoTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<deferred_echoTypedFuture> await_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_deferred_echo(req, __fu_attr__));
     }
     rusty::Result<RpcDeferredEchoResponse, rrr::i32> deferred_echo(const RpcDeferredEchoRequest& req) {
         auto __typed_fu_result__ = this->async_deferred_echo(req);

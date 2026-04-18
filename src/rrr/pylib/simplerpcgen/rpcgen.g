@@ -87,7 +87,7 @@ parser Rpc:
             {{ return functions }}
 
     rule service_function: {{ attr = None; abstract = False; input = []; output = [] }}
-        ["prefix" {{ attr = "prefix" }} | "fast" {{ attr = "prefix" }} | "raw" {{ attr = "raw" }} | "fiber" {{ attr = "fiber" }} | "defer" {{ attr = "defer" }}]
+        ["prefix" {{ attr = "prefix" }} | "fast" {{ attr = "prefix" }} | "raw" {{ attr = "raw" }} | "fiber" {{ attr = "fiber" }} | "defer" {{ attr = "defer" }} | "async" {{ attr = "async" }}]
         SYMBOL {{ forbid_reserved_names(SYMBOL) }}
         "\(" (func_arg_list {{ input = func_arg_list }}) ["\|" (func_arg_list {{ output = func_arg_list }})] "\)"
         ["=" "0" {{ abstract = True }}]

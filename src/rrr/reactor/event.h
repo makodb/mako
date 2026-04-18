@@ -19,7 +19,7 @@
 #include <vector>
 #include "../base/all.hpp"
 #include <rusty/rusty.hpp>
-#include "coroutine.h"
+#include "fiber_impl.h"
 
 // External safety annotations for std::shared_ptr and Event operations
 // @external: {
@@ -74,12 +74,12 @@ class Event {
   std::string wait_place_{"not recorded"};
   bool in_waiting_list_{false};
 
-  // An event is usually allocated on a coroutine stack, thus it cannot own a
-  //   shared_ptr to the coroutine it is.
+  // An event is usually allocated on a fiber stack, thus it cannot own a
+  //   shared_ptr to the fiber it is.
   // In this case there is no shared pointer to the event.
   // When the stack that contains the event frees, the event frees.
-  // Weak reference to coroutine using rusty::rc::Weak with proper reference counting
-  rusty::rc::Weak<Fiber> wp_coro_{};
+  // Weak reference to a fiber using rusty::rc::Weak with proper reference counting
+  rusty::rc::Weak<Fiber> wp_fiber_{};
 
   // @unsafe
   virtual void wait(uint64_t timeout=0) final;
@@ -90,7 +90,7 @@ class Event {
   }
 
   virtual void log(){return;}
-  virtual uint64_t get_coro_id();
+  virtual uint64_t get_fiber_id();
   void record_place(const char* file, int line);
 
   // @safe - Tests if event is ready

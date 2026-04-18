@@ -91,7 +91,7 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
     // this GotoNextPhase is in none/coordinator.cc, coz this is CoordinatorNone instance
     // class CoordinatorNone : public CoordinatorClassic { }
     Fiber::create_run([this]() {
-        // Log_info("Start CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+        // Log_info("Start CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
         GotoNextPhase();
       }, __FILE__, __LINE__
     );
@@ -360,7 +360,7 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
   if (res == REJECT) {
     aborted_ = true;
     txn->commit_.store(false);
-    // Log_info("DispatchAck Reject CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+    // Log_info("DispatchAck Reject CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
     GotoNextPhase();
     return;
   } else if (res == WRONG_LEADER) {
@@ -404,10 +404,10 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
     dispatch_ack_ = true;
     // Log_info("CoordinatorRule coo_id=%d thread_id=%d cmd_ver_=%d cmd_ver=%d current_phase=%d [End of DispatchAck]", coo_id_, thread_id_, cmd_ver_, cmd_ver, phase % 3);
     if (phase != phase_) {
-      // Log_info("AllDispatchAcked Failed CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+      // Log_info("AllDispatchAcked Failed CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
       return;
     }
-    // Log_info("AllDispatchAcked Successed CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+    // Log_info("AllDispatchAcked Successed CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
     GotoNextPhase();
   }
 }

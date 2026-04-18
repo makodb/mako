@@ -7,9 +7,11 @@
 #include <sys/time.h>
 #include <signal.h>
 #include <atomic>
+#include <vector>
 
 #include "rrr.hpp"
 #include <rusty/arc.hpp>
+#include <rusty/async.hpp>
 #include <rusty/mutex.hpp>
 #include "reactor/reactor.h"
 
@@ -23,11 +25,64 @@ const char *svr_addr = "127.0.0.1:8848";
 int byte_size = 10;
 int epoll_instances = 2;
 bool fast_requests = false;
+bool await_mode = false;
 int seconds = 10;
 int outgoing_requests = 1000;
 int client_threads = 8;
 int worker_threads = 16;
 int rpc_bench_vector_size = 0;
+
+enum class BenchRpcMode {
+    FAST,
+    FIBER,
+    DEFER,
+    ASYNC,
+    FAST_VEC,
+};
+
+BenchRpcMode rpc_mode = BenchRpcMode::FIBER;
+bool rpc_mode_explicit = false;
+
+static const char* rpc_mode_name(BenchRpcMode mode) {
+    switch (mode) {
+    case BenchRpcMode::FAST:
+        return "fast";
+    case BenchRpcMode::FIBER:
+        return "fiber";
+    case BenchRpcMode::DEFER:
+        return "defer";
+    case BenchRpcMode::ASYNC:
+        return "async";
+    case BenchRpcMode::FAST_VEC:
+        return "fast_vec";
+    default:
+        return "fiber";
+    }
+}
+
+static bool parse_rpc_mode(const std::string& mode_str, BenchRpcMode* mode_out) {
+    if (mode_str == "fast") {
+        *mode_out = BenchRpcMode::FAST;
+        return true;
+    }
+    if (mode_str == "fiber") {
+        *mode_out = BenchRpcMode::FIBER;
+        return true;
+    }
+    if (mode_str == "defer") {
+        *mode_out = BenchRpcMode::DEFER;
+        return true;
+    }
+    if (mode_str == "async") {
+        *mode_out = BenchRpcMode::ASYNC;
+        return true;
+    }
+    if (mode_str == "fast_vec") {
+        *mode_out = BenchRpcMode::FAST_VEC;
+        return true;
+    }
+    return false;
+}
 
 static string request_str;
 
@@ -83,6 +138,54 @@ struct ClientThreadArg {
     int thread_idx;
 };
 
+static rusty::Task<void> await_worker(BenchmarkProxy* proxy, int thread_idx, i32 rpc_id) {
+    BenchmarkProxy::RpcFastNopRequest fast_nop_req;
+    fast_nop_req.in_0 = request_str;
+
+    BenchmarkProxy::RpcAsyncNopRequest async_nop_req;
+    async_nop_req.in_0 = request_str;
+
+    BenchmarkProxy::RpcNopRequest nop_req;
+    nop_req.in_0 = request_str;
+
+    BenchmarkProxy::RpcDeferredEchoRequest deferred_echo_req;
+    deferred_echo_req.val = 1;
+
+    BenchmarkProxy::RpcFastVecRequest fast_vec_req;
+    fast_vec_req.n = rpc_bench_vector_size;
+
+    while (!should_stop) {
+        bool ok = false;
+        if (rpc_id == BenchmarkService::FAST_NOP) {
+            auto resp = co_await proxy->await_fast_nop(fast_nop_req);
+            ok = resp.is_ok();
+        } else if (rpc_id == BenchmarkService::FAST_VEC) {
+            auto resp = co_await proxy->await_fast_vec(fast_vec_req);
+            ok = resp.is_ok();
+        } else if (rpc_id == BenchmarkService::ASYNC_NOP) {
+            auto resp = co_await proxy->await_async_nop(async_nop_req);
+            ok = resp.is_ok();
+        } else if (rpc_id == BenchmarkService::DEFERRED_ECHO) {
+            auto resp = co_await proxy->await_deferred_echo(deferred_echo_req);
+            ok = resp.is_ok();
+        } else {
+            auto resp = co_await proxy->await_nop(nop_req);
+            ok = resp.is_ok();
+        }
+
+        if (ok) {
+            g_client_req_counters[thread_idx].fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    co_return;
+}
+
+static void prime_task(rusty::Task<void>& task) {
+    rusty::Waker waker{[]() {}};
+    rusty::Context ctx{&waker};
+    (void)task.poll(ctx);
+}
+
 static void* client_proc(void* arg_ptr) {
     auto* arg = static_cast<ClientThreadArg*>(arg_ptr);
     int thread_idx = arg->thread_idx;
@@ -92,20 +195,51 @@ static void* client_proc(void* arg_ptr) {
     FutureAttr fu_attr;
     i32 rpc_id;
 
-    if (fast_requests) {
+    switch (rpc_mode) {
+    case BenchRpcMode::FAST:
         rpc_id = BenchmarkService::FAST_NOP;
-    } else if (rpc_bench_vector_size > 0) {
-        rpc_id = BenchmarkService::FAST_VEC; 
-    } else {
+        break;
+    case BenchRpcMode::FIBER:
         rpc_id = BenchmarkService::NOP;
+        break;
+    case BenchRpcMode::DEFER:
+        rpc_id = BenchmarkService::DEFERRED_ECHO;
+        break;
+    case BenchRpcMode::ASYNC:
+        rpc_id = BenchmarkService::ASYNC_NOP;
+        break;
+    case BenchRpcMode::FAST_VEC:
+        rpc_id = BenchmarkService::FAST_VEC;
+        break;
+    default:
+        rpc_id = BenchmarkService::NOP;
+        break;
     }
+
+    BenchmarkProxy proxy(const_cast<Client*>(cl.get()));
+    std::vector<rusty::Task<void>> await_tasks;
+
+    if (await_mode) {
+        await_tasks.reserve(outgoing_requests);
+        for (int i = 0; i < outgoing_requests; ++i) {
+            await_tasks.emplace_back(await_worker(&proxy, thread_idx, rpc_id));
+        }
+        for (auto& task : await_tasks) {
+            prime_task(task);
+        }
+    }
+
     auto do_work = [cl, &fu_attr, rpc_id, thread_idx] {
         if (!should_stop) {
             auto fu_result = cl->request(rpc_id, fu_attr, [rpc_id](rrr::Marshal& m) {
-                if (rpc_id == BenchmarkService::FAST_NOP || rpc_id == BenchmarkService::NOP) {
+                if (rpc_id == BenchmarkService::FAST_NOP ||
+                    rpc_id == BenchmarkService::NOP ||
+                    rpc_id == BenchmarkService::ASYNC_NOP) {
                     m << request_str;
                 } else if (rpc_id == BenchmarkService::FAST_VEC) {
                     m << rpc_bench_vector_size;
+                } else if (rpc_id == BenchmarkService::DEFERRED_ECHO) {
+                    m << static_cast<rrr::i32>(1);
                 }
             });
             if (fu_result.is_err()) {
@@ -122,8 +256,10 @@ static void* client_proc(void* arg_ptr) {
             do_work();
         //});
     };
-    for (int i = 0; i < outgoing_requests; i++) {
-        do_work();
+    if (!await_mode) {
+        for (int i = 0; i < outgoing_requests; i++) {
+            do_work();
+        }
     }
     while (!should_stop) {
         sleep(1);
@@ -149,6 +285,8 @@ int main(int argc, char **argv) {
         printf("                -b    byte_size\n");
         printf("                -e    epoll_instances\n");
         printf("                -f    fast_requests\n");
+        printf("                -m    rpc mode: fast|fiber|defer|async|fast_vec\n");
+        printf("                -a    await client mode\n");
         printf("                -n    seconds\n");
         printf("                -o    outgoing_requests\n");
         printf("                -t    client_threads\n");
@@ -158,7 +296,7 @@ int main(int argc, char **argv) {
     }
 
     char ch = 0;
-    while ((ch = getopt(argc, argv, "c:s:b:e:fn:o:t:w:v:"))!= -1) {
+    while ((ch = getopt(argc, argv, "c:s:b:e:fan:o:t:w:v:m:"))!= -1) {
         switch (ch) {
         case 'c':
             is_client = true;
@@ -176,6 +314,19 @@ int main(int argc, char **argv) {
             break;
         case 'f':
             fast_requests = true;
+            break;
+        case 'm': {
+            BenchRpcMode parsed_mode;
+            if (!parse_rpc_mode(optarg, &parsed_mode)) {
+                Log_error("invalid rpc mode '%s' (expected: fast|fiber|defer|async|fast_vec)", optarg);
+                exit(1);
+            }
+            rpc_mode = parsed_mode;
+            rpc_mode_explicit = true;
+            break;
+        }
+        case 'a':
+            await_mode = true;
             break;
         case 'n':
             seconds = atoi(optarg);
@@ -196,6 +347,22 @@ int main(int argc, char **argv) {
             break;
         }
     }
+
+    if (!rpc_mode_explicit) {
+        if (rpc_bench_vector_size > 0) {
+            rpc_mode = BenchRpcMode::FAST_VEC;
+        } else if (fast_requests) {
+            rpc_mode = BenchRpcMode::FAST;
+        } else {
+            rpc_mode = BenchRpcMode::FIBER;
+        }
+    }
+
+    if (rpc_bench_vector_size > 0 && rpc_mode != BenchRpcMode::FAST_VEC) {
+        Log_error("vector benchmark requires mode fast_vec (use -m fast_vec)");
+        exit(1);
+    }
+
     verify(is_server || is_client);
     if (is_server) {
         Log_info("server will start at     %s", svr_addr);
@@ -205,6 +372,8 @@ int main(int argc, char **argv) {
     Log_info("packet byte size:        %d", byte_size);
     Log_info("epoll instances:         %d", epoll_instances);
     Log_info("fast reqeust:            %s", fast_requests ? "true" : "false");
+    Log_info("rpc mode:                %s", rpc_mode_name(rpc_mode));
+    Log_info("await mode:              %s", await_mode ? "true" : "false");
     Log_info("running seconds:         %d", seconds);
     Log_info("outgoing requests:       %d", outgoing_requests);
     Log_info("client threads:          %d", client_threads);

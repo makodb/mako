@@ -10,6 +10,8 @@ def main():
     argparser = argparse.ArgumentParser(prog=sys.argv[0])
     argparser.add_argument("--cpp", action="store_true", help="generate C++ stub files")
     argparser.add_argument("--python", action="store_true", help="generate Python stub files")
+    # Backward-compatible no-op: typed mode is now the default/only C++ mode.
+    argparser.add_argument("--cpp-mode", default="typed", help=argparse.SUPPRESS)
     argparser.add_argument("rpc_file")
     opt = argparser.parse_args()
     languages = set()

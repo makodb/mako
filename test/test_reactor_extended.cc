@@ -10,7 +10,7 @@
 #include <fcntl.h>
 #include "reactor/reactor.h"
 #include "reactor/event.h"
-#include "reactor/coroutine.h"
+#include "reactor/fiber.h"
 #include "reactor/epoll_wrapper.h"
 
 using namespace rrr;
@@ -38,9 +38,9 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
     
     EXPECT_FALSE(sp_event->is_ready());
     
-    // Run coroutine that waits for event with timeout
+    // Run fiber that waits for event with timeout
     std::atomic<bool> completed{false};
-    reactor->create_run_coroutine([sp_event, &completed]() {
+    reactor->create_run_fiber([sp_event, &completed]() {
         sp_event->wait(); // Timeout already specified in constructor (100ms)
         completed = true;
     });
@@ -52,18 +52,18 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
     EXPECT_TRUE(completed);
 }
 
-// Test 2: Single coroutine waiting on event (removed multiple waiters - not supported)
-TEST_F(ExtendedReactorTest, SingleCoroutineEvent) {
+// Test 2: Single fiber waiting on event (removed multiple waiters - not supported)
+TEST_F(ExtendedReactorTest, SingleFiberEvent) {
     auto reactor = Reactor::get_reactor();
     
     auto sp_event = Reactor::create_sp_event<IntEvent>();
     std::atomic<int> completed_count{0};
     
-    // Set the event BEFORE creating the coroutine (use default target=1)
+    // Set the event BEFORE creating the fiber (use default target=1)
     sp_event->set(1);
     
-    // Create single coroutine - it should see event is already ready
-    reactor->create_run_coroutine([sp_event, &completed_count]() {
+    // Create single fiber - it should see event is already ready
+    reactor->create_run_fiber([sp_event, &completed_count]() {
         sp_event->wait();  // Should return immediately since event is ready
         completed_count++;
     });
@@ -72,18 +72,18 @@ TEST_F(ExtendedReactorTest, SingleCoroutineEvent) {
     EXPECT_EQ(sp_event->value_, 1);
 }
 
-// Test 3: Nested coroutines
-TEST_F(ExtendedReactorTest, NestedCoroutines) {
+// Test 3: Nested fibers
+TEST_F(ExtendedReactorTest, NestedFibers) {
     auto reactor = Reactor::get_reactor();
     
     std::atomic<int> outer_value{0};
     std::atomic<int> inner_value{0};
     
-    reactor->create_run_coroutine([&reactor, &outer_value, &inner_value]() {
+    reactor->create_run_fiber([&reactor, &outer_value, &inner_value]() {
         outer_value = 1;
         
-        // Create inner coroutine from within outer
-        reactor->create_run_coroutine([&inner_value]() {
+        // Create inner fiber from within outer
+        reactor->create_run_fiber([&inner_value]() {
             inner_value = 2;
         });
         
@@ -94,15 +94,15 @@ TEST_F(ExtendedReactorTest, NestedCoroutines) {
     EXPECT_EQ(inner_value, 2);
 }
 
-// Test 4: Coroutine exception handling
-TEST_F(ExtendedReactorTest, CoroutineException) {
+// Test 4: Fiber exception handling
+TEST_F(ExtendedReactorTest, FiberException) {
     auto reactor = Reactor::get_reactor();
     
     std::atomic<bool> before_exception{false};
     std::atomic<bool> after_exception{false};
     
-    // This test checks if exceptions in coroutines are handled gracefully
-    reactor->create_run_coroutine([&before_exception, &after_exception]() {
+    // This test checks if exceptions in fibers are handled gracefully
+    reactor->create_run_fiber([&before_exception, &after_exception]() {
         before_exception = true;
         // Note: In production code, you'd want proper exception handling
         // For now, we'll avoid throwing to prevent crashes
@@ -128,20 +128,20 @@ TEST_F(ExtendedReactorTest, EventChain) {
     
     std::atomic<int> result{0};
     
-    // Create a chain of dependent coroutines
-    reactor->create_run_coroutine([sp_event1, sp_event2, &result]() {
+    // Create a chain of dependent fibers
+    reactor->create_run_fiber([sp_event1, sp_event2, &result]() {
         sp_event1->wait();
         result += sp_event1->value_;
         sp_event2->set(sp_event1->value_ * 2);
     });
     
-    reactor->create_run_coroutine([sp_event2, sp_event3, &result]() {
+    reactor->create_run_fiber([sp_event2, sp_event3, &result]() {
         sp_event2->wait();
         result += sp_event2->value_;
         sp_event3->set(sp_event2->value_ * 2);
     });
     
-    reactor->create_run_coroutine([sp_event3, &result]() {
+    reactor->create_run_fiber([sp_event3, &result]() {
         sp_event3->wait();
         result += sp_event3->value_;
     });
@@ -163,29 +163,29 @@ TEST_F(ExtendedReactorTest, EventChain) {
     EXPECT_EQ(result, 70); // 10 + 20 + 40
 }
 
-// Test 6: Simple coroutine yield and continue
-TEST_F(ExtendedReactorTest, CoroutineYieldContinue) {
+// Test 6: Simple fiber yield and continue
+TEST_F(ExtendedReactorTest, FiberYieldContinue) {
     auto reactor = Reactor::get_reactor();
     
     std::atomic<int> counter{0};
     
-    auto coro = reactor->create_run_coroutine([&counter]() {
+    auto fiber = reactor->create_run_fiber([&counter]() {
         counter = 1;
-        Fiber::current_coroutine().unwrap()->yield_();
+        Fiber::current_fiber().unwrap()->yield_();
         counter = 2;
-        Fiber::current_coroutine().unwrap()->yield_();
+        Fiber::current_fiber().unwrap()->yield_();
         counter = 3;
     });
     
     EXPECT_EQ(counter, 1); // After initial run
     
-    reactor->continue_coro(coro);
+    reactor->continue_fiber(fiber);
     EXPECT_EQ(counter, 2); // After first continue
     
-    reactor->continue_coro(coro);
+    reactor->continue_fiber(fiber);
     EXPECT_EQ(counter, 3); // After second continue
     
-    EXPECT_TRUE(coro->finished());
+    EXPECT_TRUE(fiber->finished());
 }
 
 // Test 7: Many independent events (each with single waiter)
@@ -203,10 +203,10 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
         events.push_back(event);
     }
     
-    // Now create coroutines that will process ready events
+    // Now create fibers that will process ready events
     for (int i = 0; i < num_events; i++) {
         auto event = events[i];
-        reactor->create_run_coroutine([event, &processed_count]() {
+        reactor->create_run_fiber([event, &processed_count]() {
             event->wait();  // Should be immediate
             processed_count++;
         });
@@ -215,33 +215,33 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
     EXPECT_EQ(processed_count, num_events);
 }
 
-// Test 8: Coroutine with multiple yields
+// Test 8: Fiber with multiple yields
 TEST_F(ExtendedReactorTest, MultipleYields) {
     auto reactor = Reactor::get_reactor();
     
     std::vector<int> execution_order;
     
-    auto coro1 = reactor->create_run_coroutine([&execution_order]() {
+    auto fiber1 = reactor->create_run_fiber([&execution_order]() {
         execution_order.push_back(1);
-        Fiber::current_coroutine().unwrap()->yield_();
+        Fiber::current_fiber().unwrap()->yield_();
         execution_order.push_back(3);
-        Fiber::current_coroutine().unwrap()->yield_();
+        Fiber::current_fiber().unwrap()->yield_();
         execution_order.push_back(5);
     });
     
-    auto coro2 = reactor->create_run_coroutine([&execution_order]() {
+    auto fiber2 = reactor->create_run_fiber([&execution_order]() {
         execution_order.push_back(2);
-        Fiber::current_coroutine().unwrap()->yield_();
+        Fiber::current_fiber().unwrap()->yield_();
         execution_order.push_back(4);
-        Fiber::current_coroutine().unwrap()->yield_();
+        Fiber::current_fiber().unwrap()->yield_();
         execution_order.push_back(6);
     });
     
-    // Continue coroutines alternately
-    reactor->continue_coro(coro1);
-    reactor->continue_coro(coro2);
-    reactor->continue_coro(coro1);
-    reactor->continue_coro(coro2);
+    // Continue fibers alternately
+    reactor->continue_fiber(fiber1);
+    reactor->continue_fiber(fiber2);
+    reactor->continue_fiber(fiber1);
+    reactor->continue_fiber(fiber2);
     
     EXPECT_EQ(execution_order.size(), 6);
     // Check interleaving
@@ -253,13 +253,13 @@ TEST_F(ExtendedReactorTest, MultipleYields) {
 TEST_F(ExtendedReactorTest, ReactorLoadTest) {
     auto reactor = Reactor::get_reactor();
     
-    const int num_coroutines = 1000;
+    const int num_fibers = 1000;
     std::atomic<int> completed{0};
     
     auto start = steady_clock::now();
     
-    for (int i = 0; i < num_coroutines; i++) {
-        reactor->create_run_coroutine([&completed, i]() {
+    for (int i = 0; i < num_fibers; i++) {
+        reactor->create_run_fiber([&completed, i]() {
             // Simulate some work
             int sum = 0;
             for (int j = 0; j < 100; j++) {
@@ -272,10 +272,10 @@ TEST_F(ExtendedReactorTest, ReactorLoadTest) {
     auto end = steady_clock::now();
     auto duration = duration_cast<microseconds>(end - start).count();
     
-    EXPECT_EQ(completed, num_coroutines);
+    EXPECT_EQ(completed, num_fibers);
     
-    std::cout << "Created and executed " << num_coroutines 
-              << " coroutines in " << duration << " microseconds" << std::endl;
+    std::cout << "Created and executed " << num_fibers 
+              << " fibers in " << duration << " microseconds" << std::endl;
 }
 
 // Test 10: Event recycling and memory management
@@ -291,7 +291,7 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
             auto event = Reactor::create_sp_event<IntEvent>();
             events.push_back(event);
             
-            reactor->create_run_coroutine([event]() {
+            reactor->create_run_fiber([event]() {
                 event->wait();
             });
         }
@@ -326,7 +326,7 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     auto sp_or_event = Reactor::create_sp_event<WaitAny>(event1, event2);
     
     std::atomic<bool> or_triggered{false};
-    reactor->create_run_coroutine([sp_or_event, &or_triggered]() {
+    reactor->create_run_fiber([sp_or_event, &or_triggered]() {
         sp_or_event->wait();  // Should be immediate since event1 is ready
         or_triggered = true;
     });
@@ -343,7 +343,7 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     auto sp_or_event2 = Reactor::create_sp_event<WaitAny>(event3, event4);
     
     std::atomic<bool> or_triggered2{false};
-    reactor->create_run_coroutine([sp_or_event2, &or_triggered2]() {
+    reactor->create_run_fiber([sp_or_event2, &or_triggered2]() {
         sp_or_event2->wait();  // Should be immediate since event4 is ready
         or_triggered2 = true;
     });
@@ -351,16 +351,16 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     EXPECT_TRUE(or_triggered2);
 }
 
-// Test 12: Coroutine priority/ordering
-TEST_F(ExtendedReactorTest, CoroutineOrdering) {
+// Test 12: Fiber priority/ordering
+TEST_F(ExtendedReactorTest, FiberOrdering) {
     auto reactor = Reactor::get_reactor();
     
     std::vector<int> execution_order;
     std::mutex order_mutex;
     
-    // Create coroutines with implicit ordering based on creation
+    // Create fibers with implicit ordering based on creation
     for (int i = 0; i < 10; i++) {
-        reactor->create_run_coroutine([&execution_order, &order_mutex, i]() {
+        reactor->create_run_fiber([&execution_order, &order_mutex, i]() {
             std::lock_guard<std::mutex> lock(order_mutex);
             execution_order.push_back(i);
         });

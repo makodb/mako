@@ -19,7 +19,7 @@ class RaftFrame : public Frame {
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_ = rusty::Arc<rusty::Cell<slotid_t>>::make(1);
 #ifdef RAFT_TEST_CORO
   static std::mutex raft_test_mutex_;
-  static rusty::Option<rusty::Rc<Fiber>> raft_test_coro_;
+  static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
   static uint16_t n_replicas_;
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;

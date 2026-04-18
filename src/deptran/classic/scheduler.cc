@@ -68,7 +68,7 @@ bool SchedulerClassic::DispatchPiece(Tx& tx,
       if (!Guard(tx, row, col_id)) {
         tx.inuse = false;
 //        auto reactor = Reactor::get_reactor();
-//        auto sz = reactor->coros_.size();
+//        auto sz = reactor->fibers_.size();
 //        verify(sz > 0);
         auto id = piece_data.inn_id();
         ret_output[id] = {}; // the client uses this to identify ack.
