@@ -142,6 +142,15 @@ uint64_t GetNonPreferredSteadyElectionTimeoutUs() {
   return RandomInRangeUs(500000ULL, 1000000ULL);
 }
 
+uint64_t GetAppendEntriesBatchMaxEntries() {
+  // Keep catch-up payload bounded to avoid oversized RPCs and timeout stalls
+  // when a follower is far behind.
+  constexpr uint64_t kDefaultMaxEntries = 256ULL;
+  static uint64_t max_entries = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_APPEND_BATCH_MAX_ENTRIES", kDefaultMaxEntries);
+  return max_entries;
+}
+
 bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
   return preferred_leader_site_id != INVALID_SITEID;
 }
@@ -1575,17 +1584,21 @@ void RaftServer::HeartbeatLoop() {
 
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
+              const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
+              const uint64_t batch_start_idx = std::max<uint64_t>(it->second, min_active_slot_);
               Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
                        site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
-              for (int idx = std::max(it->second, min_active_slot_); idx <= lastLogIndex; idx++) {
+              for (uint64_t idx = batch_start_idx;
+                   idx <= lastLogIndex && batch_buffer_.size() < max_batch_entries;
+                   idx++) {
                 auto curInstance = GetRaftInstance(idx);
                 if (!curInstance) {
-                  Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%d) returned NULL, skipping", idx);
+                  Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%lu) returned NULL, skipping", idx);
                   continue;
                 }
                 shared_ptr<TpcCommitCommand> curCmd = marshallable_cast<TpcCommitCommand>(curInstance->log_);
                 if (!curCmd) {
-                  Log_info("[BATCH_SKIP] site=%d idx=%d: log entry is not TpcCommitCommand (kind=%d), using raw log",
+                  Log_info("[BATCH_SKIP] site=%d idx=%lu: log entry is not TpcCommitCommand (kind=%d), using raw log",
                            site_id_, idx, curInstance->log_ ? curInstance->log_->kind_ : -1);
                   cmd = curInstance->log_;
                   break;
@@ -1597,8 +1610,12 @@ void RaftServer::HeartbeatLoop() {
                 shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
                 batch_cmd->AddCmds(batch_buffer_);
                 cmd = wrap_typed_marshallable(batch_cmd);
-                Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d",
-                         site_id_, batch_buffer_.size(), site_id);
+                const uint64_t batch_end_idx = batch_start_idx + batch_buffer_.size() - 1;
+                const bool truncated = batch_end_idx < lastLogIndex;
+                Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d "
+                         "(from=%lu to=%lu%s)",
+                         site_id_, batch_buffer_.size(), site_id,
+                         batch_start_idx, batch_end_idx, truncated ? ", truncated" : "");
               }
 #endif
             }

@@ -23,11 +23,16 @@ USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 # Start shard 0 in background (3 Raft replicas, no learner)
+# IMPORTANT: Start follower roles first, then localhost(last). dbtest enables a
+# startup watchdog for replicated localhost in non-interactive mode; launching
+# localhost first can occasionally race peers and hit timeout before all peer
+# roles are ready.
 echo "Starting shard 0 with Raft..."
-nohup bash bash/shard_raft.sh 1 0 $trd localhost 0 1 > $script_name\_shard0-localhost-$trd.log 2>&1 &
 nohup bash bash/shard_raft.sh 1 0 $trd p2 0 1 > $script_name\_shard0-p2-$trd.log 2>&1 &
 sleep 1
 nohup bash bash/shard_raft.sh 1 0 $trd p1 0 1 > $script_name\_shard0-p1-$trd.log 2>&1 &
+sleep 2
+nohup bash bash/shard_raft.sh 1 0 $trd localhost 0 1 > $script_name\_shard0-localhost-$trd.log 2>&1 &
 SHARD0_PID=$!
 sleep 2
 
