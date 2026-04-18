@@ -127,9 +127,9 @@ Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file,
       const auto& coro_ref = *coro;
       const_cast<Fiber&>(coro_ref).id = Fiber::global_id++;  // id is not Cell yet
       *coro_ref.func_.borrow_mut() = std::move(func);
-      *coro_ref.boost_coro_task_.borrow_mut() = rusty::None;
-      coro_ref.boost_coro_yield_.set(nullptr);
-      coro_ref.status_.set(Fiber::INIT);
+      // Keep the existing task/stack so continue_() can resume from the fiber's yield point.
+      verify((*coro_ref.boost_coro_task_.borrow()).is_some());
+      coro_ref.status_.set(Fiber::RECYCLED);
       return coro;
     } else {
       auto coro = rusty::Rc<Fiber>::make(std::move(func));
@@ -224,9 +224,15 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
   // Step 5: Run the coroutine
   // @unsafe
   {
-    coro->run();
+    auto status = coro->status_.get();
+    if (status == Fiber::INIT) {
+      coro->run();
+    } else {
+      verify(status == Fiber::RECYCLED);
+      coro->continue_();
+    }
     if (coro->finished()) {
-      coros_.borrow_mut()->remove(coro);
+      recycle(coro);
     }
   }
 

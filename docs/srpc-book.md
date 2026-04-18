@@ -1290,15 +1290,21 @@ Events hold weak references to fibers to avoid reference cycles:
 cmake --build build --target rpcbench -j
 
 # Terminal 1: start one server
-./build/rpcbench -s 127.0.0.1:18848
+./build/rpcbench -s 127.0.0.1:18848 -f
 
-# Terminal 2: run one client process with 10 client threads
-./build/rpcbench -c 127.0.0.1:18848 -t 10 -n 10
+# Terminal 2 (topology A): one client process with 10 client threads
+./build/rpcbench -c 127.0.0.1:18848 -f -t 10 -n 10 -o 1000
+
+# Terminal 2 (topology B): 10 independent client processes
+for i in $(seq 1 10); do
+  ./build/rpcbench -c 127.0.0.1:18848 -f -t 1 -n 10 -o 1000 &
+done
+wait
 ```
 
-### Measured Run (1 Server, 10 Clients)
+### Measured Run (1 Server, 10 Clients, Fast Mode)
 
-Run date (UTC): `2026-04-17T19:56:43Z`
+Run date (UTC): `2026-04-18T01:04:56Z`
 
 Environment:
 
@@ -1314,24 +1320,31 @@ Benchmark config from `rpcbench` logs:
 | Parameter | Value |
 |-----------|-------|
 | Server address | `127.0.0.1:18848` |
-| Client threads (`-t`) | 10 |
 | Duration (`-n`) | 10 seconds |
 | Packet byte size (`-b`) | 10 |
 | Epoll instances (`-e`) | 2 |
 | Outgoing requests (`-o`) | 1000 |
 | Worker threads (`-w`) | 16 |
-| Fast mode (`-f`) | false |
+| Fast mode (`-f`) | true |
 | Vector mode (`-v`) | 0 |
 
-Throughput result (client log):
+Throughput results:
 
-- Per-second QPS samples: `40973, 40878, 38488, 37671, 47329, 38409, 42591, 46540, 42460`
-- Average QPS reported by benchmark: `41704.33`
-- Min/Max sampled QPS: `37671 / 47329`
+1. One client process, 10 client threads (`-t 10`)
+- Per-second QPS samples: `2355764, 2184594, 2335724, 2253167, 2124776, 2209057, 2148797, 2161505, 2213496`
+- Average QPS: `2220764.50`
+- Min/Max sampled QPS: `2124776 / 2355764`
+- Server max CPU (`pidstat`, `%CPU`): `82.00`
 
-Note: after benchmark completion, stopping the server by signal currently ends with
-`std::runtime_error: Called unwrap on None` in `test/rpcbench.cc`. This happens during
-shutdown and does not affect the client-side throughput numbers above.
+2. Ten client processes, each with one client thread (`10 x (-t 1)`)
+- Aggregate average QPS (sum of 10 client averages): `2323925.64`
+- Per-client average QPS range: `229820.88 .. 235125.00`
+- Server max CPU (`pidstat`, `%CPU`): `86.00`
+
+Result summary:
+- After the coroutine-reuse fix in the client callback path, single-process (`-t 10`)
+  is close to multi-process throughput (~4.7% lower), indicating the prior process-local
+  bottleneck is largely removed.
 
 ### Tuning Parameters
 

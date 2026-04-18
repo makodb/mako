@@ -317,19 +317,19 @@ public:
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
-        if ((ret = svr.reg_rpc(FAST_PRIME, svc_index)) != 0) {
+        if ((ret = svr.reg_fast_rpc(FAST_PRIME, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(FAST_DOT_PROD, svc_index)) != 0) {
+        if ((ret = svr.reg_fast_rpc(FAST_DOT_PROD, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(FAST_ADD, svc_index)) != 0) {
+        if ((ret = svr.reg_fast_rpc(FAST_ADD, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(FAST_NOP, svc_index)) != 0) {
+        if ((ret = svr.reg_fast_rpc(FAST_NOP, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(FAST_VEC, svc_index)) != 0) {
+        if ((ret = svr.reg_fast_rpc(FAST_VEC, svc_index)) != 0) {
             goto err;
         }
         if ((ret = svr.reg_rpc(PRIME, svc_index)) != 0) {

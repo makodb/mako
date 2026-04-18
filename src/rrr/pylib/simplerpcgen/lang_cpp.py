@@ -218,7 +218,8 @@ def emit_service_and_proxy(service, f, rpc_table):
         with f.indent():
             f.writeln("int ret = 0;")
             for func in service.functions:
-                f.writeln("if ((ret = svr.reg_rpc(%s, svc_index)) != 0) {" % func.name.upper())
+                reg_api = "reg_fast_rpc" if func.attr in ("fast", "prefix") else "reg_rpc"
+                f.writeln("if ((ret = svr.%s(%s, svc_index)) != 0) {" % (reg_api, func.name.upper()))
                 with f.indent():
                     f.writeln("goto err;")
                 f.writeln("}")

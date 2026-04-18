@@ -251,14 +251,19 @@ bool ServerConnection::handle_read() {
                 // Service found - dispatch via proxy facade using RefCell
                 size_t svc_index = it->second;
                 auto weak_this = weak_self_;
-                auto ctx = ctx_.clone();  // Clone Arc for the coroutine
-                Fiber::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
-                    // Borrow inside coroutine - guard released when lambda exits
-                    // (*guard) dereferences RefMut to get Box<Service>&
-                    // (*guard)-> calls Box::operator-> to get Service*
-                    auto guard = ctx->services[svc_index].borrow_mut();
+                if (ctx_->fast_rpc_ids.find(rpc_id) != ctx_->fast_rpc_ids.end()) {
+                    auto guard = ctx_->services[svc_index].borrow_mut();
                     (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
-                }, __FILE__, __LINE__);
+                } else {
+                    auto ctx = ctx_.clone();  // Clone Arc for the coroutine
+                    Fiber::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
+                        // Borrow inside coroutine - guard released when lambda exits
+                        // (*guard) dereferences RefMut to get Box<Service>&
+                        // (*guard)-> calls Box::operator-> to get Service*
+                        auto guard = ctx->services[svc_index].borrow_mut();
+                        (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
+                    }, __FILE__, __LINE__);
+                }
             }
         }
     }
@@ -614,6 +619,7 @@ int Server::start(const char* bind_addr) {
   std::string addr_str(bind_addr, strlen(bind_addr));
   ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
       std::move(pending_rpc_to_service_),
+      std::move(pending_fast_rpc_ids_),
       std::move(wrapped_services),
       addr_str,
       pending_requests_,
@@ -639,6 +645,7 @@ int Server::start(const char* bind_addr) {
 // @safe - Unregisters RPC mapping from pending map (must be called before start())
 void Server::unreg(i32 rpc_id) {
     pending_rpc_to_service_.erase(rpc_id);
+    pending_fast_rpc_ids_.erase(rpc_id);
 }
 
 // @safe - Signals shutdown to waiting threads

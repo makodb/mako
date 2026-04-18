@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <signal.h>
+#include <atomic>
 
 #include "rrr.hpp"
 #include <rusty/arc.hpp>
@@ -29,15 +30,22 @@ int worker_threads = 16;
 int rpc_bench_vector_size = 0;
 
 static string request_str;
-rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
-ThreadPool* thrpool;
 
-Counter req_counter;
+std::atomic<i64>* g_client_req_counters = nullptr;
+int g_client_req_counter_count = 0;
 
 bool should_stop = false;
 
 pthread_mutex_t g_stop_mutex;
 pthread_cond_t g_stop_cond;
+
+static i64 total_req_count() {
+    i64 total = 0;
+    for (int i = 0; i < g_client_req_counter_count; ++i) {
+        total += g_client_req_counters[i].load(std::memory_order_relaxed);
+    }
+    return total;
+}
 
 static void signal_handler(int sig) {
     Log_info("caught signal %d, stopping server now", sig);
@@ -52,7 +60,7 @@ static void* stat_proc(void*) {
     summary.reserve(seconds);
     i64 last_cnt = 0;
     for (int i = 0; i < seconds; i++) {
-        int cnt = req_counter.peek_next();
+        i64 cnt = total_req_count();
         if (last_cnt != 0) {
             long int qps = cnt - last_cnt;
             Log_info("qps: %ld", cnt - last_cnt);
@@ -71,8 +79,15 @@ static void* stat_proc(void*) {
     return nullptr;
 }
 
-static void* client_proc(void*) {
-    auto cl = Client::create(poll_thread_worker_.as_ref().unwrap());
+struct ClientThreadArg {
+    int thread_idx;
+};
+
+static void* client_proc(void* arg_ptr) {
+    auto* arg = static_cast<ClientThreadArg*>(arg_ptr);
+    int thread_idx = arg->thread_idx;
+    auto poll_thread_worker = PollThread::create();
+    auto cl = Client::create(poll_thread_worker);
     verify(cl->connect(svr_addr) == 0);
     FutureAttr fu_attr;
     i32 rpc_id;
@@ -84,7 +99,7 @@ static void* client_proc(void*) {
     } else {
         rpc_id = BenchmarkService::NOP;
     }
-    auto do_work = [cl, &fu_attr, rpc_id] {
+    auto do_work = [cl, &fu_attr, rpc_id, thread_idx] {
         if (!should_stop) {
             auto fu_result = cl->request(rpc_id, fu_attr, [rpc_id](rrr::Marshal& m) {
                 if (rpc_id == BenchmarkService::FAST_NOP || rpc_id == BenchmarkService::NOP) {
@@ -96,8 +111,7 @@ static void* client_proc(void*) {
             if (fu_result.is_err()) {
                 return;
             }
-            // Arc auto-released
-            req_counter.next();
+            g_client_req_counters[thread_idx].fetch_add(1, std::memory_order_relaxed);
         }
     };
     fu_attr.callback = [&do_work] (rusty::Arc<Future> fu) {
@@ -116,11 +130,13 @@ static void* client_proc(void*) {
     }
 
     cl->close();  // shared_ptr handles cleanup
+    poll_thread_worker->shutdown();
     pthread_exit(nullptr);
     return nullptr;
 }
 
 int main(int argc, char **argv) {
+    Log::set_level(Log::INFO);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
@@ -196,13 +212,9 @@ int main(int argc, char **argv) {
     Log_info("vector size:             %d", rpc_bench_vector_size);
 
     request_str = string(byte_size, 'x');
-
-    // Create PollThread Arc<Mutex<>>
-    poll_thread_worker_ = rusty::Some(PollThread::create());
-
-    thrpool = new ThreadPool(worker_threads);
     if (is_server) {
-        Server svr(std::move(poll_thread_worker_));  // Server takes Option<Arc<...>>
+        auto server_poll_thread = rusty::Some(PollThread::create());
+        Server svr(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
         svr.reg_service(rusty::make_box<BenchmarkService>());
         verify(svr.start(svr_addr) == 0);
 
@@ -225,9 +237,17 @@ int main(int argc, char **argv) {
         Pthread_mutex_unlock(&g_stop_mutex);
 
     } else {
+        g_client_req_counter_count = client_threads;
+        g_client_req_counters = new std::atomic<i64>[client_threads];
+        for (int i = 0; i < client_threads; ++i) {
+            g_client_req_counters[i].store(0, std::memory_order_relaxed);
+        }
+
         pthread_t* client_th = new pthread_t[client_threads];
+        ClientThreadArg* client_args = new ClientThreadArg[client_threads];
         for (int i = 0; i < client_threads; i++) {
-            Pthread_create(&client_th[i], nullptr, client_proc, nullptr);
+            client_args[i].thread_idx = i;
+            Pthread_create(&client_th[i], nullptr, client_proc, &client_args[i]);
         }
         pthread_t stat_th;
         Pthread_create(&stat_th, nullptr, stat_proc, nullptr);
@@ -235,13 +255,12 @@ int main(int argc, char **argv) {
         for (int i = 0; i < client_threads; i++) {
             Pthread_join(client_th[i], nullptr);
         }
+        delete[] g_client_req_counters;
+        g_client_req_counters = nullptr;
+        g_client_req_counter_count = 0;
+        delete[] client_args;
         delete[] client_th;
     }
 
-    // In server mode, ownership is moved into Server; in client mode, we own it here.
-    if (poll_thread_worker_.is_some()) {
-        poll_thread_worker_.as_ref().unwrap()->shutdown();
-    }
-    delete thrpool;
     return 0;
 }

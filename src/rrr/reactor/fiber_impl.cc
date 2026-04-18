@@ -15,7 +15,7 @@
 // #define USE_PROTECTED_STACK
 
 namespace rrr {
-uint64_t Fiber::global_id = 0;
+thread_local uint64_t Fiber::global_id = 0;
 
 Fiber::Fiber(rusty::Function<void()> func)
     : status_(INIT),

@@ -169,7 +169,7 @@ class Fiber {
    */
   static void sleep(uint64_t microseconds);
 
-  static uint64_t global_id;
+  static thread_local uint64_t global_id;
   uint64_t dep_id_{0};
   bool need_finalize_{false};
   uint64_t id{0};

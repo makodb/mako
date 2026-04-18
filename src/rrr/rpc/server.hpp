@@ -279,6 +279,8 @@ inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
 struct RpcServiceContext {
     // Maps RPC ID to service index for dispatch (immutable after setup)
     const std::unordered_map<i32, size_t> rpc_to_service;
+    // RPC IDs that should be dispatched inline (no per-request server fiber).
+    const std::unordered_set<i32> fast_rpc_ids;
 
     // Owned service proxies wrapped in RefCell for interior mutability
     // RefCell allows mutable access through const reference (borrow_mut)
@@ -295,12 +297,14 @@ struct RpcServiceContext {
 
     // Constructor taking ownership of all data
     RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
+                      std::unordered_set<i32> fast_rpc_set,
                       rusty::Vec<rusty::RefCell<ServiceProxy>> svcs,
                       std::string address,
                       std::shared_ptr<std::atomic<int>> pending_counter,
                       std::shared_ptr<std::atomic<bool>> drop_heartbeats,
                       uint64_t instance_id)
         : rpc_to_service(std::move(rpc_map))
+        , fast_rpc_ids(std::move(fast_rpc_set))
         , services(std::move(svcs))
         , addr(std::move(address))
         , pending_requests(std::move(pending_counter))
@@ -617,6 +621,7 @@ class Server: public NoCopy {
     // These are moved into RpcServiceContext in start()
     rusty::Vec<ServiceProxy> pending_services_;
     std::unordered_map<i32, size_t> pending_rpc_to_service_;
+    std::unordered_set<i32> pending_fast_rpc_ids_;
 
     // Shared context containing RPC dispatch info and services
     // Created in start() after all registrations are complete
@@ -717,6 +722,17 @@ public:
             pending_rpc_to_service_[rpc_id] = svc_index;
             return 0;
         }
+    }
+
+    // @safe - Registers an RPC ID for fast inline dispatch on server side.
+    // Must be called before start().
+    int reg_fast_rpc(i32 rpc_id, size_t svc_index) {
+        int ret = reg_rpc(rpc_id, svc_index);
+        if (ret != 0) {
+            return ret;
+        }
+        pending_fast_rpc_ids_.insert(rpc_id);
+        return 0;
     }
 
     // @safe - Unregisters RPC handler
