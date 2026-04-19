@@ -265,6 +265,7 @@ class Reactor {
       std::atomic<bool> pending_wake{false};
     };
 
+    // @unsafe { std::make_shared + raw `this` pointer capture for early-wake state }
     auto early_wake = std::make_shared<EarlyWakeState>();
     early_wake->reactor = this;
 
@@ -292,6 +293,7 @@ class Reactor {
           : task(std::move(t)), on_ready(std::move(cb)), early_wake(std::move(ew)) {}
     };
 
+    // @unsafe { std::make_shared allocates and type-erases the task state }
     auto state = std::make_shared<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
     auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
       auto poll_result = state->task.poll(ctx);
