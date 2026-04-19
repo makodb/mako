@@ -175,7 +175,7 @@ class Fiber {
   rusty::Cell<bool> needs_finalize_{false};
   rusty::RefCell<rusty::Function<void()>> func_{};
 
-  // Migrated from std::unique_ptr to rusty::Box with Option for nullable semantics
+  // Uses rusty::Box with Option for nullable semantics
   rusty::RefCell<rusty::Option<rusty::Box<fiber_task_t>>> fiber_task_{};
   // Non-owning pointer to the yield handle owned by fiber_task_t.
   // Cell provides interior mutability for const yield_().

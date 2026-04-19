@@ -5,7 +5,7 @@
 #include <list>
 #include <functional>
 #include <mutex>
-#include <memory>
+#include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include "misc/marshal.hpp"
 
@@ -32,7 +32,7 @@ struct QueuedRequest {
     i32 rpc_id;                        // RPC method ID
     std::chrono::steady_clock::time_point timestamp;  // When queued
     uint32_t retry_count;              // Number of retries
-    std::shared_ptr<Marshal> payload;  // Serialized request data (shared_ptr due to Marshal's NoCopy)
+    rusty::Arc<Marshal> payload;       // Serialized request data
     std::function<void(int)> callback; // Completion callback (error_code)
     uint32_t ttl_ms;                   // TTL in milliseconds
 
@@ -42,7 +42,7 @@ struct QueuedRequest {
         , rpc_id(0)
         , timestamp(std::chrono::steady_clock::now())
         , retry_count(0)
-        , payload(nullptr)
+        , payload(rusty::Arc<Marshal>::make())
         , ttl_ms(30000)
     {}
 

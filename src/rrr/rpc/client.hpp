@@ -345,8 +345,11 @@ public:
     // Factory method for Arc creation
     // @safe - Creates Future wrapped in Arc for memory safety
     static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
-        // @unsafe { rusty::Arc::make allocates and constructs; safe by construction }
-        return rusty::Arc<Future>::make(xid, attr);
+        // SAFETY: Arc::make is the only construction path; constructor is private.
+        // @unsafe
+        {
+            return rusty::Arc<Future>::make(xid, attr);
+        }
     }
 
     // @safe - Uses rusty::Mutex
@@ -386,13 +389,16 @@ public:
     // @safe - Registers a completion callback and returns true if caller should suspend.
     // Returns false when the future is already completed (ready or timed out).
     bool add_completion_callback(std::function<void()> callback) const {
-        // @unsafe { rusty::Result::unwrap on Mutex::lock result is panic-on-poison }
-        auto guard = state_.lock().unwrap();
-        if (guard->ready || guard->timed_out) {
-            return false;
+        // SAFETY: unwrap() on poisoned mutex intentionally panics, matching existing policy.
+        // @unsafe
+        {
+            auto guard = state_.lock().unwrap();
+            if (guard->ready || guard->timed_out) {
+                return false;
+            }
+            guard->completion_callbacks.push_back(std::move(callback));
+            return true;
         }
-        guard->completion_callbacks.push_back(std::move(callback));
-        return true;
     }
 
     // @safe - Returns guard for reply (Rust-idiomatic lifetime safety)
@@ -672,7 +678,7 @@ class ClientConnection {
     // Circuit breaker integrated into live request dispatch.
     mutable CircuitBreaker circuit_breaker_;
     // Lifecycle callback hooks shared with Client facade.
-    std::shared_ptr<CallbackManager> callback_manager_;
+    rusty::Arc<CallbackManager> callback_manager_;
 
     // Last activity timestamp for idle detection (milliseconds since epoch)
     // Updated on send/receive operations
@@ -1004,9 +1010,9 @@ private:
 
 public:
     // @safe - Share callback manager with facade so pre-connect registrations persist.
-    void set_callback_manager(const std::shared_ptr<CallbackManager>& callback_manager) {
-        if (callback_manager != nullptr) {
-            callback_manager_ = callback_manager;
+    void set_callback_manager(const rusty::Arc<CallbackManager>& callback_manager) {
+        if (callback_manager.is_valid()) {
+            callback_manager_ = callback_manager.clone();
         }
     }
 
@@ -1136,18 +1142,20 @@ private:
         queued.xid = fu->xid_;
         queued.rpc_id = rpc_id;
         queued.ttl_ms = buffering_config_.default_ttl_ms;
-        queued.payload = std::make_shared<Marshal>();
+        auto payload = rusty::Arc<Marshal>::make();
+        queued.payload = payload.clone();
+        auto* payload_mut = const_cast<Marshal*>(payload.get());
 
         // Serialize request to payload (including size placeholder)
-        Marshal::bookmark bmark = queued.payload->set_bookmark(sizeof(i32));
+        Marshal::bookmark bmark = payload_mut->set_bookmark(sizeof(i32));
         // @unsafe { Marshal operators }
-        *queued.payload << v64(queued.xid);
-        *queued.payload << rpc_id;
-        write_fn(*queued.payload);  // User writes arguments
+        *payload_mut << v64(queued.xid);
+        *payload_mut << rpc_id;
+        write_fn(*payload_mut);  // User writes arguments
 
         // Fill in packet size (not counting the size field itself)
-        i32 request_size = queued.payload->get_and_reset_write_cnt();
-        queued.payload->write_bookmark(bmark, request_size);
+        i32 request_size = payload_mut->get_and_reset_write_cnt();
+        payload_mut->write_bookmark(bmark, request_size);
 
         // Store future in pending map (for response handling)
         {
@@ -1466,7 +1474,7 @@ class Client {
     // Pending circuit-breaker config (applied when connection is created)
     rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_{CircuitBreakerConfig::disabled()};
     // Shared lifecycle callback manager, wired into active ClientConnection.
-    std::shared_ptr<CallbackManager> callback_manager_{std::make_shared<CallbackManager>()};
+    rusty::Arc<CallbackManager> callback_manager_{rusty::Arc<CallbackManager>::make()};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -1499,8 +1507,11 @@ public:
     // Factory method to create Client with Arc
     // @safe - Returns Arc<Client>
     static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
-        // @unsafe { rusty::Arc::make allocates and constructs; safe by construction }
-        return rusty::Arc<Client>::make(poll_thread_worker);
+        // SAFETY: Arc::make is the only construction path; constructor is private.
+        // @unsafe
+        {
+            return rusty::Arc<Client>::make(poll_thread_worker);
+        }
     }
 
     /**

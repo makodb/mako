@@ -64,7 +64,7 @@ class CallbackManager {
 private:
     // @unsafe { std::mutex for thread-safe concurrent access }
     mutable std::mutex mutex_;
-    ConnectionCallbacks callbacks_;
+    mutable ConnectionCallbacks callbacks_;
 
 public:
     // @safe - Default constructor
@@ -73,35 +73,35 @@ public:
     // === Registration Methods ===
 
     // @safe - Add callback for connection established
-    void add_on_connected(ConnectionCallback cb) {
+    void add_on_connected(ConnectionCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
         callbacks_.on_connected.push_back(std::move(cb));
     }
 
     // @safe - Add callback for connection closed/lost
-    void add_on_disconnected(ConnectionCallback cb) {
+    void add_on_disconnected(ConnectionCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
         callbacks_.on_disconnected.push_back(std::move(cb));
     }
 
     // @safe - Add callback for errors
-    void add_on_error(ErrorCallback cb) {
+    void add_on_error(ErrorCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
         callbacks_.on_error.push_back(std::move(cb));
     }
 
     // @safe - Add callback for reconnection started
-    void add_on_reconnecting(ConnectionCallback cb) {
+    void add_on_reconnecting(ConnectionCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
         callbacks_.on_reconnecting.push_back(std::move(cb));
     }
 
     // @safe - Add callback for reconnection completed
-    void add_on_reconnected(ReconnectCallback cb) {
+    void add_on_reconnected(ReconnectCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
         callbacks_.on_reconnected.push_back(std::move(cb));
@@ -110,7 +110,7 @@ public:
     // === Invocation Methods ===
 
     // @safe - Invoke all on_connected callbacks
-    void invoke_on_connected() {
+    void invoke_on_connected() const {
         std::vector<ConnectionCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
@@ -123,7 +123,7 @@ public:
     }
 
     // @safe - Invoke all on_disconnected callbacks
-    void invoke_on_disconnected() {
+    void invoke_on_disconnected() const {
         std::vector<ConnectionCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
@@ -136,7 +136,7 @@ public:
     }
 
     // @safe - Invoke all on_error callbacks
-    void invoke_on_error(RpcError error, const std::string& message = "") {
+    void invoke_on_error(RpcError error, const std::string& message = "") const {
         std::vector<ErrorCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
@@ -149,7 +149,7 @@ public:
     }
 
     // @safe - Invoke all on_reconnecting callbacks
-    void invoke_on_reconnecting() {
+    void invoke_on_reconnecting() const {
         std::vector<ConnectionCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
@@ -162,7 +162,7 @@ public:
     }
 
     // @safe - Invoke all on_reconnected callbacks
-    void invoke_on_reconnected(bool success) {
+    void invoke_on_reconnected(bool success) const {
         std::vector<ReconnectCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
@@ -177,7 +177,7 @@ public:
     // === Utility Methods ===
 
     // @safe - Clear all registered callbacks
-    void clear_all() {
+    void clear_all() const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
         callbacks_.clear();
@@ -229,7 +229,7 @@ public:
 private:
     // @safe - Invoke callback with exception safety
     template<typename Callback, typename... Args>
-    void invoke_safely(const Callback& cb, Args&&... args) {
+    void invoke_safely(const Callback& cb, Args&&... args) const {
         // @unsafe { exception handling is not borrow-checked }
         try {
             cb(std::forward<Args>(args)...);

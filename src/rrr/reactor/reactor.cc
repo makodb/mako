@@ -679,13 +679,13 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
   verify(std::this_thread::get_id() == thread_id_.get());
   constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
   struct EarlyWakeState {
-    const Reactor* reactor = nullptr;
-    std::atomic<size_t> idx{kUnregisteredSlot};
-    std::atomic<bool> pending_wake{false};
+    explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
+    const Reactor* reactor;
+    mutable std::atomic<size_t> idx{kUnregisteredSlot};
+    mutable std::atomic<bool> pending_wake{false};
   };
 
-  auto early_wake = std::make_shared<EarlyWakeState>();
-  early_wake->reactor = this;
+  auto early_wake = make_arc<EarlyWakeState>(this);
 
   rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
     size_t idx = early_wake->idx.load(std::memory_order_acquire);
@@ -702,14 +702,14 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
   }
 
   struct TaskState {
-    rusty::Task<void> task;
-    std::shared_ptr<EarlyWakeState> early_wake;
+    mutable rusty::Task<void> task;
+    rusty::Arc<EarlyWakeState> early_wake;
 
-    TaskState(rusty::Task<void> t, std::shared_ptr<EarlyWakeState> ew)
+    TaskState(rusty::Task<void> t, rusty::Arc<EarlyWakeState> ew)
         : task(std::move(t)), early_wake(std::move(ew)) {}
   };
 
-  auto state = std::make_shared<TaskState>(std::move(task), std::move(early_wake));
+  auto state = make_arc<TaskState>(std::move(task), std::move(early_wake));
   auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
     auto poll_result = state->task.poll(ctx);
     if (poll_result.is_ready()) {

@@ -12,7 +12,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <pthread.h>
-#include <memory>
 #include <atomic>
 #include <chrono>
 #include <concepts>
@@ -141,18 +140,20 @@ using ShutdownHook = std::function<void()>;
  */
 // @safe - RAII guard for one in-flight request.
 struct PendingRequestGuard {
-    std::shared_ptr<std::atomic<int>> pending_counter;
+    rusty::Arc<std::atomic<int>> pending_counter;
 
-    explicit PendingRequestGuard(std::shared_ptr<std::atomic<int>> counter)
+    explicit PendingRequestGuard(rusty::Arc<std::atomic<int>> counter)
         : pending_counter(std::move(counter)) {
-        if (pending_counter) {
-            pending_counter->fetch_add(1, std::memory_order_relaxed);
+        if (pending_counter.is_valid()) {
+            auto* counter_ptr = const_cast<std::atomic<int>*>(pending_counter.get());
+            counter_ptr->fetch_add(1, std::memory_order_relaxed);
         }
     }
 
     ~PendingRequestGuard() {
-        if (pending_counter) {
-            pending_counter->fetch_sub(1, std::memory_order_relaxed);
+        if (pending_counter.is_valid()) {
+            auto* counter_ptr = const_cast<std::atomic<int>*>(pending_counter.get());
+            counter_ptr->fetch_sub(1, std::memory_order_relaxed);
         }
     }
 
@@ -166,12 +167,12 @@ struct PendingRequestGuard {
 struct Request {
     Marshal m;
     i64 xid;
-    std::unique_ptr<PendingRequestGuard> pending_guard;
+    rusty::Option<rusty::Box<PendingRequestGuard>> pending_guard{rusty::None};
 
     // @safe - Attach request-lifetime pending counter guard once.
-    void attach_pending_guard(const std::shared_ptr<std::atomic<int>>& counter) {
-        if (pending_guard == nullptr && counter != nullptr) {
-            pending_guard = std::make_unique<PendingRequestGuard>(counter);
+    void attach_pending_guard(const rusty::Arc<std::atomic<int>>& counter) {
+        if (pending_guard.is_none() && counter.is_valid()) {
+            pending_guard = rusty::Some(rusty::make_box<PendingRequestGuard>(counter.clone()));
         }
     }
 };
@@ -289,9 +290,9 @@ struct RpcServiceContext {
     // Server address for logging (immutable after setup)
     const std::string addr;
     // Shared in-flight request counter for dispatch-lifetime tracking.
-    const std::shared_ptr<std::atomic<int>> pending_requests;
+    const rusty::Arc<std::atomic<int>> pending_requests;
     // Test/runtime toggle to intentionally drop heartbeat probe replies.
-    const std::shared_ptr<std::atomic<bool>> drop_heartbeat_replies;
+    const rusty::Arc<std::atomic<bool>> drop_heartbeat_replies;
     // Stable server instance ID for restart detection in response headers.
     const uint64_t server_instance_id;
 
@@ -300,8 +301,8 @@ struct RpcServiceContext {
                       std::unordered_set<i32> fast_rpc_set,
                       rusty::Vec<rusty::RefCell<ServiceProxy>> svcs,
                       std::string address,
-                      std::shared_ptr<std::atomic<int>> pending_counter,
-                      std::shared_ptr<std::atomic<bool>> drop_heartbeats,
+                      rusty::Arc<std::atomic<int>> pending_counter,
+                      rusty::Arc<std::atomic<bool>> drop_heartbeats,
                       uint64_t instance_id)
         : rpc_to_service(std::move(rpc_map))
         , fast_rpc_ids(std::move(fast_rpc_set))
@@ -641,9 +642,9 @@ class Server: public NoCopy {
     // Graceful shutdown support
     rusty::Cell<ShutdownPhase> shutdown_phase_{ShutdownPhase::RUNNING};
     SpinMutex<std::vector<ShutdownHook>> shutdown_hooks_;
-    std::shared_ptr<std::atomic<int>> pending_requests_{std::make_shared<std::atomic<int>>(0)};
-    std::shared_ptr<std::atomic<bool>> drop_heartbeat_replies_{
-        std::make_shared<std::atomic<bool>>(false)};
+    rusty::Arc<std::atomic<int>> pending_requests_{rusty::Arc<std::atomic<int>>::make(0)};
+    rusty::Arc<std::atomic<bool>> drop_heartbeat_replies_{
+        rusty::Arc<std::atomic<bool>>::make(false)};
 
     // Server restart detection: unique instance ID generated on startup
     // Used by clients to detect server restarts (ID changes after restart)
@@ -704,8 +705,8 @@ public:
      *         out << reply_content;
      *     });
      *
-     *     // cleanup resource - automatic via unique_ptr
-     *     // No need to release, shared_ptr handles connection
+     *     // cleanup resource - automatic via rusty::Box/rusty::Arc ownership
+     *     // No manual release needed
      *  }
      */
     // @safe - Registers an RPC ID to be handled by the service at svc_index
@@ -802,7 +803,8 @@ public:
      */
     // @unsafe - Uses std::atomic::fetch_add
     void increment_pending() {
-        pending_requests_->fetch_add(1, std::memory_order_relaxed);  // @unsafe
+        auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
+        pending_ptr->fetch_add(1, std::memory_order_relaxed);  // @unsafe
     }
 
     /**
@@ -810,13 +812,17 @@ public:
      */
     // @unsafe - Uses std::atomic::fetch_sub
     void decrement_pending() {
-        pending_requests_->fetch_sub(1, std::memory_order_relaxed);  // @unsafe
+        auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
+        pending_ptr->fetch_sub(1, std::memory_order_relaxed);  // @unsafe
     }
 
     // @safe - Toggle dropping of internal heartbeat probe replies.
     void set_drop_heartbeat_replies(bool drop) {
         // @unsafe - std::atomic::store is currently modeled as non-safe.
-        { drop_heartbeat_replies_->store(drop, std::memory_order_release); }
+        {
+            auto* drop_ptr = const_cast<std::atomic<bool>*>(drop_heartbeat_replies_.get());
+            drop_ptr->store(drop, std::memory_order_release);
+        }
     }
 
     // @safe - Read drop-heartbeat toggle.

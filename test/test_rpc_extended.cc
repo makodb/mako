@@ -150,8 +150,8 @@ rusty::Arc<RpcServiceContext> make_test_rpc_context() {
         std::move(fast_rpc_ids),
         std::move(services),
         "127.0.0.1:0",
-        std::make_shared<std::atomic<int>>(0),
-        std::make_shared<std::atomic<bool>>(false),
+        rusty::Arc<std::atomic<int>>::make(0),
+        rusty::Arc<std::atomic<bool>>::make(false),
         1);
 }
 

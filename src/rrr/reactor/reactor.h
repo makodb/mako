@@ -63,12 +63,12 @@
 //   std::*::push_back: [unsafe, (auto) -> void]
 //   std::*::insert_or_assign: [unsafe, (auto...) -> auto]
 //   std::*::operator[]: [unsafe, (auto) -> auto&]
-//   std::make_shared: [unsafe, (auto...) -> std::shared_ptr<auto>]
-//   std::shared_ptr::operator*: [unsafe, () -> auto&]
-//   std::shared_ptr::operator->: [unsafe, () -> auto*]
-//   std::shared_ptr::get: [unsafe, () -> auto*]
-//   std::shared_ptr::operator=: [unsafe, (const std::shared_ptr<auto>&) -> std::shared_ptr<auto>&]
-//   std::shared_ptr::shared_ptr: [unsafe, (auto...) -> void]
+//   rusty::Arc::make: [unsafe, (auto...) -> rusty::Arc<auto>]
+//   rusty::Arc::operator*: [unsafe, () -> auto&]
+//   rusty::Arc::operator->: [unsafe, () -> auto*]
+//   rusty::Arc::get: [unsafe, () -> auto*]
+//   rusty::Arc::operator=: [unsafe, (const rusty::Arc<auto>&) -> rusty::Arc<auto>&]
+//   rusty::Arc::Arc: [unsafe, (auto...) -> void]
 //   std::visit: [unsafe, (auto...) -> auto]
 //   visit: [unsafe, (auto...) -> auto]
 //   std::move: [unsafe, (auto) -> auto]
@@ -95,9 +95,6 @@
 // }
 
 namespace rrr {
-
-using std::make_unique;
-using std::make_shared;
 
 // Note: Fiber is the primary class (defined in fiber_impl.h)
 // The full definition is available via #include "fiber_impl.h" above
@@ -246,6 +243,13 @@ class Reactor {
   // Returns true if at least one stackless task was polled.
   bool process_stackless_tasks() const;
 
+  // @safe - Arc::make wrapper with localized unsafe allocation boundary.
+  template <typename U, typename... Args>
+  static rusty::Arc<U> make_arc(Args&&... args) {
+    // @unsafe
+    { return rusty::Arc<U>::make(std::forward<Args>(args)...); }
+  }
+
  public:
   // @safe - Main event loop
   void loop(bool infinite = false, bool do_check_timeout = true) const;
@@ -260,14 +264,14 @@ class Reactor {
   void spawn_stackless_task_with_result(rusty::Task<T> task, OnReady on_ready) const {
     constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
     struct EarlyWakeState {
-      const Reactor* reactor = nullptr;
-      std::atomic<size_t> idx{kUnregisteredSlot};
-      std::atomic<bool> pending_wake{false};
+      explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
+      const Reactor* reactor;
+      mutable std::atomic<size_t> idx{kUnregisteredSlot};
+      mutable std::atomic<bool> pending_wake{false};
     };
 
-    // @unsafe { std::make_shared + raw `this` pointer capture for early-wake state }
-    auto early_wake = std::make_shared<EarlyWakeState>();
-    early_wake->reactor = this;
+    // SAFETY: shared state is heap-owned; reactor outlives callback execution.
+    auto early_wake = make_arc<EarlyWakeState>(this);
 
     rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
       size_t idx = early_wake->idx.load(std::memory_order_acquire);
@@ -285,16 +289,16 @@ class Reactor {
     }
 
     struct TaskState {
-      rusty::Task<T> task;
-      std::optional<OnReady> on_ready;
-      std::shared_ptr<EarlyWakeState> early_wake;
+      mutable rusty::Task<T> task;
+      mutable std::optional<OnReady> on_ready;
+      rusty::Arc<EarlyWakeState> early_wake;
 
-      TaskState(rusty::Task<T> t, OnReady cb, std::shared_ptr<EarlyWakeState> ew)
+      TaskState(rusty::Task<T> t, OnReady cb, rusty::Arc<EarlyWakeState> ew)
           : task(std::move(t)), on_ready(std::move(cb)), early_wake(std::move(ew)) {}
     };
 
-    // @unsafe { std::make_shared allocates and type-erases the task state }
-    auto state = std::make_shared<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
+    // SAFETY: TaskState is only accessed through the Arc captured by the poller.
+    auto state = make_arc<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
     auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
       auto poll_result = state->task.poll(ctx);
       if (!poll_result.is_ready()) {

@@ -124,7 +124,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
       state_machine_(),
       heartbeat_manager_(HeartbeatConfig::disabled()),
       circuit_breaker_(CircuitBreakerConfig::disabled()),
-      callback_manager_(std::make_shared<CallbackManager>()),
+      callback_manager_(rusty::Arc<CallbackManager>::make()),
       pending_queue_(buffering_config_.to_queue_config()) {
 }
 
@@ -621,11 +621,12 @@ size_t ClientConnection::replay_pending_requests() {
     }
 
     // Copy payload to output buffer
-    if (req.payload && req.payload->content_size() > 0) {
-      size_t payload_size = req.payload->content_size();
+    auto* payload = const_cast<Marshal*>(req.payload.get());
+    if (payload->content_size() > 0) {
+      size_t payload_size = payload->content_size();
       std::string payload_bytes;
       payload_bytes.resize(payload_size);
-      verify(req.payload->read(payload_bytes.data(), payload_size) == payload_size);
+      verify(payload->read(payload_bytes.data(), payload_size) == payload_size);
 
       auto guard = out_.lock().unwrap();
       verify(guard->write(payload_bytes.data(), payload_size) == payload_size);
