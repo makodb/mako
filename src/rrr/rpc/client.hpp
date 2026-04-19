@@ -344,8 +344,8 @@ public:
 
     // Factory method for Arc creation
     // @safe - Creates Future wrapped in Arc for memory safety
-    // Arc::make is safe - it just allocates and constructs
     static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
+        // @unsafe { rusty::Arc::make allocates and constructs; safe by construction }
         return rusty::Arc<Future>::make(xid, attr);
     }
 
@@ -386,6 +386,7 @@ public:
     // @safe - Registers a completion callback and returns true if caller should suspend.
     // Returns false when the future is already completed (ready or timed out).
     bool add_completion_callback(std::function<void()> callback) const {
+        // @unsafe { rusty::Result::unwrap on Mutex::lock result is panic-on-poison }
         auto guard = state_.lock().unwrap();
         if (guard->ready || guard->timed_out) {
             return false;
@@ -1497,8 +1498,8 @@ public:
 
     // Factory method to create Client with Arc
     // @safe - Returns Arc<Client>
-    // Arc::make is safe - it just allocates and constructs
     static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
+        // @unsafe { rusty::Arc::make allocates and constructs; safe by construction }
         return rusty::Arc<Client>::make(poll_thread_worker);
     }
 
