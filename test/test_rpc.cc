@@ -615,11 +615,17 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
         handles.push_back(std::move(handle));
     }
 
-    // Join all threads and collect results
+    // Join all threads and collect results.
+    // JoinHandle::join() returns rusty::Result<T, std::exception_ptr> so the
+    // caller can observe thread-level exceptions instead of having them
+    // propagate across thread boundaries.
     int total_successes = 0;
     int total_failures = 0;
     for (auto& handle : handles) {
-        auto [successes, failures] = handle.join();
+        auto join_result = handle.join();
+        ASSERT_TRUE(join_result.is_ok())
+            << "worker thread exited with an exception";
+        auto [successes, failures] = join_result.unwrap();
         total_successes += successes;
         total_failures += failures;
     }
