@@ -882,7 +882,7 @@ void RaftServer::Setup() {
              site_id_, partition_id_, async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
-    rrr::RecoveryConfig config;
+    raft::RecoveryConfig config;
     std::string base_path = "/tmp";
     const char* custom_path = std::getenv("MAKO_RAFT_PERSISTENCE_PATH");
     if (custom_path && custom_path[0] != '\0') {
@@ -892,7 +892,7 @@ void RaftServer::Setup() {
                          "_partition_" + std::to_string(partition_id_);
 
     // Create RecoveryManager and storage
-    rrr::RecoveryManager manager(config);
+    raft::RecoveryManager manager(config);
     auto storage = manager.create_storage();
 
     if (!storage) {
@@ -902,7 +902,7 @@ void RaftServer::Setup() {
       auto result = manager.recover(
         [this](std::shared_ptr<janus::raft::LogStorage> s) { SetLogStorage(s); },
         [this]() { return RecoverFromStorage(); },
-        [this](rrr::RecoveryResult& r) {
+        [this](raft::RecoveryResult& r) {
           r.recovered_term = currentTerm;
           r.recovered_entries = raft_logs_.size();
         }

@@ -9,7 +9,7 @@
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
 #include "log_storage.hpp"
-#include "rpc/recovery_manager.hpp"
+#include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
 
 // @external: {

@@ -7,7 +7,7 @@
 #include "communicator.h"
 #include "raft/server.h"
 #include "paxos/server.h"
-#include "rrr/rpc/recovery_manager.hpp"
+#include "raft/recovery_manager.hpp"
 
 #include <gperftools/profiler.h>
 
@@ -399,10 +399,10 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
   }
 
   // Create recovery config for this replica
-  rrr::RecoveryConfig config = rrr::RecoveryConfig::for_replica(partition_id, locale_id);
+  raft::RecoveryConfig config = raft::RecoveryConfig::for_replica(partition_id, locale_id);
 
   // Create recovery manager
-  rrr::RecoveryManager recovery_manager(config);
+  raft::RecoveryManager recovery_manager(config);
 
   // Create storage backend
   auto storage = recovery_manager.create_storage();
@@ -420,7 +420,7 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
         [raft_server]() {
           return raft_server->RecoverFromStorage();
         },
-        [&storage](rrr::RecoveryResult& r) {
+        [&storage](raft::RecoveryResult& r) {
           auto term_opt = storage->get_metadata("currentTerm");
           if (term_opt.is_some()) {
             r.recovered_term = std::stoull(term_opt.unwrap());
@@ -447,7 +447,7 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
         [paxos_server]() {
           return paxos_server->RecoverFromStorage();
         },
-        [&storage](rrr::RecoveryResult& r) {
+        [&storage](raft::RecoveryResult& r) {
           auto epoch_opt = storage->get_metadata("cur_epoch");
           if (epoch_opt.is_some()) {
             r.recovered_epoch = std::stoull(epoch_opt.unwrap());

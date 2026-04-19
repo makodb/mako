@@ -20,16 +20,12 @@
 
 #include <rusty/cell.hpp>
 
-#include "deptran/raft/log_storage.hpp"
-#include "deptran/raft/rocksdb_log_storage.hpp"
+#include "log_storage.hpp"
+#include "rocksdb_log_storage.hpp"
 #include "base/misc.hpp"  // For Log_info, Log_error
 
-namespace rrr {
-
-// The log storage types moved to the janus::raft:: namespace; alias them here
-// so RecoveryManager can keep its previous unqualified references.
-using ::janus::raft::LogStorage;
-using ::janus::raft::RocksDBLogStorage;
+namespace janus {
+namespace raft {
 
 /**
  * Mode of operation for recovery.
@@ -269,4 +265,5 @@ class RecoveryManager {
   rusty::Cell<RecoveryMode> detected_mode_;
 };
 
-}  // namespace rrr
+}  // namespace raft
+}  // namespace janus
