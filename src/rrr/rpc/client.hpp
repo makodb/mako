@@ -10,7 +10,6 @@ module;
 export module rrr:rpc.client;
 
 import <chrono>;
-import <thread>;
 import <atomic>;
 import <coroutine>;
 import <type_traits>;
@@ -1357,7 +1356,7 @@ public:
                             return;
                         }
                     }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(backoff_delay_ms));
+                    rusty::thread::sleep(std::chrono::milliseconds(backoff_delay_ms));
                 }
 
                 retry_count++;

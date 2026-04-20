@@ -18,7 +18,6 @@ module;
 
 module rrr:impl.rpc.client;
 
-import <thread>;
 import <atomic>;
 import <coroutine>;
 import <type_traits>;
@@ -397,7 +396,7 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
       if (state_machine_.is_connected()) {
         return 0;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      rusty::thread::sleep(std::chrono::milliseconds(5));
     }
 
     if (state_machine_.is_connected()) {
@@ -505,7 +504,7 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
 
     uint32_t delay_ms = calc.next_delay_ms();
     if (delay_ms > 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+      rusty::thread::sleep(std::chrono::milliseconds(delay_ms));
     }
 
     if (reconnect_abort_.load(std::memory_order_acquire)) {
