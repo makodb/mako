@@ -225,15 +225,20 @@ start_replicas() {
     local learner_log="$5"
 
     export MAKO_BATCH_SIZE=$BATCH_SIZE
+    # Bump dbtest's replicated-startup watchdog (default 120s). The bottleneck
+    # at high warehouse counts is TPC-C data loading replicated through Paxos
+    # consensus (every insert hits all 4 replicas). 16w needs >10min, 24w more.
+    export MAKO_STARTUP_TIMEOUT_SEC=${MAKO_STARTUP_TIMEOUT_SEC:-1800}
 
     case "$BACKEND" in
         paxos)
+            # 3-replica Paxos (leader + p1 + p2). Learner removed: config/1leader_2followers/
+            # generator.py no longer emits it, and ForwardToLearner in paxos_worker.cc:127
+            # finds no role==2 peer so it short-circuits.
             nohup bash bash/shard.sh 1 0 "$trd" localhost 0 1 paxos > "$leader_log" 2>&1 &
             nohup bash bash/shard.sh 1 0 "$trd" p2 0 1 paxos > "$follower_p2_log" 2>&1 &
             sleep 1
             nohup bash bash/shard.sh 1 0 "$trd" p1 0 1 paxos > "$follower_p1_log" 2>&1 &
-            sleep 1
-            nohup bash bash/shard.sh 1 0 "$trd" learner 0 1 paxos > "$learner_log" 2>&1 &
             ;;
         raft-single|raft-multi)
             nohup bash bash/shard_raft.sh 1 0 "$trd" localhost 0 1 > "$leader_log" 2>&1 &
@@ -244,6 +249,7 @@ start_replicas() {
     esac
 
     unset MAKO_BATCH_SIZE
+    unset MAKO_STARTUP_TIMEOUT_SEC
 }
 
 # ============================================================
@@ -263,7 +269,7 @@ echo "============================================================"
 echo ""
 
 # CSV header
-echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,exit_code" > "$CSV_FILE"
+echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,exit_code" > "$CSV_FILE"
 
 # Accumulate per-thread-count means for final summary
 declare -A thread_throughputs  # thread_count -> space-separated throughputs
@@ -277,10 +283,16 @@ for trd in $THREADS; do
         echo "  --- Run $run / $NUM_RUNS (threads=$trd) ---"
 
         # Cleanup
-        pkill -9 -f "build/dbtest" 2>/dev/null || true
+        # NOTE: `-x dbtest` matches process COMM exactly, avoiding the self-kill
+        # bug where `-f "build/dbtest"` kills the sweep shell itself (because the
+        # shell's command line contains that literal string as an argument).
+        pkill -9 -x dbtest 2>/dev/null || true
         USERNAME=${USER:-unknown}
         rm -rf /tmp/${USERNAME}_mako_rocksdb_shard* 2>/dev/null
-        sleep 5
+        # Inter-run pause. Default 90s lets the kernel drain TIME_WAIT on the
+        # Paxos/Raft site ports (default TIME_WAIT is 60s). Too short and the
+        # next run deadlocks on bind(). Override with INTER_RUN_SLEEP=N.
+        sleep "${INTER_RUN_SLEEP:-90}"
 
         # Log file paths
         leader_log="${LOGS_DIR}/t${trd}_run${run}_leader.log"
@@ -298,12 +310,23 @@ for trd in $THREADS; do
         sleep 2
 
         # Poll for completion (timeout: 180s for high thread counts)
-        max_wait=180
+        # Allow plenty of headroom: replicated startup at high warehouse counts
+        # can take 10-20 minutes (every TPC-C load insert goes through Paxos
+        # consensus across 4 replicas). Early-exit pgrep below catches crashes
+        # quickly so this big number only matters for genuinely-slow startups.
+        max_wait=2400
         wait_count=0
         while [ $wait_count -lt $max_wait ]; do
             if [ -f "$leader_log" ] && grep -q "agg_persist_throughput" "$leader_log" 2>/dev/null; then
                 echo "    Benchmark completed after ${wait_count}s"
                 sleep 2
+                break
+            fi
+            # Early-exit detection: if no dbtest processes are running, the
+            # replicas have crashed/exited. Stop polling immediately.
+            if [ $wait_count -gt 10 ] && ! pgrep -x dbtest >/dev/null 2>&1; then
+                echo "    All dbtest processes exited at ${wait_count}s — aborting wait."
+                grep -lE "Aborted|verify failed|timed out" "$leader_log" "$follower_p1_log" "$follower_p2_log" "$learner_log" 2>/dev/null | sed 's/^/      crash signature in: /'
                 break
             fi
             sleep 1
@@ -322,10 +345,10 @@ for trd in $THREADS; do
         # Stop CPU monitoring
         stop_cpu_monitor
 
-        # Graceful shutdown
-        pkill -TERM -f "dbtest" 2>/dev/null || true
+        # Graceful shutdown (use -x to avoid self-kill)
+        pkill -TERM -x dbtest 2>/dev/null || true
         sleep 3
-        pkill -9 -f "build/dbtest" 2>/dev/null || true
+        pkill -9 -x dbtest 2>/dev/null || true
         sleep 1
 
         # Extract metrics
@@ -357,16 +380,59 @@ for trd in $THREADS; do
         fi
 
         # Active threads from per-thread monitor (threads using >5% CPU)
+        worker_mean_cpu=""
+        worker_peak_cpu=""
         if [ -f "$thread_cpu_log" ]; then
             active_threads=$(awk '!/^#/ && NF>=3 { sum += $3; n++ } END { if (n>0) printf "%.0f", sum/n }' "$thread_cpu_log")
+
+            # Worker-thread utilisation: per sample, sort all thread CPU% values,
+            # take the top-N (where N = worker-thread count = $trd). Average
+            # across samples = "how busy was the typical worker". Peak = hottest
+            # worker seen. This distinguishes "workers pegged at 100%" (real
+            # scaling) from "workers idle waiting on replication" (bottleneck).
+            worker_mean_cpu=$(awk -v N="$trd" '
+                !/^#/ && NF >= 4 {
+                    nvals = 0
+                    for (i = 4; i <= NF; i++) {
+                        v = $i
+                        gsub(/.*:/, "", v)
+                        gsub(/%/, "", v)
+                        pcts[nvals++] = v + 0
+                    }
+                    # simple insertion sort descending (nvals usually < 200)
+                    for (i = 1; i < nvals; i++) {
+                        key = pcts[i]; j = i - 1
+                        while (j >= 0 && pcts[j] < key) { pcts[j+1] = pcts[j]; j-- }
+                        pcts[j+1] = key
+                    }
+                    limit = (nvals < N) ? nvals : N
+                    s = 0
+                    for (i = 0; i < limit; i++) s += pcts[i]
+                    if (limit > 0) { total += s / limit; samples++ }
+                }
+                END { if (samples > 0) printf "%.1f", total / samples }
+            ' "$thread_cpu_log")
+
+            worker_peak_cpu=$(awk '
+                !/^#/ && NF >= 4 {
+                    for (i = 4; i <= NF; i++) {
+                        v = $i
+                        gsub(/.*:/, "", v)
+                        gsub(/%/, "", v)
+                        if (v + 0 > max) max = v + 0
+                    }
+                }
+                END { if (max > 0) printf "%.1f", max }
+            ' "$thread_cpu_log")
         fi
 
         # Display
-        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | ActiveThreads: %s\n" \
-            "${throughput:-N/A}" "${avg_cpu:-N/A}" "${avg_latency:-N/A}" "${active_threads:-N/A}"
+        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | Workers: mean=%s%% peak=%s%%\n" \
+            "${throughput:-N/A}" "${avg_cpu:-N/A}" "${avg_latency:-N/A}" \
+            "${worker_mean_cpu:-N/A}" "${worker_peak_cpu:-N/A}"
 
         # CSV row
-        echo "${trd},${run},${throughput},${per_core_throughput},${avg_cpu},${peak_cpu},${avg_latency},${avg_persist_latency},${abort_rate},${replay_p1},${replay_p2},${active_threads},${exit_code}" >> "$CSV_FILE"
+        echo "${trd},${run},${throughput},${per_core_throughput},${avg_cpu},${peak_cpu},${avg_latency},${avg_persist_latency},${abort_rate},${replay_p1},${replay_p2},${active_threads},${worker_mean_cpu},${worker_peak_cpu},${exit_code}" >> "$CSV_FILE"
 
         # Accumulate for summary
         if [ -n "$throughput" ]; then
@@ -374,7 +440,7 @@ for trd in $THREADS; do
         fi
 
         # Cleanup between runs
-        pkill -9 -f "build/dbtest" 2>/dev/null || true
+        pkill -9 -x dbtest 2>/dev/null || true
         sleep 3
     done
     echo ""
@@ -392,7 +458,7 @@ echo "  Date:           $(date)"
 echo "  Backend:        $BACKEND"
 echo "  Configuration:  1 shard, TPC-C, batch_size=$BATCH_SIZE"
 case "$BACKEND" in
-    paxos)       echo "  Replication:    Multi-Paxos (4 replicas: 3 voters + 1 learner)" ;;
+    paxos)       echo "  Replication:    Multi-Paxos (3 replicas: leader + 2 followers, no learner)" ;;
     raft-single) echo "  Replication:    Raft single-instance (3 replicas, 1 Raft group for all partitions)" ;;
     raft-multi)  echo "  Replication:    Raft multi-instance (3 replicas, 1 Raft group per partition)" ;;
 esac
@@ -496,3 +562,17 @@ echo "  Thread CPU logs:  ${LOGS_DIR}/t*_run*_cpu_threads.log"
 echo ""
 echo "Done. Summary saved to: $SUMMARY_FILE"
 echo "CSV data saved to:      $CSV_FILE"
+
+# Auto-generate throughput plot
+case "$BACKEND" in
+    paxos)       PLOT_TITLE="Mako Paxos Scalability: Throughput vs Threads" ;;
+    raft-single) PLOT_TITLE="Mako Single-Raft Scalability: Throughput vs Threads" ;;
+    raft-multi)  PLOT_TITLE="Mako Multi-Raft Scalability: Throughput vs Threads" ;;
+    *)           PLOT_TITLE="Mako $BACKEND Scalability: Throughput vs Threads" ;;
+esac
+PLOT_FILE="${RESULTS_DIR}/throughput_vs_threads.png"
+python3 "${SCRIPT_DIR}/scripts/plot_no_replication_throughput.py" \
+    "$CSV_FILE" \
+    --title "$PLOT_TITLE" \
+    -o "$PLOT_FILE" 2>&1 | sed 's/^/  /' || echo "  (plot generation failed)"
+echo "Plot:                   $PLOT_FILE"

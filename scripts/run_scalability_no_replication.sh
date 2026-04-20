@@ -450,3 +450,11 @@ echo "  Thread CPU logs:  ${LOGS_DIR}/t*_run*_cpu_threads.log"
 echo ""
 echo "Done. Summary saved to: $SUMMARY_FILE"
 echo "CSV data saved to:      $CSV_FILE"
+
+# Auto-generate throughput plot
+PLOT_FILE="${RESULTS_DIR}/throughput_vs_threads.png"
+python3 "${SCRIPT_DIR}/scripts/plot_no_replication_throughput.py" \
+    "$CSV_FILE" \
+    --title "Mako Single-Shard, No Replication: Throughput vs Threads" \
+    -o "$PLOT_FILE" 2>&1 | sed 's/^/  /' || echo "  (plot generation failed)"
+echo "Plot:                   $PLOT_FILE"

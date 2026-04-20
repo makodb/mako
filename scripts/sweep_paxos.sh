@@ -38,7 +38,13 @@ echo "============================================================"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo ">>> Building Paxos binary..."
-    make clean && make -j32
+    # Use cmake directly with --target dbtest to skip the third-party eRPC demo
+    # binaries (hello_world, latency). Those have an intermittent LTO "Bus
+    # error" under -j32 on this toolchain and failing them aborts the whole
+    # make target. -j16 is a further safety against transient LTO flakes.
+    rm -rf build
+    cmake -S . -B build -DMAKO_USE_RAFT=OFF
+    cmake --build build --target dbtest --parallel 16
 fi
 
 bash scripts/run_scalability_sweep.sh \

@@ -38,7 +38,9 @@ echo "============================================================"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo ">>> Building Single-Raft binary..."
-    make clean && make mako-raft-single -j32
+    rm -rf build
+    cmake -S . -B build -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=ON
+    cmake --build build --target dbtest --parallel 16
 fi
 
 bash scripts/run_scalability_sweep.sh \

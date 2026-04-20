@@ -3,6 +3,7 @@ config={
     # each line is one shard
     # Using 45xxx+ ports to avoid conflicts with other users' processes on the shared server
     # (17xxx-26xxx previously conflicted with other users' long-running processes)
+    # 4th column (401-series) retained for port stability but no longer emitted as a site.
     "base_0": [(101, 45001),(201, 45101),(301, 45201),(401, 45301)],
     "base_1": [(101, 46001),(201, 46101),(301, 46201),(401, 46301)],
     "base_2": [(101, 47001),(201, 47101),(301, 47201),(401, 47301)],
@@ -14,6 +15,10 @@ config={
     "base_8": [(101, 53001),(201, 53101),(301, 53201),(401, 53301)],
     "base_9": [(101, 54001),(201, 54101),(301, 54201),(401, 54301)],
 }
+# Skip the learner entry (4th entry) everywhere: no learner process is launched,
+# so its presence in the YAML caused the leader to keep retrying ForwardToLearner.
+SKIP_CLUSTERS = ["localhost","p1","p2","learner"]
+EMIT_CLUSTERS = ["localhost","p1","p2"]
 nshards=10
 with open('../../bash/n_partitions', 'r') as file:
     file_contents = file.read()
@@ -37,33 +42,32 @@ def generate_shard(shardIdx):
         content = ""
         for line in open(template, "r").readlines():
             skip=False
-            for p in ["localhost","p1","p2","learner"]:
+            for p in SKIP_CLUSTERS:
                 if p in line:
                     skip=True
-            
+
             if not skip:
                 content += line
             if "server:" in line:
                 servers = ""
-                for i in range(w_id): 
-                    servers += '    - ["s{n0}:{p0}", "s{n1}:{p1}", "s{n2}:{p2}", "s{n3}:{p3}"]\n'.format(
+                for i in range(w_id):
+                    # 3-replica Paxos group (leader, p1, p2). No learner column.
+                    servers += '    - ["s{n0}:{p0}", "s{n1}:{p1}", "s{n2}:{p2}"]\n'.format(
                         n0=base[0][0]+i, p0=base[0][1]+i,
                         n1=base[1][0]+i, p1=base[1][1]+i,
                         n2=base[2][0]+i, p2=base[2][1]+i,
-                        n3=base[3][0]+i, p3=base[3][1]+i,
                     )
-                content += servers    
-            
+                content += servers
+
             if "process:" in line:
                 processes = ""
                 for i in range(w_id):
                     processes += "  s{n0}: localhost\n".format(n0=base[0][0]+i)
                     processes += "  s{n1}: p1\n".format(n1=base[1][0]+i)
                     processes += "  s{n2}: p2\n".format(n2=base[2][0]+i)
-                    processes += "  s{n3}: learner\n".format(n3=base[3][0]+i)
                 content += processes
 
-            for p in ["localhost","p1","p2","learner"]:
+            for p in EMIT_CLUSTERS:
                 if p in line:
                     line = line.replace("127.0.0.1", map_ip[shardIdx][p])
                     content += line

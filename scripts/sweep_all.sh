@@ -10,12 +10,15 @@
 #   bash scripts/sweep_all.sh --backends "paxos raft-single"   # subset
 #   bash scripts/sweep_all.sh --skip-build                     # reuse existing binaries
 
-set -e
+# NOTE: No `set -e`. Overnight sweeps must keep running when a single backend
+# fails — otherwise 5 hours of data gets discarded because one t24 run hung.
+# Per-backend failures are tracked and reported at the end.
+set -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-THREADS="1 2 4 8 16 24"
+THREADS="1 2 4 6 8 12 16 20 24"
 RUNS=3
 BATCH_SIZE=400
 BACKENDS="paxos raft-multi raft-single"
@@ -36,9 +39,14 @@ done
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 COMBINED_DIR="${REPO_ROOT}/results/benchmarks/combined/sweep_all_${TIMESTAMP}"
 COMPARISON_FILE="${COMBINED_DIR}/comparison_table.txt"
+OVERNIGHT_LOG="${COMBINED_DIR}/overnight.log"
 LATEST_LINK="${REPO_ROOT}/results/benchmarks/combined/sweep_all_latest"
 mkdir -p "$COMBINED_DIR"
 ln -sfn "$COMBINED_DIR" "$LATEST_LINK"
+
+# Mirror all stdout+stderr to the overnight log too, so if something kills the
+# terminal the record survives.
+exec > >(tee -a "$OVERNIGHT_LOG") 2>&1
 
 echo "============================================================"
 echo "  Mako Combined Thread Sweep (all backends)"
@@ -47,6 +55,7 @@ echo "  Threads:    $THREADS"
 echo "  Runs/conf:  $RUNS"
 echo "  Batch size: $BATCH_SIZE"
 echo "  Output:     $COMBINED_DIR/"
+echo "  Log file:   $OVERNIGHT_LOG"
 echo "  Started:    $(date)"
 echo "============================================================"
 
@@ -86,6 +95,7 @@ echo "  Generating comparison table"
 echo "############################################################"
 
 PY_ARGS=()
+SERIES_ARGS=()
 for backend in $SUCCEEDED; do
     csv="${REPO_ROOT}/results/benchmarks/${backend}/scalability_latest/results.csv"
     if [ ! -f "$csv" ]; then
@@ -93,9 +103,9 @@ for backend in $SUCCEEDED; do
         continue
     fi
     case "$backend" in
-        paxos)       PY_ARGS+=(--paxos       "$csv") ;;
-        raft-multi)  PY_ARGS+=(--raft-multi  "$csv") ;;
-        raft-single) PY_ARGS+=(--raft-single "$csv") ;;
+        paxos)       PY_ARGS+=(--paxos       "$csv"); SERIES_ARGS+=(--series "Paxos:$csv") ;;
+        raft-multi)  PY_ARGS+=(--raft-multi  "$csv"); SERIES_ARGS+=(--series "Multi-Raft:$csv") ;;
+        raft-single) PY_ARGS+=(--raft-single "$csv"); SERIES_ARGS+=(--series "Single-Raft:$csv") ;;
     esac
     # Snapshot each backend's CSV into the combined dir for archival
     cp "$csv" "${COMBINED_DIR}/${backend}_results.csv"
@@ -110,6 +120,23 @@ if [ ${#PY_ARGS[@]} -gt 0 ]; then
     echo "  COMPARISON TABLE"
     echo "------------------------------------------------------------"
     cat "$COMPARISON_FILE"
+
+    # Combined throughput plot (all backends overlaid)
+    COMPARE_PLOT="${COMBINED_DIR}/throughput_compare.png"
+    python3 scripts/plot_throughput_compare.py \
+        "${SERIES_ARGS[@]}" \
+        --title "Mako Throughput Comparison: Paxos vs Multi-Raft vs Single-Raft" \
+        -o "$COMPARE_PLOT" 2>&1 | sed 's/^/  /' || echo "  (compare plot failed)"
+    echo "Compare plot: $COMPARE_PLOT"
+
+    # Full overnight dashboard: throughput + worker-thread saturation + per-core
+    # efficiency, using the new columns in results.csv.
+    OVERNIGHT_PLOTS="${COMBINED_DIR}/overnight_plots"
+    mkdir -p "$OVERNIGHT_PLOTS"
+    python3 scripts/plot_overnight_results.py \
+        "${SERIES_ARGS[@]}" \
+        --outdir "$OVERNIGHT_PLOTS" 2>&1 | sed 's/^/  /' || echo "  (overnight plots failed)"
+    echo "Overnight plots: $OVERNIGHT_PLOTS/"
 else
     echo "No backend results available to compare."
 fi

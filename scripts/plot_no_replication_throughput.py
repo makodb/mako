@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Plot throughput vs threads from a no-replication scalability sweep."""
+"""Plot throughput vs threads from any scalability sweep CSV.
+
+Despite the historical filename, this script is backend-agnostic — pass
+--title to label the plot for the relevant backend (paxos, raft, etc.).
+"""
 import argparse
 import csv
 import os
@@ -41,8 +45,10 @@ def stats(vals):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("csv", help="results.csv from a no-replication sweep")
+    p.add_argument("csv", help="results.csv from a scalability sweep")
     p.add_argument("-o", "--output", help="output PNG (default: alongside CSV)")
+    p.add_argument("--title", default="Mako Scalability: Throughput vs Threads",
+                   help="plot title")
     args = p.parse_args()
 
     data = load(args.csv)
@@ -94,7 +100,7 @@ def main():
 
     ax.set_xlabel("Worker threads (= warehouses)")
     ax.set_ylabel("Throughput (ops/sec)")
-    ax.set_title("Mako Single-Shard, No Replication: Throughput vs Threads")
+    ax.set_title(args.title)
     ax.set_xticks(threads)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="upper left")
