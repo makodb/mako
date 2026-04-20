@@ -2,17 +2,12 @@ module;
 
 #include <algorithm>
 #include <fstream>
-#include <list>
-#include <set>
-#include <unordered_set>
-#include <map>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <memory>
-#include <vector>
 #include <rusty/rusty.hpp>
 
 
@@ -228,12 +223,16 @@ bool SharedIntEvent::wait_until_gte(int x, int timeout) {
   auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
   ev->target_ = x;
-  auto it = events_.insert(events_.end(), ev);
+  events_.push(ev);
   ev->wait(timeout);
   // verify(ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
   bool if_timeout = (ev->status_.get() == Event::TIMEOUT);
-  events_.erase(it);
+  auto* ev_ptr = ev.get();
+  events_.retain(rusty::Function<bool(const std::shared_ptr<IntEvent>&)>(
+      [ev_ptr](const std::shared_ptr<IntEvent>& item) {
+        return item.get() != ev_ptr;
+      }));
   return if_timeout;
 }
 
@@ -244,7 +243,7 @@ void SharedIntEvent::wait(function<bool(int v)> f) {
   auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
   ev->test_ = f;
-  events_.push_back(ev);
+  events_.push(ev);
 //  ev->wait(1000*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
   ev->wait();

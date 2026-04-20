@@ -1,5 +1,7 @@
 module;
 
+#include <rusty/rusty.hpp>
+
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -7,7 +9,6 @@ module;
 #include <list>
 #include <string>
 #include <utility>
-#include <vector>
 
 
 export module rrr:misc.recorder;
@@ -30,7 +31,7 @@ private:
     Timer timer_;  
 
 //    io_context_t ctx_;
-//    std::map<uint8_t*, std::function<void(void)>> callbacks_;
+//    rusty::BTreeMap<uint8_t*, std::function<void(void)>> callbacks_;
 
 public:
 
@@ -61,7 +62,7 @@ public:
 
     void flush_buf();
 
-    void callback(std::vector<std::pair<std::string, 
+    void callback(rusty::Vec<std::pair<std::string, 
 		  std::function<void(void)> > > *reqs);
 
     void invoke_cb();

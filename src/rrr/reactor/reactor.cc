@@ -1,13 +1,9 @@
 module;
 
 #include <algorithm>
-#include <list>
 #include <limits>
 #include <memory>
-#include <queue>
-#include <set>
 #include <thread>
-#include <vector>
 #include <variant>
 #include <optional>
 #include <rusty/rusty.hpp>
@@ -24,8 +20,6 @@ module;
 #include <string.h>
 #include <errno.h>
 #include <sys/syscall.h>  // For SYS_gettid
-#include <unordered_map>
-#include <unordered_set>
 #include <functional>
 #include <mutex>
 #include <utility>
@@ -129,12 +123,12 @@ inline void stackless_profile_report_periodic() {
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
 thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> Reactor::sp_running_fiber_th_{};
-thread_local std::unordered_map<std::string, std::vector<PollableProxy>> Reactor::clients_{};
+thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> Reactor::clients_{};
 
 // Thread-local storage for PollThreadWorker (raw pointer for direct access)
 // Safe because worker outlives all fibers on its thread
 thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
-thread_local std::unordered_set<std::string> Reactor::dangling_ips_{};
+thread_local rusty::HashSet<std::string> Reactor::dangling_ips_{};
 SpinLock Reactor::trying_job_;
 
 // @safe - Returns current fiber with single-threaded reference counting
@@ -217,7 +211,7 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
     if (REUSING_FIBER && available_guard->size() > 0) {
       n_idle_fibers_.set(n_idle_fibers_.get() - 1);
       auto fiber = available_guard->back().clone();
-      available_guard->pop_back();
+      available_guard->pop();
       // Use Cell/RefCell for interior mutability (safe: single-threaded)
       const auto& fiber_ref = *fiber;
       const_cast<Fiber&>(fiber_ref).id = Fiber::global_id++;  // id is not Cell yet
@@ -322,9 +316,9 @@ size_t Reactor::register_stackless_poller(std::function<bool(rusty::Context&)> p
   size_t scanned = 0;
   {
     auto free_guard = free_stackless_task_slots_.borrow_mut();
-    if (!free_guard->empty()) {
+    if (!free_guard->is_empty()) {
       size_t idx = free_guard->back();
-      free_guard->pop_back();
+      free_guard->pop();
       auto tasks_guard = stackless_tasks_.borrow_mut();
       if (idx < tasks_guard->size()) {
         auto& entry = (*tasks_guard)[idx];
@@ -346,7 +340,7 @@ size_t Reactor::register_stackless_poller(std::function<bool(rusty::Context&)> p
   entry.active = true;
   entry.queued = false;
   entry.poll_once = std::move(poller);
-  tasks_guard->push_back(std::move(entry));
+  tasks_guard->push(std::move(entry));
   if (stackless_profile_enabled()) {
     g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
     g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
@@ -404,7 +398,7 @@ bool Reactor::process_stackless_tasks() const {
         entry.active = false;
         entry.queued = false;
         entry.poll_once = {};
-        free_stackless_task_slots_.borrow_mut()->push_back(idx);
+        free_stackless_task_slots_.borrow_mut()->push(idx);
       }
     }
   }
@@ -688,7 +682,7 @@ void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
     fiber_ref.status_.set(Fiber::RECYCLED);
     *fiber_ref.func_.borrow_mut() = {};
     n_idle_fibers_.set(n_idle_fibers_.get() + 1);
-    available_fibers_.borrow_mut()->push_back(fiber.clone());  // @unsafe
+    available_fibers_.borrow_mut()->push(fiber.clone());  // @unsafe
   }
   n_busy_fibers_.set(n_busy_fibers_.get() - 1);
   // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, fiber is still valid
@@ -780,11 +774,11 @@ void PollThreadWorker::poll_loop() {
     // Wait for events (epoll_wait with short timeout)
     // Dispatch through proxy storage by fd; no Pollable* userdata assumptions.
     poll_.Wait([this](int fd, int ready_events) {
-      auto poll_it = fd_to_pollable_.find(fd);
-      if (poll_it == fd_to_pollable_.end()) {
+      auto poll_opt = fd_to_pollable_.get(fd);
+      if (poll_opt.is_none()) {
         return;
       }
-      auto& poll = poll_it->second;
+      auto& poll = *poll_opt.unwrap();
 
       if (ready_events & PollReady::READABLE) {
         poll->handle_read();
@@ -814,7 +808,7 @@ void PollThreadWorker::poll_loop() {
     // Check for pending write updates (set by end_reply() during fiber execution)
     // @unsafe - const_cast needed because Arc provides const access, but we know the
     // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
-    for (auto& [fd, poll] : fd_to_pollable_) {
+    for (auto [fd, poll] : fd_to_pollable_) {
       if (poll->check_pending_write_update()) {
         do_update_mode(fd, PollMode::READ | PollMode::WRITE);
       }
@@ -822,33 +816,33 @@ void PollThreadWorker::poll_loop() {
 
     // Check for pollables closed by handle_error() and remove them
     // This prevents fd reuse issues when old connection is closed but not removed
-    std::vector<int> closed_fds;
-    for (auto& [fd, poll] : fd_to_pollable_) {
+    rusty::Vec<int> closed_fds;
+    for (auto [fd, poll] : fd_to_pollable_) {
       if (poll->is_closed()) {
-        closed_fds.push_back(fd);
+        closed_fds.push(fd);
       }
     }
     for (int fd : closed_fds) {
-      auto proxy_it = fd_to_pollable_.find(fd);
-      if (proxy_it != fd_to_pollable_.end()) {
+      auto proxy_opt = fd_to_pollable_.get(fd);
+      if (proxy_opt.is_some()) {
         // Remove from epoll if still registered
-        if (mode_.find(fd) != mode_.end()) {
+        if (mode_.contains_key(fd)) {
           poll_.Remove(fd);
         }
 
         // Invoke close callback before erasing map entry so cleanup hooks run.
-        proxy_it->second->close();
+        (*proxy_opt.unwrap())->close();
 
-        fd_to_pollable_.erase(proxy_it);
-        mode_.erase(fd);
+        fd_to_pollable_.remove(fd);
+        mode_.remove(fd);
       }
     }
   }
 
   Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
   // Shutdown cleanup - remove all registered pollables
-  for (auto& [fd, poll] : fd_to_pollable_) {
-    if (mode_.find(fd) != mode_.end()) {
+  for (auto [fd, poll] : fd_to_pollable_) {
+    if (mode_.contains_key(fd)) {
       poll_.Remove(fd);
     }
   }
@@ -894,7 +888,7 @@ void PollThreadWorker::process_commands() {
 // @unsafe - uses std::set operations
 void PollThreadWorker::trigger_job() {
   // Copy jobs to process (in case jobs modify the set)
-  std::set<rusty::Arc<Job>> jobs_exec = jobs_;
+  rusty::BTreeSet<rusty::Arc<Job>> jobs_exec = jobs_.clone();
   jobs_.clear();
 
   for (const auto& job : jobs_exec) {
@@ -924,13 +918,13 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll) {
   }
 
   // Check if already exists
-  if (fd_to_pollable_.find(fd) != fd_to_pollable_.end()) {
+  if (fd_to_pollable_.contains_key(fd)) {
     return;
   }
 
   // Store in maps
-  fd_to_pollable_.insert_or_assign(fd, std::move(poll));
-  mode_[fd] = poll_mode;
+  fd_to_pollable_.insert(fd, std::move(poll));
+  mode_.insert(fd, poll_mode);
 
   // @unsafe { Epoll::Add is not borrow-checked }
   { poll_.Add(fd, poll_mode); }
@@ -938,7 +932,7 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll) {
 
 // @unsafe - uses STL operations
 void PollThreadWorker::do_remove_pollable(int fd) {
-  if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
+  if (!fd_to_pollable_.contains_key(fd)) {
     return;
   }
   // Add to pending_remove (actual removal happens after epoll_wait)
@@ -949,39 +943,39 @@ void PollThreadWorker::do_remove_pollable(int fd) {
 // SAFETY: Called only from poll thread, owns the Pollable via Arc
 void PollThreadWorker::do_close_pollable(int fd) {
   // Remove from pending_remove if present
-  pending_remove_.erase(fd);
+  pending_remove_.remove(fd);
 
-  auto proxy_it = fd_to_pollable_.find(fd);
-  if (proxy_it == fd_to_pollable_.end()) {
+  auto proxy_opt = fd_to_pollable_.get(fd);
+  if (proxy_opt.is_none()) {
     return;
   }
 
   // Remove from epoll if still registered
-  if (mode_.find(fd) != mode_.end()) {
+  if (mode_.contains_key(fd)) {
     poll_.Remove(fd);
   }
 
   // Close the socket via Pollable's close() method
-  proxy_it->second->close();
+  (*proxy_opt.unwrap())->close();
 
   // Erase from maps, dropping storage references
-  fd_to_pollable_.erase(proxy_it);
-  mode_.erase(fd);
+  fd_to_pollable_.remove(fd);
+  mode_.remove(fd);
 }
 
 // @unsafe - Uses raw pointers for epoll userdata and calls Epoll::Update
 void PollThreadWorker::do_update_mode(int fd, int new_mode) {
-  if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
+  if (!fd_to_pollable_.contains_key(fd)) {
     return;
   }
 
-  auto mode_it = mode_.find(fd);
-  if (mode_it == mode_.end()) {
+  auto mode_opt = mode_.get(fd);
+  if (mode_opt.is_none()) {
     return;
   }
 
-  int old_mode = mode_it->second;
-  mode_[fd] = new_mode;
+  int old_mode = *mode_opt.unwrap();
+  mode_.insert(fd, new_mode);
 
   if (new_mode != old_mode) {
     poll_.Update(fd, new_mode, old_mode);
@@ -995,28 +989,26 @@ void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
 
 // @unsafe - uses std::set::erase
 void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
-  jobs_.erase(job);
+  jobs_.remove(job);
 }
 
 // @unsafe - uses std::unordered_set::swap
 void PollThreadWorker::process_pending_removals() {
-  std::unordered_set<int> remove_fds;
-  remove_fds.swap(pending_remove_);
-  // pending_remove_ is now empty after swap
+  rusty::HashSet<int> remove_fds = pending_remove_.clone();
+  pending_remove_.clear();
 
   for (int fd : remove_fds) {
-    auto proxy_it = fd_to_pollable_.find(fd);
-    if (proxy_it == fd_to_pollable_.end()) {
+    if (!fd_to_pollable_.contains_key(fd)) {
       continue;
     }
 
     // Check if fd was NOT reused (still in mode map)
-    if (mode_.find(fd) != mode_.end()) {
+    if (mode_.contains_key(fd)) {
       poll_.Remove(fd);
     }
 
-    fd_to_pollable_.erase(proxy_it);
-    mode_.erase(fd);
+    fd_to_pollable_.remove(fd);
+    mode_.remove(fd);
   }
 }
 

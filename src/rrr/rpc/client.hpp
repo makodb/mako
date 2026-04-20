@@ -5,8 +5,6 @@ module;
 #include <rusty/refcell.hpp>
 #include <rusty/async.hpp>
 
-#include <unordered_map>
-#include <map>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -313,7 +311,7 @@ class Future {
     struct State {
         bool ready = false;
         bool timed_out = false;
-        std::vector<std::function<void()>> completion_callbacks;
+        rusty::Vec<std::function<void()>> completion_callbacks;
     };
 
     i64 xid_;
@@ -402,7 +400,7 @@ public:
             if (guard->ready || guard->timed_out) {
                 return false;
             }
-            guard->completion_callbacks.push_back(std::move(callback));
+            guard->completion_callbacks.push(std::move(callback));
             return true;
         }
     }
@@ -604,7 +602,7 @@ TypedFutureResultAwaiter<TypedFuture> make_typed_future_result_awaitable(
 // MIGRATED: Now uses Arc<Future> for automatic memory management
 class FutureGroup {
 private:
-    std::vector<rusty::Arc<Future>> futures_;
+    rusty::Vec<rusty::Arc<Future>> futures_;
 
 public:
     // @safe - Adds future to group
@@ -613,7 +611,7 @@ public:
             Log_error("Invalid Future object passed to FutureGroup!");
             return;
         }
-        futures_.push_back(std::move(f));
+        futures_.push(std::move(f));
     }
 
     // @safe - Waits for all futures in group
@@ -654,7 +652,7 @@ class ClientConnection {
     mutable Counter xid_counter_;
 
     // Map of pending futures awaiting responses (protected by SpinMutex)
-    SpinMutex<std::unordered_map<i64, rusty::Arc<Future>>> pending_fu_{std::unordered_map<i64, rusty::Arc<Future>>()};
+    SpinMutex<rusty::HashMap<i64, rusty::Arc<Future>>> pending_fu_{rusty::HashMap<i64, rusty::Arc<Future>>()};
 
     // Connection state machine for lifecycle management
     ConnectionStateMachine state_machine_;
@@ -814,7 +812,7 @@ public:
     // @unsafe - Uses SpinMutex + std::unordered_map access
     size_t pending_future_count() const {
         auto pending_guard = pending_fu_.lock().unwrap();
-        return pending_guard->size();
+        return pending_guard->len();
     }
 
 #ifdef RPC_TEST_HOOKS
@@ -1084,17 +1082,14 @@ public:
 
         {
             auto pending_guard = pending_fu_.lock().unwrap();
-            pending_guard->insert_or_assign(fu->xid_, fu);
+            pending_guard->insert(fu->xid_, fu);
         }
 
         // Check if connection closed while we were setting up
         if (!state_machine_.is_connected()) {
             {
                 auto pending_guard = pending_fu_.lock().unwrap();
-                auto it = pending_guard->find(fu->xid_);
-                if (it != pending_guard->end()) {
-                    pending_guard->erase(it);
-                }
+                pending_guard->remove(fu->xid_);
             }
             // Check if buffering is enabled with QUEUE behavior
             if (buffering_config_.enabled &&
@@ -1166,7 +1161,7 @@ private:
         // Store future in pending map (for response handling)
         {
             auto pending_guard = pending_fu_.lock().unwrap();
-            pending_guard->insert_or_assign(fu->xid_, fu);
+            pending_guard->insert(fu->xid_, fu);
         }
 
         // Set callback to notify future on queue failure (e.g., overflow, expiry)
@@ -2031,13 +2026,13 @@ class ClientPool {
     SpinLock l_;
     // @safe - Uses rusty::Arc<Client> for thread-safe reference counting
     // SAFETY: Arc provides thread-safe reference counting with polymorphism support
-    std::map<std::string, std::vector<rusty::Arc<Client>>> cache_;
+    rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache_;
 
     // Pool configuration (Cell for interior mutability)
     rusty::Cell<PoolConfig> config_;
 
     // Load balancer state per address (for round-robin tracking)
-    std::map<std::string, LoadBalancerState> lb_state_;
+    rusty::BTreeMap<std::string, LoadBalancerState> lb_state_;
 
     // Helper: Check if a client is considered healthy
     // @safe - Uses metrics to determine health

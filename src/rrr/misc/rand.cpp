@@ -1,11 +1,12 @@
 module;
 
+#include <rusty/rusty.hpp>
+
 #include <pthread.h>
 #include <cstdlib>
 
 
 #include <string>
-#include <vector>
 
 
 
@@ -150,7 +151,7 @@ unsigned long long RandomGenerator::rdtsc() {
 }
 
 // @unsafe - Calls rand_double which uses rand_r
-unsigned int RandomGenerator::weighted_select(const std::vector<double> &weight_vector) {
+unsigned int RandomGenerator::weighted_select(const rusty::Vec<double> &weight_vector) {
     double sum = 0, stage_sum = 0;
     unsigned int i = 0;
     while (i < weight_vector.size())

@@ -1,8 +1,9 @@
 module;
 
+#include <rusty/rusty.hpp>
+
 #include <string.h>
 #include <string>
-#include <vector>
 
 export module rrr:base.strop;
 
@@ -17,6 +18,6 @@ bool endswith(const char* str, const char* head);
 std::string format_decimal(double val);
 std::string format_decimal(int val);
 
-std::vector<std::string> strsplit(const std::string& str, const char sep = ' ');
+rusty::Vec<std::string> strsplit(const std::string& str, const char sep = ' ');
 
 } // namespace base

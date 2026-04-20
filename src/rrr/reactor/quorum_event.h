@@ -1,8 +1,8 @@
 module;
 
-#include <vector>
+#include <rusty/rusty.hpp>
+
 #include <functional>
-#include <unordered_map>
 #include <chrono>
 
 export module rrr:reactor.quorum_event;
@@ -16,7 +16,6 @@ import :reactor.event;
 using rrr::Event;
 using rrr::IntEvent;
 using rrr::verify;
-using std::vector;
 using std::function;
 using std::shared_ptr;
 
@@ -27,7 +26,7 @@ class QuorumEvent : public Event {
 	static uint64_t count;
   int32_t n_voted_yes_{0};
   int32_t n_voted_no_{0};
-  std::unordered_map<uint16_t, rrr::i64> xids_;
+  rusty::HashMap<uint16_t, rrr::i64> xids_;
   uint64_t begin_timestamp_;
 
  public:
@@ -43,7 +42,7 @@ class QuorumEvent : public Event {
 	uint64_t server_id_ = -1;
   std::chrono::steady_clock::time_point ready_time;
   // fast vote result.
-  vector<uint64_t> vec_timestamp_{};
+  rusty::Vec<uint64_t> vec_timestamp_{};
   shared_ptr<IntEvent> finalize_event_;
 
   QuorumEvent() = delete;
@@ -76,7 +75,7 @@ class QuorumEvent : public Event {
    * @param timeout time to wait after event-ready to do finalize
    * @param finalize_func what to do in finalization, take a list of dangling RPC
    */
-  void finalize(uint64_t timeout, function<bool(vector<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
+  void finalize(uint64_t timeout, function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
 
   virtual bool yes() {
     return n_voted_yes_ >= quorum_;
@@ -87,7 +86,7 @@ class QuorumEvent : public Event {
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
-  // @unsafe: calls undeclared test(), Time::now(), vector::push_back(), IntEvent::set()
+  // @unsafe: calls undeclared test(), Time::now(), rusty::Vec::push_back(), IntEvent::set()
   void vote_yes();
 
   // @unsafe: calls undeclared test(), IntEvent::set()

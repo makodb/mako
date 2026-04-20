@@ -3,10 +3,6 @@ module;
 #include <algorithm>
 #include <fstream>
 #include <iostream>
-#include <list>
-#include <set>
-#include <unordered_set>
-#include <map>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -15,7 +11,6 @@ module;
 //#include "../../deptran/client_worker.h"
 #include <functional>
 #include <memory>
-#include <vector>
 #include <rusty/rusty.hpp>
 
 // External safety annotations for std::shared_ptr and Event operations
@@ -25,7 +20,7 @@ module;
 //   std::shared_ptr::operator->: [unsafe, () -> auto*]
 //   std::shared_ptr::get: [unsafe, () -> auto*]
 //   std::shared_ptr::operator=: [unsafe, (const std::shared_ptr<auto>&) -> std::shared_ptr<auto>&]
-//   std::vector::push_back: [unsafe, (auto) -> void]
+//   rusty::Vec::push: [unsafe, (auto) -> void]
 //   std::atomic<int>::operator int: [safe, () -> int]
 //   std::atomic<*>::operator T: [safe, () -> T]
 //   std::atomic<*>::load: [safe, () -> T]
@@ -47,8 +42,6 @@ import :base.all;
 
 export namespace rrr {
 using std::function;
-using std::vector;
-using std::list;
 
 class Reactor;
 class Fiber;
@@ -174,7 +167,7 @@ class IntEvent : public Event {
 class SharedIntEvent {
  public:
   int value_{};
-  vector<std::shared_ptr<IntEvent>> events_;
+  rusty::Vec<std::shared_ptr<IntEvent>> events_;
   // Declaration only - definition in event.cc
   int set(const int& v);
 
@@ -210,7 +203,7 @@ class TimeoutEvent : public Event {
 
 class WaitAny : public Event {
  public:
-  vector<std::shared_ptr<Event>> events_;
+  rusty::Vec<std::shared_ptr<Event>> events_;
 
   void add_event() {
     // empty func for recursive variadic parameters
@@ -218,7 +211,7 @@ class WaitAny : public Event {
 
   template<typename X, typename... Args>
   void add_event(X& x, Args&... rest) {
-    events_.push_back(x);
+    events_.push(x);
     add_event(rest...);
   }
 
@@ -228,7 +221,12 @@ class WaitAny : public Event {
   }
 
   bool is_ready() override {
-    return std::any_of(events_.begin(), events_.end(), [](const std::shared_ptr<Event>& e){return e->is_ready();});
+    for (const auto& e : events_) {
+      if (e && e->is_ready()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // Mark as composite event - will be polled in reactor loop
@@ -237,13 +235,18 @@ class WaitAny : public Event {
 
 class WaitAll : public Event {
  public:
-  vector<std::shared_ptr<Event>> events_;
+  rusty::Vec<std::shared_ptr<Event>> events_;
 
   // Default constructor (mako-dev)
   WaitAll() {}
 
   // Constructor for vector of events
-  explicit WaitAll(const vector<std::shared_ptr<Event>>& evs) : events_(evs) {}
+  explicit WaitAll(const rusty::Vec<std::shared_ptr<Event>>& evs) {
+    events_.reserve(evs.len());
+    for (const auto& ev : evs) {
+      events_.push(ev);
+    }
+  }
 
   void add_event() {
     // empty func for recursive variadic parameters
@@ -251,7 +254,7 @@ class WaitAll : public Event {
 
   template<typename... Args>
   void add_event(std::shared_ptr<Event> x, Args... rest) {
-    events_.push_back(std::move(x));
+    events_.push(std::move(x));
     add_event(rest...);
   }
 
@@ -260,19 +263,23 @@ class WaitAll : public Event {
     add_event(std::move(first), rest...);
   }
 
-  void log() {
-    for(size_t i = 0; i < events_.size(); i++){
+  void log() override {
+    for(size_t i = 0; i < events_.len(); i++){
       events_[i]->log();
     }
   }
 
   bool is_ready() override {
-    // All events must be ready (or DONE) for WaitAll to be ready
-    // Include null check for safety
-    return std::all_of(events_.begin(), events_.end(),
-                       [](const std::shared_ptr<Event>& e) {
-                         return e && (e->is_ready() || e->status_.get() == Event::DONE);
-                       });
+    // All events must be ready (or DONE) for WaitAll to be ready.
+    for (const auto& e : events_) {
+      if (!e) {
+        return false;
+      }
+      if (!(e->is_ready() || e->status_.get() == Event::DONE)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // Mark as composite event - will be polled in reactor loop
@@ -281,7 +288,7 @@ class WaitAll : public Event {
 
 class WaitN : public Event {
  public:
-  vector<std::shared_ptr<Event>> events_;
+  rusty::Vec<std::shared_ptr<Event>> events_;
   int number;
 
   void add_event() {
@@ -290,7 +297,7 @@ class WaitN : public Event {
 
   template<typename... Args>
   void add_event(std::shared_ptr<Event> x, Args... rest) {
-    events_.push_back(std::move(x));
+    events_.push(std::move(x));
     add_event(rest...);
   }
 
@@ -317,7 +324,7 @@ class DispatchEvent: public Event{
   public:
     uint32_t n_dispatch_;
     uint32_t n_dispatch_ack_ = 0;
-    std::map<uint32_t, bool> dispatch_acks_ = {};
+    rusty::BTreeMap<uint32_t, bool> dispatch_acks_ = {};
     bool aborted_ = false;
     bool more = false;
 
@@ -331,11 +338,12 @@ class DispatchEvent: public Event{
           return true;
         }
         else{
-          return std::all_of(dispatch_acks_.begin(),
-                             dispatch_acks_.end(),
-                             [](std::pair<uint32_t, bool> pair) {
-                             return pair.second;
-                             });
+          for (const auto& [_, acked] : dispatch_acks_) {
+            if (!acked) {
+              return false;
+            }
+          }
+          return true;
         }
       }
       else if(more){
@@ -352,20 +360,21 @@ class SingleRPCEvent: public Event{
     uint32_t coo_id_;
     int32_t& res_;
     std::string log_file = "logs.txt";
-    std::unordered_set<int> dep{};
+    rusty::HashSet<int> dep{};
     SingleRPCEvent(uint32_t cli_id, int32_t res): Event(),
                                                    cli_id_(cli_id),
                                                    res_(res){
     }
     void add_dep(int tgtId){
-      auto index = dep.find(tgtId);
-      if(index == dep.end()) dep.insert(tgtId);
+      if (!dep.contains(tgtId)) {
+        dep.insert(tgtId);
+      }
     }
     void log() override {
       std::ofstream of(log_file, std::fstream::app);
       //of << "hello\n";
       of << "{ " << cli_id_ << ": ";
-      for(auto it = dep.begin(); it != dep.end(); it++){
+      for(auto it = dep.begin(); it != dep.end(); ++it){
         of << *it << " ";
       }
       of << "}\n";

@@ -5,8 +5,6 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/async.hpp>
-#include <unordered_map>
-#include <map>
 #include <thread>
 #include <atomic>
 #include <coroutine>
@@ -99,7 +97,7 @@ void Future::timed_wait(double sec) const {
 // @unsafe - rusty-cpp false positive: should_callback IS initialized
 void Future::notify_ready(rusty::Arc<Future> self) const {
   bool should_callback = false;  // Initialized here
-  std::vector<std::function<void()>> completion_callbacks;
+  rusty::Vec<std::function<void()>> completion_callbacks;
   {
     auto guard = state_.lock().unwrap();
     if (!guard->timed_out) {
@@ -151,7 +149,7 @@ ClientConnection::~ClientConnection() {
 void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
   auto guard = pending_fu_.lock().unwrap();
-  for (auto& it: *guard) {
+  for (auto it: *guard) {
     futures.push_back(it.second);  // Copy Arc
   }
   guard->clear();  // Clear map (releases its Arc references)
@@ -170,10 +168,10 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
     auto pending_guard = pending_fu_.lock().unwrap();
-    auto it = pending_guard->find(xid);
-    if (it != pending_guard->end()) {
-      fu_opt = rusty::Some(it->second);  // Copy Arc before erase
-      pending_guard->erase(it);
+    auto fu_ptr = pending_guard->get(xid);
+    if (fu_ptr.is_some()) {
+      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());  // Copy Arc before remove
+      pending_guard->remove(xid);
     }
   }  // Drop lock before notifying callback/future waiters
 
@@ -235,9 +233,7 @@ void ClientConnection::mark_closing() {
 // @unsafe - Jetpack: handle_free for explicit future cleanup
 void ClientConnection::handle_free(i64 xid) const {
   auto guard = pending_fu_.lock().unwrap();
-  auto it = guard->find(xid);
-  if (it != guard->end()) {
-    guard->erase(it);
+  if (guard->remove(xid).is_some()) {
     metrics_.record_request_dropped();
     // Arc auto-released when removed from map
   }
@@ -975,10 +971,10 @@ bool ClientConnection::handle_read() {
       rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
       {
         auto guard = pending_fu_.lock().unwrap();
-        auto it = guard->find(v_reply_xid.get());
-        if (it != guard->end()) {
-          fu_opt = rusty::Some(it->second);  // Copy Arc (refcount still 2)
-          guard->erase(it);  // Remove from map (refcount 2→1)
+        auto fu_ptr = guard->get(v_reply_xid.get());
+        if (fu_ptr.is_some()) {
+          fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());  // Copy Arc (refcount still 2)
+          guard->remove(v_reply_xid.get());  // Remove from map (refcount 2→1)
         }
       }  // Guard dropped here, releasing lock
 
@@ -1212,7 +1208,7 @@ bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
 
 // @safe - Destroys pool and all cached connections
 ClientPool::~ClientPool() {
-  for (auto& it : cache_) {
+  for (auto it : cache_) {
     for (auto& client : it.second) {
       client->close();
     }
@@ -1228,9 +1224,9 @@ ClientPool::~ClientPool() {
 size_t ClientPool::get_healthy_client_count(const std::string& addr) {
   l_.lock();
   size_t count = 0;
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    for (const auto& client : it->second) {
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    for (const auto& client : *clients_opt.unwrap()) {
       if (is_client_healthy(client)) {
         count++;
       }
@@ -1244,30 +1240,31 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
 size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
   l_.lock();
   size_t removed = 0;
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    auto& clients = it->second;
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    auto* clients = clients_opt.unwrap();
     auto cfg = config_.get();
 
-    // Remove unhealthy clients, but keep at least min_connections
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &removed, &clients, &cfg](const rusty::Arc<Client>& client) {
-        // Keep if we're at minimum connections
-        if (clients.size() - removed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        if (!is_client_healthy(client)) {
-          client->close();
-          removed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
+    // Remove unhealthy clients, but keep at least min_connections.
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients->len());
+    for (const auto& client : *clients) {
+      if (clients->len() - removed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (!is_client_healthy(client)) {
+        client->close();
+        removed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    *clients = std::move(kept);
 
     // Remove empty entries from cache
-    if (clients.empty()) {
-      cache_.erase(it);
+    if (clients->is_empty()) {
+      cache_.remove(addr);
     }
   }
   l_.unlock();
@@ -1286,28 +1283,28 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
     return 0;
   }
 
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    auto& clients = it->second;
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    auto* clients = clients_opt.unwrap();
 
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &closed, &clients, &cfg, current_time_ms](const rusty::Arc<Client>& client) {
-        // Keep if we're at minimum connections
-        if (clients.size() - closed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        // Check if idle
-        if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
-          client->close();
-          closed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients->len());
+    for (const auto& client : *clients) {
+      if (clients->len() - closed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
+        client->close();
+        closed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    *clients = std::move(kept);
 
-    if (clients.empty()) {
-      cache_.erase(it);
+    if (clients->is_empty()) {
+      cache_.remove(addr);
     }
   }
   l_.unlock();
@@ -1320,30 +1317,37 @@ size_t ClientPool::remove_all_unhealthy() {
   size_t total_removed = 0;
   auto cfg = config_.get();
 
-  for (auto it = cache_.begin(); it != cache_.end(); ) {
-    auto& clients = it->second;
-    size_t removed = 0;
-
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &removed, &clients, &cfg](const rusty::Arc<Client>& client) {
-        if (clients.size() - removed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        if (!is_client_healthy(client)) {
-          client->close();
-          removed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
-    total_removed += removed;
-
-    if (clients.empty()) {
-      it = cache_.erase(it);
-    } else {
-      ++it;
+  rusty::Vec<std::string> keys = cache_.keys();
+  rusty::Vec<std::string> empty_keys;
+  for (const auto& addr : keys) {
+    auto clients_opt = cache_.get(addr);
+    if (clients_opt.is_none()) {
+      continue;
     }
+    auto* clients = clients_opt.unwrap();
+    size_t removed = 0;
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients->len());
+    for (const auto& client : *clients) {
+      if (clients->len() - removed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (!is_client_healthy(client)) {
+        client->close();
+        removed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    *clients = std::move(kept);
+    total_removed += removed;
+    if (clients->is_empty()) {
+      empty_keys.push(addr);
+    }
+  }
+  for (const auto& addr : empty_keys) {
+    cache_.remove(addr);
   }
   l_.unlock();
   return total_removed;
@@ -1360,30 +1364,37 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
     return 0;
   }
 
-  for (auto it = cache_.begin(); it != cache_.end(); ) {
-    auto& clients = it->second;
-    size_t closed = 0;
-
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &closed, &clients, &cfg, current_time_ms](const rusty::Arc<Client>& client) {
-        if (clients.size() - closed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
-          client->close();
-          closed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
-    total_closed += closed;
-
-    if (clients.empty()) {
-      it = cache_.erase(it);
-    } else {
-      ++it;
+  rusty::Vec<std::string> keys = cache_.keys();
+  rusty::Vec<std::string> empty_keys;
+  for (const auto& addr : keys) {
+    auto clients_opt = cache_.get(addr);
+    if (clients_opt.is_none()) {
+      continue;
     }
+    auto* clients = clients_opt.unwrap();
+    size_t closed = 0;
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients->len());
+    for (const auto& client : *clients) {
+      if (clients->len() - closed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
+        client->close();
+        closed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    *clients = std::move(kept);
+    total_closed += closed;
+    if (clients->is_empty()) {
+      empty_keys.push(addr);
+    }
+  }
+  for (const auto& addr : empty_keys) {
+    cache_.remove(addr);
   }
   l_.unlock();
   return total_closed;
@@ -1403,7 +1414,7 @@ size_t ClientPool::total_client_count() {
 // @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::address_count() {
   l_.lock();
-  size_t count = cache_.size();
+  size_t count = cache_.len();
   l_.unlock();
   return count;
 }
@@ -1415,17 +1426,17 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
   BulkReconnectResult result{0, 0, 0, 0};
 
   // Collect clients to reconnect
-  std::vector<rusty::Arc<Client>> clients_to_reconnect;
+  rusty::Vec<rusty::Arc<Client>> clients_to_reconnect;
   {
     l_.lock();
-    auto it = cache_.find(addr);
-    if (it != cache_.end()) {
-      for (const auto& client : it->second) {
+    auto clients_opt = cache_.get(addr);
+    if (clients_opt.is_some()) {
+      for (const auto& client : *clients_opt.unwrap()) {
         auto state = client->connection_state();
         if (config.skip_connected && state == ConnectionState::CONNECTED) {
           result.skipped++;
         } else {
-          clients_to_reconnect.push_back(client);
+          clients_to_reconnect.push(client);
         }
       }
     }
@@ -1442,7 +1453,7 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
                                 clients_to_reconnect.size());
 
     // Track reconnection results for this batch
-    std::vector<std::atomic<int>> batch_results(batch_end - i);
+    rusty::Vec<std::atomic<int>> batch_results(batch_end - i);
     for (auto& r : batch_results) r.store(-1);
 
     // Start async reconnections
@@ -1501,11 +1512,11 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
   BulkReconnectResult total_result{0, 0, 0, 0};
 
   // Get list of addresses
-  std::vector<std::string> addresses;
+  rusty::Vec<std::string> addresses;
   {
     l_.lock();
     for (const auto& kv : cache_) {
-      addresses.push_back(kv.first);
+      addresses.push(kv.first);
     }
     l_.unlock();
   }
@@ -1532,24 +1543,29 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   l_.lock();
 
   // Get or create load balancer state for this address
-  auto& lb_state = lb_state_[addr];
+  auto lb_state_opt = lb_state_.get(addr);
+  if (lb_state_opt.is_none()) {
+    lb_state_.insert(addr, LoadBalancerState{});
+    lb_state_opt = lb_state_.get(addr);
+  }
+  auto* lb_state = lb_state_opt.unwrap();
 
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    auto& clients = it->second;
-    int client_count = static_cast<int>(clients.size());
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    auto* clients = clients_opt.unwrap();
+    int client_count = static_cast<int>(clients->size());
 
     // Use load balancer to select starting index
     size_t start_idx = LoadBalancer::select(
         cfg.load_balancing,
-        clients,
-        lb_state,
+        *clients,
+        *lb_state,
         rand_()
     );
 
     for (int i = 0; i < client_count; i++) {
       int idx = (start_idx + i) % client_count;
-      auto& client = clients[idx];
+      auto& client = (*clients)[idx];
 
       // Check if client is connected and healthy
       if (client->connected() && is_client_healthy(client)) {
@@ -1576,10 +1592,10 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     if (sp_cl.is_none()) {
       Log_info("ClientPool: all clients to %s failed, recreating connections", addr.c_str());
       // Close old connections
-      for (auto& client : clients) {
+      for (auto& client : *clients) {
         client->close();
       }
-      clients.clear();
+      clients->clear();
 
       // Create new connections (use min_connections)
       bool ok = true;
@@ -1591,19 +1607,19 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
           ok = false;
           break;
         }
-        clients.push_back(client);
+        clients->push(client);
       }
 
-      if (ok && !clients.empty()) {
-        sp_cl = rusty::Some(clients[rand_() % clients.size()].clone());
+      if (ok && !clients->is_empty()) {
+        sp_cl = rusty::Some((*clients)[rand_() % clients->size()].clone());
       } else {
         // Remove from cache if we can't connect
-        cache_.erase(it);
+        cache_.remove(addr);
       }
     }
   } else {
     // No cached connections - create new ones
-    std::vector<rusty::Arc<Client>> parallel_clients;
+    rusty::Vec<rusty::Arc<Client>> parallel_clients;
     bool ok = true;
     for (int i = 0; i < num_connections; i++) {
       auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
@@ -1612,11 +1628,11 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
         ok = false;
         break;
       }
-      parallel_clients.push_back(client);
+      parallel_clients.push(client);
     }
     if (ok) {
       sp_cl = rusty::Some(parallel_clients[rand_() % parallel_clients.size()].clone());
-      cache_[addr] = std::move(parallel_clients);
+      cache_.insert(addr, std::move(parallel_clients));
     }
     // If not ok, parallel_clients automatically cleaned up by Arc
   }

@@ -1,13 +1,13 @@
 module;
 
+#include <rusty/rusty.hpp>
+
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
-#include <list>
-#include <queue>
-#include <vector>
+#include <algorithm>
 #include <pthread.h>
 #include <atomic>
 #include <mutex>
@@ -135,7 +135,7 @@ void ThreadPool::run_thread(int id_in_pool) {
     int stage = 0;
 
     // randomized stealing order
-    std::vector<int> steal_order(n_);
+    rusty::Vec<int> steal_order(n_);
     for (int i = 0; i < n_; i++) {
         steal_order[i] = i;
     }
@@ -221,6 +221,7 @@ RunLater::~RunLater() {
 
     Pthread_mutex_lock(&m_);
     jobs_.push(make_pair(0.0, nullptr)); // death pill
+    std::push_heap(jobs_.begin(), jobs_.end(), std::greater<job_t>());
     Pthread_cond_signal(&cv_);
     Pthread_mutex_unlock(&m_);
 
@@ -233,10 +234,10 @@ RunLater::~RunLater() {
 void RunLater::try_one_job() {
     // @unsafe - pthread mutex operations
     { Pthread_mutex_lock(&m_); }
-    if (!jobs_.empty()) {
+    if (!jobs_.is_empty()) {
         // Copy job data before potentially modifying container
-        auto job_time = jobs_.top().first;
-        auto job_func = jobs_.top().second;
+        auto job_time = jobs_.front().first;
+        auto job_func = jobs_.front().second;
 
         struct timeval now;
         // @unsafe - gettimeofday uses address-of
@@ -245,8 +246,11 @@ void RunLater::try_one_job() {
         double wait = job_time - now_f;
         if (wait < 0.0) {
             // Pop now that we've copied the data
-            // @unsafe - STL container method
-            { jobs_.pop(); }
+            // @unsafe - heap operations over internal job vector
+            {
+                std::pop_heap(jobs_.begin(), jobs_.end(), std::greater<job_t>());
+                (void)jobs_.pop();
+            }
             if (job_func == nullptr) {
                 // death pill
                 // @unsafe
@@ -292,7 +296,7 @@ void RunLater::run_later_loop() {
     bool done = false;
     while (!done) {
         Pthread_mutex_lock(&m_);
-        if (jobs_.empty()) {
+        if (jobs_.is_empty()) {
             done = true;
         }
         Pthread_mutex_unlock(&m_);
@@ -322,6 +326,7 @@ int RunLater::run_later(double sec, const std::function<void()>& f) {
 
     Pthread_mutex_lock(&m_);
     jobs_.push(make_pair(later, new std::function<void()>(f)));
+    std::push_heap(jobs_.begin(), jobs_.end(), std::greater<job_t>());
     Pthread_cond_signal(&cv_);
     Pthread_mutex_unlock(&m_);
 

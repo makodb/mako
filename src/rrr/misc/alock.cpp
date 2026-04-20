@@ -1,7 +1,8 @@
 module;
 
+#include <rusty/rusty.hpp>
+
 #include <list>
-#include <map>
 #include <mutex>
 #include <thread>
 #include <functional>
@@ -222,10 +223,10 @@ void WaitDieALock::abort(uint64_t id) {
                                         // needs to approve all following read
                                         // requests till next write request
                 verify(status_ == RLOCKED);
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == RLOCK) {
-                        lock_reqs.push_back(&(*next_it));
+                        lock_reqs.push(&(*next_it));
                     }
                     else
                         break;
@@ -261,11 +262,11 @@ void WaitDieALock::abort(uint64_t id) {
                 write_acquire(*next_it);
             }
             else { // acquire read locks
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == WLOCK)
                         break;
-                    lock_reqs.push_back(&(*next_it));
+                    lock_reqs.push(&(*next_it));
                 }
                 read_acquire(lock_reqs);
                 verify(status_ == RLOCKED);
@@ -361,11 +362,11 @@ uint64_t WoundDieALock::vlock(uint64_t owner,
                 write_acquire(front);
             }
             else {
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 std::list<lock_req_t>::iterator it = requests_.begin();
                 for (; it != requests_.end(); it++)
                     if (it->type == RLOCK)
-                        lock_reqs.push_back(&(*it));
+                        lock_reqs.push(&(*it));
                     else
                         break;
                 read_acquire(lock_reqs);
@@ -376,14 +377,14 @@ uint64_t WoundDieALock::vlock(uint64_t owner,
         {
             verify(front.type == RLOCK && front.status == lock_req_t::LOCK);
             bool new_acquired = false;
-            std::vector<lock_req_t *> lock_reqs;
+            rusty::Vec<lock_req_t *> lock_reqs;
             std::list<lock_req_t>::iterator it = requests_.begin();
             for (; it != requests_.end(); it++) {
                 if (it->status == lock_req_t::LOCK) {
                     verify(it->type == RLOCK && new_acquired == false);
                 }
                 else if (it->type == RLOCK) {
-                    lock_reqs.push_back(&(*it));
+                    lock_reqs.push(&(*it));
                     new_acquired = true;
                 }
                 else
@@ -426,10 +427,10 @@ void WoundDieALock::abort(uint64_t id) {
                                         // needs to approve all following read
                                         // requests till next write request
                 verify(status_ == RLOCKED);
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == RLOCK) {
-                        lock_reqs.push_back(&(*next_it));
+                        lock_reqs.push(&(*next_it));
                     }
                     else
                         break;
@@ -463,11 +464,11 @@ void WoundDieALock::abort(uint64_t id) {
                 write_acquire(*next_it);
             }
             else { // acquire read locks
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == WLOCK)
                         break;
-                    lock_reqs.push_back(&(*next_it));
+                    lock_reqs.push(&(*next_it));
                 }
                 read_acquire(lock_reqs);
                 verify(status_ == RLOCKED);
@@ -571,7 +572,7 @@ uint64_t TimeoutALock::vlock(uint64_t owner,
     return id;
 }
 
-uint32_t TimeoutALock::lock_all(std::vector<ALockReq*>& lock_reqs) {
+uint32_t TimeoutALock::lock_all(rusty::Vec<ALockReq*>& lock_reqs) {
     verify(status_ == FREE && n_rlock_ == 0);
 
     // find next lock. if next lock is read lock, find all
@@ -589,7 +590,7 @@ uint32_t TimeoutALock::lock_all(std::vector<ALockReq*>& lock_reqs) {
             n_lock++;
 
             //Log_info("lock req yes: %p", &next_req);
-            lock_reqs.push_back(&next_req);
+            lock_reqs.push(&next_req);
 
             if (next_req.type_== RLOCK) {
                 status_ = RLOCKED;
@@ -613,7 +614,7 @@ uint32_t TimeoutALock::lock_all(std::vector<ALockReq*>& lock_reqs) {
             n_lock++;
             n_rlock_ ++;
             //Log_info("lock req yes: %p", &next_req);
-            lock_reqs.push_back(&next_req);
+            lock_reqs.push(&next_req);
         }
     }
     return n_lock;
@@ -646,7 +647,7 @@ void TimeoutALock::abort(uint64_t id) {
 
     // found the request, different actions based on
     // the current state of the lock.
-    std::vector<ALockReq*> lock_reqs;
+    rusty::Vec<ALockReq*> lock_reqs;
 
     ALockReq& req = *it;
     if (req.cas_status(ALockReq::LOCK, ALockReq::UNLOCK)) {
@@ -695,7 +696,7 @@ TimeoutALock::~TimeoutALock() {
 
     // free all the lockes and trigger timeout for those waiting.
     // @unsafe {
-    std::vector<std::function<void(void)>> tocall;
+    rusty::Vec<std::function<void(void)>> tocall;
     // }
     //        lock_.lock();
     auto& alarm = get_alarm_s();

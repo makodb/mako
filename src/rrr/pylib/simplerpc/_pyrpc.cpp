@@ -1,7 +1,7 @@
 #include <Python.h>
+#include <rusty/rusty.hpp>
 #include <string>
 #include <memory>
-#include <map>
 
 import rrr;
 
@@ -33,8 +33,8 @@ class PythonRpcService : public Service {
 public:
     ~PythonRpcService() {
         // Release Python references
-        for (auto& [rpc_id, func] : handlers_) {
-            Py_XDECREF(func);
+        for (auto entry : handlers_) {
+            Py_XDECREF(entry.second);
         }
     }
 
@@ -48,13 +48,14 @@ public:
     int __reg_to__(Server& svr, size_t svc_index) override {
         // @unsafe - loop iteration
         {
-            for (auto& [rpc_id, func] : handlers_) {
+            for (auto entry : handlers_) {
+                int rpc_id = entry.first;
                 int ret = svr.reg_rpc(rpc_id, svc_index);
                 if (ret != 0) {
                     // Unregister on failure
-                    for (auto& [id, _] : handlers_) {
-                        if (id >= rpc_id) break;
-                        svr.unreg(id);
+                    for (auto prior : handlers_) {
+                        if (prior.first >= rpc_id) break;
+                        svr.unreg(prior.first);
                     }
                     return ret;
                 }
@@ -67,7 +68,7 @@ public:
     void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override;
 
 private:
-    std::map<i32, PyObject*> handlers_;
+    rusty::BTreeMap<i32, PyObject*> handlers_;
 };
 
 // Wrapper to hold Arc<Mutex<>> for Python binding
@@ -141,7 +142,7 @@ void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakSer
 
 // Map from Server* to its PythonRpcService* (before registration)
 // The service is moved to the Server when server_start is called
-static std::map<Server*, PythonRpcService*> pending_python_services_;
+static rusty::BTreeMap<Server*, PythonRpcService*> pending_python_services_;
 
 static PyObject* _pyrpc_init_server(PyObject* self, PyObject* args) {
     GILHelper gil_helper;

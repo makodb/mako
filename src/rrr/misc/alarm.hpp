@@ -1,23 +1,15 @@
 module;
+
+#include <rusty/rusty.hpp>
 /**
  * This is an alarmer.
  */
 
 
 
-#include <list>
 #include <mutex>
 #include <thread>
 #include <functional>
-#include <map>
-
-
-// External safety annotations for STL functions
-// @external: {
-//   std::make_pair: [unsafe]
-//   std::map::operator[]: [unsafe]
-//   std::map::erase: [unsafe]
-// }
 
 // @unsafe
 
@@ -42,11 +34,11 @@ class Alarm: public FrequentJob {
 
 
   // id -> <alarm_time, func>;
-  std::map<uint64_t,
+  rusty::BTreeMap<uint64_t,
            std::pair<uint64_t, std::function<void(void)>>> waiting_;
 
   // <time, id> -> func
-  std::map<std::pair<uint64_t, uint64_t>,
+  rusty::BTreeMap<std::pair<uint64_t, uint64_t>,
            std::function<void(void)> > idx_time_;
 
   Alarm() : th_(), waiting_(), idx_time_()
@@ -72,12 +64,14 @@ class Alarm: public FrequentJob {
     auto it = waiting_.begin();
     if (it != waiting_.end()) {
       uint64_t tm_now = rrr::Time::now();
-      uint64_t tm_out = it->second.first;
+      auto item = *it;
+      const uint64_t id = item.first;
+      uint64_t tm_out = item.second.first;
       ret = (tm_now > tm_out);
       if (ret) {
-        auto &func = it->second.second;
+        auto& func = item.second.second;
         func();
-        waiting_.erase(it);
+        waiting_.remove(id);
       }
     }
     return ret;
@@ -104,7 +98,7 @@ class Alarm: public FrequentJob {
     //	std::lock_guard<std::mutex> guard(lock_);
     //Log::debug("add timeout callback");
     uint64_t id = next_id_++;
-    waiting_[id] = std::make_pair(time, func);
+    waiting_.insert(id, std::make_pair(time, std::move(func)));
     //	idx_time_[std::make_pair(time, id)] = func;
     return id;
   }
@@ -119,10 +113,7 @@ class Alarm: public FrequentJob {
   // @unsafe - Removes alarm callback (calls std::map::erase)
   bool remove(uint64_t id) {
     //	std::lock_guard<std::mutex> guard(lock_);
-    // @unsafe {
-    int n_erased = waiting_.erase(id);
-    // }
-    return (n_erased == 1);
+    return waiting_.remove(id).is_some();
   }
 
 };

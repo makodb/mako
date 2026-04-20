@@ -9,8 +9,6 @@ module;
 #include <rusty/vec.hpp>
 #include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
 
-#include <unordered_map>
-#include <unordered_set>
 #include <pthread.h>
 #include <atomic>
 #include <chrono>
@@ -285,9 +283,9 @@ inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
  */
 struct RpcServiceContext {
     // Maps RPC ID to service index for dispatch (immutable after setup)
-    const std::unordered_map<i32, size_t> rpc_to_service;
+    const rusty::HashMap<i32, size_t> rpc_to_service;
     // RPC IDs that should be dispatched inline (no per-request server fiber).
-    const std::unordered_set<i32> fast_rpc_ids;
+    const rusty::HashSet<i32> fast_rpc_ids;
 
     // Owned service proxies wrapped in RefCell for interior mutability
     // RefCell allows mutable access through const reference (borrow_mut)
@@ -303,8 +301,8 @@ struct RpcServiceContext {
     const uint64_t server_instance_id;
 
     // Constructor taking ownership of all data
-    RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
-                      std::unordered_set<i32> fast_rpc_set,
+    RpcServiceContext(rusty::HashMap<i32, size_t> rpc_map,
+                      rusty::HashSet<i32> fast_rpc_set,
                       rusty::Vec<rusty::RefCell<ServiceProxy>> svcs,
                       std::string address,
                       rusty::Arc<std::atomic<int>> pending_counter,
@@ -408,7 +406,7 @@ public:
 private:
     // used to surpress multiple "no handler for rpc_id=..." errro
     // SpinMutex provides thread-safe interior mutability
-    static SpinMutex<std::unordered_set<i32>> rpc_id_missing_s;
+    static SpinMutex<rusty::HashSet<i32>> rpc_id_missing_s;
 
 public:
     // Jetpack-specific member
@@ -627,8 +625,8 @@ class Server: public NoCopy {
     // Pending registration data (before start() is called)
     // These are moved into RpcServiceContext in start()
     rusty::Vec<ServiceProxy> pending_services_;
-    std::unordered_map<i32, size_t> pending_rpc_to_service_;
-    std::unordered_set<i32> pending_fast_rpc_ids_;
+    rusty::HashMap<i32, size_t> pending_rpc_to_service_;
+    rusty::HashSet<i32> pending_fast_rpc_ids_;
 
     // Shared context containing RPC dispatch info and services
     // Created in start() after all registrations are complete
@@ -647,7 +645,7 @@ class Server: public NoCopy {
 
     // Graceful shutdown support
     rusty::Cell<ShutdownPhase> shutdown_phase_{ShutdownPhase::RUNNING};
-    SpinMutex<std::vector<ShutdownHook>> shutdown_hooks_;
+    SpinMutex<rusty::Vec<ShutdownHook>> shutdown_hooks_;
     rusty::Arc<std::atomic<int>> pending_requests_{rusty::Arc<std::atomic<int>>::make(0)};
     rusty::Arc<std::atomic<bool>> drop_heartbeat_replies_{
         rusty::Arc<std::atomic<bool>>::make(false)};
@@ -723,10 +721,10 @@ public:
         // disallow duplicate rpc_id
         // @unsafe
         {
-            if (pending_rpc_to_service_.find(rpc_id) != pending_rpc_to_service_.end()) {
+            if (pending_rpc_to_service_.contains_key(rpc_id)) {
                 return EEXIST;
             }
-            pending_rpc_to_service_[rpc_id] = svc_index;
+            pending_rpc_to_service_.insert(rpc_id, svc_index);
             return 0;
         }
     }

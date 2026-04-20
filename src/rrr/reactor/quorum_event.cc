@@ -1,8 +1,8 @@
 module;
 
-#include <vector>
+#include <rusty/rusty.hpp>
+
 #include <functional>
-#include <unordered_map>
 #include <chrono>
 #include <iostream>
 
@@ -28,16 +28,16 @@ QuorumEvent::QuorumEvent(int n_total, int quorum)
 
 void QuorumEvent::finalize(
     uint64_t timeout,
-    function<bool(vector<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
+    function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
   
   
   Fiber::create_run([timeout, finalize_func, this]() {
     bool ret = false;
     
     auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)
-    vector<std::pair<uint16_t, rrr::i64> > dangling_rpc;
-    for (auto &it : xids_)
-      dangling_rpc.push_back(it);  // fetch out dangling rpc info before it's freed (see comment A)
+    rusty::Vec<std::pair<uint16_t, rrr::i64> > dangling_rpc;
+    for (auto it : xids_)
+      dangling_rpc.push(it);  // fetch out dangling rpc info before it's freed (see comment A)
 
     final_ev->wait(timeout);
     /* A: by the time this fires, the quorum event could have been freed. Thus,
@@ -56,15 +56,13 @@ void QuorumEvent::add_xid(uint16_t site, rrr::i64 xid) {
 }
 
 void QuorumEvent::remove_xid(uint16_t site) {
-  auto it = xids_.find(site);
-  if (it != xids_.end())
-    xids_.erase(it);
+  xids_.remove(site);
 }
 
 void QuorumEvent::vote_yes() {
   n_voted_yes_++;
   test();
-  vec_timestamp_.push_back(Time::now(true) - begin_timestamp_);
+  vec_timestamp_.push(Time::now(true) - begin_timestamp_);
 
   if (finalize_event_->status_.get() != Event::TIMEOUT)
     finalize_event_->set(n_voted_yes_ + n_voted_no_);

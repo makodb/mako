@@ -8,8 +8,6 @@ module;
 #include <rusty/unsafe_cell.hpp>
 #include <rusty/vec.hpp>
 #include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
-#include <unordered_map>
-#include <unordered_set>
 #include <pthread.h>
 #include <atomic>
 #include <chrono>
@@ -118,7 +116,7 @@ static void stat_server_batching(size_t batch) {
 }
 
 // rpc_id -> <count, cumulative>
-static unordered_map<i32, pair<Counter, Counter>> g_stat_rpc_counter;
+static rusty::HashMap<i32, pair<Counter, Counter>> g_stat_rpc_counter;
 static uint64_t g_stat_server_rpc_counting_report_time = 0;
 static const uint64_t g_stat_server_rpc_counting_report_interval = 1000 * 1000 * 1000;
 
@@ -129,7 +127,7 @@ static void stat_server_rpc_counting(i32 rpc_id) {
     uint64_t now = base::rdtsc();
     if (now - g_stat_server_rpc_counting_report_time > g_stat_server_rpc_counting_report_interval) {
         // do report
-        for (auto& it: g_stat_rpc_counter) {
+        for (auto it: g_stat_rpc_counter) {
             i32 counted_rpc_id = it.first;
             i64 count = it.second.first.peek_next();
             it.second.first.reset();
@@ -146,7 +144,7 @@ static void stat_server_rpc_counting(i32 rpc_id) {
 
 // Static member definitions for missing RPC ID tracking
 // SpinMutex wraps the unordered_set for thread-safe access
-SpinMutex<std::unordered_set<i32>> ServerConnection::rpc_id_missing_s{std::unordered_set<i32>()};
+SpinMutex<rusty::HashSet<i32>> ServerConnection::rpc_id_missing_s{rusty::HashSet<i32>()};
 
 
 // @safe - Initializes connection
@@ -254,13 +252,13 @@ bool ServerConnection::handle_read() {
             stat_server_rpc_counting(rpc_id);
 #endif // RPC_STATISTICS
 
-            auto it = ctx_->rpc_to_service.find(rpc_id);
-            if (it == ctx_->rpc_to_service.end()) {
+            auto svc_index_opt = ctx_->rpc_to_service.get(rpc_id);
+            if (svc_index_opt.is_none()) {
                 // Handler not found - track missing RPC IDs
                 bool surpress_warning = false;
                 {
                     auto guard = rpc_id_missing_s.lock().unwrap();
-                    if (guard->find(rpc_id) == guard->end()) {
+                    if (!guard->contains(rpc_id)) {
                         guard->insert(rpc_id);
                     } else {
                         surpress_warning = true;
@@ -272,9 +270,9 @@ bool ServerConnection::handle_read() {
                 reply(*req, ENOENT);
             } else {
                 // Service found - dispatch via proxy facade using RefCell
-                size_t svc_index = it->second;
+                size_t svc_index = *svc_index_opt.unwrap();
                 auto weak_this = weak_self_;
-                if (ctx_->fast_rpc_ids.find(rpc_id) != ctx_->fast_rpc_ids.end()) {
+                if (ctx_->fast_rpc_ids.contains(rpc_id)) {
                     auto guard = ctx_->services[svc_index].borrow_mut();
                     (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
                 } else {
@@ -667,8 +665,8 @@ int Server::start(const char* bind_addr) {
 
 // @unsafe - Unregisters RPC mapping from pending map (must be called before start())
 void Server::unreg(i32 rpc_id) {
-    pending_rpc_to_service_.erase(rpc_id);
-    pending_fast_rpc_ids_.erase(rpc_id);
+    pending_rpc_to_service_.remove(rpc_id);
+    pending_fast_rpc_ids_.remove(rpc_id);
 }
 
 // @unsafe - Signals shutdown to waiting threads
@@ -695,7 +693,7 @@ void Server::wait_for_shutdown() {
 // @unsafe - Thread-safe hook registration
 void Server::add_shutdown_hook(ShutdownHook hook) {
     auto guard = shutdown_hooks_.lock().unwrap();
-    guard->push_back(std::move(hook));
+    guard->push(std::move(hook));
 }
 
 // @unsafe - Calls PollThread::request_close

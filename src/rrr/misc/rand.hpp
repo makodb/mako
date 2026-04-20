@@ -1,11 +1,12 @@
 module;
+
+#include <rusty/rusty.hpp>
 #ifndef RANDOM_GENERATOR_H_
 #define RANDOM_GENERATOR_H_
 
 #include <pthread.h>
 #include <cstdlib>
 #include <string>
-#include <vector>
 
 export module rrr:misc.rand;
 
@@ -46,7 +47,7 @@ public:
 
     static bool percentage_true(int p);
 
-    static unsigned int weighted_select(const std::vector<double> &weight_vector);
+    static unsigned int weighted_select(const rusty::Vec<double> &weight_vector);
 
     static void destroy();
 };

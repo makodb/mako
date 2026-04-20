@@ -2,15 +2,9 @@ module;
 #include <algorithm>
 #include <atomic>
 #include <functional>
-#include <list>
 #include <limits>
 #include <memory>
-#include <queue>
-#include <set>
 #include <thread>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
 #include <variant>
 #include <optional>
 #include <unistd.h>
@@ -174,10 +168,10 @@ class Reactor {
   // Using rusty::BTreeSet for @safe contains() checks
   // Using RefCell for safe interior mutability in const methods
   rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
-  rusty::RefCell<std::vector<rusty::Rc<Fiber>>> available_fibers_{};
+  rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
-  static thread_local std::unordered_map<std::string, std::vector<PollableProxy>> clients_;
-  static thread_local std::unordered_set<std::string> dangling_ips_;
+  static thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> clients_;
+  static thread_local rusty::HashSet<std::string> dangling_ips_;
   // Interior mutability using Cell<T> for safe const method access
   rusty::Cell<bool> looping_{false};
   rusty::Cell<bool> slow_{false};
@@ -196,8 +190,8 @@ class Reactor {
     bool queued = false;
     std::function<bool(rusty::Context&)> poll_once;
   };
-  rusty::RefCell<std::vector<StacklessTaskEntry>> stackless_tasks_{};
-  rusty::RefCell<std::vector<size_t>> free_stackless_task_slots_{};
+  rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
+  rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
   rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
   static SpinLock trying_job_;
 #if defined(REUSE_FIBER) || defined(REUSE_CORO)
@@ -502,12 +496,12 @@ private:
     Epoll poll_;
 
     // Pollable state - single owner in worker thread
-    std::unordered_map<int, PollableProxy> fd_to_pollable_;
-    std::unordered_map<int, int> mode_;  // fd -> mode
-    std::unordered_set<int> pending_remove_;
+    rusty::HashMap<int, PollableProxy> fd_to_pollable_;
+    rusty::HashMap<int, int> mode_;  // fd -> mode
+    rusty::HashSet<int> pending_remove_;
 
     // Jobs - single owner in worker thread
-    std::set<rusty::Arc<Job>> jobs_;
+    rusty::BTreeSet<rusty::Arc<Job>> jobs_;
 
     // Stop flag
     bool stop_ = false;

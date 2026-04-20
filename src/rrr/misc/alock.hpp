@@ -1,4 +1,6 @@
 module;
+
+#include <rusty/rusty.hpp>
 /**
  * This is a asynchronous queued lock module with timeout support.
  * Written to support two-phase locking in rococo.
@@ -11,7 +13,6 @@ module;
 
 
 #include <list>
-#include <map>
 #include <mutex>
 #include <thread>
 #include <functional>
@@ -184,28 +185,25 @@ class WaitDieALock: public ALock {
     lock_req.status = lock_req_t::LOCK;
     lock_req.yes_callback(lock_req.id);
   }
-  void read_acquire(const std::vector<lock_req_t *> &lock_reqs) {
+  void read_acquire(const rusty::Vec<lock_req_t *> &lock_reqs) {
     if (lock_reqs.size() == 0) {
       return;
     }
     if (n_rlock_ == 0)
       status_ = RLOCKED;
     n_rlock_ += lock_reqs.size();
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> > to_calls;
+    rusty::Vec<std::pair<std::function<void(uint64_t)>, uint64_t> > to_calls;
     to_calls.reserve(lock_reqs.size());
-    std::vector<lock_req_t *>::const_iterator it;
-    for (it = lock_reqs.begin(); it != lock_reqs.end(); it++) {
-      verify((*it)->type == RLOCK && (*it)->status == lock_req_t::WAIT);
-      (*it)->status = lock_req_t::LOCK;
-      to_calls.push_back(
+    for (auto* req : lock_reqs) {
+      verify(req->type == RLOCK && req->status == lock_req_t::WAIT);
+      req->status = lock_req_t::LOCK;
+      to_calls.push(
           std::pair<std::function<void(uint64_t)>, uint64_t>(
-              (*it)->yes_callback,
-              (*it)->id));
+              req->yes_callback,
+              req->id));
     }
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> >::iterator
-        cit;
-    for (cit = to_calls.begin(); cit != to_calls.end(); cit++) {
-      cit->first(cit->second);
+    for (auto& cb : to_calls) {
+      cb.first(cb.second);
     }
   }
 
@@ -383,28 +381,25 @@ class WoundDieALock: public ALock {
     lock_req.status = lock_req_t::LOCK;
     lock_req.yes_callback(lock_req.id);
   }
-  void read_acquire(const std::vector<lock_req_t *> &lock_reqs) {
+  void read_acquire(const rusty::Vec<lock_req_t *> &lock_reqs) {
     if (lock_reqs.size() == 0) {
       return;
     }
     if (n_rlock_ == 0)
       status_ = RLOCKED;
     n_rlock_ += lock_reqs.size();
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> > to_calls;
+    rusty::Vec<std::pair<std::function<void(uint64_t)>, uint64_t> > to_calls;
     to_calls.reserve(lock_reqs.size());
-    std::vector<lock_req_t *>::const_iterator it;
-    for (it = lock_reqs.begin(); it != lock_reqs.end(); it++) {
-      verify((*it)->type == RLOCK && (*it)->status == lock_req_t::WAIT);
-      (*it)->status = lock_req_t::LOCK;
-      to_calls.push_back(
+    for (auto* req : lock_reqs) {
+      verify(req->type == RLOCK && req->status == lock_req_t::WAIT);
+      req->status = lock_req_t::LOCK;
+      to_calls.push(
           std::pair<std::function<void(uint64_t)>, uint64_t>(
-              (*it)->yes_callback,
-              (*it)->id));
+              req->yes_callback,
+              req->id));
     }
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> >::iterator
-        cit;
-    for (cit = to_calls.begin(); cit != to_calls.end(); cit++) {
-      cit->first(cit->second);
+    for (auto& cb : to_calls) {
+      cb.first(cb.second);
     }
   }
 
@@ -597,7 +592,7 @@ class TimeoutALock: public ALock {
   /**
    * return: how many i locked.
    */
-  uint32_t lock_all(std::vector<ALockReq *> &lock_reqs);
+  uint32_t lock_all(rusty::Vec<ALockReq *> &lock_reqs);
 
   /**
    *
@@ -613,8 +608,8 @@ class ALockGroup {
 
   std::recursive_mutex mtx_locks_;
 
-  std::map<ALock *, uint64_t> locked_;
-  std::map<ALock *, ALock::type_t> tolock_;
+  rusty::BTreeMap<ALock *, uint64_t> locked_;
+  rusty::BTreeMap<ALock *, ALock::type_t> tolock_;
 
   uint64_t priority_;
   std::function<int(void)> wound_callback_;
@@ -674,7 +669,7 @@ class ALockGroup {
       //	    mtx_locks_.lock();
       //	    tolock_.insert(std::pair<ALock*, uint64_t>(&alock, 0));
       //	    tolock_.insert(std::pair<ALock*, ALock::type_t>(&alock, type));
-      tolock_[alock] = type;
+      tolock_.insert(alock, type);
       //	    mtx_locks_.unlock();
     } else {
       verify(0);
@@ -683,7 +678,7 @@ class ALockGroup {
 
   void abort_all_locked() {
     //        mtx_locks_.lock();
-    for (auto &pair: locked_) {
+    for (auto pair: locked_) {
       auto &alock = pair.first;
       auto &areq_id = pair.second;
       if (areq_id != 0) {

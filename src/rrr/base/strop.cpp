@@ -1,7 +1,8 @@
 module;
 
+#include <rusty/rusty.hpp>
+
 #include <string>
-#include <vector>
 
 
 #include <iostream>
@@ -91,17 +92,17 @@ std::string format_decimal(int val) {
     return str;
 }
 
-// @unsafe - Uses STL functions (vector::push_back, string::find_first_not_of) not yet in rusty-cpp safe list
-std::vector<std::string> strsplit(const std::string& str, const char sep /* =? */) {
-    std::vector<std::string> split;
+// @unsafe - Uses STL string parsing helpers not yet in rusty-cpp safe list
+rusty::Vec<std::string> strsplit(const std::string& str, const char sep /* =? */) {
+    rusty::Vec<std::string> split;
     size_t begin, end;
     begin = str.find_first_not_of(sep);  // @unsafe
     while ((end = str.find(sep, begin)) != std::string::npos) {
-        split.push_back(str.substr(begin, end - begin));  // @unsafe
+        split.push(str.substr(begin, end - begin));  // @unsafe
         begin = str.find_first_not_of(sep, end);  // @unsafe
     }
     if (begin != std::string::npos && begin < str.size()) {
-        split.push_back(str.substr(begin));  // @unsafe
+        split.push(str.substr(begin));  // @unsafe
     }
     return split;
 }
