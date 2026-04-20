@@ -6,10 +6,7 @@
 #include <unistd.h>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-#include "misc/marshal.hpp"
+import rrr;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 
@@ -545,7 +542,9 @@ TEST_F(ConnectionErrorTest, InvalidPort) {
 TEST_F(RPCTest, MultiThreadedStressTest) {
     const int num_threads = 100;
     const int requests_per_thread = 10;
-    std::vector<rusty::thread::JoinHandle<std::pair<int, int>>> handles;
+    std::vector<std::thread> workers;
+    workers.reserve(num_threads);
+    std::vector<std::pair<int, int>> per_thread_results(num_threads, {0, 0});
 
     // Clone the Arc for each thread to test Arc's thread-safety
     for (int thread_id = 0; thread_id < num_threads; thread_id++) {
@@ -553,11 +552,12 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
         auto worker_clone = poll_thread_worker_.as_ref().unwrap().clone();
 
         // Spawn thread with explicit parameter passing (enforces Send trait)
-        auto handle = rusty::thread::spawn(
-            [](rusty::Arc<PollThread> worker,
-               int tid,
-               int requests,
-               int port) -> std::pair<int, int> {
+        workers.emplace_back(
+            [worker = std::move(worker_clone),
+             tid = thread_id,
+             requests = requests_per_thread,
+             port = int(test_port_),
+             &per_thread_results]() mutable {
                 int thread_successes = 0;
                 int thread_failures = 0;
 
@@ -569,7 +569,8 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
                 int conn_result = thread_client->connect(server_addr.c_str());
                 if (conn_result != 0) {
                     thread_failures++;
-                    return {thread_successes, thread_failures};
+                    per_thread_results[tid] = {thread_successes, thread_failures};
+                    return;
                 }
 
                 // Small delay to ensure connection is established
@@ -603,29 +604,18 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
 
                 // Close connection
                 thread_client->close();
-
-                return {thread_successes, thread_failures};
-            },
-            worker_clone,
-            thread_id,
-            requests_per_thread,
-            test_port_
+                per_thread_results[tid] = {thread_successes, thread_failures};
+            }
         );
-
-        handles.push_back(std::move(handle));
     }
 
     // Join all threads and collect results.
-    // JoinHandle::join() returns rusty::Result<T, std::exception_ptr> so the
-    // caller can observe thread-level exceptions instead of having them
-    // propagate across thread boundaries.
     int total_successes = 0;
     int total_failures = 0;
-    for (auto& handle : handles) {
-        auto join_result = handle.join();
-        ASSERT_TRUE(join_result.is_ok())
-            << "worker thread exited with an exception";
-        auto [successes, failures] = join_result.unwrap();
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    for (const auto& [successes, failures] : per_thread_results) {
         total_successes += successes;
         total_failures += failures;
     }

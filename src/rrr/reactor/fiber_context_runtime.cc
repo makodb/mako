@@ -1,17 +1,36 @@
-/**
- * @file fiber_context_runtime.cc
- * @brief Custom stackful fiber runtime compatible with Fiber's task/yield flow.
- */
+module;
 
-#include "fiber_impl.h"
+#include <rusty/box.hpp>
+#include <rusty/rc.hpp>
+#include <rusty/option.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/refcell.hpp>
+#include <rusty/function.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
+#include <utility>
+
 
 #include <cstdlib>
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "../base/all.hpp"
+
+module rrr:impl.reactor.fiber_context_runtime;
+import rrr;
+
+/**
+ * @file fiber_context_runtime.cc
+ * @brief Custom stackful fiber runtime compatible with Fiber's task/yield flow.
+ */
+
+
+
 
 namespace rrr {
+
+extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);
 
 #if !defined(__x86_64__)
 extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to) {
@@ -109,7 +128,7 @@ void fiber_task_t::entry_trampoline() {
 
 [[noreturn]] void fiber_task_t::entry() {
   state_ = State::RUNNING;
-  verify(fn_);
+  verify(static_cast<bool>(fn_));
   fn_(yield_);
   state_ = State::FINISHED;
   fiber_swap_context(&fiber_ctx_, &caller_ctx_);

@@ -1,11 +1,10 @@
-#pragma once
+module;
 
 #include <cstdio>
 #include <cinttypes>
 #include <string>
 #include <functional>
 
-#include "basetypes.hpp"
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -19,7 +18,11 @@
 //   free: [unsafe, (void*) -> void]
 // }
 
-namespace rrr {
+export module rrr:base.misc;
+
+import :base.basetypes;
+
+export namespace rrr {
 
 // @unsafe - Uses inline assembly to read timestamp counter
 // SAFETY: rdtsc instruction is safe to execute, reads CPU timestamp counter

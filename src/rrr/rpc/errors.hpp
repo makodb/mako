@@ -1,9 +1,11 @@
-#pragma once
+module;
 
 #include <string>
 #include <cstdint>
 
-namespace rrr {
+export module rrr:rpc.errors;
+
+export namespace rrr {
 
 /**
  * High-level RPC error categories.

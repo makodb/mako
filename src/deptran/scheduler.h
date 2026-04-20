@@ -521,7 +521,7 @@ class TxLogServer {
     }
     return false;
   }
-  // @safe
+  // @unsafe
   virtual bool IsFPGALeader() { verify(0); } ;
 	virtual bool RequestVote() { verify(0); return false;};
   virtual void Pause();

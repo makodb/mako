@@ -1,8 +1,18 @@
+module;
+
+#include <string>
+#include <vector>
+
+
 #include <iostream>
 #include <sstream>
 #include <string.h>
 
-#include "strop.hpp"
+
+
+
+module rrr:impl.base.strop;
+import rrr;
 
 // @external: {
 //   strlen: [unsafe],

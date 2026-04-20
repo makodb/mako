@@ -244,7 +244,7 @@ class FileSnapshotReader : public SnapshotReader {
     return true;
   }
 
-  // @safe - Check if all data read
+  // @unsafe - Check if all data read
   bool IsComplete() const override {
     return valid_ && read_offset_ >= data_.size();
   }
@@ -364,19 +364,19 @@ class FileSnapshotManager : public SnapshotManager {
   // Snapshot Queries
   // ========================================================================
 
-  // @safe (with mutex)
+  // @unsafe (with mutex)
   rusty::Option<SnapshotMetadata> GetLatestSnapshot() const override {
     std::lock_guard<std::mutex> lock(mutex_);
     return GetLatestSnapshotUnlocked();
   }
 
-  // @safe (with mutex)
+  // @unsafe (with mutex)
   std::vector<SnapshotMetadata> ListSnapshots() const override {
     std::lock_guard<std::mutex> lock(mutex_);
     return ListSnapshotsUnlocked();
   }
 
-  // @safe (with mutex)
+  // @unsafe (with mutex)
   bool HasSnapshotAtOrAfter(slotid_t min_index) const override {
     std::lock_guard<std::mutex> lock(mutex_);
     auto snapshots = ListSnapshotsUnlocked();
@@ -450,13 +450,13 @@ class FileSnapshotManager : public SnapshotManager {
     return mkdir(config_.storage_path.c_str(), 0755) == 0;
   }
 
-  // @safe - Generates path
+  // @unsafe - Generates path
   std::string GetSnapshotPath(slotid_t index, ballot_t term) const {
     return config_.storage_path + "/snapshot_" + std::to_string(index) +
            "_" + std::to_string(term) + ".snap";
   }
 
-  // @safe - Generates temp path
+  // @unsafe - Generates temp path
   std::string GetTempPath(slotid_t index, ballot_t term) const {
     return GetSnapshotPath(index, term) + ".tmp";
   }
@@ -502,7 +502,7 @@ class FileSnapshotManager : public SnapshotManager {
     return result;
   }
 
-  // @safe (must hold mutex)
+  // @unsafe (must hold mutex)
   rusty::Option<SnapshotMetadata> GetLatestSnapshotUnlocked() const {
     auto snapshots = ListSnapshotsUnlocked();
     if (snapshots.empty()) {

@@ -4,9 +4,7 @@
 #include <chrono>
 #include <vector>
 #include <random>
-#include "misc/alock.hpp"
-#include "misc/alarm.hpp"
-#include "base/all.hpp"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

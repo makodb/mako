@@ -1,6 +1,10 @@
-#pragma once
+module;
 
-namespace rrr {
+#include <cstdint>
+
+export module rrr:misc.stat;
+
+export namespace rrr {
 
 class AvgStat {
 public:

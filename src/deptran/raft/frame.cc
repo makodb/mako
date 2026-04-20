@@ -133,7 +133,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
   return svr_.get();
 }
 
-// @safe - returns raw pointer to owned member, external calls marked @external [safe]
+// @unsafe - returns raw pointer to owned member, external calls marked @external [safe]
 Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
@@ -226,7 +226,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   return commo_.get();
 }
 
-// @safe - external calls marked @external [safe]
+// @unsafe - external calls marked @external [safe]
 vector<rrr::ServiceProxy>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,

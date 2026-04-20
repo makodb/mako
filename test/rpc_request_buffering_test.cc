@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 #define RPC_TEST_HOOKS
-#include "rpc/client.hpp"
+import rrr;
 #undef RPC_TEST_HOOKS
 
 using namespace rrr;

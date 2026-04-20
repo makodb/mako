@@ -4,9 +4,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "reactor/fiber.h"
-#include "reactor/reactor.h"
-#include "base/basetypes.hpp"
+import rrr;
 
 namespace rrr {
 
@@ -289,33 +287,33 @@ TEST_F(FiberTest, SleepUntilFutureTime) {
 // =============================================================================
 
 TEST_F(FiberTest, PromiseGetFutureOnce) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     EXPECT_TRUE(future.valid());
 }
 
 TEST_F(FiberTest, PromiseGetFutureTwiceThrows) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     EXPECT_THROW(promise.get_future(), std::logic_error);
 }
 
 TEST_F(FiberTest, PromiseSetValueOnce) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     promise.set_value(42);
     EXPECT_TRUE(promise.is_ready());
 }
 
 TEST_F(FiberTest, PromiseSetValueTwiceThrows) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     promise.set_value(42);
     EXPECT_THROW(promise.set_value(100), std::logic_error);
 }
 
 TEST_F(FiberTest, FutureIsReadyAfterSet) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     EXPECT_FALSE(future.is_ready());
     promise.set_value(42);
@@ -323,7 +321,7 @@ TEST_F(FiberTest, FutureIsReadyAfterSet) {
 }
 
 TEST_F(FiberTest, FutureGetValueImmediate) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     promise.set_value(42);
 
@@ -332,7 +330,7 @@ TEST_F(FiberTest, FutureGetValueImmediate) {
 }
 
 TEST_F(FiberTest, FutureGetValueMultipleTimes) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     promise.set_value(42);
 
@@ -343,7 +341,7 @@ TEST_F(FiberTest, FutureGetValueMultipleTimes) {
 }
 
 TEST_F(FiberTest, FutureGetValueInFiber) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     int received_value = 0;
     auto reactor = Reactor::get_reactor();
@@ -363,7 +361,7 @@ TEST_F(FiberTest, FutureGetValueInFiber) {
 }
 
 TEST_F(FiberTest, FutureWaitForTimeout) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     bool ready = false;
     auto reactor = Reactor::get_reactor();
@@ -380,7 +378,7 @@ TEST_F(FiberTest, FutureWaitForTimeout) {
 }
 
 TEST_F(FiberTest, FutureWaitForReady) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future = promise.get_future();
     promise.set_value(42);
 
@@ -390,13 +388,13 @@ TEST_F(FiberTest, FutureWaitForReady) {
 }
 
 TEST_F(FiberTest, DefaultFutureIsInvalid) {
-    Future<int> future;
+    FiberFuture<int> future;
     EXPECT_FALSE(future.valid());
     EXPECT_FALSE(future.is_ready());
 }
 
 TEST_F(FiberTest, MovedFromFutureIsInvalid) {
-    Promise<int> promise;
+    FiberPromise<int> promise;
     auto future1 = promise.get_future();
     auto future2 = std::move(future1);
 
@@ -405,9 +403,9 @@ TEST_F(FiberTest, MovedFromFutureIsInvalid) {
 }
 
 TEST_F(FiberTest, MovedFromPromiseThrows) {
-    Promise<int> promise1;
+    FiberPromise<int> promise1;
     auto future = promise1.get_future();
-    Promise<int> promise2 = std::move(promise1);
+    FiberPromise<int> promise2 = std::move(promise1);
 
     // Moved-from promise should throw
     EXPECT_THROW(promise1.set_value(42), std::logic_error);
@@ -434,14 +432,14 @@ TEST_F(FiberTest, MakeReadyFuture) {
 }
 
 TEST_F(FiberTest, FutureWithStringType) {
-    Promise<std::string> promise;
+    FiberPromise<std::string> promise;
     auto future = promise.get_future();
     promise.set_value("hello world");
     EXPECT_EQ("hello world", future.get());
 }
 
 TEST_F(FiberTest, FutureWithVectorType) {
-    Promise<std::vector<int>> promise;
+    FiberPromise<std::vector<int>> promise;
     auto future = promise.get_future();
     promise.set_value({1, 2, 3, 4, 5});
 

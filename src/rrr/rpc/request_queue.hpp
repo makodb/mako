@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 #include <chrono>
 #include <cerrno>
@@ -7,9 +7,14 @@
 #include <mutex>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
-#include "misc/marshal.hpp"
 
-namespace rrr {
+export module rrr:rpc.request_queue;
+
+import :base.basetypes;
+import :misc.marshal;
+
+
+export namespace rrr {
 
 /**
  * Strategy for handling queue overflow.

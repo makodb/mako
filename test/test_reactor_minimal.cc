@@ -1,9 +1,7 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
-#include "reactor/reactor.h"
-#include "reactor/event.h"
-#include "reactor/fiber.h"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

@@ -1,3 +1,5 @@
-#pragma once
+module;
 
-#include "marshal.hpp"
+export module rrr:misc.marshallable_proxy;
+
+import :misc.marshal;

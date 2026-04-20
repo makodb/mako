@@ -1,19 +1,25 @@
-#pragma once
-#include "../base/all.hpp"
+module;
 
-#include "stdlib.h"
-#include "stdio.h"
-#include "string.h"
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
 #include <mutex>
+#include <fstream>
 #include <sstream>
+#include <string>
 #include <vector>
-#include "sys/times.h"
+#include <sys/times.h>
+#include <unistd.h>
 
 #ifndef __APPLE__
-#include "sys/sysinfo.h"
+#include <sys/sysinfo.h>
 #endif
 
-namespace rrr {
+export module rrr:misc.cpuinfo;
+
+import :base.all;
+
+export namespace rrr {
 
 class CPUInfo {
 private:

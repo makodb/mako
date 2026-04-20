@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 #include <list>
 #include <vector>
@@ -7,6 +7,7 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
+#include <functional>
 #include <limits>
 #include <chrono>
 #include<iostream>
@@ -15,8 +16,7 @@
 #include <unistd.h>
 #include <memory>
 
-#include "base/all.hpp"
-#include "rusty/arc.hpp"
+#include <rusty/arc.hpp>
 
 #ifdef RR
 #pragma push_macro("RR")
@@ -35,7 +35,12 @@
 //   std::min: [safe]
 // }
 
-namespace rrr {
+export module rrr:misc.marshal;
+
+import :base.all;
+
+
+export namespace rrr {
 
 // @safe - Wrapper for std::min (pure function, no side effects)
 template<typename T>

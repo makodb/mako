@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 /**
  * Connection Health Metrics (Phase 3.2)
@@ -16,7 +16,9 @@
 #include <cstdint>
 #include <limits>
 
-namespace rrr {
+export module rrr:rpc.connection_metrics;
+
+export namespace rrr {
 
 // @safe - All fields use Cell for thread-safe interior mutability
 class ConnectionMetrics {

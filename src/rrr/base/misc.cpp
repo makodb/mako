@@ -1,3 +1,11 @@
+module;
+
+#include <cstdio>
+#include <cinttypes>
+#include <string>
+#include <functional>
+
+
 #include <stdio.h>
 #include <time.h>
 #include <limits.h>
@@ -5,7 +13,11 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
-#include "misc.hpp"
+
+
+
+module rrr:impl.base.misc;
+import rrr;
 
 // External safety annotations for system functions used in this module
 // @external: {

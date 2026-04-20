@@ -1,16 +1,31 @@
+module;
+
+#include <rusty/box.hpp>
+#include <rusty/rc.hpp>
+#include <rusty/option.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/refcell.hpp>
+#include <rusty/function.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
+
+
+#include <utility>
+#include <functional>
+#include <iostream>
+#include <memory>
+
+
+module rrr:impl.reactor.fiber_impl;
+import rrr;
+
 /**
  * @file fiber_impl.cc
  * @brief Implementation of the Fiber class.
  */
 
-#include <utility>
 
-#include <functional>
-#include <iostream>
-#include <memory>
-#include "../base/all.hpp"
-#include "fiber_impl.h"
-#include "reactor.h"
 
 // #define USE_PROTECTED_STACK
 
@@ -32,12 +47,12 @@ Fiber::~Fiber() {
 
 void Fiber::run_wrapper(fiber_yield_t& yield) {
   fiber_yield_.set(&yield);
-  verify(*func_.borrow());
+  verify(static_cast<bool>(*func_.borrow()));
   auto reactor = Reactor::get_reactor();
   while (true) {
     auto sz = reactor->fibers_.borrow()->len();
     verify(sz > 0);
-    verify(*func_.borrow());
+    verify(static_cast<bool>(*func_.borrow()));
     (*func_.borrow_mut())();  // borrow_mut needed because operator() is non-const
     *func_.borrow_mut() = {};
     status_.set(FINISHED);

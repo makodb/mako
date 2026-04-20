@@ -1,13 +1,32 @@
+module;
+
+#include <algorithm>
+#include <fstream>
+#include <list>
+#include <set>
+#include <unordered_set>
+#include <map>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <memory>
+#include <vector>
+#include <rusty/rusty.hpp>
+
 
 #include <functional>
 #include <thread>
 #include <iostream>
 #include <cerrno>
 #include <cstring>
-#include "fiber_impl.h"
-#include "event.h"
-#include "reactor.h"
-#include "epoll_wrapper.h"
+
+
+
+
+module rrr:impl.reactor.event;
+import rrr;
 
 namespace rrr {
 using std::function;
@@ -134,7 +153,7 @@ void Event::record_place(const char* file, int line) {
   rcd_wait_ = true;
 }
 
-// @safe - Tests if event is ready
+// @unsafe - Tests if event is ready (calls verify/log helpers not marked @safe)
 bool Event::test() {
   verify(__debug_creator);
   if (is_ready()) {

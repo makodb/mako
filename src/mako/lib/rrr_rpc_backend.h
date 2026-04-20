@@ -16,9 +16,7 @@
 #include "lib/transport.h"
 
 // rrr/rpc library
-#include "rrr/rpc/client.hpp"
-#include "rrr/rpc/server.hpp"
-#include "rrr/reactor/reactor.h"
+import rrr;
 
 #include <map>
 #include <vector>

@@ -1,3 +1,4 @@
+module;
 /**
  * This is a asynchronous queued lock module with timeout support.
  * Written to support two-phase locking in rococo.
@@ -8,29 +9,32 @@
  * thread.
  */
 
-#pragma once
 
 #include <list>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <functional>
 #include <cstdint>
 
-#include "base/all.hpp"
 
-#include "alarm.hpp"
-#include "dball.hpp"
 
 // External safety annotations for STL functions used in inline methods
 // @external: {
 //   std::function::function: [unsafe]
 // }
 
-#define ALOCK_TIMEOUT (200000) // 0.2s;
-//#define ALOCK_TIMEOUT (0) // no_timeout;
+export module rrr:misc.alock;
+
+import :base.all;
 
 
-namespace rrr {
+import :misc.alarm;
+import :misc.dball;
+
+export namespace rrr {
+
+inline constexpr uint64_t ALOCK_TIMEOUT = 200000; // 0.2s
 
 class ALock {
  public:

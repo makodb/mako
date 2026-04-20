@@ -5,7 +5,8 @@
 #include "benchmark_control_rpc.h"
 #include "client_worker.h"
 #include "stats_registry.h"
-#include "../rrr/misc/recorder.hpp"
+
+import rrr;
 
 
 extern vector<unique_ptr<janus::ClientWorker>> client_workers_g;

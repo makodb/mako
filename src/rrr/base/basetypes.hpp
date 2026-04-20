@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 #include <vector>
 #include <queue>
@@ -10,7 +10,6 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "debugging.hpp"
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -26,7 +25,11 @@
 // }
 // Note: struct types like 'timeval' are not functions - they're filtered out in the AST parser
 
-namespace rrr {
+export module rrr:base.basetypes;
+
+import :base.debugging;
+
+export namespace rrr {
 
 // @unsafe - Wrapper for atomic store to satisfy borrow checker
 template<typename T>

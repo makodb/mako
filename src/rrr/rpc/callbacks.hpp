@@ -1,12 +1,15 @@
-#pragma once
+module;
 
 #include <functional>
 #include <string>
 #include <vector>
 #include <mutex>
-#include "errors.hpp"
 
-namespace rrr {
+export module rrr:rpc.callbacks;
+
+import :rpc.errors;
+
+export namespace rrr {
 
 /**
  * Callback function types for connection events.

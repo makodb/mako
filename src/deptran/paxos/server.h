@@ -70,7 +70,7 @@ class PaxosServer : public TxLogServer {
  public:
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
   void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) { log_storage_ = std::move(storage); }
-  // @safe - Read-only access
+  // @unsafe - Read-only access
   std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const { return log_storage_; }
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
   bool RecoverFromStorage();
@@ -84,7 +84,7 @@ class PaxosServer : public TxLogServer {
   void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
     snapshot_manager_ = std::move(manager);
   }
-  // @safe - Read-only access
+  // @unsafe - Read-only access
   std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
   }

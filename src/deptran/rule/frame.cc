@@ -7,7 +7,6 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "tx.h"
-#include "../troad/troad.h"
 
 namespace janus {
 

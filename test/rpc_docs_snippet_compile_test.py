@@ -70,9 +70,7 @@ def extract_and_validate_cpp_snippets(book_text: str):
 def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
     if profile == "reliability":
         return f"""#include <time.h>
-#include "src/rrr/rpc/reconnect_policy.hpp"
-#include "src/rrr/rpc/circuit_breaker.hpp"
-#include "src/rrr/rpc/heartbeat.hpp"
+import rrr;
 
 using namespace rrr;
 
@@ -88,7 +86,7 @@ int main() {{
     if profile == "client":
         return f"""#include <time.h>
 #include <utility>
-#include "src/rrr/rpc/client.hpp"
+import rrr;
 
 using namespace rrr;
 
@@ -131,7 +129,7 @@ int main() {{
 """
     if profile == "server":
         return f"""#include <time.h>
-#include "src/rrr/rpc/server.hpp"
+import rrr;
 
 using namespace rrr;
 
@@ -163,7 +161,7 @@ int main() {{
 """
     if profile == "codegen":
         return f"""#include <time.h>
-#include "src/rrr/rpc/client.hpp"
+import rrr;
 
 using namespace rrr;
 

@@ -2,6 +2,7 @@
 
 #include "__dep__.h"
 #include "constants.h"
+#include <functional>
 
 namespace janus {
 

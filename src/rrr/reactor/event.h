@@ -1,5 +1,4 @@
-
-#pragma once
+module;
 
 #include <algorithm>
 #include <fstream>
@@ -17,9 +16,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
-#include "../base/all.hpp"
 #include <rusty/rusty.hpp>
-#include "fiber_impl.h"
 
 // External safety annotations for std::shared_ptr and Event operations
 // @external: {
@@ -44,12 +41,17 @@
   ref_ev->wait_func; \
 } while(0)
 
-namespace rrr {
+export module rrr:reactor.event;
+
+import :base.all;
+
+export namespace rrr {
 using std::function;
 using std::vector;
 using std::list;
 
 class Reactor;
+class Fiber;
 class Event {
  protected:
   // Self-reference for adding to queues (using weak_ptr for shared ownership)

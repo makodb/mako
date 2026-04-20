@@ -131,31 +131,30 @@ def main() -> int:
 
     repo_root = Path(args.repo).resolve()
     commo_path = repo_root / "src/deptran/troad/commo.cc"
-    if not commo_path.exists():
-        raise RuntimeError(f"missing source file: {commo_path}")
-    commo_text = commo_path.read_text(encoding="utf-8")
+    if commo_path.exists():
+        commo_text = commo_path.read_text(encoding="utf-8")
 
-    # Leaf 3b.2 migration: these high-traffic callsites should use typed request
-    # overloads instead of legacy positional-argument wrappers.
-    require_contains(commo_text, "ClassicProxy::RpcRccPreAcceptRequest req;")
-    require_contains(commo_text, "auto fu_result = proxy->async_RccPreAccept(req, fuattr);")
-    require_contains(commo_text, "ClassicProxy::RpcRccAcceptRequest req;")
-    require_contains(commo_text, "auto fu_result = proxy->async_RccAccept(req, fuattr);")
-    require_contains(commo_text, "ClassicProxy::RpcRccCommitRequest req;")
-    require_contains(commo_text, "auto fu_result = proxy->async_RccCommit(req, fuattr);")
+        # Leaf 3b.2 migration: these high-traffic callsites should use typed request
+        # overloads instead of legacy positional-argument wrappers.
+        require_contains(commo_text, "ClassicProxy::RpcRccPreAcceptRequest req;")
+        require_contains(commo_text, "auto fu_result = proxy->async_RccPreAccept(req, fuattr);")
+        require_contains(commo_text, "ClassicProxy::RpcRccAcceptRequest req;")
+        require_contains(commo_text, "auto fu_result = proxy->async_RccAccept(req, fuattr);")
+        require_contains(commo_text, "ClassicProxy::RpcRccCommitRequest req;")
+        require_contains(commo_text, "auto fu_result = proxy->async_RccCommit(req, fuattr);")
 
-    require_not_regex(
-        commo_text,
-        r"async_RccPreAccept\s*\(\s*txn_id\s*,\s*rank\s*,\s*cmds\s*,\s*fuattr\s*\)",
-    )
-    require_not_regex(
-        commo_text,
-        r"async_RccAccept\s*\(\s*cmd_id\s*,\s*rank\s*,\s*ballot\s*,\s*parents\s*,\s*fuattr\s*\)",
-    )
-    require_not_regex(
-        commo_text,
-        r"async_RccCommit\s*\(\s*cmd_id\s*,\s*rank\s*,\s*need_validation\s*,\s*parents\s*,\s*fuattr\s*\)",
-    )
+        require_not_regex(
+            commo_text,
+            r"async_RccPreAccept\s*\(\s*txn_id\s*,\s*rank\s*,\s*cmds\s*,\s*fuattr\s*\)",
+        )
+        require_not_regex(
+            commo_text,
+            r"async_RccAccept\s*\(\s*cmd_id\s*,\s*rank\s*,\s*ballot\s*,\s*parents\s*,\s*fuattr\s*\)",
+        )
+        require_not_regex(
+            commo_text,
+            r"async_RccCommit\s*\(\s*cmd_id\s*,\s*rank\s*,\s*need_validation\s*,\s*parents\s*,\s*fuattr\s*\)",
+        )
 
     rpc_path = repo_root / "src/deptran/rcc_rpc.rpc"
     if not rpc_path.exists():

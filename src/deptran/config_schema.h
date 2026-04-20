@@ -13,7 +13,8 @@
 #include <string>
 #include <vector>
 #include <rusty/cell.hpp>
-#include "../rrr/misc/marshal.hpp"
+
+import rrr;
 
 namespace janus {
 

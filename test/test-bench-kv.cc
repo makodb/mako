@@ -1,6 +1,6 @@
 //#include <array>
 //
-//#include "base/all.hpp"
+//import rrr;
 //#include "memdb/schema.h"
 //#include "memdb/row.h"
 //#include "memdb/table.h"

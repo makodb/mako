@@ -22,7 +22,7 @@
 
 #include "log_storage.hpp"
 #include "rocksdb_log_storage.hpp"
-#include "base/misc.hpp"  // For Log_info, Log_error
+import rrr;  // For Log_info, Log_error
 
 namespace janus {
 namespace raft {
@@ -199,7 +199,7 @@ class RecoveryManager {
     return initialized_.get();
   }
 
-  // @safe - Get storage (may be nullptr)
+  // @unsafe - Get storage (may be nullptr)
   std::shared_ptr<LogStorage> get_storage() const {
     return storage_;
   }

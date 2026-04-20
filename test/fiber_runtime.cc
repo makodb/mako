@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <iostream>
 
-#include "rrr/rrr.hpp"
+import rrr;
 
 using namespace std;
 using namespace rrr;

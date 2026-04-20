@@ -3,7 +3,8 @@
 #include "bench/rw/procedure.h"
 #include "bench/rw/workload.h"
 #include "classic/tpc_command.h"
-#include "../rrr/misc/rand.hpp"
+
+import rrr;
 
 namespace janus {
 

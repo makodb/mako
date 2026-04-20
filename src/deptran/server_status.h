@@ -4,7 +4,8 @@
 #include <rusty/mutex.hpp>
 #include <rusty/condvar.hpp>
 #include <rusty/arc.hpp>
-#include "../rrr/misc/cpuinfo.hpp"
+
+import rrr;
 
 namespace janus {
 

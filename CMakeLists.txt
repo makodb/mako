@@ -6,9 +6,13 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
 endif()
 
-# using g++
-set(CMAKE_C_COMPILER "gcc" CACHE STRING "C compiler")
-set(CMAKE_CXX_COMPILER "g++" CACHE STRING "C++ compiler")
+# Default to clang toolchain unless caller explicitly chooses otherwise.
+if(NOT DEFINED CMAKE_C_COMPILER)
+    set(CMAKE_C_COMPILER "clang" CACHE STRING "C compiler")
+endif()
+if(NOT DEFINED CMAKE_CXX_COMPILER)
+    set(CMAKE_CXX_COMPILER "clang++" CACHE STRING "C++ compiler")
+endif()
 
 # Enable compile_commands.json generation for language servers (clangd, etc.)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -21,19 +25,24 @@ set(BUILD_SHARED_LIBS ON)
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+# Required for C++20 named-module import syntax with GCC.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fmodules-ts>)
+endif()
 
 # Check compiler and version.
-# The ngcpp/proxy dependency requires GCC >= 13.1 or Clang >= 16.
+# The ngcpp/proxy dependency requires GCC >= 13.1 or Clang >= 17.
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13.1)
         message(FATAL_ERROR "GCC version 13.1 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
     endif()
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16.0)
-        message(FATAL_ERROR "Clang version 16.0 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17.0)
+        message(FATAL_ERROR "Clang version 17.0 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
     endif()
 else()
-    message(WARNING "Compiler ${CMAKE_CXX_COMPILER_ID} is unvalidated for ngcpp/proxy (requires GCC >= 13.1 or Clang >= 16).")
+    message(WARNING "Compiler ${CMAKE_CXX_COMPILER_ID} is unvalidated for ngcpp/proxy (requires GCC >= 13.1 or Clang >= 17).")
 endif()
 
 # Auto-detect the latest available libclang for rusty-cpp-checker.
@@ -88,6 +97,14 @@ message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
+# Global include roots for `import rrr;` and rrr header-unit/module prebuild.
+include_directories(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include"
+)
+
 # Build yaml-cpp from vendored source to avoid system ABI/version drift.
 set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "Disable yaml-cpp tests" FORCE)
 set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools" FORCE)
@@ -118,6 +135,109 @@ add_custom_command(
 
 # Create a custom target that depends on the output
 add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
+
+# Prebuild all rrr named modules for `import rrr;`.
+# CMake 3.10 has no native module dependency scanning, so we bootstrap BMIs
+# in dependency order during configure.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(RRR_MODULE_PCM_DIR "${CMAKE_BINARY_DIR}/rrr-modules")
+    file(MAKE_DIRECTORY "${RRR_MODULE_PCM_DIR}")
+
+    set(RRR_MODULE_BOOTSTRAP_LIST
+        "rrr:base.debugging::src/rrr/base/debugging.hpp"
+        "rrr:base.strop::src/rrr/base/strop.hpp"
+        "rrr:base.unittest::src/rrr/base/unittest.hpp"
+        "rrr:misc.netinfo::src/rrr/misc/netinfo.hpp"
+        "rrr:misc.rand::src/rrr/misc/rand.hpp"
+        "rrr:misc.stat::src/rrr/misc/stat.hpp"
+        "rrr:reactor.fiber_impl::src/rrr/reactor/fiber_impl.h"
+        "rrr:rpc.circuit_breaker::src/rrr/rpc/circuit_breaker.hpp"
+        "rrr:rpc.connection_metrics::src/rrr/rpc/connection_metrics.hpp"
+        "rrr:rpc.connection_state::src/rrr/rpc/connection_state.hpp"
+        "rrr:rpc.errors::src/rrr/rpc/errors.hpp"
+        "rrr:rpc.heartbeat::src/rrr/rpc/heartbeat.hpp"
+        "rrr:rpc.internal_protocol::src/rrr/rpc/internal_protocol.hpp"
+        "rrr:rpc.reconnect_policy::src/rrr/rpc/reconnect_policy.hpp"
+        "rrr:rpc.request_options::src/rrr/rpc/request_options.hpp"
+        "rrr:rpc.utils::src/rrr/rpc/utils.hpp"
+        "rrr:base.basetypes::src/rrr/base/basetypes.hpp"
+        "rrr:misc.dball::src/rrr/misc/dball.hpp"
+        "rrr:rpc.load_balancer::src/rrr/rpc/load_balancer.hpp"
+        "rrr:rpc.callbacks::src/rrr/rpc/callbacks.hpp"
+        "rrr:base.misc::src/rrr/base/misc.hpp"
+        "rrr:base.threading::src/rrr/base/threading.hpp"
+        "rrr:base.logging::src/rrr/base/logging.hpp"
+        "rrr:base.all::src/rrr/base/all.hpp"
+        "rrr:misc.cpuinfo::src/rrr/misc/cpuinfo.hpp"
+        "rrr:misc.marshal::src/rrr/misc/marshal.hpp"
+        "rrr:reactor.epoll_wrapper::src/rrr/reactor/epoll_wrapper.h"
+        "rrr:reactor.event::src/rrr/reactor/event.h"
+        "rrr:misc.marshallable_proxy::src/rrr/misc/marshallable_proxy.h"
+        "rrr:misc.recorder::src/rrr/misc/recorder.hpp"
+        "rrr:rpc.idempotency::src/rrr/rpc/idempotency.hpp"
+        "rrr:rpc.request_queue::src/rrr/rpc/request_queue.hpp"
+        "rrr:rpc.pollable_proxy::src/rrr/rpc/pollable_proxy.h"
+        "rrr:reactor.quorum_event::src/rrr/reactor/quorum_event.h"
+        "rrr:rpc.completion_tracker::src/rrr/rpc/completion_tracker.hpp"
+        "rrr:reactor.reactor::src/rrr/reactor/reactor.h"
+        "rrr:misc.alarm::src/rrr/misc/alarm.hpp"
+        "rrr:reactor.future::src/rrr/reactor/future.h"
+        "rrr:rpc.client::src/rrr/rpc/client.hpp"
+        "rrr:rpc.server::src/rrr/rpc/server.hpp"
+        "rrr:misc.alock::src/rrr/misc/alock.hpp"
+        "rrr:reactor.fiber::src/rrr/reactor/fiber.h"
+        "rrr::src/rrr/rrr.hpp"
+    )
+
+    # Keep the module interface source list so interfaces are also compiled
+    # into object files and linked into librrr.a (not only precompiled to PCM).
+    set(RRR_MODULE_INTERFACE_SRC "")
+
+    foreach(RRR_MODULE_ENTRY IN LISTS RRR_MODULE_BOOTSTRAP_LIST)
+        string(REPLACE "::" ";" RRR_MODULE_FIELDS "${RRR_MODULE_ENTRY}")
+        list(GET RRR_MODULE_FIELDS 0 RRR_MODULE_NAME)
+        list(GET RRR_MODULE_FIELDS 1 RRR_MODULE_IFC_REL)
+
+        list(APPEND RRR_MODULE_INTERFACE_SRC "${RRR_MODULE_IFC_REL}")
+
+        set(RRR_MODULE_IFC "${CMAKE_CURRENT_SOURCE_DIR}/${RRR_MODULE_IFC_REL}")
+        set(RRR_MODULE_PCM_BASENAME "${RRR_MODULE_NAME}")
+        string(REPLACE ":" "-" RRR_MODULE_PCM_BASENAME "${RRR_MODULE_PCM_BASENAME}")
+        set(RRR_MODULE_PCM "${RRR_MODULE_PCM_DIR}/${RRR_MODULE_PCM_BASENAME}.pcm")
+
+        execute_process(
+            COMMAND ${CMAKE_CXX_COMPILER}
+                -std=c++23
+                -x c++-module
+                --precompile
+                -fprebuilt-module-path=${RRR_MODULE_PCM_DIR}
+                -I "${CMAKE_CURRENT_SOURCE_DIR}"
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include"
+                "${RRR_MODULE_IFC}"
+                -o "${RRR_MODULE_PCM}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+            RESULT_VARIABLE RRR_MODULE_BOOTSTRAP_RESULT
+            OUTPUT_VARIABLE RRR_MODULE_BOOTSTRAP_STDOUT
+            ERROR_VARIABLE RRR_MODULE_BOOTSTRAP_STDERR
+        )
+        if(NOT RRR_MODULE_BOOTSTRAP_RESULT EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to precompile module ${RRR_MODULE_NAME} during configure.\n"
+                "module file: ${RRR_MODULE_IFC}\n"
+                "stdout:\n${RRR_MODULE_BOOTSTRAP_STDOUT}\n"
+                "stderr:\n${RRR_MODULE_BOOTSTRAP_STDERR}\n")
+        endif()
+    endforeach()
+
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fprebuilt-module-path=${RRR_MODULE_PCM_DIR}>)
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR
+        "GCC named-module build for `import rrr;` currently hits a compiler ICE on this codebase. "
+        "Use clang++ for this branch.")
+endif()
 
 # Create imported library for Rust library
 add_library(rust_lib STATIC IMPORTED)
@@ -712,18 +832,11 @@ endif()
 # Build libtxlog.so natively with CMake instead of WAF
 # Collect RRR source files
 file(GLOB RRR_SRC
-    "src/rrr/base/*.hpp"
     "src/rrr/base/*.cpp"
-    "src/rrr/misc/*.hpp"
     "src/rrr/misc/*.cpp"
-    "src/rrr/reactor/*.h"
     "src/rrr/reactor/*.cc"
     "src/rrr/pylib/simplerpc/_pyrpc.cpp"
     "src/rrr/rpc/*.cpp"
-    "src/rrr/rpc/*.hpp"
-    "src/rrr/utils/*.h"
-    "src/rrr/rrr.h"
-    "src/rrr/rrr.hpp"
 )
 
 # Collect MEMDB source files
@@ -1235,16 +1348,37 @@ file(GLOB RRR_BENCH_SRC
     "src/rrr/reactor/*.cc"
 )
 
+# RRR module implementation units cannot be compiled with the global forced
+# include (`-include .../masstree/config.h`) because it injects tokens before
+# the module declaration.
+set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
+list(FIND RRR_CXXFLAGS "-include" RRR_INCLUDE_FLAG_INDEX)
+if(NOT RRR_INCLUDE_FLAG_INDEX EQUAL -1)
+    math(EXPR RRR_INCLUDE_PATH_INDEX "${RRR_INCLUDE_FLAG_INDEX}+1")
+    list(REMOVE_AT RRR_CXXFLAGS ${RRR_INCLUDE_PATH_INDEX})
+    list(REMOVE_AT RRR_CXXFLAGS ${RRR_INCLUDE_FLAG_INDEX})
+endif()
+
 # Add RRR library if not already built
 if(NOT TARGET rrr)
-    add_library(rrr STATIC ${RRR_BENCH_SRC})
+    add_library(rrr STATIC ${RRR_BENCH_SRC} ${RRR_MODULE_INTERFACE_SRC})
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Headers carrying `export module` declarations must be treated as
+        # compilation units so module initializers and exported definitions
+        # are linked into librrr.
+        set_source_files_properties(${RRR_MODULE_INTERFACE_SRC} PROPERTIES
+            LANGUAGE CXX
+            HEADER_FILE_ONLY OFF
+            COMPILE_FLAGS "-x c++"
+        )
+    endif()
     target_include_directories(rrr PUBLIC
         src
         src/rrr
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         ${PROXY_INCLUDE_DIR}
     )
-    target_compile_options(rrr PUBLIC ${BENCH_CXXFLAGS})
+    target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
     target_link_libraries(rrr pthread)
 
     # RRR files for borrow checking (explicit list to control what gets checked)
@@ -1300,7 +1434,7 @@ if(NOT TARGET rrr)
             ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
             third-party/proxy/include
         )
-        target_compile_options(rrr_borrow PUBLIC ${BENCH_CXXFLAGS})
+        target_compile_options(rrr_borrow PUBLIC ${RRR_CXXFLAGS})
 
         add_borrow_check_target(rrr_borrow)
 

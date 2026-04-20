@@ -22,8 +22,7 @@
 #include <rusty/option.hpp>
 
 #include "log_storage.hpp"
-#include "misc/marshal.hpp"
-#include "base/logging.hpp"
+import rrr;
 
 namespace janus {
 namespace raft {

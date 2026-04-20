@@ -3,7 +3,8 @@
 #include <vector>
 #include <memory>
 #include <atomic>
-#include "../../rrr/base/logging.hpp"
+
+import rrr;
 
 namespace janus {
 

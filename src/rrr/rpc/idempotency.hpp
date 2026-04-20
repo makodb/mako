@@ -1,3 +1,4 @@
+module;
 /**
  * Idempotency Support for RPC (Phase 2.3)
  *
@@ -10,7 +11,6 @@
  * Thread-safe via rusty::Cell and rusty::Mutex.
  */
 
-#pragma once
 
 #include <cstdint>
 #include <unordered_map>
@@ -18,9 +18,13 @@
 #include <vector>
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
-#include "misc/marshal.hpp"
 
-namespace rrr {
+export module rrr:rpc.idempotency;
+
+import :misc.marshal;
+
+
+export namespace rrr {
 
 // Forward declarations
 class Counter;

@@ -7,7 +7,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
-#include "rpc/request_queue.hpp"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

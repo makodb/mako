@@ -444,7 +444,7 @@ class RaftServer : public TxLogServer {
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
 #endif
 
-  // @safe - timer and atomic operations are safe internal operations
+  // @unsafe - timer and atomic operations include atomics/mutexes
   void resetTimerBatch()
   {
     // Log_info("!!!!!!! if (!failover_)");
@@ -582,7 +582,7 @@ class RaftServer : public TxLogServer {
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   bool Start(shared_ptr<Marshallable> &cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
 
-  // @safe - output pointer writes are bounded
+  // @unsafe - output pointer writes and mutex operations
   void GetState(bool *is_leader, uint64_t *term) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // @unsafe
@@ -609,7 +609,7 @@ class RaftServer : public TxLogServer {
   // @safe - sets POD field (minimum 1 to avoid division by zero)
   void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
 
-  // @safe - external calls marked @external, output pointer writes in @unsafe blocks
+  // @unsafe - external calls plus output pointer writes and shared_ptr ops
   void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // @unsafe
@@ -679,7 +679,7 @@ class RaftServer : public TxLogServer {
     }
   }
 
-  // @safe - map access and make_shared marked @external [safe]
+  // @unsafe - map access and shared_ptr mutation
   shared_ptr<RaftData> GetInstance(slotid_t id) {
     verify(id >= min_active_slot_ || lastLogIndex == 0);
     auto& sp_instance = logs_[id];
@@ -698,7 +698,7 @@ class RaftServer : public TxLogServer {
     return sp_instance;
   }*/
 
-  // @safe - Log_info and make_shared marked @external [safe]
+  // @unsafe - map access and shared_ptr mutation
    shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
     if (id < min_active_slot_ && id != 0) {
       Log_info("[RAFT_LOG] expanding min_active_slot_ from %lu to %lu", min_active_slot_, id);
@@ -725,7 +725,7 @@ class RaftServer : public TxLogServer {
    * Should be called before starting the server.
    * @param storage Shared pointer to LogStorage implementation
    */
-  // @safe - moves shared_ptr into member field
+  // @unsafe - moves shared_ptr into member field
   void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) {
     log_storage_ = std::move(storage);
   }
@@ -734,7 +734,7 @@ class RaftServer : public TxLogServer {
    * Get the current log storage backend.
    * @return Shared pointer to LogStorage, or nullptr if not set
    */
-  // @safe - returns copy of shared_ptr
+  // @unsafe - returns copy of shared_ptr
   std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const {
     return log_storage_;
   }
@@ -773,7 +773,7 @@ class RaftServer : public TxLogServer {
    * Should be called before starting the server.
    * @param manager Shared pointer to SnapshotManager implementation
    */
-  // @safe - moves shared_ptr into member field
+  // @unsafe - moves shared_ptr into member field
   void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
     snapshot_manager_ = std::move(manager);
   }
@@ -782,7 +782,7 @@ class RaftServer : public TxLogServer {
    * Get the current snapshot manager.
    * @return Shared pointer to SnapshotManager, or nullptr if not set
    */
-  // @safe - returns copy of shared_ptr
+  // @unsafe - returns copy of shared_ptr
   std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
   }
@@ -791,7 +791,7 @@ class RaftServer : public TxLogServer {
    * Get the ReplicatedDB instance, if one was created during Setup().
    * @return Shared pointer to ReplicatedDB, or nullptr if not enabled
    */
-  // @safe - returns copy of shared_ptr
+  // @unsafe - returns copy of shared_ptr
   std::shared_ptr<ReplicatedDB> GetReplicatedDB() const {
     return replicated_db_;
   }
@@ -987,12 +987,13 @@ class RaftServer : public TxLogServer {
    * @return Reference to the active replica set
    */
   // @safe - Read-only accessor
+  // @lifetime: (&'a) -> &'a
   const std::set<siteid_t>& GetCurrentConfig() const;
 
   /**
    * Check if a server is a learner (being caught up, not yet in quorum).
    */
-  // @safe - Read-only lookup
+  // @unsafe - Read-only lookup on std::set
   bool IsLearner(siteid_t id) const { return learners_.count(id) > 0; }
 
   /**
@@ -1101,7 +1102,7 @@ class RaftServer : public TxLogServer {
    *
    * Safety: This maintains all Raft safety guarantees via explicit transfer protocol.
    */
-  // @safe - Log_info marked @external [safe], mutex is bounded
+  // @unsafe - Log_info plus mutex operations
   void SetPreferredLeader(siteid_t site_id) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -1191,7 +1192,7 @@ class RaftServer : public TxLogServer {
    * Get the set of servers that have memory-voted for us in current term.
    * @return copy of specVoters set
    */
-  // @safe - Returns copy, read-only access
+  // @unsafe - Returns copy, read-only access
   std::set<siteid_t> GetSpecVoters() const {
     return specVoters_;
   }
@@ -1200,7 +1201,7 @@ class RaftServer : public TxLogServer {
    * Get the count of servers that have memory-voted for us in current term.
    * @return Number of servers in specVoters
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::set
   size_t GetSpecVotersCount() const {
     return specVoters_.size();
   }
@@ -1209,7 +1210,7 @@ class RaftServer : public TxLogServer {
    * Get the set of servers that have durably-voted for us in current term.
    * @return copy of durableVoters set
    */
-  // @safe - Returns copy, read-only access
+  // @unsafe - Returns copy, read-only access
   std::set<siteid_t> GetDurableVoters() const {
     return durableVoters_;
   }
@@ -1218,7 +1219,7 @@ class RaftServer : public TxLogServer {
    * Get the count of servers that have durably-voted for us in current term.
    * @return Number of servers in durableVoters
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::set
   size_t GetDurableVotersCount() const {
     return durableVoters_.size();
   }
@@ -1237,7 +1238,7 @@ class RaftServer : public TxLogServer {
    * @param index Log index to query
    * @return Number of nodes that have memory-acked this index
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::map
   size_t GetMemoryAckCount(uint64_t index) const {
     auto it = memoryAcks_.find(index);
     return it != memoryAcks_.end() ? it->second.size() : 0;
@@ -1248,7 +1249,7 @@ class RaftServer : public TxLogServer {
    * @param index Log index to query
    * @return Number of nodes that have durably-acked this index
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::map
   size_t GetDurableAckCount(uint64_t index) const {
     auto it = durableAcks_.find(index);
     return it != durableAcks_.end() ? it->second.size() : 0;

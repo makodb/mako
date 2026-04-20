@@ -2,7 +2,7 @@
 #include <random>
 #include <limits>
 #include <cmath>
-#include "misc/marshal.hpp"
+import rrr;
 
 using namespace rrr;
 

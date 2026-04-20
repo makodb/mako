@@ -8,10 +8,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include "reactor/reactor.h"
-#include "reactor/event.h"
-#include "reactor/fiber.h"
-#include "reactor/epoll_wrapper.h"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

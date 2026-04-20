@@ -1,7 +1,8 @@
 #pragma once
 
 #include "__dep__.h"
-#include "../rrr/misc/marshal.hpp"
+
+import rrr;
 
 namespace janus {
 

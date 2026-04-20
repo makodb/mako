@@ -1,10 +1,19 @@
+module;
+
+#include <iostream>
+#include <utility>
+#include <assert.h>
+
+
 #include <stdarg.h>
 #include <string.h>
 #include <sys/time.h>
 
-#include "misc.hpp"
-#include "threading.hpp"
-#include "logging.hpp"
+
+
+
+module rrr:impl.base.logging;
+import rrr;
 
 // External safety annotations for functions used in this module
 // @external: {
@@ -59,9 +68,12 @@ void Log::log_v(int level, int line, const char* file, const char* fmt, va_list 
     static char indicator[] = { 'F', 'E', 'W', 'I', 'D' };
     assert(level <= Log::DEBUG);
     if (level <= level_s) {
-      const char* filebase = file;
-      verify (filebase != nullptr);
-        char now_str[TIME_NOW_STR_SIZE];
+      const char* filebase = basename(file);
+      if (filebase == nullptr) {
+          filebase = "<unknown>";
+      }
+        constexpr int kTimeNowStrSize = 24;
+        char now_str[kTimeNowStrSize];
         time_now_str(now_str);
         char buf[1000];
       int offset = 0;

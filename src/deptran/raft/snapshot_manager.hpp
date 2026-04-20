@@ -19,7 +19,7 @@
 
 #include <rusty/option.hpp>
 
-#include "base/misc.hpp"  // For Log_info, Log_error
+import rrr;  // For Log_info, Log_error
 
 namespace janus {
 namespace raft {

@@ -38,8 +38,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
-#include "rrr/rpc/client.hpp"
-#include "rrr/reactor/reactor.h"
+import rrr;
 #include <string>
 #include <atomic>
 #include <unordered_map>

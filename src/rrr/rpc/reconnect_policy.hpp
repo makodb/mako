@@ -1,11 +1,13 @@
-#pragma once
+module;
 
 #include <rusty/cell.hpp>
 #include <cstdint>
 #include <algorithm>
 #include <random>
 
-namespace rrr {
+export module rrr:rpc.reconnect_policy;
+
+export namespace rrr {
 
 /**
  * Configuration for automatic reconnection behavior.

@@ -1,5 +1,18 @@
-#include <utility>
+module;
 
+#include <list>
+#include <map>
+#include <unordered_map>
+#include <functional>
+#include <sys/types.h>
+#include <stdarg.h>
+#include <assert.h>
+#include <pthread.h>
+#include <inttypes.h>
+#include <rusty/result.hpp>
+
+
+#include <utility>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -11,8 +24,12 @@
 #include <unistd.h>
 
 
-#include "base/all.hpp"
-#include "utils.hpp"
+
+
+
+
+module rrr:impl.rpc.utils;
+import rrr;
 
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
 // No external annotations needed here - utils.cpp doesn't use atomics directly

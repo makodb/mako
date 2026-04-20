@@ -1,5 +1,5 @@
 
-#include "rrr.hpp"
+import rrr;
 
 #include "memdb/value.h"
 #include "deptran/marshal-value.h"

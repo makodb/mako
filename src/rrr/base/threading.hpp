@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -16,8 +16,6 @@
 #include <condition_variable>
 #include <memory>
 
-#include "basetypes.hpp"
-#include "misc.hpp"
 
 // External safety annotations for pthread and std functions used in this module
 // @external: {
@@ -54,23 +52,76 @@
 //   std::condition_variable::wait_for: [unsafe, (std::unique_lock<std::mutex>&, duration) -> std::cv_status]
 // }
 
-#define Pthread_spin_init(l, pshared) verify(pthread_spin_init(l, (pshared)) == 0)
-#define Pthread_spin_lock(l) verify(pthread_spin_lock(l) == 0)
-#define Pthread_spin_unlock(l) verify(pthread_spin_unlock(l) == 0)
-#define Pthread_spin_destroy(l) verify(pthread_spin_destroy(l) == 0)
-#define Pthread_mutex_init(m, attr) verify(pthread_mutex_init(m, attr) == 0)
-#define Pthread_mutex_lock(m) verify(pthread_mutex_lock(m) == 0)
-#define Pthread_mutex_unlock(m) verify(pthread_mutex_unlock(m) == 0)
-#define Pthread_mutex_destroy(m) verify(pthread_mutex_destroy(m) == 0)
-#define Pthread_cond_init(c, attr) verify(pthread_cond_init(c, attr) == 0)
-#define Pthread_cond_destroy(c) verify(pthread_cond_destroy(c) == 0)
-#define Pthread_cond_signal(c) verify(pthread_cond_signal(c) == 0)
-#define Pthread_cond_broadcast(c) verify(pthread_cond_broadcast(c) == 0)
-#define Pthread_cond_wait(c, m) verify(pthread_cond_wait(c, m) == 0)
-#define Pthread_create(th, attr, func, arg) verify(pthread_create(th, attr, func, arg) == 0)
-#define Pthread_join(th, attr) verify(pthread_join(th, attr) == 0)
+export module rrr:base.threading;
 
-namespace rrr {
+import :base.basetypes;
+import :base.debugging;
+import :base.misc;
+
+export namespace rrr {
+
+inline void Pthread_spin_init(pthread_spinlock_t* lock, int pshared) {
+    verify(pthread_spin_init(lock, pshared) == 0);
+}
+
+inline void Pthread_spin_lock(pthread_spinlock_t* lock) {
+    verify(pthread_spin_lock(lock) == 0);
+}
+
+inline void Pthread_spin_unlock(pthread_spinlock_t* lock) {
+    verify(pthread_spin_unlock(lock) == 0);
+}
+
+inline void Pthread_spin_destroy(pthread_spinlock_t* lock) {
+    verify(pthread_spin_destroy(lock) == 0);
+}
+
+inline void Pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
+    verify(pthread_mutex_init(mutex, attr) == 0);
+}
+
+inline void Pthread_mutex_lock(pthread_mutex_t* mutex) {
+    verify(pthread_mutex_lock(mutex) == 0);
+}
+
+inline void Pthread_mutex_unlock(pthread_mutex_t* mutex) {
+    verify(pthread_mutex_unlock(mutex) == 0);
+}
+
+inline void Pthread_mutex_destroy(pthread_mutex_t* mutex) {
+    verify(pthread_mutex_destroy(mutex) == 0);
+}
+
+inline void Pthread_cond_init(pthread_cond_t* cond, const pthread_condattr_t* attr) {
+    verify(pthread_cond_init(cond, attr) == 0);
+}
+
+inline void Pthread_cond_destroy(pthread_cond_t* cond) {
+    verify(pthread_cond_destroy(cond) == 0);
+}
+
+inline void Pthread_cond_signal(pthread_cond_t* cond) {
+    verify(pthread_cond_signal(cond) == 0);
+}
+
+inline void Pthread_cond_broadcast(pthread_cond_t* cond) {
+    verify(pthread_cond_broadcast(cond) == 0);
+}
+
+inline void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
+    verify(pthread_cond_wait(cond, mutex) == 0);
+}
+
+inline void Pthread_create(pthread_t* thread,
+                           const pthread_attr_t* attr,
+                           void* (*func)(void*),
+                           void* arg) {
+    verify(pthread_create(thread, attr, func, arg) == 0);
+}
+
+inline void Pthread_join(pthread_t thread, void** value_ptr) {
+    verify(pthread_join(thread, value_ptr) == 0);
+}
 
 class Lockable: public NoCopy {
 public:

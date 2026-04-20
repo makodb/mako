@@ -1,19 +1,26 @@
-#pragma once
+module;
 
 #include <vector>
 #include <functional>
 #include <unordered_map>
 #include <chrono>
-#include "event.h"
-#include "base/basetypes.hpp"
+
+export module rrr:reactor.quorum_event;
+
+import :base.debugging;
+import :base.basetypes;
+
+
+import :reactor.event;
 
 using rrr::Event;
 using rrr::IntEvent;
+using rrr::verify;
 using std::vector;
 using std::function;
 using std::shared_ptr;
 
-namespace janus {
+export namespace janus {
 
 class QuorumEvent : public Event {
  public:

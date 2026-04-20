@@ -2,7 +2,7 @@
 
 #include <atomic>
 
-#include "rpc/server.hpp"
+import rrr;
 
 namespace rrr {
 namespace {

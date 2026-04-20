@@ -23,10 +23,7 @@
 #include <stdexcept>
 
 // RRR/RPC includes for direct testing
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-#include "misc/marshal.hpp"
+import rrr;
 
 using namespace std::chrono;
 

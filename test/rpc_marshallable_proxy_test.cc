@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 #include <type_traits>
-#include "rrr.hpp"
-#include "misc/marshallable_proxy.h"
+import rrr;
 #include "deptran/classic/tpc_command.h"
 #include "deptran/carousel/tx.h"
 #include "deptran/procedure.h"

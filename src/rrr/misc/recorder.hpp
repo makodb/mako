@@ -1,15 +1,25 @@
-
-#pragma once
+module;
 
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <functional>
+#include <list>
+#include <string>
+#include <utility>
+#include <vector>
 
-#include "base/misc.hpp"
-#include "base/threading.hpp"
-#include "marshal.hpp"
 
-namespace rrr {
+export module rrr:misc.recorder;
+
+import :base.basetypes;
+import :base.misc;
+import :base.threading;
+
+import :misc.marshal;
+import :misc.stat;
+
+export namespace rrr {
 
 class Recorder : public FrequentJob {
 private:
@@ -78,4 +88,3 @@ public:
 };
 
 } // namespace rrr
-

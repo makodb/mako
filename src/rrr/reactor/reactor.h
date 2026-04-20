@@ -1,4 +1,4 @@
-#pragma once
+module;
 #include <algorithm>
 #include <atomic>
 #include <functional>
@@ -22,12 +22,6 @@
 #include <rusty/async.hpp>
 #include <rusty/vecdeque.hpp>
 #include <rusty/btreeset.hpp>
-#include "base/misc.hpp"
-#include "event.h"
-#include "quorum_event.h"
-#include "fiber_impl.h"
-#include "epoll_wrapper.h"
-#include "rpc/pollable_proxy.h"
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -94,7 +88,18 @@
 //   verify: [unsafe, (auto) -> void]
 // }
 
-namespace rrr {
+export module rrr:reactor.reactor;
+
+import :base.misc;
+import :rpc.pollable_proxy;
+
+
+import :reactor.event;
+import :reactor.quorum_event;
+import :reactor.fiber_impl;
+import :reactor.epoll_wrapper;
+
+export namespace rrr {
 
 // Note: Fiber is the primary class (defined in fiber_impl.h)
 // The full definition is available via #include "fiber_impl.h" above
@@ -395,7 +400,7 @@ template<>
 struct is_send<rrr::PollCommand> : std::true_type {};
 } // namespace rusty
 
-namespace rrr {
+export namespace rrr {
 
 // =============================================================================
 // PollThreadWorker - Owns all polling state, runs in dedicated thread

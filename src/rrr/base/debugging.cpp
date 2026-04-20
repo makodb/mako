@@ -1,13 +1,25 @@
+module;
+
+#include <stdio.h>
+#include <assert.h>
+#include <iostream>
+#include <source_location>
+#include <cstdlib>
+
+
 #include <execinfo.h>
 #include <limits.h>
 #include <string.h>
-
 #include <string>
 #include <vector>
 #include <utility>
 
-#include "debugging.hpp"
-#include "misc.hpp"
+
+
+
+
+module rrr:impl.base.debugging;
+import rrr;
 
 // External safety annotations for system and std library functions
 // @external: {

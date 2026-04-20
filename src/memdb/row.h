@@ -6,12 +6,13 @@
 #include <vector>
 #include <string>
 #include <ctime>
+#include <functional>
 
 #include "utils.h"
 #include "schema.h"
 #include "locking.h"
 
-#include "rrr.hpp"
+import rrr;
 #include <rusty/arc.hpp>
 
 using std::list;

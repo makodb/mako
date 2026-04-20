@@ -1,9 +1,12 @@
 #pragma once
 
-#include "rrr.hpp"
+import rrr;
 
 #include <errno.h>
 #include <memory>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/result.hpp>
 
 #include "procedure.h"
 #include "rcc/tx.h"
@@ -12588,6 +12591,4 @@ public:
 };
 
 } // namespace janus
-
-
 

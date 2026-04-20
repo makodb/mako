@@ -22,7 +22,7 @@
 #include <cstring>
 #include <string>
 
-#include "base/misc.hpp"
+import rrr;
 
 namespace janus {
 namespace raft {

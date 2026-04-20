@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <time.h>
-#include "rrr.hpp"
+import rrr;
 
 #include <functional>
 #define CALL_TIMES 10000

@@ -1,3 +1,4 @@
+module;
 /**
  * @file fiber.h
  * @brief Modern fiber API following Boost.Fiber conventions.
@@ -23,16 +24,19 @@
  * Note: This header uses rrr::Time for timing, NOT std::chrono.
  */
 
-#pragma once
 
-#include "fiber_impl.h"
-#include "event.h"  // For Event types
-#include "future.h"  // For Future/Promise
-#include "../base/basetypes.hpp"  // For rrr::Time
 #include <rusty/option.hpp>
 #include <rusty/rc.hpp>
+#include <cstdint>
 
-namespace rrr {
+export module rrr:reactor.fiber;
+
+import :reactor.fiber_impl;
+import :reactor.event;
+import :reactor.future;
+import :base.basetypes;
+
+export namespace rrr {
 
 // =============================================================================
 // Fiber is the primary class for stackful fibers

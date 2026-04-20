@@ -11,7 +11,7 @@
 
 #include <rusty/arc.hpp>
 
-#include "reactor/reactor.h"
+import rrr;
 
 namespace rrr {
 namespace {

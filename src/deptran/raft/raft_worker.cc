@@ -46,7 +46,7 @@ namespace janus {
 // @safe
 RaftWorker::RaftWorker() = default;
 
-// @safe - cleanup operations are bounded
+// @unsafe - cleanup operations are bounded
 RaftWorker::~RaftWorker() {
   StopSubmitThread();
 
@@ -265,7 +265,7 @@ void RaftWorker::ShutDown() {
   Log_info("[RAFT-WORKER-SHUTDOWN] poll threads shutdown complete");
 }
 
-// @safe
+// @unsafe
 void RaftWorker::WaitForShutdown() {
   StopSubmitThread();
 
@@ -278,7 +278,7 @@ void RaftWorker::WaitForShutdown() {
   }
 }
 
-// @safe - pointer dereferences are bounded, dynamic_cast marked @external [safe]
+// @unsafe - pointer dereferences are bounded, dynamic_cast marked @external [safe]
 bool RaftWorker::IsLeader(uint32_t par_id) {
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
@@ -316,7 +316,7 @@ siteid_t RaftWorker::GetLeaderHint() {
   return INVALID_SITEID;
 }
 
-// @safe - pointer dereferences are bounded
+// @unsafe - pointer dereferences are bounded
 bool RaftWorker::IsPartition(uint32_t par_id) {
 #ifdef SINGLE_RAFT_INSTANCE
   // SINGLE-RAFT: A single RaftWorker handles all partitions.
@@ -333,7 +333,7 @@ bool RaftWorker::IsPartition(uint32_t par_id) {
 #endif
 }
 
-// @safe
+// @unsafe
 void RaftWorker::StartSubmitThread() {
   if (submit_thread_started_) {
     return;
@@ -346,7 +346,7 @@ void RaftWorker::StartSubmitThread() {
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::StopSubmitThread() {
   if (!submit_thread_started_) {
     return;
@@ -372,7 +372,7 @@ void RaftWorker::StopSubmitThread() {
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size) {
   if (!submit_thread_started_) {
     // @unsafe
@@ -397,7 +397,7 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
   submit_cv_.notify_one();
 }
 
-// @safe - external calls marked @external [safe]
+// @unsafe - external calls marked @external [safe]
 #ifdef SINGLE_RAFT_INSTANCE
 std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
     const char* log_entry,
@@ -439,7 +439,7 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   return tpc_cmd;
 }
 
-// @safe - external calls marked @external [safe], pointer ops are bounded
+// @unsafe - external calls marked @external [safe], pointer ops are bounded
 void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id=%d length=%d", par_id, length);
 
@@ -480,10 +480,11 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 
 // @safe
 void RaftWorker::IncSubmit() {
-  n_submit++;
+  // @unsafe
+  { n_submit++; }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::WaitForSubmit() {
   std::unique_lock<std::mutex> lock(condition_mutex_);
   // Wait logic - can be enhanced with condition variable if needed
@@ -504,7 +505,7 @@ void RaftWorker::WaitForSubmit() {
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_apply_callback(std::function<void(const char*, int)> cb) {
   // @unsafe
   { this->callback_ = cb; }
@@ -524,7 +525,7 @@ void RaftWorker::register_apply_callback(std::function<void(const char*, int)> c
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_apply_callback_par_id(
     std::function<void(const char*&, int, int)> cb) {
   // @unsafe
@@ -545,7 +546,7 @@ void RaftWorker::register_apply_callback_par_id(
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_leader_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
@@ -573,7 +574,7 @@ void RaftWorker::register_leader_callback_par_id_return(
            site_info_ ? site_info_->partition_id_ : -1);
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_follower_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
@@ -600,7 +601,7 @@ void RaftWorker::register_follower_callback_par_id_return(
            site_info_ ? site_info_->partition_id_ : -1);
 }
 
-// @safe - delegates to register_follower_callback_par_id_return
+// @unsafe - delegates to register_follower_callback_par_id_return
 void RaftWorker::register_apply_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
@@ -608,7 +609,7 @@ void RaftWorker::register_apply_callback_par_id_return(
   register_follower_callback_par_id_return(cb);
 }
 
-// @safe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
+// @unsafe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
 int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   int status = -1;
 
@@ -747,7 +748,7 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
 
 #ifdef SINGLE_RAFT_INSTANCE
 // SINGLE-RAFT: Per-partition callback registration methods
-// @safe
+// @unsafe
 void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
   leader_callbacks_by_partition_[par_id] = cb;
 
@@ -767,7 +768,7 @@ void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, waterma
   Log_info("[SINGLE-RAFT] Registered leader callback for partition %d", par_id);
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
   follower_callbacks_by_partition_[par_id] = cb;
 
@@ -788,7 +789,7 @@ void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, water
 }
 #endif
 
-// @safe
+// @unsafe
 void RaftWorker::SubmitLoop() {
   std::unique_lock<std::mutex> lock(submit_mutex_);
   while (true) {

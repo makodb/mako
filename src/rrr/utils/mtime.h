@@ -1,3 +1,4 @@
+module;
 /*
  * mtime.h
  *
@@ -31,3 +32,5 @@
 //}
 //
 //#endif /* MTIME_H_ */
+
+export module rrr:utils.mtime;

@@ -4,6 +4,7 @@
 #include "__dep__.h"
 #include "constants.h"
 #include "sharding.h"
+#include <deque>
 
 namespace janus {
 extern size_t bulkBatchCount;

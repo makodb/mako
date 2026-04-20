@@ -1,11 +1,12 @@
 #include "testconf.h"
-#include "../../rrr/misc/marshal.hpp"
 #include "../config.h"
 #include "frame.h"
 #include "service.h"
 #include "commo.h"
 #include "recovery_manager.hpp"
 #include <cstring>
+
+import rrr;
 
 namespace janus {
 

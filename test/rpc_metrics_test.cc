@@ -9,11 +9,7 @@
 #include <thread>
 #include <vector>
 #include <rusty/arc.hpp>
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-#include "rpc/connection_metrics.hpp"
-#include "misc/marshal.hpp"
+import rrr;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 

@@ -1,3 +1,24 @@
+module;
+
+#include <algorithm>
+#include <list>
+#include <limits>
+#include <memory>
+#include <queue>
+#include <set>
+#include <thread>
+#include <vector>
+#include <variant>
+#include <optional>
+#include <rusty/rusty.hpp>
+#include <rusty/thread.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/mutex.hpp>
+#include <rusty/sync/mpsc.hpp>
+#include <rusty/async.hpp>
+#include <rusty/vecdeque.hpp>
+#include <rusty/btreeset.hpp>
+
 
 #include <unistd.h>
 #include <string.h>
@@ -10,14 +31,14 @@
 #include <utility>
 #include <cstdlib>
 #include <atomic>
-#include "../base/all.hpp"
-#include "reactor.h"
-#include "fiber_impl.h"
-#include "event.h"
-#include "quorum_event.h"
-#include "epoll_wrapper.h"
-#include "sys/times.h"
+#include <sys/times.h>
 #include <std_annotation.hpp>
+
+
+
+
+module rrr:impl.reactor.reactor;
+import rrr;
 
 // @external: {
 //   rrr::Log::debug: [safe],
@@ -30,6 +51,11 @@
 namespace rrr {
 
 const int64_t n_max_fiber = 2000;
+#ifdef REUSE_FIBER
+constexpr bool REUSING_FIBER = true;
+#else
+constexpr bool REUSING_FIBER = false;
+#endif
 
 namespace {
 
@@ -262,7 +288,7 @@ void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
   }
 }
 
-// @safe - Queue a stackless task slot for polling if not already queued.
+// @unsafe - Queue a stackless task slot for polling if not already queued.
 void Reactor::enqueue_stackless_task(size_t idx) const {
   if (stackless_profile_enabled()) {
     g_stackless_profile.enqueue_calls.fetch_add(1, std::memory_order_relaxed);
@@ -291,7 +317,7 @@ void Reactor::enqueue_stackless_task(size_t idx) const {
   ready_stackless_tasks_.borrow_mut()->push_back(idx);
 }
 
-// @safe - Register a stackless task poller and return slot index.
+// @unsafe - Register a stackless task poller and return slot index.
 size_t Reactor::register_stackless_poller(std::function<bool(rusty::Context&)> poller) const {
   size_t scanned = 0;
   {
@@ -330,7 +356,7 @@ size_t Reactor::register_stackless_poller(std::function<bool(rusty::Context&)> p
   return tasks_guard->size() - 1;
 }
 
-// @safe - Poll all queued stackless tasks once.
+// @unsafe - Poll all queued stackless tasks once.
 bool Reactor::process_stackless_tasks() const {
   bool did_work = false;
   for (;;) {
@@ -609,7 +635,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
   } while (looping_.get());
 }
 
-// @safe - Continues execution of a paused fiber; RefCell ops wrapped @unsafe
+// @unsafe - Continues execution of a paused fiber; RefCell ops and fiber calls
 void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
   // Save current running fiber for nesting support
   rusty::Option<rusty::Rc<Fiber>> old_fiber;
@@ -674,7 +700,7 @@ void Reactor::display_waiting_ev() const {
            waiting_events_.borrow()->len(), composite_events_.borrow()->len());
 }
 
-// @safe - Spawn a stackless task and schedule first poll on this reactor.
+// @unsafe - Spawn a stackless task and schedule first poll on this reactor.
 void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
   verify(std::this_thread::get_id() == thread_id_.get());
   constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();

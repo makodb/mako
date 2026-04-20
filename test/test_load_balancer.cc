@@ -18,11 +18,7 @@
 #include <map>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-#include "rpc/load_balancer.hpp"
-#include "misc/marshal.hpp"
+import rrr;
 #include "benchmark_service.h"
 
 // Atomic counter for dynamic port allocation to avoid conflicts when tests run in parallel

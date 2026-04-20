@@ -8,11 +8,7 @@
 #include <chrono>
 #include <thread>
 #include <rusty/arc.hpp>
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-#include "rpc/errors.hpp"
-#include "misc/marshal.hpp"
+import rrr;
 #include "benchmark_service.h"
 
 using namespace rrr;

@@ -16,7 +16,8 @@
 #include <string>
 #include <vector>
 #include <map>
-#include "../rrr/misc/marshal.hpp"
+
+import rrr;
 
 namespace janus {
 

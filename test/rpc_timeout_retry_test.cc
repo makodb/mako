@@ -12,10 +12,7 @@
 #include <cmath>
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/request_options.hpp"
-#include "rpc/server.hpp"
+import rrr;
 #include "rpc_test_ports.h"
 
 using namespace rrr;

@@ -1,4 +1,5 @@
-#include "base/all.hpp"
+
+import rrr;
 #include "deptran/all.h"
 
 using namespace base;

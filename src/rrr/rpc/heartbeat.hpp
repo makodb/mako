@@ -1,21 +1,21 @@
-#pragma once
+module;
 
 #include <rusty/cell.hpp>
 #include <functional>
 #include <cstdint>
+#include <ctime>
 
-namespace rrr {
+export module rrr:rpc.heartbeat;
 
-// Time utility
-namespace {
-    // @safe - Get current time in microseconds
-    inline uint64_t heartbeat_time_us() {
-        // @unsafe - system call
-        {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
-        }
+export namespace rrr {
+
+// @safe - Get current time in microseconds
+inline uint64_t heartbeat_time_us() {
+    // @unsafe - system call
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
     }
 }
 

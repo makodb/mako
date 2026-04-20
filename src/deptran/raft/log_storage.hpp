@@ -19,7 +19,7 @@
 #include <rusty/mutex.hpp>
 #include <rusty/cell.hpp>
 
-#include "misc/marshal.hpp"
+import rrr;
 
 namespace janus {
 namespace raft {

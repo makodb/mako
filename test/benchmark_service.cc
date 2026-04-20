@@ -1,6 +1,6 @@
 #include <math.h>
 
-#include "rrr.hpp"
+import rrr;
 #include "benchmark_service.h"
 
 using namespace benchmark;

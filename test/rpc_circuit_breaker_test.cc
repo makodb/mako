@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <chrono>
-#include "rpc/circuit_breaker.hpp"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

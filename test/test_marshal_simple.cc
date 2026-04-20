@@ -1,5 +1,5 @@
 #include "simple_test_runner.h"
-#include "misc/marshal.hpp"
+import rrr;
 #include <vector>
 #include <string>
 #include <map>

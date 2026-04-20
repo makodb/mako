@@ -1,10 +1,12 @@
-#pragma once
+module;
 
 #include <cstdint>
 #include <cmath>
 #include <random>
 
-namespace rrr {
+export module rrr:rpc.request_options;
+
+export namespace rrr {
 
 /**
  * @safe - Enum types are trivially safe

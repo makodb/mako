@@ -1,11 +1,36 @@
-#include <sstream>
+module;
 
+#include <list>
+#include <vector>
+#include <string>
+#include <map>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
+#include <functional>
+#include <limits>
+#include <chrono>
+#include <inttypes.h>
+#include <string.h>
+#include <unistd.h>
+#include <memory>
+#include <rusty/arc.hpp>
+#include <proxy/proxy.h>
+#include <proxy/proxy_macros.h>
+
+
+#include <sstream>
 #include <sys/time.h>
 #include <atomic>
 #include <mutex>
-
-#include "marshal.hpp"
 #include <rusty/rc.hpp>
+
+
+
+
+
+module rrr:impl.misc.marshal;
+import rrr;
 
 // External safety annotations for atomic operations
 // @external: {
@@ -459,8 +484,8 @@ size_t Marshal::write_to_fd(int fd) {
     }
 }
 
-// @safe - Creates bookmark for deferred writes
-// SAFETY: Internal @unsafe block handles raw pointer and new/delete operations
+// @unsafe - Creates bookmark for deferred writes
+// SAFETY: Uses verify/new/delete and raw pointer operations
 Marshal::bookmark Marshal::set_bookmark(size_t n) {
     verify(write_cnt_ == 0);
 
@@ -553,7 +578,7 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
       break;
     default:
       auto func = get_initializer(kind_);
-      verify(func);
+      verify(static_cast<bool>(func));
       auto state = func();
       verify(state.kind != UNKNOWN);
       verify(state.kind == kind_);

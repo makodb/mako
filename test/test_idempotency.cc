@@ -14,7 +14,7 @@
 #include <chrono>
 #include <vector>
 #include <atomic>
-#include "rpc/idempotency.hpp"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

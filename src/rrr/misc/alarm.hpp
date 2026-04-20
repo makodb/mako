@@ -1,9 +1,9 @@
+module;
 /**
  * This is an alarmer.
  */
 
 
-#pragma once
 
 #include <list>
 #include <mutex>
@@ -11,8 +11,6 @@
 #include <functional>
 #include <map>
 
-#include "base/misc.hpp"
-#include "reactor/reactor.h"
 
 // External safety annotations for STL functions
 // @external: {
@@ -22,7 +20,14 @@
 // }
 
 // @unsafe
-namespace rrr {
+
+export module rrr:misc.alarm;
+
+import :base.misc;
+import :reactor.reactor;
+
+
+export namespace rrr {
 
 class Alarm: public FrequentJob {
  public:

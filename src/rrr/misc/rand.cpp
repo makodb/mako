@@ -1,9 +1,18 @@
+module;
+
+#include <pthread.h>
+#include <cstdlib>
+
 
 #include <string>
 #include <vector>
 
-#include "base/all.hpp"
-#include "rand.hpp"
+
+
+
+
+module rrr:impl.misc.rand;
+import rrr;
 
 // @external: {
 //   pthread_key_create: [unsafe],

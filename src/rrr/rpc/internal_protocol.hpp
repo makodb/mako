@@ -1,9 +1,11 @@
-#pragma once
+module;
 
 #include <cstdint>
 #include <limits>
 
-namespace rrr {
+export module rrr:rpc.internal_protocol;
+
+export namespace rrr {
 
 // Reserved RPC ID for internal heartbeat probes exchanged by ClientConnection.
 constexpr int32_t kInternalHeartbeatRpcId = std::numeric_limits<int32_t>::min();

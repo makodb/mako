@@ -7,7 +7,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
-#include "rpc/connection_state.hpp"
+import rrr;
 
 using namespace rrr;
 

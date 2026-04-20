@@ -1,33 +1,49 @@
+module;
 
-#pragma once
+export module rrr;
 
-// External safety annotations for types included transitively through this umbrella header
-// These annotations ensure the borrow checker recognizes types as unsafe when analyzing
-// files that include rrr.hpp
-// @external: {
-//   rrr::ServerConnection: [unsafe_type]
-// }
+// Former `rrr:public` exports are folded into this root module.
+export import :base.debugging;
+export import :base.strop;
+export import :base.unittest;
+export import :misc.dball;
+export import :misc.netinfo;
+export import :misc.rand;
+export import :misc.stat;
+export import :reactor.fiber_impl;
+export import :rpc.circuit_breaker;
+export import :rpc.connection_metrics;
+export import :rpc.connection_state;
+export import :rpc.errors;
+export import :rpc.heartbeat;
+export import :rpc.internal_protocol;
+export import :rpc.reconnect_policy;
+export import :rpc.request_options;
+export import :rpc.utils;
+export import :base.basetypes;
+export import :rpc.load_balancer;
+export import :rpc.callbacks;
+export import :base.misc;
+export import :base.threading;
+export import :base.logging;
+export import :base.all;
+export import :misc.cpuinfo;
+export import :misc.marshal;
+export import :reactor.epoll_wrapper;
+export import :reactor.event;
+export import :misc.marshallable_proxy;
+export import :misc.recorder;
+export import :rpc.idempotency;
+export import :rpc.request_queue;
+export import :rpc.pollable_proxy;
+export import :reactor.quorum_event;
+export import :rpc.completion_tracker;
+export import :reactor.reactor;
+export import :misc.alarm;
+export import :reactor.future;
+export import :rpc.client;
+export import :rpc.server;
+export import :misc.alock;
+export import :reactor.fiber;
 
-#include "base/all.hpp"
-
-#include "misc/stat.hpp"
-#include "misc/dball.hpp"
-#include "misc/alarm.hpp"
-#include "misc/alock.hpp"
-#include "misc/rand.hpp"
-#include "misc/marshal.hpp"
-#include "misc/recorder.hpp"
-#include "misc/cpuinfo.hpp"
-#include "misc/netinfo.hpp"
-
-#include "reactor/reactor.h"
-#include "reactor/fiber_impl.h"
-#include "reactor/event.h"
-#include "reactor/epoll_wrapper.h"
-
-#include "rpc/utils.hpp"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-
-namespace base = rrr;
-
+export namespace base = rrr;

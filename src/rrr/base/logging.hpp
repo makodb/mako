@@ -1,8 +1,8 @@
-#pragma once
+module;
 
 #include <string.h>
 #include <iostream>
-#include "threading.hpp"
+#include <utility>
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -16,17 +16,11 @@
 //   strlen: [safe, (const char*) -> size_t]
 // }
 
-//#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+export module rrr:base.logging;
 
-#define __FILENAME__ __FILE__
+import :base.threading;
 
-#define Log_debug(msg, ...) ::rrr::Log::debug(__LINE__, __FILENAME__, msg, ## __VA_ARGS__)
-#define Log_info(msg, ...) ::rrr::Log::info(__LINE__, __FILENAME__, msg, ## __VA_ARGS__)
-#define Log_warn(msg, ...) ::rrr::Log::warn(__LINE__, __FILENAME__, msg, ## __VA_ARGS__)
-#define Log_error(msg, ...) ::rrr::Log::error(__LINE__, __FILENAME__, msg, ## __VA_ARGS__)
-#define Log_fatal(msg, ...) ::rrr::Log::fatal(__LINE__, __FILENAME__, msg, ## __VA_ARGS__)
-
-namespace rrr {
+export namespace rrr {
 
 // @safe - Thread-safe logging class using static mutex
 class Log {
@@ -67,5 +61,30 @@ public:
     static void info(const char* fmt, ...);
     static void debug(const char* fmt, ...);
 };
+
+template <typename... Args>
+inline void Log_debug(const char* fmt, Args&&... args) {
+    Log::debug(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_info(const char* fmt, Args&&... args) {
+    Log::info(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_warn(const char* fmt, Args&&... args) {
+    Log::warn(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_error(const char* fmt, Args&&... args) {
+    Log::error(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_fatal(const char* fmt, Args&&... args) {
+    Log::fatal(fmt, std::forward<Args>(args)...);
+}
 
 } // namespace base

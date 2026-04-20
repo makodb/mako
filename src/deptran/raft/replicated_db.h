@@ -1,6 +1,6 @@
 #pragma once
 #include "__dep__.h"
-#include "rrr/misc/marshal.hpp"
+import rrr;
 #include <string>
 #include <vector>
 #include <atomic>

@@ -1,9 +1,8 @@
+module;
 //
 // Created by shuai on 8/22/18.
 //
-#pragma once
 
-#include "base/all.hpp"
 #include <rusty/arc.hpp>
 #include <rusty/rc.hpp>
 #include <rusty/rc/weak.hpp>
@@ -11,6 +10,7 @@
 #include <unistd.h>
 #include <array>
 #include <algorithm>
+#include <cstring>
 #include <memory>
 #include <vector>
 #include <cerrno>
@@ -26,7 +26,12 @@
 #endif
 
 
-namespace rrr {
+export module rrr:reactor.epoll_wrapper;
+
+import :base.all;
+
+
+export namespace rrr {
 using std::shared_ptr;
 
 // Forward declaration
@@ -34,16 +39,16 @@ class PollThreadWorker;
 
 // Pollable mode constants (moved outside interface for @interface compliance)
 namespace PollMode {
-    static constexpr int READ = 0x1;
-    static constexpr int WRITE = 0x2;
+    inline constexpr int READ = 0x1;
+    inline constexpr int WRITE = 0x2;
     // Special return value for handle_write() indicating no mode change needed
-    static constexpr int NO_CHANGE = -1;
+    inline constexpr int NO_CHANGE = -1;
 }
 
 namespace PollReady {
-    static constexpr int READABLE = 0x1;
-    static constexpr int WRITABLE = 0x2;
-    static constexpr int ERROR = 0x4;
+    inline constexpr int READABLE = 0x1;
+    inline constexpr int WRITABLE = 0x2;
+    inline constexpr int ERROR = 0x4;
 }
 
 // @interface

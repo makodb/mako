@@ -6,8 +6,9 @@
 #include "benchmark_control_rpc.h"
 #include "client_status.h"
 #include "server_worker.h"
-#include "../rrr/reactor/event.h"
 #include "scheduler.h"
+
+import rrr;
 
 // #define CPU_PROFILE 1
 

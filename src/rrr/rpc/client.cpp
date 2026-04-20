@@ -1,9 +1,23 @@
+module;
+
+#include <rusty/rusty.hpp>
+#include <rusty/result.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/refcell.hpp>
+#include <rusty/async.hpp>
+#include <unordered_map>
+#include <map>
+#include <thread>
+#include <atomic>
+#include <coroutine>
+#include <type_traits>
+
+
 #include <string>
 #include <memory>
 #include <chrono>
 #include <mutex>
 #include <climits>
-
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
@@ -12,11 +26,9 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 
-#include "reactor/fiber_impl.h"
-#include "reactor/reactor.h"
-#include "client.hpp"
-#include "internal_protocol.hpp"
-#include "utils.hpp"
+
+module rrr:impl.rpc.client;
+import rrr;
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
 // Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
@@ -52,7 +64,7 @@ static uint64_t current_time_ms() {
 // Future implementation
 // ============================================================================
 
-// @safe - Uses rusty::Mutex and rusty::Condvar together
+// @unsafe - Uses rusty::Mutex and rusty::Condvar together
 void Future::wait() const {
   auto guard = state_.lock().unwrap();
   // wait_while: waits WHILE condition is TRUE, stops when FALSE
@@ -135,7 +147,7 @@ ClientConnection::~ClientConnection() {
   invalidate_pending_futures();
 }
 
-// @safe - Cancels all pending futures with error, protected by SpinMutex
+// @unsafe - Cancels all pending futures with error, protected by SpinMutex
 void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
   auto guard = pending_fu_.lock().unwrap();
@@ -153,7 +165,7 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
-// @safe - Fails one pending future if it still exists in the pending map
+// @unsafe - Fails one pending future if it still exists in the pending map
 void ClientConnection::fail_pending_future(i64 xid, int err) const {
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
@@ -208,7 +220,7 @@ void ClientConnection::close() {
   }
 }
 
-// @safe - Mark connection as closing without closing socket
+// @unsafe - Mark connection as closing without closing socket
 // Used by Client::close() to update state before poll thread closes socket
 void ClientConnection::mark_closing() {
   reconnect_abort_.store(true, std::memory_order_release);
@@ -220,7 +232,7 @@ void ClientConnection::mark_closing() {
   invalidate_pending_futures();
 }
 
-// @safe - Jetpack: handle_free for explicit future cleanup
+// @unsafe - Jetpack: handle_free for explicit future cleanup
 void ClientConnection::handle_free(i64 xid) const {
   auto guard = pending_fu_.lock().unwrap();
   auto it = guard->find(xid);
@@ -543,7 +555,7 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
   }
 }
 
-// @safe - Configure heartbeat manager and timeout callback.
+// @unsafe - Configure heartbeat manager and timeout callback.
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
   heartbeat_manager_.set_config(config);
   WeakClientConnection weak_conn;
@@ -566,17 +578,17 @@ void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const
   });
 }
 
-// @safe - Returns heartbeat config snapshot.
+// @unsafe - Returns heartbeat config snapshot.
 HeartbeatConfig ClientConnection::heartbeat_config() const {
   return heartbeat_manager_.config();
 }
 
-// @safe - Configure circuit breaker and reset state.
+// @unsafe - Configure circuit breaker and reset state.
 void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
   circuit_breaker_.set_config(config);
 }
 
-// @safe - Returns circuit breaker config snapshot.
+// @unsafe - Returns circuit breaker config snapshot.
 CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
   return circuit_breaker_.config();
 }
@@ -649,7 +661,7 @@ size_t ClientConnection::replay_pending_requests() {
   return replayed;
 }
 
-// @safe - Enqueue one internal heartbeat probe into the output buffer.
+// @unsafe - Enqueue one internal heartbeat probe into the output buffer.
 void ClientConnection::enqueue_heartbeat_probe() const {
   auto guard = out_.lock().unwrap();
   Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
@@ -659,7 +671,7 @@ void ClientConnection::enqueue_heartbeat_probe() const {
   guard->write_bookmark(bmark, packet_size);
 }
 
-// @safe - Route allow_request through metrics (rejections + state transitions).
+// @unsafe - Route allow_request through metrics (rejections + state transitions).
 bool ClientConnection::allow_request_with_circuit_metrics() const {
   CircuitState before = circuit_breaker_.state();
   bool allowed = circuit_breaker_.allow_request();
@@ -713,7 +725,7 @@ void ClientConnection::record_circuit_state_transition(
   }
 }
 
-// @safe - Records success/failure in circuit breaker.
+// @unsafe - Records success/failure in circuit breaker.
 void ClientConnection::record_circuit_result(i32 err) const {
   CircuitState before = circuit_breaker_.state();
   if (err == 0) {
@@ -759,7 +771,7 @@ RpcError ClientConnection::map_system_error(i32 err) {
   }
 }
 
-// @safe - Invoke callback manager error hooks.
+// @unsafe - Invoke callback manager error hooks.
 void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const {
   if (!callback_manager_) {
     return;
@@ -767,7 +779,7 @@ void ClientConnection::invoke_error_callback(i32 err, const std::string& message
   callback_manager_->invoke_on_error(map_system_error(err), message);
 }
 
-// @safe - Invoke callback manager disconnected hooks.
+// @unsafe - Invoke callback manager disconnected hooks.
 void ClientConnection::invoke_disconnected_callback() const {
   if (!callback_manager_) {
     return;
@@ -775,7 +787,7 @@ void ClientConnection::invoke_disconnected_callback() const {
   callback_manager_->invoke_on_disconnected();
 }
 
-// @safe - Invoke callback manager reconnecting hooks.
+// @unsafe - Invoke callback manager reconnecting hooks.
 void ClientConnection::invoke_reconnecting_callback() const {
   if (!callback_manager_) {
     return;
@@ -783,7 +795,7 @@ void ClientConnection::invoke_reconnecting_callback() const {
   callback_manager_->invoke_on_reconnecting();
 }
 
-// @safe - Invoke callback manager reconnected hooks.
+// @unsafe - Invoke callback manager reconnected hooks.
 void ClientConnection::invoke_reconnected_callback(bool success) const {
   if (!callback_manager_) {
     return;
@@ -791,7 +803,7 @@ void ClientConnection::invoke_reconnected_callback(bool success) const {
   callback_manager_->invoke_on_reconnected(success);
 }
 
-// @safe - Invoke callback manager connected hooks.
+// @unsafe - Invoke callback manager connected hooks.
 void ClientConnection::invoke_connected_callback() const {
   if (!callback_manager_) {
     return;
@@ -799,7 +811,7 @@ void ClientConnection::invoke_connected_callback() const {
   callback_manager_->invoke_on_connected();
 }
 
-// @safe - Error handler - transitions to FAILED state
+// @unsafe - Error handler - transitions to FAILED state
 void ClientConnection::handle_error() {
   ConnectionState prev_state = state_machine_.state();
   const bool user_initiated_closing =
@@ -855,7 +867,7 @@ void ClientConnection::handle_error() {
   }
 }
 
-// @safe - Poll-loop heartbeat tick and pending write-update handling.
+// @unsafe - Poll-loop heartbeat tick and pending write-update handling.
 bool ClientConnection::check_pending_write_update() const {
   if (state_machine_.is_connected() && !paused_.get()) {
     if (heartbeat_manager_.check_timeout()) {
@@ -876,7 +888,7 @@ bool ClientConnection::check_pending_write_update() const {
   return false;
 }
 
-// @safe - Writes buffered data to socket, protected by SpinMutex
+// @unsafe - Writes buffered data to socket, protected by SpinMutex
 int ClientConnection::handle_write() {
   if (!state_machine_.is_connected()) {
     return PollMode::NO_CHANGE;
@@ -1004,7 +1016,7 @@ bool ClientConnection::handle_read() {
   return true;
 }
 
-// @safe - Determines polling mode based on output buffer, protected by SpinMutex
+// @unsafe - Determines polling mode based on output buffer, protected by SpinMutex
 int ClientConnection::poll_mode() const {
   int mode = PollMode::READ;
   auto guard = out_.lock().unwrap();
@@ -1019,12 +1031,12 @@ int ClientConnection::poll_mode() const {
 // Client implementation (facade that delegates to ClientConnection)
 // ============================================================================
 
-// @safe - Cleanup destructor, uses request_close() for thread-safe close
+// @unsafe - Cleanup destructor, uses request_close() for thread-safe close
 Client::~Client() {
   close();  // Delegate to close() which uses request_close()
 }
 
-// @safe - Sets connection validity using RefCell
+// @unsafe - Sets connection validity using RefCell
 void Client::set_valid(bool valid) const {
   auto guard = connection_.borrow_mut();
   if (guard->is_some()) {
@@ -1033,7 +1045,7 @@ void Client::set_valid(bool valid) const {
   }
 }
 
-// @safe - Closes socket via request_close() for thread-safe cleanup
+// @unsafe - Closes socket via request_close() for thread-safe cleanup
 // Note: Does NOT clear the connection object so reconnect() can work.
 // The connection object retains the address for reconnection.
 // IMPORTANT: Does NOT call conn.close() directly! The socket close must happen
@@ -1054,7 +1066,7 @@ void Client::close() const {
   }
 }
 
-// @safe - Jetpack: handle_free for explicit future cleanup
+// @unsafe - Jetpack: handle_free for explicit future cleanup
 void Client::handle_free(i64 xid) const {
   auto guard = connection_.borrow();
   if (guard->is_some()) {
@@ -1062,7 +1074,7 @@ void Client::handle_free(i64 xid) const {
   }
 }
 
-// @safe - Pauses the connection
+// @unsafe - Pauses the connection
 void Client::pause() const {
   auto guard = connection_.borrow();
   if (guard->is_some()) {
@@ -1070,7 +1082,7 @@ void Client::pause() const {
   }
 }
 
-// @safe - Resumes the connection
+// @unsafe - Resumes the connection
 void Client::resume() const {
   auto guard = connection_.borrow();
   if (guard->is_some()) {
@@ -1078,7 +1090,7 @@ void Client::resume() const {
   }
 }
 
-// @safe - Establishes TCP/IPC connection to server
+// @unsafe - Establishes TCP/IPC connection to server
 // Uses Arc::get_mut() for exclusive mutable access during initialization
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
@@ -1170,7 +1182,7 @@ PoolConfig ClientPool::pool_config() const {
   return config_.get();
 }
 
-// @safe - Check if a client is considered healthy
+// @unsafe - Check if a client is considered healthy
 bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
   auto cfg = config_.get();
 

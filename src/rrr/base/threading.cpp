@@ -1,9 +1,29 @@
+module;
+
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/result.hpp>
+#include <rusty/option.hpp>
+#include <rusty/unsafe_cell.hpp>
+#include <list>
+#include <queue>
+#include <vector>
+#include <pthread.h>
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
+#include <memory>
+
+
 #include <chrono>
 #include <functional>
 #include <sys/time.h>
 
-#include "misc.hpp"
-#include "threading.hpp"
+
+
+
+module rrr:impl.base.threading;
+import rrr;
 
 // External safety annotations for atomic operations
 // @external: {

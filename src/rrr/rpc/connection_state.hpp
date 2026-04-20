@@ -1,9 +1,11 @@
-#pragma once
+module;
 
 #include <rusty/cell.hpp>
 #include <functional>
 
-namespace rrr {
+export module rrr:rpc.connection_state;
+
+export namespace rrr {
 
 /**
  * Connection lifecycle states for RPC client connections.

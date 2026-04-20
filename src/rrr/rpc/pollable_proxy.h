@@ -1,6 +1,6 @@
-#pragma once
+module;
 
-#include "reactor/epoll_wrapper.h"
+#include <rusty/arc.hpp>
 
 #ifdef RR
 #pragma push_macro("RR")
@@ -14,7 +14,12 @@
 #undef RRR_RESTORE_RR_MACRO
 #endif
 
-namespace rrr {
+export module rrr:rpc.pollable_proxy;
+
+import :reactor.epoll_wrapper;
+
+
+export namespace rrr {
 
 // Proxy facade definition for Pollable behavior dispatch.
 PRO_DEF_MEM_DISPATCH(PollableMemFd, fd);

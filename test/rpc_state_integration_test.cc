@@ -19,11 +19,7 @@
 #include <unistd.h>
 #include <vector>
 #include <rusty/arc.hpp>
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-#include "rpc/connection_state.hpp"
-#include "misc/marshal.hpp"
+import rrr;
 #include "benchmark_service.h"
 
 using namespace rrr;

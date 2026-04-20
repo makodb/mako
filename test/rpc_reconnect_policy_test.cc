@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <set>
-#include "rpc/reconnect_policy.hpp"
+import rrr;
 
 using namespace rrr;
 

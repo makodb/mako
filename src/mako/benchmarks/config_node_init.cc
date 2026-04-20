@@ -6,7 +6,7 @@
 #include "config_node_init.h"
 #include "deptran/config_converter.h"
 #include "deptran/sharding_policy_cache.h"
-#include "rrr/base/logging.hpp"
+import rrr;
 
 namespace mako {
 

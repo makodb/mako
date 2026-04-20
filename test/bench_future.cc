@@ -8,10 +8,7 @@
 #include <vector>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
-#include "reactor/reactor.h"
-#include "rpc/client.hpp"
-#include "rpc/server.hpp"
-#include "misc/marshal.hpp"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

@@ -1,9 +1,15 @@
+module;
 #ifndef RANDOM_GENERATOR_H_
 #define RANDOM_GENERATOR_H_
 
 #include <pthread.h>
+#include <cstdlib>
+#include <string>
+#include <vector>
 
-namespace rrr {
+export module rrr:misc.rand;
+
+export namespace rrr {
 
 class RandomGenerator {
 private:

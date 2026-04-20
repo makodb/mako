@@ -1,7 +1,7 @@
-
-#include "../../rrr/misc/marshal.hpp"
 #include "service.h"
 #include "server.h"
+
+import rrr;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]
@@ -107,7 +107,7 @@ void RaftServiceImpl::InstallSnapshot(const RaftService::RpcInstallSnapshotReque
                         std::move(defer));
 }
 
-// @safe - svr_ pointer is bounded, delegates to RaftServer::OnInstallSnapshot
+// @unsafe - svr_ pointer is bounded, delegates to RaftServer::OnInstallSnapshot
 void RaftServiceImpl::HandleInstallSnapshot(const uint64_t& term,
                                              const uint64_t& leader_id,
                                              const uint64_t& last_included_index,
@@ -131,7 +131,7 @@ void RaftServiceImpl::HandleInstallSnapshot(const uint64_t& term,
 std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;
 std::mutex RaftServiceImpl::registry_mutex_;
 
-// @safe - C-style cast in @unsafe block, clock_gettime/srand marked @external [safe]
+// @unsafe - C-style cast in @unsafe block, clock_gettime/srand marked @external [safe]
 RaftServiceImpl::RaftServiceImpl(TxLogServer *sched, rusty::Arc<rrr::PollThread> poll_thread)
     : poll_thread_(rusty::Some(std::move(poll_thread))) {
   // @unsafe
@@ -179,7 +179,7 @@ rusty::Option<rusty::Arc<rrr::PollThread>> RaftServiceImpl::GetPollThread(siteid
   return rusty::None;
 }
 
-// @safe - svr_ pointer is bounded (set in constructor), external calls marked @external
+// @unsafe - svr_ pointer is bounded (set in constructor), external calls marked @external
 void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                                     const ballot_t& lst_log_term,
                                     const siteid_t& can_id,
@@ -200,7 +200,7 @@ void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                     [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
-// @safe - Handle VoteDurable RPC for speculative voting
+// @unsafe - Handle VoteDurable RPC for speculative voting
 // Received when a follower has durably persisted its vote to disk
 void RaftServiceImpl::HandleVoteDurable(const ballot_t& term,
                                          const siteid_t& voter_id,
@@ -217,7 +217,7 @@ void RaftServiceImpl::HandleVoteDurable(const ballot_t& term,
                      [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
-// @safe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
+// @unsafe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
 void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         const ballot_t& ballot,
                                         const uint64_t& leaderCurrentTerm,
@@ -263,7 +263,7 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
   });
 }
 
-// @safe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
+// @unsafe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
 void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              const ballot_t& ballot,
                                              const uint64_t& leaderCurrentTerm,
@@ -311,7 +311,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
   });
 }
 
-// @safe - Handle AppendEntriesDurable RPC for speculative commits
+// @unsafe - Handle AppendEntriesDurable RPC for speculative commits
 // Received when a follower has durably persisted log entries to disk
 void RaftServiceImpl::HandleAppendEntriesDurable(const ballot_t& term,
                                                   const siteid_t& follower_id,
@@ -329,7 +329,7 @@ void RaftServiceImpl::HandleAppendEntriesDurable(const ballot_t& term,
                               [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
-// @safe - svr_ pointer is bounded, external calls marked @external [safe]
+// @unsafe - svr_ pointer is bounded, external calls marked @external [safe]
 void RaftServiceImpl::HandleTimeoutNow(const uint64_t& leaderTerm,
                                         const siteid_t& leaderSiteId,
                                         uint64_t* followerTerm,
@@ -347,7 +347,7 @@ void RaftServiceImpl::HandleTimeoutNow(const uint64_t& leaderTerm,
                      [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
-// @safe
+// @unsafe
 void RaftServiceImpl::HandleNotifyRestart(const siteid_t& restartedSiteId,
                                           bool_t* acknowledged,
                                           rrr::DeferredReply defer) {
@@ -382,7 +382,7 @@ void RaftServiceImpl::HandleNotifyRestart(const siteid_t& restartedSiteId,
   defer.reply();
 }
 
-// @safe - Typed RPC dispatcher for AddServer
+// @unsafe - Typed RPC dispatcher for AddServer
 void RaftServiceImpl::AddServer(const RaftService::RpcAddServerRequest& req,
                                 RaftService::RpcAddServerResponse& resp,
                                 rrr::DeferredReply defer) {
@@ -395,7 +395,7 @@ void RaftServiceImpl::AddServer(const RaftService::RpcAddServerRequest& req,
                   std::move(defer));
 }
 
-// @safe - Typed RPC dispatcher for RemoveServer
+// @unsafe - Typed RPC dispatcher for RemoveServer
 void RaftServiceImpl::RemoveServer(const RaftService::RpcRemoveServerRequest& req,
                                    RaftService::RpcRemoveServerResponse& resp,
                                    rrr::DeferredReply defer) {
@@ -407,7 +407,7 @@ void RaftServiceImpl::RemoveServer(const RaftService::RpcRemoveServerRequest& re
                      std::move(defer));
 }
 
-// @safe - svr_ pointer is bounded, delegates to RaftServer::OnAddServer
+// @unsafe - svr_ pointer is bounded, delegates to RaftServer::OnAddServer
 void RaftServiceImpl::HandleAddServer(const uint64_t& term,
                                        const uint64_t& new_server_id,
                                        const std::string& new_server_addr,
@@ -428,7 +428,7 @@ void RaftServiceImpl::HandleAddServer(const uint64_t& term,
                    std::move(defer));
 }
 
-// @safe - svr_ pointer is bounded, delegates to RaftServer::OnRemoveServer
+// @unsafe - svr_ pointer is bounded, delegates to RaftServer::OnRemoveServer
 void RaftServiceImpl::HandleRemoveServer(const uint64_t& term,
                                           const uint64_t& server_id,
                                           bool_t* success,

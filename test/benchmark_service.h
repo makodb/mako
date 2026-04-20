@@ -1,7 +1,10 @@
 #pragma once
 
-#include "rrr.hpp"
+import rrr;
 #include <rusty/async.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/result.hpp>
 
 #include <errno.h>
 #include <memory>
@@ -1329,4 +1332,3 @@ public:
 
 // BenchmarkService methods are implemented in test/benchmark_service.cc using
 // typed Rpc*Request/Rpc*Response signatures.
-

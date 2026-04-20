@@ -1,20 +1,34 @@
-/*
- *
- * Here is how it works, there is a queue, a flush thread, and a callback thread.
- *
- */
+module;
+
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
+#include <list>
+#include <string>
+#include <utility>
+#include <vector>
+
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
-
 #include <chrono>
 
-#include "base/logging.hpp"
-#include "stat.hpp"
-#include "recorder.hpp"
+
+module rrr:impl.misc.recorder;
+import rrr;
+
+/*
+ *
+ * Here is how it works, there is a queue, a flush thread, and a callback thread.
+ *
+ */
+
+
+
 
 // @external: {
 //   open: [unsafe],

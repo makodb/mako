@@ -1,10 +1,12 @@
-#pragma once
+module;
 
 #include <string.h>
 #include <string>
 #include <vector>
 
-namespace rrr {
+export module rrr:base.strop;
+
+export namespace rrr {
 
 #define streq(a, b) (strcmp((a), (b)) == 0)
 

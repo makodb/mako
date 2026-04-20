@@ -1,4 +1,5 @@
-#include "rrr.hpp"
+
+import rrr;
 
 #include "deptran/all.h"
 #include "time.h"

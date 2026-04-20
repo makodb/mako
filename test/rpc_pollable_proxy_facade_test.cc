@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "rpc/pollable_proxy.h"
+import rrr;
 
 namespace rrr {
 namespace {

@@ -59,7 +59,7 @@ using namespace std;
 // google library
 
 // misc helper files
-#include "rrr.hpp"
+import rrr;
 
 using namespace rrr;
 

@@ -2,6 +2,7 @@
 #define STATS_REGISTRY_H_
 
 #include "__dep__.h"
+#include <rusty/mutex.hpp>
 
 namespace janus {
 

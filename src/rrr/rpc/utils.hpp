@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 #include <list>
 #include <map>
@@ -31,7 +31,9 @@
 //   close: [unsafe, (int) -> int]
 // }
 
-namespace rrr {
+export module rrr:rpc.utils;
+
+export namespace rrr {
 
 // RAII wrapper for addrinfo from getaddrinfo()
 // Automatically calls freeaddrinfo() on destruction

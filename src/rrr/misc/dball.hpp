@@ -1,3 +1,4 @@
+module;
 /**
  * DragonBall is an interesting abstraction of event driven
  * programming. Typically after you collect all dragon balls you can
@@ -6,13 +7,17 @@
  * DragonBall is not thread-safe for now.
  */
 
-#pragma once
 
 
 #include <mutex>
 #include <functional>
+#include <cstdint>
 
-namespace rrr {
+export module rrr:misc.dball;
+
+import :base.debugging;
+
+export namespace rrr {
 
 class DragonBall {
 

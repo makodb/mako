@@ -1,9 +1,31 @@
+module;
+
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/function.hpp>
+#include <rusty/option.hpp>
+#include <rusty/unsafe_cell.hpp>
+#include <rusty/vec.hpp>
+#include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
+#include <unordered_map>
+#include <unordered_set>
+#include <pthread.h>
+#include <atomic>
+#include <chrono>
+#include <concepts>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <proxy/proxy.h>
+#include <proxy/proxy_macros.h>
+
+
 #include <string>
 #include <sstream>
 #include <memory>
+#include <list>
 #include <cerrno>
 #include <random>
-
 #include <sys/select.h>
 #include <sys/un.h>
 #include <errno.h>
@@ -11,11 +33,12 @@
 #include <sys/types.h>
 #include <netinet/tcp.h>
 
-#include "reactor/fiber_impl.h"
-#include "reactor/reactor.h"
-#include "server.hpp"
-#include "internal_protocol.hpp"
-#include "utils.hpp"
+
+
+
+
+module rrr:impl.rpc.server;
+import rrr;
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
 // Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
@@ -136,7 +159,7 @@ ServerConnection::~ServerConnection() {
     // Arc reference to RpcServiceContext is automatically released
 }
 
-// @safe - Executes callback inline for API compatibility.
+// @unsafe - Executes callback inline for API compatibility.
 int ServerConnection::run_async(std::function<void()> f) {
   if (!f) {
     Log_warn("rrr::ServerConnection::run_async called with empty callback");
@@ -146,18 +169,18 @@ int ServerConnection::run_async(std::function<void()> f) {
   return 0;
 }
 
-// @safe - Returns total buffered bytes owned by this connection.
+// @unsafe - Returns total buffered bytes owned by this connection.
 size_t ServerConnection::content_size() {
     auto out_guard = out_.lock().unwrap();
     return in_.content_size() + out_guard->content_size();
 }
 
-// @safe - Explicit no-op for server connection API compatibility.
+// @unsafe - Explicit no-op for server connection API compatibility.
 void ServerConnection::handle_free() {
     Log_warn("rrr::ServerConnection::handle_free() is a no-op on server connections");
 }
 
-// @safe - Reads requests from socket and dispatches to handlers
+// @unsafe - Reads requests from socket and dispatches to handlers
 // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers.
 bool ServerConnection::handle_read() {
     if (status_ == CLOSED) {
@@ -273,7 +296,7 @@ bool ServerConnection::handle_read() {
     return false;
 }
 
-// @safe - Writes buffered data to socket, protected by SpinMutex
+// @unsafe - Writes buffered data to socket, protected by SpinMutex
 int ServerConnection::handle_write() {
     if (status_ == CLOSED) {
         return PollMode::NO_CHANGE;
@@ -310,7 +333,7 @@ void ServerConnection::close() {
     }
 }
 
-// @safe - Returns poll mode based on output buffer, protected by SpinMutex
+// @unsafe - Returns poll mode based on output buffer, protected by SpinMutex
 int ServerConnection::poll_mode() const {
     int mode = PollMode::READ;
     auto guard = out_.lock().unwrap();
@@ -321,7 +344,7 @@ int ServerConnection::poll_mode() const {
     return mode;
 }
 
-// @safe - Executes callback inline for API compatibility.
+// @unsafe - Executes callback inline for API compatibility.
 int DeferredReply::run_async(std::function<void()> f) {
     if (!f) {
         Log_warn("rrr::DeferredReply::run_async called with empty callback");
@@ -642,13 +665,13 @@ int Server::start(const char* bind_addr) {
   return 0;
 }
 
-// @safe - Unregisters RPC mapping from pending map (must be called before start())
+// @unsafe - Unregisters RPC mapping from pending map (must be called before start())
 void Server::unreg(i32 rpc_id) {
     pending_rpc_to_service_.erase(rpc_id);
     pending_fast_rpc_ids_.erase(rpc_id);
 }
 
-// @safe - Signals shutdown to waiting threads
+// @unsafe - Signals shutdown to waiting threads
 void Server::do_shutdown() {
     Log_debug("Server::do_shutdown");
     {
@@ -658,7 +681,7 @@ void Server::do_shutdown() {
     shutdown_cond_.notify_all();
 }
 
-// @safe - Blocks until shutdown is signaled
+// @unsafe - Blocks until shutdown is signaled
 void Server::wait_for_shutdown() {
     Log_debug("Server::wait_for_shutdown");
     auto guard = shutdown_state_.lock().unwrap();
@@ -669,7 +692,7 @@ void Server::wait_for_shutdown() {
 
 // === Graceful Shutdown Implementation ===
 
-// @safe - Thread-safe hook registration
+// @unsafe - Thread-safe hook registration
 void Server::add_shutdown_hook(ShutdownHook hook) {
     auto guard = shutdown_hooks_.lock().unwrap();
     guard->push_back(std::move(hook));

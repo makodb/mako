@@ -11,7 +11,8 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/time.h>
-#include "../rrr/base/debugging.hpp"
+
+import rrr;
 #ifdef __APPLE__ // for OS X
 #include <mach/clock.h>
 #include <mach/mach.h>

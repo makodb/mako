@@ -2,7 +2,7 @@
 // Tests basic functionality without gtest dependency
 
 #include <iostream>
-#include "base/all.hpp"
+import rrr;
 #include "mako/varint.h"
 #include "mako/macros.h"
 

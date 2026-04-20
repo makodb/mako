@@ -7,7 +7,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
-#include "rpc/heartbeat.hpp"
+import rrr;
 
 using namespace rrr;
 using namespace std::chrono;

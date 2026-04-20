@@ -51,7 +51,7 @@ bool CoordinatorRaft::IsFPGALeader() {
    }
 }
 
-// @safe - external calls marked @external [safe], pointer ops in @unsafe blocks
+// @unsafe - external calls marked @external [safe], pointer ops in @unsafe blocks
 void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
@@ -131,7 +131,7 @@ void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
   GotoNextPhase();
 }
 
-// @safe - external calls marked @external [safe], address-of ops in @unsafe blocks
+// @unsafe - external calls marked @external [safe], address-of ops in @unsafe blocks
 void CoordinatorRaft::AppendEntries() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     verify(!in_append_entries);
@@ -191,10 +191,11 @@ void CoordinatorRaft::LeaderLearn() {
     commit_callback_();
     }
     verify(phase_ == Phase::COMMIT);
-    GotoNextPhase();
+    // @unsafe
+    { GotoNextPhase(); }
 }
 
-// @safe - calls @safe AppendEntries and @safe LeaderLearn
+// @unsafe - calls @safe AppendEntries and @safe LeaderLearn
 void CoordinatorRaft::GotoNextPhase() {
   int n_phase = 4;
   int current_phase = phase_ % n_phase;

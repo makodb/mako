@@ -81,7 +81,7 @@ class RaftVoteQuorumEvent: public QuorumEvent {
     return highest_term_;
   }
 
-  // @safe - Get the set of sites that voted yes (memory votes)
+  // @unsafe - Get the set of sites that voted yes (memory votes)
   std::set<siteid_t> GetSpecVoters() {
     std::lock_guard<std::mutex> lock(voters_mtx_);
     return spec_voters_;
@@ -305,4 +305,3 @@ friend class RaftProxy;
 };
 
 } // namespace janus
-

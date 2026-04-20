@@ -205,7 +205,7 @@ void RaftServer::PersistCommitIndexToLogStorage() {
 }
 
 // @unsafe - Uses LogStorage API
-// @safe - Persists specCommitIndex_ and securedLogIndex_ to storage
+// @unsafe - Persists specCommitIndex_ and securedLogIndex_ to storage
 void RaftServer::PersistSpeculativeIndicesToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
@@ -263,7 +263,7 @@ void RaftServer::PersistLogEntriesToLogStorage(const std::vector<std::pair<sloti
   }
 }
 
-// @safe - Recovers state from LogStorage
+// @unsafe - Recovers state from LogStorage
 bool RaftServer::RecoverFromStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return true;  // No storage configured, nothing to recover
@@ -344,7 +344,7 @@ bool RaftServer::RecoverFromStorage() {
   return true;
 }
 
-// @safe - Replays committed entries (callbacks wrapped in @unsafe blocks)
+// @unsafe - Replays committed entries (callbacks wrapped in @unsafe blocks)
 void RaftServer::ReplayCommittedEntries() {
   if (!app_next_) {
     Log_warn("[RAFT-REPLAY] Site %d: No app_next_ callback, skipping replay", site_id_);
@@ -445,7 +445,7 @@ void RaftServer::InitializeSnapshotManager() {
              snapidx_, snapterm_, meta.size_bytes);
   }
 
-  // @safe - Recover server state from snapshot metadata
+  // @unsafe - Recover server state from snapshot metadata
   // InitializeSnapshotManager() runs AFTER RecoverFromStorage() in Setup(),
   // so log-recovered values may already be set. Only advance, never go backwards.
   if (snapidx_ > 0) {
@@ -475,9 +475,12 @@ void RaftServer::InitializeSnapshotManager() {
 
 // @safe - Returns true if a snapshot is available
 bool RaftServer::HasSnapshot() const {
-  if (!snapshot_manager_) return false;
-  auto latest = snapshot_manager_->GetLatestSnapshot();
-  return latest.is_some();
+  // @unsafe
+  {
+    if (!snapshot_manager_) return false;
+    auto latest = snapshot_manager_->GetLatestSnapshot();
+    return latest.is_some();
+  }
 }
 
 // @safe - Returns the last snapshotted log index
@@ -490,7 +493,7 @@ uint64_t RaftServer::GetSnapshotTerm() const {
   return snapterm_;
 }
 
-// @safe - Log compaction (storage operations wrapped in @unsafe blocks)
+// @unsafe - Log compaction (storage operations wrapped in @unsafe blocks)
 size_t RaftServer::CompactLog(slotid_t up_to_index) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -624,7 +627,7 @@ void RaftServer::CreateSnapshot() {
 
 // ============================================================================
 
-// @safe - Logs term changes (Log_info marked safe via @external)
+// @unsafe - Logs term changes (Log_info marked safe via @external)
 void RaftServer::LogTermChange(const char* reason,
                                uint64_t old_term,
                                uint64_t new_term,
@@ -647,7 +650,7 @@ void RaftServer::LogTermChange(const char* reason,
 
 namespace {
 
-// @safe
+// @unsafe
 bool JetpackRecoveryEnabled() {
   static const bool enabled = []() {
     const char* flag = std::getenv("MAKO_DISABLE_JETPACK");
@@ -682,7 +685,7 @@ bool JetpackRecoveryEnabled() {
 
 }  // namespace
 
-// @safe - raw pointer parameter is bounded (frame outlives server)
+// @unsafe - raw pointer parameter is bounded (frame outlives server)
 RaftServer::RaftServer(Frame * frame)
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
@@ -714,7 +717,7 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
   }
 }
 
-// @safe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
+// @unsafe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
 uint64_t RaftServer::GetElectionTimeout() {
   uint64_t current_time = Time::now();
   const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
@@ -860,7 +863,7 @@ void RaftServer::StartApplyThread() {
 }
 #endif  // SINGLE_RAFT_INSTANCE
 
-// @safe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
+// @unsafe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
 void RaftServer::Setup() {
   // Record startup time for grace period logic
   startup_timestamp_ = Time::now();
@@ -1069,7 +1072,7 @@ bool RaftServer::IsDisconnected() {
   return disconnected_;
 }
 
-// @safe - read-only access to current_leader_id_ under lock
+// @safe - read-only leader hint lookup
 siteid_t RaftServer::GetLeaderHint() const {
   // Note: mtx_ is recursive_mutex, but this is const - callers should hold lock
   // or accept a slightly stale value. current_leader_id_ is set under lock in
@@ -1080,7 +1083,7 @@ siteid_t RaftServer::GetLeaderHint() const {
   return current_leader_id_;
 }
 
-// @safe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
+// @unsafe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
 void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
@@ -1281,7 +1284,7 @@ bool RaftServer::ReadIndex(uint64_t timeout_us) {
   return true;
 }
 
-// @safe - Applies committed logs (callbacks wrapped in @unsafe blocks)
+// @unsafe - Applies committed logs (callbacks wrapped in @unsafe blocks)
 void RaftServer::applyLogs() {
   // Log commit state for debugging
   Log_info("[APPLY-LOGS] site=%d commitIndex=%ld executeIndex=%ld",
@@ -1361,7 +1364,7 @@ void RaftServer::applyLogs() {
 #endif
 }
 
-// @safe - external calls marked @external [safe], core replication loop
+// @unsafe - external calls marked @external [safe], core replication loop
 // TODO: Revisit borrow checker errors in this function.
 // The checker reports "use after move" for loop-local variables (matchedIndices,
 // batch_buffer_, batch_cmd, cmd) due to 2-iteration loop simulation. These variables
@@ -1383,6 +1386,7 @@ struct PendingAppendEntries {
   uint64_t sent_term;  // term when RPC was sent
 };
 
+// @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
 void RaftServer::HeartbeatLoop() {
   // @unsafe
   {
@@ -1415,7 +1419,7 @@ void RaftServer::HeartbeatLoop() {
   Log_debug("heartbeat loop init from site: %d", site_id_);
   looping_ = true;
   while(looping_) {
-    uint64_t term;
+    uint64_t term = 0;
     {
       {
         std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
@@ -1827,7 +1831,10 @@ void RaftServer::HeartbeatLoop() {
         for (uint64_t idx = specCommitIndex_ + 1; idx <= lastLogIndex; ++idx) {
           // Check if we have quorum for this index
           auto it = memoryAcks_.find(idx);
-          size_t ack_count = (it != memoryAcks_.end()) ? it->second.size() : 0;
+          size_t ack_count = 0;
+          if (it != memoryAcks_.end()) {
+            ack_count = it->second.size();
+          }
           // Leader's own log counts as an ack (we have the entry)
           ack_count += 1;  // +1 for leader's own entry
 
@@ -1931,7 +1938,7 @@ RaftServer::~RaftServer() {
       partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
 }
 
-// @safe - external calls marked @external [safe], mutex/pointer ops in @unsafe blocks
+// @unsafe - external calls marked @external [safe], mutex/pointer ops in @unsafe blocks
 bool RaftServer::RequestVote() {
   // FIX 2: Prevent RequestVote during shutdown
   // The election timer coroutine may fire after ~RaftServer destructor runs,
@@ -2108,7 +2115,7 @@ bool RaftServer::RequestVote() {
   }
 }
 
-// @safe - calls @safe doVote, external calls marked @external [safe]
+// @unsafe - calls @safe doVote, external calls marked @external [safe]
 void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& lst_log_term,
                                const siteid_t& can_id,
@@ -2305,7 +2312,7 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
   cb();
 }
 
-// @safe - Calls undeclared Fiber::create_run()
+// @unsafe - Calls undeclared Fiber::create_run()
 void RaftServer::StartElectionTimer() {
   // @unsafe
   { resetTimer("start election timer"); }
@@ -2357,7 +2364,7 @@ void RaftServer::StartElectionTimer() {
   });
 }
 
-// @safe - external calls marked @external [safe], pointer ops in @unsafe blocks
+// @unsafe - external calls marked @external [safe], pointer ops in @unsafe blocks
 bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
                        uint64_t *index,
                        uint64_t *term,
@@ -2406,7 +2413,7 @@ bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
 /* NOTE: same as ReceiveAppend */
 /* NOTE: broadcast send to all of the host even to its own server
  * should we exclude the execution of this function for leader? */
-// @safe - external calls marked @external [safe], output pointer writes in @unsafe blocks
+// @unsafe - external calls marked @external [safe], output pointer writes in @unsafe blocks
 void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  const ballot_t ballot,
                                  const uint64_t leaderCurrentTerm,
@@ -2699,7 +2706,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
     cb();
 }
 
-// @safe - Removes command from log (external calls wrapped in @unsafe blocks)
+// @unsafe - Removes command from log (external calls wrapped in @unsafe blocks)
 void RaftServer::removeCmd(slotid_t slot) {
   auto it = raft_logs_.find(slot);
   if (it == raft_logs_.end()) {
@@ -2726,12 +2733,12 @@ void RaftServer::removeCmd(slotid_t slot) {
 #endif
 }
 
-// @safe - Stores callback for later invocation
+// @unsafe - Stores callback for later invocation
 void RaftServer::RegisterLeaderChangeCallback(std::function<void(bool)> cb) {
   leader_change_cb_ = std::move(cb);
 }
 
-// @safe - external calls marked @external [safe], output pointer writes in @unsafe blocks
+// @unsafe - external calls marked @external [safe], output pointer writes in @unsafe blocks
 void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
                                const siteid_t leaderSiteId,
                                uint64_t *followerTerm,
@@ -2989,7 +2996,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   cb();
 }
 
-// @safe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)
+// @unsafe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)
 void RaftServer::StopLeadershipTransferMonitoring() {
   leadership_monitor_stop_ = true;
 
@@ -3001,7 +3008,7 @@ void RaftServer::StopLeadershipTransferMonitoring() {
   }
 }
 
-// @safe - Starts monitor thread (threading and mutex operations marked safe via @external)
+// @unsafe - Starts monitor thread (threading and mutex operations marked safe via @external)
 void RaftServer::StartLeadershipTransferMonitoring() {
   if (leadership_monitor_stop_.load()) {
     leadership_monitor_stop_ = false;
@@ -3086,7 +3093,7 @@ void RaftServer::StartLeadershipTransferMonitoring() {
   });
 }
 
-// @safe - Calls Setup if not already initialized
+// @unsafe - Calls Setup if not already initialized
 void RaftServer::EnsureSetup() {
   if (heartbeat_setup_) {
     return;
@@ -3095,7 +3102,7 @@ void RaftServer::EnsureSetup() {
   Setup();
 }
 
-// @safe - Checks conditions for leadership transfer (mutex and map access marked safe via @external)
+// @unsafe - Checks conditions for leadership transfer (mutex and map access marked safe via @external)
 bool RaftServer::ShouldTransferLeadership() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -3145,7 +3152,7 @@ bool RaftServer::ShouldTransferLeadership() {
   return true;
 }
 
-// @safe - Initiates leadership transfer (RPC calls wrapped in @unsafe blocks)
+// @unsafe - Initiates leadership transfer (RPC calls wrapped in @unsafe blocks)
 void RaftServer::InitiateLeadershipTransfer() {
   // Check if server is shutting down
   if (stop_) {
@@ -3547,10 +3554,14 @@ void RaftServer::NotifyRollback(StepDownReason reason) {
 
 // @safe - Read-only computation on member field
 size_t RaftServer::GetQuorumSize() const {
-  return current_config_.size() / 2 + 1;
+  size_t config_size = 0;
+  // @unsafe
+  { config_size = current_config_.size(); }
+  return config_size / 2 + 1;
 }
 
 // @safe - Read-only accessor
+// @lifetime: (&'a) -> &'a
 const std::set<siteid_t>& RaftServer::GetCurrentConfig() const {
   return current_config_;
 }

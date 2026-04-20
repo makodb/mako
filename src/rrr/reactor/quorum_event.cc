@@ -1,7 +1,18 @@
+module;
 
-#include "quorum_event.h"
-#include "fiber_impl.h"
+#include <vector>
+#include <functional>
+#include <unordered_map>
+#include <chrono>
+#include <iostream>
 
+
+
+
+
+
+module rrr:impl.reactor.quorum_event;
+import rrr;
 
 namespace janus {
 

@@ -1,9 +1,11 @@
-#pragma once
+module;
 
 #include <vector>
 #include <iostream>
 
-namespace rrr {
+export module rrr:base.unittest;
+
+export namespace rrr {
 
 class TestCase {
     const char* group_;

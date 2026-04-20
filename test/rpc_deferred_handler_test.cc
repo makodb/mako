@@ -2,7 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
-#include "rrr.hpp"
+import rrr;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 

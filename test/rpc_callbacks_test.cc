@@ -7,7 +7,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
-#include "rpc/callbacks.hpp"
+import rrr;
 
 using namespace rrr;
 

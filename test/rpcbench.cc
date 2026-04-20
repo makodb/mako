@@ -9,11 +9,11 @@
 #include <atomic>
 #include <vector>
 
-#include "rrr.hpp"
+import rrr;
 #include <rusty/arc.hpp>
 #include <rusty/async.hpp>
 #include <rusty/mutex.hpp>
-#include "reactor/reactor.h"
+import rrr;
 
 #include "benchmark_service.h"
 

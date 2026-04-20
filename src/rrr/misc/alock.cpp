@@ -1,9 +1,19 @@
+module;
+
+#include <list>
+#include <map>
+#include <mutex>
+#include <thread>
+#include <functional>
+#include <cstdint>
 
 
-#include "alock.hpp"
-#include "reactor/fiber_impl.h"
-#include "reactor/event.h"
-#include "reactor/reactor.h"
+
+
+
+
+module rrr:impl.misc.alock;
+import rrr;
 
 // External safety annotations for atomic operations and STL functions
 // @external: {

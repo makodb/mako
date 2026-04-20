@@ -2,8 +2,9 @@
 #include "frame.h"
 #include "benchmark_control_rpc.h"
 #include "../RW_command.h"
-#include "../../rrr/misc/rand.hpp"
 #include "commo.h"
+
+import rrr;
 
 namespace janus {
 

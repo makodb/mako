@@ -1,8 +1,17 @@
+module;
+
+#include <vector>
+#include <iostream>
+#include <string.h>
+
+
 #include <stdio.h>
 
-#include "unittest.hpp"
-#include "logging.hpp"
-#include "strop.hpp"
+
+
+
+module rrr:impl.base.unittest;
+import rrr;
 
 // @external: {
 //   printf: [unsafe],
@@ -65,9 +74,9 @@ int TestMgr::parse_args(int argc, char* argv[], bool* show_help, bool* list_test
     char* skip = nullptr;
     std::vector<TestCase*> match;
     for (int i = 1; i < argc; i++) {
-        if (streq(argv[i], "-h") || streq(argv[i], "--help")) {  // @unsafe
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {  // @unsafe
             *show_help = true;
-        } else if (streq(argv[i], "-l") || streq(argv[i], "--list")) {  // @unsafe
+        } else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0) {  // @unsafe
             *list_tests = true;
         } else if (startswith(argv[i], "--select=")) {  // @unsafe
             select = argv[i] + strlen("--select=");  // @unsafe

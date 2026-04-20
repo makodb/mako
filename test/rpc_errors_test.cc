@@ -5,7 +5,7 @@
 
 #include <gtest/gtest.h>
 #include <string>
-#include "rpc/errors.hpp"
+import rrr;
 
 using namespace rrr;
 

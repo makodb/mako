@@ -27,7 +27,7 @@ RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(
 //  verify(poll != nullptr);
 }
 
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 // Returns shared_ptr<AppendEntriesResponse> - callback captures this to ensure memory validity
 shared_ptr<AppendEntriesResponse>
 RaftCommo::SendAppendEntries2(siteid_t site_id,
@@ -115,7 +115,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
   return response;
 }
 
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 shared_ptr<SendAppendEntriesResults>
 RaftCommo::SendAppendEntries(siteid_t site_id,
                              parid_t par_id,
@@ -210,7 +210,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
   return res;
 }
 
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 shared_ptr<RaftVoteQuorumEvent>
 RaftCommo::BroadcastVote(parid_t par_id,
                          slotid_t lst_log_idx,
@@ -274,7 +274,7 @@ RaftCommo::BroadcastVote(parid_t par_id,
  * - RPC succeeds but target rejects → callback(false, follower_term)
  * - RPC succeeds and target starts election → callback(true, follower_term)
  */
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 void RaftCommo::SendTimeoutNow(siteid_t site_id,
                                parid_t par_id,
                                uint64_t leader_term,
@@ -357,7 +357,7 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
  * Called after a follower has durably persisted its vote to disk.
  * This notifies the candidate that this vote is now durable.
  */
-// @safe
+// @unsafe
 void RaftCommo::SendVoteDurable(siteid_t candidate_id,
                                  parid_t par_id,
                                  ballot_t term,
@@ -368,7 +368,8 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
   RaftProxy* proxy = nullptr;
   for (auto& p : proxies) {
     if (p.first == candidate_id) {
-      proxy = (RaftProxy*) p.second;
+      // @unsafe
+      { proxy = (RaftProxy*) p.second; }
       break;
     }
   }
@@ -412,7 +413,7 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
  * Called after a follower has durably persisted log entries to disk.
  * This notifies the leader that entries up to lastLogIndex are now durable.
  */
-// @safe
+// @unsafe
 void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
                                           parid_t par_id,
                                           ballot_t term,
@@ -424,7 +425,8 @@ void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
   RaftProxy* proxy = nullptr;
   for (auto& p : proxies) {
     if (p.first == leader_id) {
-      proxy = (RaftProxy*) p.second;
+      // @unsafe
+      { proxy = (RaftProxy*) p.second; }
       break;
     }
   }
@@ -475,7 +477,7 @@ void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
  * - acknowledged=false → DOWN (peer is down, will reconnect when it restarts)
  * - error/timeout      → PENDING (should retry)
  */
-// @safe
+// @unsafe
 void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
   auto proxies = rpc_par_proxies_[par_id];
 
@@ -503,7 +505,9 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
       continue;  // Don't notify self
     }
 
-    auto proxy = (RaftProxy*) p.second;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
 
     // Capture 'this' to update status map

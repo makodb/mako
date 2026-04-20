@@ -1,7 +1,21 @@
+module;
 
+#include <vector>
+#include <queue>
+#include <random>
+#include <inttypes.h>
+#include <atomic>
+#include <memory>
+#include <time.h>
+#include <sys/time.h>
 #include <thread>
 #include <cstring>  // for std::memcpy
-#include "basetypes.hpp"
+
+module rrr:impl.base.basetypes;
+import rrr;
+
+
+
 
 // External safety annotations for atomic operations
 // @external: {

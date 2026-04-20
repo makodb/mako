@@ -3,7 +3,7 @@
 
 #include <iostream>
 #include <functional>
-#include "base/all.hpp"
+import rrr;
 
 using namespace rrr;
 

@@ -1,3 +1,4 @@
+module;
 /**
  * Load balancing strategies for RPC client pools.
  * Part of Phase 5.2: Load Balancing Strategies.
@@ -9,15 +10,17 @@
  * - LEAST_LATENCY: Select client with lowest average latency
  */
 
-#pragma once
 
 #include <cstdint>
 #include <vector>
 #include <rusty/cell.hpp>
 #include <rusty/arc.hpp>
-#include "connection_metrics.hpp"
 
-namespace rrr {
+export module rrr:rpc.load_balancer;
+
+import :rpc.connection_metrics;
+
+export namespace rrr {
 
 // Forward declaration
 class Client;

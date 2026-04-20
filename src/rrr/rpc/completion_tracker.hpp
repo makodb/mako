@@ -1,3 +1,4 @@
+module;
 /**
  * Request Completion Tracking for RPC (Phase 4.3)
  *
@@ -16,16 +17,18 @@
  * Thread-safe via rusty::Mutex.
  */
 
-#pragma once
 
 #include <cstdint>
 #include <unordered_set>
 #include <list>
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
-#include "idempotency.hpp"
 
-namespace rrr {
+export module rrr:rpc.completion_tracker;
+
+import :rpc.idempotency;
+
+export namespace rrr {
 
 // ===========================================================================
 // CompletionTrackerConfig

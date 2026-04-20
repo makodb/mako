@@ -1,5 +1,5 @@
+module;
 // @unsafe - RPC server module uses raw sockets and mutable spinlocks
-#pragma once
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
@@ -19,11 +19,6 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
-#include "misc/marshal.hpp"
-#include "internal_protocol.hpp"
-#include "reactor/epoll_wrapper.h"
-#include "reactor/reactor.h"
-#include "utils.hpp"
 
 #ifdef RR
 #pragma push_macro("RR")
@@ -97,7 +92,18 @@
 //struct addrinfo;
 
 // @unsafe - RPC module uses raw sockets, mutable spinlocks, and pthread primitives
-namespace rrr {
+
+export module rrr:rpc.server;
+
+import :misc.marshal;
+import :reactor.epoll_wrapper;
+import :reactor.reactor;
+
+
+import :rpc.internal_protocol;
+import :rpc.utils;
+
+export namespace rrr {
 
 class Server;
 class ServerConnection;
@@ -528,7 +534,7 @@ public:
 } // namespace rrr
 
 
-namespace rrr {
+export namespace rrr {
 
 // @safe - RAII wrapper for deferred RPC replies with move semantics
 // Handler receives DeferredReply by value (moved) and calls defer.reply()

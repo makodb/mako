@@ -1,4 +1,4 @@
-#pragma once
+module;
 #include <rusty/rusty.hpp>
 #include <rusty/result.hpp>
 #include <rusty/cell.hpp>
@@ -6,6 +6,7 @@
 #include <rusty/async.hpp>
 
 #include <unordered_map>
+#include <map>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -14,20 +15,25 @@
 #include <coroutine>
 #include <type_traits>
 
-#include "misc/marshal.hpp"
-#include "reactor/epoll_wrapper.h"
-#include "reactor/reactor.h"
-#include "connection_state.hpp"
-#include "reconnect_policy.hpp"
-#include "request_queue.hpp"
-#include "connection_metrics.hpp"
-#include "request_options.hpp"
-#include "load_balancer.hpp"
-#include "heartbeat.hpp"
-#include "circuit_breaker.hpp"
-#include "callbacks.hpp"
 
-namespace rrr {
+export module rrr:rpc.client;
+
+import :misc.marshal;
+import :reactor.epoll_wrapper;
+import :reactor.reactor;
+
+
+import :rpc.connection_state;
+import :rpc.reconnect_policy;
+import :rpc.request_queue;
+import :rpc.connection_metrics;
+import :rpc.request_options;
+import :rpc.load_balancer;
+import :rpc.heartbeat;
+import :rpc.circuit_breaker;
+import :rpc.callbacks;
+
+export namespace rrr {
 
 // Stream operator for RefMut<Marshal> - allows get_reply() >> x pattern
 // This forwards to Marshal's operator>> while caller holds the guard
@@ -108,7 +114,7 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 // NOTE: Marshal methods (set_bookmark, write_bookmark, get_and_reset_write_cnt, empty, content_size)
 // are now annotated @safe in-place in marshal.hpp
 
-namespace rrr {
+export namespace rrr {
 
 /**
  * Behavior when a request is made while disconnected.
@@ -1446,7 +1452,7 @@ struct hash<rusty::Arc<rrr::ClientConnection>> {
 };
 }
 
-namespace rrr {
+export namespace rrr {
 
 // @unsafe - RPC client facade that owns a ClientConnection
 // (Marked unsafe due to mutable field for interior mutability)

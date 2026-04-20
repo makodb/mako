@@ -1,3 +1,4 @@
+module;
 /**
  * @file fiber_impl.h
  * @brief Core stackful fiber implementation.
@@ -14,7 +15,6 @@
  * Fiber is the primary class for stackful fibers.
  */
 
-#pragma once
 
 #include <rusty/box.hpp>
 #include <rusty/rc.hpp>
@@ -28,7 +28,9 @@
 #include <type_traits>
 #include <utility>
 
-namespace rrr {
+export module rrr:reactor.fiber_impl;
+
+export namespace rrr {
 
 // Forward declaration
 class Fiber;

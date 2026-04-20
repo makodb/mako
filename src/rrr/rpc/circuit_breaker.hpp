@@ -1,21 +1,20 @@
-#pragma once
+module;
 
 #include <rusty/cell.hpp>
 #include <cstdint>
+#include <ctime>
 
-namespace rrr {
+export module rrr:rpc.circuit_breaker;
 
-// Forward declare Time utility from base
-// We'll use a simple time function
-namespace {
-    // @safe - Get current time in microseconds
-    inline uint64_t current_time_us() {
-        // @unsafe - system call
-        {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
-        }
+export namespace rrr {
+
+// @safe - Get current time in microseconds
+inline uint64_t current_time_us() {
+    // @unsafe - system call
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
     }
 }
 
@@ -151,13 +150,10 @@ public:
         reset();
     }
 
-    // @safe - Copy constructor
-    CircuitBreaker(const CircuitBreaker&) = default;
-    CircuitBreaker& operator=(const CircuitBreaker&) = default;
-
-    // @safe - Move constructor
-    CircuitBreaker(CircuitBreaker&&) = default;
-    CircuitBreaker& operator=(CircuitBreaker&&) = default;
+    CircuitBreaker(const CircuitBreaker&) = delete;
+    CircuitBreaker& operator=(const CircuitBreaker&) = delete;
+    CircuitBreaker(CircuitBreaker&&) = delete;
+    CircuitBreaker& operator=(CircuitBreaker&&) = delete;
 
     // @safe - Check if a request should be allowed
     // Returns true if request can proceed, false if should fail-fast
