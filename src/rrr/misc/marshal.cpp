@@ -1,28 +1,14 @@
 module;
 
-#include <list>
-#include <vector>
-#include <string>
-#include <map>
-#include <set>
-#include <unordered_map>
-#include <unordered_set>
-#include <functional>
-#include <limits>
-#include <chrono>
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
-#include <memory>
 #include <rusty/arc.hpp>
 #include <proxy/proxy.h>
 #include <proxy/proxy_macros.h>
 
 
-#include <sstream>
 #include <sys/time.h>
-#include <atomic>
-#include <mutex>
 #include <rusty/rc.hpp>
 
 
@@ -30,6 +16,21 @@ module;
 
 
 module rrr:impl.misc.marshal;
+
+import <list>;
+import <vector>;
+import <string>;
+import <map>;
+import <set>;
+import <unordered_map>;
+import <unordered_set>;
+import <functional>;
+import <limits>;
+import <chrono>;
+import <memory>;
+import <sstream>;
+import <atomic>;
+import <mutex>;
 import rrr;
 
 // External safety annotations for atomic operations

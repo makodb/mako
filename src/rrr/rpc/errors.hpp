@@ -1,9 +1,10 @@
 module;
 
-#include <string>
-#include <cstdint>
 
 export module rrr:rpc.errors;
+
+import <string>;
+import <cstdint>;
 
 export namespace rrr {
 

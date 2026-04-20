@@ -1,26 +1,27 @@
 module;
 
-#include <algorithm>
-#include <fstream>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
-#include <memory>
 #include <rusty/rusty.hpp>
 
 
-#include <functional>
-#include <thread>
-#include <iostream>
-#include <cerrno>
-#include <cstring>
 
 
 
 
 module rrr:impl.reactor.event;
+
+import <algorithm>;
+import <fstream>;
+import <memory>;
+import <functional>;
+import <thread>;
+import <iostream>;
+import <cerrno>;
+import <cstring>;
 import rrr;
 
 namespace rrr {

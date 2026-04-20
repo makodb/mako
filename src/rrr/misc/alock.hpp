@@ -12,11 +12,6 @@ module;
  */
 
 
-#include <list>
-#include <mutex>
-#include <thread>
-#include <functional>
-#include <cstdint>
 
 
 
@@ -26,6 +21,12 @@ module;
 // }
 
 export module rrr:misc.alock;
+
+import <list>;
+import <mutex>;
+import <thread>;
+import <functional>;
+import <cstdint>;
 
 import :base.all;
 

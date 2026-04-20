@@ -34,11 +34,12 @@ module;
 
 
 #include <rusty/option.hpp>
-#include <cstdint>
-#include <memory>
-#include <stdexcept>
 
 export module rrr:reactor.future;
+
+import <cstdint>;
+import <memory>;
+import <stdexcept>;
 
 import :reactor.event;
 import :reactor.reactor;

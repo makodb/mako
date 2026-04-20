@@ -2,9 +2,6 @@ module;
 
 #include <stdio.h>
 #include <assert.h>
-#include <iostream>
-#include <source_location>
-#include <cstdlib>
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -19,6 +16,10 @@ module;
 // }
 
 export module rrr:base.debugging;
+
+import <iostream>;
+import <source_location>;
+import <cstdlib>;
 
 export namespace rrr {
 

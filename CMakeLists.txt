@@ -142,6 +142,78 @@ add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(RRR_MODULE_PCM_DIR "${CMAKE_BINARY_DIR}/rrr-modules")
     file(MAKE_DIRECTORY "${RRR_MODULE_PCM_DIR}")
+    set(RRR_STD_HEADER_UNIT_DIR "${RRR_MODULE_PCM_DIR}/std")
+    file(MAKE_DIRECTORY "${RRR_STD_HEADER_UNIT_DIR}")
+
+    # Build Clang header units for the C++ standard headers imported by rrr modules.
+    # Clang needs explicit -fmodule-file=<pcm> wiring for `import <header>;`.
+    set(RRR_STD_HEADER_UNIT_LIST
+        algorithm
+        array
+        atomic
+        cassert
+        cerrno
+        chrono
+        cinttypes
+        climits
+        cmath
+        concepts
+        condition_variable
+        coroutine
+        cstdarg
+        cstddef
+        cstdint
+        cstdio
+        cstdlib
+        cstring
+        ctime
+        fstream
+        functional
+        iostream
+        limits
+        list
+        map
+        memory
+        mutex
+        optional
+        queue
+        random
+        set
+        source_location
+        sstream
+        stdexcept
+        string
+        thread
+        type_traits
+        unordered_map
+        unordered_set
+        utility
+        variant
+        vector
+    )
+    set(RRR_STD_HEADER_UNIT_FLAGS "")
+    foreach(RRR_STD_HEADER IN LISTS RRR_STD_HEADER_UNIT_LIST)
+        set(RRR_STD_HEADER_PCM "${RRR_STD_HEADER_UNIT_DIR}/${RRR_STD_HEADER}.pcm")
+        execute_process(
+            COMMAND ${CMAKE_CXX_COMPILER}
+                -std=c++23
+                -x c++-system-header
+                --precompile
+                "${RRR_STD_HEADER}"
+                -o "${RRR_STD_HEADER_PCM}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+            RESULT_VARIABLE RRR_STD_HEADER_UNIT_RESULT
+            OUTPUT_VARIABLE RRR_STD_HEADER_UNIT_STDOUT
+            ERROR_VARIABLE RRR_STD_HEADER_UNIT_STDERR
+        )
+        if(NOT RRR_STD_HEADER_UNIT_RESULT EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to precompile std header unit <${RRR_STD_HEADER}>.\n"
+                "stdout:\n${RRR_STD_HEADER_UNIT_STDOUT}\n"
+                "stderr:\n${RRR_STD_HEADER_UNIT_STDERR}\n")
+        endif()
+        list(APPEND RRR_STD_HEADER_UNIT_FLAGS "-fmodule-file=${RRR_STD_HEADER_PCM}")
+    endforeach()
 
     set(RRR_MODULE_BOOTSTRAP_LIST
         "rrr:base.debugging::src/rrr/base/debugging.hpp"
@@ -210,6 +282,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
                 -std=c++23
                 -x c++-module
                 --precompile
+                ${RRR_STD_HEADER_UNIT_FLAGS}
                 -fprebuilt-module-path=${RRR_MODULE_PCM_DIR}
                 -I "${CMAKE_CURRENT_SOURCE_DIR}"
                 -I "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -838,6 +911,13 @@ file(GLOB RRR_SRC
     "src/rrr/pylib/simplerpc/_pyrpc.cpp"
     "src/rrr/rpc/*.cpp"
 )
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND RRR_STD_HEADER_UNIT_FLAGS)
+    # Only rrr translation units should receive std header-unit bindings.
+    # Passing these flags globally breaks non-module TU builds that textually include std headers.
+    set_source_files_properties(${RRR_SRC} PROPERTIES
+        COMPILE_OPTIONS "${RRR_STD_HEADER_UNIT_FLAGS}"
+    )
+endif()
 
 # Collect MEMDB source files
 file(GLOB MEMDB_SRC
@@ -1347,6 +1427,11 @@ file(GLOB RRR_BENCH_SRC
     "src/rrr/rpc/*.cpp"
     "src/rrr/reactor/*.cc"
 )
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND RRR_STD_HEADER_UNIT_FLAGS)
+    set_source_files_properties(${RRR_BENCH_SRC} ${RRR_MODULE_INTERFACE_SRC} PROPERTIES
+        COMPILE_OPTIONS "${RRR_STD_HEADER_UNIT_FLAGS}"
+    )
+endif()
 
 # RRR module implementation units cannot be compiled with the global forced
 # include (`-include .../masstree/config.h`) because it injects tokens before

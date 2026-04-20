@@ -1,13 +1,7 @@
 module;
 
-#include <cstdlib>
-#include <cstdio>
-#include <cstring>
-#include <mutex>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <vector>
+#include <rusty/rusty.hpp>
+
 #include <sys/times.h>
 #include <unistd.h>
 
@@ -16,6 +10,14 @@ module;
 #endif
 
 export module rrr:misc.cpuinfo;
+
+import <cstdlib>;
+import <cstdio>;
+import <cstring>;
+import <mutex>;
+import <fstream>;
+import <sstream>;
+import <string>;
 
 import :base.all;
 
@@ -36,7 +38,7 @@ private:
 			const std::lock_guard<std::recursive_mutex> lock (mtx_);
     	struct tms tms_buf;
 			double txed, rxed;
-			std::vector<double> result;
+			rusty::Vec<double> result;
 			struct sysinfo mem_info;
 
 			sysinfo(&mem_info);
@@ -52,8 +54,8 @@ private:
 			last_user_ticks_[index] = tms_buf.tms_utime;
 			
 			pid_ = ::getpid();
-			result = get_network(std::to_string(pid_), result, last_ticks_[index]);
-			result = get_memory(std::to_string(pid_), result, last_ticks_[index]);
+			get_network(std::to_string(pid_), result, last_ticks_[index]);
+			get_memory(std::to_string(pid_), result, last_ticks_[index]);
 
 			index++;
 			//proc_cpuinfo = fopen("/proc/cpuinfo", "r");
@@ -72,12 +74,12 @@ private:
      * return:  upon success, this function will return the utilization roughly
      *          between 0.0 to 1.0; otherwise, it will return a negative value
      */
-    std::vector<double> get_cpu_stat() {
+    rusty::Vec<double> get_cpu_stat() {
 			const std::lock_guard<std::recursive_mutex> lock (mtx_);
 
       struct tms tms_buf;
       clock_t ticks;
-			std::vector<double> result;
+			rusty::Vec<double> result;
 			unsigned long txed, rxed;
       double cpu_total, tx_total, rx_total;
       clock_t last_ticks;
@@ -124,16 +126,16 @@ private:
 			last_cpu = cpu_total;
         //ret /= num_processors_;
 	
-			if(index < 10) result.push_back(-1.0);
-			else result.push_back(cpu_total);
+			if(index < 10) result.push(-1.0);
+			else result.push(cpu_total);
 			
-			result = get_network(std::to_string(pid_), result, ticks);
-			result = get_memory(std::to_string(pid_), result, ticks);
+			get_network(std::to_string(pid_), result, ticks);
+			get_memory(std::to_string(pid_), result, ticks);
     	return result;
     }
 
-		std::vector<double> get_network(std::string pid, std::vector<double> result, clock_t ticks){
-			double tx_total, rx_total;
+		void get_network(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
+			double tx_total = -1.0, rx_total = -1.0;
 			std::string line;
 			std::string temp;
 			unsigned long txed, rxed;
@@ -179,17 +181,16 @@ private:
 				}
 			}
 			
-			result.push_back(tx_total);
-			result.push_back(rx_total);
+			result.push(tx_total);
+			result.push(rx_total);
 
 			last_txed = tx_total;
 			last_rxed = rx_total;
-			return result;
 		}
 
-		std::vector<double> get_memory(std::string pid, std::vector<double> result, clock_t ticks){
+		void get_memory(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
 			long rss;
-			double mem_usage, mem_total;
+			double mem_usage, mem_total = -1.0;
 			std::string ignore;
 
 			std::ifstream stat_file("/proc/"+pid+"/stat", std::ios_base::in);
@@ -214,14 +215,13 @@ private:
 				else mem_total = (mem_usage - last_mem_usage[8])/(ticks - last_ticks_[8]);
 			}
 			
-			result.push_back(mem_total);
+			result.push(mem_total);
 
 			last_mem = mem_total;
-			return result;
 		}
 
 public:
-    static std::vector<double> cpu_stat() {
+    static rusty::Vec<double> cpu_stat() {
         static CPUInfo cpu_info;
         return cpu_info.get_cpu_stat();
     }

@@ -2,17 +2,18 @@ module;
 
 #include <rusty/rusty.hpp>
 
-#include <string>
 
 
-#include <iostream>
-#include <sstream>
 #include <string.h>
 
 
 
 
 module rrr:impl.base.strop;
+
+import <string>;
+import <iostream>;
+import <sstream>;
 import rrr;
 
 // @external: {

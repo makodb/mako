@@ -6,18 +6,19 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/function.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <type_traits>
 
 
-#include <utility>
-#include <functional>
-#include <iostream>
-#include <memory>
 
 
 module rrr:impl.reactor.fiber_impl;
+
+import <cstddef>;
+import <cstdint>;
+import <type_traits>;
+import <utility>;
+import <functional>;
+import <iostream>;
+import <memory>;
 import rrr;
 
 /**

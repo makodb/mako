@@ -1,9 +1,5 @@
 module;
 
-#include <cstdio>
-#include <cinttypes>
-#include <string>
-#include <functional>
 
 
 // External safety annotations for system functions used in this module
@@ -19,6 +15,11 @@ module;
 // }
 
 export module rrr:base.misc;
+
+import <cstdio>;
+import <cinttypes>;
+import <string>;
+import <functional>;
 
 import :base.basetypes;
 

@@ -1,8 +1,6 @@
 module;
 
 #include <string.h>
-#include <iostream>
-#include <utility>
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -17,6 +15,9 @@ module;
 // }
 
 export module rrr:base.logging;
+
+import <iostream>;
+import <utility>;
 
 import :base.threading;
 

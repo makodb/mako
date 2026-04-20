@@ -1,10 +1,11 @@
 module;
 
 #include <rusty/cell.hpp>
-#include <cstdint>
-#include <ctime>
 
 export module rrr:rpc.circuit_breaker;
+
+import <cstdint>;
+import <ctime>;
 
 export namespace rrr {
 

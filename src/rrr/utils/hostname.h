@@ -3,9 +3,10 @@ module;
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
-#include <cstdlib>
 
 export module rrr:utils.hostname;
+
+import <cstdlib>;
 
 export inline char* gethostip(const char* hostname) {
     struct hostent* h = gethostbyname(hostname);

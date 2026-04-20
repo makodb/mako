@@ -1,14 +1,17 @@
 module;
 
-#include <chrono>
-#include <cerrno>
-#include <list>
-#include <functional>
-#include <mutex>
+#include <rusty/rusty.hpp>
+
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 
 export module rrr:rpc.request_queue;
+
+import <chrono>;
+import <cerrno>;
+import <list>;
+import <functional>;
+import <mutex>;
 
 import :base.basetypes;
 import :misc.marshal;
@@ -249,7 +252,7 @@ public:
 
     // @unsafe - Uses std::list and std::mutex
     size_t expire_stale() {
-        std::vector<std::function<void(int)>> callbacks_to_invoke;
+        rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
         size_t removed = 0;
 
         {
@@ -261,7 +264,7 @@ public:
             while (it != queue_.end()) {
                 if (it->is_expired()) {
                     if (it->callback) {
-                        callbacks_to_invoke.push_back(std::move(it->callback));
+                        callbacks_to_invoke.push(std::move(it->callback));
                     }
                     it = queue_.erase(it);
                 } else {
@@ -318,7 +321,7 @@ public:
 
     // @unsafe - Uses std::list and std::mutex
     void clear_all(int error_code = -3) {
-        std::vector<std::function<void(int)>> callbacks_to_invoke;
+        rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
 
         {
             // @unsafe { std::mutex lock, std::list operations }
@@ -326,7 +329,7 @@ public:
 
             for (auto& req : queue_) {
                 if (req.callback) {
-                    callbacks_to_invoke.push_back(std::move(req.callback));
+                    callbacks_to_invoke.push(std::move(req.callback));
                 }
             }
             queue_.clear();

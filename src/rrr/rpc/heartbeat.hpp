@@ -1,11 +1,12 @@
 module;
 
 #include <rusty/cell.hpp>
-#include <functional>
-#include <cstdint>
-#include <ctime>
 
 export module rrr:rpc.heartbeat;
+
+import <functional>;
+import <cstdint>;
+import <ctime>;
 
 export namespace rrr {
 

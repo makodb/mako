@@ -8,12 +8,6 @@ module;
 #include <rusty/rc/weak.hpp>
 #include <rusty/refcell.hpp>
 #include <unistd.h>
-#include <array>
-#include <algorithm>
-#include <cstring>
-#include <memory>
-#include <vector>
-#include <cerrno>
 
 #ifdef __APPLE__
 #define USE_KQUEUE
@@ -27,6 +21,13 @@ module;
 
 
 export module rrr:reactor.epoll_wrapper;
+
+import <array>;
+import <algorithm>;
+import <cstring>;
+import <memory>;
+import <vector>;
+import <cerrno>;
 
 import :base.all;
 

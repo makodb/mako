@@ -1,11 +1,12 @@
 module;
 
 #include <rusty/cell.hpp>
-#include <cstdint>
-#include <algorithm>
-#include <random>
 
 export module rrr:rpc.reconnect_policy;
+
+import <cstdint>;
+import <algorithm>;
+import <random>;
 
 export namespace rrr {
 

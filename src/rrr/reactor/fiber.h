@@ -27,9 +27,10 @@ module;
 
 #include <rusty/option.hpp>
 #include <rusty/rc.hpp>
-#include <cstdint>
 
 export module rrr:reactor.fiber;
+
+import <cstdint>;
 
 import :reactor.fiber_impl;
 import :reactor.event;

@@ -5,18 +5,19 @@ module;
 #include <rusty/rc/weak.hpp>
 #include <rusty/refcell.hpp>
 #include <unistd.h>
-#include <array>
-#include <algorithm>
-#include <cstring>
-#include <memory>
-#include <vector>
-#include <cerrno>
 #include <sys/epoll.h>
 
 
 
 
 module rrr:impl.reactor.epoll_wrapper;
+
+import <array>;
+import <algorithm>;
+import <cstring>;
+import <memory>;
+import <vector>;
+import <cerrno>;
 import rrr;
 
 namespace rrr {

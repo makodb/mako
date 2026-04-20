@@ -2,10 +2,11 @@ module;
 
 #include <rusty/rusty.hpp>
 
-#include <functional>
-#include <chrono>
 
 export module rrr:reactor.quorum_event;
+
+import <functional>;
+import <chrono>;
 
 import :base.debugging;
 import :base.basetypes;

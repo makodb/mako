@@ -1,20 +1,14 @@
 module;
 
+#include <rusty/rusty.hpp>
+
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
 
-#include <list>
-#include <queue>
-#include <vector>
-#include <functional>
 #include <pthread.h>
-#include <atomic>
-#include <mutex>
-#include <condition_variable>
-#include <memory>
 
 
 // External safety annotations for pthread and std functions used in this module
@@ -53,6 +47,14 @@ module;
 // }
 
 export module rrr:base.threading;
+
+import <list>;
+import <algorithm>;
+import <functional>;
+import <atomic>;
+import <mutex>;
+import <condition_variable>;
+import <memory>;
 
 import :base.basetypes;
 import :base.debugging;
@@ -518,8 +520,8 @@ public:
 class ThreadPool: public NoCopy {
     int n_;
     Counter round_robin_;
-    std::vector<pthread_t> th_;
-    std::vector<Queue<rusty::Box<std::function<void()>>>> q_;
+    rusty::Vec<pthread_t> th_;
+    rusty::Vec<Queue<rusty::Box<std::function<void()>>>> q_;
     bool should_stop_{false};
 
     static void* start_thread_pool(void*);
@@ -555,7 +557,7 @@ class RunLater: public NoCopy {
     SpinLock latest_l_{};
     double latest_{};
 
-    std::priority_queue<job_t, std::vector<job_t>, std::greater<job_t>> jobs_{};
+    rusty::Vec<job_t> jobs_{};
 
     static void* start_run_later(void*);
     void run_later_loop();

@@ -7,13 +7,14 @@ module;
 
 
 
-#include <mutex>
-#include <thread>
-#include <functional>
 
 // @unsafe
 
 export module rrr:misc.alarm;
+
+import <mutex>;
+import <thread>;
+import <functional>;
 
 import :base.misc;
 import :reactor.reactor;

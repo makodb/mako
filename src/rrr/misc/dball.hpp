@@ -9,11 +9,12 @@ module;
 
 
 
-#include <mutex>
-#include <functional>
-#include <cstdint>
 
 export module rrr:misc.dball;
+
+import <mutex>;
+import <functional>;
+import <cstdint>;
 
 import :base.debugging;
 

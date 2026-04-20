@@ -10,9 +10,6 @@ module;
 #include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
 
 #include <pthread.h>
-#include <atomic>
-#include <chrono>
-#include <concepts>
 
 #include <sys/socket.h>
 #include <netdb.h>
@@ -92,6 +89,10 @@ module;
 // @unsafe - RPC module uses raw sockets, mutable spinlocks, and pthread primitives
 
 export module rrr:rpc.server;
+
+import <atomic>;
+import <chrono>;
+import <concepts>;
 
 import :misc.marshal;
 import :reactor.epoll_wrapper;

@@ -5,16 +5,17 @@ module;
 #include <rusty/refcell.hpp>
 #include <rusty/async.hpp>
 
-#include <chrono>
-#include <mutex>
-#include <thread>
-#include <atomic>
-#include <memory>
-#include <coroutine>
-#include <type_traits>
 
 
 export module rrr:rpc.client;
+
+import <chrono>;
+import <mutex>;
+import <thread>;
+import <atomic>;
+import <memory>;
+import <coroutine>;
+import <type_traits>;
 
 import :misc.marshal;
 import :reactor.epoll_wrapper;

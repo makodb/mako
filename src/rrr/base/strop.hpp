@@ -3,9 +3,10 @@ module;
 #include <rusty/rusty.hpp>
 
 #include <string.h>
-#include <string>
 
 export module rrr:base.strop;
+
+import <string>;
 
 export namespace rrr {
 

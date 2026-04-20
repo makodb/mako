@@ -1,9 +1,10 @@
 module;
 
 #include <rusty/cell.hpp>
-#include <functional>
 
 export module rrr:rpc.connection_state;
+
+import <functional>;
 
 export namespace rrr {
 

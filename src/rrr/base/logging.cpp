@@ -1,7 +1,5 @@
 module;
 
-#include <iostream>
-#include <utility>
 #include <assert.h>
 
 
@@ -13,6 +11,9 @@ module;
 
 
 module rrr:impl.base.logging;
+
+import <iostream>;
+import <utility>;
 import rrr;
 
 // External safety annotations for functions used in this module

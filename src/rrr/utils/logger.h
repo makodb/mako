@@ -1,10 +1,11 @@
 module;
 
-#include <chrono>
-#include <cstdio>
-#include <cstdarg>
 
 export module rrr:utils.logger;
+
+import <chrono>;
+import <cstdio>;
+import <cstdarg>;
 
 export inline constexpr int LOG_LEVEL_OFF = 0;
 export inline constexpr int LOG_LEVEL_FATAL = 1;

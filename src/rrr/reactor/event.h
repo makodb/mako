@@ -1,16 +1,11 @@
 module;
 
-#include <algorithm>
-#include <fstream>
-#include <iostream>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 //#include "../../deptran/client_worker.h"
-#include <functional>
-#include <memory>
 #include <rusty/rusty.hpp>
 
 // External safety annotations for std::shared_ptr and Event operations
@@ -37,6 +32,12 @@ module;
 } while(0)
 
 export module rrr:reactor.event;
+
+import <algorithm>;
+import <fstream>;
+import <iostream>;
+import <functional>;
+import <memory>;
 
 import :base.all;
 

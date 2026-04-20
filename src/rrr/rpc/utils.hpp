@@ -1,9 +1,5 @@
 module;
 
-#include <list>
-#include <map>
-#include <unordered_map>
-#include <functional>
 
 #include <sys/types.h>
 #include <sys/time.h>
@@ -32,6 +28,11 @@ module;
 // }
 
 export module rrr:rpc.utils;
+
+import <list>;
+import <map>;
+import <unordered_map>;
+import <functional>;
 
 export namespace rrr {
 

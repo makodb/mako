@@ -2,7 +2,6 @@ module;
 
 #include <rusty/rusty.hpp>
 
-#include <iostream>
 #include <string.h>
 
 
@@ -12,6 +11,8 @@ module;
 
 
 module rrr:impl.base.unittest;
+
+import <iostream>;
 import rrr;
 
 // @external: {

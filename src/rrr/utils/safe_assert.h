@@ -1,9 +1,10 @@
 module;
 
-#include <cassert>
-#include <cstdlib>
 
 export module rrr:utils.safe_assert;
+
+import <cassert>;
+import <cstdlib>;
 
 export inline void SAFE_ASSERT(bool expr) {
 #ifdef NDEBUG

@@ -1,9 +1,10 @@
 module;
 
-#include <cstdint>
-#include <limits>
 
 export module rrr:rpc.internal_protocol;
+
+import <cstdint>;
+import <limits>;
 
 export namespace rrr {
 

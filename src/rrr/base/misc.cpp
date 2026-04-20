@@ -1,9 +1,5 @@
 module;
 
-#include <cstdio>
-#include <cinttypes>
-#include <string>
-#include <functional>
 
 
 #include <stdio.h>
@@ -17,6 +13,11 @@ module;
 
 
 module rrr:impl.base.misc;
+
+import <cstdio>;
+import <cinttypes>;
+import <string>;
+import <functional>;
 import rrr;
 
 // External safety annotations for system functions used in this module

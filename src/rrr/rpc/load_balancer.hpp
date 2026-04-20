@@ -11,12 +11,13 @@ module;
  */
 
 
-#include <cstdint>
-#include <vector>
 #include <rusty/cell.hpp>
 #include <rusty/arc.hpp>
 
 export module rrr:rpc.load_balancer;
+
+import <cstdint>;
+import <vector>;
 
 import :rpc.connection_metrics;
 

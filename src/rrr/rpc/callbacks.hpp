@@ -1,11 +1,13 @@
 module;
 
-#include <functional>
-#include <string>
-#include <vector>
-#include <mutex>
+#include <rusty/rusty.hpp>
+
 
 export module rrr:rpc.callbacks;
+
+import <functional>;
+import <string>;
+import <mutex>;
 
 import :rpc.errors;
 
@@ -22,11 +24,11 @@ using ReconnectCallback = std::function<void(bool)>;
  * Container for all connection callbacks.
  */
 struct ConnectionCallbacks {
-    std::vector<ConnectionCallback> on_connected;
-    std::vector<ConnectionCallback> on_disconnected;
-    std::vector<ErrorCallback> on_error;
-    std::vector<ConnectionCallback> on_reconnecting;
-    std::vector<ReconnectCallback> on_reconnected;
+    rusty::Vec<ConnectionCallback> on_connected;
+    rusty::Vec<ConnectionCallback> on_disconnected;
+    rusty::Vec<ErrorCallback> on_error;
+    rusty::Vec<ConnectionCallback> on_reconnecting;
+    rusty::Vec<ReconnectCallback> on_reconnected;
 
     // @safe - Get total callback count
     size_t total_count() const {
@@ -79,46 +81,46 @@ public:
     void add_on_connected(ConnectionCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
-        callbacks_.on_connected.push_back(std::move(cb));
+        callbacks_.on_connected.push(std::move(cb));
     }
 
     // @safe - Add callback for connection closed/lost
     void add_on_disconnected(ConnectionCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
-        callbacks_.on_disconnected.push_back(std::move(cb));
+        callbacks_.on_disconnected.push(std::move(cb));
     }
 
     // @safe - Add callback for errors
     void add_on_error(ErrorCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
-        callbacks_.on_error.push_back(std::move(cb));
+        callbacks_.on_error.push(std::move(cb));
     }
 
     // @safe - Add callback for reconnection started
     void add_on_reconnecting(ConnectionCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
-        callbacks_.on_reconnecting.push_back(std::move(cb));
+        callbacks_.on_reconnecting.push(std::move(cb));
     }
 
     // @safe - Add callback for reconnection completed
     void add_on_reconnected(ReconnectCallback cb) const {
         // @unsafe { std::mutex lock }
         std::lock_guard<std::mutex> lock(mutex_);
-        callbacks_.on_reconnected.push_back(std::move(cb));
+        callbacks_.on_reconnected.push(std::move(cb));
     }
 
     // === Invocation Methods ===
 
     // @safe - Invoke all on_connected callbacks
     void invoke_on_connected() const {
-        std::vector<ConnectionCallback> callbacks_copy;
+        rusty::Vec<ConnectionCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
             std::lock_guard<std::mutex> lock(mutex_);
-            callbacks_copy = callbacks_.on_connected;
+            callbacks_copy = callbacks_.on_connected.clone();
         }
         for (const auto& cb : callbacks_copy) {
             invoke_safely(cb);
@@ -127,11 +129,11 @@ public:
 
     // @safe - Invoke all on_disconnected callbacks
     void invoke_on_disconnected() const {
-        std::vector<ConnectionCallback> callbacks_copy;
+        rusty::Vec<ConnectionCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
             std::lock_guard<std::mutex> lock(mutex_);
-            callbacks_copy = callbacks_.on_disconnected;
+            callbacks_copy = callbacks_.on_disconnected.clone();
         }
         for (const auto& cb : callbacks_copy) {
             invoke_safely(cb);
@@ -140,11 +142,11 @@ public:
 
     // @safe - Invoke all on_error callbacks
     void invoke_on_error(RpcError error, const std::string& message = "") const {
-        std::vector<ErrorCallback> callbacks_copy;
+        rusty::Vec<ErrorCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
             std::lock_guard<std::mutex> lock(mutex_);
-            callbacks_copy = callbacks_.on_error;
+            callbacks_copy = callbacks_.on_error.clone();
         }
         for (const auto& cb : callbacks_copy) {
             invoke_safely(cb, error, message);
@@ -153,11 +155,11 @@ public:
 
     // @safe - Invoke all on_reconnecting callbacks
     void invoke_on_reconnecting() const {
-        std::vector<ConnectionCallback> callbacks_copy;
+        rusty::Vec<ConnectionCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
             std::lock_guard<std::mutex> lock(mutex_);
-            callbacks_copy = callbacks_.on_reconnecting;
+            callbacks_copy = callbacks_.on_reconnecting.clone();
         }
         for (const auto& cb : callbacks_copy) {
             invoke_safely(cb);
@@ -166,11 +168,11 @@ public:
 
     // @safe - Invoke all on_reconnected callbacks
     void invoke_on_reconnected(bool success) const {
-        std::vector<ReconnectCallback> callbacks_copy;
+        rusty::Vec<ReconnectCallback> callbacks_copy;
         {
             // @unsafe { std::mutex lock }
             std::lock_guard<std::mutex> lock(mutex_);
-            callbacks_copy = callbacks_.on_reconnected;
+            callbacks_copy = callbacks_.on_reconnected.clone();
         }
         for (const auto& cb : callbacks_copy) {
             invoke_safely(cb, success);

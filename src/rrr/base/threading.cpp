@@ -7,22 +7,23 @@ module;
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
-#include <algorithm>
 #include <pthread.h>
-#include <atomic>
-#include <mutex>
-#include <condition_variable>
-#include <memory>
 
 
-#include <chrono>
-#include <functional>
 #include <sys/time.h>
 
 
 
 
 module rrr:impl.base.threading;
+
+import <algorithm>;
+import <atomic>;
+import <mutex>;
+import <condition_variable>;
+import <memory>;
+import <chrono>;
+import <functional>;
 import rrr;
 
 // External safety annotations for atomic operations

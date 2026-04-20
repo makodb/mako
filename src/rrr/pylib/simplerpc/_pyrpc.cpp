@@ -1,8 +1,8 @@
 #include <Python.h>
 #include <rusty/rusty.hpp>
-#include <string>
-#include <memory>
 
+import <string>;
+import <memory>;
 import rrr;
 
 

@@ -1,17 +1,18 @@
 module;
 
-#include <cstdlib>
-#include <cstdio>
-#include <cstring>
 #include <sys/times.h>
-#include <fstream>
-#include <string>
 
 #ifndef __APPLE__
 // #include "sys/vtimes.h"
 #endif
 
 export module rrr:misc.netinfo;
+
+import <cstdlib>;
+import <cstdio>;
+import <cstring>;
+import <fstream>;
+import <string>;
 
 export namespace rrr {
 

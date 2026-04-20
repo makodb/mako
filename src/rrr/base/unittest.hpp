@@ -2,9 +2,10 @@ module;
 
 #include <rusty/rusty.hpp>
 
-#include <iostream>
 
 export module rrr:base.unittest;
+
+import <iostream>;
 
 export namespace rrr {
 

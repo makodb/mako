@@ -1,9 +1,5 @@
 module;
 
-#include <list>
-#include <map>
-#include <unordered_map>
-#include <functional>
 #include <sys/types.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -12,7 +8,6 @@ module;
 #include <rusty/result.hpp>
 
 
-#include <utility>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -29,6 +24,12 @@ module;
 
 
 module rrr:impl.rpc.utils;
+
+import <list>;
+import <map>;
+import <unordered_map>;
+import <functional>;
+import <utility>;
 import rrr;
 
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h

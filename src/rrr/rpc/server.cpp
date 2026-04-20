@@ -9,21 +9,12 @@ module;
 #include <rusty/vec.hpp>
 #include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
 #include <pthread.h>
-#include <atomic>
-#include <chrono>
-#include <concepts>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <proxy/proxy.h>
 #include <proxy/proxy_macros.h>
 
 
-#include <string>
-#include <sstream>
-#include <memory>
-#include <list>
-#include <cerrno>
-#include <random>
 #include <sys/select.h>
 #include <sys/un.h>
 #include <errno.h>
@@ -36,6 +27,16 @@ module;
 
 
 module rrr:impl.rpc.server;
+
+import <atomic>;
+import <chrono>;
+import <concepts>;
+import <string>;
+import <sstream>;
+import <memory>;
+import <list>;
+import <cerrno>;
+import <random>;
 import rrr;
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).

@@ -14,13 +14,14 @@ module;
 #include <stdlib.h>
 #include <apr_hash.h>
 #include <apr_thread_rwlock.h>
-#include <cstring>
 
 #ifdef	__cplusplus
 //extern "C" {
 #endif
 
 export module rrr:utils.mpr_hash;
+
+import <cstring>;
 
 import :utils.logger;
 

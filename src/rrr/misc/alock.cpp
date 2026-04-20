@@ -2,11 +2,6 @@ module;
 
 #include <rusty/rusty.hpp>
 
-#include <list>
-#include <mutex>
-#include <thread>
-#include <functional>
-#include <cstdint>
 
 
 
@@ -14,6 +9,12 @@ module;
 
 
 module rrr:impl.misc.alock;
+
+import <list>;
+import <mutex>;
+import <thread>;
+import <functional>;
+import <cstdint>;
 import rrr;
 
 // External safety annotations for atomic operations and STL functions

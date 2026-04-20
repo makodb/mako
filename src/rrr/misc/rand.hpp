@@ -5,10 +5,11 @@ module;
 #define RANDOM_GENERATOR_H_
 
 #include <pthread.h>
-#include <cstdlib>
-#include <string>
 
 export module rrr:misc.rand;
+
+import <cstdlib>;
+import <string>;
 
 export namespace rrr {
 

@@ -5,17 +5,8 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/async.hpp>
-#include <thread>
-#include <atomic>
-#include <coroutine>
-#include <type_traits>
 
 
-#include <string>
-#include <memory>
-#include <chrono>
-#include <mutex>
-#include <climits>
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
@@ -26,6 +17,16 @@ module;
 
 
 module rrr:impl.rpc.client;
+
+import <thread>;
+import <atomic>;
+import <coroutine>;
+import <type_traits>;
+import <string>;
+import <memory>;
+import <chrono>;
+import <mutex>;
+import <climits>;
 import rrr;
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).

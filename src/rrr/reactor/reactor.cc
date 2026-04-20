@@ -1,11 +1,5 @@
 module;
 
-#include <algorithm>
-#include <limits>
-#include <memory>
-#include <thread>
-#include <variant>
-#include <optional>
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/arc.hpp>
@@ -20,11 +14,6 @@ module;
 #include <string.h>
 #include <errno.h>
 #include <sys/syscall.h>  // For SYS_gettid
-#include <functional>
-#include <mutex>
-#include <utility>
-#include <cstdlib>
-#include <atomic>
 #include <sys/times.h>
 #include <std_annotation.hpp>
 
@@ -32,6 +21,18 @@ module;
 
 
 module rrr:impl.reactor.reactor;
+
+import <algorithm>;
+import <limits>;
+import <memory>;
+import <thread>;
+import <variant>;
+import <optional>;
+import <functional>;
+import <mutex>;
+import <utility>;
+import <cstdlib>;
+import <atomic>;
 import rrr;
 
 // @external: {

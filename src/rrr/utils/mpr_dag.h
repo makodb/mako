@@ -16,10 +16,11 @@ module;
 #include <apr_queue.h>
 #include <apr_errno.h>
 #include <apr_thread_mutex.h>
-#include <cstring>
 
 
 export module rrr:utils.mpr_dag;
+
+import <cstring>;
 
 import :utils.safe_assert;
 import :utils.logger;

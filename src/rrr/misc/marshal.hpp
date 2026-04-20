@@ -1,20 +1,11 @@
 module;
 
-#include <list>
-#include <vector>
-#include <string>
-#include <map>
-#include <set>
-#include <unordered_map>
-#include <unordered_set>
-#include <functional>
-#include <limits>
-#include <chrono>
+#include <rusty/rusty.hpp>
+
 #include<iostream>
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
-#include <memory>
 
 #include <rusty/arc.hpp>
 
@@ -36,6 +27,18 @@ module;
 // }
 
 export module rrr:misc.marshal;
+
+import <list>;
+import <vector>;
+import <string>;
+import <map>;
+import <set>;
+import <unordered_map>;
+import <unordered_set>;
+import <functional>;
+import <limits>;
+import <chrono>;
+import <memory>;
 
 import :base.all;
 
@@ -214,7 +217,7 @@ class MarshallDeputy {
       int32_t kind{0};
     };
     typedef std::function<MarInitializerState()> MarInitializerFn;
-    typedef std::unordered_map<int32_t, MarInitializerFn> MarContainer;
+    typedef rusty::HashMap<int32_t, MarInitializerFn> MarContainer;
     // @safe - Returns reference to global factory registry
     // SAFETY: Protected by mutex, returns reference to static container
     // @lifetime: () -> &'static
@@ -1103,18 +1106,32 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::pair<T1, T2> &v) {
 }
 
 // @unsafe
-// @lifetime: (&'a, const std::vector<T>&) -> &'a
+// @lifetime: (&'a, const rusty::Vec<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::Vec<T> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
+    for (typename rusty::Vec<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
       m << *it;
     }
     return m;
   // }
+}
+
+// @unsafe
+// @lifetime: (&'a, const std::vector<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
+  // Keep std::vector support for non-rrr call sites while rrr internals move to rusty containers.
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
+       ++it) {
+    m << *it;
+  }
+  return m;
 }
 
 // @unsafe
@@ -1133,15 +1150,43 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
 }
 
 // @unsafe
-// @lifetime: (&'a, const std::set<T>&) -> &'a
+// @lifetime: (&'a, const rusty::BTreeSet<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeSet<T> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
+    for (typename rusty::BTreeSet<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
       m << *it;
+    }
+    return m;
+  // }
+}
+
+// @unsafe
+// @lifetime: (&'a, const std::set<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
+       ++it) {
+    m << *it;
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, const rusty::BTreeMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v) {
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    for (typename rusty::BTreeMap<K, V>::const_iterator it = v.begin(); it != v.end();
+         ++it) {
+      m << it->first << it->second;
     }
     return m;
   // }
@@ -1151,12 +1196,26 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
 // @lifetime: (&'a, const std::map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
+       ++it) {
+    m << it->first << it->second;
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, const rusty::HashSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator<<(rrr::Marshal &m,
+                                const rusty::HashSet<T> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
-         ++it) {
-      m << it->first << it->second;
+    for (typename rusty::HashSet<T>::const_iterator it = v.begin();
+         it != v.end(); ++it) {
+      m << *it;
     }
     return m;
   // }
@@ -1167,12 +1226,26 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_set<T> &v) {
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::unordered_set<T>::const_iterator it = v.begin();
+       it != v.end(); ++it) {
+    m << *it;
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, const rusty::HashMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator<<(rrr::Marshal &m,
+                                const rusty::HashMap<K, V> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::unordered_set<T>::const_iterator it = v.begin();
+    for (typename rusty::HashMap<K, V>::const_iterator it = v.begin();
          it != v.end(); ++it) {
-      m << *it;
+      m << it->first << it->second;
     }
     return m;
   // }
@@ -1183,15 +1256,13 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_map<K, V> &v) {
-  // @unsafe {
-    v64 v_len = v.size();
-    m << v_len;
-    for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
-         it != v.end(); ++it) {
-      m << it->first << it->second;
-    }
-    return m;
-  // }
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
+       it != v.end(); ++it) {
+    m << it->first << it->second;
+  }
+  return m;
 }
 
 // @unsafe
@@ -1322,6 +1393,22 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::pair<T1, T2> &v) {
 }
 
 // @unsafe
+// @lifetime: (&'a, rusty::Vec<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::Vec<T> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  v.reserve(v_len.get());
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    m >> elem;
+    v.push_back(elem);
+  }
+  return m;
+}
+
+// @unsafe
 // @lifetime: (&'a, std::vector<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::vector<T> &v) {
@@ -1353,6 +1440,21 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::list<T> &v) {
 }
 
 // @unsafe
+// @lifetime: (&'a, rusty::BTreeSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::BTreeSet<T> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    m >> elem;
+    v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
 // @lifetime: (&'a, std::set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::set<T> &v) {
@@ -1363,6 +1465,22 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::set<T> &v) {
     T elem;
     m >> elem;
     v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, rusty::BTreeMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::BTreeMap<K, V> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    m >> key >> value;
+    insert_into_map(v, key, value);
   }
   return m;
 }
@@ -1384,6 +1502,21 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::map<K, V> &v) {
 }
 
 // @unsafe
+// @lifetime: (&'a, rusty::HashSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::HashSet<T> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    m >> elem;
+    v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
 // @lifetime: (&'a, std::unordered_set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_set<T> &v) {
@@ -1394,6 +1527,22 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_set<T> &v) {
     T elem;
     m >> elem;
     v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, rusty::HashMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::HashMap<K, V> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    m >> key >> value;
+    insert_into_map(v, key, value);
   }
   return m;
 }

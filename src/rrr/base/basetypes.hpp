@@ -1,11 +1,8 @@
 module;
 
-#include <vector>
-#include <queue>
-#include <random>
+#include <rusty/rusty.hpp>
+
 #include <inttypes.h>
-#include <atomic>
-#include <memory>
 
 #include <time.h>
 #include <sys/time.h>
@@ -26,6 +23,11 @@ module;
 // Note: struct types like 'timeval' are not functions - they're filtered out in the AST parser
 
 export module rrr:base.basetypes;
+
+import <algorithm>;
+import <random>;
+import <atomic>;
+import <memory>;
 
 import :base.debugging;
 
@@ -311,29 +313,31 @@ class MergedEnumerator: public Enumerator<T> {
         }
     };
 
-    std::priority_queue<merge_helper, std::vector<merge_helper>> q_;
+    rusty::Vec<merge_helper> q_;
 
 public:
     // @unsafe
     void add_source(Enumerator<T>* src) {
         if (src && src->has_next()) {
             q_.push(merge_helper(src->next(), src));
+            std::push_heap(q_.begin(), q_.end());
         }
     }
     //TODO
     void reset() override {
     }
     bool has_next() override {
-        return !q_.empty();
+        return !q_.is_empty();
     }
     T next() override {
-        verify(!q_.empty());
-        const merge_helper& mh = q_.top();
+        verify(!q_.is_empty());
+        std::pop_heap(q_.begin(), q_.end());
+        merge_helper mh = q_.pop();
         T ret = mh.data;
         Enumerator<T>* src = mh.src;
-        q_.pop();
         if (src->has_next()) {
             q_.push(merge_helper(src->next(), src));
+            std::push_heap(q_.begin(), q_.end());
         }
         return ret;
     }

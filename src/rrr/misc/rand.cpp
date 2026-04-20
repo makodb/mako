@@ -3,16 +3,17 @@ module;
 #include <rusty/rusty.hpp>
 
 #include <pthread.h>
-#include <cstdlib>
 
 
-#include <string>
 
 
 
 
 
 module rrr:impl.misc.rand;
+
+import <cstdlib>;
+import <string>;
 import rrr;
 
 // @external: {

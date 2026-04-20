@@ -1,4 +1,6 @@
 module;
+
+#include <rusty/rusty.hpp>
 /**
  * @file fiber_impl.h
  * @brief Core stackful fiber implementation.
@@ -23,12 +25,13 @@ module;
 #include <rusty/refcell.hpp>
 #include <rusty/function.hpp>
 
-#include <cstddef>
-#include <cstdint>
-#include <type_traits>
-#include <utility>
 
 export module rrr:reactor.fiber_impl;
+
+import <cstddef>;
+import <cstdint>;
+import <type_traits>;
+import <utility>;
 
 export namespace rrr {
 
@@ -211,7 +214,7 @@ class Fiber {
   bool finished() const;
   void do_finalize();
 
-  // Comparison operator for std::set<rusty::Rc<Fiber>>
+  // Comparison operator for rusty::BTreeSet<rusty::Rc<Fiber>>
   friend bool operator<(const rusty::Rc<Fiber>& lhs, const rusty::Rc<Fiber>& rhs) {
     return lhs.get() < rhs.get();
   }

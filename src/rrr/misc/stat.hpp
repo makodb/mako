@@ -1,8 +1,9 @@
 module;
 
-#include <cstdint>
 
 export module rrr:misc.stat;
+
+import <cstdint>;
 
 export namespace rrr {
 

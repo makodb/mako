@@ -13,10 +13,11 @@ module;
  */
 
 #include <rusty/cell.hpp>
-#include <cstdint>
-#include <limits>
 
 export module rrr:rpc.connection_metrics;
+
+import <cstdint>;
+import <limits>;
 
 export namespace rrr {
 

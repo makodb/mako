@@ -4,12 +4,13 @@ module;
 #include <apr_thread_proc.h>
 #include <apr_thread_mutex.h>
 #include <apr_atomic.h>
-#include <cstdlib>
 
 #define SZ_QUEUE 1000000
 #define SZ_THREADPOOL 1
 
 export module rrr:utils.mpr_thread_pool;
+
+import <cstdlib>;
 
 import :utils.logger;
 import :utils.safe_assert;

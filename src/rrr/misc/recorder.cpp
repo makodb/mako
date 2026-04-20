@@ -1,13 +1,5 @@
 module;
 
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <functional>
-#include <list>
-#include <string>
-#include <utility>
-#include <vector>
 
 
 #include <sys/types.h>
@@ -15,10 +7,19 @@ module;
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
-#include <chrono>
 
 
 module rrr:impl.misc.recorder;
+
+import <thread>;
+import <mutex>;
+import <condition_variable>;
+import <functional>;
+import <list>;
+import <string>;
+import <utility>;
+import <vector>;
+import <chrono>;
 import rrr;
 
 /*

@@ -1,12 +1,4 @@
 module;
-#include <algorithm>
-#include <atomic>
-#include <functional>
-#include <limits>
-#include <memory>
-#include <thread>
-#include <variant>
-#include <optional>
 #include <unistd.h>
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
@@ -83,6 +75,15 @@ module;
 // }
 
 export module rrr:reactor.reactor;
+
+import <algorithm>;
+import <atomic>;
+import <functional>;
+import <limits>;
+import <memory>;
+import <thread>;
+import <variant>;
+import <optional>;
 
 import :base.misc;
 import :rpc.pollable_proxy;

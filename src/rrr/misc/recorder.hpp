@@ -2,16 +2,17 @@ module;
 
 #include <rusty/rusty.hpp>
 
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <functional>
-#include <list>
-#include <string>
-#include <utility>
 
 
 export module rrr:misc.recorder;
+
+import <thread>;
+import <mutex>;
+import <condition_variable>;
+import <functional>;
+import <list>;
+import <string>;
+import <utility>;
 
 import :base.basetypes;
 import :base.misc;

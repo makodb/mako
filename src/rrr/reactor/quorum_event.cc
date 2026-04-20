@@ -2,9 +2,6 @@ module;
 
 #include <rusty/rusty.hpp>
 
-#include <functional>
-#include <chrono>
-#include <iostream>
 
 
 
@@ -12,6 +9,10 @@ module;
 
 
 module rrr:impl.reactor.quorum_event;
+
+import <functional>;
+import <chrono>;
+import <iostream>;
 import rrr;
 
 namespace janus {

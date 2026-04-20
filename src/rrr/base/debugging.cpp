@@ -4,22 +4,23 @@ module;
 
 #include <stdio.h>
 #include <assert.h>
-#include <iostream>
-#include <source_location>
-#include <cstdlib>
 
 
 #include <execinfo.h>
 #include <limits.h>
 #include <string.h>
-#include <string>
-#include <utility>
 
 
 
 
 
 module rrr:impl.base.debugging;
+
+import <iostream>;
+import <source_location>;
+import <cstdlib>;
+import <string>;
+import <utility>;
 import rrr;
 
 // External safety annotations for system and std library functions

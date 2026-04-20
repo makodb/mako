@@ -1,17 +1,18 @@
 module;
 
-#include <vector>
-#include <queue>
-#include <random>
 #include <inttypes.h>
-#include <atomic>
-#include <memory>
 #include <time.h>
 #include <sys/time.h>
-#include <thread>
-#include <cstring>  // for std::memcpy
 
 module rrr:impl.base.basetypes;
+
+import <vector>;
+import <queue>;
+import <random>;
+import <atomic>;
+import <memory>;
+import <thread>;
+import <cstring>;
 import rrr;
 
 
