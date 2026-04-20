@@ -23,9 +23,7 @@ import <atomic>;
 import <coroutine>;
 import <type_traits>;
 import <string>;
-import <memory>;
 import <chrono>;
-import <mutex>;
 import <climits>;
 import rrr;
 
@@ -838,7 +836,7 @@ void ClientConnection::handle_error() {
         return;
       }
       auto weak_conn = weak_self_;
-      std::thread([weak_conn]() {
+      rusty::thread::spawn([weak_conn]() {
         auto conn_opt = weak_conn.upgrade();
         if (conn_opt.is_none()) {
           return;

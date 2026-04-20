@@ -10,10 +10,8 @@ module;
 export module rrr:rpc.client;
 
 import <chrono>;
-import <mutex>;
 import <thread>;
 import <atomic>;
-import <memory>;
 import <coroutine>;
 import <type_traits>;
 
@@ -69,8 +67,6 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 //   gai_strerror: [unsafe]
 //   memset: [unsafe]
 //   strcpy: [unsafe]
-//   std::lock_guard: [safe]
-//   std::unique_lock: [safe]
 //   std::chrono::duration: [safe]
 //   std::function: [safe]
 //   std::function::operator(): [safe]
@@ -1238,7 +1234,7 @@ public:
         final_fu->set_options(waiter_options);
 
         auto weak_conn = weak_self_;
-        std::thread([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
+        rusty::thread::spawn([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
             auto start_time = std::chrono::steady_clock::now();
             uint16_t retry_count = 0;
 
