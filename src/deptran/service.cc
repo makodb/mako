@@ -9,7 +9,6 @@
 #include "communicator.h"
 #include "config.h"
 #include "coordinator.h"
-#include "februus/scheduler.h"
 #include "janus/scheduler.h"
 #include "procedure.h"
 #include "rcc/dep_graph.h"
@@ -163,18 +162,6 @@ void ClassicServiceImpl::RccAccept(const ClassicService::RpcRccAcceptRequest& re
 
 void ClassicServiceImpl::JanusAccept(const ClassicService::RpcJanusAcceptRequest& req, ClassicService::RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) {
   this->JanusAccept(req.txn_id, req.rank, req.ballot, req.graph, &resp.res, std::move(defer));
-}
-
-void ClassicServiceImpl::PreAcceptFebruus(const ClassicService::RpcPreAcceptFebruusRequest& req, ClassicService::RpcPreAcceptFebruusResponse& resp, rrr::DeferredReply defer) {
-  this->PreAcceptFebruus(req.tx_id, &resp.ret, &resp.timestamp, std::move(defer));
-}
-
-void ClassicServiceImpl::AcceptFebruus(const ClassicService::RpcAcceptFebruusRequest& req, ClassicService::RpcAcceptFebruusResponse& resp, rrr::DeferredReply defer) {
-  this->AcceptFebruus(req.tx_id, req.ballot, req.timestamp, &resp.ret, std::move(defer));
-}
-
-void ClassicServiceImpl::CommitFebruus(const ClassicService::RpcCommitFebruusRequest& req, ClassicService::RpcCommitFebruusResponse& resp, rrr::DeferredReply defer) {
-  this->CommitFebruus(req.tx_id, req.timestamp, &resp.ret, std::move(defer));
 }
 
 void ClassicServiceImpl::JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) {
@@ -826,37 +813,7 @@ void ClassicServiceImpl::JanusAccept(const cmdid_t& txnid,
   defer.reply();
 }
 
-void ClassicServiceImpl::PreAcceptFebruus(const txid_t& tx_id,
-                                          int32_t* res,
-                                          uint64_t* timestamp,
-                                          rrr::DeferredReply defer) {
-  SchedulerFebruus* sched = (SchedulerFebruus*) dtxn_sched_;
-  *res = sched->OnPreAccept(tx_id, *timestamp);
-  defer.reply();
-}
-
-void ClassicServiceImpl::AcceptFebruus(const txid_t& tx_id,
-                                       const ballot_t& ballot,
-                                       const uint64_t& timestamp,
-                                       int32_t* res,
-                                       rrr::DeferredReply defer) {
-  SchedulerFebruus* sched = (SchedulerFebruus*) dtxn_sched_;
-  *res = sched->OnAccept(tx_id, timestamp, ballot);
-  defer.reply();
-
-}
-
-void ClassicServiceImpl::CommitFebruus(const txid_t& tx_id,
-                                       const uint64_t& timestamp,
-                                       int32_t* res,
-                                       rrr::DeferredReply defer) {
-  SchedulerFebruus* sched = (SchedulerFebruus*) dtxn_sched_;
-  *res = sched->OnCommit(tx_id, timestamp);
-  defer.reply();
-}
-
-
-void ClassicServiceImpl::JetpackBeginRecovery(const MarshallDeputy& old_view, 
+void ClassicServiceImpl::JetpackBeginRecovery(const MarshallDeputy& old_view,
                                               const MarshallDeputy& new_view, 
                                               const epoch_t& new_view_id, 
                                               rrr::DeferredReply defer) {

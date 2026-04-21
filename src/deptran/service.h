@@ -256,22 +256,7 @@ class ClassicServiceImpl : public ClassicService {
                    int32_t* res,
                    rrr::DeferredReply done);
 
-  void PreAcceptFebruus(const txid_t& tx_id,
-                        int32_t* res,
-                        uint64_t* timestamp,
-                        rrr::DeferredReply done);
-
-  void AcceptFebruus(const txid_t& tx_id,
-                     const ballot_t& ballot,
-                     const uint64_t& timestamp,
-                     int32_t* res,
-                     rrr::DeferredReply done);
-
-  void CommitFebruus(const txid_t& tx_id,
-                     const uint64_t& timestamp,
-                     int32_t* res, rrr::DeferredReply done);
-  
-  void JetpackBeginRecovery(const MarshallDeputy& old_view, 
+  void JetpackBeginRecovery(const MarshallDeputy& old_view,
                             const MarshallDeputy& new_view, 
                             const epoch_t& new_view_id, 
                             rrr::DeferredReply done);
@@ -391,9 +376,6 @@ class ClassicServiceImpl : public ClassicService {
   void JanusPreAcceptWoGraph(const ClassicService::RpcJanusPreAcceptWoGraphRequest& req, ClassicService::RpcJanusPreAcceptWoGraphResponse& resp, rrr::DeferredReply defer) override;
   void RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) override;
   void JanusAccept(const ClassicService::RpcJanusAcceptRequest& req, ClassicService::RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void PreAcceptFebruus(const ClassicService::RpcPreAcceptFebruusRequest& req, ClassicService::RpcPreAcceptFebruusResponse& resp, rrr::DeferredReply defer) override;
-  void AcceptFebruus(const ClassicService::RpcAcceptFebruusRequest& req, ClassicService::RpcAcceptFebruusResponse& resp, rrr::DeferredReply defer) override;
-  void CommitFebruus(const ClassicService::RpcCommitFebruusRequest& req, ClassicService::RpcCommitFebruusResponse& resp, rrr::DeferredReply defer) override;
   void JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullIdSet(const ClassicService::RpcJetpackPullIdSetRequest& req, ClassicService::RpcJetpackPullIdSetResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullCmd(const ClassicService::RpcJetpackPullCmdRequest& req, ClassicService::RpcJetpackPullCmdResponse& resp, rrr::DeferredReply defer) override;

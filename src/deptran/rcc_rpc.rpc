@@ -384,17 +384,6 @@ abstract service Classic {
                     MarshallDeputy graph |
                     i32 res);
 
-  defer PreAcceptFebruus(txid_t tx_id |
-                         i32 ret,
-                         uint64_t timestamp);
-
-  defer AcceptFebruus(txid_t tx_id,
-                      ballot_t ballot,
-                      uint64_t timestamp |
-                      i32 ret);
-
-  defer CommitFebruus(txid_t tx_id, uint64_t timestamp | i32 ret);
-
   defer JetpackBeginRecovery(MarshallDeputy old_view,
                              MarshallDeputy new_view, 
                              epoch_t new_view_id);

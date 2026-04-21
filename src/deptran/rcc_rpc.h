@@ -5925,90 +5925,6 @@ public:
         return m;
     }
 
-    struct RpcPreAcceptFebruusRequest {
-        txid_t tx_id;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPreAcceptFebruusRequest& o) {
-        m << o.tx_id;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPreAcceptFebruusRequest& o) {
-        m >> o.tx_id;
-        return m;
-    }
-
-    struct RpcPreAcceptFebruusResponse {
-        rrr::i32 ret;
-        uint64_t timestamp;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPreAcceptFebruusResponse& o) {
-        m << o.ret;
-        m << o.timestamp;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPreAcceptFebruusResponse& o) {
-        m >> o.ret;
-        m >> o.timestamp;
-        return m;
-    }
-
-    struct RpcAcceptFebruusRequest {
-        txid_t tx_id;
-        ballot_t ballot;
-        uint64_t timestamp;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAcceptFebruusRequest& o) {
-        m << o.tx_id;
-        m << o.ballot;
-        m << o.timestamp;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptFebruusRequest& o) {
-        m >> o.tx_id;
-        m >> o.ballot;
-        m >> o.timestamp;
-        return m;
-    }
-
-    struct RpcAcceptFebruusResponse {
-        rrr::i32 ret;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAcceptFebruusResponse& o) {
-        m << o.ret;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptFebruusResponse& o) {
-        m >> o.ret;
-        return m;
-    }
-
-    struct RpcCommitFebruusRequest {
-        txid_t tx_id;
-        uint64_t timestamp;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitFebruusRequest& o) {
-        m << o.tx_id;
-        m << o.timestamp;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitFebruusRequest& o) {
-        m >> o.tx_id;
-        m >> o.timestamp;
-        return m;
-    }
-
-    struct RpcCommitFebruusResponse {
-        rrr::i32 ret;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitFebruusResponse& o) {
-        m << o.ret;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitFebruusResponse& o) {
-        m >> o.ret;
-        return m;
-    }
-
     struct RpcJetpackBeginRecoveryRequest {
         MarshallDeputy old_view;
         MarshallDeputy new_view;
@@ -6397,9 +6313,6 @@ public:
         JANUSPREACCEPTWOGRAPH = 0x58a4d224,
         RCCACCEPT = 0x15acd37d,
         JANUSACCEPT = 0x24690ad7,
-        PREACCEPTFEBRUUS = 0x61e25538,
-        ACCEPTFEBRUUS = 0x5744c775,
-        COMMITFEBRUUS = 0x67e6a524,
         JETPACKBEGINRECOVERY = 0x4bffeb61,
         JETPACKPULLIDSET = 0x10b97ae0,
         JETPACKPULLCMD = 0x6ba6ee7d,
@@ -6522,15 +6435,6 @@ public:
         if ((ret = svr.reg_rpc(JANUSACCEPT, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(PREACCEPTFEBRUUS, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(ACCEPTFEBRUUS, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(COMMITFEBRUUS, svc_index)) != 0) {
-            goto err;
-        }
         if ((ret = svr.reg_rpc(JETPACKBEGINRECOVERY, svc_index)) != 0) {
             goto err;
         }
@@ -6596,9 +6500,6 @@ public:
         svr.unreg(JANUSPREACCEPTWOGRAPH);
         svr.unreg(RCCACCEPT);
         svr.unreg(JANUSACCEPT);
-        svr.unreg(PREACCEPTFEBRUUS);
-        svr.unreg(ACCEPTFEBRUUS);
-        svr.unreg(COMMITFEBRUUS);
         svr.unreg(JETPACKBEGINRECOVERY);
         svr.unreg(JETPACKPULLIDSET);
         svr.unreg(JETPACKPULLCMD);
@@ -6649,9 +6550,6 @@ public:
         case JANUSPREACCEPTWOGRAPH: __JanusPreAcceptWoGraph__wrapper__(std::move(req), weak_sconn); break;
         case RCCACCEPT: __RccAccept__wrapper__(std::move(req), weak_sconn); break;
         case JANUSACCEPT: __JanusAccept__wrapper__(std::move(req), weak_sconn); break;
-        case PREACCEPTFEBRUUS: __PreAcceptFebruus__wrapper__(std::move(req), weak_sconn); break;
-        case ACCEPTFEBRUUS: __AcceptFebruus__wrapper__(std::move(req), weak_sconn); break;
-        case COMMITFEBRUUS: __CommitFebruus__wrapper__(std::move(req), weak_sconn); break;
         case JETPACKBEGINRECOVERY: __JetpackBeginRecovery__wrapper__(std::move(req), weak_sconn); break;
         case JETPACKPULLIDSET: __JetpackPullIdSet__wrapper__(std::move(req), weak_sconn); break;
         case JETPACKPULLCMD: __JetpackPullCmd__wrapper__(std::move(req), weak_sconn); break;
@@ -6737,12 +6635,6 @@ public:
     virtual void RccAccept(const RpcRccAcceptRequest& req, RpcRccAcceptResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void JanusAccept(const RpcJanusAcceptRequest& req, RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void PreAcceptFebruus(const RpcPreAcceptFebruusRequest& req, RpcPreAcceptFebruusResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void AcceptFebruus(const RpcAcceptFebruusRequest& req, RpcAcceptFebruusResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void CommitFebruus(const RpcCommitFebruusRequest& req, RpcCommitFebruusResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest& req, RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
@@ -7430,61 +7322,6 @@ private:
         }
     }
     // @safe
-    void __PreAcceptFebruus__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcPreAcceptFebruusRequest __typed_req__;
-            req->m >> __typed_req__.tx_id;
-            auto __typed_resp__ = std::make_shared<RpcPreAcceptFebruusResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->ret;
-                    m << __typed_resp__->timestamp;
-                },
-                []() {});
-            this->PreAcceptFebruus(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __AcceptFebruus__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcAcceptFebruusRequest __typed_req__;
-            req->m >> __typed_req__.tx_id;
-            req->m >> __typed_req__.ballot;
-            req->m >> __typed_req__.timestamp;
-            auto __typed_resp__ = std::make_shared<RpcAcceptFebruusResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->ret;
-                },
-                []() {});
-            this->AcceptFebruus(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __CommitFebruus__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcCommitFebruusRequest __typed_req__;
-            req->m >> __typed_req__.tx_id;
-            req->m >> __typed_req__.timestamp;
-            auto __typed_resp__ = std::make_shared<RpcCommitFebruusResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->ret;
-                },
-                []() {});
-            this->CommitFebruus(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
     void __JetpackBeginRecovery__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
         {
@@ -7762,12 +7599,6 @@ public:
     using RpcRccAcceptResponse = ClassicService::RpcRccAcceptResponse;
     using RpcJanusAcceptRequest = ClassicService::RpcJanusAcceptRequest;
     using RpcJanusAcceptResponse = ClassicService::RpcJanusAcceptResponse;
-    using RpcPreAcceptFebruusRequest = ClassicService::RpcPreAcceptFebruusRequest;
-    using RpcPreAcceptFebruusResponse = ClassicService::RpcPreAcceptFebruusResponse;
-    using RpcAcceptFebruusRequest = ClassicService::RpcAcceptFebruusRequest;
-    using RpcAcceptFebruusResponse = ClassicService::RpcAcceptFebruusResponse;
-    using RpcCommitFebruusRequest = ClassicService::RpcCommitFebruusRequest;
-    using RpcCommitFebruusResponse = ClassicService::RpcCommitFebruusResponse;
     using RpcJetpackBeginRecoveryRequest = ClassicService::RpcJetpackBeginRecoveryRequest;
     using RpcJetpackBeginRecoveryResponse = ClassicService::RpcJetpackBeginRecoveryResponse;
     using RpcJetpackPullIdSetRequest = ClassicService::RpcJetpackPullIdSetRequest;
@@ -9600,157 +9431,6 @@ public:
         auto __typed_fu_result__ = this->async_JanusAccept(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcJanusAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class PreAcceptFebruusTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit PreAcceptFebruusTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcPreAcceptFebruusResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcPreAcceptFebruusResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcPreAcceptFebruusResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.ret;
-            __fu__->get_reply() >> __typed_resp__.timestamp;
-            return rusty::Result<RpcPreAcceptFebruusResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<PreAcceptFebruusTypedFuture, rrr::i32> async_PreAcceptFebruus(const RpcPreAcceptFebruusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::PREACCEPTFEBRUUS, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << req.tx_id;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<PreAcceptFebruusTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<PreAcceptFebruusTypedFuture, rrr::i32>::Ok(PreAcceptFebruusTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<PreAcceptFebruusTypedFuture> await_PreAcceptFebruus(const RpcPreAcceptFebruusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_PreAcceptFebruus(req, __fu_attr__));
-    }
-    rusty::Result<RpcPreAcceptFebruusResponse, rrr::i32> PreAcceptFebruus(const RpcPreAcceptFebruusRequest& req) {
-        auto __typed_fu_result__ = this->async_PreAcceptFebruus(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcPreAcceptFebruusResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class AcceptFebruusTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit AcceptFebruusTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcAcceptFebruusResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcAcceptFebruusResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcAcceptFebruusResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.ret;
-            return rusty::Result<RpcAcceptFebruusResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<AcceptFebruusTypedFuture, rrr::i32> async_AcceptFebruus(const RpcAcceptFebruusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::ACCEPTFEBRUUS, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << req.tx_id;
-            __m__ << req.ballot;
-            __m__ << req.timestamp;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<AcceptFebruusTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<AcceptFebruusTypedFuture, rrr::i32>::Ok(AcceptFebruusTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<AcceptFebruusTypedFuture> await_AcceptFebruus(const RpcAcceptFebruusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_AcceptFebruus(req, __fu_attr__));
-    }
-    rusty::Result<RpcAcceptFebruusResponse, rrr::i32> AcceptFebruus(const RpcAcceptFebruusRequest& req) {
-        auto __typed_fu_result__ = this->async_AcceptFebruus(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcAcceptFebruusResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class CommitFebruusTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit CommitFebruusTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcCommitFebruusResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcCommitFebruusResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcCommitFebruusResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.ret;
-            return rusty::Result<RpcCommitFebruusResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<CommitFebruusTypedFuture, rrr::i32> async_CommitFebruus(const RpcCommitFebruusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::COMMITFEBRUUS, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << req.tx_id;
-            __m__ << req.timestamp;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<CommitFebruusTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<CommitFebruusTypedFuture, rrr::i32>::Ok(CommitFebruusTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<CommitFebruusTypedFuture> await_CommitFebruus(const RpcCommitFebruusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_CommitFebruus(req, __fu_attr__));
-    }
-    rusty::Result<RpcCommitFebruusResponse, rrr::i32> CommitFebruus(const RpcCommitFebruusRequest& req) {
-        auto __typed_fu_result__ = this->async_CommitFebruus(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcCommitFebruusResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
