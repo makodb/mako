@@ -5,6 +5,7 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/mpsc.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/async.hpp>
 #include <rusty/vecdeque.hpp>
 #include <rusty/btreeset.hpp>
@@ -527,10 +528,10 @@ private:
     // Join handle for the thread (Mutex provides interior mutability)
     rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>> join_handle_;
 
-    // Thread ID of the poll thread - used to detect self-join attempts
-    // std::atomic for safe cross-thread access (set by spawned thread, read by shutdown())
-    // Stored as std::thread::id (atomic-friendly TriviallyCopyable); compared via rusty::thread::current_id().as_std()
-    mutable std::atomic<std::thread::id> poll_thread_id_{};
+    // Thread ID of the poll thread - used to detect self-join attempts.
+    // rusty::Atomic wraps std::atomic<ThreadId> — ThreadId is TriviallyCopyable so
+    // this stays lock-free on typical platforms.
+    mutable rusty::sync::atomic::Atomic<rusty::thread::ThreadId> poll_thread_id_{};
 
     // Track if shutdown was called
     mutable std::atomic<bool> shutdown_called_{false};

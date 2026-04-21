@@ -1041,13 +1041,13 @@ rusty::Arc<PollThread> PollThread::create() {
   auto arc = rusty::Arc<PollThread>::make(std::move(sender));
 
   // Pointer to atomic thread ID for safe cross-thread access
-  std::atomic<std::thread::id>* thread_id_ptr = &arc->poll_thread_id_;
+  rusty::sync::atomic::Atomic<rusty::thread::ThreadId>* thread_id_ptr = &arc->poll_thread_id_;
 
   // Spawn thread - worker owns the receiver
   auto handle = rusty::thread::spawn(
     [thread_id_ptr](rusty::sync::mpsc::Receiver<PollCommand> rx) {
       auto tid = rusty::thread::current_id();
-      thread_id_ptr->store(tid.as_std(), std::memory_order_release);
+      thread_id_ptr->store(tid, rusty::sync::atomic::Ordering::Release);
       // Create worker wrapped in Rc<RefCell<>>
       auto worker = PollThreadWorker::create(std::move(rx));
       // Store raw pointer in TLS for direct access from same thread
@@ -1092,8 +1092,8 @@ void PollThread::shutdown() const {
 
   // Check if we're on the poll thread (atomic load for thread-safe read)
   auto current_tid = rusty::thread::current_id();
-  auto poll_tid = poll_thread_id_.load(std::memory_order_acquire);
-  if (current_tid.as_std() == poll_tid) {
+  auto poll_tid = poll_thread_id_.load(rusty::sync::atomic::Ordering::Acquire);
+  if (current_tid == poll_tid) {
     Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
     return;
   }
