@@ -13,7 +13,6 @@ module;
 export module rrr:misc.alarm;
 
 import <mutex>;
-import <thread>;
 import <functional>;
 
 import :base.misc;
@@ -25,7 +24,6 @@ export namespace rrr {
 class Alarm: public FrequentJob {
  public:
   bool run_ = true;
-  std::thread th_;
   //    std::mutex lock_;
 
   uint64_t next_id_ = 1;
@@ -42,10 +40,7 @@ class Alarm: public FrequentJob {
   rusty::BTreeMap<std::pair<uint64_t, uint64_t>,
            std::function<void(void)> > idx_time_;
 
-  Alarm() : th_(), waiting_(), idx_time_()
-//	th_([this] () {
-//		this->alarm_loop();
-//	    })
+  Alarm() : waiting_(), idx_time_()
   {
     period_ = 50 * 1000; // 50ms;
   }

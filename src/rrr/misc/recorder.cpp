@@ -38,7 +38,6 @@ import rrr;
 //   strerror: [unsafe],
 //   new: [unsafe],
 //   delete: [unsafe],
-//   std::thread: [unsafe],
 //   std::mutex: [unsafe],
 //   std::condition_variable: [unsafe]
 // }
@@ -48,7 +47,7 @@ import rrr;
 
 namespace rrr {
 
-// @unsafe - Uses open() system call, new, std::thread
+// @unsafe - Uses open() system call and new
 Recorder::Recorder(const char *path) {
     Log::debug("disk log into %s", path);  // @unsafe
 
@@ -68,13 +67,9 @@ Recorder::Recorder(const char *path) {
     callback_reqs_ = new std::list<io_req_t*>();  // @unsafe
 
 
-    th_flush_ = new std::thread(&Recorder::flush_loop, this);  // @unsafe
+    th_flush_ = rusty::Some(rusty::thread::spawn([this]() { this->flush_loop(); }));
 
     timer_.start();
-
-//    th_flush_ = new std::thread([this] () {
-//	    this->flush_loop();
-//	});
     //    th_pool_ = new base::ThreadPool(1);
 }
 

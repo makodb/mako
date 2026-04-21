@@ -6,7 +6,6 @@ module;
 
 export module rrr:misc.recorder;
 
-import <thread>;
 import <mutex>;
 import <condition_variable>;
 import <functional>;
@@ -45,7 +44,7 @@ public:
 
     std::mutex mtx_cd_flush_;
     std::condition_variable cd_flush_;
-    std::thread *th_flush_;
+    rusty::Option<rusty::thread::JoinHandle<void>> th_flush_{};
 
     AvgStat stat_cnt_;
     AvgStat stat_sz_;
