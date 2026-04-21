@@ -1,12 +1,13 @@
 #pragma once
 
 import rrr;
-
-#include <errno.h>
-#include <memory>
+#include <rusty/async.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/result.hpp>
+
+#include <errno.h>
+#include <memory>
 
 #include "procedure.h"
 #include "rcc/tx.h"
@@ -587,19 +588,19 @@ public:
     }
 
     enum {
-        FORWARD = 0x22428310,
-        PREPARE = 0x19f4872f,
-        ACCEPT = 0x390b06a3,
-        DECIDE = 0x235f8d12,
-        HEARTBEAT = 0x2b484265,
-        FORWARDTOLEARNERSERVER = 0x17fcd4b3,
-        BULKPREPARE = 0x312b0cc6,
-        BULKACCEPT = 0x3f174f51,
-        BULKPREPARE2 = 0x4aca3db4,
-        SYNCLOG = 0x4e587d6b,
-        SYNCCOMMIT = 0x3ee8ff04,
-        SYNCNOOPS = 0x16e43a8e,
-        BULKDECIDE = 0x6d2a686a,
+        FORWARD = 0x1550d120,
+        PREPARE = 0x3daaea7d,
+        ACCEPT = 0x14f38ffb,
+        DECIDE = 0x5d5f5a61,
+        HEARTBEAT = 0x23eefdb2,
+        FORWARDTOLEARNERSERVER = 0x10a5b383,
+        BULKPREPARE = 0x3825adef,
+        BULKACCEPT = 0x2e80ccf2,
+        BULKPREPARE2 = 0x5ab0c1ab,
+        SYNCLOG = 0x47ae83ba,
+        SYNCCOMMIT = 0x1ac6a8a1,
+        SYNCNOOPS = 0x4a1ea960,
+        BULKDECIDE = 0x18c8e741,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1673,7 +1674,7 @@ public:
     }
 
     enum {
-        COMMIT = 0x14833777,
+        COMMIT = 0x4ac086a9,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1882,9 +1883,9 @@ public:
     }
 
     enum {
-        PREPARE = 0x5c3b5381,
-        SUGGEST = 0x488ae3b0,
-        DECIDE = 0x548a454d,
+        PREPARE = 0x3127799a,
+        SUGGEST = 0x14f7f5d8,
+        DECIDE = 0x254983fd,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -2418,13 +2419,13 @@ public:
     }
 
     enum {
-        HEARTBEAT = 0x30ac7415,
-        FORWARD = 0x18bc0d19,
-        VOTE = 0x69710417,
-        VOTE2FPGA = 0x65f59dee,
-        APPENDENTRIES = 0x11f644af,
-        APPENDENTRIES2 = 0x325236f8,
-        DECIDE = 0x1aa37b6f,
+        HEARTBEAT = 0x351f4605,
+        FORWARD = 0x6ff50fe7,
+        VOTE = 0x36ee5519,
+        VOTE2FPGA = 0x68cb51a6,
+        APPENDENTRIES = 0x53698bd8,
+        APPENDENTRIES2 = 0x27a881a8,
+        DECIDE = 0x316f8487,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -3404,16 +3405,16 @@ public:
     }
 
     enum {
-        VOTE = 0x3f87837a,
-        VOTEDURABLE = 0x3f0eaf6f,
-        APPENDENTRIES = 0x2c9361b4,
-        EMPTYAPPENDENTRIES = 0x3929f05a,
-        APPENDENTRIESDURABLE = 0x5dfd9b06,
-        TIMEOUTNOW = 0x5d2311b7,
-        NOTIFYRESTART = 0x6328754e,
-        INSTALLSNAPSHOT = 0x2104d491,
-        ADDSERVER = 0x5aa17f78,
-        REMOVESERVER = 0x4fedb68e,
+        VOTE = 0x462081df,
+        VOTEDURABLE = 0x48f01ea6,
+        APPENDENTRIES = 0x281109b0,
+        EMPTYAPPENDENTRIES = 0x3896dd0b,
+        APPENDENTRIESDURABLE = 0x4cabeafc,
+        TIMEOUTNOW = 0x27392f66,
+        NOTIFYRESTART = 0x4d933c4b,
+        INSTALLSNAPSHOT = 0x608c31fc,
+        ADDSERVER = 0x496cad88,
+        REMOVESERVER = 0x43a0c047,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -4453,11 +4454,11 @@ public:
     }
 
     enum {
-        FORWARD = 0x40890f70,
-        PREPARE = 0x5244e044,
-        FASTACCEPT = 0x46a5798e,
-        ACCEPT = 0x68e54b74,
-        COMMIT = 0x611b68e0,
+        FORWARD = 0x20e76cf9,
+        PREPARE = 0x4a2dc235,
+        FASTACCEPT = 0x4dcca968,
+        ACCEPT = 0x6b34f8f7,
+        COMMIT = 0x2a5203a0,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -5432,117 +5433,6 @@ public:
         return m;
     }
 
-    struct RpcCarouselReadAndPrepareRequest {
-        rrr::i64 tid;
-        MarshallDeputy cmd;
-        bool_t leader;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselReadAndPrepareRequest& o) {
-        m << o.tid;
-        m << o.cmd;
-        m << o.leader;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselReadAndPrepareRequest& o) {
-        m >> o.tid;
-        m >> o.cmd;
-        m >> o.leader;
-        return m;
-    }
-
-    struct RpcCarouselReadAndPrepareResponse {
-        rrr::i32 res;
-        TxnOutput output;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselReadAndPrepareResponse& o) {
-        m << o.res;
-        m << o.output;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselReadAndPrepareResponse& o) {
-        m >> o.res;
-        m >> o.output;
-        return m;
-    }
-
-    struct RpcCarouselAcceptRequest {
-        uint64_t cmd_id;
-        int64_t ballot;
-        int32_t decision;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselAcceptRequest& o) {
-        m << o.cmd_id;
-        m << o.ballot;
-        m << o.decision;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselAcceptRequest& o) {
-        m >> o.cmd_id;
-        m >> o.ballot;
-        m >> o.decision;
-        return m;
-    }
-
-    struct RpcCarouselAcceptResponse {
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselAcceptResponse& o) {
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselAcceptResponse& o) {
-        return m;
-    }
-
-    struct RpcCarouselFastAcceptRequest {
-        uint64_t cmd_id;
-        std::vector<SimpleCommand> txn_cmds;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselFastAcceptRequest& o) {
-        m << o.cmd_id;
-        m << o.txn_cmds;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselFastAcceptRequest& o) {
-        m >> o.cmd_id;
-        m >> o.txn_cmds;
-        return m;
-    }
-
-    struct RpcCarouselFastAcceptResponse {
-        rrr::i32 res;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselFastAcceptResponse& o) {
-        m << o.res;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselFastAcceptResponse& o) {
-        m >> o.res;
-        return m;
-    }
-
-    struct RpcCarouselDecideRequest {
-        uint64_t cmd_id;
-        rrr::i32 commit;
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselDecideRequest& o) {
-        m << o.cmd_id;
-        m << o.commit;
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselDecideRequest& o) {
-        m >> o.cmd_id;
-        m >> o.commit;
-        return m;
-    }
-
-    struct RpcCarouselDecideResponse {
-    };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCarouselDecideResponse& o) {
-        return m;
-    }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCarouselDecideResponse& o) {
-        return m;
-    }
-
     struct RpcRccDispatchRequest {
         std::vector<SimpleCommand> cmd;
     };
@@ -6471,58 +6361,54 @@ public:
     }
 
     enum {
-        MSGSTRING = 0x378dd960,
-        MSGMARSHALL = 0x6ee078a5,
-        REELECT = 0x461e7153,
-        RULESPECULATIVEEXECUTE = 0x57f649b5,
-        DISPATCH = 0x38604250,
-        PREPARE = 0x614f61c9,
-        COMMIT = 0x228c9708,
-        ABORT = 0x16103606,
-        EARLYABORT = 0x332b2087,
-        UPGRADEEPOCH = 0x368a3b32,
-        TRUNCATEEPOCH = 0x539ed42d,
-        ISLEADER = 0x180b4a79,
-        ISFPGALEADER = 0x4be4a2e8,
-        SIMPLECMD = 0x29da7aa1,
-        FAILOVERPAUSESOCKETOUT = 0x6156a3ac,
-        FAILOVERRESUMESOCKETOUT = 0x4f8f9f2e,
-        RPC_NULL = 0x37cbe591,
-        TAPIRACCEPT = 0x48034a0e,
-        TAPIRFASTACCEPT = 0x16270043,
-        TAPIRDECIDE = 0x16ad222d,
-        CAROUSELREADANDPREPARE = 0x43122a9e,
-        CAROUSELACCEPT = 0x3ce05ad7,
-        CAROUSELFASTACCEPT = 0x4af9caf6,
-        CAROUSELDECIDE = 0x13a475cb,
-        RCCDISPATCH = 0x13b83dfb,
-        RCCFINISH = 0x65b7cba9,
-        RCCINQUIRE = 0x4302af87,
-        RCCDISPATCHRO = 0x5c46f058,
-        RCCINQUIREVALIDATION = 0x40fc6b11,
-        RCCNOTIFYGLOBALVALIDATION = 0x4c7fdf62,
-        JANUSDISPATCH = 0x59733bc9,
-        RCCCOMMIT = 0x4d6f6a2e,
-        JANUSCOMMIT = 0x34aba396,
-        JANUSCOMMITWOGRAPH = 0x6fca7a8a,
-        JANUSINQUIRE = 0x396edb62,
-        RCCPREACCEPT = 0x326bac12,
-        JANUSPREACCEPT = 0x5d2166bf,
-        JANUSPREACCEPTWOGRAPH = 0x30f99037,
-        RCCACCEPT = 0x269eb2ab,
-        JANUSACCEPT = 0x54f64e5a,
-        PREACCEPTFEBRUUS = 0x2bfa1e38,
-        ACCEPTFEBRUUS = 0x21867ca3,
-        COMMITFEBRUUS = 0x5615a963,
-        JETPACKBEGINRECOVERY = 0x582fcd62,
-        JETPACKPULLIDSET = 0x26882db9,
-        JETPACKPULLCMD = 0x41127eaa,
-        JETPACKRECORDCMD = 0x5dbbcf91,
-        JETPACKPREPARE = 0x1b957819,
-        JETPACKACCEPT = 0x4b6fc396,
-        JETPACKCOMMIT = 0x3722b90d,
-        JETPACKPULLRECSETINS = 0x6578e960,
-        JETPACKFINISHRECOVERY = 0x43a351b1,
+        MSGSTRING = 0x3bc09be3,
+        MSGMARSHALL = 0x3d52add9,
+        REELECT = 0x181adf0a,
+        RULESPECULATIVEEXECUTE = 0x603e572c,
+        DISPATCH = 0x1950c367,
+        PREPARE = 0x421ecaf7,
+        COMMIT = 0x2a1a699f,
+        ABORT = 0x30cb24cd,
+        EARLYABORT = 0x49e13946,
+        UPGRADEEPOCH = 0x1f3ba98a,
+        TRUNCATEEPOCH = 0x4e95541d,
+        ISLEADER = 0x1cb196dd,
+        ISFPGALEADER = 0x1a68ee65,
+        SIMPLECMD = 0x162bdb4a,
+        FAILOVERPAUSESOCKETOUT = 0x1ebc1f83,
+        FAILOVERRESUMESOCKETOUT = 0x18a6952e,
+        RPC_NULL = 0x481df7e9,
+        TAPIRACCEPT = 0x212f14e3,
+        TAPIRFASTACCEPT = 0x290c5f78,
+        TAPIRDECIDE = 0x6e0f4008,
+        RCCDISPATCH = 0x100cf79c,
+        RCCFINISH = 0x3f58d58b,
+        RCCINQUIRE = 0x5e250b93,
+        RCCDISPATCHRO = 0x43331448,
+        RCCINQUIREVALIDATION = 0x5fc933f7,
+        RCCNOTIFYGLOBALVALIDATION = 0x68bd6af3,
+        JANUSDISPATCH = 0x38b80f5c,
+        RCCCOMMIT = 0x2398961e,
+        JANUSCOMMIT = 0x60c08751,
+        JANUSCOMMITWOGRAPH = 0x4668d0c6,
+        JANUSINQUIRE = 0x53c147de,
+        RCCPREACCEPT = 0x14f872e3,
+        JANUSPREACCEPT = 0x5596b6fe,
+        JANUSPREACCEPTWOGRAPH = 0x58a4d224,
+        RCCACCEPT = 0x15acd37d,
+        JANUSACCEPT = 0x24690ad7,
+        PREACCEPTFEBRUUS = 0x61e25538,
+        ACCEPTFEBRUUS = 0x5744c775,
+        COMMITFEBRUUS = 0x67e6a524,
+        JETPACKBEGINRECOVERY = 0x4bffeb61,
+        JETPACKPULLIDSET = 0x10b97ae0,
+        JETPACKPULLCMD = 0x6ba6ee7d,
+        JETPACKRECORDCMD = 0x458d811b,
+        JETPACKPREPARE = 0x5cb7764b,
+        JETPACKACCEPT = 0x1739a78f,
+        JETPACKCOMMIT = 0x1386adf2,
+        JETPACKPULLRECSETINS = 0x611ebd77,
+        JETPACKFINISHRECOVERY = 0x53830441,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -6586,18 +6472,6 @@ public:
             goto err;
         }
         if ((ret = svr.reg_rpc(TAPIRDECIDE, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(CAROUSELREADANDPREPARE, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(CAROUSELACCEPT, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(CAROUSELFASTACCEPT, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(CAROUSELDECIDE, svc_index)) != 0) {
             goto err;
         }
         if ((ret = svr.reg_rpc(RCCDISPATCH, svc_index)) != 0) {
@@ -6706,10 +6580,6 @@ public:
         svr.unreg(TAPIRACCEPT);
         svr.unreg(TAPIRFASTACCEPT);
         svr.unreg(TAPIRDECIDE);
-        svr.unreg(CAROUSELREADANDPREPARE);
-        svr.unreg(CAROUSELACCEPT);
-        svr.unreg(CAROUSELFASTACCEPT);
-        svr.unreg(CAROUSELDECIDE);
         svr.unreg(RCCDISPATCH);
         svr.unreg(RCCFINISH);
         svr.unreg(RCCINQUIRE);
@@ -6763,10 +6633,6 @@ public:
         case TAPIRACCEPT: __TapirAccept__wrapper__(std::move(req), weak_sconn); break;
         case TAPIRFASTACCEPT: __TapirFastAccept__wrapper__(std::move(req), weak_sconn); break;
         case TAPIRDECIDE: __TapirDecide__wrapper__(std::move(req), weak_sconn); break;
-        case CAROUSELREADANDPREPARE: __CarouselReadAndPrepare__wrapper__(std::move(req), weak_sconn); break;
-        case CAROUSELACCEPT: __CarouselAccept__wrapper__(std::move(req), weak_sconn); break;
-        case CAROUSELFASTACCEPT: __CarouselFastAccept__wrapper__(std::move(req), weak_sconn); break;
-        case CAROUSELDECIDE: __CarouselDecide__wrapper__(std::move(req), weak_sconn); break;
         case RCCDISPATCH: __RccDispatch__wrapper__(std::move(req), weak_sconn); break;
         case RCCFINISH: __RccFinish__wrapper__(std::move(req), weak_sconn); break;
         case RCCINQUIRE: __RccInquire__wrapper__(std::move(req), weak_sconn); break;
@@ -6839,14 +6705,6 @@ public:
     virtual void TapirFastAccept(const RpcTapirFastAcceptRequest& req, RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void TapirDecide(const RpcTapirDecideRequest& req, RpcTapirDecideResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void CarouselReadAndPrepare(const RpcCarouselReadAndPrepareRequest& req, RpcCarouselReadAndPrepareResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void CarouselAccept(const RpcCarouselAcceptRequest& req, RpcCarouselAcceptResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void CarouselFastAccept(const RpcCarouselFastAcceptRequest& req, RpcCarouselFastAcceptResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void CarouselDecide(const RpcCarouselDecideRequest& req, RpcCarouselDecideResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void RccDispatch(const RpcRccDispatchRequest& req, RpcRccDispatchResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
@@ -7261,79 +7119,6 @@ private:
                 },
                 []() {});
             this->TapirDecide(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __CarouselReadAndPrepare__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcCarouselReadAndPrepareRequest __typed_req__;
-            req->m >> __typed_req__.tid;
-            req->m >> __typed_req__.cmd;
-            req->m >> __typed_req__.leader;
-            auto __typed_resp__ = std::make_shared<RpcCarouselReadAndPrepareResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->output;
-                },
-                []() {});
-            this->CarouselReadAndPrepare(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __CarouselAccept__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcCarouselAcceptRequest __typed_req__;
-            req->m >> __typed_req__.cmd_id;
-            req->m >> __typed_req__.ballot;
-            req->m >> __typed_req__.decision;
-            auto __typed_resp__ = std::make_shared<RpcCarouselAcceptResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                },
-                []() {});
-            this->CarouselAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __CarouselFastAccept__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcCarouselFastAcceptRequest __typed_req__;
-            req->m >> __typed_req__.cmd_id;
-            req->m >> __typed_req__.txn_cmds;
-            auto __typed_resp__ = std::make_shared<RpcCarouselFastAcceptResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->res;
-                },
-                []() {});
-            this->CarouselFastAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __CarouselDecide__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcCarouselDecideRequest __typed_req__;
-            req->m >> __typed_req__.cmd_id;
-            req->m >> __typed_req__.commit;
-            auto __typed_resp__ = std::make_shared<RpcCarouselDecideResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                },
-                []() {});
-            this->CarouselDecide(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
@@ -7945,14 +7730,6 @@ public:
     using RpcTapirFastAcceptResponse = ClassicService::RpcTapirFastAcceptResponse;
     using RpcTapirDecideRequest = ClassicService::RpcTapirDecideRequest;
     using RpcTapirDecideResponse = ClassicService::RpcTapirDecideResponse;
-    using RpcCarouselReadAndPrepareRequest = ClassicService::RpcCarouselReadAndPrepareRequest;
-    using RpcCarouselReadAndPrepareResponse = ClassicService::RpcCarouselReadAndPrepareResponse;
-    using RpcCarouselAcceptRequest = ClassicService::RpcCarouselAcceptRequest;
-    using RpcCarouselAcceptResponse = ClassicService::RpcCarouselAcceptResponse;
-    using RpcCarouselFastAcceptRequest = ClassicService::RpcCarouselFastAcceptRequest;
-    using RpcCarouselFastAcceptResponse = ClassicService::RpcCarouselFastAcceptResponse;
-    using RpcCarouselDecideRequest = ClassicService::RpcCarouselDecideRequest;
-    using RpcCarouselDecideResponse = ClassicService::RpcCarouselDecideResponse;
     using RpcRccDispatchRequest = ClassicService::RpcRccDispatchRequest;
     using RpcRccDispatchResponse = ClassicService::RpcRccDispatchResponse;
     using RpcRccFinishRequest = ClassicService::RpcRccFinishRequest;
@@ -9003,207 +8780,6 @@ public:
         auto __typed_fu_result__ = this->async_TapirDecide(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcTapirDecideResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class CarouselReadAndPrepareTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit CarouselReadAndPrepareTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcCarouselReadAndPrepareResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcCarouselReadAndPrepareResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcCarouselReadAndPrepareResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.res;
-            __fu__->get_reply() >> __typed_resp__.output;
-            return rusty::Result<RpcCarouselReadAndPrepareResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<CarouselReadAndPrepareTypedFuture, rrr::i32> async_CarouselReadAndPrepare(const RpcCarouselReadAndPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::CAROUSELREADANDPREPARE, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << req.tid;
-            __m__ << req.cmd;
-            __m__ << req.leader;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<CarouselReadAndPrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<CarouselReadAndPrepareTypedFuture, rrr::i32>::Ok(CarouselReadAndPrepareTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<CarouselReadAndPrepareTypedFuture> await_CarouselReadAndPrepare(const RpcCarouselReadAndPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_CarouselReadAndPrepare(req, __fu_attr__));
-    }
-    rusty::Result<RpcCarouselReadAndPrepareResponse, rrr::i32> CarouselReadAndPrepare(const RpcCarouselReadAndPrepareRequest& req) {
-        auto __typed_fu_result__ = this->async_CarouselReadAndPrepare(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcCarouselReadAndPrepareResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class CarouselAcceptTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit CarouselAcceptTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcCarouselAcceptResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcCarouselAcceptResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcCarouselAcceptResponse __typed_resp__;
-            return rusty::Result<RpcCarouselAcceptResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<CarouselAcceptTypedFuture, rrr::i32> async_CarouselAccept(const RpcCarouselAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::CAROUSELACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << req.cmd_id;
-            __m__ << req.ballot;
-            __m__ << req.decision;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<CarouselAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<CarouselAcceptTypedFuture, rrr::i32>::Ok(CarouselAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<CarouselAcceptTypedFuture> await_CarouselAccept(const RpcCarouselAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_CarouselAccept(req, __fu_attr__));
-    }
-    rusty::Result<RpcCarouselAcceptResponse, rrr::i32> CarouselAccept(const RpcCarouselAcceptRequest& req) {
-        auto __typed_fu_result__ = this->async_CarouselAccept(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcCarouselAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class CarouselFastAcceptTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit CarouselFastAcceptTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcCarouselFastAcceptResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcCarouselFastAcceptResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcCarouselFastAcceptResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.res;
-            return rusty::Result<RpcCarouselFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<CarouselFastAcceptTypedFuture, rrr::i32> async_CarouselFastAccept(const RpcCarouselFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::CAROUSELFASTACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << req.cmd_id;
-            __m__ << req.txn_cmds;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<CarouselFastAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<CarouselFastAcceptTypedFuture, rrr::i32>::Ok(CarouselFastAcceptTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<CarouselFastAcceptTypedFuture> await_CarouselFastAccept(const RpcCarouselFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_CarouselFastAccept(req, __fu_attr__));
-    }
-    rusty::Result<RpcCarouselFastAcceptResponse, rrr::i32> CarouselFastAccept(const RpcCarouselFastAcceptRequest& req) {
-        auto __typed_fu_result__ = this->async_CarouselFastAccept(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcCarouselFastAcceptResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class CarouselDecideTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit CarouselDecideTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcCarouselDecideResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcCarouselDecideResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcCarouselDecideResponse __typed_resp__;
-            return rusty::Result<RpcCarouselDecideResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<CarouselDecideTypedFuture, rrr::i32> async_CarouselDecide(const RpcCarouselDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::CAROUSELDECIDE, __fu_attr__, [&](rrr::Marshal& __m__) {
-            __m__ << req.cmd_id;
-            __m__ << req.commit;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<CarouselDecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<CarouselDecideTypedFuture, rrr::i32>::Ok(CarouselDecideTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<CarouselDecideTypedFuture> await_CarouselDecide(const RpcCarouselDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_CarouselDecide(req, __fu_attr__));
-    }
-    rusty::Result<RpcCarouselDecideResponse, rrr::i32> CarouselDecide(const RpcCarouselDecideRequest& req) {
-        auto __typed_fu_result__ = this->async_CarouselDecide(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcCarouselDecideResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
@@ -10748,10 +10324,10 @@ public:
     }
 
     enum {
-        SERVER_SHUTDOWN = 0x6610639d,
-        SERVER_READY = 0x28176845,
-        SERVER_HEART_BEAT_WITH_DATA = 0x674723c6,
-        SERVER_HEART_BEAT = 0x2043a469,
+        SERVER_SHUTDOWN = 0x4cb2393e,
+        SERVER_READY = 0x6877de72,
+        SERVER_HEART_BEAT_WITH_DATA = 0x346df440,
+        SERVER_HEART_BEAT = 0x211817c0,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -11238,14 +10814,14 @@ public:
     }
 
     enum {
-        CLIENT_GET_TXN_NAMES = 0x2e542e1b,
-        CLIENT_SHUTDOWN = 0x5759b290,
-        CLIENT_FORCE_STOP = 0x372b1bf8,
-        CLIENT_RESPONSE = 0x4b2f38c9,
-        CLIENT_READY = 0x56dc49dc,
-        CLIENT_READY_BLOCK = 0x2276d050,
-        CLIENT_START = 0x1d219a51,
-        DISPATCHTXN = 0x68faa557,
+        CLIENT_GET_TXN_NAMES = 0x138c70e4,
+        CLIENT_SHUTDOWN = 0x39485192,
+        CLIENT_FORCE_STOP = 0x49288d97,
+        CLIENT_RESPONSE = 0x32682831,
+        CLIENT_READY = 0x13f8b2f8,
+        CLIENT_READY_BLOCK = 0x6a090932,
+        CLIENT_START = 0x267dfd28,
+        DISPATCHTXN = 0x51c531a4,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -12029,13 +11605,13 @@ public:
     }
 
     enum {
-        GETCONFIG = 0x3bf945a3,
-        GETCONFIGVERSION = 0x5a1d4133,
-        HASCONFIG = 0x4c7f2f51,
-        SETSHARDINGPOLICY = 0x50747658,
-        GETSHARDINGPOLICY = 0x49043081,
-        GETSHARDINGPOLICYVERSION = 0x326f7a8d,
-        HASSHARDINGPOLICY = 0x52327670,
+        GETCONFIG = 0x1ec6ee4c,
+        GETCONFIGVERSION = 0x659c96b2,
+        HASCONFIG = 0x10193e8b,
+        SETSHARDINGPOLICY = 0x2774f3a1,
+        GETSHARDINGPOLICY = 0x6c88d4b3,
+        GETSHARDINGPOLICYVERSION = 0x484b4a33,
+        HASSHARDINGPOLICY = 0x6de17b84,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -12591,4 +12167,6 @@ public:
 };
 
 } // namespace janus
+
+
 

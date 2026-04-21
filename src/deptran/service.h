@@ -126,16 +126,6 @@ class ClassicServiceImpl : public ClassicService {
                    const rrr::i32& decision,
                    rrr::DeferredReply done);
 
-  void CarouselReadAndPrepare(const i64& cmd_id, const MarshallDeputy& cmd,
-      const bool_t& leader, int32_t* res, TxnOutput* output,
-      rrr::DeferredReply done);
-  void CarouselAccept(const txid_t& cmd_id, const ballot_t& ballot,
-      const int32_t& decision, rrr::DeferredReply done);
-  void CarouselFastAccept(const txid_t& cmd_id, const vector<SimpleCommand>& txn_cmds,
-      rrr::i32* res, rrr::DeferredReply done);
-  void CarouselDecide(
-      const txid_t& cmd_id, const rrr::i32& decision, rrr::DeferredReply done);
-
   void MsgString(const string& arg,
                  string* ret,
                  rrr::DeferredReply done);
@@ -385,10 +375,6 @@ class ClassicServiceImpl : public ClassicService {
   void TapirAccept(const ClassicService::RpcTapirAcceptRequest& req, ClassicService::RpcTapirAcceptResponse& resp, rrr::DeferredReply defer) override;
   void TapirFastAccept(const ClassicService::RpcTapirFastAcceptRequest& req, ClassicService::RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) override;
   void TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselReadAndPrepare(const ClassicService::RpcCarouselReadAndPrepareRequest& req, ClassicService::RpcCarouselReadAndPrepareResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselAccept(const ClassicService::RpcCarouselAcceptRequest& req, ClassicService::RpcCarouselAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselFastAccept(const ClassicService::RpcCarouselFastAcceptRequest& req, ClassicService::RpcCarouselFastAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselDecide(const ClassicService::RpcCarouselDecideRequest& req, ClassicService::RpcCarouselDecideResponse& resp, rrr::DeferredReply defer) override;
   void RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) override;
   void RccFinish(const ClassicService::RpcRccFinishRequest& req, ClassicService::RpcRccFinishResponse& resp, rrr::DeferredReply defer) override;
   void RccInquire(const ClassicService::RpcRccInquireRequest& req, ClassicService::RpcRccInquireResponse& resp, rrr::DeferredReply defer) override;

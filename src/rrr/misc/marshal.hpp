@@ -276,7 +276,6 @@ class MarshallDeputy {
       CMD_TPC_EMPTY=14,
       CMD_NOOP=15,
       CMD_TPC_BATCH=16,
-      CMD_TPC_PREPARE_CAROUSEL=17,
       CMD_MULTI_STRING=18,
       CMD_REC_VEC=19,
       CMD_VIEW_DATA=20,

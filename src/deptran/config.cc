@@ -547,9 +547,6 @@ void Config::LoadModeYML(YAML::Node config) {
       verify(0);
     }
   }
-  if (config["carousel_basic_mode"]) {
-    carousel_basic_mode_ = config["carousel_basic_mode"].as<bool>();
-  }
   if (config["jetpack_recovery_batch_size"]) {
     jetpack_recovery_batch_size_ = config["jetpack_recovery_batch_size"].as<int>();
   }

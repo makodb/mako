@@ -91,8 +91,6 @@ class Config {
   uint32_t sid_;
   uint32_t cid_;
 
-  // carousel mode choice
-  bool carousel_basic_mode_ = false;
 
   // Jetpack fast path mode
   int jetpack_fastpath_attempt_rate_ = 0;
@@ -278,7 +276,6 @@ class Config {
   int32_t get_failover_srv_idx() { return failover_srv_idx_; }
   bool get_failover_random() { return failover_random_; }
   bool get_failover_leader() { return failover_leader_; }
-  bool carousel_basic_mode() { return carousel_basic_mode_; }
 
   const char *log_path();
 

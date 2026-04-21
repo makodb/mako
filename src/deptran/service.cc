@@ -1,7 +1,6 @@
 #include "__dep__.h"
 #include "benchmark_control_rpc.h"
 #include "stats_registry.h"
-#include "carousel/scheduler.h"
 #include "classic/scheduler.h"
 #include "classic/tpc_command.h"
 #include "classic/tx.h"
@@ -99,24 +98,6 @@ void ClassicServiceImpl::TapirFastAccept(const ClassicService::RpcTapirFastAccep
 void ClassicServiceImpl::TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, rrr::DeferredReply defer) {
   (void)resp;
   this->TapirDecide(req.cmd_id, req.commit, std::move(defer));
-}
-
-void ClassicServiceImpl::CarouselReadAndPrepare(const ClassicService::RpcCarouselReadAndPrepareRequest& req, ClassicService::RpcCarouselReadAndPrepareResponse& resp, rrr::DeferredReply defer) {
-  this->CarouselReadAndPrepare(req.tid, req.cmd, req.leader, &resp.res, &resp.output, std::move(defer));
-}
-
-void ClassicServiceImpl::CarouselAccept(const ClassicService::RpcCarouselAcceptRequest& req, ClassicService::RpcCarouselAcceptResponse& resp, rrr::DeferredReply defer) {
-  (void)resp;
-  this->CarouselAccept(req.cmd_id, req.ballot, req.decision, std::move(defer));
-}
-
-void ClassicServiceImpl::CarouselFastAccept(const ClassicService::RpcCarouselFastAcceptRequest& req, ClassicService::RpcCarouselFastAcceptResponse& resp, rrr::DeferredReply defer) {
-  this->CarouselFastAccept(req.cmd_id, req.txn_cmds, &resp.res, std::move(defer));
-}
-
-void ClassicServiceImpl::CarouselDecide(const ClassicService::RpcCarouselDecideRequest& req, ClassicService::RpcCarouselDecideResponse& resp, rrr::DeferredReply defer) {
-  (void)resp;
-  this->CarouselDecide(req.cmd_id, req.commit, std::move(defer));
 }
 
 void ClassicServiceImpl::RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) {
@@ -628,57 +609,6 @@ void ClassicServiceImpl::TapirDecide(const cmdid_t& cmd_id,
                                      const rrr::i32& decision,
                                      rrr::DeferredReply defer) {
   SchedulerTapir* sched = (SchedulerTapir*) dtxn_sched_;
-  sched->OnDecide(cmd_id, decision, [defer = std::move(defer)]() mutable { defer.reply(); });
-}
-
-void ClassicServiceImpl::CarouselReadAndPrepare(const i64& cmd_id,
-    const MarshallDeputy& md, const bool_t& leader, int32_t* res, TxnOutput* output,
-    rrr::DeferredReply defer) {
-  // TODO: yidawu
-  shared_ptr<Marshallable> sp = md.inner();
-  *res = SUCCESS;
-  auto sched = (SchedulerCarousel*)dtxn_sched();
-	DepId di;
-	di.str = "dep";
-	di.id = 0;
-  *res = sched->Dispatch(cmd_id, di, sp, *output);
-  if (*res == SUCCESS) {
-    std::vector<i32> sids;
-    if (leader) {
-      *res = sched->OnPrepare(cmd_id) ? SUCCESS : REJECT;
-    } else {
-      // Followers try to do prepare directly.
-      bool ret = sched->DoPrepare(cmd_id);
-      if (!ret) {
-        Fiber::create_run([res, defer = std::move(defer), cmd_id, sids, sched, this]() mutable {
-          auto sp_tx = dynamic_pointer_cast<TxClassic>(sched->GetOrCreateTx(cmd_id));
-          sp_tx->prepare_result->wait();
-          bool ret2 = sp_tx->prepare_result->get();
-          *res = ret2 ? SUCCESS : REJECT;
-          defer.reply();
-        });
-        return;
-      }
-    }
-  }
-  defer.reply();
-}
-
-void ClassicServiceImpl::CarouselAccept(const cmdid_t& cmd_id, const ballot_t& ballot,
-    const int32_t& decision, rrr::DeferredReply defer) {
-  verify(0);
-}
-
-void ClassicServiceImpl::CarouselFastAccept(const txid_t& tx_id,
-    const vector<SimpleCommand>& txn_cmds, rrr::i32* res, rrr::DeferredReply defer) {
-  /*SchedulerCarousel* sched = (SchedulerCarousel*) dtxn_sched_;
-  *res = sched->OnFastAccept(tx_id, txn_cmds);
-  defer.reply();*/
-}
-
-void ClassicServiceImpl::CarouselDecide(
-    const cmdid_t& cmd_id, const rrr::i32& decision, rrr::DeferredReply defer) {
-  SchedulerCarousel* sched = (SchedulerCarousel*)dtxn_sched_;
   sched->OnDecide(cmd_id, decision, [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
