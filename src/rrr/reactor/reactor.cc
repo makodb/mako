@@ -172,7 +172,7 @@ void Fiber::sleep(uint64_t microseconds) {
  *
  * POSTCONDITIONS:
  * - Returns valid Rc<Reactor> pinned to current thread
- * - Reactor's thread_id_ matches std::this_thread::get_id()
+ * - Reactor's thread_id_ matches rusty::thread::current_id()
  */
 rusty::Rc<Reactor>
 Reactor::get_reactor() {
@@ -183,7 +183,7 @@ Reactor::get_reactor() {
     if (!REUSING_FIBER)
       Log_warn("reusing fiber not enabled!");
     sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
-    (*sp_reactor_th_.as_ref().unwrap()).thread_id_.set(std::this_thread::get_id());
+    (*sp_reactor_th_.as_ref().unwrap()).thread_id_.set(rusty::thread::current_id());
   }
   return sp_reactor_th_.as_ref().unwrap().clone();
   }
@@ -194,7 +194,7 @@ Reactor::get_disk_reactor() {
   if (sp_disk_reactor_th_.is_none()) {
     Log_debug("create a disk fiber scheduler");
     sp_disk_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
-    (*sp_disk_reactor_th_.as_ref().unwrap()).thread_id_.set(std::this_thread::get_id());
+    (*sp_disk_reactor_th_.as_ref().unwrap()).thread_id_.set(rusty::thread::current_id());
   }
   return sp_disk_reactor_th_.as_ref().unwrap().clone();
 }
@@ -515,7 +515,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
 
 // @unsafe - rusty-cpp false positive: found_ready_events IS initialized inside do-while loop
 void Reactor::loop(bool infinite, bool do_check_timeout) const {
-  verify(std::this_thread::get_id() == thread_id_.get());
+  verify(rusty::thread::current_id() == thread_id_.get());
 
   looping_.set(infinite);
 
@@ -697,7 +697,7 @@ void Reactor::display_waiting_ev() const {
 
 // @unsafe - Spawn a stackless task and schedule first poll on this reactor.
 void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
-  verify(std::this_thread::get_id() == thread_id_.get());
+  verify(rusty::thread::current_id() == thread_id_.get());
   constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
   struct EarlyWakeState {
     explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
@@ -1046,8 +1046,8 @@ rusty::Arc<PollThread> PollThread::create() {
   // Spawn thread - worker owns the receiver
   auto handle = rusty::thread::spawn(
     [thread_id_ptr](rusty::sync::mpsc::Receiver<PollCommand> rx) {
-      auto tid = std::this_thread::get_id();
-      thread_id_ptr->store(tid, std::memory_order_release);
+      auto tid = rusty::thread::current_id();
+      thread_id_ptr->store(tid.as_std(), std::memory_order_release);
       // Create worker wrapped in Rc<RefCell<>>
       auto worker = PollThreadWorker::create(std::move(rx));
       // Store raw pointer in TLS for direct access from same thread
@@ -1091,9 +1091,9 @@ void PollThread::shutdown() const {
   Log_debug("[PollThread::shutdown] CmdShutdown sent");
 
   // Check if we're on the poll thread (atomic load for thread-safe read)
-  auto current_tid = std::this_thread::get_id();
+  auto current_tid = rusty::thread::current_id();
   auto poll_tid = poll_thread_id_.load(std::memory_order_acquire);
-  if (current_tid == poll_tid) {
+  if (current_tid.as_std() == poll_tid) {
     Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
     return;
   }

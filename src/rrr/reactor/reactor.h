@@ -178,7 +178,7 @@ class Reactor {
   rusty::Cell<bool> slow_{false};
   rusty::Cell<int> slow_count_{0};
   rusty::Cell<int> trying_count_{0};
-  rusty::Cell<std::thread::id> thread_id_{};
+  rusty::Cell<rusty::thread::ThreadId> thread_id_{};
   // Jetpack fiber counters - using Cell for interior mutability
   rusty::Cell<int64_t> n_created_fibers_{0};
   rusty::Cell<int64_t> n_busy_fibers_{0};
@@ -529,6 +529,7 @@ private:
 
     // Thread ID of the poll thread - used to detect self-join attempts
     // std::atomic for safe cross-thread access (set by spawned thread, read by shutdown())
+    // Stored as std::thread::id (atomic-friendly TriviallyCopyable); compared via rusty::thread::current_id().as_std()
     mutable std::atomic<std::thread::id> poll_thread_id_{};
 
     // Track if shutdown was called

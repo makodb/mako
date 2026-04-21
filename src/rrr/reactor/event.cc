@@ -43,7 +43,7 @@ bool Event::is_slow() {
 // //  verify(__debug_creator); // if this fails, the event is not created by reactor.
 
 //   verify(Reactor::sp_reactor_th_);
-//   verify(Reactor::sp_reactor_th_->thread_id_ == std::this_thread::get_id());
+//   verify(Reactor::sp_reactor_th_->thread_id_ == rusty::thread::current_id());
 //   if (IsReady()) {
 //     status_ = DONE; // does not need to wait.
 //     return;
@@ -68,7 +68,7 @@ bool Event::is_slow() {
 void Event::wait(uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_.is_some());
-  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == std::this_thread::get_id());
+  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
   if (status_.get() == DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_.get() == INIT);
   if (is_ready()) {
