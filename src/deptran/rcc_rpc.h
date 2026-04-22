@@ -3482,25 +3482,25 @@ public:
     }
     // typed service signatures
     // @safe
-    virtual void Vote(const RpcVoteRequest& req, RpcVoteResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcVoteResponse, rrr::i32> Vote(const RpcVoteRequest& req) = 0;
     // @safe
-    virtual void VoteDurable(const RpcVoteDurableRequest& req, RpcVoteDurableResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcVoteDurableResponse, rrr::i32> VoteDurable(const RpcVoteDurableRequest& req) = 0;
     // @safe
-    virtual void AppendEntries(const RpcAppendEntriesRequest& req, RpcAppendEntriesResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcAppendEntriesResponse, rrr::i32> AppendEntries(const RpcAppendEntriesRequest& req) = 0;
     // @safe
-    virtual void EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req, RpcEmptyAppendEntriesResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) = 0;
     // @safe
-    virtual void AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req, RpcAppendEntriesDurableResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32> AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) = 0;
     // @safe
-    virtual void TimeoutNow(const RpcTimeoutNowRequest& req, RpcTimeoutNowResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcTimeoutNowResponse, rrr::i32> TimeoutNow(const RpcTimeoutNowRequest& req) = 0;
     // @safe
-    virtual void NotifyRestart(const RpcNotifyRestartRequest& req, RpcNotifyRestartResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcNotifyRestartResponse, rrr::i32> NotifyRestart(const RpcNotifyRestartRequest& req) = 0;
     // @safe
-    virtual void InstallSnapshot(const RpcInstallSnapshotRequest& req, RpcInstallSnapshotResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcInstallSnapshotResponse, rrr::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) = 0;
     // @safe
-    virtual void AddServer(const RpcAddServerRequest& req, RpcAddServerResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcAddServerResponse, rrr::i32> AddServer(const RpcAddServerRequest& req) = 0;
     // @safe
-    virtual void RemoveServer(const RpcRemoveServerRequest& req, RpcRemoveServerResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual rusty::Result<RpcRemoveServerResponse, rrr::i32> RemoveServer(const RpcRemoveServerRequest& req) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
@@ -3513,16 +3513,25 @@ private:
             req->m >> __typed_req__.lst_log_term;
             req->m >> __typed_req__.site_id;
             req->m >> __typed_req__.cur_term;
-            auto __typed_resp__ = std::make_shared<RpcVoteResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->vote_granted;
-                },
-                []() {});
-            this->Vote(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->Vote(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.max_ballot;
+                            m << __typed_resp__.vote_granted;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3532,15 +3541,24 @@ private:
             RpcVoteDurableRequest __typed_req__;
             req->m >> __typed_req__.term;
             req->m >> __typed_req__.voter_id;
-            auto __typed_resp__ = std::make_shared<RpcVoteDurableResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->acknowledged;
-                },
-                []() {});
-            this->VoteDurable(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->VoteDurable(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.acknowledged;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3557,18 +3575,27 @@ private:
             req->m >> __typed_req__.leaderCommitIndex;
             req->m >> __typed_req__.cmd;
             req->m >> __typed_req__.leaderNextLogTerm;
-            auto __typed_resp__ = std::make_shared<RpcAppendEntriesResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->followerAppendOK;
-                    m << __typed_resp__->followerCurrentTerm;
-                    m << __typed_resp__->followerLastLogIndex;
-                    m << __typed_resp__->followerAckType;
-                },
-                []() {});
-            this->AppendEntries(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->AppendEntries(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.followerAppendOK;
+                            m << __typed_resp__.followerCurrentTerm;
+                            m << __typed_resp__.followerLastLogIndex;
+                            m << __typed_resp__.followerAckType;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3584,18 +3611,27 @@ private:
             req->m >> __typed_req__.leaderPrevLogTerm;
             req->m >> __typed_req__.leaderCommitIndex;
             req->m >> __typed_req__.trigger_election_now;
-            auto __typed_resp__ = std::make_shared<RpcEmptyAppendEntriesResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->followerAppendOK;
-                    m << __typed_resp__->followerCurrentTerm;
-                    m << __typed_resp__->followerLastLogIndex;
-                    m << __typed_resp__->followerAckType;
-                },
-                []() {});
-            this->EmptyAppendEntries(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->EmptyAppendEntries(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.followerAppendOK;
+                            m << __typed_resp__.followerCurrentTerm;
+                            m << __typed_resp__.followerLastLogIndex;
+                            m << __typed_resp__.followerAckType;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3606,15 +3642,24 @@ private:
             req->m >> __typed_req__.term;
             req->m >> __typed_req__.follower_id;
             req->m >> __typed_req__.lastLogIndex;
-            auto __typed_resp__ = std::make_shared<RpcAppendEntriesDurableResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->acknowledged;
-                },
-                []() {});
-            this->AppendEntriesDurable(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->AppendEntriesDurable(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.acknowledged;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3624,16 +3669,25 @@ private:
             RpcTimeoutNowRequest __typed_req__;
             req->m >> __typed_req__.leaderTerm;
             req->m >> __typed_req__.leaderSiteId;
-            auto __typed_resp__ = std::make_shared<RpcTimeoutNowResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->followerTerm;
-                    m << __typed_resp__->success;
-                },
-                []() {});
-            this->TimeoutNow(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->TimeoutNow(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.followerTerm;
+                            m << __typed_resp__.success;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3642,15 +3696,24 @@ private:
         {
             RpcNotifyRestartRequest __typed_req__;
             req->m >> __typed_req__.restartedSiteId;
-            auto __typed_resp__ = std::make_shared<RpcNotifyRestartResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->acknowledged;
-                },
-                []() {});
-            this->NotifyRestart(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->NotifyRestart(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.acknowledged;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3663,15 +3726,24 @@ private:
             req->m >> __typed_req__.last_included_index;
             req->m >> __typed_req__.last_included_term;
             req->m >> __typed_req__.data;
-            auto __typed_resp__ = std::make_shared<RpcInstallSnapshotResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->term_out;
-                },
-                []() {});
-            this->InstallSnapshot(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->InstallSnapshot(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.term_out;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3682,17 +3754,26 @@ private:
             req->m >> __typed_req__.term;
             req->m >> __typed_req__.new_server_id;
             req->m >> __typed_req__.new_server_addr;
-            auto __typed_resp__ = std::make_shared<RpcAddServerResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->success;
-                    m << __typed_resp__->error_msg;
-                    m << __typed_resp__->leader_hint;
-                },
-                []() {});
-            this->AddServer(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->AddServer(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.success;
+                            m << __typed_resp__.error_msg;
+                            m << __typed_resp__.leader_hint;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
     // @safe
@@ -3702,17 +3783,26 @@ private:
             RpcRemoveServerRequest __typed_req__;
             req->m >> __typed_req__.term;
             req->m >> __typed_req__.server_id;
-            auto __typed_resp__ = std::make_shared<RpcRemoveServerResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
-                    m << __typed_resp__->success;
-                    m << __typed_resp__->error_msg;
-                    m << __typed_resp__->leader_hint;
-                },
-                []() {});
-            this->RemoveServer(__typed_req__, *__typed_resp__, std::move(__defer__));
+            auto __fiber_req__ = std::move(req);
+            auto __fiber_weak_sconn__ = weak_sconn;
+            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
+                auto __typed_result__ = this->RemoveServer(__typed_req__);
+                auto sconn_opt = __fiber_weak_sconn__.upgrade();
+                if (sconn_opt.is_some()) {
+                    auto sconn = sconn_opt.unwrap();
+                    if (__typed_result__.is_err()) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                    } else {
+                        auto __typed_resp__ = __typed_result__.unwrap();
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                            m << __typed_resp__.success;
+                            m << __typed_resp__.error_msg;
+                            m << __typed_resp__.leader_hint;
+                        });
+                    }
+                }
+            });
+            (void)__fiber__;
         }
     }
 };

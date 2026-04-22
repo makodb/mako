@@ -130,7 +130,7 @@ abstract service FpgaRaft {
 
 abstract service Raft {
 
-  defer Vote(uint64_t lst_log_idx,
+  fiber Vote(uint64_t lst_log_idx,
                 ballot_t lst_log_term,
                 siteid_t site_id,
                 ballot_t cur_term|
@@ -139,11 +139,11 @@ abstract service Raft {
 
   // VoteDurable - Sent by follower AFTER vote is persisted to disk
   // Enables speculative voting: leader knows when vote is durable
-  defer VoteDurable(ballot_t term,
+  fiber VoteDurable(ballot_t term,
                     siteid_t voter_id |
                     bool_t acknowledged );
 
-  defer AppendEntries(uint64_t slot,
+  fiber AppendEntries(uint64_t slot,
                       ballot_t ballot,
                       uint64_t leaderCurrentTerm,
                       siteid_t leaderSiteId,
@@ -157,7 +157,7 @@ abstract service Raft {
                       uint64_t followerLastLogIndex,
                       uint64_t followerAckType);
 
-  defer EmptyAppendEntries(uint64_t slot,
+  fiber EmptyAppendEntries(uint64_t slot,
                            ballot_t ballot,
                            uint64_t leaderCurrentTerm,
                            siteid_t leaderSiteId,
@@ -172,24 +172,24 @@ abstract service Raft {
 
   // AppendEntriesDurable - Sent by follower AFTER log entries are persisted to disk
   // Enables speculative commits: leader tracks memory vs durable acknowledgments
-  defer AppendEntriesDurable(ballot_t term,
+  fiber AppendEntriesDurable(ballot_t term,
                              siteid_t follower_id,
                              uint64_t lastLogIndex |
                              bool_t acknowledged);
 
-  defer TimeoutNow(uint64_t leaderTerm,
+  fiber TimeoutNow(uint64_t leaderTerm,
                    siteid_t leaderSiteId |
                    uint64_t followerTerm,
                    bool_t success);
 
   // NotifyRestart - Sent by a server after it restarts to tell other servers
   // to reconnect their client connections to it
-  defer NotifyRestart(siteid_t restartedSiteId |
+  fiber NotifyRestart(siteid_t restartedSiteId |
                       bool_t acknowledged);
 
   // InstallSnapshot - Sent by leader to follower that is too far behind
   // Transfers the full snapshot in one RPC (no chunking)
-  defer InstallSnapshot(uint64_t term,
+  fiber InstallSnapshot(uint64_t term,
                         uint64_t leader_id,
                         uint64_t last_included_index,
                         uint64_t last_included_term,
@@ -197,10 +197,10 @@ abstract service Raft {
                         uint64_t term_out);
 
   // Membership changes - single-server protocol
-  defer AddServer(uint64_t term, uint64_t new_server_id, string new_server_addr |
+  fiber AddServer(uint64_t term, uint64_t new_server_id, string new_server_addr |
                   bool_t success, string error_msg, uint64_t leader_hint);
 
-  defer RemoveServer(uint64_t term, uint64_t server_id |
+  fiber RemoveServer(uint64_t term, uint64_t server_id |
                      bool_t success, string error_msg, uint64_t leader_hint);
 
 }
