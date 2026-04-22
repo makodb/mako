@@ -912,6 +912,7 @@ list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/raft_lab_standalone.cc")
 
 # Collect benchmark source files (compiled separately from deptran core)
 file(GLOB_RECURSE TXLOG_BENCH_SRC
@@ -2089,6 +2090,12 @@ if(BUILD_TESTS)
     target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
+
+    add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)
+    target_include_directories(raft_lab_standalone PRIVATE ${TEST_INCLUDE_DIRS})
+    target_compile_options(raft_lab_standalone PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
     # PollThread proxy-backed storage guard tests (Phase 1 leaf 2)
     add_executable(test_rpc_pollthread_proxy_storage test/rpc_pollthread_proxy_storage_test.cc)

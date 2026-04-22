@@ -344,17 +344,33 @@ src/deptran/raft/
 
 Phases completed will be checked off as commits land.
 
-- [x] Phase 0 — `messages.hpp`               (f4356b6c1)
-- [x] Phase 1 — `TransportProxy`             (ef79abcd1)
-- [~] Phase 2 — `RrrTransport` adapter (MVP: fire-and-forget RPCs;
-      quorum-returning RPCs stubbed with `verify(0)` pending Phase 2.5
-      RaftCommo callback-shape refactor)
-- [ ] Phase 2.5 — Refactor `RaftCommo::Send{AppendEntries,
-      EmptyAppendEntries, InstallSnapshot}` and `BroadcastVote` to take
-      `rusty::Function` callbacks directly, so the adapter can implement
-      the remaining 4 facade methods instead of `verify(0)`.
-- [ ] Phase 3 — `DispatcherProxy` + rrr shim
-- [ ] Phase 4 — `ChannelTransport` + `Switchboard`
-- [ ] Phase 5 — `SnapshotManagerProxy` + `MemorySnapshotManager`
-- [ ] Phase 6 — `RaftNode` + `TestCluster`
-- [ ] Phase 7 — `raft_lab_standalone`
+- [x] Phase 0 — `messages.hpp`                             (f4356b6c1)
+- [x] Phase 1 — `TransportProxy`                           (ef79abcd1)
+- [x] Phase 2 — `RrrTransport` adapter (fire-and-forget)   (668d2ba84)
+- [x] Phase 2.5 — callback-shaped quorum RPCs on RaftCommo +
+      full RrrTransportAdapter                            (6cf3dfd21)
+- [x] Phase 3 — `DispatcherProxy` facade                   (4c6a1b102)
+- [x] Phase 4 — `ChannelTransport` + `Switchboard`         (2b39593bf)
+- [x] Phase 5 — `MemorySnapshotManager`                    (b97aff1e6)
+- [x] Phase 6 — `RaftNode` + `TestCluster` (skeleton)      (b288a2bca)
+- [x] Phase 7 — `raft_lab_standalone` (skeleton)
+
+### Remaining follow-ups (deferred)
+
+- [ ] Phase 3.5 — wire `RaftServiceImpl` to call through
+      `DispatcherProxy` (swap `rrr::DeferredReply` for the callback
+      shape). Currently the proxy is compile-verified but unused by
+      production handlers.
+- [ ] Phase 5.5 — retire the virtual `LogStorage` /
+      `SnapshotManager` interfaces in favor of `LogStorageProxy` /
+      `SnapshotManagerProxy` facades. Requires threading the proxy
+      types through `server.cc` where both are currently referenced
+      by virtual pointer.
+- [ ] Phase 6.5 — replace `DummyDispatcher` inside `RaftNode` with a
+      real `RaftServer`-backed dispatcher. Requires first decoupling
+      `RaftServer` from `rrr::PollThread` / `rrr::Fiber` (the outbound
+      transport abstraction is done; the fiber/timer abstraction is
+      Phase 8).
+- [ ] Phase 7.5 — port `RaftLabTest::Run()` to drive `TestCluster`
+      once Phase 6.5 is in. Today `raft_lab_standalone` only exercises
+      the transport + fault plumbing.
