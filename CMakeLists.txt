@@ -2054,6 +2054,12 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_messages COMMAND test_raft_messages)
 
+    add_executable(test_raft_transport_facade test/raft_transport_facade_test.cc)
+    target_include_directories(test_raft_transport_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_raft_transport_facade PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    add_test(NAME test_raft_transport_facade COMMAND test_raft_transport_facade)
+
     # PollThread proxy-backed storage guard tests (Phase 1 leaf 2)
     add_executable(test_rpc_pollthread_proxy_storage test/rpc_pollthread_proxy_storage_test.cc)
     target_include_directories(test_rpc_pollthread_proxy_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
