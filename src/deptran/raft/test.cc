@@ -1975,7 +1975,12 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     Log_info("TEST 19: Isolating leader S3 (%d) by killing all others", leader2);
 
     // Kill using explicit server IDs we tracked, not getServerIdByIndex
-    std::vector<siteid_t> all_servers = {leader1, follower_s2, killed1, killed2, killed3};
+    std::vector<siteid_t> all_servers = {
+        static_cast<siteid_t>(leader1),
+        static_cast<siteid_t>(follower_s2),
+        static_cast<siteid_t>(killed1),
+        static_cast<siteid_t>(killed2),
+        static_cast<siteid_t>(killed3)};
     std::vector<siteid_t> killed_in_step7;
     for (siteid_t svr : all_servers) {
       if (svr != leader2) {

@@ -9,6 +9,8 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/option.hpp>
+#include <rusty/rc.hpp>
 
 namespace janus {
 
