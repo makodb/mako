@@ -262,6 +262,28 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
       int nc;
       int iteration = 0;
       while ((chrono::steady_clock::now() - start2) < chrono::seconds{10}) {
+        if (retry) {
+          // If leadership/term moved on, this index may be stale. Retry Start() quickly.
+          if (TermMovedOn(term)) {
+            Log_info("DoAgreement: Term moved on from %ld while waiting for command %d at index %ld, retrying Start()", term, cmd, index);
+            break;
+          }
+
+          bool isLeader = false;
+          uint64_t curTerm = 0;
+          auto ldr_it = replicas.find(ldr);
+          if (ldr_it == replicas.end() || ldr_it->second == nullptr || ldr_it->second->svr_ == nullptr) {
+            Log_info("DoAgreement: Leader %d disappeared while waiting for command %d at index %ld, retrying Start()", ldr, cmd, index);
+            break;
+          }
+          ldr_it->second->svr_->GetState(&isLeader, &curTerm);
+          if (!isLeader || curTerm != term) {
+            Log_info("DoAgreement: Leader changed (server=%d isLeader=%d term=%ld expected_term=%ld) while waiting for command %d at index %ld, retrying Start()",
+                     ldr, isLeader ? 1 : 0, curTerm, term, cmd, index);
+            break;
+          }
+        }
+
         nc = NCommitted(index);
         Log_info("DoAgreement: Iteration %d - NCommitted(%ld) returned %d for command %d", iteration++, index, nc, cmd);
         if (nc < 0) {
