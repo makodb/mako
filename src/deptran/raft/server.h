@@ -427,8 +427,7 @@ class RaftServer : public TxLogServer {
   // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
   void applyLogs();
 
-#ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: Dedicated apply fiber and background apply thread.
+  // Dedicated apply fiber and background apply thread.
   void StartApplyFiber();
 
   std::thread apply_thread_;
@@ -438,7 +437,6 @@ class RaftServer : public TxLogServer {
 
   void StartApplyThread();
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
-#endif
 
   // @unsafe - timer and atomic operations include atomics/mutexes
   void resetTimerBatch()

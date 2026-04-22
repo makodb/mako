@@ -15,7 +15,7 @@ Mako supports Raft as an alternative to Paxos for consensus and replication. Raf
 
 ### Build Targets
 
-Mako supports three replication modes. Always `make clean` before switching between them (CMake caches the flags).
+Mako supports three replication modes. `SINGLE_RAFT_INSTANCE` now sets the **default runtime** Raft-group mode (single vs multi). You can still switch defaults via CMake/Make targets.
 
 ```bash
 # Single-instance Raft (1 Raft group shared by all partitions) — RECOMMENDED
@@ -53,6 +53,20 @@ cmake --build build --parallel 32
 # Multi-instance Raft
 cmake -S . -B build -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=OFF
 cmake --build build --parallel 32
+```
+
+### Runtime Override (Recommended for experiments)
+
+You can override the Raft-group mode at runtime (no rebuild required):
+
+```bash
+# CLI flag
+./build/dbtest ... --raft-groups=single
+./build/dbtest ... --raft-groups=multi
+
+# Or environment variable
+MAKO_RAFT_GROUP_MODE=single ./build/dbtest ...
+MAKO_RAFT_GROUP_MODE=multi ./build/dbtest ...
 ```
 
 ## Running the CI Tests

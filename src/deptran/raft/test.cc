@@ -96,10 +96,15 @@ int RaftLabTest::Run(void) {
 
   // Speculative index persistence tests
   if (!failed) {
-    Log_info("Running speculative index persistence tests");
-    failed =
-        TEST_EXPAND(testSpecCommitIndexPersistence())             // Test 61
-        || TEST_EXPAND(testSpecIndicesRecoveredOnRestart());      // Test 62
+    if (persistence_enabled) {
+      Log_info("Running speculative index persistence tests");
+      failed =
+          TEST_EXPAND(testSpecCommitIndexPersistence())             // Test 61
+          || TEST_EXPAND(testSpecIndicesRecoveredOnRestart());      // Test 62
+      ;
+    } else {
+      Log_info("Skipping speculative index persistence tests (MAKO_RAFT_PERSISTENCE disabled)");
+    }
   }
 
   // Reason-aware rollback notification tests

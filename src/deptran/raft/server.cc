@@ -497,11 +497,6 @@ uint64_t RaftServer::GetSnapshotTerm() const {
 size_t RaftServer::CompactLog(slotid_t up_to_index) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-  if (!log_storage_) {
-    Log_debug("[RAFT-COMPACT] Site %d: No log storage, skipping compaction", site_id_);
-    return 0;
-  }
-
   // Safety check: don't compact beyond commit index
   if (up_to_index > commitIndex) {
     Log_warn("[RAFT-COMPACT] Site %d: Cannot compact beyond commitIndex (%lu > %lu)",
@@ -509,15 +504,17 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
     up_to_index = commitIndex;
   }
 
-  // Get current first slot
-  slotid_t first_slot = 0;
-  // @unsafe
-  {
-  first_slot = log_storage_->get_first_index();
-  if (first_slot == 0 || log_storage_->empty()) {
-    Log_debug("[RAFT-COMPACT] Site %d: Log is empty, nothing to compact", site_id_);
-    return 0;
-  }
+  // Determine first compactable slot. Without persistent storage we still
+  // compact the in-memory map and advance min_active_slot_.
+  slotid_t first_slot = min_active_slot_;
+  if (log_storage_) {
+    // @unsafe
+    {
+    slotid_t persisted_first = log_storage_->get_first_index();
+    if (persisted_first != 0 && !log_storage_->empty()) {
+      first_slot = persisted_first;
+    }
+    }
   }
 
   // Nothing to compact if up_to_index is before first slot
@@ -527,30 +524,40 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
     return 0;
   }
 
-  // Remove entries from storage
-  size_t to_remove = up_to_index - first_slot + 1;
-  // @unsafe
-  {
-  if (log_storage_->remove_range(first_slot, up_to_index + 1)) {
-    Log_info("[RAFT-COMPACT] Site %d: Compacted %zu entries [%lu..%lu]",
-             site_id_, to_remove, first_slot, up_to_index);
-
-    // Also remove from in-memory logs
-    for (slotid_t id = first_slot; id <= up_to_index; ++id) {
-      raft_logs_.erase(id);
+  size_t removed_storage = 0;
+  if (log_storage_) {
+    // @unsafe
+    {
+    if (log_storage_->remove_range(first_slot, up_to_index + 1)) {
+      removed_storage = up_to_index - first_slot + 1;
+    } else {
+      Log_error("[RAFT-COMPACT] Site %d: Failed to compact persistent log entries [%lu..%lu]",
+                site_id_, first_slot, up_to_index);
     }
-
-    // Update min_active_slot_
-    if (up_to_index + 1 > min_active_slot_) {
-      min_active_slot_ = up_to_index + 1;
     }
+  }
 
-    return to_remove;
-  } else {
-    Log_error("[RAFT-COMPACT] Site %d: Failed to compact log entries", site_id_);
-    return 0;
+  size_t removed_memory = 0;
+  auto it = raft_logs_.lower_bound(first_slot);
+  while (it != raft_logs_.end() && it->first <= up_to_index) {
+    it = raft_logs_.erase(it);
+    removed_memory++;
   }
+
+  // Update min_active_slot_ even when persistence is disabled.
+  if (up_to_index + 1 > min_active_slot_) {
+    min_active_slot_ = up_to_index + 1;
   }
+
+  if (log_storage_) {
+    Log_info("[RAFT-COMPACT] Site %d: Compacted [%lu..%lu] (storage=%zu, memory=%zu)",
+             site_id_, first_slot, up_to_index, removed_storage, removed_memory);
+    return removed_storage != 0 ? removed_storage : removed_memory;
+  }
+
+  Log_info("[RAFT-COMPACT] Site %d: Compacted in-memory entries [%lu..%lu] (memory=%zu)",
+           site_id_, first_slot, up_to_index, removed_memory);
+  return removed_memory;
 }
 
 // @unsafe - Creates snapshot from current state, persists, and compacts log
@@ -738,8 +745,7 @@ uint64_t RaftServer::GetElectionTimeout() {
   }
 }
 
-#ifdef SINGLE_RAFT_INSTANCE
-// SINGLE-RAFT: StartApplyFiber - lightweight status monitor on PollThread.
+// StartApplyFiber - lightweight status monitor on PollThread.
 void RaftServer::StartApplyFiber() {
   Fiber::create_run([this]() {
     Log_info("[APPLY-FIBER] Site %d: Started apply fiber (monitor only)", site_id_);
@@ -752,7 +758,7 @@ void RaftServer::StartApplyFiber() {
   });
 }
 
-// SINGLE-RAFT: Enqueue newly committed entries for the background apply thread.
+// Enqueue newly committed entries for the background apply thread.
 // Called from OnAppendEntries (already under mtx_) when commitIndex advances.
 void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit) {
   std::vector<std::pair<slotid_t, shared_ptr<Marshallable>>> batch;
@@ -789,7 +795,7 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
   }
 }
 
-// SINGLE-RAFT: Background OS thread for entry application.
+// Background OS thread for entry application.
 // Drains from apply_queue_ (populated by OnAppendEntries) to avoid contention on mtx_.
 void RaftServer::StartApplyThread() {
   apply_thread_running_.store(true);
@@ -835,12 +841,7 @@ void RaftServer::StartApplyThread() {
                    site_id_, apply_count, executeIndex, queue_size);
         }
 
-        // Snapshot trigger: mirrors the non-SINGLE_RAFT applyLogs() path
-        // at the equivalent position (server.cc after the apply loop).
-        // In SINGLE_RAFT_INSTANCE mode, applyLogs() is compiled out and
-        // committed entries flow through this thread instead — without a
-        // snapshot trigger here, snapshots are never taken automatically.
-        //
+        // Snapshot trigger for queued apply path.
         // Cheap unlocked pre-check so the hot path stays lock-free when
         // we're far from the threshold or have no manager configured.
         if (snapshot_manager_ && snapidx_ < executeIndex &&
@@ -883,7 +884,6 @@ void RaftServer::StartApplyThread() {
   // ~RaftServer destroys the RaftServer, resulting in an empty std::function
   // invocation when it next pulls from apply_queue_.
 }
-#endif  // SINGLE_RAFT_INSTANCE
 
 // @unsafe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
 void RaftServer::Setup() {
@@ -1040,14 +1040,12 @@ void RaftServer::Setup() {
 	}
 #endif
 
-#ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: Start apply infrastructure
+  // Start apply infrastructure.
   StartApplyFiber();
   if (commitIndex > executeIndex) {
     EnqueueCommittedEntries(executeIndex, commitIndex);
   }
   StartApplyThread();
-#endif
 
   // Election timer will be started in Start() method when first command is submitted
 }
@@ -1359,8 +1357,7 @@ void RaftServer::applyLogs() {
     CreateSnapshot();
   }
 
-  // Cleanup old commands to prevent memory buildup
-#ifdef SINGLE_RAFT_INSTANCE
+  // Cleanup old commands to prevent memory buildup.
   slotid_t cutoff = (executeIndex > log_retention_window_) ? executeIndex - log_retention_window_ : 0;
   // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
   if (snapidx_ > 0 && cutoff > snapidx_) {
@@ -1370,20 +1367,6 @@ void RaftServer::applyLogs() {
     removeCmd(min_active_slot_);
     min_active_slot_++;
   }
-#else
-  if (executeIndex % log_retention_window_ == 0) {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
-    slotid_t cutoff = (executeIndex > 2 * log_retention_window_) ? executeIndex - 2 * log_retention_window_ : 0;
-    // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
-    if (snapidx_ > 0 && cutoff > snapidx_) {
-      cutoff = snapidx_;
-    }
-    while (min_active_slot_ < cutoff) {
-      raft_logs_.erase(min_active_slot_);
-      min_active_slot_++;
-    }
-  }
-#endif
 }
 
 // @unsafe - external calls marked @external [safe], core replication loop
@@ -1491,15 +1474,8 @@ void RaftServer::HeartbeatLoop() {
           Log_debug("newCommitIndex %d", newCommitIndex);
           commitIndex = newCommitIndex;
           PersistCommitIndex(commitIndex, "HeartbeatLoop: leader commit");
-#ifdef SINGLE_RAFT_INSTANCE
           EnqueueCommittedEntries(old_commit, commitIndex);
-#endif
         }
-#ifndef SINGLE_RAFT_INSTANCE
-        if (commitIndex > executeIndex) {
-          applyLogs();
-        }
-#endif
         term = currentTerm;
         current_commit_index = commitIndex;
         current_last_log_index = lastLogIndex;
@@ -1584,14 +1560,23 @@ void RaftServer::HeartbeatLoop() {
             }
           } else {
             verify(prevLogIndex <= lastLogIndex);
-            auto instance = GetRaftInstance(prevLogIndex);
-            if (!instance) {
-              Log_error("[HEARTBEAT-SEND] [CRITICAL] GetRaftInstance(%lu) returned NULL! Skipping follower %d",
-                        prevLogIndex, site_id);
-              skip_follower = true;
+            if (prevLogIndex == 0) {
+              prevLogTerm = 0;
+            } else if (prevLogIndex == snapidx_ && snapidx_ > 0) {
+              // Keep using snapshot boundary metadata after compaction.
+              prevLogTerm = snapterm_;
             } else {
-              prevLogTerm = instance->term;
+              auto instance = GetRaftInstance(prevLogIndex);
+              if (!instance) {
+                Log_error("[HEARTBEAT-SEND] [CRITICAL] GetRaftInstance(%lu) returned NULL! Skipping follower %d",
+                          prevLogIndex, site_id);
+                skip_follower = true;
+              } else {
+                prevLogTerm = instance->term;
+              }
+            }
 
+            if (!skip_follower) {
 #ifndef RAFT_BATCH_OPTIMIZATION
               Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
                        site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
@@ -1828,14 +1813,8 @@ void RaftServer::HeartbeatLoop() {
           Log_debug("[PHASE3-COMMIT] Advancing commitIndex %lu -> %lu", commitIndex, finalCommitIndex);
           commitIndex = finalCommitIndex;
           PersistCommitIndex(commitIndex, "HeartbeatLoop: post-response commit");
-#ifdef SINGLE_RAFT_INSTANCE
           EnqueueCommittedEntries(old_commit, commitIndex);
-#endif
         }
-#ifndef SINGLE_RAFT_INSTANCE
-        if (commitIndex > executeIndex)
-          applyLogs();
-#endif
 
         // ==================================================================
         // LEARNER CATCH-UP: Check if any learners are caught up and promote
@@ -1914,7 +1893,6 @@ RaftServer::~RaftServer() {
   // This must happen before vtable collapse to prevent race conditions
   stop_ = true;
 
-#ifdef SINGLE_RAFT_INSTANCE
   // Stop and join the background apply thread if it was started. The thread
   // captures `this` and walks apply_queue_ / app_next_, so it must finish
   // before any member state is destroyed.
@@ -1922,7 +1900,6 @@ RaftServer::~RaftServer() {
   if (apply_thread_.joinable()) {
     apply_thread_.join();
   }
-#endif
 
   // Stop the HeartbeatLoop
   if (heartbeat_ && looping_) {
@@ -2451,10 +2428,20 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   std::unique_lock<std::recursive_mutex> lock(mtx_);
 
   bool term_ok = (leaderCurrentTerm >= this->currentTerm);
-  bool index_ok = (leaderPrevLogIndex <= this->lastLogIndex);
+  const bool compacted_prefix_miss =
+      (leaderPrevLogIndex != 0 &&
+       leaderPrevLogIndex < min_active_slot_ &&
+       leaderPrevLogIndex != snapidx_);
+  bool index_ok = (leaderPrevLogIndex <= this->lastLogIndex) && !compacted_prefix_miss;
   uint64_t local_prev_term = 0;
-  if (leaderPrevLogIndex > 0 && leaderPrevLogIndex <= this->lastLogIndex) {
-      local_prev_term = GetRaftInstance(leaderPrevLogIndex)->term;
+  if (leaderPrevLogIndex == 0) {
+      local_prev_term = 0;
+  } else if (leaderPrevLogIndex == snapidx_) {
+      // Snapshot boundary is still valid even when log entries are compacted.
+      local_prev_term = snapterm_;
+  } else if (leaderPrevLogIndex <= this->lastLogIndex && !compacted_prefix_miss) {
+      auto prev_instance = GetRaftInstance(leaderPrevLogIndex);
+      local_prev_term = prev_instance ? prev_instance->term : 0;
   }
   bool prev_term_ok = (leaderPrevLogIndex == 0 || local_prev_term == leaderPrevLogTerm);
 
@@ -2536,30 +2523,13 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 #endif
       }
 
-#ifdef SINGLE_RAFT_INSTANCE
-      // SINGLE-RAFT: Enqueue for background apply thread
+      // Advance commit index and enqueue committed entries for background apply.
       if (leaderCommitIndex > commitIndex) {
         auto old_commit = commitIndex;
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
-        PersistCommitIndex(commitIndex, "OnAppendEntries: SINGLE_RAFT follower commit");
+        PersistCommitIndex(commitIndex, "OnAppendEntries: follower commit");
         EnqueueCommittedEntries(old_commit, commitIndex);
-      }
-
-      // @unsafe
-      {
-      *followerAppendOK = 1;
-      *followerCurrentTerm = this->currentTerm;
-      *followerLastLogIndex = this->lastLogIndex;
-      }
-#else
-      // MULTI-RAFT: Apply logs synchronously (release mtx_ to avoid blocking RPCs)
-      bool need_apply = false;
-      if (leaderCommitIndex > commitIndex) {
-        commitIndex = std::min(leaderCommitIndex, lastLogIndex);
-        verify(lastLogIndex >= commitIndex);
-
-        need_apply = true;
       }
 
       // @unsafe
@@ -2576,13 +2546,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       parid_t par_id_copy = partition_id_;
       uint64_t commit_index_copy = commitIndex;
 
-      // CRITICAL FIX: Release mutex before applying logs!
-      // This allows concurrent AppendEntries to be processed
-      // while we're applying the current batch
+      // Release mutex before persistence work.
       lock.unlock();
-      if (need_apply) {
-        applyLogs();
-      }
 
       // ==================================================================
       // PERSISTENCE: Either async (speculative) or sync (traditional)
@@ -2641,7 +2606,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
       // Re-acquire mutex before returning (to handle remaining code safely)
       lock.lock();
-#endif
 
 #ifndef RAFT_TEST_CORO
       if (cmd != nullptr) {
@@ -2732,24 +2696,9 @@ void RaftServer::removeCmd(slotid_t slot) {
     return;
   }
 
-#ifdef SINGLE_RAFT_INSTANCE
-  // In SINGLE_RAFT_INSTANCE mode, committed log replay and callback execution can
-  // overlap with log cleanup. DestroyTx() here can race with callback usage and
-  // lead to shutdown/runtime crashes. We only evict the log entry.
+  // Committed log replay and callback execution may overlap with log cleanup.
+  // Only evict the log entry here; transaction destruction is handled elsewhere.
   raft_logs_.erase(it);
-  return;
-#else
-  // @unsafe
-  {
-    if (it->second && it->second->log_) {
-      auto cmd = marshallable_cast<TpcCommitCommand>(it->second->log_);
-      if (cmd && tx_sched_) {
-        tx_sched_->DestroyTx(cmd->tx_id_);
-      }
-    }
-  }
-  raft_logs_.erase(it);
-#endif
 }
 
 // @unsafe - Stores callback for later invocation
