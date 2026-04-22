@@ -344,8 +344,8 @@ src/deptran/raft/
 
 Phases completed will be checked off as commits land.
 
-- [ ] Phase 0 — `messages.hpp`
-- [ ] Phase 1 — `TransportProxy`
+- [x] Phase 0 — `messages.hpp`               (f4356b6c1)
+- [x] Phase 1 — `TransportProxy`             (ef79abcd1)
 - [ ] Phase 2 — `RrrTransport` adapter
 - [ ] Phase 3 — `DispatcherProxy` + rrr shim
 - [ ] Phase 4 — `ChannelTransport` + `Switchboard`
