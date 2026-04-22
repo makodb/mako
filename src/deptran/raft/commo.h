@@ -3,6 +3,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../communicator.h"
+#include "messages.hpp"
 #include <map>
 #include <mutex>
 
@@ -302,6 +303,48 @@ friend class RaftProxy;
                            uint64_t last_included_term,
                            const std::string& data,
                            std::function<void(uint64_t follower_term)> callback);
+
+  // ==========================================================================
+  // Phase 2.5 — callback-shaped variants of the quorum RPCs.
+  //
+  // The existing SendAppendEntries / BroadcastVote methods return
+  // shared_ptr<QuorumEvent> shapes that fit the fiber-based wait path in
+  // RaftServer. The new *Cb variants deliver each peer's reply via a plain
+  // callback, which is the shape the proxy::TransportFacade expects. Both
+  // variants share the same underlying rrr async_* call site; the *Cb
+  // variants are merely a different projection of the reply.
+  // ==========================================================================
+
+  // @unsafe - C-style cast, std::function
+  // Called once per reply (for the single target site). `on_reply` fires
+  // with the site_id that replied; on error, it does not fire at all, so
+  // callers should treat absence of reply as a timeout.
+  void SendAppendEntriesCb(
+      siteid_t site_id,
+      parid_t par_id,
+      slotid_t slot_id,
+      ballot_t ballot,
+      bool isLeader,
+      siteid_t leader_site_id,
+      uint64_t currentTerm,
+      uint64_t prevLogIndex,
+      uint64_t prevLogTerm,
+      uint64_t commitIndex,
+      shared_ptr<Marshallable> cmd,
+      uint64_t cmdLogTerm,
+      bool trigger_election_now,
+      std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply);
+
+  // @unsafe - C-style cast, std::function
+  // Broadcasts to every peer in the partition except self. `on_reply`
+  // fires once per replying peer with that peer's site_id.
+  void BroadcastVoteCb(
+      parid_t par_id,
+      slotid_t lst_log_idx,
+      ballot_t lst_log_term,
+      siteid_t self_id,
+      ballot_t cur_term,
+      std::function<void(siteid_t, raft::VoteReply)> on_reply);
 };
 
 } // namespace janus

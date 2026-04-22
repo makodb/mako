@@ -726,4 +726,132 @@ void RaftCommo::SendInstallSnapshot(siteid_t site_id,
   }
 }
 
+// ============================================================================
+// Phase 2.5 — callback-shaped quorum RPCs
+// ============================================================================
+
+// @unsafe - C-style casts, std::function captures
+void RaftCommo::SendAppendEntriesCb(
+    siteid_t site_id,
+    parid_t par_id,
+    slotid_t slot_id,
+    ballot_t ballot,
+    bool isLeader,
+    siteid_t leader_site_id,
+    uint64_t currentTerm,
+    uint64_t prevLogIndex,
+    uint64_t prevLogTerm,
+    uint64_t commitIndex,
+    shared_ptr<Marshallable> cmd,
+    uint64_t cmdLogTerm,
+    bool trigger_election_now,
+    std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply) {
+  auto proxies = rpc_par_proxies_[par_id];
+  WAN_WAIT;
+  for (auto& p : proxies) {
+    if (p.first != site_id)
+      continue;
+    auto follower_id = p.first;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
+    FutureAttr fuattr;
+    auto cmd_keep = cmd;  // keep alive across the async boundary
+    fuattr.callback = [on_reply, cmd_keep, follower_id](rusty::Arc<Future> fu) {
+      if (fu->get_error_code() != 0) {
+        Log_debug("[APPEND_RPC_CB] Error from site %d code=%d",
+                  follower_id, fu->get_error_code());
+        return;
+      }
+      raft::AppendEntriesReply r{};
+      fu->get_reply() >> r.follower_append_ok;
+      fu->get_reply() >> r.follower_current_term;
+      fu->get_reply() >> r.follower_last_log_index;
+      fu->get_reply() >> r.follower_ack_type;
+      on_reply(follower_id, r);
+    };
+
+    if (cmd == nullptr) {
+      RaftProxy::RpcEmptyAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.trigger_election_now = trigger_election_now;
+      auto f = proxy->async_EmptyAppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
+    } else {
+      MarshallDeputy md(cmd);
+      verify(md.inner() != nullptr);
+      RaftProxy::RpcAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.cmd = md;
+      req.leaderNextLogTerm = cmdLogTerm;
+      auto f = proxy->async_AppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
+    }
+    return;
+  }
+}
+
+// @unsafe - C-style casts, std::function captures
+void RaftCommo::BroadcastVoteCb(
+    parid_t par_id,
+    slotid_t lst_log_idx,
+    ballot_t lst_log_term,
+    siteid_t self_id,
+    ballot_t cur_term,
+    std::function<void(siteid_t, raft::VoteReply)> on_reply) {
+  auto proxies = rpc_par_proxies_[par_id];
+  WAN_WAIT;
+  for (auto& p : proxies) {
+    auto site_id = p.first;
+    if (site_id == self_id) continue;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
+    FutureAttr fuattr;
+    fuattr.callback = [on_reply, site_id](rusty::Arc<Future> fu) {
+      if (fu->get_error_code() != 0) {
+        Log_debug("[VOTE_RPC_CB] Error from site %d code=%d",
+                  site_id, fu->get_error_code());
+        return;
+      }
+      raft::VoteReply r{};
+      ballot_t term = 0;
+      bool_t vote = false;
+      fu->get_reply() >> term;
+      fu->get_reply() >> vote;
+      r.max_ballot = term;
+      r.vote_granted = vote;
+      on_reply(site_id, r);
+    };
+    RaftProxy::RpcVoteRequest req{};
+    req.lst_log_idx = lst_log_idx;
+    req.lst_log_term = lst_log_term;
+    req.site_id = self_id;
+    req.cur_term = cur_term;
+    auto f = proxy->async_Vote(req, fuattr);
+    _RPC_COUNT();
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
+  }
+}
+
 } // namespace janus

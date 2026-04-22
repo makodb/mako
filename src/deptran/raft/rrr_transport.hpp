@@ -101,35 +101,92 @@ class RrrTransportAdapter {
   }
 
   // ------------------------------------------------------------------
-  // Quorum-returning RPCs — TODO in phase 2.5.
-  // Until RaftCommo itself grows callback-shaped Send* methods (or
-  // RaftServer stops consuming the shared_ptr<...> return values), the
-  // adapter does not expose them. Calling these via the proxy should
-  // never happen from production code paths: production RaftServer
-  // still reaches RaftCommo directly through commo_. Channel-transport
-  // tests that need these must wait on phase 2.5 or target a more
-  // restricted subset of scenarios.
+  // Quorum-returning RPCs — implemented in phase 2.5 against the *Cb
+  // variants RaftCommo grew. Each bridges rusty::Function into
+  // std::function via a shared holder that keeps the rusty::Function
+  // alive across the async boundary.
   // ------------------------------------------------------------------
 
-  // @unsafe { deliberately unimplemented until phase 2.5 }
-  void send_append_entries(siteid_t, AppendEntriesReq, OnAppendEntriesReply) {
-    verify(0);  // not reachable until phase 2.5
+  // @unsafe { std::function bridge }
+  void send_append_entries(siteid_t dst,
+                           AppendEntriesReq req,
+                           OnAppendEntriesReply on_reply) {
+    // Holder keeps the rusty::Function alive until the reply fires.
+    struct Holder { OnAppendEntriesReply cb; };
+    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply)});
+    // @unsafe { MarshallDeputy::inner() returns a std::shared_ptr }
+    auto cmd = req.cmd.inner();
+    commo_->SendAppendEntriesCb(
+        dst, par_,
+        req.slot, req.ballot,
+        /*isLeader=*/true,
+        req.leader_site_id,
+        req.leader_current_term,
+        req.leader_prev_log_index,
+        req.leader_prev_log_term,
+        req.leader_commit_index,
+        cmd,
+        req.leader_next_log_term,
+        /*trigger_election_now=*/false,
+        [holder](siteid_t from, AppendEntriesReply r) {
+          holder->cb(from, std::move(r));
+        });
   }
-  // @unsafe { deliberately unimplemented until phase 2.5 }
-  void send_empty_append_entries(siteid_t,
-                                 EmptyAppendEntriesReq,
-                                 OnAppendEntriesReply) {
-    verify(0);
+
+  // @unsafe { std::function bridge; cmd=null triggers heartbeat path }
+  void send_empty_append_entries(siteid_t dst,
+                                 EmptyAppendEntriesReq req,
+                                 OnAppendEntriesReply on_reply) {
+    struct Holder { OnAppendEntriesReply cb; };
+    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply)});
+    commo_->SendAppendEntriesCb(
+        dst, par_,
+        req.slot, req.ballot,
+        /*isLeader=*/true,
+        req.leader_site_id,
+        req.leader_current_term,
+        req.leader_prev_log_index,
+        req.leader_prev_log_term,
+        req.leader_commit_index,
+        /*cmd=*/nullptr,
+        /*cmdLogTerm=*/0,
+        req.trigger_election_now,
+        [holder](siteid_t from, AppendEntriesReply r) {
+          holder->cb(from, std::move(r));
+        });
   }
-  // @unsafe { deliberately unimplemented until phase 2.5 }
-  void broadcast_vote(parid_t, VoteReq, OnVoteReply) {
-    verify(0);
+
+  // @unsafe { std::function bridge }
+  void broadcast_vote(parid_t par, VoteReq req, OnVoteReply on_reply) {
+    struct Holder { OnVoteReply cb; };
+    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply)});
+    commo_->BroadcastVoteCb(
+        par,
+        req.last_log_idx, req.last_log_term,
+        req.candidate_site_id, req.current_term,
+        [holder](siteid_t from, VoteReply r) {
+          holder->cb(from, std::move(r));
+        });
   }
-  // @unsafe { deliberately unimplemented until phase 2.5 }
-  void send_install_snapshot(siteid_t,
-                             InstallSnapshotReq,
-                             OnInstallSnapshotReply) {
-    verify(0);
+
+  // @unsafe { std::function bridge; existing SendInstallSnapshot already
+  //           takes a std::function, we just adapt its reply shape. }
+  void send_install_snapshot(siteid_t dst,
+                             InstallSnapshotReq req,
+                             OnInstallSnapshotReply on_reply) {
+    struct Holder { OnInstallSnapshotReply cb; siteid_t dst; };
+    auto holder = std::make_shared<Holder>(
+        Holder{std::move(on_reply), dst});
+    commo_->SendInstallSnapshot(
+        dst, par_,
+        req.term, req.leader_id,
+        req.last_included_index, req.last_included_term,
+        req.data,
+        [holder](uint64_t follower_term) {
+          InstallSnapshotReply r{};
+          r.term_out = follower_term;
+          holder->cb(holder->dst, std::move(r));
+        });
   }
 
  private:
