@@ -2084,6 +2084,12 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_memory_snapshot_manager COMMAND test_raft_memory_snapshot_manager)
 
+    add_executable(test_raft_test_cluster test/raft_test_cluster_test.cc)
+    target_include_directories(test_raft_test_cluster PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
+
     # PollThread proxy-backed storage guard tests (Phase 1 leaf 2)
     add_executable(test_rpc_pollthread_proxy_storage test/rpc_pollthread_proxy_storage_test.cc)
     target_include_directories(test_rpc_pollthread_proxy_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
