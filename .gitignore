@@ -51,6 +51,19 @@ GTAGS
 GRTAGS
 GPATH
 /CMakeFiles
+# Ninja / CMake build artifacts that land in the repo root if a build runs
+# from here by mistake. The canonical build dir is /build (ignored above).
+/.ninja_deps
+/.ninja_log
+/build.ninja
+/rules.ninja
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/CPackConfig.cmake
+/CPackSourceConfig.cmake
+/CTestTestfile.cmake
+/gcm.cache/
 /_3rdParty
 /.clang-format
 *.so
