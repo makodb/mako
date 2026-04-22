@@ -346,7 +346,13 @@ Phases completed will be checked off as commits land.
 
 - [x] Phase 0 — `messages.hpp`               (f4356b6c1)
 - [x] Phase 1 — `TransportProxy`             (ef79abcd1)
-- [ ] Phase 2 — `RrrTransport` adapter
+- [~] Phase 2 — `RrrTransport` adapter (MVP: fire-and-forget RPCs;
+      quorum-returning RPCs stubbed with `verify(0)` pending Phase 2.5
+      RaftCommo callback-shape refactor)
+- [ ] Phase 2.5 — Refactor `RaftCommo::Send{AppendEntries,
+      EmptyAppendEntries, InstallSnapshot}` and `BroadcastVote` to take
+      `rusty::Function` callbacks directly, so the adapter can implement
+      the remaining 4 facade methods instead of `verify(0)`.
 - [ ] Phase 3 — `DispatcherProxy` + rrr shim
 - [ ] Phase 4 — `ChannelTransport` + `Switchboard`
 - [ ] Phase 5 — `SnapshotManagerProxy` + `MemorySnapshotManager`
