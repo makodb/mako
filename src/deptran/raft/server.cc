@@ -835,6 +835,25 @@ void RaftServer::StartApplyThread() {
                    site_id_, apply_count, executeIndex, queue_size);
         }
 
+        // Snapshot trigger: mirrors the non-SINGLE_RAFT applyLogs() path
+        // at the equivalent position (server.cc after the apply loop).
+        // In SINGLE_RAFT_INSTANCE mode, applyLogs() is compiled out and
+        // committed entries flow through this thread instead — without a
+        // snapshot trigger here, snapshots are never taken automatically.
+        //
+        // Cheap unlocked pre-check so the hot path stays lock-free when
+        // we're far from the threshold or have no manager configured.
+        if (snapshot_manager_ && snapidx_ < executeIndex &&
+            (executeIndex - snapidx_) > snapshot_threshold_) {
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          // Re-check under the lock: CreateSnapshot mutates snapidx_ and
+          // raft_logs_ via CompactLog.
+          if (snapshot_manager_ && snapidx_ < executeIndex &&
+              (executeIndex - snapidx_) > snapshot_threshold_) {
+            CreateSnapshot();
+          }
+        }
+
         // Cleanup old log entries periodically to prevent memory buildup.
         // Only erase from the map — skip DestroyTx since the apply callback
         // may still reference transaction state on this thread.

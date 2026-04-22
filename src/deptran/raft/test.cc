@@ -4865,6 +4865,7 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
   config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
   auto original_mgr = server->GetSnapshotManager();
+  auto original_threshold = server->GetSnapshotThreshold();
   server->SetSnapshotManager(test_mgr);
 
   // Set a low threshold so we can trigger a snapshot easily
@@ -4903,6 +4904,7 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
 
   // Restore and clean up
   server->SetSnapshotManager(original_mgr);
+  server->SetSnapshotThreshold(original_threshold);
   test_mgr->DeleteAllSnapshots();
   rmdir(test_path.c_str());
 
@@ -4931,6 +4933,7 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
   config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
   auto original_mgr = server->GetSnapshotManager();
+  auto original_threshold = server->GetSnapshotThreshold();
   server->SetSnapshotManager(test_mgr);
 
   // Set a low threshold
@@ -4960,6 +4963,7 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
 
   // Restore and clean up
   server->SetSnapshotManager(original_mgr);
+  server->SetSnapshotThreshold(original_threshold);
   test_mgr->DeleteAllSnapshots();
   rmdir(test_path.c_str());
 
