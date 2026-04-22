@@ -127,7 +127,7 @@ class RaftServer : public TxLogServer {
   int32_t wait_int_ = 100000 ;
   bool disconnected_ = false;
   bool req_voting_ = false ;
-  bool in_applying_logs_ = false ;
+  std::atomic<bool> in_applying_logs_{false};
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
 #ifdef RAFT_TEST_CORO
   bool failover_{true} ;
@@ -253,7 +253,7 @@ class RaftServer : public TxLogServer {
   void applyLogs();
 
 #ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: Dedicated apply fiber and background apply thread.
+  // Dedicated apply fiber and background apply thread (single-Raft or multi-Raft experiment).
   void StartApplyFiber();
 
   std::thread apply_thread_;

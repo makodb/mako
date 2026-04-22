@@ -77,3 +77,4 @@ cmake-build/*
 
 # Misc build/test artifacts
 /Testing/
+config

@@ -373,6 +373,11 @@ ServerWorker::~ServerWorker() {
 // Phase 2.1: Initialize recovery for replication servers
 // @unsafe - Uses LogStorage and filesystem operations
 void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id) {
+#ifdef DISABLE_DISK
+  // Disk persistence compiled out — leave log_storage_ nullptr so every
+  // Persist* call in paxos/raft server.cc hits its `if (!log_storage_) return;` guard.
+  return;
+#endif
   if (!rep_sched_) {
     return;  // No replication scheduler to recover
   }

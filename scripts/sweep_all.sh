@@ -59,6 +59,12 @@ echo "  Log file:   $OVERNIGHT_LOG"
 echo "  Started:    $(date)"
 echo "============================================================"
 
+# Regenerate configs so shard YAMLs match the current generator settings
+# (no-learner paxos + 3-replica raft). Idempotent — safe to run every time.
+echo ">>> Regenerating paxos + raft configs..."
+(cd config/1leader_2followers && python3 generator.py) || echo "WARN: paxos generator failed"
+(cd config/1leader_2followers && python3 raft_generator.py) || echo "WARN: raft generator failed"
+
 SUCCEEDED=""
 FAILED=""
 

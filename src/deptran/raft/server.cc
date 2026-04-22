@@ -443,7 +443,7 @@ uint64_t RaftServer::GetElectionTimeout() {
 }
 
 #ifdef SINGLE_RAFT_INSTANCE
-// SINGLE-RAFT: StartApplyFiber - lightweight status monitor on PollThread.
+// StartApplyFiber - lightweight status monitor on PollThread.
 void RaftServer::StartApplyFiber() {
   Fiber::create_run([this]() {
     Log_info("[APPLY-FIBER] Site %d: Started apply fiber (monitor only)", site_id_);
@@ -603,7 +603,7 @@ void RaftServer::Setup() {
 #endif
 
 #ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: Start apply infrastructure
+  // Start apply infrastructure (single-Raft only).
   StartApplyFiber();
   if (commitIndex > executeIndex) {
     EnqueueCommittedEntries(executeIndex, commitIndex);
@@ -806,12 +806,15 @@ void RaftServer::applyLogs() {
     apply_pending_.store(true, std::memory_order_release);
   }
 
-  // If already applying, return - the current apply loop will pick up our work
-  if (in_applying_logs_) {
+  // Atomic CAS to ensure only one thread enters the apply loop at a time.
+  // In SINGLE_RAFT_INSTANCE with stub servers, multiple PollThreads can
+  // concurrently call this from OnAppendEntries, which would otherwise race
+  // on executeIndex and the app_next_ callback (Masstree mutation).
+  bool expected = false;
+  if (!in_applying_logs_.compare_exchange_strong(expected, true,
+        std::memory_order_acq_rel, std::memory_order_acquire)) {
     return;
   }
-
-  in_applying_logs_ = true;
 
   // Keep applying logs until no more pending work arrives
   // This ensures we never drop work even under heavy load
@@ -838,10 +841,11 @@ void RaftServer::applyLogs() {
     // If so, loop again to process it
   } while (apply_pending_.load(std::memory_order_acquire));
 
-  in_applying_logs_ = false;
+  in_applying_logs_.store(false, std::memory_order_release);
 
   // Cleanup old commands to prevent memory buildup
 #ifdef SINGLE_RAFT_INSTANCE
+  // Dead code when SINGLE_RAFT_INSTANCE is active (applyLogs not called inline) — kept for safety.
   slotid_t cutoff = (executeIndex > 5000) ? executeIndex - 5000 : 0;
   while (min_active_slot_ < cutoff) {
     removeCmd(min_active_slot_);
@@ -852,7 +856,11 @@ void RaftServer::applyLogs() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     slotid_t cutoff = (executeIndex > 10000) ? executeIndex - 10000 : 0;
     while (min_active_slot_ < cutoff) {
+#ifdef SINGLE_RAFT_INSTANCE
+      removeCmd(min_active_slot_);
+#else
       raft_logs_.erase(min_active_slot_);
+#endif
       min_active_slot_++;
     }
   }
@@ -965,7 +973,7 @@ void RaftServer::HeartbeatLoop() {
         }
       }
 #ifndef SINGLE_RAFT_INSTANCE
-      // MULTI-RAFT: Apply logs inline on leader
+      // Multi-Raft: inline apply on leader (no background apply thread).
       if (commitIndex > executeIndex)
         applyLogs();
 #endif
@@ -1670,7 +1678,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       }
 
 #ifdef SINGLE_RAFT_INSTANCE
-      // SINGLE-RAFT: Enqueue for background apply thread
+      // Enqueue for background apply thread
       if (leaderCommitIndex > commitIndex) {
         auto old_commit = commitIndex;
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
@@ -1686,7 +1694,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       *followerLastLogIndex = this->lastLogIndex;
       }
 #else
-      // MULTI-RAFT: Apply logs synchronously (release mtx_ to avoid blocking RPCs)
+      // Inline apply (when apply thread is not active):
+      // Apply logs synchronously (release mtx_ to avoid blocking RPCs)
       bool need_apply = false;
       if (leaderCommitIndex > commitIndex) {
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);

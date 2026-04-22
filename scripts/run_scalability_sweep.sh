@@ -427,9 +427,10 @@ for trd in $THREADS; do
         fi
 
         # Display
-        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | Workers: mean=%s%% peak=%s%%\n" \
+        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | Workers: mean=%s%% peak=%s%% | replay_p1: %s replay_p2: %s\n" \
             "${throughput:-N/A}" "${avg_cpu:-N/A}" "${avg_latency:-N/A}" \
-            "${worker_mean_cpu:-N/A}" "${worker_peak_cpu:-N/A}"
+            "${worker_mean_cpu:-N/A}" "${worker_peak_cpu:-N/A}" \
+            "${replay_p1:-N/A}" "${replay_p2:-N/A}"
 
         # CSV row
         echo "${trd},${run},${throughput},${per_core_throughput},${avg_cpu},${peak_cpu},${avg_latency},${avg_persist_latency},${abort_rate},${replay_p1},${replay_p2},${active_threads},${worker_mean_cpu},${worker_peak_cpu},${exit_code}" >> "$CSV_FILE"

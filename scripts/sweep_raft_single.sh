@@ -39,7 +39,7 @@ echo "============================================================"
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo ">>> Building Single-Raft binary..."
     rm -rf build
-    cmake -S . -B build -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=ON
+    cmake -S . -B build -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=ON -DDISABLE_DISK=ON
     cmake --build build --target dbtest --parallel 16
 fi
 
