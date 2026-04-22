@@ -859,7 +859,10 @@ void RaftServer::StartApplyThread() {
     }
     Log_info("[APPLY-THREAD] Site %d: Background apply thread exiting", site_id_);
   });
-  apply_thread_.detach();
+  // Keep the thread joinable so the destructor can await it. Detaching here
+  // causes use-after-free: the thread captures `this` and keeps running after
+  // ~RaftServer destroys the RaftServer, resulting in an empty std::function
+  // invocation when it next pulls from apply_queue_.
 }
 #endif  // SINGLE_RAFT_INSTANCE
 
@@ -1891,6 +1894,16 @@ RaftServer::~RaftServer() {
   // CRITICAL: Set stop_ FIRST to signal all coroutines to stop
   // This must happen before vtable collapse to prevent race conditions
   stop_ = true;
+
+#ifdef SINGLE_RAFT_INSTANCE
+  // Stop and join the background apply thread if it was started. The thread
+  // captures `this` and walks apply_queue_ / app_next_, so it must finish
+  // before any member state is destroyed.
+  apply_thread_running_.store(false);
+  if (apply_thread_.joinable()) {
+    apply_thread_.join();
+  }
+#endif
 
   // Stop the HeartbeatLoop
   if (heartbeat_ && looping_) {
