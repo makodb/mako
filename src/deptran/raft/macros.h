@@ -65,17 +65,29 @@
 #define _PARAMS(n, ...) _PARAMS##n(__VA_ARGS__)
 #define _ARGPAIRS(n, ...) _ARGPAIRS##n(__VA_ARGS__)
 
+// RpcHandler — top-level RPC dispatcher generated per RPC.
+//
+// The rrr framework hands us a DeferredReply; we do NOT pass it further.
+// Instead we wrap the Handle##name call in a Fiber so the handler body
+// can yield/sleep freely, and auto-reply once the handler returns. This
+// removes `rrr::DeferredReply` from every user-visible raft handler
+// (Handle##name in service.cc and the On##name methods in server.cc
+// they delegate to). The RPC reply is sent on the fiber's completion
+// path.
 #define RpcHandler(name, ...) \
   void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer) { \
     RaftServer* _svr = GetServer(); \
     if (_svr == nullptr || _svr->IsDisconnected()) { \
       OnDisconnected##name(_PARAMS(__VA_ARGS__)); \
       defer.reply(); \
-    }  else { \
-      Handle##name(_PARAMS(__VA_ARGS__), std::move(defer)); \
+      return; \
     } \
+    Fiber::create_run([=, defer = std::move(defer), this]() mutable { \
+      Handle##name(_PARAMS(__VA_ARGS__)); \
+      defer.reply(); \
+    }); \
   } \
-  void Handle##name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer); \
+  void Handle##name(_ARGPAIRS(__VA_ARGS__)); \
   void OnDisconnected##name(_ARGPAIRS(__VA_ARGS__))
 
 #ifdef RAFT_TEST_CORO

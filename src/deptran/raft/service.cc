@@ -113,18 +113,11 @@ void RaftServiceImpl::HandleInstallSnapshot(const uint64_t& term,
                                              const uint64_t& last_included_index,
                                              const uint64_t& last_included_term,
                                              const std::string& data,
-                                             uint64_t* term_out,
-                                             rrr::DeferredReply defer) {
+                                             uint64_t* term_out) {
   RaftServer* svr = GetServer();
-  if (svr == nullptr) {
-    // Server is killed, return failure
-    *term_out = 0;
-    defer.reply();
-    return;
-  }
+  if (svr == nullptr) { *term_out = 0; return; }
   svr->OnInstallSnapshot(term, leader_id, last_included_index,
-                         last_included_term, data, term_out,
-                         [defer = std::move(defer)]() mutable { defer.reply(); });
+                         last_included_term, data, term_out);
 }
 
 // Static member definitions for service registry
@@ -179,45 +172,29 @@ rusty::Option<rusty::Arc<rrr::PollThread>> RaftServiceImpl::GetPollThread(siteid
   return rusty::None;
 }
 
-// @unsafe - svr_ pointer is bounded (set in constructor), external calls marked @external
+// @unsafe - svr_ pointer is bounded (set in constructor)
 void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                                     const ballot_t& lst_log_term,
                                     const siteid_t& can_id,
                                     const ballot_t& can_term,
                                     ballot_t* reply_term,
-                                    bool_t *vote_granted,
-                                    rrr::DeferredReply defer) {
+                                    bool_t *vote_granted) {
   RaftServer* svr = GetServer();
-  if (svr == nullptr) {
-    // Server is killed, return failure
-    *reply_term = 0;
-    *vote_granted = false;
-    defer.reply();
-    return;
-  }
+  if (svr == nullptr) { *reply_term = 0; *vote_granted = false; return; }
   svr->OnRequestVote(lst_log_idx, lst_log_term, can_id, can_term,
-                    reply_term, vote_granted,
-                    [defer = std::move(defer)]() mutable { defer.reply(); });
+                     reply_term, vote_granted);
 }
 
-// @unsafe - Handle VoteDurable RPC for speculative voting
-// Received when a follower has durably persisted its vote to disk
+// @unsafe - VoteDurable for speculative voting
 void RaftServiceImpl::HandleVoteDurable(const ballot_t& term,
                                          const siteid_t& voter_id,
-                                         bool_t* acknowledged,
-                                         rrr::DeferredReply defer) {
+                                         bool_t* acknowledged) {
   RaftServer* svr = GetServer();
-  if (svr == nullptr) {
-    // Server is killed, return failure
-    *acknowledged = false;
-    defer.reply();
-    return;
-  }
-  svr->OnVoteDurable(term, voter_id, acknowledged,
-                     [defer = std::move(defer)]() mutable { defer.reply(); });
+  if (svr == nullptr) { *acknowledged = false; return; }
+  svr->OnVoteDurable(term, voter_id, acknowledged);
 }
 
-// @unsafe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
+// @unsafe - svr_ pointer is bounded
 void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         const ballot_t& ballot,
                                         const uint64_t& leaderCurrentTerm,
@@ -230,40 +207,24 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         uint64_t *followerAppendOK,
                                         uint64_t *followerCurrentTerm,
                                         uint64_t *followerLastLogIndex,
-                                        uint64_t *followerAckType,
-                                        rrr::DeferredReply defer) {
+                                        uint64_t *followerAckType) {
   RaftServer* svr = GetServer();
   if (svr == nullptr) {
-    // Server is killed, return failure
-    *followerAppendOK = 0;
-    *followerCurrentTerm = 0;
-    *followerLastLogIndex = 0;
-    *followerAckType = 0;  // Memory
-    defer.reply();
+    *followerAppendOK = 0; *followerCurrentTerm = 0;
+    *followerLastLogIndex = 0; *followerAckType = 0;
     return;
   }
-
-  // Set ackType to Memory - this response is sent before fsync
-  *followerAckType = 0;  // Memory
-
-  Fiber::create_run([=, defer = std::move(defer)]() mutable {
-    svr->OnAppendEntries(slot,
-                            ballot,
-                            leaderCurrentTerm,
-                            leaderSiteId,
-                            leaderPrevLogIndex,
-                            leaderPrevLogTerm,
-                            leaderCommitIndex,
-                            const_cast<MarshallDeputy&>(md_cmd).inner(),
-                            leaderNextLogTerm,
-                            followerAppendOK,
-                            followerCurrentTerm,
-                            followerLastLogIndex,
-                            [defer = std::move(defer)]() mutable { defer.reply(); });
-  });
+  *followerAckType = 0;  // Memory — response precedes fsync
+  svr->OnAppendEntries(slot, ballot, leaderCurrentTerm, leaderSiteId,
+                       leaderPrevLogIndex, leaderPrevLogTerm,
+                       leaderCommitIndex,
+                       const_cast<MarshallDeputy&>(md_cmd).inner(),
+                       leaderNextLogTerm,
+                       followerAppendOK, followerCurrentTerm,
+                       followerLastLogIndex);
 }
 
-// @unsafe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
+// @unsafe - svr_ pointer is bounded
 void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              const ballot_t& ballot,
                                              const uint64_t& leaderCurrentTerm,
@@ -275,93 +236,51 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerAppendOK,
                                              uint64_t *followerCurrentTerm,
                                              uint64_t *followerLastLogIndex,
-                                             uint64_t *followerAckType,
-                                             rrr::DeferredReply defer) {
+                                             uint64_t *followerAckType) {
   Log_debug("RaftServiceImpl: HandleEmptyAppendEntries answering leader %d", leaderSiteId);
   RaftServer* svr = GetServer();
   if (svr == nullptr) {
-    // Server is killed, return failure
-    *followerAppendOK = 0;
-    *followerCurrentTerm = 0;
-    *followerLastLogIndex = 0;
-    *followerAckType = 0;  // Memory
-    defer.reply();
+    *followerAppendOK = 0; *followerCurrentTerm = 0;
+    *followerLastLogIndex = 0; *followerAckType = 0;
     return;
   }
-
-  // Set ackType to Memory - this response is sent before fsync
-  *followerAckType = 0;  // Memory
-
+  *followerAckType = 0;
   std::shared_ptr<Marshallable> cmd = nullptr;
-  Fiber::create_run([=, defer = std::move(defer)]() mutable {
-    svr->OnAppendEntries(slot,
-                            ballot,
-                            leaderCurrentTerm,
-                            leaderSiteId,
-                            leaderPrevLogIndex,
-                            leaderPrevLogTerm,
-                            leaderCommitIndex,
-                            cmd,
-                            0,
-                            followerAppendOK,
-                            followerCurrentTerm,
-                            followerLastLogIndex,
-                            [defer = std::move(defer)]() mutable { defer.reply(); },
-                            trigger_election_now);
-  });
+  svr->OnAppendEntries(slot, ballot, leaderCurrentTerm, leaderSiteId,
+                       leaderPrevLogIndex, leaderPrevLogTerm,
+                       leaderCommitIndex, cmd, 0,
+                       followerAppendOK, followerCurrentTerm,
+                       followerLastLogIndex,
+                       trigger_election_now);
 }
 
-// @unsafe - Handle AppendEntriesDurable RPC for speculative commits
-// Received when a follower has durably persisted log entries to disk
+// @unsafe - AppendEntriesDurable for speculative commits
 void RaftServiceImpl::HandleAppendEntriesDurable(const ballot_t& term,
                                                   const siteid_t& follower_id,
                                                   const uint64_t& lastLogIndex,
-                                                  bool_t* acknowledged,
-                                                  rrr::DeferredReply defer) {
+                                                  bool_t* acknowledged) {
   RaftServer* svr = GetServer();
-  if (svr == nullptr) {
-    // Server is killed, return failure
-    *acknowledged = false;
-    defer.reply();
-    return;
-  }
-  svr->OnAppendEntriesDurable(term, follower_id, lastLogIndex, acknowledged,
-                              [defer = std::move(defer)]() mutable { defer.reply(); });
+  if (svr == nullptr) { *acknowledged = false; return; }
+  svr->OnAppendEntriesDurable(term, follower_id, lastLogIndex, acknowledged);
 }
 
-// @unsafe - svr_ pointer is bounded, external calls marked @external [safe]
+// @unsafe - svr_ pointer is bounded
 void RaftServiceImpl::HandleTimeoutNow(const uint64_t& leaderTerm,
                                         const siteid_t& leaderSiteId,
                                         uint64_t* followerTerm,
-                                        bool_t* success,
-                                        rrr::DeferredReply defer) {
+                                        bool_t* success) {
   RaftServer* svr = GetServer();
-  if (svr == nullptr) {
-    // Server is killed, return failure
-    *followerTerm = 0;
-    *success = false;
-    defer.reply();
-    return;
-  }
-  svr->OnTimeoutNow(leaderTerm, leaderSiteId, followerTerm, success,
-                     [defer = std::move(defer)]() mutable { defer.reply(); });
+  if (svr == nullptr) { *followerTerm = 0; *success = false; return; }
+  svr->OnTimeoutNow(leaderTerm, leaderSiteId, followerTerm, success);
 }
 
 // @unsafe
 void RaftServiceImpl::HandleNotifyRestart(const siteid_t& restartedSiteId,
-                                          bool_t* acknowledged,
-                                          rrr::DeferredReply defer) {
+                                          bool_t* acknowledged) {
   Log_info("[NOTIFY-RESTART] Received restart notification from site %d", restartedSiteId);
-
   RaftServer* svr = GetServer();
-  if (svr == nullptr) {
-    // Server is killed, return failure
-    *acknowledged = false;
-    defer.reply();
-    return;
-  }
+  if (svr == nullptr) { *acknowledged = false; return; }
 
-  // Reconnect our client connection to the restarted site
   auto commo = svr->commo();
   if (commo != nullptr) {
     bool success = commo->ReconnectToSite(restartedSiteId, svr->partition_id_);
@@ -372,14 +291,8 @@ void RaftServiceImpl::HandleNotifyRestart(const siteid_t& restartedSiteId,
     Log_warn("[NOTIFY-RESTART] commo is null, cannot reconnect to site %d", restartedSiteId);
   }
 
-  // ==================================================================
-  // SPECULATIVE REPLICATION: Invalidate speculative state for peer
-  // ==================================================================
-  // When a peer restarts, it loses its in-memory state (memory vote,
-  // memory-acked entries). The leader must update its speculative state.
+  // Invalidate speculative state for the peer that just restarted.
   svr->OnPeerRestart(restartedSiteId);
-
-  defer.reply();
 }
 
 // @unsafe - Typed RPC dispatcher for AddServer
@@ -413,19 +326,14 @@ void RaftServiceImpl::HandleAddServer(const uint64_t& term,
                                        const std::string& new_server_addr,
                                        bool_t* success,
                                        std::string* error_msg,
-                                       uint64_t* leader_hint,
-                                       rrr::DeferredReply defer) {
+                                       uint64_t* leader_hint) {
   RaftServer* svr = GetServer();
   if (svr == nullptr) {
-    *success = false;
-    *error_msg = "server down";
-    *leader_hint = 0;
-    defer.reply();
+    *success = false; *error_msg = "server down"; *leader_hint = 0;
     return;
   }
   svr->OnAddServer(term, new_server_id, new_server_addr,
-                   success, error_msg, leader_hint,
-                   std::move(defer));
+                   success, error_msg, leader_hint);
 }
 
 // @unsafe - svr_ pointer is bounded, delegates to RaftServer::OnRemoveServer
@@ -433,19 +341,14 @@ void RaftServiceImpl::HandleRemoveServer(const uint64_t& term,
                                           const uint64_t& server_id,
                                           bool_t* success,
                                           std::string* error_msg,
-                                          uint64_t* leader_hint,
-                                          rrr::DeferredReply defer) {
+                                          uint64_t* leader_hint) {
   RaftServer* svr = GetServer();
   if (svr == nullptr) {
-    *success = false;
-    *error_msg = "server down";
-    *leader_hint = 0;
-    defer.reply();
+    *success = false; *error_msg = "server down"; *leader_hint = 0;
     return;
   }
   svr->OnRemoveServer(term, server_id,
-                      success, error_msg, leader_hint,
-                      std::move(defer));
+                      success, error_msg, leader_hint);
 }
 
 } // namespace janus;

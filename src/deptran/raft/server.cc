@@ -2134,15 +2134,14 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const siteid_t& can_id,
                                const ballot_t& can_term,
                                ballot_t *reply_term,
-                               bool_t *vote_granted,
-                               rusty::Function<void()> cb) {
+                               bool_t *vote_granted) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("raft receives vote from candidate: %llx", can_id);
 
   uint64_t cur_term = currentTerm ;
   if( can_term < cur_term)
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
     return ;
   }
 
@@ -2156,7 +2155,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   {
     Log_debug("site %d vote NO for %d (already voted for %d in term %lu)",
               site_id_, can_id, vote_for_, cur_term);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
     return ;
   }
   }
@@ -2166,7 +2165,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   {
     Log_debug("site %d vote YES for %d (already voted for them in term %lu, idempotent)",
               site_id_, can_id, cur_term);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, std::move(cb)) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true) ;
     return ;
   }
 
@@ -2191,11 +2190,11 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   if( lst_log_term > curlstterm || (lst_log_term == curlstterm && lst_log_idx >= curlstidx) )
   {
     Log_debug("site %d vote for request vote from %d, lastidx %d, lastterm %d", site_id_, can_id, curlstidx, curlstterm);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, std::move(cb)) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true) ;
     return ;
   }
 
-  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
+  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
 
 }
 
@@ -2205,8 +2204,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
 void RaftServer::OnVoteDurable(const ballot_t& term,
                                 const siteid_t& voter_id,
-                                bool_t* acknowledged,
-                                rusty::Function<void()> cb) {
+                                bool_t* acknowledged) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // Reject stale votes from old terms
@@ -2214,7 +2212,6 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
     Log_debug("[SPEC-RAFT] Site %d: Ignoring VoteDurable from %d - term mismatch (got %lu, current %lu)",
               site_id_, voter_id, term, currentTerm);
     *acknowledged = false;
-    cb();
     return;
   }
 
@@ -2223,7 +2220,6 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
     Log_debug("[SPEC-RAFT] Site %d: Ignoring VoteDurable from %d - not leader",
               site_id_, voter_id);
     *acknowledged = false;
-    cb();
     return;
   }
 
@@ -2241,8 +2237,6 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
     Log_info("[SPEC-RAFT] Site %d: Became SECURED leader with %zu durable votes (quorum=%zu)",
              site_id_, durableVoters_.size(), quorum);
   }
-
-  cb();
 }
 
 // ============================================================================
@@ -2252,8 +2246,7 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
 void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
                                          const siteid_t& follower_id,
                                          const uint64_t& lastLogIndex,
-                                         bool_t* acknowledged,
-                                         rusty::Function<void()> cb) {
+                                         bool_t* acknowledged) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // Reject stale acks from old terms
@@ -2261,7 +2254,6 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
     Log_debug("[SPEC-RAFT] Site %d: Ignoring AppendEntriesDurable from %d - term mismatch (got %lu, current %lu)",
               site_id_, follower_id, term, currentTerm);
     *acknowledged = false;
-    cb();
     return;
   }
 
@@ -2270,7 +2262,6 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
     Log_debug("[SPEC-RAFT] Site %d: Ignoring AppendEntriesDurable from %d - not leader",
               site_id_, follower_id);
     *acknowledged = false;
-    cb();
     return;
   }
 
@@ -2321,8 +2312,6 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
 
   // Verify invariants in debug mode
   VerifySpeculativeInvariants();
-
-  cb();
 }
 
 // @unsafe - Calls undeclared Fiber::create_run()
@@ -2439,7 +2428,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  uint64_t *followerAppendOK,
                                  uint64_t *followerCurrentTerm,
                                  uint64_t *followerLastLogIndex,
-                                 rusty::Function<void()> cb,
                                  bool trigger_election_now) {
   std::unique_lock<std::recursive_mutex> lock(mtx_);
 
@@ -2716,7 +2704,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
     }
 
     lock.unlock();
-    cb();
 }
 
 // @unsafe - Removes command from log (external calls wrapped in @unsafe blocks)
@@ -2755,8 +2742,7 @@ void RaftServer::RegisterLeaderChangeCallback(std::function<void(bool)> cb) {
 void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
                                const siteid_t leaderSiteId,
                                uint64_t *followerTerm,
-                               bool_t *success,
-                               rusty::Function<void()> cb) {
+                               bool_t *success) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // @unsafe
@@ -2770,7 +2756,6 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   // ============================================================================
   if (stop_) {
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring TimeoutNow - server shutting down", site_id_);
-    cb();
     return;
   }
 
@@ -2780,7 +2765,6 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   if (leaderTerm < currentTerm) {
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring stale TimeoutNow from leader %d (leader_term=%lu < my_term=%lu)",
              site_id_, leaderSiteId, leaderTerm, currentTerm);
-    cb();
     return;
   }
 
@@ -2815,7 +2799,6 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring TimeoutNow from leader %d - already leader in term %lu",
              site_id_, leaderSiteId, currentTerm);
     *success = true;  // Success = already leader (goal achieved)
-    cb();
     return;
   }
 
@@ -2826,7 +2809,6 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring TimeoutNow from leader %d - already requesting votes (term=%lu)",
              site_id_, leaderSiteId, currentTerm);
     *success = true;  // Success = already trying to become leader
-    cb();
     return;
   }
 
@@ -2836,7 +2818,6 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   if (transferring_leadership_) {
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring TimeoutNow from leader %d - currently transferring leadership",
              site_id_, leaderSiteId);
-    cb();
     return;
   }
 
@@ -2859,8 +2840,6 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
     Log_warn("[TIMEOUT-NOW] Site %d: Failed to start election",
              site_id_);
   }
-
-  cb();
 }
 
 // ============================================================================
@@ -2873,8 +2852,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
                                     const uint64_t last_included_index,
                                     const uint64_t last_included_term,
                                     const std::string& data,
-                                    uint64_t* term_out,
-                                    rusty::Function<void()> cb) {
+                                    uint64_t* term_out) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // @unsafe
@@ -2885,7 +2863,6 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // ============================================================================
   if (stop_) {
     Log_info("[INSTALL-SNAPSHOT] Site %d: Ignoring InstallSnapshot - server shutting down", site_id_);
-    cb();
     return;
   }
 
@@ -2896,7 +2873,6 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     Log_info("[INSTALL-SNAPSHOT] Site %d: Rejecting InstallSnapshot from leader %lu "
              "(leader_term=%lu < my_term=%lu)",
              site_id_, leader_id, term, currentTerm);
-    cb();
     return;
   }
 
@@ -3005,8 +2981,6 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   Log_info("[INSTALL-SNAPSHOT] Site %d: Installed snapshot from leader %lu "
            "(snapidx=%lu, snapterm=%lu, commitIndex=%lu, executeIndex=%lu, lastLogIndex=%lu)",
            site_id_, leader_id, snapidx_, snapterm_, commitIndex, executeIndex, lastLogIndex);
-
-  cb();
 }
 
 // @unsafe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)
@@ -3585,8 +3559,7 @@ void RaftServer::OnAddServer(const uint64_t term,
                              const std::string& addr,
                              bool_t* success,
                              std::string* error_msg,
-                             uint64_t* leader_hint,
-                             rrr::DeferredReply defer) {
+                             uint64_t* leader_hint) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // @unsafe
@@ -3602,7 +3575,6 @@ void RaftServer::OnAddServer(const uint64_t term,
       *error_msg = "not leader";
     }
     Log_info("[RAFT-CONFIG] AddServer rejected: not leader (site %d)", site_id_);
-    defer.reply();
     return;
   }
 
@@ -3614,7 +3586,6 @@ void RaftServer::OnAddServer(const uint64_t term,
       *error_msg = "config change already pending";
     }
     Log_info("[RAFT-CONFIG] AddServer rejected: config change pending (site %d)", site_id_);
-    defer.reply();
     return;
   }
 
@@ -3627,7 +3598,6 @@ void RaftServer::OnAddServer(const uint64_t term,
     }
     Log_info("[RAFT-CONFIG] AddServer rejected: server %lu already in config (site %d)",
              new_server_id, site_id_);
-    defer.reply();
     return;
   }
 
@@ -3639,7 +3609,6 @@ void RaftServer::OnAddServer(const uint64_t term,
     }
     Log_info("[RAFT-CONFIG] AddServer rejected: server %lu already a learner (site %d)",
              new_server_id, site_id_);
-    defer.reply();
     return;
   }
 
@@ -3670,8 +3639,6 @@ void RaftServer::OnAddServer(const uint64_t term,
            "learners=%zu, config_size=%zu, next_index=%lu",
            new_server_id, site_id_, learners_.size(),
            current_config_.size(), next_index_[sid]);
-
-  defer.reply();
 }
 
 // @unsafe - Modifies config state, logs output
@@ -3713,8 +3680,7 @@ void RaftServer::OnRemoveServer(const uint64_t term,
                                 const uint64_t server_id,
                                 bool_t* success,
                                 std::string* error_msg,
-                                uint64_t* leader_hint,
-                                rrr::DeferredReply defer) {
+                                uint64_t* leader_hint) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // @unsafe
@@ -3730,7 +3696,6 @@ void RaftServer::OnRemoveServer(const uint64_t term,
       *error_msg = "not leader";
     }
     Log_info("[RAFT-CONFIG] RemoveServer rejected: not leader (site %d)", site_id_);
-    defer.reply();
     return;
   }
 
@@ -3742,7 +3707,6 @@ void RaftServer::OnRemoveServer(const uint64_t term,
       *error_msg = "config change already pending";
     }
     Log_info("[RAFT-CONFIG] RemoveServer rejected: config change pending (site %d)", site_id_);
-    defer.reply();
     return;
   }
 
@@ -3755,7 +3719,6 @@ void RaftServer::OnRemoveServer(const uint64_t term,
     }
     Log_info("[RAFT-CONFIG] RemoveServer rejected: server %lu not in config (site %d)",
              server_id, site_id_);
-    defer.reply();
     return;
   }
 
@@ -3767,7 +3730,6 @@ void RaftServer::OnRemoveServer(const uint64_t term,
       *error_msg = "cannot remove last server";
     }
     Log_info("[RAFT-CONFIG] RemoveServer rejected: cannot remove last server (site %d)", site_id_);
-    defer.reply();
     return;
   }
 
@@ -3788,8 +3750,6 @@ void RaftServer::OnRemoveServer(const uint64_t term,
 
   Log_info("[RAFT-CONFIG] RemoveServer: removed server %lu from config (site %d), new config size=%zu, quorum=%zu",
            server_id, site_id_, current_config_.size(), GetQuorumSize());
-
-  defer.reply();
 }
 
 } // namespace janus

@@ -330,8 +330,7 @@ class RaftServer : public TxLogServer {
               const ballot_t& can_term,
               ballot_t *reply_term,
               bool_t *vote_granted,
-              bool_t vote,
-              rusty::Function<void()> cb) {
+              bool_t vote) {
       // @unsafe
       {
         *vote_granted = vote ;
@@ -372,13 +371,12 @@ class RaftServer : public TxLogServer {
           resetTimer("granted vote");
 
           if (async_persistence_) {
-            // SPECULATIVE VOTING (async mode): Respond IMMEDIATELY (memory vote)
-            // Then start async persistence and send VoteDurable after fsync
+            // SPECULATIVE VOTING (async mode): return NOW (memory vote), then
+            // start async persistence and send VoteDurable after fsync. The
+            // outer fiber replies automatically once this function returns.
             n_vote_++ ;
-            cb() ;  // Respond now - this is the memory vote
 
-            // Start async vote persistence
-            // Capture necessary state for the async operation
+            // Capture necessary state for the async persistence thread.
             ballot_t term_copy = currentTerm;
             siteid_t voter_copy = site_id_;
             siteid_t can_id_copy = can_id;
@@ -413,19 +411,17 @@ class RaftServer : public TxLogServer {
               }), done);
             }
 
-            return;  // Already called cb() above
+            return;
           } else {
-            // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then respond
-            // No separate VoteDurable RPC needed - the vote response implies durability
+            // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then return.
+            // No separate VoteDurable RPC needed — the ack implies durability.
             PersistState(currentTerm, can_id, "doVote: sync vote persist");
             n_vote_++ ;
-            cb() ;
             return;
           }
       }
 
       n_vote_++ ;
-      cb() ;
   }
 
   // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
@@ -867,8 +863,7 @@ class RaftServer : public TxLogServer {
                      const siteid_t& can_id,
                      const ballot_t& can_term,
                      ballot_t *reply_term,
-                     bool_t *vote_granted,
-                     rusty::Function<void()> cb) ;
+                     bool_t *vote_granted) ;
 
   /**
    * VoteDurable RPC Handler - Speculative Voting Protocol
@@ -885,8 +880,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - Modifies durableVoters_ and securedLeader_
   void OnVoteDurable(const ballot_t& term,
                      const siteid_t& voter_id,
-                     bool_t* acknowledged,
-                     rusty::Function<void()> cb);
+                     bool_t* acknowledged);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   void OnAppendEntries(const slotid_t slot_id,
@@ -901,7 +895,6 @@ class RaftServer : public TxLogServer {
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,
                        uint64_t *followerLastLogIndex,
-                       rusty::Function<void()> cb,
                        bool trigger_election_now = false);
 
   /**
@@ -921,8 +914,7 @@ class RaftServer : public TxLogServer {
   void OnAppendEntriesDurable(const ballot_t& term,
                               const siteid_t& follower_id,
                               const uint64_t& lastLogIndex,
-                              bool_t* acknowledged,
-                              rusty::Function<void()> cb);
+                              bool_t* acknowledged);
 
   /**
    * TimeoutNow RPC Handler - Leadership Transfer Protocol
@@ -943,8 +935,7 @@ class RaftServer : public TxLogServer {
   void OnTimeoutNow(const uint64_t leaderTerm,
                     const siteid_t leaderSiteId,
                     uint64_t *followerTerm,
-                    bool_t *success,
-                    rusty::Function<void()> cb);
+                    bool_t *success);
 
   /**
    * InstallSnapshot RPC Handler - Snapshot Transfer Protocol
@@ -968,8 +959,7 @@ class RaftServer : public TxLogServer {
                          const uint64_t last_included_index,
                          const uint64_t last_included_term,
                          const std::string& data,
-                         uint64_t* term_out,
-                         rusty::Function<void()> cb);
+                         uint64_t* term_out);
 
   // ============================================================================
   // MEMBERSHIP CHANGE PUBLIC API
@@ -1036,8 +1026,7 @@ class RaftServer : public TxLogServer {
   void OnAddServer(const uint64_t term, const uint64_t new_server_id,
                    const std::string& addr,
                    bool_t* success, std::string* error_msg,
-                   uint64_t* leader_hint,
-                   rrr::DeferredReply defer);
+                   uint64_t* leader_hint);
 
   /**
    * RemoveServer RPC Handler - Membership Change Protocol
@@ -1056,8 +1045,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - Modifies config state
   void OnRemoveServer(const uint64_t term, const uint64_t server_id,
                       bool_t* success, std::string* error_msg,
-                      uint64_t* leader_hint,
-                      rrr::DeferredReply defer);
+                      uint64_t* leader_hint);
 
   // @unsafe - modifies proxy maps with C-style casts on raw pointers (non-trivial pointer arithmetic)
   void Disconnect(const bool disconnect = true);

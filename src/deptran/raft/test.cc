@@ -5053,19 +5053,16 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
   uint64_t snap_term = server->currentTerm;
   std::string snap_data = "test_snapshot_data_for_install";
 
-  // Call OnInstallSnapshot directly on the follower
+  // Call OnInstallSnapshot directly on the follower (synchronous)
   uint64_t reply_term = 0;
-  bool callback_called = false;
   server->OnInstallSnapshot(
       server->currentTerm,  // term (matches follower's current term)
       config_->GetServer(leader)->site_id_,  // leader_id
       snap_index,
       snap_term,
       snap_data,
-      &reply_term,
-      [&callback_called]() { callback_called = true; });
+      &reply_term);
 
-  Assert2(callback_called, "Callback should have been called");
   Assert2(reply_term > 0, "Reply term should be > 0, got %lu", reply_term);
 
   // Verify snapshot metadata updated
@@ -5144,17 +5141,13 @@ int RaftLabTest::testInstallSnapshotRejectsStaleTerm(void) {
           "Stale term %lu should be < follower term %lu", stale_term, follower_term);
 
   uint64_t reply_term = 0;
-  bool callback_called = false;
   server->OnInstallSnapshot(
       stale_term,  // stale term
       999,         // fake leader_id
       100,         // last_included_index
       1,           // last_included_term
       "stale_snapshot_data",
-      &reply_term,
-      [&callback_called]() { callback_called = true; });
-
-  Assert2(callback_called, "Callback should have been called");
+      &reply_term);
 
   // Reply should contain the follower's current term (so leader can update)
   Assert2(reply_term == follower_term,
@@ -6304,8 +6297,7 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
       leader_term,
       leader_server->site_id_,
       &follower_term,
-      &success,
-      []() {});  // @unsafe { empty callback }
+      &success);
   Log_info("TEST 70: Sent TimeoutNow to target %d, success=%d", target, (int)success);
 
   // Immediately kill the target before it can win the election
