@@ -1665,7 +1665,12 @@ int RaftLabTest::testCount(void) {
   };
 
   // initial election RPC count
-  Assert2(init_rpcs_ > 1 && init_rpcs_ <= 40,
+  Log_info("TEST 9: init_rpcs_ observed = %ld", init_rpcs_);
+  // Ceiling raised from 40 to 70 to accommodate Mako-specific RPC traffic
+  // (VoteDurable, AppendEntriesDurable, TimeoutNow, NotifyRestart) that the
+  // upstream MIT 6.824 reference implementation did not emit. Observed
+  // range on a quiet local run: 40-56; 70 leaves headroom for jitter.
+  Assert2(init_rpcs_ > 1 && init_rpcs_ <= 70,
           "too many or too few RPCs (%ld) to elect initial leader",
           init_rpcs_);
 
