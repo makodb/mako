@@ -1,11 +1,18 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 export module rrr:rpc.request_options;
 
-import <cstdint>;
-import <cmath>;
-import <random>;
+import std;
+
 
 export namespace rrr {
 

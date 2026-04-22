@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 #include <rusty/result.hpp>
 #include <rusty/cell.hpp>
@@ -12,18 +20,15 @@ module;
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <unistd.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 
 
 module rrr:impl.rpc.client;
 
-import <atomic>;
-import <coroutine>;
-import <type_traits>;
-import <string>;
-import <chrono>;
-import <climits>;
+import std;
+
 import rrr;
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).

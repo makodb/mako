@@ -3,10 +3,15 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <cassert>
 
 import rrr;
 
 namespace mdb {
+
+using rrr::verify;
+
+
 
 using base::i32;
 using base::i64;

@@ -1,8 +1,15 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
-#include<iostream>
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
@@ -28,17 +35,8 @@ module;
 
 export module rrr:misc.marshal;
 
-import <list>;
-import <vector>;
-import <string>;
-import <map>;
-import <set>;
-import <unordered_map>;
-import <unordered_set>;
-import <functional>;
-import <limits>;
-import <chrono>;
-import <memory>;
+import std;
+
 
 import :base.all;
 

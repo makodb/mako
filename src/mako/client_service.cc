@@ -5,6 +5,12 @@ import rrr;
 
 namespace mako {
 
+using rrr::Log_debug;
+using rrr::Log_info;
+using rrr::Log_warn;
+using rrr::Log_error;
+
+
 // @safe - Register RPC handlers with server
 int MakoClientService::__reg_to__(rrr::Server& server, size_t svc_index) {
     int ret = 0;

@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <rusty/arc.hpp>
@@ -48,13 +56,8 @@ module;
 
 export module rrr:base.threading;
 
-import <list>;
-import <algorithm>;
-import <functional>;
-import <atomic>;
-import <mutex>;
-import <condition_variable>;
-import <memory>;
+import std;
+
 
 import :base.basetypes;
 import :base.debugging;
@@ -521,7 +524,10 @@ class ThreadPool: public NoCopy {
     int n_;
     Counter round_robin_;
     rusty::Vec<pthread_t> th_;
-    rusty::Vec<Queue<rusty::Box<std::function<void()>>>> q_;
+    // Queue owns pthread primitives (mutex/cond) with stable addresses, so it
+    // is not move-constructible. rusty::Vec needs a moveable T for push(),
+    // so use std::vector here (resize() constructs in place).
+    std::vector<Queue<rusty::Box<std::function<void()>>>> q_;
     bool should_stop_{false};
 
     static void* start_thread_pool(void*);

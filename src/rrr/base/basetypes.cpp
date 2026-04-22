@@ -1,18 +1,22 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <pthread.h>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <inttypes.h>
 #include <time.h>
 #include <sys/time.h>
 
 module rrr:impl.base.basetypes;
 
-import <vector>;
-import <queue>;
-import <random>;
-import <atomic>;
-import <memory>;
-import <thread>;
-import <cstring>;
+import std;
+
 import rrr;
 
 

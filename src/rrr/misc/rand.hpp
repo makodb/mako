@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 #ifndef RANDOM_GENERATOR_H_
 #define RANDOM_GENERATOR_H_
@@ -8,8 +16,8 @@ module;
 
 export module rrr:misc.rand;
 
-import <cstdlib>;
-import <string>;
+import std;
+
 
 export namespace rrr {
 
@@ -48,7 +56,7 @@ public:
 
     static bool percentage_true(int p);
 
-    static unsigned int weighted_select(const rusty::Vec<double> &weight_vector);
+    static unsigned int weighted_select(const std::vector<double> &weight_vector);
 
     static void destroy();
 };

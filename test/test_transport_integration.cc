@@ -1,3 +1,7 @@
+#include <rusty/rc.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
+#include <rusty/box.hpp>
 // -*- mode: c++; c-file-style: "k&r"; c-basic-offset: 4 -*-
 /***********************************************************************
  *

@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 /**
  * Request Completion Tracking for RPC (Phase 4.3)
@@ -25,8 +33,8 @@ module;
 
 export module rrr:rpc.completion_tracker;
 
-import <cstdint>;
-import <list>;
+import std;
+
 
 import :rpc.idempotency;
 

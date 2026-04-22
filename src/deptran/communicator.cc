@@ -10,6 +10,7 @@
 #include "procedure.h"
 #include "rcc_rpc.h"
 #include <typeinfo>
+#include <rusty/vec.hpp>
 #include "RW_command.h"
 
 namespace janus {
@@ -357,12 +358,11 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       // Keep a host-scoped reference to the connection through PollableProxy.
       auto conn_opt = rpc_cli->connection();
       if (conn_opt.is_some()) {
-        auto it = Reactor::clients_.find(rpc_cli->host());
-        if (it == Reactor::clients_.end()) {
-          Reactor::clients_[rpc_cli->host()] = std::vector<rrr::PollableProxy>{};
+        if (!Reactor::clients_.contains_key(rpc_cli->host())) {
+          Reactor::clients_.insert(rpc_cli->host(), rusty::Vec<rrr::PollableProxy>{});
         }
         auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
-        Reactor::clients_[rpc_cli->host()].push_back(std::move(conn_proxy));
+        Reactor::clients_.get(rpc_cli->host()).unwrap()->push(std::move(conn_proxy));
       }
       Log_info("connect to site: %s success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);

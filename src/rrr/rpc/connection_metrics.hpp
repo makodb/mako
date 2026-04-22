@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 /**
  * Connection Health Metrics (Phase 3.2)
  *
@@ -16,8 +24,8 @@ module;
 
 export module rrr:rpc.connection_metrics;
 
-import <cstdint>;
-import <limits>;
+import std;
+
 
 export namespace rrr {
 

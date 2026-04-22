@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /* 
  * File:   dag.h
  * Author: ms
@@ -20,7 +28,8 @@ module;
 
 export module rrr:utils.mpr_dag;
 
-import <cstring>;
+import std;
+
 
 import :utils.safe_assert;
 import :utils.logger;

@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 //
 // Created by shuai on 8/22/18.
 //
@@ -22,12 +30,8 @@ module;
 
 export module rrr:reactor.epoll_wrapper;
 
-import <array>;
-import <algorithm>;
-import <cstring>;
-import <memory>;
-import <vector>;
-import <cerrno>;
+import std;
+
 
 import :base.all;
 

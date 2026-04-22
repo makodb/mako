@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 
@@ -10,9 +18,8 @@ module;
 
 module rrr:impl.reactor.quorum_event;
 
-import <functional>;
-import <chrono>;
-import <iostream>;
+import std;
+
 import rrr;
 
 namespace janus {

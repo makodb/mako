@@ -1,3 +1,6 @@
+#include <rusty/option.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -160,9 +163,9 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationUsesProxyBackedPendingStorage)
   EXPECT_EQ(reg_calls.load(std::memory_order_relaxed), 1);
   EXPECT_EQ(last_svc_index, 0u);
 
-  auto rpc_it = server.pending_rpc_to_service_.find(CountingService::RPC_ID);
-  ASSERT_NE(rpc_it, server.pending_rpc_to_service_.end());
-  EXPECT_EQ(rpc_it->second, 0u);
+  auto rpc_it = server.pending_rpc_to_service_.get(CountingService::RPC_ID);
+  ASSERT_TRUE(rpc_it.is_some());
+  EXPECT_EQ(*rpc_it.unwrap(), 0u);
 
   auto req = rusty::make_box<Request>();
   req->xid = 88;
@@ -189,9 +192,9 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationAcceptsTypedServiceWithoutInhe
   EXPECT_EQ(reg_calls.load(std::memory_order_relaxed), 1);
   EXPECT_EQ(last_svc_index, 0u);
 
-  auto rpc_it = server.pending_rpc_to_service_.find(TypedCountingService::RPC_ID);
-  ASSERT_NE(rpc_it, server.pending_rpc_to_service_.end());
-  EXPECT_EQ(rpc_it->second, 0u);
+  auto rpc_it = server.pending_rpc_to_service_.get(TypedCountingService::RPC_ID);
+  ASSERT_TRUE(rpc_it.is_some());
+  EXPECT_EQ(*rpc_it.unwrap(), 0u);
 
   auto req = rusty::make_box<Request>();
   req->xid = 99;

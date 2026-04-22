@@ -1,11 +1,19 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/cell.hpp>
 
 export module rrr:rpc.circuit_breaker;
 
-import <cstdint>;
-import <ctime>;
+import std;
+
 
 export namespace rrr {
 

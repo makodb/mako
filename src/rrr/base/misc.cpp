@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 
 #include <stdio.h>
@@ -14,10 +22,8 @@ module;
 
 module rrr:impl.base.misc;
 
-import <cstdio>;
-import <cinttypes>;
-import <string>;
-import <functional>;
+import std;
+
 import rrr;
 
 // External safety annotations for system functions used in this module

@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 #include <sys/types.h>
 #include <sys/time.h>
@@ -29,10 +37,8 @@ module;
 
 export module rrr:rpc.utils;
 
-import <list>;
-import <map>;
-import <unordered_map>;
-import <functional>;
+import std;
+
 
 export namespace rrr {
 

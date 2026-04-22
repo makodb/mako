@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <unistd.h>
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
@@ -77,14 +85,8 @@ module;
 
 export module rrr:reactor.reactor;
 
-import <algorithm>;
-import <atomic>;
-import <functional>;
-import <limits>;
-import <memory>;
-import <thread>;
-import <variant>;
-import <optional>;
+import std;
+
 
 import :base.misc;
 import :rpc.pollable_proxy;

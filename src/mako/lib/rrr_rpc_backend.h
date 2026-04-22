@@ -15,6 +15,10 @@
 #include "lib/configuration.h"
 #include "lib/transport.h"
 
+#include <rusty/box.hpp>
+#include <rusty/option.hpp>
+#include <rusty/arc.hpp>
+
 // rrr/rpc library
 import rrr;
 

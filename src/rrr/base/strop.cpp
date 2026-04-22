@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 
@@ -11,9 +19,8 @@ module;
 
 module rrr:impl.base.strop;
 
-import <string>;
-import <iostream>;
-import <sstream>;
+import std;
+
 import rrr;
 
 // @external: {

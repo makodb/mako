@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/arc.hpp>
 #include <rusty/rc.hpp>
 #include <rusty/rc/weak.hpp>
@@ -12,12 +20,8 @@ module;
 
 module rrr:impl.reactor.epoll_wrapper;
 
-import <array>;
-import <algorithm>;
-import <cstring>;
-import <memory>;
-import <vector>;
-import <cerrno>;
+import std;
+
 import rrr;
 
 namespace rrr {

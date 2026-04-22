@@ -1,12 +1,19 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/cell.hpp>
 
 export module rrr:rpc.reconnect_policy;
 
-import <cstdint>;
-import <algorithm>;
-import <random>;
+import std;
+
 
 export namespace rrr {
 

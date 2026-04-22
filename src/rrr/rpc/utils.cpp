@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <sys/types.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -25,11 +33,8 @@ module;
 
 module rrr:impl.rpc.utils;
 
-import <list>;
-import <map>;
-import <unordered_map>;
-import <functional>;
-import <utility>;
+import std;
+
 import rrr;
 
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h

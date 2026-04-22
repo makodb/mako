@@ -22,6 +22,8 @@ import rrr;
 
 namespace janus {
 
+using rrr::verify;
+
 // Forward declarations
 void clock_gettime(struct timespec *time);
 bool operator<(const struct timespec &lhs, const struct timespec &rhs);

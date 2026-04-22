@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <rusty/arc.hpp>
@@ -17,13 +25,8 @@ module;
 
 module rrr:impl.base.threading;
 
-import <algorithm>;
-import <atomic>;
-import <mutex>;
-import <condition_variable>;
-import <memory>;
-import <chrono>;
-import <functional>;
+import std;
+
 import rrr;
 
 // External safety annotations for atomic operations
@@ -90,6 +93,13 @@ ThreadPool::ThreadPool(int n /* =... */)
     : n_(n), round_robin_(), th_(n), q_(n) {
     verify(n_ >= 0);
 
+    // rusty::Vec(size_t) only reserves capacity, it does NOT populate the
+    // vector. Grow th_ to n elements before indexed assignment. q_ is a
+    // std::vector (see threading.hpp) and the constructor already sized it.
+    for (int i = 0; i < n_; i++) {
+        th_.push(pthread_t{});
+    }
+
     for (int i = 0; i < n_; i++) {
         start_thread_pool_args* args = new start_thread_pool_args();
         args->thrpool = this;
@@ -138,7 +148,7 @@ void ThreadPool::run_thread(int id_in_pool) {
     // randomized stealing order
     rusty::Vec<int> steal_order(n_);
     for (int i = 0; i < n_; i++) {
-        steal_order[i] = i;
+        steal_order.push(i);
     }
     Rand r;
     for (int i = 0; i < n_ - 1; i++) {

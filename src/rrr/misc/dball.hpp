@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /**
  * DragonBall is an interesting abstraction of event driven
  * programming. Typically after you collect all dragon balls you can
@@ -12,9 +20,8 @@ module;
 
 export module rrr:misc.dball;
 
-import <mutex>;
-import <functional>;
-import <cstdint>;
+import std;
+
 
 import :base.debugging;
 

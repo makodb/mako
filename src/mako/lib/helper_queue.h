@@ -1,7 +1,15 @@
 #ifndef _LIB_HELPER_QUEUE_H_
 #define _LIB_HELPER_QUEUE_H_
 
+#include <exception>  // Needed by asio (pulled via rpc.h) under libc++.
 #include "rpc.h"
+
+// Forward declare erpc::ReqHandle to break a circular include cycle:
+//   rpc.h → cc/timing_wheel.h → cc/timely.h → "common.h"
+// resolves to mako/benchmarks/common.h (not erpc/src/common.h) because of
+// include path ordering. mako's common.h pulls benchmark_config.h which
+// pulls this file before rpc.h has finished declaring erpc::ReqHandle.
+namespace erpc { class ReqHandle; }
 #include <mutex>
 #include <condition_variable>
 #include <atomic>

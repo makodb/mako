@@ -1,9 +1,18 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 export module rrr:misc.stat;
 
-import <cstdint>;
+import std;
+
 
 export namespace rrr {
 

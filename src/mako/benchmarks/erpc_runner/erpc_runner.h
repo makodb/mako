@@ -1,3 +1,4 @@
+#include <exception>  // asio via erpc rpc.h uses std::nested_exception; libc++ does not pull it transitively
 #pragma once
 
 #include "rpc.h"

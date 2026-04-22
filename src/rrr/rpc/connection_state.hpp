@@ -1,10 +1,19 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/cell.hpp>
 
 export module rrr:rpc.connection_state;
 
-import <functional>;
+import std;
+
 
 export namespace rrr {
 

@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -14,14 +22,8 @@ module;
 
 module rrr:impl.reactor.event;
 
-import <algorithm>;
-import <fstream>;
-import <memory>;
-import <functional>;
-import <thread>;
-import <iostream>;
-import <cerrno>;
-import <cstring>;
+import std;
+
 import rrr;
 
 namespace rrr {

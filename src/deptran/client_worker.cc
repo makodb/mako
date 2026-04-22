@@ -1,5 +1,16 @@
 #include <cmath>
 #include "client_worker.h"
+
+// The wait_recordplace macro is defined in rrr/reactor/event.h but macros do
+// not cross module boundaries, so redefine it locally here.
+#ifndef wait_recordplace
+#define wait_recordplace(ev, wait_func) do { \
+  auto ref_ev = ev; \
+  ref_ev->record_place(__FILE__, __LINE__); \
+  ref_ev->wait_func; \
+} while(0)
+#endif
+
 #include "frame.h"
 #include "procedure.h"
 #include "workload.h"

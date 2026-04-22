@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /* 
  * File:   mpr_hash.h
  * Author: ms
@@ -21,7 +29,8 @@ module;
 
 export module rrr:utils.mpr_hash;
 
-import <cstring>;
+import std;
+
 
 import :utils.logger;
 

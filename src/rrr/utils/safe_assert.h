@@ -1,10 +1,18 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 export module rrr:utils.safe_assert;
 
-import <cassert>;
-import <cstdlib>;
+import std;
+
 
 export inline void SAFE_ASSERT(bool expr) {
 #ifdef NDEBUG

@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <string.h>
@@ -12,7 +20,8 @@ module;
 
 module rrr:impl.base.unittest;
 
-import <iostream>;
+import std;
+
 import rrr;
 
 // @external: {

@@ -3,10 +3,11 @@
 #include <chrono>
 #include <memory>
 #include <thread>
-#include <unordered_set>
 #include <unistd.h>
 #include <random>
 #include <rusty/arc.hpp>
+#include <rusty/hashmap.hpp>
+#include <rusty/hashset.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/vec.hpp>
@@ -142,8 +143,8 @@ std::atomic<int> ExtendedRPCTest::port_offset{0};
 namespace {
 
 rusty::Arc<RpcServiceContext> make_test_rpc_context() {
-    std::unordered_map<i32, size_t> rpc_to_service;
-    std::unordered_set<i32> fast_rpc_ids;
+    rusty::HashMap<i32, size_t> rpc_to_service;
+    rusty::HashSet<i32> fast_rpc_ids;
     rusty::Vec<rusty::RefCell<ServiceProxy>> services;
     return rusty::Arc<RpcServiceContext>::make(
         std::move(rpc_to_service),

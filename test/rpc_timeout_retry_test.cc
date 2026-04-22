@@ -1,3 +1,5 @@
+#include <rusty/option.hpp>
+#include <rusty/box.hpp>
 /**
  * Unit tests for RPC Request Timeout and Retry.
  * Tests RequestOptions, TimeoutType, and Future retry support.

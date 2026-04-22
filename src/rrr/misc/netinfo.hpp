@@ -1,5 +1,14 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <cstddef>  // NULL macro (not exported by `import std;`)
 #include <sys/times.h>
 
 #ifndef __APPLE__
@@ -8,11 +17,8 @@ module;
 
 export module rrr:misc.netinfo;
 
-import <cstdlib>;
-import <cstdio>;
-import <cstring>;
-import <fstream>;
-import <string>;
+import std;
+
 
 export namespace rrr {
 

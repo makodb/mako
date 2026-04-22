@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 
 #include <sys/types.h>
@@ -8,18 +16,14 @@ module;
 #include <string.h>
 #include <unistd.h>
 
+#include <rusty/option.hpp>
+#include <rusty/thread.hpp>
+
 
 module rrr:impl.misc.recorder;
 
-import <thread>;
-import <mutex>;
-import <condition_variable>;
-import <functional>;
-import <list>;
-import <string>;
-import <utility>;
-import <vector>;
-import <chrono>;
+import std;
+
 import rrr;
 
 /*

@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 /**
  * This is an alarmer.
@@ -12,8 +20,8 @@ module;
 
 export module rrr:misc.alarm;
 
-import <mutex>;
-import <functional>;
+import std;
+
 
 import :base.misc;
 import :reactor.reactor;

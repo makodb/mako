@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /**
  * @file fiber.h
  * @brief Modern fiber API following Boost.Fiber conventions.
@@ -30,7 +38,8 @@ module;
 
 export module rrr:reactor.fiber;
 
-import <cstdint>;
+import std;
+
 
 import :reactor.fiber_impl;
 import :reactor.event;

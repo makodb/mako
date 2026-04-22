@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 
@@ -10,11 +18,8 @@ module;
 
 module rrr:impl.misc.alock;
 
-import <list>;
-import <mutex>;
-import <thread>;
-import <functional>;
-import <cstdint>;
+import std;
+
 import rrr;
 
 // External safety annotations for atomic operations and STL functions

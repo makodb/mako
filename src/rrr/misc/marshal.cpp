@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
@@ -17,20 +25,8 @@ module;
 
 module rrr:impl.misc.marshal;
 
-import <list>;
-import <vector>;
-import <string>;
-import <map>;
-import <set>;
-import <unordered_map>;
-import <unordered_set>;
-import <functional>;
-import <limits>;
-import <chrono>;
-import <memory>;
-import <sstream>;
-import <atomic>;
-import <mutex>;
+import std;
+
 import rrr;
 
 // External safety annotations for atomic operations
@@ -527,8 +523,8 @@ int MarshallDeputy::reg_initializer(int32_t cmd_type,
                                    MarInitializerFn init) {
   md_mutex_g.lock();
   auto& container = get_initializers();
-  auto pair = container.insert(std::make_pair(cmd_type, init));
-  verify(pair.second);
+  verify(!container.contains_key(cmd_type));
+  container.insert(cmd_type, init);
   mc_version_g.fetch_add(1, std::memory_order_release);
   md_mutex_g.unlock();
   return 0;
@@ -542,15 +538,14 @@ MarshallDeputy::get_initializer(int32_t type) {
     md_mutex_g.lock();
     auto& global_container = get_initializers();
     // Copy the container into thread-local storage
-    mc_th_ = global_container;
+    mc_th_ = global_container.clone();
     mc_th_initialized_ = true;
     mc_th_version_ = mc_version_g.load(std::memory_order_relaxed);
     md_mutex_g.unlock();
   }
-  auto it = mc_th_.find(type);
-  verify(it != mc_th_.end());
-  auto f = it->second;
-  return f;
+  auto opt = mc_th_.get(type);
+  verify(opt.is_some());
+  return *opt.unwrap();
 }
 
 // Returns reference to global factory registry

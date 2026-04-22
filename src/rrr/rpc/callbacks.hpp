@@ -1,13 +1,20 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 
 export module rrr:rpc.callbacks;
 
-import <functional>;
-import <string>;
-import <mutex>;
+import std;
+
 
 import :rpc.errors;
 

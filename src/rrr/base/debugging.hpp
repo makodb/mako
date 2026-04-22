@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <stdio.h>
 #include <assert.h>
 
@@ -17,9 +25,8 @@ module;
 
 export module rrr:base.debugging;
 
-import <iostream>;
-import <source_location>;
-import <cstdlib>;
+import std;
+
 
 export namespace rrr {
 

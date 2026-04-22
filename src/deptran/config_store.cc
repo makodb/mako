@@ -10,6 +10,12 @@ import rrr;
 
 namespace janus {
 
+using rrr::Log_debug;
+using rrr::Log_info;
+using rrr::Log_warn;
+using rrr::Log_error;
+
+
 namespace {
 
 // @unsafe - Uses RocksDB C API allocation semantics

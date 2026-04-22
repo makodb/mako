@@ -1,17 +1,21 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 
 
 export module rrr:misc.recorder;
 
-import <mutex>;
-import <condition_variable>;
-import <functional>;
-import <list>;
-import <string>;
-import <utility>;
+import std;
+
 
 import :base.basetypes;
 import :base.misc;

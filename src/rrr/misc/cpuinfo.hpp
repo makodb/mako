@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <sys/times.h>
@@ -11,13 +19,8 @@ module;
 
 export module rrr:misc.cpuinfo;
 
-import <cstdlib>;
-import <cstdio>;
-import <cstring>;
-import <mutex>;
-import <fstream>;
-import <sstream>;
-import <string>;
+import std;
+
 
 import :base.all;
 

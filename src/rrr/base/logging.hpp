@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <string.h>
 
 // External safety annotations for system functions used in this module
@@ -16,8 +24,8 @@ module;
 
 export module rrr:base.logging;
 
-import <iostream>;
-import <utility>;
+import std;
+
 
 import :base.threading;
 

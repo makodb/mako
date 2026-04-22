@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/arc.hpp>
@@ -22,17 +30,8 @@ module;
 
 module rrr:impl.reactor.reactor;
 
-import <algorithm>;
-import <limits>;
-import <memory>;
-import <thread>;
-import <variant>;
-import <optional>;
-import <functional>;
-import <mutex>;
-import <utility>;
-import <cstdlib>;
-import <atomic>;
+import std;
+
 import rrr;
 
 // @external: {

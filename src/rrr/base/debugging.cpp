@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <stdio.h>
@@ -16,11 +24,8 @@ module;
 
 module rrr:impl.base.debugging;
 
-import <iostream>;
-import <source_location>;
-import <cstdlib>;
-import <string>;
-import <utility>;
+import std;
+
 import rrr;
 
 // External safety annotations for system and std library functions

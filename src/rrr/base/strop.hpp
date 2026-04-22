@@ -1,12 +1,21 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <string.h>
 
 export module rrr:base.strop;
 
-import <string>;
+import std;
+
 
 export namespace rrr {
 

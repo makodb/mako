@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
 
 import rrr;
 

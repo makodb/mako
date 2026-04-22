@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 /**
  * This is a asynchronous queued lock module with timeout support.
@@ -22,11 +30,8 @@ module;
 
 export module rrr:misc.alock;
 
-import <list>;
-import <mutex>;
-import <thread>;
-import <functional>;
-import <cstdint>;
+import std;
+
 
 import :base.all;
 

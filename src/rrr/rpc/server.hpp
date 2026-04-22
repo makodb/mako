@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 // @unsafe - RPC server module uses raw sockets and mutable spinlocks
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -90,9 +98,8 @@ module;
 
 export module rrr:rpc.server;
 
-import <atomic>;
-import <chrono>;
-import <concepts>;
+import std;
+
 
 import :misc.marshal;
 import :reactor.epoll_wrapper;

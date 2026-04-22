@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 /**
  * Idempotency Support for RPC (Phase 2.3)
@@ -19,8 +27,8 @@ module;
 
 export module rrr:rpc.idempotency;
 
-import <cstdint>;
-import <list>;
+import std;
+
 
 import :misc.marshal;
 

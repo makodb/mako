@@ -3,6 +3,7 @@
 
 #include "deptran/workload.h"
 #include "../../deptran/scheduler.h"
+#include <random>
 
 namespace janus {
 

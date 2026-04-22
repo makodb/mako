@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <pthread.h>
@@ -12,8 +20,8 @@ module;
 
 module rrr:impl.misc.rand;
 
-import <cstdlib>;
-import <string>;
+import std;
+
 import rrr;
 
 // @external: {
@@ -152,7 +160,7 @@ unsigned long long RandomGenerator::rdtsc() {
 }
 
 // @unsafe - Calls rand_double which uses rand_r
-unsigned int RandomGenerator::weighted_select(const rusty::Vec<double> &weight_vector) {
+unsigned int RandomGenerator::weighted_select(const std::vector<double> &weight_vector) {
     double sum = 0, stage_sum = 0;
     unsigned int i = 0;
     while (i < weight_vector.size())

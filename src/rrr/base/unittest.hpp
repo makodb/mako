@@ -1,11 +1,20 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 
 export module rrr:base.unittest;
 
-import <iostream>;
+import std;
+
 
 export namespace rrr {
 

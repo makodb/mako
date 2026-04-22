@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /**
  * Load balancing strategies for RPC client pools.
  * Part of Phase 5.2: Load Balancing Strategies.
@@ -16,8 +24,8 @@ module;
 
 export module rrr:rpc.load_balancer;
 
-import <cstdint>;
-import <vector>;
+import std;
+
 
 import :rpc.connection_metrics;
 

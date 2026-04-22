@@ -1,3 +1,7 @@
+#include <rusty/rc.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
+#include <rusty/box.hpp>
 #include <gtest/gtest.h>
 
 #include <stdexcept>

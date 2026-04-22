@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <inttypes.h>
@@ -24,10 +32,8 @@ module;
 
 export module rrr:base.basetypes;
 
-import <algorithm>;
-import <random>;
-import <atomic>;
-import <memory>;
+import std;
+
 
 import :base.debugging;
 

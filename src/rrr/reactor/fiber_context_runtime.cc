@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/box.hpp>
 #include <rusty/rc.hpp>
 #include <rusty/option.hpp>
@@ -14,11 +22,8 @@ module;
 
 module rrr:impl.reactor.fiber_context_runtime;
 
-import <cstddef>;
-import <cstdint>;
-import <type_traits>;
-import <utility>;
-import <cstdlib>;
+import std;
+
 import rrr;
 
 /**

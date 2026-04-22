@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -33,11 +41,8 @@ module;
 
 export module rrr:reactor.event;
 
-import <algorithm>;
-import <fstream>;
-import <iostream>;
-import <functional>;
-import <memory>;
+import std;
+
 
 import :base.all;
 

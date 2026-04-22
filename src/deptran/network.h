@@ -4,6 +4,7 @@ import rrr;
 
 #include <errno.h>
 #include <memory>
+#include <rusty/box.hpp>
 
 
 namespace network_client {

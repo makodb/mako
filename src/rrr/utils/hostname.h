@@ -1,12 +1,21 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
 
 export module rrr:utils.hostname;
 
-import <cstdlib>;
+import std;
+
 
 export inline char* gethostip(const char* hostname) {
     struct hostent* h = gethostbyname(hostname);

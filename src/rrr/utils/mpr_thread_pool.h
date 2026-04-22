@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <apr_queue.h>
 #include <apr_thread_proc.h>
 #include <apr_thread_mutex.h>
@@ -10,7 +18,8 @@ module;
 
 export module rrr:utils.mpr_thread_pool;
 
-import <cstdlib>;
+import std;
+
 
 import :utils.logger;
 import :utils.safe_assert;

@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <rusty/rusty.hpp>
 #include <rusty/result.hpp>
 #include <rusty/cell.hpp>
@@ -9,10 +17,8 @@ module;
 
 export module rrr:rpc.client;
 
-import <chrono>;
-import <atomic>;
-import <coroutine>;
-import <type_traits>;
+import std;
+
 
 import :misc.marshal;
 import :reactor.epoll_wrapper;

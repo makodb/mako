@@ -1,3 +1,6 @@
+#include <rusty/option.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 /**
  * Unit tests for RPC Request Buffering.
  * Tests buffering requests during disconnection and replay on reconnect.

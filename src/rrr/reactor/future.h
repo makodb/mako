@@ -1,4 +1,12 @@
 module;
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /**
  * @file future.h
  * @brief FiberFuture/FiberPromise API for fiber-based asynchronous programming.
@@ -37,9 +45,8 @@ module;
 
 export module rrr:reactor.future;
 
-import <cstdint>;
-import <memory>;
-import <stdexcept>;
+import std;
+
 
 import :reactor.event;
 import :reactor.reactor;

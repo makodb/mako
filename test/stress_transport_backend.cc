@@ -12,6 +12,7 @@
  **********************************************************************/
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -219,7 +220,7 @@ TEST_F(TransportStressTest, RapidBufferAllocation) {
 
     std::cout << "[STRESS] Rapid buffer allocation: " << iterations
               << " iterations in " << duration_ms << "ms ("
-              << (iterations * 1000.0 / std::max(1L, duration_ms)) << " ops/sec)" << std::endl;
+              << (iterations * 1000.0 / std::max<long long>(1, duration_ms)) << " ops/sec)" << std::endl;
 
     backend.Shutdown();
 }
@@ -300,7 +301,7 @@ TEST_F(TransportStressTest, ConcurrentBackendOperations) {
     std::cout << "[STRESS] Concurrent operations: " << total_ops
               << " total operations across " << num_threads << " threads in "
               << duration_ms << "ms ("
-              << (total_ops * 1000.0 / std::max(1L, duration_ms)) << " ops/sec)" << std::endl;
+              << (total_ops * 1000.0 / std::max<long long>(1, duration_ms)) << " ops/sec)" << std::endl;
 
     for (auto& backend : backends) {
         backend->Shutdown();
@@ -446,7 +447,7 @@ TEST_F(TransportStressTest, TypeParsingPerformance) {
 
     std::cout << "[STRESS] Type parsing: " << iterations
               << " iterations in " << duration_us << "μs ("
-              << (iterations * 1000.0 / std::max(1L, duration_us)) << " ops/ms)" << std::endl;
+              << (iterations * 1000.0 / std::max<long long>(1, duration_us)) << " ops/ms)" << std::endl;
 }
 
 // ============= Send Operation Stress Tests =============
@@ -468,7 +469,7 @@ TEST_F(TransportStressTest, HighThroughputSend) {
 
     std::cout << "[STRESS] High throughput send: " << iterations
               << " sends in " << duration_ms << "ms ("
-              << (iterations * 1000.0 / std::max(1L, duration_ms)) << " ops/sec)" << std::endl;
+              << (iterations * 1000.0 / std::max<long long>(1, duration_ms)) << " ops/sec)" << std::endl;
 
     backend.Shutdown();
 }
@@ -490,7 +491,7 @@ TEST_F(TransportStressTest, BroadcastStress) {
 
     std::cout << "[STRESS] Broadcast stress: " << iterations
               << " broadcasts in " << duration_ms << "ms ("
-              << (iterations * 1000.0 / std::max(1L, duration_ms)) << " ops/sec)" << std::endl;
+              << (iterations * 1000.0 / std::max<long long>(1, duration_ms)) << " ops/sec)" << std::endl;
 
     backend.Shutdown();
 }
@@ -520,7 +521,7 @@ TEST_F(TransportStressTest, BatchSendStress) {
     std::cout << "[STRESS] Batch send stress: " << iterations
               << " batches (" << (iterations * 4) << " individual sends) in "
               << duration_ms << "ms ("
-              << (iterations * 4 * 1000.0 / std::max(1L, duration_ms)) << " ops/sec)" << std::endl;
+              << (iterations * 4 * 1000.0 / std::max<long long>(1, duration_ms)) << " ops/sec)" << std::endl;
 
     backend.Shutdown();
 }
@@ -557,7 +558,7 @@ TEST_F(TransportStressTest, ThroughputBenchmark) {
                                (duration_us / 1000000.0);
 
         std::cout << "[BENCHMARK] Size " << size << " bytes: "
-                  << (iterations * 1000000.0 / std::max(1L, duration_us)) << " ops/sec, "
+                  << (iterations * 1000000.0 / std::max<long long>(1, duration_us)) << " ops/sec, "
                   << throughput_mb << " MB/sec" << std::endl;
     }
 
@@ -626,7 +627,7 @@ TEST_F(TransportStressTest, MixedWorkload) {
     std::cout << "[STRESS] Mixed workload: " << total_ops
               << " operations across " << num_backends << " backends in "
               << duration_ms << "ms ("
-              << (total_ops * 1000.0 / std::max(1L, duration_ms)) << " ops/sec)" << std::endl;
+              << (total_ops * 1000.0 / std::max<long long>(1, duration_ms)) << " ops/sec)" << std::endl;
 
     for (auto& backend : backends) {
         backend->Shutdown();

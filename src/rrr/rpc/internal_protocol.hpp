@@ -1,10 +1,18 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 export module rrr:rpc.internal_protocol;
 
-import <cstdint>;
-import <limits>;
+import std;
+
 
 export namespace rrr {
 

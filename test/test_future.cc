@@ -1,3 +1,6 @@
+#include <rusty/rc.hpp>
+#include <rusty/option.hpp>
+#include <rusty/box.hpp>
 #include <gtest/gtest.h>
 #include <atomic>
 #include <chrono>

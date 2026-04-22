@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 
 #include <rusty/arc.hpp>
@@ -7,11 +15,8 @@ module;
 
 export module rrr:rpc.request_queue;
 
-import <chrono>;
-import <cerrno>;
-import <list>;
-import <functional>;
-import <mutex>;
+import std;
+
 
 import :base.basetypes;
 import :misc.marshal;

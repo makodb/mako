@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
+#include <exception>  // asio uses std::nested_exception transitively but doesn't #include <exception> itself.
+#include <functional>
 #include <sys/file.h>
 #include "rpc.h"
 #include <mutex>

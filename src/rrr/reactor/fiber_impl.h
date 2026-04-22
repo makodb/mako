@@ -1,5 +1,13 @@
 module;
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <rusty/rusty.hpp>
 /**
  * @file fiber_impl.h
@@ -28,10 +36,8 @@ module;
 
 export module rrr:reactor.fiber_impl;
 
-import <cstddef>;
-import <cstdint>;
-import <type_traits>;
-import <utility>;
+import std;
+
 
 export namespace rrr {
 
