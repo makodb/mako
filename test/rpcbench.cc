@@ -9,12 +9,6 @@
 #include <atomic>
 #include <vector>
 
-import rrr;
-#include <rusty/arc.hpp>
-#include <rusty/async.hpp>
-#include <rusty/mutex.hpp>
-import rrr;
-
 #include "benchmark_service.h"
 
 using namespace benchmark;

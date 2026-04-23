@@ -1,6 +1,5 @@
 #pragma once
 
-import rrr;
 #include <rusty/async.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -8,6 +7,8 @@ import rrr;
 
 #include <errno.h>
 #include <memory>
+
+import rrr;
 
 // #include <math.h>
 
