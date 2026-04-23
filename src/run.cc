@@ -6,7 +6,7 @@ import rrr;
 using namespace std;
 using namespace rrr;
 
-// copy from ./test/fiber_runtime.cc
+// copy from ./tests/fiber_runtime.cc
 void ASSERT_EQ(bool a) { if (!a) throw; }
 
 void fiber_basic() {

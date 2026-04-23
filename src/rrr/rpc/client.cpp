@@ -1116,6 +1116,8 @@ int Client::connect(const char* addr, bool client) const {
   mut_conn.set_heartbeat_config(pending_heartbeat_config_.get());
   // Apply pending circuit-breaker config before connecting
   mut_conn.set_circuit_breaker_config(pending_circuit_breaker_config_.get());
+  // Apply pending reconnect policy before connecting
+  mut_conn.set_reconnect_policy(pending_reconnect_policy_.get());
 
   // Call connect through mutable reference
   int result = 0;

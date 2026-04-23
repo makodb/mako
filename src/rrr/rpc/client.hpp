@@ -1478,6 +1478,8 @@ class Client {
     rusty::Cell<HeartbeatConfig> pending_heartbeat_config_{HeartbeatConfig::disabled()};
     // Pending circuit-breaker config (applied when connection is created)
     rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_{CircuitBreakerConfig::disabled()};
+    // Pending reconnect config (applied when connection is created)
+    rusty::Cell<ReconnectPolicy> pending_reconnect_policy_{ReconnectPolicy()};
     // Shared lifecycle callback manager, wired into active ClientConnection.
     rusty::Arc<CallbackManager> callback_manager_{rusty::Arc<CallbackManager>::make()};
 
@@ -1599,6 +1601,8 @@ public:
      */
     // @safe - Sets reconnection policy
     void set_reconnect_policy(const ReconnectPolicy& policy) const {
+        pending_reconnect_policy_.set(policy);
+
         // @unsafe
         {
         auto guard = connection_.borrow();

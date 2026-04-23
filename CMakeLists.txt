@@ -163,85 +163,7 @@ add_custom_command(
 # Create a custom target that depends on the output
 add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 
-# rrr's C++20 named module interfaces and implementations. CMake 3.28+ natively
-# scans for module dependencies and builds BMIs in order, with consistent flags
-# across all consumer TUs — no manual bootstrap needed.
-# Our module interfaces use .hpp / .h extensions (legacy), so tell CMake to
-# treat them as C++ source files not headers.
-set(RRR_MODULE_INTERFACE_FILES
-    src/rrr/base/debugging.hpp
-    src/rrr/base/strop.hpp
-    src/rrr/base/unittest.hpp
-    src/rrr/misc/netinfo.hpp
-    src/rrr/misc/rand.hpp
-    src/rrr/misc/stat.hpp
-    src/rrr/reactor/fiber_impl.h
-    src/rrr/rpc/circuit_breaker.hpp
-    src/rrr/rpc/connection_metrics.hpp
-    src/rrr/rpc/connection_state.hpp
-    src/rrr/rpc/errors.hpp
-    src/rrr/rpc/heartbeat.hpp
-    src/rrr/rpc/internal_protocol.hpp
-    src/rrr/rpc/reconnect_policy.hpp
-    src/rrr/rpc/request_options.hpp
-    src/rrr/rpc/utils.hpp
-    src/rrr/base/basetypes.hpp
-    src/rrr/misc/dball.hpp
-    src/rrr/rpc/load_balancer.hpp
-    src/rrr/rpc/callbacks.hpp
-    src/rrr/base/misc.hpp
-    src/rrr/base/threading.hpp
-    src/rrr/base/logging.hpp
-    src/rrr/base/all.hpp
-    src/rrr/misc/cpuinfo.hpp
-    src/rrr/misc/marshal.hpp
-    src/rrr/reactor/epoll_wrapper.h
-    src/rrr/reactor/event.h
-    src/rrr/misc/marshallable_proxy.h
-    src/rrr/misc/recorder.hpp
-    src/rrr/rpc/idempotency.hpp
-    src/rrr/rpc/request_queue.hpp
-    src/rrr/rpc/pollable_proxy.h
-    src/rrr/reactor/quorum_event.h
-    src/rrr/rpc/completion_tracker.hpp
-    src/rrr/reactor/reactor.h
-    src/rrr/misc/alarm.hpp
-    src/rrr/reactor/future.h
-    src/rrr/rpc/client.hpp
-    src/rrr/rpc/server.hpp
-    src/rrr/misc/alock.hpp
-    src/rrr/reactor/fiber.h
-    src/rrr/rrr.hpp
-)
-# rrr module implementation partitions (module rrr:impl.xxx;) must also live
-# in the FILE_SET CXX_MODULES so CMake knows they "provide" those partitions.
-set(RRR_MODULE_IMPL_FILES
-    src/rrr/base/basetypes.cpp
-    src/rrr/base/debugging.cpp
-    src/rrr/base/logging.cpp
-    src/rrr/base/misc.cpp
-    src/rrr/base/strop.cpp
-    src/rrr/base/threading.cpp
-    src/rrr/base/unittest.cpp
-    src/rrr/misc/alock.cpp
-    src/rrr/misc/marshal.cpp
-    src/rrr/misc/rand.cpp
-    src/rrr/misc/recorder.cpp
-    src/rrr/reactor/epoll_wrapper.cc
-    src/rrr/reactor/event.cc
-    src/rrr/reactor/fiber_context_runtime.cc
-    # fiber_context_x86_64.cc is a plain TU (top-level asm).
-    src/rrr/reactor/fiber_impl.cc
-    src/rrr/reactor/quorum_event.cc
-    src/rrr/reactor/reactor.cc
-    src/rrr/rpc/client.cpp
-    src/rrr/rpc/server.cpp
-    src/rrr/rpc/utils.cpp
-)
-set_source_files_properties(${RRR_MODULE_INTERFACE_FILES} PROPERTIES
-    LANGUAGE CXX
-    CXX_SCAN_FOR_MODULES ON
-)
+# rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # libc++ removed std::unary_function/binary_function (LWG3820, C++20);
@@ -882,6 +804,13 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so")
   message(STATUS "LZ4 library built successfully")
 endif()
 
+# Build and export rrr module/target wiring from a dedicated CMakeLists.
+add_subdirectory(src/rrr)
+set_source_files_properties(${RRR_MODULE_INTERFACE_FILES} PROPERTIES
+    LANGUAGE CXX
+    CXX_SCAN_FOR_MODULES ON
+)
+
 # Build libtxlog.so natively with CMake instead of WAF
 # Collect RRR source files
 file(GLOB RRR_SRC
@@ -895,7 +824,7 @@ file(GLOB RRR_SRC
 # Remove the rrr module implementation partitions from RRR_SRC; they are
 # registered separately via the FILE_SET CXX_MODULES on txlog_core_obj.
 foreach(_RRR_MOD_IMPL IN LISTS RRR_MODULE_IMPL_FILES)
-    list(REMOVE_ITEM RRR_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${_RRR_MOD_IMPL}")
+    list(REMOVE_ITEM RRR_SRC "${_RRR_MOD_IMPL}")
 endforeach()
 
 # Collect MEMDB source files
@@ -1408,15 +1337,16 @@ add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
 # RPC benchmark binary
 get_filename_component(MAKO_CXX_COMPILER_BASENAME "${CMAKE_CXX_COMPILER}" NAME)
-set(RPCBENCH_SRC test/rpcbench.cc)
+set(RPCBENCH_SRC src/rrr/tests/rpcbench.cc)
 if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
     # Use a fragile-friendly source variant to keep benchmark logic transpilable.
-    set(RPCBENCH_SRC test/rpcbench_fragile.cc)
+    set(RPCBENCH_SRC tests/rpcbench_fragile.cc)
 endif()
-add_executable(rpcbench ${RPCBENCH_SRC} test/benchmark_service.cc)
+add_executable(rpcbench ${RPCBENCH_SRC} src/rrr/tests/benchmark_service.cc)
 target_include_directories(rpcbench PRIVATE
     src
     src/rrr
+    src/rrr/tests
     test
 )
 target_compile_options(rpcbench PRIVATE ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
@@ -1426,117 +1356,6 @@ target_link_libraries(rpcbench
     ${BENCH_LDFLAGS}
     ${LIBEVENT_LDFLAGS}
 )
-
-# Build the necessary RRR library sources for rpcbench
-file(GLOB RRR_BENCH_SRC
-    "src/rrr/base/*.cpp"
-    "src/rrr/misc/*.cpp"
-    "src/rrr/rpc/*.cpp"
-    "src/rrr/reactor/*.cc"
-)
-# Module impl partitions are registered via FILE_SET on the rrr target below.
-foreach(_RRR_MOD_IMPL IN LISTS RRR_MODULE_IMPL_FILES)
-    list(REMOVE_ITEM RRR_BENCH_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${_RRR_MOD_IMPL}")
-endforeach()
-
-# RRR module implementation units cannot be compiled with the global forced
-# include (`-include .../masstree/config.h`) because it injects tokens before
-# the module declaration.
-set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
-list(FIND RRR_CXXFLAGS "-include" RRR_INCLUDE_FLAG_INDEX)
-if(NOT RRR_INCLUDE_FLAG_INDEX EQUAL -1)
-    math(EXPR RRR_INCLUDE_PATH_INDEX "${RRR_INCLUDE_FLAG_INDEX}+1")
-    list(REMOVE_AT RRR_CXXFLAGS ${RRR_INCLUDE_PATH_INDEX})
-    list(REMOVE_AT RRR_CXXFLAGS ${RRR_INCLUDE_FLAG_INDEX})
-endif()
-
-# Add RRR library if not already built
-if(NOT TARGET rrr)
-    add_library(rrr STATIC ${RRR_BENCH_SRC})
-    target_sources(rrr PUBLIC
-        FILE_SET rrr_modules TYPE CXX_MODULES
-        BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-        FILES ${RRR_MODULE_INTERFACE_FILES} ${RRR_MODULE_IMPL_FILES}
-    )
-    target_include_directories(rrr PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
-        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-        ${PROXY_INCLUDE_DIR}
-    )
-    target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
-    target_link_libraries(rrr pthread)
-
-    # RRR files for borrow checking (explicit list to control what gets checked)
-    # NOTE: Many RRR files are currently excluded from borrow checking due to
-    # false positives from recent rusty-cpp updates that enforce stricter
-    # uniform borrow rules for pointers and references. The following errors
-    # are being triggered across multiple files:
-    #   - "Cannot return 'value' because it has been moved"
-    #   - "Cannot borrow from 'this': variable is not alive in current scope"
-    # These appear to be false positives related to how the checker handles
-    # method calls on this and return value tracking in C++ code.
-    # Files should be added back as these issues are resolved in rusty-cpp.
-    #
-    # Excluded files (add back when issues are resolved):
-    #   - src/rrr/misc/rand.cpp (no safety annotations)
-    #   - src/rrr/misc/recorder.cpp (no safety annotations)
-    #   - src/rrr/base/unittest.cpp (no safety annotations)
-    #   - Other *.cpp/*.cc files (need safety annotations or have violations)
-    set(RRR_BORROW_SRC
-        # Reactor files that pass borrow checking
-        src/rrr/reactor/fiber_impl.cc
-        src/rrr/reactor/event.cc
-        src/rrr/reactor/quorum_event.cc
-        src/rrr/reactor/epoll_wrapper.cc
-        src/rrr/reactor/reactor.cc  # Uses RefCell for safe interior mutability (refactored from mutable)
-        # Base files that pass borrow checking
-        src/rrr/base/logging.cpp
-        src/rrr/base/misc.cpp
-        src/rrr/base/basetypes.cpp
-        src/rrr/base/debugging.cpp
-        src/rrr/base/threading.cpp
-        # Misc files that pass borrow checking
-        src/rrr/misc/alock.cpp
-        src/rrr/misc/marshal.cpp
-        # Additional base files
-        src/rrr/base/strop.cpp
-        src/rrr/base/unittest.cpp
-        src/rrr/misc/rand.cpp
-        src/rrr/misc/recorder.cpp
-        # RPC files that pass borrow checking
-        src/rrr/rpc/utils.cpp
-        src/rrr/rpc/client.cpp
-        src/rrr/rpc/server.cpp
-    )
-
-    # Add borrow checking for RRR library (only if we have files to check)
-    if(ENABLE_BORROW_CHECKING AND RRR_BORROW_SRC)
-        add_library(rrr_borrow OBJECT ${RRR_BORROW_SRC})
-        set_target_properties(rrr_borrow PROPERTIES EXCLUDE_FROM_ALL YES)
-        target_include_directories(rrr_borrow PUBLIC
-            src
-            src/rrr
-            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-            third-party/proxy/include
-        )
-        target_compile_options(rrr_borrow PUBLIC ${RRR_CXXFLAGS})
-
-        add_borrow_check_target(rrr_borrow)
-
-        # Create a convenience target to check only RRR library files
-        add_custom_target(borrow_check_rrr
-            DEPENDS borrow_check_all_rrr_borrow
-            COMMENT "Running borrow checker on RRR library files"
-        )
-    elseif(ENABLE_BORROW_CHECKING)
-        # Create an empty target when no files to check
-        add_custom_target(borrow_check_rrr
-            COMMAND ${CMAKE_COMMAND} -E echo "No RRR files configured for borrow checking"
-            COMMENT "No RRR files configured for borrow checking"
-        )
-    endif()
-endif()
 
 # Add memdb library if not already built
 if(NOT TARGET memdb)
@@ -1562,7 +1381,7 @@ enable_testing()
 set(BUILD_TESTS OFF)
 set(FRAGILE_GTEST_FROM_SOURCE OFF)
 set(MAKO_GTEST_ROOT "")
-set(MAKO_GTEST_MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/test/fragile_gtest_main.cc)
+set(MAKO_GTEST_MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/tests/fragile_gtest_main.cc)
 
 # Prefer root-level third-party layout. Keep erpc-nested path as fallback.
 foreach(_gtest_candidate
@@ -1634,6 +1453,7 @@ if(BUILD_TESTS)
     set(TEST_INCLUDE_DIRS
         src
         src/rrr
+        src/rrr/tests
         src/memdb
         src/mako
         test
@@ -1660,63 +1480,63 @@ if(BUILD_TESTS)
     )
 
     # Marshal/Unmarshal Tests
-    add_executable(test_marshal test/test_marshal.cc)
+    add_executable(test_marshal src/rrr/tests/test_marshal.cc)
     target_include_directories(test_marshal PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_marshal PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_marshal ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_marshal COMMAND test_marshal)
 
     # MakoClientService Unit Tests
-    add_executable(test_client_service test/test_client_service.cc)
+    add_executable(test_client_service tests/test_client_service.cc)
     target_include_directories(test_client_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_client_service PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_client_service COMMAND test_client_service)
 
     # Config Schema Serialization Tests
-    add_executable(test_config_schema test/config_schema_test.cc)
+    add_executable(test_config_schema tests/config_schema_test.cc)
     target_include_directories(test_config_schema PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_config_schema PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_schema ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_config_schema COMMAND test_config_schema)
 
     # Sharding Policy Tests
-    add_executable(test_sharding_policy test/sharding_policy_test.cc)
+    add_executable(test_sharding_policy tests/sharding_policy_test.cc)
     target_include_directories(test_sharding_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_sharding_policy PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_sharding_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
 
     # Sharding Policy Cache Tests (requires txlog bench/core for ConfigClient)
-    add_executable(test_sharding_policy_cache test/sharding_policy_cache_test.cc)
+    add_executable(test_sharding_policy_cache tests/sharding_policy_cache_test.cc)
     target_include_directories(test_sharding_policy_cache PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_sharding_policy_cache PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_sharding_policy_cache ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_sharding_policy_cache COMMAND test_sharding_policy_cache)
 
     # Shard Router Integration Tests (requires txlog bench/core for ShardingPolicyCache)
-    add_executable(test_shard_router test/shard_router_test.cc)
+    add_executable(test_shard_router tests/shard_router_test.cc)
     target_include_directories(test_shard_router PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
     target_compile_options(test_shard_router PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_shard_router ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_shard_router COMMAND test_shard_router)
 
     # TPC-C Sharding Integration Tests (requires txlog bench/core for ShardingPolicyCache)
-    add_executable(test_tpcc_sharding test/tpcc_sharding_test.cc)
+    add_executable(test_tpcc_sharding tests/tpcc_sharding_test.cc)
     target_include_directories(test_tpcc_sharding PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
     target_compile_options(test_tpcc_sharding PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_tpcc_sharding ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_tpcc_sharding COMMAND test_tpcc_sharding)
 
     # Fiber API Tests
-    add_executable(test_fiber test/fiber_test.cc)
+    add_executable(test_fiber src/rrr/tests/fiber_test.cc)
     target_include_directories(test_fiber PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/rrr)
     target_compile_options(test_fiber PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_fiber rrr ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} pthread)
     add_test(NAME test_fiber COMMAND test_fiber)
 
     # ConfigStore RocksDB Tests
-    add_executable(test_config_store test/config_store_test.cc)
+    add_executable(test_config_store tests/config_store_test.cc)
     target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_config_store PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_store ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
@@ -1724,7 +1544,7 @@ if(BUILD_TESTS)
 
     # ConfigService RPC Tests
     # Note: Includes src/deptran for rcc_rpc.h dependencies (__dep__.h, rcc/tx.h, etc.)
-    add_executable(test_config_service test/config_service_test.cc)
+    add_executable(test_config_service tests/config_service_test.cc)
     target_include_directories(test_config_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_config_service PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
@@ -1732,28 +1552,28 @@ if(BUILD_TESTS)
 
     # ConfigClient Tests
     # Note: Includes src/deptran for rcc_rpc.h dependencies
-    add_executable(test_config_client test/config_client_test.cc)
+    add_executable(test_config_client tests/config_client_test.cc)
     target_include_directories(test_config_client PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_config_client PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_client ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_client COMMAND test_config_client)
 
     # Config Node Failure Scenario Tests
-    add_executable(test_config_failure test/config_failure_test.cc)
+    add_executable(test_config_failure tests/config_failure_test.cc)
     target_include_directories(test_config_failure PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_config_failure PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_failure ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_failure COMMAND test_config_failure)
 
     # Sharding Policy Startup Tests
-    add_executable(test_sharding_startup test/sharding_startup_test.cc)
+    add_executable(test_sharding_startup src/rrr/tests/sharding_startup_test.cc)
     target_include_directories(test_sharding_startup PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako/benchmarks)
     target_compile_options(test_sharding_startup PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_sharding_startup ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_sharding_startup COMMAND test_sharding_startup)
 
     # RPC Tests
-    add_executable(test_rpc test/test_rpc.cc test/benchmark_service.cc)
+    add_executable(test_rpc src/rrr/tests/test_rpc.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc PRIVATE ${TEST_COMPILE_OPTIONS})
     # test_rpc only exercises RRR RPC paths and does not require memdb.
@@ -1773,21 +1593,21 @@ if(BUILD_TESTS)
     endif()
 
     # Load Balancer Tests
-    add_executable(test_load_balancer test/test_load_balancer.cc test/benchmark_service.cc)
+    add_executable(test_load_balancer src/rrr/tests/test_load_balancer.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_load_balancer PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_load_balancer PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_load_balancer ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_load_balancer COMMAND test_load_balancer)
 
     # Idempotency Tests
-    add_executable(test_idempotency test/test_idempotency.cc)
+    add_executable(test_idempotency src/rrr/tests/test_idempotency.cc)
     target_include_directories(test_idempotency PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_idempotency PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_idempotency ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_idempotency COMMAND test_idempotency)
 
     # Completion Tracker Tests
-    add_executable(test_completion_tracker test/test_completion_tracker.cc)
+    add_executable(test_completion_tracker src/rrr/tests/test_completion_tracker.cc)
     target_include_directories(test_completion_tracker PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_completion_tracker PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_completion_tracker ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -1796,7 +1616,7 @@ if(BUILD_TESTS)
     # Chaos Engineering Tests — disabled: references rrr::chaos::{ChaosConfig,
     # ChaosStats, FailureType} which don't exist in the tree (the chaos support
     # module was never implemented). Re-enable if/when the namespace lands.
-    # add_executable(rpc_chaos_test test/rpc_chaos_test.cc test/benchmark_service.cc)
+    # add_executable(rpc_chaos_test src/rrr/tests/rpc_chaos_test.cc src/rrr/tests/benchmark_service.cc)
     # target_include_directories(rpc_chaos_test PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     # target_compile_options(rpc_chaos_test PRIVATE ${TEST_COMPILE_OPTIONS})
     # target_link_libraries(rpc_chaos_test ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -1804,55 +1624,55 @@ if(BUILD_TESTS)
     # set_tests_properties(rpc_chaos_test PROPERTIES LABELS "chaos")
 
     # Atomic Lock Tests - Commented out due to crashes
-    # add_executable(test_alock test/test_alock.cc)
+    # add_executable(test_alock src/rrr/tests/test_alock.cc)
     # target_include_directories(test_alock PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     # target_compile_options(test_alock PRIVATE ${TEST_COMPILE_OPTIONS})
     # target_link_libraries(test_alock ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     # add_test(NAME test_alock COMMAND test_alock)
 
     # Future Tests
-    add_executable(test_future test/test_future.cc)
+    add_executable(test_future src/rrr/tests/test_future.cc)
     target_include_directories(test_future PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_future PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_future ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_future COMMAND test_future)
 
     # Future Performance Benchmark (not run in test suite)
-    add_executable(bench_future test/bench_future.cc)
+    add_executable(bench_future src/rrr/tests/bench_future.cc)
     target_include_directories(bench_future PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(bench_future PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(bench_future ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
 
     # Masstree unit tests (run with ctest/make test)
-    add_executable(test_masstree test/test_masstree.cc)
+    add_executable(test_masstree tests/test_masstree.cc)
     target_include_directories(test_masstree PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_masstree PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_masstree mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree COMMAND test_masstree)
 
     # Masstree internals tests (threadinfo, globalepoch, RCU)
-    add_executable(test_masstree_internals test/test_masstree_internals.cc)
+    add_executable(test_masstree_internals tests/test_masstree_internals.cc)
     target_include_directories(test_masstree_internals PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_masstree_internals PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_masstree_internals mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree_internals COMMAND test_masstree_internals)
 
     # Masstree multi-instance stress tests (MasstreeContext isolation)
-    add_executable(test_masstree_multi_instance test/test_masstree_multi_instance.cc)
+    add_executable(test_masstree_multi_instance tests/test_masstree_multi_instance.cc)
     target_include_directories(test_masstree_multi_instance PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_masstree_multi_instance PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_masstree_multi_instance mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree_multi_instance COMMAND test_masstree_multi_instance)
 
     # SiloRuntime tests (per-site runtime isolation)
-    add_executable(test_silo_runtime test/test_silo_runtime.cc)
+    add_executable(test_silo_runtime tests/test_silo_runtime.cc)
     target_include_directories(test_silo_runtime PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_silo_runtime mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
 
     # Multi-site Silo stress tests
-    add_executable(test_silo_multi_site_stress test/test_silo_multi_site_stress.cc)
+    add_executable(test_silo_multi_site_stress tests/test_silo_multi_site_stress.cc)
     target_include_directories(test_silo_multi_site_stress PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_silo_multi_site_stress PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_silo_multi_site_stress mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -1868,10 +1688,10 @@ if(BUILD_TESTS)
     # endif()
 
     # Masstree performance benchmark (on-demand throughput output)
-    set(MASSTREE_PERF_SRC test/masstree_perf.cc)
+    set(MASSTREE_PERF_SRC tests/masstree_perf.cc)
     if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
         # Use a fragile-friendly source variant to keep benchmark logic transpilable.
-        set(MASSTREE_PERF_SRC test/masstree_perf_fragile.cc)
+        set(MASSTREE_PERF_SRC tests/masstree_perf_fragile.cc)
     endif()
     add_executable(masstree_perf ${MASSTREE_PERF_SRC})
     target_include_directories(masstree_perf PRIVATE ${TEST_INCLUDE_DIRS})
@@ -1886,15 +1706,15 @@ if(BUILD_TESTS)
     endif()
 
     # Reactor/Event System Tests
-    add_executable(test_reactor test/test_reactor.cc)
+    add_executable(test_reactor src/rrr/tests/test_reactor.cc)
     target_include_directories(test_reactor PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_reactor PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_reactor ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_reactor COMMAND test_reactor)
 
     # Fiber Runtime Tests
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/fiber_runtime.cc")
-        add_executable(test_fiber_runtime test/fiber_runtime.cc)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/tests/fiber_runtime.cc")
+        add_executable(test_fiber_runtime src/rrr/tests/fiber_runtime.cc)
         target_include_directories(test_fiber_runtime PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
         target_compile_options(test_fiber_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
         target_link_libraries(test_fiber_runtime ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -1902,35 +1722,35 @@ if(BUILD_TESTS)
     endif()
 
     # Extended RPC Tests
-    add_executable(test_rpc_extended test/test_rpc_extended.cc test/benchmark_service.cc)
+    add_executable(test_rpc_extended src/rrr/tests/test_rpc_extended.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_extended PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_extended PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_extended ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_extended COMMAND test_rpc_extended)
 
     # Extended Reactor Tests
-    add_executable(test_reactor_extended test/test_reactor_extended.cc)
+    add_executable(test_reactor_extended src/rrr/tests/test_reactor_extended.cc)
     target_include_directories(test_reactor_extended PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_reactor_extended PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_reactor_extended ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_reactor_extended COMMAND test_reactor_extended)
 
     # Arc<Mutex<>> Thread Safety Tests
-    add_executable(test_arc_mutex_thread test/test_arc_mutex_thread.cc)
+    add_executable(test_arc_mutex_thread tests/test_arc_mutex_thread.cc)
     target_include_directories(test_arc_mutex_thread PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_arc_mutex_thread PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_arc_mutex_thread ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_arc_mutex_thread COMMAND test_arc_mutex_thread)
 
     # Timeout Race Condition Tests
-    add_executable(test_timeout_race test/test_timeout_race.cc)
+    add_executable(test_timeout_race src/rrr/tests/test_timeout_race.cc)
     target_include_directories(test_timeout_race PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_timeout_race PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_timeout_race ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_timeout_race COMMAND test_timeout_race)
 
     # AndEvent Tests
-    add_executable(test_and_event test/test_and_event.cc)
+    add_executable(test_and_event src/rrr/tests/test_and_event.cc)
     target_include_directories(test_and_event PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_and_event PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_and_event ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -1938,14 +1758,14 @@ if(BUILD_TESTS)
 
     # Transport Backend Tests (Comprehensive)
     # Tests use mock implementations to avoid mako/eRPC dependencies
-    add_executable(test_transport_backend test/test_transport_backend.cc)
+    add_executable(test_transport_backend src/rrr/tests/test_transport_backend.cc)
     target_include_directories(test_transport_backend PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_transport_backend PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_transport_backend ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_transport_backend COMMAND test_transport_backend)
 
     # Transport Backend Stress Tests
-    add_executable(stress_transport_backend test/stress_transport_backend.cc)
+    add_executable(stress_transport_backend src/rrr/tests/stress_transport_backend.cc)
     target_include_directories(stress_transport_backend PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(stress_transport_backend PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(stress_transport_backend ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -1954,7 +1774,7 @@ if(BUILD_TESTS)
     set_tests_properties(stress_transport_backend PROPERTIES TIMEOUT 120)
 
     # Transport Integration Tests (uses real rrr/rpc network I/O)
-    add_executable(test_transport_integration test/test_transport_integration.cc)
+    add_executable(test_transport_integration src/rrr/tests/test_transport_integration.cc)
     target_include_directories(test_transport_integration PRIVATE
         ${TEST_INCLUDE_DIRS}
         ${GTEST_INCLUDE_DIRS}
@@ -1971,7 +1791,7 @@ if(BUILD_TESTS)
     set_tests_properties(test_transport_integration PROPERTIES TIMEOUT 120)
 
     # eRPC Integration Tests (uses socket-based "fake" transport - no RDMA required)
-    add_executable(test_erpc_integration test/test_erpc_integration.cc)
+    add_executable(test_erpc_integration tests/test_erpc_integration.cc)
     target_include_directories(test_erpc_integration PRIVATE
         ${TEST_INCLUDE_DIRS}
         ${GTEST_INCLUDE_DIRS}
@@ -1994,42 +1814,42 @@ if(BUILD_TESTS)
     # ============================================================================
 
     # Connection State Machine Tests
-    add_executable(test_rpc_connection_state test/rpc_connection_state_test.cc)
+    add_executable(test_rpc_connection_state src/rrr/tests/rpc_connection_state_test.cc)
     target_include_directories(test_rpc_connection_state PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_connection_state PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_connection_state ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_connection_state COMMAND test_rpc_connection_state)
 
     # Reconnection Policy Tests
-    add_executable(test_rpc_reconnect_policy test/rpc_reconnect_policy_test.cc)
+    add_executable(test_rpc_reconnect_policy src/rrr/tests/rpc_reconnect_policy_test.cc)
     target_include_directories(test_rpc_reconnect_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_reconnect_policy PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_reconnect_policy ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_reconnect_policy COMMAND test_rpc_reconnect_policy)
 
     # Circuit Breaker Tests
-    add_executable(test_rpc_circuit_breaker test/rpc_circuit_breaker_test.cc)
+    add_executable(test_rpc_circuit_breaker src/rrr/tests/rpc_circuit_breaker_test.cc)
     target_include_directories(test_rpc_circuit_breaker PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_circuit_breaker PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_circuit_breaker ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_circuit_breaker COMMAND test_rpc_circuit_breaker)
 
     # Heartbeat Tests
-    add_executable(test_rpc_heartbeat test/rpc_heartbeat_test.cc)
+    add_executable(test_rpc_heartbeat src/rrr/tests/rpc_heartbeat_test.cc)
     target_include_directories(test_rpc_heartbeat PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_heartbeat PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_heartbeat ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_heartbeat COMMAND test_rpc_heartbeat)
 
     # Error Handling Tests
-    add_executable(test_rpc_errors test/rpc_errors_test.cc)
+    add_executable(test_rpc_errors src/rrr/tests/rpc_errors_test.cc)
     target_include_directories(test_rpc_errors PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_errors PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_errors ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_errors COMMAND test_rpc_errors)
 
     # SRPC Book API Symbol Drift Guard
-    add_executable(test_rpc_docs_symbols test/rpc_docs_symbols_test.cc)
+    add_executable(test_rpc_docs_symbols src/rrr/tests/rpc_docs_symbols_test.cc)
     target_include_directories(test_rpc_docs_symbols PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_docs_symbols PRIVATE ${TEST_COMPILE_OPTIONS})
     target_compile_definitions(test_rpc_docs_symbols PRIVATE
@@ -2040,56 +1860,56 @@ if(BUILD_TESTS)
     add_test(NAME test_rpc_docs_symbols COMMAND test_rpc_docs_symbols)
 
     # ngcpp/proxy dependency smoke test
-    add_executable(test_rpc_proxy_dependency test/rpc_proxy_dependency_test.cc)
+    add_executable(test_rpc_proxy_dependency src/rrr/tests/rpc_proxy_dependency_test.cc)
     target_include_directories(test_rpc_proxy_dependency PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_proxy_dependency PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_proxy_dependency ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_proxy_dependency COMMAND test_rpc_proxy_dependency)
 
     # Pollable proxy facade guard tests (Phase 1 leaf 1)
-    add_executable(test_rpc_pollable_proxy_facade test/rpc_pollable_proxy_facade_test.cc)
+    add_executable(test_rpc_pollable_proxy_facade src/rrr/tests/rpc_pollable_proxy_facade_test.cc)
     target_include_directories(test_rpc_pollable_proxy_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_pollable_proxy_facade PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_pollable_proxy_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_rpc_pollable_proxy_facade COMMAND test_rpc_pollable_proxy_facade)
 
-    add_executable(test_raft_messages test/raft_messages_test.cc)
+    add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_messages COMMAND test_raft_messages)
 
-    add_executable(test_raft_transport_facade test/raft_transport_facade_test.cc)
+    add_executable(test_raft_transport_facade tests/raft_transport_facade_test.cc)
     target_include_directories(test_raft_transport_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_transport_facade PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_transport_facade COMMAND test_raft_transport_facade)
 
-    add_executable(test_raft_rrr_transport_compile test/raft_rrr_transport_compile_test.cc)
+    add_executable(test_raft_rrr_transport_compile tests/raft_rrr_transport_compile_test.cc)
     target_include_directories(test_raft_rrr_transport_compile PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_rrr_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_rrr_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_rrr_transport_compile COMMAND test_raft_rrr_transport_compile)
 
-    add_executable(test_raft_dispatcher_facade test/raft_dispatcher_facade_test.cc)
+    add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
     target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_dispatcher_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_dispatcher_facade COMMAND test_raft_dispatcher_facade)
 
-    add_executable(test_raft_channel_transport test/raft_channel_transport_test.cc)
+    add_executable(test_raft_channel_transport tests/raft_channel_transport_test.cc)
     target_include_directories(test_raft_channel_transport PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_channel_transport PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_channel_transport ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_channel_transport COMMAND test_raft_channel_transport)
 
-    add_executable(test_raft_memory_snapshot_manager test/raft_memory_snapshot_manager_test.cc)
+    add_executable(test_raft_memory_snapshot_manager tests/raft_memory_snapshot_manager_test.cc)
     target_include_directories(test_raft_memory_snapshot_manager PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_memory_snapshot_manager PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_memory_snapshot_manager COMMAND test_raft_memory_snapshot_manager)
 
-    add_executable(test_raft_test_cluster test/raft_test_cluster_test.cc)
+    add_executable(test_raft_test_cluster tests/raft_test_cluster_test.cc)
     target_include_directories(test_raft_test_cluster PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
@@ -2102,14 +1922,14 @@ if(BUILD_TESTS)
     add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
     # PollThread proxy-backed storage guard tests (Phase 1 leaf 2)
-    add_executable(test_rpc_pollthread_proxy_storage test/rpc_pollthread_proxy_storage_test.cc)
+    add_executable(test_rpc_pollthread_proxy_storage src/rrr/tests/rpc_pollthread_proxy_storage_test.cc)
     target_include_directories(test_rpc_pollthread_proxy_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_pollthread_proxy_storage PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_pollthread_proxy_storage ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_pollthread_proxy_storage COMMAND test_rpc_pollthread_proxy_storage)
 
     # Service proxy facade guard tests (Phase 2 leaf 1)
-    add_executable(test_rpc_service_proxy_facade test/rpc_service_proxy_facade_test.cc)
+    add_executable(test_rpc_service_proxy_facade src/rrr/tests/rpc_service_proxy_facade_test.cc)
     target_include_directories(test_rpc_service_proxy_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_service_proxy_facade PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_service_proxy_facade ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -2125,9 +1945,10 @@ if(BUILD_TESTS)
     add_test(
         NAME test_rpc_docs_snippet_compile
         COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpc_docs_snippet_compile_test.py
+                ${CMAKE_SOURCE_DIR}/src/rrr/tests/rpc_docs_snippet_compile_test.py
                 --book ${CMAKE_SOURCE_DIR}/docs/srpc-book.md
                 --repo ${CMAKE_SOURCE_DIR}
+                --build-dir ${CMAKE_BINARY_DIR}
                 --cxx ${RPC_DOCS_SNIPPET_CXX}
                 --min-snippets 8
                 --snippet-timeout-sec 60
@@ -2135,25 +1956,26 @@ if(BUILD_TESTS)
     add_test(
         NAME test_rpc_rpcgen_typed_structs
         COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpcgen_typed_structs_test.py
+                ${CMAKE_SOURCE_DIR}/src/rrr/tests/rpcgen_typed_structs_test.py
                 --repo ${CMAKE_SOURCE_DIR}
     )
     add_test(
         NAME test_rpc_rpcgen_compile
         COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpcgen_compile_test.py
+                ${CMAKE_SOURCE_DIR}/src/rrr/tests/rpcgen_compile_test.py
                 --repo ${CMAKE_SOURCE_DIR}
+                --build-dir ${CMAKE_BINARY_DIR}
                 --cxx ${RPC_DOCS_SNIPPET_CXX}
     )
     # Callback System Tests (Phase 6.2)
-    add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)
+    add_executable(test_rpc_callbacks src/rrr/tests/rpc_callbacks_test.cc)
     target_include_directories(test_rpc_callbacks PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_callbacks PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_callbacks ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_callbacks COMMAND test_rpc_callbacks)
 
     # Marshallable Proxy Facade Tests
-    add_executable(test_rpc_marshallable_proxy test/rpc_marshallable_proxy_test.cc)
+    add_executable(test_rpc_marshallable_proxy src/rrr/tests/rpc_marshallable_proxy_test.cc)
     target_include_directories(test_rpc_marshallable_proxy PRIVATE
         ${TEST_INCLUDE_DIRS}
         ${GTEST_INCLUDE_DIRS}
@@ -2168,27 +1990,27 @@ if(BUILD_TESTS)
     add_test(NAME test_rpc_marshallable_proxy COMMAND test_rpc_marshallable_proxy)
 
     # Deferred Handler Regression Tests
-    add_executable(test_rpc_deferred_handler test/rpc_deferred_handler_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_deferred_handler src/rrr/tests/rpc_deferred_handler_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_deferred_handler PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_deferred_handler PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_deferred_handler ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_deferred_handler COMMAND test_rpc_deferred_handler)
 
     # Request Queue Tests (Phase 2.1)
-    add_executable(test_rpc_request_queue test/rpc_request_queue_test.cc)
+    add_executable(test_rpc_request_queue src/rrr/tests/rpc_request_queue_test.cc)
     target_include_directories(test_rpc_request_queue PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_request_queue PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_request_queue ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_request_queue COMMAND test_rpc_request_queue)
 
-    add_executable(test_rpc_request_buffering test/rpc_request_buffering_test.cc)
+    add_executable(test_rpc_request_buffering src/rrr/tests/rpc_request_buffering_test.cc)
     target_include_directories(test_rpc_request_buffering PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_request_buffering PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_request_buffering ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_request_buffering COMMAND test_rpc_request_buffering)
 
     # Timeout and Retry Tests (Phase 2.4)
-    add_executable(test_rpc_timeout_retry test/rpc_timeout_retry_test.cc)
+    add_executable(test_rpc_timeout_retry src/rrr/tests/rpc_timeout_retry_test.cc)
     target_include_directories(test_rpc_timeout_retry PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_timeout_retry PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_timeout_retry ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -2199,98 +2021,98 @@ if(BUILD_TESTS)
     # ============================================================================
 
     # State Machine Integration Tests
-    add_executable(test_rpc_state_integration test/rpc_state_integration_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_state_integration src/rrr/tests/rpc_state_integration_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_state_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_state_integration PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_state_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_state_integration COMMAND test_rpc_state_integration)
 
     # Reconnection Integration Tests
-    add_executable(test_rpc_reconnect_integration test/rpc_reconnect_integration_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_reconnect_integration src/rrr/tests/rpc_reconnect_integration_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_reconnect_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_reconnect_integration PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_reconnect_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_reconnect_integration COMMAND test_rpc_reconnect_integration)
 
     # Circuit Breaker Integration Tests
-    add_executable(test_rpc_circuit_breaker_integration test/rpc_circuit_breaker_integration_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_circuit_breaker_integration src/rrr/tests/rpc_circuit_breaker_integration_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_circuit_breaker_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_circuit_breaker_integration PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_circuit_breaker_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_circuit_breaker_integration COMMAND test_rpc_circuit_breaker_integration)
 
     # Error Integration Tests
-    add_executable(test_rpc_error_integration test/rpc_error_integration_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_error_integration src/rrr/tests/rpc_error_integration_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_error_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_error_integration PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_error_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_error_integration COMMAND test_rpc_error_integration)
 
     # Combined Reliability Tests
-    add_executable(test_rpc_combined_reliability test/rpc_combined_reliability_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_combined_reliability src/rrr/tests/rpc_combined_reliability_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_combined_reliability PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_combined_reliability PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_combined_reliability ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_combined_reliability COMMAND test_rpc_combined_reliability)
 
     # Graceful Shutdown Tests (Phase 4.1)
-    add_executable(test_rpc_graceful_shutdown test/rpc_graceful_shutdown_test.cc)
+    add_executable(test_rpc_graceful_shutdown src/rrr/tests/rpc_graceful_shutdown_test.cc)
     target_include_directories(test_rpc_graceful_shutdown PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_graceful_shutdown PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_graceful_shutdown ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_graceful_shutdown COMMAND test_rpc_graceful_shutdown)
 
     # Server Restart Detection Tests (Phase 4.2)
-    add_executable(test_rpc_restart_detection test/rpc_restart_detection_test.cc)
+    add_executable(test_rpc_restart_detection src/rrr/tests/rpc_restart_detection_test.cc)
     target_include_directories(test_rpc_restart_detection PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_restart_detection PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_restart_detection ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_restart_detection COMMAND test_rpc_restart_detection)
 
     # Connection Validation Tests (Phase 3.3)
-    add_executable(test_rpc_validation test/rpc_validation_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_validation src/rrr/tests/rpc_validation_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_validation PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_validation PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_validation ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_validation COMMAND test_rpc_validation)
 
     # Connection Health Metrics Tests (Phase 3.2)
-    add_executable(test_rpc_metrics test/rpc_metrics_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_metrics src/rrr/tests/rpc_metrics_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_metrics PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_metrics PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_metrics ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_metrics COMMAND test_rpc_metrics)
 
     # ClientPool Health-Aware Tests (Phase 5.1)
-    add_executable(test_rpc_client_pool test/rpc_client_pool_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_client_pool src/rrr/tests/rpc_client_pool_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_client_pool PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_client_pool PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_client_pool ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_client_pool COMMAND test_rpc_client_pool)
 
     # Log Storage Tests (Phase 1.1)
-    add_executable(test_rpc_log_storage test/rpc_log_storage_test.cc)
+    add_executable(test_rpc_log_storage src/rrr/tests/rpc_log_storage_test.cc)
     target_include_directories(test_rpc_log_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_log_storage PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_log_storage ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_log_storage COMMAND test_rpc_log_storage)
 
     # RocksDB Log Storage Tests (Phase 1.2)
-    add_executable(test_rpc_rocksdb_log_storage test/rpc_rocksdb_log_storage_test.cc)
+    add_executable(test_rpc_rocksdb_log_storage src/rrr/tests/rpc_rocksdb_log_storage_test.cc)
     target_include_directories(test_rpc_rocksdb_log_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_rocksdb_log_storage PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_rocksdb_log_storage ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_rpc_rocksdb_log_storage COMMAND test_rpc_rocksdb_log_storage)
 
     # Transaction Timeout Tests
-    add_executable(test_txn_timeout test/deptran/txn_timeout_test.cc)
+    add_executable(test_txn_timeout tests/deptran/txn_timeout_test.cc)
     target_include_directories(test_txn_timeout PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_txn_timeout PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_txn_timeout ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_txn_timeout COMMAND test_txn_timeout)
 
     # Stress Crash Recovery Tests (Phase 7.3.1)
-    add_executable(test_rpc_stress_crash test/rpc_stress_crash_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_stress_crash src/rrr/tests/rpc_stress_crash_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_stress_crash PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_stress_crash PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_stress_crash ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -2304,7 +2126,7 @@ if(BUILD_TESTS)
     )
 
     # Network Partition Simulation Tests (Phase 7.3.2)
-    add_executable(test_rpc_partition test/rpc_partition_test.cc test/benchmark_service.cc)
+    add_executable(test_rpc_partition src/rrr/tests/rpc_partition_test.cc src/rrr/tests/benchmark_service.cc)
     target_include_directories(test_rpc_partition PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_partition PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_rpc_partition ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
@@ -2317,7 +2139,7 @@ if(BUILD_TESTS)
     # Integration tests from CI
     add_test(NAME simpleTransaction COMMAND simpleTransaction)
     add_test(NAME test_rpc_replication_config_generation
-        COMMAND bash -c "bash ./test/rpc_replication_config_generation_test.sh"
+        COMMAND bash -c "bash ./src/rrr/tests/rpc_replication_config_generation_test.sh"
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     )
     set_tests_properties(test_rpc_replication_config_generation PROPERTIES TIMEOUT 30)
@@ -2383,7 +2205,7 @@ if(BUILD_TESTS)
     # ============================================================================
 
     # Test: Silo Varint (Utility)
-    add_executable(test_silo_varint test/test_silo_varint.cc)
+    add_executable(test_silo_varint tests/test_silo_varint.cc)
     target_link_libraries(test_silo_varint
         mako
         rrr
@@ -2406,7 +2228,7 @@ if(BUILD_TESTS)
     add_test(NAME SiloVarintTests COMMAND test_silo_varint)
 
     # Test: Silo RCU + Thread
-    add_executable(test_silo_rcu_thread test/test_silo_rcu_thread.cc)
+    add_executable(test_silo_rcu_thread tests/test_silo_rcu_thread.cc)
     target_link_libraries(test_silo_rcu_thread
         mako
         rrr
@@ -2429,7 +2251,7 @@ if(BUILD_TESTS)
     add_test(NAME SiloRCUThreadTests COMMAND test_silo_rcu_thread)
 
     # Test: Silo Allocator + Tuple Integration (Real System)
-    add_executable(test_silo_allocator_tuple test/test_silo_allocator_tuple.cc)
+    add_executable(test_silo_allocator_tuple tests/test_silo_allocator_tuple.cc)
     target_link_libraries(test_silo_allocator_tuple
         mako
         rrr
@@ -2452,7 +2274,7 @@ if(BUILD_TESTS)
     add_test(NAME SiloAllocatorTupleTests COMMAND test_silo_allocator_tuple)
 
     # Test: STO Transaction (TRcu)
-    add_executable(test_sto_transaction test/test_sto_transaction.cc)
+    add_executable(test_sto_transaction tests/test_sto_transaction.cc)
     target_link_libraries(test_sto_transaction
         mako
         rrr
@@ -2475,7 +2297,7 @@ if(BUILD_TESTS)
     add_test(NAME STOTransactionTests COMMAND test_sto_transaction)
 
     # Test: STO Transaction Real (Integration)
-    add_executable(test_sto_transaction_real test/test_sto_transaction_real.cc)
+    add_executable(test_sto_transaction_real tests/test_sto_transaction_real.cc)
     target_link_libraries(test_sto_transaction_real
         mako
         rrr

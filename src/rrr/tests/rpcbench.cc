@@ -123,8 +123,11 @@ static void* stat_proc(void*) {
     for (size_t i=0; i<summary.size(); i++) {
         sum += summary[i];
     }
-    Log_info("avg qps: %2.2f", ((float)sum)/summary.size());
-    pthread_exit(nullptr);
+    if (summary.empty()) {
+        Log_info("avg qps: 0.00");
+    } else {
+        Log_info("avg qps: %2.2f", ((float)sum)/summary.size());
+    }
     return nullptr;
 }
 
@@ -261,7 +264,6 @@ static void* client_proc(void* arg_ptr) {
 
     cl->close();  // shared_ptr handles cleanup
     poll_thread_worker->shutdown();
-    pthread_exit(nullptr);
     return nullptr;
 }
 

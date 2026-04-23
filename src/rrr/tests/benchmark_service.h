@@ -1331,5 +1331,5 @@ public:
 
 // optional %%: marks footer section, code below will be copied into end of generated C++ header
 
-// BenchmarkService methods are implemented in test/benchmark_service.cc using
+// BenchmarkService methods are implemented in src/rrr/tests/benchmark_service.cc using
 // typed Rpc*Request/Rpc*Response signatures.

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +16,89 @@ COMPILE_TAG_TO_PROFILE = {
 }
 NON_COMPILE_TAG = "srpc-no-compile"
 ALLOWED_CPP_TAGS = set(COMPILE_TAG_TO_PROFILE) | {NON_COMPILE_TAG}
+COMMON_SNIPPET_PREAMBLE = """#include <errno.h>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+#include <rusty/async.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/option.hpp>
+#include <rusty/result.hpp>
+"""
+
+
+def load_cmake_module_compile_context(
+    repo_root: Path, requested_build_dir: Path | None
+) -> tuple[str, list[str], Path] | None:
+    candidate_build_dirs: list[Path] = []
+    if requested_build_dir is not None:
+        candidate_build_dirs.append(requested_build_dir)
+    else:
+        candidate_build_dirs.extend([repo_root / "build", repo_root / "cmake-build-debug"])
+
+    for build_dir in candidate_build_dirs:
+        compile_db = build_dir / "compile_commands.json"
+        if not compile_db.exists():
+            continue
+
+        try:
+            entries = json.loads(compile_db.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        def pick_entry() -> dict | None:
+            preferred_suffixes = (
+                "src/rrr/tests/test_rpc.cc",
+                "src/rrr/tests/rpc_docs_symbols_test.cc",
+            )
+            for suffix in preferred_suffixes:
+                for entry in entries:
+                    cmd = entry.get("command", "")
+                    src = entry.get("file", "")
+                    if src.endswith(suffix) and ".o.modmap" in cmd:
+                        return entry
+            for entry in entries:
+                cmd = entry.get("command", "")
+                src = entry.get("file", "")
+                if ".o.modmap" in cmd and "src/rrr/" in src:
+                    return entry
+            return None
+
+        entry = pick_entry()
+        if entry is None:
+            continue
+
+        tokens = shlex.split(entry.get("command", ""))
+        if not tokens:
+            continue
+        compiler = tokens[0]
+        source_file = entry.get("file", "")
+
+        reusable_flags: list[str] = []
+        i = 1
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok in {"-o", "-c", "-MF", "-MT", "-MQ", "-MJ"}:
+                i += 2
+                continue
+            if tok in {"-MD", "-MP"}:
+                i += 1
+                continue
+            if tok == source_file:
+                i += 1
+                continue
+            if tok.startswith("@"):
+                modmap = tok[1:]
+                if not Path(modmap).is_absolute():
+                    tok = "@" + str((build_dir / modmap).resolve())
+            reusable_flags.append(tok)
+            i += 1
+
+        return compiler, reusable_flags, build_dir
+
+    return None
 
 
 def extract_and_validate_cpp_snippets(book_text: str):
@@ -69,7 +154,8 @@ def extract_and_validate_cpp_snippets(book_text: str):
 
 def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
     if profile == "reliability":
-        return f"""#include <time.h>
+        return f"""{COMMON_SNIPPET_PREAMBLE}
+#include <time.h>
 import rrr;
 
 using namespace rrr;
@@ -84,8 +170,8 @@ int main() {{
 }}
 """
     if profile == "client":
-        return f"""#include <time.h>
-#include <utility>
+        return f"""{COMMON_SNIPPET_PREAMBLE}
+#include <time.h>
 import rrr;
 
 using namespace rrr;
@@ -128,7 +214,8 @@ int main() {{
 }}
 """
     if profile == "server":
-        return f"""#include <time.h>
+        return f"""{COMMON_SNIPPET_PREAMBLE}
+#include <time.h>
 import rrr;
 
 using namespace rrr;
@@ -160,7 +247,8 @@ int main() {{
 }}
 """
     if profile == "codegen":
-        return f"""#include <time.h>
+        return f"""{COMMON_SNIPPET_PREAMBLE}
+#include <time.h>
 import rrr;
 
 using namespace rrr;
@@ -218,25 +306,28 @@ def compile_snippet(
     profile: str,
     snippet: str,
     timeout_sec: float,
+    compile_context: tuple[str, list[str], Path] | None,
 ):
     unit = build_compile_unit(profile, idx, snippet)
-    cmd = [
-        cxx,
-        "-std=c++23",
-        "-w",
-        "-fsyntax-only",
-        "-x",
-        "c++",
-        "-",
-        "-I",
-        str(repo_root),
-        "-I",
-        str(repo_root / "src/rrr"),
-        "-I",
-        str(repo_root / "third-party/rusty-cpp/include"),
-        "-I",
-        str(repo_root / "third-party/proxy/include"),
-    ]
+    run_cwd = None
+    if compile_context is not None:
+        cmake_cxx, cmake_flags, cmake_build_dir = compile_context
+        cmd = [cmake_cxx] + cmake_flags + ["-fsyntax-only", "-x", "c++", "-"]
+        run_cwd = str(cmake_build_dir)
+    else:
+        cmd = [cxx, "-std=c++23", "-w", "-fsyntax-only", "-x", "c++", "-"]
+    cmd.extend(
+        [
+            "-I",
+            str(repo_root),
+            "-I",
+            str(repo_root / "src/rrr"),
+            "-I",
+            str(repo_root / "third-party/rusty-cpp/include"),
+            "-I",
+            str(repo_root / "third-party/proxy/include"),
+        ]
+    )
     try:
         proc = subprocess.run(
             cmd,
@@ -244,6 +335,7 @@ def compile_snippet(
             capture_output=True,
             text=True,
             timeout=timeout_sec,
+            cwd=run_cwd,
         )
     except subprocess.TimeoutExpired as exc:
         return (
@@ -270,6 +362,7 @@ def main():
     parser.add_argument("--book", required=True, help="Path to docs/srpc-book.md")
     parser.add_argument("--repo", required=True, help="Repository root path")
     parser.add_argument("--cxx", default="g++", help="C++ compiler executable")
+    parser.add_argument("--build-dir", default=None, help="CMake build directory for module flags")
     parser.add_argument("--min-snippets", type=int, default=1, help="Minimum required tagged snippets")
     parser.add_argument(
         "--snippet-timeout-sec",
@@ -280,6 +373,7 @@ def main():
     args = parser.parse_args()
 
     repo_root = Path(args.repo).resolve()
+    build_dir = Path(args.build_dir).resolve() if args.build_dir else None
     book_path = Path(args.book).resolve()
 
     if not book_path.exists():
@@ -325,6 +419,7 @@ def main():
         )
         return 2
 
+    compile_context = load_cmake_module_compile_context(repo_root, build_dir)
     failures = []
     for idx, (line_no, profile, snippet) in enumerate(snippets, start=1):
         ok, message = compile_snippet(
@@ -335,6 +430,7 @@ def main():
             profile,
             snippet,
             args.snippet_timeout_sec,
+            compile_context,
         )
         if not ok:
             failures.append(message)
