@@ -235,6 +235,10 @@ else()
   set(LOG_LEVEL "none" CACHE STRING "eRPC log level")
 endif()
 
+# Prevent vendored gflags (pulled in by eRPC) from registering its own CTest
+# suite in the top-level build. Keep CI focused on mako/rrr tests.
+set(GFLAGS_BUILD_TESTING OFF CACHE BOOL "Disable gflags tests from eRPC dependency" FORCE)
+
 add_subdirectory(third-party/erpc)
 
 # Apply module-related compile options AFTER third-party subdirectories so
