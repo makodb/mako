@@ -559,11 +559,6 @@ MarshallDeputy::get_initializers() {
   return mc_;
 }
 
-Marshal &Marshallable::from_marshal(Marshal &m) {
-  verify(0);
-  return m;
-}
-
 // @unsafe - Calls initializer factory and unmarshals into proxied payload.
 // @lifetime: (&'a mut) -> &'a mut
 Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
@@ -590,11 +585,6 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   verify(object->kind());
   verify(kind_);
   verify(object->kind() == kind_);
-  return m;
-}
-
-Marshal &Marshallable::to_marshal(Marshal &m) const {
-  verify(0);
   return m;
 }
 

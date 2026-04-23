@@ -134,6 +134,7 @@ public:
 
     virtual void lock() = 0;
     virtual void unlock() = 0;
+    virtual ~Lockable() = default;
 //    virtual Lockable::type whatami() = 0;
 };
 
@@ -142,6 +143,7 @@ class SpinLock: public Lockable {
 public:
     // @safe - Initializes to unlocked state
     SpinLock(): locked_(false) { }
+    ~SpinLock() override = default;
 
     // Delete copy and move constructors (atomic is not copyable)
     SpinLock(const SpinLock&) = delete;
@@ -150,7 +152,38 @@ public:
     SpinLock& operator=(SpinLock&&) = delete;
 
     // @unsafe - Uses address-of operator for nanosleep call
-    void lock();
+    // SAFETY: Only takes address of stack-allocated timespec which remains valid throughout nanosleep
+    void lock() override {
+        // Fast path: try to acquire lock immediately
+        bool expected = false;
+        if (locked_.compare_exchange_strong(expected, true,
+                                            std::memory_order_acquire,
+                                            std::memory_order_relaxed)) {
+            return;
+        }
+
+        // Spin for a short while before sleeping
+        int wait = 1000;
+        while ((wait-- > 0) && locked_.load(std::memory_order_relaxed)) {
+            // CPU-specific pause instruction to reduce contention
+#if defined(__i386__) || defined(__x86_64__)
+            asm volatile("pause");
+#endif
+        }
+
+        // Fall back to sleeping if still contended
+        struct timespec t;
+        t.tv_sec = 0;
+        t.tv_nsec = 50000;  // 50 microseconds
+
+        expected = false;
+        while (!locked_.compare_exchange_weak(expected, true,
+                                              std::memory_order_acquire,
+                                              std::memory_order_relaxed)) {
+            nanosleep(&t, nullptr);
+            expected = false;
+        }
+    }
 
     // @unsafe - Calls std::atomic::store
     void unlock() {

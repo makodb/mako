@@ -42,40 +42,6 @@ using namespace std;
 
 namespace rrr {
 
-// @unsafe - Uses address-of operator for nanosleep call
-// SAFETY: Only takes address of stack-allocated timespec which remains valid throughout nanosleep
-void SpinLock::lock() {
-    // Fast path: try to acquire lock immediately
-    bool expected = false;
-    if (locked_.compare_exchange_strong(expected, true, 
-                                        std::memory_order_acquire,
-                                        std::memory_order_relaxed)) {
-        return;
-    }
-    
-    // Spin for a short while before sleeping
-    int wait = 1000;
-    while ((wait-- > 0) && locked_.load(std::memory_order_relaxed)) {
-        // CPU-specific pause instruction to reduce contention
-#if defined(__i386__) || defined(__x86_64__)
-        asm volatile("pause");
-#endif
-    }
-    
-    // Fall back to sleeping if still contended
-    struct timespec t;
-    t.tv_sec = 0;
-    t.tv_nsec = 50000;  // 50 microseconds
-    
-    expected = false;
-    while (!locked_.compare_exchange_weak(expected, true,
-                                          std::memory_order_acquire,
-                                          std::memory_order_relaxed)) {
-        nanosleep(&t, nullptr);
-        expected = false;
-    }
-}
-
 struct start_thread_pool_args {
     ThreadPool* thrpool;
     int id_in_pool;

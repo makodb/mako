@@ -67,19 +67,19 @@ class Marshallable {
   Marshallable() = delete;
   explicit Marshallable(int32_t k): kind_(k) {};
   int32_t kind() const { return kind_; }
-  virtual ~Marshallable() {
-//    if (__debug_ != 10) {
-//      verify(0);
-//    }
-//    __debug_ = 30;
-//    Log_debug("destruct marshallable.");
-  };
+  virtual ~Marshallable() = default;
   // @safe
   // @lifetime: (&'a, &'b mut) -> &'b mut
-  virtual Marshal& to_marshal(Marshal& m) const;
+  virtual Marshal& to_marshal(Marshal& m) const {
+    verify(0);
+    return m;
+  }
   // @safe
   // @lifetime: (&'a mut, &'b mut) -> &'b mut
-  virtual Marshal& from_marshal(Marshal& m);
+  virtual Marshal& from_marshal(Marshal& m) {
+    verify(0);
+    return m;
+  }
   virtual size_t entity_size() const {
     verify(0);
     return 0;
