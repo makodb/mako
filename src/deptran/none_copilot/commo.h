@@ -16,6 +16,8 @@ public:
         dispatch_quota.value_ = 3 * max_pending_rpc_;
     }
 
+    ~CommunicatorNoneCopilot() noexcept override {}
+
     std::vector<SiteProxyPair>
     PilotProxyForPartition(parid_t par_id) const;
 

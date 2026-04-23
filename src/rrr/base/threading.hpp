@@ -534,7 +534,7 @@ class ThreadPool: public NoCopy {
     void run_thread(int id_in_pool);
 
 public:
-    ~ThreadPool();
+    ~ThreadPool() noexcept;
 
 public:
     ThreadPool(int n = 1 /*get_ncpu() * 2*/);
@@ -570,7 +570,7 @@ class RunLater: public NoCopy {
     void try_one_job();
 public:
     RunLater();
-    ~RunLater();
+    ~RunLater() noexcept;
 
     // return 0 when queuing ok, otherwise EPERM
     int run_later(double sec, const std::function<void()>&);

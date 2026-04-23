@@ -283,7 +283,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
   RccTx(RccTx& rhs_dtxn);
   RccTx(epoch_t, txnid_t tid, TxLogServer *mgr, bool ro);
 
-  virtual ~RccTx() {
+  ~RccTx() noexcept override {
   }
 
   virtual void DispatchExecute(SimpleCommand &cmd,

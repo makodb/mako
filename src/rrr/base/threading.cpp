@@ -108,7 +108,7 @@ ThreadPool::ThreadPool(int n /* =... */)
     }
 }
 
-ThreadPool::~ThreadPool() {
+ThreadPool::~ThreadPool() noexcept {
     should_stop_ = true;
     for (int i = 0; i < n_; i++) {
         q_[i].push(rusty::Box<function<void()>>(nullptr));  // death pill
@@ -227,7 +227,7 @@ RunLater::RunLater() :
     Pthread_create(&th_, nullptr, RunLater::start_run_later, this);
 }
 
-RunLater::~RunLater() {
+RunLater::~RunLater() noexcept {
     should_stop_ = true;
 
     Pthread_mutex_lock(&m_);

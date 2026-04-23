@@ -69,7 +69,7 @@ class CopilotServer : public TxLogServer {
 
  public:
   CopilotServer(Frame *frame);
-  ~CopilotServer() {}
+  ~CopilotServer() noexcept override {}
 
   shared_ptr<CopilotData> GetInstance(slotid_t slot, uint8_t is_pilot);
   std::pair<slotid_t, uint64_t> PickInitSlotAndDep();
