@@ -135,6 +135,7 @@ def compile_header(
         repo_root / "src",
         repo_root / "src/rrr",
         repo_root / "src/memdb",
+        repo_root / "third-party/yaml-cpp/include",
         repo_root / "third-party/rusty-cpp/include",
         repo_root / "third-party/proxy/include",
     ] + extra_include_dirs

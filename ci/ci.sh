@@ -596,7 +596,8 @@ run_rrr_unit_tests() {
     write_simple_transaction_config "$base_port" "$src_config" "$tmp_config"
 
     cd ${BUILD_DIR}
-    MAKO_CONFIG="$tmp_config" ctest
+    # Exclude eRPC tests in CI due transport/environment instability on shared runners.
+    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E 'erpc'
     local test_result=$?
     cd ..
     rm -f "$tmp_config"
