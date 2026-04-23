@@ -28,6 +28,7 @@ jobs:
       RUN_ID: ${{ github.run_id }}            # unique per workflow run
       MAKO_NO_GDB: "1"                        # Disable GDB for CI (breaks output parsing)
       CI_MAKE_JOBS: "4"                       # Keep compile CPU usage low on shared runners
+      CMAKE_GENERATOR: "Ninja"                # Force CMake to generate Ninja build files
       MAKO_CPU_LIMIT: "5"                     # CPU throttling for dbtest workers
       MAKO_THROTTLE_CYCLE_MS: "100"           # Throttle duty-cycle period (ms)
       MAKO_MAX_WAIT_SECONDS: "180"            # Allow slower throttled runs to finish
@@ -57,6 +58,7 @@ jobs:
           echo "RUN_NUM=${{ github.run_number }}"
           echo "RUN_ID=${{ github.run_id }}"
           echo "CI_MAKE_JOBS=${CI_MAKE_JOBS}"
+          echo "CMAKE_GENERATOR=${CMAKE_GENERATOR}"
           echo "MAKO_CPU_LIMIT=${MAKO_CPU_LIMIT}"
           echo "MAKO_THROTTLE_CYCLE_MS=${MAKO_THROTTLE_CYCLE_MS}"
 

@@ -204,10 +204,14 @@ compile() {
     echo "========================================="
     echo "Running: ./ci/ci.sh compile"
     echo "========================================="
-    local jobs="${CI_MAKE_JOBS:-32}"
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
+    local generator="${CMAKE_GENERATOR:-Ninja}"
+    local build_type="${CMAKE_BUILD_TYPE:-Release}"
     echo "Using ${jobs} parallel build jobs"
+    echo "Configuring CMake generator='${generator}', build_type='${build_type}', build_dir='${BUILD_DIR}'"
     set -o pipefail
-    make BUILD_DIR=${BUILD_DIR} -j"${jobs}" 2>&1 | tee build.log
+    cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" 2>&1 | tee build.log
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" 2>&1 | tee -a build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }
@@ -629,7 +633,9 @@ run_client_server_test() {
 
 cleanup() {
     cleanup_processes
-    make BUILD_DIR=${BUILD_DIR} clean
+    if [ -f "${BUILD_DIR}/CMakeCache.txt" ]; then
+        cmake --build "${BUILD_DIR}" --target clean || true
+    fi
     rm -rf ./out-perf.masstree/*
     rm -rf ./src/mako/out-perf.masstree/*
     rm -rf ${BUILD_DIR}/*
