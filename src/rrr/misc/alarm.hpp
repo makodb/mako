@@ -23,7 +23,7 @@ export module rrr:misc.alarm;
 import std;
 
 
-import :base.misc;
+import :base.all;
 import :reactor.reactor;
 
 
