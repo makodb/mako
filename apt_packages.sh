@@ -51,6 +51,8 @@ sudo apt-get --assume-yes install libdpdk-dev || echo "DPDK not available, skipp
 
 # For rusty-cpp-checker: LLVM 18 and Z3 (available in Ubuntu 24.04 default repos)
 sudo apt-get --assume-yes install llvm-18-dev libclang-18-dev clang-18 libz3-dev
+# Required by CMakeLists.txt forcing clang + -stdlib=libc++
+sudo apt-get --assume-yes install libc++-18-dev libc++abi-18-dev
 
 # Set up alternatives for clang/llvm
 sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100 || true

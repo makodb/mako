@@ -633,7 +633,7 @@ run_client_server_test() {
 
 cleanup() {
     cleanup_processes
-    if [ -f "${BUILD_DIR}/CMakeCache.txt" ]; then
+    if [ -f "${BUILD_DIR}/CMakeCache.txt" ] && { [ -f "${BUILD_DIR}/build.ninja" ] || [ -f "${BUILD_DIR}/Makefile" ]; }; then
         cmake --build "${BUILD_DIR}" --target clean || true
     fi
     rm -rf ./out-perf.masstree/*
