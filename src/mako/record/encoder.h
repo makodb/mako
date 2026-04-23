@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include "serializer.h"
 #include "../util.h"
-#include "../masstree/str.hh"
-#include "../masstree/compiler.hh"
+#include "masstree/str.hh"
+#include "masstree/compiler.hh"
 #include "lib/common.h"
 
 // the C preprocessor is absolutely wonderful...

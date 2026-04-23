@@ -122,6 +122,7 @@ set(ERPC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc")
 set(PROXY_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include")
 message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
+set(MASSTREE_DIR "src/masstree")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
 # Global include roots for `import rrr;` and rrr header-unit/module prebuild.
@@ -451,7 +452,7 @@ set(O "${O}.masstree")
 set(BORROW_CHECKER_INCLUDE_PATHS
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree
+    ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
@@ -461,7 +462,7 @@ set(BORROW_CHECKER_INCLUDE_PATHS
 )
 
 # Make config paths visible to the borrow checker (will be turned into -include)
-add_compile_definitions(MASSTREE_CONFIG_H=\"${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/config.h\")
+add_compile_definitions(MASSTREE_CONFIG_H=\"${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}/config.h\")
 add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree_btree.h\")
 
 # Masstree borrow checking - incrementally enabled per file
@@ -477,14 +478,14 @@ add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/sr
 # not require the checker's runtime libclang setup.
 if(ENABLE_BORROW_CHECKING)
     # Phase 4.1: Enable borrow checking for masstree_context
-    add_borrow_check(src/mako/masstree/masstree_context.cc)
+    add_borrow_check(src/masstree/masstree_context.cc)
     #
     # Phase 4.2: Enable borrow checking for kvthread
-    add_borrow_check(src/mako/masstree/kvthread.cc)
+    add_borrow_check(src/masstree/kvthread.cc)
     #
     # Phase 4.3: Enable more files incrementally
-    add_borrow_check(src/mako/masstree/value_versioned_array.cc)
-    add_borrow_check(src/mako/masstree/query_masstree.cc)
+    add_borrow_check(src/masstree/value_versioned_array.cc)
+    add_borrow_check(src/masstree/query_masstree.cc)
 endif()
 
 # Compiler flags
@@ -569,7 +570,7 @@ list(APPEND CXXFLAGS
 # of every TU. It must NOT be applied to C++20 named module files, which
 # require `module;` to be the first token. Kept as a separate flag and added
 # only to targets that actually use Masstree, skipping rrr module files.
-set(MASSTREE_FORCE_INCLUDE_FLAG -include ${W}/masstree/config.h)
+set(MASSTREE_FORCE_INCLUDE_FLAG -include ${MASSTREE_DIR}/config.h)
 
 if(DEFINED LESSER_OPACITY)
   list(APPEND CXXFLAGS -DLESSER_OPACITY=${LESSER_OPACITY})
@@ -673,13 +674,13 @@ set(MAKO_SRCFILES
   "${W}/txn.cc"
   "${W}/txn_proto2_impl.cc"
   "${W}/varint.cc"
-  "${W}/masstree/compiler.cc"
-  "${W}/masstree/str.cc"
-  "${W}/masstree/string.cc"
-  "${W}/masstree/straccum.cc"
-  "${W}/masstree/json.cc"
-  "${W}/masstree/kvthread.cc"
-  "${W}/masstree/masstree_context.cc"
+  "${MASSTREE_DIR}/compiler.cc"
+  "${MASSTREE_DIR}/str.cc"
+  "${MASSTREE_DIR}/string.cc"
+  "${MASSTREE_DIR}/straccum.cc"
+  "${MASSTREE_DIR}/json.cc"
+  "${MASSTREE_DIR}/kvthread.cc"
+  "${MASSTREE_DIR}/masstree_context.cc"
   "${W}/silo_runtime.cc"
   "${W}/benchmarks/bench.cc"
   "${W}/benchmarks/encstress.cc"
@@ -753,11 +754,11 @@ separate_arguments(MASSTREE_CONFIG_ARGS NATIVE_COMMAND "${MASSTREE_CONFIG}")
 
 # Masstree configuration - automatically configure if needed
 # First, run autoreconf if configure script doesn't exist
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/configure")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}/configure")
   message(STATUS "Running autoreconf for Masstree...")
   execute_process(
     COMMAND autoreconf -i
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}"
     RESULT_VARIABLE autoreconf_result
   )
   if(NOT autoreconf_result EQUAL 0)
@@ -766,11 +767,11 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/configure")
 endif()
 
 # Then, run configure if config.h doesn't exist
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/config.h")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}/config.h")
   message(STATUS "Configuring Masstree with: ${MASSTREE_CONFIG}")
   execute_process(
     COMMAND ./configure ${MASSTREE_CONFIG_ARGS}
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}"
     RESULT_VARIABLE configure_result
   )
   if(NOT configure_result EQUAL 0)
@@ -1128,7 +1129,7 @@ add_custom_command(
 )
 
 # Handle Masstree submodule
-if(NOT EXISTS "${W}/masstree/GNUmakefile.in")
+if(NOT EXISTS "${MASSTREE_DIR}/GNUmakefile.in")
   execute_process(COMMAND git submodule init WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   execute_process(COMMAND git submodule update WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
@@ -1143,7 +1144,7 @@ if(NOT "${MASSTREE_CONFIG}" STREQUAL "${DEP_MASSTREE_CONFIG}")
 endif()
 
 # Masstree dependency - not needed since we assume it's pre-configured
-# set_source_files_properties(${MAKO_SRCFILES} PROPERTIES OBJECT_DEPENDS "${W}/masstree/config.h")
+# set_source_files_properties(${MAKO_SRCFILES} PROPERTIES OBJECT_DEPENDS "${MASSTREE_DIR}/config.h")
 
 # Add the mako library
 add_library(mako STATIC ${MAKO_SRCFILES})
@@ -1154,7 +1155,7 @@ target_include_directories(mako BEFORE PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src"
 )
 target_include_directories(mako PUBLIC
-    "${W}/masstree"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include"
@@ -1249,7 +1250,7 @@ function(add_apps exec_name exec_path)
   # Configure target
   target_include_directories(${exec_name} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree
+      ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
       ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
       ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include
       ${CMAKE_CURRENT_SOURCE_DIR}/src

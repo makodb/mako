@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 #include <map>
-#include "../masstree/str.hh"
+#include "masstree/str.hh"
 
 #include "../macros.h"
 #include "../str_arena.h"
