@@ -7,6 +7,10 @@ on:
     branches: [ mako-dev, mako-weihai ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: read
+
 # comment out so we run test for every commit, otherwise new commit will cancel old (pending test) commit.
 #concurrency:
 #  group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,6 +19,12 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user root
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -38,16 +48,6 @@ jobs:
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
-      - name: Install system dependencies
-        run: bash ./apt_packages.sh
-
-      - name: Install Rust toolchain
-        run: |
-          bash ./install_rustc.sh
-          echo "$HOME/.local-rust/bin" >> "$GITHUB_PATH"
-          "$HOME/.local-rust/bin/rustc" --version
-          "$HOME/.local-rust/bin/cargo" --version
-
       - name: Environments
         run: |
           pwd
@@ -61,6 +61,10 @@ jobs:
           echo "CMAKE_GENERATOR=${CMAKE_GENERATOR}"
           echo "MAKO_CPU_LIMIT=${MAKO_CPU_LIMIT}"
           echo "MAKO_THROTTLE_CYCLE_MS=${MAKO_THROTTLE_CYCLE_MS}"
+          rustc --version
+          cargo --version
+          cmake --version
+          clang --version
 
       - name: Compile
         run: ./ci/ci.sh compile
