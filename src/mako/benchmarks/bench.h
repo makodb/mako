@@ -354,14 +354,21 @@ public:
       const std::string &value)
   {
     INVARIANT(n < N);
-    //    INVARIANT(arena->manages(&value));
+    INVARIANT(arena);
+
+    // Copy values into the arena so callback consumers never hold references
+    // to transient strings owned by lower-level scan implementations.
+    std::string *const v_px = arena->next();
+    INVARIANT(v_px && v_px->empty());
+    v_px->assign(value);
+
     if (ignore_key) {
-      values.emplace_back(nullptr, &value);
+      values.emplace_back(nullptr, v_px);
     } else {
       std::string * const s_px = arena->next();
       INVARIANT(s_px && s_px->empty());
       s_px->assign(keyp, keylen);
-      values.emplace_back(s_px, &value);
+      values.emplace_back(s_px, v_px);
     }
     return ++n < N;
   }
