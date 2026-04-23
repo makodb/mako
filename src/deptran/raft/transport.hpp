@@ -35,17 +35,39 @@
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
 
+// deptran/constants.h defines macro RR, which collides with template
+// parameter names in proxy headers (e.g. class RR in proxy/v4/proxy.h).
+// Keep proxy includes insulated from that macro.
+#ifdef RR
+#pragma push_macro("RR")
+#undef RR
+#define RAFT_TRANSPORT_RESTORE_RR_MACRO 1
+#endif
 #include <proxy/proxy.h>
 #include <proxy/proxy_macros.h>
-
-#include "messages.hpp"
-
-import rrr;
+#ifdef RAFT_TRANSPORT_RESTORE_RR_MACRO
+#pragma pop_macro("RR")
+#undef RAFT_TRANSPORT_RESTORE_RR_MACRO
+#endif
 
 #include "../constants.h"
 
 namespace janus {
 namespace raft {
+
+// Forward declarations to avoid pulling rrr module state into facade
+// construction order; complete definitions come from messages.hpp where needed.
+struct VoteReq;
+struct VoteReply;
+struct VoteDurableReq;
+struct TimeoutNowReq;
+struct TimeoutNowReply;
+struct AppendEntriesReq;
+struct AppendEntriesReply;
+struct EmptyAppendEntriesReq;
+struct AppendEntriesDurableReq;
+struct InstallSnapshotReq;
+struct InstallSnapshotReply;
 
 // ---------------------------------------------------------------------------
 // Callback aliases — reply types land on a rusty::Function delivered by the
@@ -119,3 +141,7 @@ using TransportProxy = pro::proxy<TransportFacade>;
 
 }  // namespace raft
 }  // namespace janus
+
+// Provide complete RPC payload definitions to callers that include only
+// transport.hpp.
+#include "messages.hpp"

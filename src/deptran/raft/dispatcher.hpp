@@ -27,19 +27,46 @@
 
 #include <cstdint>
 
+#include <rusty/arc.hpp>
 #include <rusty/function.hpp>
+#include <rusty/sync/atomic.hpp>
 
+// deptran/constants.h defines macro RR, which can collide with template
+// parameter names inside proxy headers. Protect proxy includes.
+#ifdef RR
+#pragma push_macro("RR")
+#undef RR
+#define RAFT_DISPATCHER_RESTORE_RR_MACRO 1
+#endif
 #include <proxy/proxy.h>
 #include <proxy/proxy_macros.h>
-
-#include "messages.hpp"
-
-import rrr;
+#ifdef RAFT_DISPATCHER_RESTORE_RR_MACRO
+#pragma pop_macro("RR")
+#undef RAFT_DISPATCHER_RESTORE_RR_MACRO
+#endif
 
 #include "../constants.h"
 
 namespace janus {
 namespace raft {
+
+// Forward declarations; full definitions are pulled in at the end of file.
+struct VoteReq;
+struct VoteReply;
+struct VoteDurableReq;
+struct VoteDurableReply;
+struct AppendEntriesReq;
+struct AppendEntriesReply;
+struct EmptyAppendEntriesReq;
+struct EmptyAppendEntriesReply;
+struct AppendEntriesDurableReq;
+struct AppendEntriesDurableReply;
+struct TimeoutNowReq;
+struct TimeoutNowReply;
+struct NotifyRestartReq;
+struct NotifyRestartReply;
+struct InstallSnapshotReq;
+struct InstallSnapshotReply;
 
 // ---------------------------------------------------------------------------
 // Per-handler reply callbacks. The dispatcher invokes these when a
@@ -99,3 +126,7 @@ using DispatcherProxy = pro::proxy<DispatcherFacade>;
 
 }  // namespace raft
 }  // namespace janus
+
+// Provide complete RPC payload definitions to callers that include only
+// dispatcher.hpp.
+#include "messages.hpp"

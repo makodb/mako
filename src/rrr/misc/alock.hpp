@@ -70,11 +70,7 @@ class ALock {
   bool done_;
 
  public:
-  ALock() :
-      status_(FREE),
-      n_rlock_(0),
-      done_(false) {
-  }
+  ALock();
 
   // @unsafe - Constructs std::function and calls virtual vlock
   virtual uint64_t lock(uint64_t owner,
@@ -113,7 +109,7 @@ class ALock {
 
   virtual void disable_wound(uint64_t req_id);
   virtual void abort(uint64_t id) = 0;
-  virtual ~ALock() { }
+  virtual ~ALock();
 };
 
 class WaitDieALock: public ALock {

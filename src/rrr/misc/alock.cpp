@@ -39,6 +39,13 @@ import rrr;
 
 namespace rrr {
 
+ALock::ALock()
+    : status_(FREE),
+      n_rlock_(0),
+      done_(false) {}
+
+ALock::~ALock() = default;
+
 
 // @unsafe - Creates std::function objects from lambdas
 uint64_t ALock::lock_sync(uint64_t owner,

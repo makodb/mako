@@ -38,9 +38,8 @@
 #include <rusty/sync/atomic.hpp>
 #include <rusty/sync/mpsc.hpp>
 
-#include "dispatcher.hpp"
-#include "messages.hpp"
 #include "transport.hpp"
+#include "dispatcher.hpp"
 
 #include "../constants.h"
 
