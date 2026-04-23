@@ -20,12 +20,14 @@ export module rrr:rpc.client;
 import std;
 
 
+import :base.all;
 import :misc.marshal;
 import :reactor.epoll_wrapper;
 import :reactor.reactor;
 
 
 import :rpc.connection_state;
+import :rpc.errors;
 import :rpc.reconnect_policy;
 import :rpc.request_queue;
 import :rpc.connection_metrics;
