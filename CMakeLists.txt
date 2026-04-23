@@ -547,15 +547,19 @@ add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/sr
 #   - Converting raw pointers to rusty::Ptr<T>/MutPtr<T> wrappers
 #   - Marking safe getters/setters with @safe annotations
 #
-# Phase 4.1: Enable borrow checking for masstree_context
-add_borrow_check(src/mako/masstree/masstree_context.cc)
-#
-# Phase 4.2: Enable borrow checking for kvthread
-add_borrow_check(src/mako/masstree/kvthread.cc)
-#
-# Phase 4.3: Enable more files incrementally
-add_borrow_check(src/mako/masstree/value_versioned_array.cc)
-add_borrow_check(src/mako/masstree/query_masstree.cc)
+# Keep these checks gated behind ENABLE_BORROW_CHECKING so normal CI builds do
+# not require the checker's runtime libclang setup.
+if(ENABLE_BORROW_CHECKING)
+    # Phase 4.1: Enable borrow checking for masstree_context
+    add_borrow_check(src/mako/masstree/masstree_context.cc)
+    #
+    # Phase 4.2: Enable borrow checking for kvthread
+    add_borrow_check(src/mako/masstree/kvthread.cc)
+    #
+    # Phase 4.3: Enable more files incrementally
+    add_borrow_check(src/mako/masstree/value_versioned_array.cc)
+    add_borrow_check(src/mako/masstree/query_masstree.cc)
+endif()
 
 # Compiler flags
 set(CXXFLAGS

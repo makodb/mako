@@ -92,8 +92,8 @@ sudo apt-get --assume-yes install pandoc
 # DPDK (if available)
 sudo apt-get --assume-yes install libdpdk-dev || echo "DPDK not available, skipping"
 
-# For rusty-cpp-checker: LLVM 18 and Z3 (available in Ubuntu 24.04 default repos)
-sudo apt-get --assume-yes install llvm-18-dev libclang-18-dev clang-18 libz3-dev
+# For rusty-cpp-checker and CMake module scanning: LLVM/Clang tools + Z3.
+sudo apt-get --assume-yes install llvm-18-dev libclang-18-dev clang-18 clang-tools-18 libz3-dev
 # Required by CMakeLists.txt forcing clang + -stdlib=libc++
 sudo apt-get --assume-yes install libc++-18-dev libc++abi-18-dev
 
