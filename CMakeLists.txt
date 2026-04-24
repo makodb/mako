@@ -811,6 +811,8 @@ endif()
 
 # Build and export rrr module/target wiring from a dedicated CMakeLists.
 add_subdirectory(src/rrr)
+# Build and export masstree-specific test wiring from a dedicated CMakeLists.
+add_subdirectory(src/masstree)
 set_source_files_properties(${RRR_MODULE_INTERFACE_FILES} PROPERTIES
     LANGUAGE CXX
     CXX_SCAN_FOR_MODULES ON
@@ -1648,67 +1650,8 @@ if(BUILD_TESTS)
     target_compile_options(bench_future PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(bench_future ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
 
-    # Masstree unit tests (run with ctest/make test)
-    add_executable(test_masstree tests/test_masstree.cc)
-    target_include_directories(test_masstree PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_masstree PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_masstree mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_masstree COMMAND test_masstree)
-
-    # Masstree internals tests (threadinfo, globalepoch, RCU)
-    add_executable(test_masstree_internals tests/test_masstree_internals.cc)
-    target_include_directories(test_masstree_internals PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_masstree_internals PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_masstree_internals mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_masstree_internals COMMAND test_masstree_internals)
-
-    # Masstree multi-instance stress tests (MasstreeContext isolation)
-    add_executable(test_masstree_multi_instance tests/test_masstree_multi_instance.cc)
-    target_include_directories(test_masstree_multi_instance PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_masstree_multi_instance PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_masstree_multi_instance mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_masstree_multi_instance COMMAND test_masstree_multi_instance)
-
-    # SiloRuntime tests (per-site runtime isolation)
-    add_executable(test_silo_runtime tests/test_silo_runtime.cc)
-    target_include_directories(test_silo_runtime PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_silo_runtime mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
-
-    # Multi-site Silo stress tests
-    add_executable(test_silo_multi_site_stress tests/test_silo_multi_site_stress.cc)
-    target_include_directories(test_silo_multi_site_stress PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_silo_multi_site_stress PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_silo_multi_site_stress mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_silo_multi_site_stress COMMAND test_silo_multi_site_stress)
-
-    # Borrow checking for Silo tests
-    # Note: compare_key and increment functions now have correct @unsafe annotations.
-    # Full borrow checking is disabled because other Masstree code (nodeversion.hh,
-    # string.hh) has violations that require broader refactoring.
-    # if(ENABLE_BORROW_CHECKING)
-    #     add_borrow_check_target(test_silo_runtime)
-    #     add_borrow_check_target(test_silo_multi_site_stress)
-    # endif()
-
-    # Masstree performance benchmark (on-demand throughput output)
-    set(MASSTREE_PERF_SRC tests/masstree_perf.cc)
-    if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
-        # Use a fragile-friendly source variant to keep benchmark logic transpilable.
-        set(MASSTREE_PERF_SRC tests/masstree_perf_fragile.cc)
-    endif()
-    add_executable(masstree_perf ${MASSTREE_PERF_SRC})
-    target_include_directories(masstree_perf PRIVATE ${TEST_INCLUDE_DIRS})
-    target_compile_options(masstree_perf PRIVATE ${TEST_COMPILE_OPTIONS})
-    if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
-        # Keep strict fragile benchmark builds focused on Masstree-only code paths.
-        # Linking the full `mako` library pulls in unrelated RPC translation units
-        # that are not required for this benchmark and currently block compilation.
-        target_link_libraries(masstree_perf pthread)
-    else()
-        target_link_libraries(masstree_perf mako ${TEST_LINK_LIBS})
-    endif()
+    # Masstree-specific tests and benchmarks are maintained in src/masstree/CMakeLists.txt.
+    mako_add_masstree_tests()
 
     # Reactor/Event System Tests
     add_executable(test_reactor src/rrr/tests/test_reactor.cc)
