@@ -119,7 +119,10 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
   - [x] *high* Verify by re-running the Raft CI suites. [26:04:24, 10:50]
     shard1ReplicationRaft passes end-to-end (attempt 2/2 after
     attempt-1 flake on perf threshold `replay_batch=500` — exactly
-    equal to threshold; retry hit `replay_batch=4000`).
+    equal to threshold; retry hit `replay_batch=4000`). Build/link
+    side of the fix is fully verified; shard2ReplicationRaft still
+    fails at test time for a pre-existing reason — see
+    "shard2ReplicationRaft TPC-C segfault" task below.
 - [x] *high* Fix `docker_build.sh ci <suite>` — top-level Makefile no longer exists after CMake migration [26:04:24, 10:50]
   - Context: 2026-04-24 daily CI attempt immediately fails with
     `make: *** No targets specified and no makefile found. Stop.`
@@ -137,5 +140,88 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
     BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}`. The `compile` phase
     runs cmake+ninja; the subsequent test invocation is unchanged. [26:04:24]
   - [x] *high* Verify by re-running the 4 Raft CI suites. [26:04:24, 10:50]
-  - repeated task
-    - [ ] for every day, run all Raft CI tests (`./docker_build.sh ci shard1ReplicationRaft`, `./docker_build.sh ci shard2ReplicationRaft`, `./docker_build.sh ci shard1ReplicationSimpleRaft`, `./docker_build.sh ci shard2ReplicationSimpleRaft`) and verify all pass. If any fail, investigate root cause and add a fix task above. [last done: 26:04:17, all 4 suites passed after fixing upstream borrow checker violations and adding ListTables() stub to mako::IDatabase]
+    Partially verified: 3 of 4 suites pass (shard1ReplicationRaft,
+    shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft). The
+    fourth — shard2ReplicationRaft — fails for an unrelated,
+    reproducible TPC-C crash tracked as a separate task below.
+- [ ] *high* Fix shard2ReplicationRaft TPC-C segfault in `tpcc_worker::txn_order_status`
+  - Context: 2026-04-24 daily CI. With the three docker_build.sh /
+    CMake fixes above in place the build completes, but
+    shard2ReplicationRaft (2-shard TPC-C with Raft replication)
+    reliably SIGSEGVs on both retry attempts after ~20–28 s of load
+    (around applied index 500–560). Shard 0 keeps running and starts
+    getting `RPC error: 107` (ENOTCONN) to shard 1 once shard 1's
+    dbtest crashes. The other three suites — shard1ReplicationRaft
+    (1-shard TPC-C), shard1ReplicationSimpleRaft and
+    shard2ReplicationSimpleRaft (SimpleTransaction, 1-shard and
+    2-shard) — all pass clean, so Raft replication itself is fine;
+    the crash is in the TPC-C / Masstree / STO path that only gets
+    exercised by shard2ReplicationRaft.
+  - Evidence (three core dumps under
+    `MAKO_DOCKER_ENABLE_COREDUMP=1 ./docker_build.sh ci-quick
+    shard2ReplicationRaft`, build_docker/dbtest with -g):
+    ```
+    Program terminated with signal SIGSEGV.
+    #0  str_arena::next (this=0x756931736d754b59) at str_arena.h:40
+    #1  str_arena::operator() (this=0x756931736d754b59) at str_arena.h:56
+    #2  transRQuery<…>::{value_callback lambda}(Str, versioned_str*)
+        at MassTrans.hh:406
+    ...
+    #6  transRQuery(..., va=0x756931736d754b59, ...)
+        at MassTrans.hh:445
+    #7  mbta_ordered_index::rscan at mbta_wrapper.hh:278
+    #8  tpcc_worker::txn_order_status at tpcc.cc:3223
+    ```
+    The `va` / `str_arena*` that gets passed through `rscan` →
+    `transRQuery` → the value_callback lambda has been overwritten
+    with ASCII-looking garbage on the stack. Across the three crashes
+    the value varied:
+    `0x756931736d754b59` ("YKumsl1iu"), `0x53446b3355434b` ("KCU3kDS…"),
+    and a third unreadable address — always ASCII-ish bytes, never a
+    valid pointer. `begin.len` of the same `transRQuery` frame is
+    also clobbered to a low-range stack-like value, confirming it's
+    stack corruption, not a bad pointer stored at construction time.
+    In parallel, Thread 3 (Raft leader's HeartbeatLoop fiber) is
+    marshaling a `TpcBatchCommand` with `content_size_ = 4055733249`
+    (≈4 GB) — a second symptom that suggests TxWorkspace / mdb::Value
+    state is also being clobbered, not just arena state.
+  - Scope: bug is reliably reproducible, 2-shard-TPC-C specific, and
+    independent of my CI-infra fixes above (those only gate the
+    build). The CI suite passed "all 4" on 2026-04-17 (commit
+    `d4a3ab2b1`), so the regression was introduced between
+    `d4a3ab2b1` and `c6a1bda7b` (the HEAD before today's CI fixes).
+    Top suspects touching either the crash path or the threading
+    model around it, in order:
+      1. `1eeb52e03 bench: stabilize scan callback value lifetimes`
+         — only commit in the window that modifies
+         `src/mako/benchmarks/bench.h`. Changes
+         `static_limit_callback::invoke` to always `arena->next()` +
+         copy, doubling arena consumption per scan row. Could
+         interact badly with a separate lifetime assumption elsewhere.
+      2. `cf5db3fef raft: phase 8.0 — collapse transport/dispatcher
+         facades to fiber-synchronous` — flips outbound/dispatcher
+         RPCs to fiber-synchronous; the leader's HeartbeatLoop now
+         yields inside each `send_append_entries`. Doesn't touch the
+         TPC-C stack directly, but changes how long apply/heartbeat
+         fibers hold live state on the RPC thread pool.
+      3. `1ea323cfb raft: flip 10 RPCs from defer to fiber` and
+         `36766c1f0 raft: replace DeferredReply with Fiber-wrapped
+         auto-reply` — server-side fiber migration of Raft RPCs.
+         Could surface a fiber-stack / TLS aliasing issue that the
+         benchmark worker thread happens to be near.
+  - [ ] *high* Bisect `d4a3ab2b1..c6a1bda7b` on shard2ReplicationRaft
+    to identify the first bad commit. Revert-test the top three
+    suspects above first (1eeb52e03, then cf5db3fef, then 1ea323cfb
+    /36766c1f0 together) since each rebuild is ~20 min. If the
+    bisect points at 1eeb52e03, the fix is likely to stop calling
+    `arena->next()` inside `static_limit_callback::invoke` for the
+    `ignore_key=true` path and instead copy `value` into a slot
+    allocated by the caller (or revert to the previous
+    `&value`-reference behavior with an explicit lifetime
+    invariant). If it points at a raft-side commit, the fix is
+    harder — probably a fiber/TLS aliasing bug that needs
+    ThreadSanitizer to catch.
+  - [ ] *high* Before merging any fix, re-run all 4 Raft CI suites
+    and verify the 3 currently-green ones stay green.
+- [ ] *high* repeated task — daily Raft CI
+  - [ ] for every day, run all Raft CI tests (`./docker_build.sh ci shard1ReplicationRaft`, `./docker_build.sh ci shard2ReplicationRaft`, `./docker_build.sh ci shard1ReplicationSimpleRaft`, `./docker_build.sh ci shard2ReplicationSimpleRaft`) and verify all pass. If any fail, investigate root cause and add a fix task above. [partial 26:04:24, 11:30: 3/4 pass — shard1ReplicationRaft, shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft green after the three docker_build.sh/CMake fixes above; shard2ReplicationRaft still red, tracked as "shard2ReplicationRaft TPC-C segfault" above; not marking today "done" until that fix lands. Last fully-green run: 26:04:17 on `d4a3ab2b1`.]
