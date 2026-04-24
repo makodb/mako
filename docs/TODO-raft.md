@@ -209,18 +209,88 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
          auto-reply` — server-side fiber migration of Raft RPCs.
          Could surface a fiber-stack / TLS aliasing issue that the
          benchmark worker thread happens to be near.
-  - [ ] *high* Bisect `d4a3ab2b1..c6a1bda7b` on shard2ReplicationRaft
-    to identify the first bad commit. Revert-test the top three
-    suspects above first (1eeb52e03, then cf5db3fef, then 1ea323cfb
-    /36766c1f0 together) since each rebuild is ~20 min. If the
-    bisect points at 1eeb52e03, the fix is likely to stop calling
-    `arena->next()` inside `static_limit_callback::invoke` for the
-    `ignore_key=true` path and instead copy `value` into a slot
-    allocated by the caller (or revert to the previous
-    `&value`-reference behavior with an explicit lifetime
-    invariant). If it points at a raft-side commit, the fix is
-    harder — probably a fiber/TLS aliasing bug that needs
-    ThreadSanitizer to catch.
+  - [x] *high* Bisect `d4a3ab2b1..c6a1bda7b` on shard2ReplicationRaft
+    to identify the first bad commit. [26:04:24, 19:00] Partial
+    result — bisect is blocked by a dense cluster of unbuildable
+    intermediate commits. Concrete results from tested commits:
+    * `d4a3ab2b1` (04-17, pre-everything): **PASS** (agg_persist_throughput
+      3008/3815 ops/sec, both shards green). Confirms the regression
+      is real and in the 68-commit window `d4a3ab2b1..c6a1bda7b`.
+    * `1eeb52e03` (04-23 18:27, bench scan callback): **FAIL** (both
+      retry attempts segfault in `tpcc_worker::txn_order_status`,
+      same signature as HEAD).
+    * `6b378ad3b` (04-23 14:21, raft proxy facade compile order):
+      **FAIL** (same segfault).
+    * `76f259c96` (04-23 11:15, Consolidate test layout):
+      **UNBUILDABLE** — `raft_lab_standalone` / `raft_channel_transport_test`
+      fail with `TransportProxy` / proxy facade constraint errors.
+    * `d335a0c50` (04-23 01:38, rpc module imports): **UNBUILDABLE**
+      — same TransportProxy errors.
+    * `31dc57a37` (04-22 16:40, snapshot trigger): **UNBUILDABLE**
+      — module import errors (`SpinLock`/`Log_debug` not imported).
+    * `78aa05e34` (04-22 09:16, docs for phase 0+1): **UNBUILDABLE**
+      — same module import errors.
+    * `2fcfc9164 + 6b378ad3b cherry-pick` (04-22 23:03 + proxy fix):
+      **UNBUILDABLE** — `rrr/misc/alarm.hpp`, `rrr/rpc/server.hpp`,
+      `rrr/rpc/client.hpp` still missing module imports for `Time`,
+      `i64`, `SpinMutex`, `RpcError`, etc. Cherry-pick would need
+      to stack ~5-8 subsequent module-fix commits (d335a0c50,
+      abba2aab9, e3b03918e, 76f259c96, 6b378ad3b …) which is
+      conflict-heavy.
+    * Revert-tests on HEAD that **did NOT fix** the crash:
+      (a) revert `1eeb52e03` (bench scan lifetime change);
+      (b) revert `cf5db3fef` (phase 8.0 raft transport/dispatcher)
+          via `git checkout e71aaf2ac -- src/deptran/raft tests`;
+      (c) revert `1ea323cfb` + `36766c1f0` on top of HEAD (server-
+          side fiber RPC migration). The revert cherry-picks cleanly
+          and the resulting tree builds, so the combined test
+          actually ran — and both attempts segfaulted in
+          `tpcc_worker::txn_order_status` with the same signature.
+          This **eliminates server-side fiber RPC migration as the
+          suspect.**
+    * So the suspect set is narrowed to "commits in
+      `d4a3ab2b1..6b378ad3b`" *excluding* the scan-callback change
+      (1eeb52e03 is downstream of 6b378ad3b anyway) and phase 8.0.
+      The dominant remaining suspects are, in order:
+      - `0cf5b9724` (04-21 22:51, libstdc++ → libc++ + import std;
+        + CMake 3.30 modules). Huge ABI/toolchain change; `std::string`
+        SSO layout differs between libstdc++ and libc++ which
+        could matter for anything that hardcodes sizes/offsets.
+        Currently the **only remaining likely candidate** after
+        eliminating the fiber and scan-callback changes.
+      - `31dc57a37` (raft: snapshot trigger in StartApplyThread),
+        `d53536d9d` (raft: join apply thread in ~RaftServer),
+        `6d72aa7da` (raft-test retry DoAgreement) — apply-thread
+        lifetime / snapshot changes.
+      - Miscellaneous build-infra commits (be6fd3c2d, aff4e9536,
+        2fcfc9164, 43d28b561, d335a0c50, e3b03918e, 76f259c96) —
+        lower priority.
+  - [ ] *high* Next step — test `0cf5b9724` (libstdc++→libc++
+    migration) in isolation. Plain revert of `0cf5b9724` on top of
+    HEAD is impractical because every later commit pulls in
+    `import std;` which requires libc++. Two attack plans, in
+    order:
+    (a) Remove the `-stdlib=libc++` forcing in `CMakeLists.txt:
+        27-29` and strip the `import std;` lines (or revert the
+        module-based `.cpp` files back to header includes).
+        Re-build on HEAD with libstdc++. Risky/invasive but the
+        most direct test of the hypothesis.
+    (b) Build HEAD with libc++ but run under **ThreadSanitizer**
+        or **AddressSanitizer** (`-fsanitize=thread` or `=address`
+        + `-g -O1`). The crash signature (ASCII-bytes overwriting
+        a `str_arena*` on the stack, plus `begin.len` clobbered)
+        strongly suggests a stack buffer overflow or an
+        unsynchronized write into a struct that straddles a
+        pointer — both of which ASan/TSan can pinpoint to the
+        exact write. Start with ASan since TSan is noisier on
+        fiber-heavy code.
+    The fix will almost certainly be in application code
+    (deptran / rrr) whose layout or lifetime assumed a
+    libstdc++-sized `std::string` / `std::vector` and overflows
+    under libc++. This is compatible with the 2-shard-only
+    repro: only the 2-shard TPC-C path allocates enough of these
+    to trigger the overflow, whereas 1-shard TPC-C and Simple
+    benchmarks stay under the threshold.
   - [ ] *high* Before merging any fix, re-run all 4 Raft CI suites
     and verify the 3 currently-green ones stay green.
 - [ ] *high* repeated task — daily Raft CI
