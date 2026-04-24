@@ -383,9 +383,12 @@ option(DISABLE_DISK "Disable disk persistence" OFF)
 option(FAIL_NEW_VERSION "Enable fail new version" ON)
 option(SIMULATE_ONE_SHARD_PER_THREAD "Simulate one shard per thread" OFF)
 option(TRACKING_ROLLBACK "Enable rollback tracking" OFF)
+option(MASSTREE_ENABLE_SUPERPAGE "Enable Masstree superpage support when available" ON)
+set(MASSTREE_MAX_KEY_LEN 1024 CACHE STRING "Maximum key length for Masstree (bytes)")
+set(MASSTREE_ROW_TYPE "bag" CACHE STRING "Default Masstree row type (bag,array,array_ver,str)")
 
 # Masstree configuration
-set(MASSTREE_CONFIG "CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} --enable-max-key-len=1024")
+set(MASSTREE_CONFIG "CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} --enable-max-key-len=${MASSTREE_MAX_KEY_LEN}")
 if(DEBUG)
   set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --enable-assertions")
 else()
@@ -448,6 +451,9 @@ else()
 endif()
 set(O "${O}.masstree")
 
+# Configure Masstree's config.h using CMake checks (no autoconf dependency).
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/masstree/ConfigureMasstree.cmake)
+
 # Borrow checker inputs (place after CONFIG_H so it is available to the checker)
 set(BORROW_CHECKER_INCLUDE_PATHS
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -462,7 +468,7 @@ set(BORROW_CHECKER_INCLUDE_PATHS
 )
 
 # Make config paths visible to the borrow checker (will be turned into -include)
-add_compile_definitions(MASSTREE_CONFIG_H=\"${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}/config.h\")
+add_compile_definitions(MASSTREE_CONFIG_H=\"${MASSTREE_GENERATED_CONFIG_H}\")
 add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree_btree.h\")
 
 # Masstree borrow checking - incrementally enabled per file
@@ -492,6 +498,7 @@ endif()
 set(CXXFLAGS
   -w
   -Wreturn-type
+  -I${MASSTREE_CONFIG_INCLUDE_DIR}
   -Isrc/mako
   -MD
   -MP
@@ -570,7 +577,7 @@ list(APPEND CXXFLAGS
 # of every TU. It must NOT be applied to C++20 named module files, which
 # require `module;` to be the first token. Kept as a separate flag and added
 # only to targets that actually use Masstree, skipping rrr module files.
-set(MASSTREE_FORCE_INCLUDE_FLAG -include ${MASSTREE_DIR}/config.h)
+set(MASSTREE_FORCE_INCLUDE_FLAG -include ${MASSTREE_GENERATED_CONFIG_H})
 
 if(DEFINED LESSER_OPACITY)
   list(APPEND CXXFLAGS -DLESSER_OPACITY=${LESSER_OPACITY})
@@ -747,38 +754,6 @@ set(BENCH_LDFLAGS
   -lssl
   -lcrypto
 )
-
-# Custom command for Masstree configuration
-# avoid adding backslashes (\) automatically
-separate_arguments(MASSTREE_CONFIG_ARGS NATIVE_COMMAND "${MASSTREE_CONFIG}")
-
-# Masstree configuration - automatically configure if needed
-# First, run autoreconf if configure script doesn't exist
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}/configure")
-  message(STATUS "Running autoreconf for Masstree...")
-  execute_process(
-    COMMAND autoreconf -i
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}"
-    RESULT_VARIABLE autoreconf_result
-  )
-  if(NOT autoreconf_result EQUAL 0)
-    message(FATAL_ERROR "Failed to run autoreconf for Masstree")
-  endif()
-endif()
-
-# Then, run configure if config.h doesn't exist
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}/config.h")
-  message(STATUS "Configuring Masstree with: ${MASSTREE_CONFIG}")
-  execute_process(
-    COMMAND ./configure ${MASSTREE_CONFIG_ARGS}
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}"
-    RESULT_VARIABLE configure_result
-  )
-  if(NOT configure_result EQUAL 0)
-    message(FATAL_ERROR "Failed to configure Masstree")
-  endif()
-endif()
-
 
 # Add rpc defined in Janus
 add_custom_command(
