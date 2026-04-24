@@ -1,6 +1,5 @@
-// Compile + behavior test for the DispatcherFacade. Defines a trivial
-// recording adapter that satisfies every handle_* method and verifies
-// each facade method lands on the adapter and its reply callback fires.
+// Compile + behavior test for the DispatcherFacade. Fiber-synchronous
+// since Phase 8.0: each handle_* returns a Reply by value.
 
 #include <gtest/gtest.h>
 
@@ -29,48 +28,37 @@ struct Counts {
 struct RecordingDispatcher {
   rusty::Arc<Counts> counts{rusty::Arc<Counts>::make()};
 
-  void handle_vote(VoteReq, OnVoteReplyDispatch cb) {
+  VoteReply handle_vote(VoteReq) {
     counts->n_vote.fetch_add(1);
-    VoteReply r{}; r.vote_granted = true; r.max_ballot = 5;
-    cb(r);
+    VoteReply r{}; r.vote_granted = true; r.max_ballot = 5; return r;
   }
-  void handle_vote_durable(VoteDurableReq, OnVoteDurableReplyDispatch cb) {
+  VoteDurableReply handle_vote_durable(VoteDurableReq) {
     counts->n_vote_durable.fetch_add(1);
-    VoteDurableReply r{}; r.acknowledged = true;
-    cb(r);
+    VoteDurableReply r{}; r.acknowledged = true; return r;
   }
-  void handle_append_entries(AppendEntriesReq, OnAppendEntriesReplyDispatch cb) {
+  AppendEntriesReply handle_append_entries(AppendEntriesReq) {
     counts->n_append.fetch_add(1);
-    AppendEntriesReply r{}; r.follower_append_ok = 1;
-    cb(r);
+    AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  void handle_empty_append_entries(EmptyAppendEntriesReq,
-                                   OnEmptyAppendEntriesReplyDispatch cb) {
+  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) {
     counts->n_empty.fetch_add(1);
-    EmptyAppendEntriesReply r{}; r.follower_append_ok = 1;
-    cb(r);
+    EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  void handle_append_entries_durable(AppendEntriesDurableReq,
-                                     OnAppendEntriesDurableReplyDispatch cb) {
+  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) {
     counts->n_append_durable.fetch_add(1);
-    AppendEntriesDurableReply r{}; r.acknowledged = true;
-    cb(r);
+    AppendEntriesDurableReply r{}; r.acknowledged = true; return r;
   }
-  void handle_timeout_now(TimeoutNowReq, OnTimeoutNowReplyDispatch cb) {
+  TimeoutNowReply handle_timeout_now(TimeoutNowReq) {
     counts->n_timeout.fetch_add(1);
-    TimeoutNowReply r{}; r.success = true;
-    cb(r);
+    TimeoutNowReply r{}; r.success = true; return r;
   }
-  void handle_notify_restart(NotifyRestartReq, OnNotifyRestartReplyDispatch cb) {
+  NotifyRestartReply handle_notify_restart(NotifyRestartReq) {
     counts->n_notify_restart.fetch_add(1);
-    NotifyRestartReply r{}; r.acknowledged = true;
-    cb(r);
+    NotifyRestartReply r{}; r.acknowledged = true; return r;
   }
-  void handle_install_snapshot(InstallSnapshotReq,
-                               OnInstallSnapshotReplyDispatch cb) {
+  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) {
     counts->n_install_snap.fetch_add(1);
-    InstallSnapshotReply r{}; r.term_out = 42;
-    cb(r);
+    InstallSnapshotReply r{}; r.term_out = 42; return r;
   }
 };
 
@@ -81,23 +69,22 @@ TEST(RaftDispatcherFacadeTest, AdapterConformsToFacade) {
   DispatcherProxy proxy =
       pro::make_proxy<DispatcherFacade, RecordingDispatcher>(*adapter);
 
-  int replies = 0;
-  proxy->handle_vote(VoteReq{},
-      [&](VoteReply r) { EXPECT_TRUE(r.vote_granted); ++replies; });
-  proxy->handle_vote_durable(VoteDurableReq{},
-      [&](VoteDurableReply r) { EXPECT_TRUE(r.acknowledged); ++replies; });
-  proxy->handle_append_entries(AppendEntriesReq{},
-      [&](AppendEntriesReply) { ++replies; });
-  proxy->handle_empty_append_entries(EmptyAppendEntriesReq{},
-      [&](EmptyAppendEntriesReply) { ++replies; });
-  proxy->handle_append_entries_durable(AppendEntriesDurableReq{},
-      [&](AppendEntriesDurableReply) { ++replies; });
-  proxy->handle_timeout_now(TimeoutNowReq{},
-      [&](TimeoutNowReply) { ++replies; });
-  proxy->handle_notify_restart(NotifyRestartReq{},
-      [&](NotifyRestartReply) { ++replies; });
-  proxy->handle_install_snapshot(InstallSnapshotReq{},
-      [&](InstallSnapshotReply r) { EXPECT_EQ(r.term_out, 42u); ++replies; });
+  auto v  = proxy->handle_vote(VoteReq{});
+  EXPECT_TRUE(v.vote_granted);
+  auto vd = proxy->handle_vote_durable(VoteDurableReq{});
+  EXPECT_TRUE(vd.acknowledged);
+  auto a  = proxy->handle_append_entries(AppendEntriesReq{});
+  EXPECT_EQ(a.follower_append_ok, 1u);
+  auto e  = proxy->handle_empty_append_entries(EmptyAppendEntriesReq{});
+  EXPECT_EQ(e.follower_append_ok, 1u);
+  auto ad = proxy->handle_append_entries_durable(AppendEntriesDurableReq{});
+  EXPECT_TRUE(ad.acknowledged);
+  auto tn = proxy->handle_timeout_now(TimeoutNowReq{});
+  EXPECT_TRUE(tn.success);
+  auto nr = proxy->handle_notify_restart(NotifyRestartReq{});
+  EXPECT_TRUE(nr.acknowledged);
+  auto is = proxy->handle_install_snapshot(InstallSnapshotReq{});
+  EXPECT_EQ(is.term_out, 42u);
 
   EXPECT_EQ(adapter->counts->n_vote.load(),            1);
   EXPECT_EQ(adapter->counts->n_vote_durable.load(),    1);
@@ -107,5 +94,4 @@ TEST(RaftDispatcherFacadeTest, AdapterConformsToFacade) {
   EXPECT_EQ(adapter->counts->n_timeout.load(),         1);
   EXPECT_EQ(adapter->counts->n_notify_restart.load(),  1);
   EXPECT_EQ(adapter->counts->n_install_snap.load(),    1);
-  EXPECT_EQ(replies, 8);
 }

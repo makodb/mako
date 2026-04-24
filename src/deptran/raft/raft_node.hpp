@@ -55,36 +55,32 @@ class DummyDispatcher {
   // @safe
   DummyDispatcher(siteid_t self) : self_(self) {}
 
-  void handle_vote(VoteReq req, OnVoteReplyDispatch cb) {
+  VoteReply handle_vote(VoteReq req) {
     VoteReply r{};
     r.max_ballot   = req.current_term;
     r.vote_granted = true;
-    cb(std::move(r));
+    return r;
   }
-  void handle_vote_durable(VoteDurableReq, OnVoteDurableReplyDispatch cb) {
-    VoteDurableReply r{}; r.acknowledged = true; cb(std::move(r));
+  VoteDurableReply handle_vote_durable(VoteDurableReq) {
+    VoteDurableReply r{}; r.acknowledged = true; return r;
   }
-  void handle_append_entries(AppendEntriesReq, OnAppendEntriesReplyDispatch cb) {
-    AppendEntriesReply r{}; r.follower_append_ok = 1; cb(std::move(r));
+  AppendEntriesReply handle_append_entries(AppendEntriesReq) {
+    AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  void handle_empty_append_entries(EmptyAppendEntriesReq,
-                                   OnEmptyAppendEntriesReplyDispatch cb) {
-    EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; cb(std::move(r));
+  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) {
+    EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  void handle_append_entries_durable(AppendEntriesDurableReq,
-                                     OnAppendEntriesDurableReplyDispatch cb) {
-    AppendEntriesDurableReply r{}; r.acknowledged = true; cb(std::move(r));
+  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) {
+    AppendEntriesDurableReply r{}; r.acknowledged = true; return r;
   }
-  void handle_timeout_now(TimeoutNowReq, OnTimeoutNowReplyDispatch cb) {
-    TimeoutNowReply r{}; r.success = true; cb(std::move(r));
+  TimeoutNowReply handle_timeout_now(TimeoutNowReq) {
+    TimeoutNowReply r{}; r.success = true; return r;
   }
-  void handle_notify_restart(NotifyRestartReq,
-                             OnNotifyRestartReplyDispatch cb) {
-    NotifyRestartReply r{}; r.acknowledged = true; cb(std::move(r));
+  NotifyRestartReply handle_notify_restart(NotifyRestartReq) {
+    NotifyRestartReply r{}; r.acknowledged = true; return r;
   }
-  void handle_install_snapshot(InstallSnapshotReq,
-                               OnInstallSnapshotReplyDispatch cb) {
-    InstallSnapshotReply r{}; r.term_out = 0; cb(std::move(r));
+  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) {
+    InstallSnapshotReply r{}; r.term_out = 0; return r;
   }
 
   siteid_t self_site_id() const { return self_; }

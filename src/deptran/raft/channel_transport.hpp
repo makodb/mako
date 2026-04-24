@@ -2,29 +2,29 @@
 
 /**
  * @file channel_transport.hpp
- * @brief In-process Raft transport built on rusty::sync::mpsc (Phase 4
- *        of the decouple plan). Enables raft tests to run without
- *        sockets, rrr, or PollThreads.
+ * @brief In-process Raft transport built on rusty::sync::mpsc. Enables
+ *        raft tests to run without sockets, rrr, or PollThreads.
  *
- * Architecture:
+ * Architecture (Phase 8.0 — fiber-synchronous):
  *   - ChannelSwitchboard owns one mpsc channel per site and a small
  *     fault-injection state machine (drop direction, partition two
  *     groups, reset).
- *   - ChannelTransportAdapter satisfies TransportFacade and pushes
- *     Envelopes onto the destination site's channel via the
- *     switchboard. Outbound RPCs are captured as opaque "deliver"
- *     closures that are invoked by the destination's worker thread.
- *   - ChannelNodeWorker pulls envelopes off its receiver and invokes
- *     each envelope's deliver closure against its local DispatcherProxy.
- *     Reply callbacks fire from the worker thread of whoever *received*
- *     the request; tests that need strict thread isolation should wrap
- *     the callback with their own posting mechanism.
+ *   - ChannelTransportAdapter satisfies TransportFacade. Each
+ *     reply-expecting send_* allocates a one-shot reply channel,
+ *     pushes an Envelope carrying the deliver-closure + reply sender,
+ *     then blocks on the reply receiver. The caller's thread parks in
+ *     recv() until the remote worker fills the slot.
+ *   - ChannelNodeWorker drains envelopes and invokes each envelope's
+ *     deliver closure against the local DispatcherProxy. The closure
+ *     synchronously calls the matching handle_* and forwards its
+ *     return value through the reply sender.
+ *   - Fire-and-forget methods push an envelope whose deliver closure
+ *     calls handle_* and discards the return value.
  *
  * Rusty-safety:
  *  - No inheritance, no std::thread, no std::mutex.
- *  - `Envelope` is explicitly marked Send so it can cross mpsc.
- *  - Fault-injection state behind rusty::Mutex to keep reads lock-free
- *    on the hot path when no fault is configured.
+ *  - Envelope + every Reply type are explicitly marked Send so they
+ *    can cross mpsc boundaries.
  */
 
 #include <cstdint>
@@ -52,22 +52,33 @@ namespace raft {
 
 // Carries one outbound RPC across the switchboard. `deliver` is a
 // closure bound by the sender: when the receiving worker invokes it
-// with its local dispatcher, the dispatcher is called with the request
-// and the reply callback is fired.
+// with its local dispatcher, it calls the matching handle_* and
+// forwards the return value through whatever reply channel the
+// closure captured.
 struct Envelope {
   siteid_t from{0};
   siteid_t to{0};
-  // @unsafe { rusty::Function is Send per rusty convention }
   rusty::Function<void(DispatcherProxy&)> deliver;
 };
 
 }  // namespace raft
 }  // namespace janus
 
-// Mark Envelope as Send so it may cross mpsc::channel boundaries.
+// ---------------------------------------------------------------------------
+// Send-trait registrations.
+// Every type crossing an mpsc boundary (Envelope itself + each Reply
+// type carried in a one-shot reply channel) must be marked Send.
+// ---------------------------------------------------------------------------
 namespace rusty {
-template <>
-struct is_send<janus::raft::Envelope> : std::true_type {};
+template <> struct is_send<janus::raft::Envelope>                 : std::true_type {};
+template <> struct is_send<janus::raft::VoteReply>                : std::true_type {};
+template <> struct is_send<janus::raft::VoteDurableReply>         : std::true_type {};
+template <> struct is_send<janus::raft::AppendEntriesReply>       : std::true_type {};
+template <> struct is_send<janus::raft::EmptyAppendEntriesReply>  : std::true_type {};
+template <> struct is_send<janus::raft::AppendEntriesDurableReply>: std::true_type {};
+template <> struct is_send<janus::raft::TimeoutNowReply>          : std::true_type {};
+template <> struct is_send<janus::raft::NotifyRestartReply>       : std::true_type {};
+template <> struct is_send<janus::raft::InstallSnapshotReply>     : std::true_type {};
 }  // namespace rusty
 
 namespace janus {
@@ -78,10 +89,7 @@ namespace raft {
 // ---------------------------------------------------------------------------
 
 struct ChannelFaults {
-  // Directed pairs whose outbound traffic should be silently dropped.
   std::vector<std::pair<siteid_t, siteid_t>> dropped;
-  // If non-empty, each site in a partition can only talk to peers in
-  // the same partition. One site belongs to one partition.
   std::vector<std::vector<siteid_t>> partitions;
 
   // @safe
@@ -105,7 +113,7 @@ struct ChannelFaults {
         if (x == s) return static_cast<int>(i);
       }
     }
-    return -1;  // unknown site — treat as its own partition
+    return -1;
   }
 };
 
@@ -118,9 +126,7 @@ class ChannelSwitchboard {
   // @safe
   ChannelSwitchboard() = default;
 
-  // @safe - registers a new site. Returns the receiver side that the
-  // worker should drain. Must be called once per site before any
-  // adapter sends to it.
+  // @safe - registers a new site. Returns the receiver side.
   rusty::sync::mpsc::Receiver<Envelope> register_site(siteid_t s) {
     auto [tx, rx] = rusty::sync::mpsc::channel<Envelope>();
     senders_.push_back({s, std::move(tx)});
@@ -129,20 +135,13 @@ class ChannelSwitchboard {
 
   // @unsafe { pushes into mpsc; drops silently if the dest is gone }
   void send(Envelope env) {
-    {
-      // @unsafe { faults_ is read-only here; caller holds no lock
-      //           because fault updates happen from the test thread
-      //           while RPCs are paused }
-      if (faults_.is_dropped(env.from, env.to)) return;
-    }
+    if (faults_.is_dropped(env.from, env.to)) return;
     for (auto& pair : senders_) {
       if (pair.first == env.to) {
-        // @unsafe { Sender::send returns Result; ignore errors for MVP }
         (void)pair.second.send(std::move(env));
         return;
       }
     }
-    // no matching site — drop
   }
 
   // @safe - fault-injection accessors
@@ -162,53 +161,145 @@ class ChannelSwitchboard {
 };
 
 // ---------------------------------------------------------------------------
-// ChannelTransportAdapter — satisfies TransportFacade
+// Helper: build a fire-and-forget deliver closure.
+// ---------------------------------------------------------------------------
+namespace detail {
+
+template <typename Handle>
+// @safe
+inline rusty::Function<void(DispatcherProxy&)>
+make_fire_and_forget(Handle handle) {
+  return rusty::Function<void(DispatcherProxy&)>(
+      [handle = std::move(handle)](DispatcherProxy& disp) mutable {
+        handle(disp);
+      });
+}
+
+}  // namespace detail
+
+// ---------------------------------------------------------------------------
+// ChannelTransportAdapter — satisfies TransportFacade (fiber-sync).
 // ---------------------------------------------------------------------------
 
 class ChannelTransportAdapter {
  public:
-  // @unsafe { non-owning switchboard pointer; switchboard outlives
-  //           every adapter built on top of it }
+  // @unsafe { non-owning switchboard pointer }
   ChannelTransportAdapter(ChannelSwitchboard* sw, siteid_t self, parid_t par)
       : sw_(sw), self_(self), par_(par) {}
 
   // @safe
   siteid_t self_site_id() const { return self_; }
 
-  // @safe - fire-and-forget envelope push
-  void send_timeout_now(siteid_t dst, TimeoutNowReq req,
-                        OnTimeoutNowReply on_reply) {
-    // @unsafe { captures by move }
-    auto deliver_fn = [req = std::move(req), on_reply = std::move(on_reply),
-                       from = self_, dst](DispatcherProxy& disp) mutable {
-      disp->handle_timeout_now(std::move(req),
-          [on_reply = std::move(on_reply), dst](TimeoutNowReply r) mutable {
-            on_reply(dst, std::move(r));
-          });
-    };
-    Envelope env{self_, dst, rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
+  // ------------------------------------------------------------------
+  // Reply-expecting RPCs.
+  //
+  // Each method:
+  //   1. Allocates a one-shot rusty::sync::mpsc reply channel for the
+  //      matching Reply type.
+  //   2. Builds an Envelope whose deliver closure captures the req and
+  //      the reply sender.
+  //   3. Pushes the envelope through the switchboard.
+  //   4. Blocks on the reply receiver until the remote worker fills it.
+  //
+  // If the switchboard drops the envelope (fault injection / unknown
+  // dest), the reply channel's sender is destroyed, recv() returns
+  // Err(Disconnected), and we fall back to a default-constructed Reply
+  // (which matches the "server down" shape of the old OnDisconnected
+  // path).
+  // ------------------------------------------------------------------
+
+  // @unsafe { mpsc bridge }
+  AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) {
+    auto [tx, rx] = rusty::sync::mpsc::channel<AppendEntriesReply>();
+    Envelope env{self_, dst,
+        rusty::Function<void(DispatcherProxy&)>(
+            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+              (void)tx.send(disp->handle_append_entries(std::move(req)));
+            })};
     sw_->send(std::move(env));
+    auto r = rx.recv();
+    if (r.is_err()) return AppendEntriesReply{};
+    return r.unwrap();
   }
+
+  // @unsafe { mpsc bridge }
+  EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
+                                                    EmptyAppendEntriesReq req) {
+    auto [tx, rx] = rusty::sync::mpsc::channel<EmptyAppendEntriesReply>();
+    Envelope env{self_, dst,
+        rusty::Function<void(DispatcherProxy&)>(
+            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+              (void)tx.send(disp->handle_empty_append_entries(std::move(req)));
+            })};
+    sw_->send(std::move(env));
+    auto r = rx.recv();
+    if (r.is_err()) return EmptyAppendEntriesReply{};
+    return r.unwrap();
+  }
+
+  // @unsafe { mpsc bridge }
+  VoteReply send_vote(siteid_t dst, VoteReq req) {
+    auto [tx, rx] = rusty::sync::mpsc::channel<VoteReply>();
+    Envelope env{self_, dst,
+        rusty::Function<void(DispatcherProxy&)>(
+            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+              (void)tx.send(disp->handle_vote(std::move(req)));
+            })};
+    sw_->send(std::move(env));
+    auto r = rx.recv();
+    if (r.is_err()) return VoteReply{};
+    return r.unwrap();
+  }
+
+  // @unsafe { mpsc bridge }
+  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) {
+    auto [tx, rx] = rusty::sync::mpsc::channel<TimeoutNowReply>();
+    Envelope env{self_, dst,
+        rusty::Function<void(DispatcherProxy&)>(
+            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+              (void)tx.send(disp->handle_timeout_now(std::move(req)));
+            })};
+    sw_->send(std::move(env));
+    auto r = rx.recv();
+    if (r.is_err()) return TimeoutNowReply{};
+    return r.unwrap();
+  }
+
+  // @unsafe { mpsc bridge }
+  InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) {
+    auto [tx, rx] = rusty::sync::mpsc::channel<InstallSnapshotReply>();
+    Envelope env{self_, dst,
+        rusty::Function<void(DispatcherProxy&)>(
+            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+              (void)tx.send(disp->handle_install_snapshot(std::move(req)));
+            })};
+    sw_->send(std::move(env));
+    auto r = rx.recv();
+    if (r.is_err()) return InstallSnapshotReply{};
+    return r.unwrap();
+  }
+
+  // ------------------------------------------------------------------
+  // Fire-and-forget RPCs. Reply is discarded.
+  // ------------------------------------------------------------------
 
   // @safe
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) {
-    auto deliver_fn = [req = std::move(req)](DispatcherProxy& disp) mutable {
-      disp->handle_vote_durable(std::move(req),
-          [](VoteDurableReply) {});  // fire-and-forget
-    };
     Envelope env{self_, candidate,
-                 rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
+        rusty::Function<void(DispatcherProxy&)>(
+            [req](DispatcherProxy& disp) mutable {
+              (void)disp->handle_vote_durable(req);
+            })};
     sw_->send(std::move(env));
   }
 
   // @safe
   void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) {
-    auto deliver_fn = [req = std::move(req)](DispatcherProxy& disp) mutable {
-      disp->handle_append_entries_durable(std::move(req),
-          [](AppendEntriesDurableReply) {});
-    };
     Envelope env{self_, leader,
-                 rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
+        rusty::Function<void(DispatcherProxy&)>(
+            [req](DispatcherProxy& disp) mutable {
+              (void)disp->handle_append_entries_durable(req);
+            })};
     sw_->send(std::move(env));
   }
 
@@ -216,114 +307,30 @@ class ChannelTransportAdapter {
   void send_notify_restart(siteid_t dst, parid_t /*par*/) {
     NotifyRestartReq req{};
     req.restarted_site_id = self_;
-    auto deliver_fn = [req](DispatcherProxy& disp) mutable {
-      disp->handle_notify_restart(req,
-          [](NotifyRestartReply) {});
-    };
     Envelope env{self_, dst,
-                 rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
+        rusty::Function<void(DispatcherProxy&)>(
+            [req](DispatcherProxy& disp) mutable {
+              (void)disp->handle_notify_restart(req);
+            })};
     sw_->send(std::move(env));
   }
-
-  // @safe
-  void send_append_entries(siteid_t dst, AppendEntriesReq req,
-                           OnAppendEntriesReply on_reply) {
-    auto deliver_fn = [req = std::move(req), on_reply = std::move(on_reply),
-                       dst](DispatcherProxy& disp) mutable {
-      disp->handle_append_entries(std::move(req),
-          [on_reply = std::move(on_reply), dst](AppendEntriesReply r) mutable {
-            on_reply(dst, std::move(r));
-          });
-    };
-    Envelope env{self_, dst,
-                 rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
-    sw_->send(std::move(env));
-  }
-
-  // @safe
-  void send_empty_append_entries(siteid_t dst, EmptyAppendEntriesReq req,
-                                 OnAppendEntriesReply on_reply) {
-    auto deliver_fn = [req = std::move(req), on_reply = std::move(on_reply),
-                       dst](DispatcherProxy& disp) mutable {
-      disp->handle_empty_append_entries(std::move(req),
-          [on_reply = std::move(on_reply), dst](EmptyAppendEntriesReply r) mutable {
-            AppendEntriesReply rr{};
-            rr.follower_append_ok = r.follower_append_ok;
-            rr.follower_current_term = r.follower_current_term;
-            rr.follower_last_log_index = r.follower_last_log_index;
-            rr.follower_ack_type = r.follower_ack_type;
-            on_reply(dst, std::move(rr));
-          });
-    };
-    Envelope env{self_, dst,
-                 rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
-    sw_->send(std::move(env));
-  }
-
-  // @safe - broadcasts one envelope per peer configured via set_peers().
-  void broadcast_vote(parid_t /*par*/, VoteReq req, OnVoteReply on_reply) {
-    // Share on_reply across peers via a std::shared_ptr holder: rusty::Arc
-    // yields const deref, but OnVoteReply::operator() is non-const.
-    // @unsafe { std::shared_ptr at adapter boundary }
-    struct Holder { OnVoteReply cb; };
-    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply)});
-    for (auto peer : peers_) {
-      if (peer == self_) continue;
-      auto holder_ref = holder;
-      auto deliver_fn = [req, holder_ref, peer](DispatcherProxy& disp) mutable {
-        disp->handle_vote(req,
-            [holder_ref, peer](VoteReply r) mutable {
-              holder_ref->cb(peer, std::move(r));
-            });
-      };
-      Envelope env{self_, peer,
-                   rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
-      sw_->send(std::move(env));
-    }
-  }
-
-  // @safe
-  void send_install_snapshot(siteid_t dst, InstallSnapshotReq req,
-                             OnInstallSnapshotReply on_reply) {
-    auto deliver_fn = [req = std::move(req), on_reply = std::move(on_reply),
-                       dst](DispatcherProxy& disp) mutable {
-      disp->handle_install_snapshot(std::move(req),
-          [on_reply = std::move(on_reply), dst](InstallSnapshotReply r) mutable {
-            on_reply(dst, std::move(r));
-          });
-    };
-    Envelope env{self_, dst,
-                 rusty::Function<void(DispatcherProxy&)>(std::move(deliver_fn))};
-    sw_->send(std::move(env));
-  }
-
-  // Configure peer list for broadcast_vote. Must be called before any
-  // vote broadcast runs.
-  // @safe
-  void set_peers(std::vector<siteid_t> peers) { peers_ = std::move(peers); }
 
  private:
   ChannelSwitchboard* sw_{nullptr};
-  siteid_t             self_{0};
-  parid_t              par_{0};
-  std::vector<siteid_t> peers_{};
+  siteid_t            self_{0};
+  parid_t             par_{0};
 };
 
 // @safe - factory produces a TransportProxy backed by the channel adapter.
 inline TransportProxy make_channel_transport(ChannelSwitchboard* sw,
                                              siteid_t self,
-                                             parid_t  par,
-                                             std::vector<siteid_t> peers) {
+                                             parid_t  par) {
   ChannelTransportAdapter a{sw, self, par};
-  a.set_peers(std::move(peers));
   return pro::make_proxy<TransportFacade, ChannelTransportAdapter>(std::move(a));
 }
 
 // ---------------------------------------------------------------------------
 // ChannelNodeWorker — drains a receiver and invokes a DispatcherProxy.
-// Not a thread by itself; callers can spin a rusty::thread around
-// ::run_until_empty() or ::run_forever(). Tests that run a single
-// step at a time can call ::step().
 // ---------------------------------------------------------------------------
 
 class ChannelNodeWorker {
@@ -334,7 +341,6 @@ class ChannelNodeWorker {
       : rx_(std::move(rx)), dispatcher_(std::move(dispatcher)) {}
 
   // @unsafe { try_recv / Result unwrap on rusty boundary }
-  // Returns true if one envelope was drained.
   bool step() {
     auto r = rx_.try_recv();
     if (r.is_err()) return false;

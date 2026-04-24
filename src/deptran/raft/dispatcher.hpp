@@ -2,34 +2,25 @@
 
 /**
  * @file dispatcher.hpp
- * @brief Raft inbound-RPC dispatcher abstraction (Phase 3 of decouple
- *        plan). Mirrors transport.hpp but for the receiver side.
+ * @brief Raft inbound-RPC dispatcher abstraction. Mirrors transport.hpp
+ *        but for the receiver side.
  *
- * Design intent:
- *  - Every inbound Raft RPC has a `handle_*` method on the facade taking
- *    the request struct and a reply callback. The transport (rrr shim or
- *    in-memory channel worker) drains incoming messages and calls the
- *    dispatcher. No rrr::DeferredReply, no Fiber yield, no rrr::Service
- *    base class in the facade signature.
+ * Design intent (Phase 8.0 — fiber-synchronous):
+ *  - Every `handle_*` method on the facade returns its reply type
+ *    directly. The transport (rrr shim or in-memory channel worker)
+ *    invokes the dispatcher and uses the returned value as the reply
+ *    payload. No rrr::DeferredReply, no callbacks, no rusty::Function.
  *  - Concrete adapters:
- *      RaftServerDispatcher (phase 3.5) — delegates to RaftServer
- *                                         methods synchronously (or via
- *                                         a Fiber on the rrr side).
- *      ChannelDispatcher    (phase 4)   — drives the same RaftServer
- *                                         from the in-memory worker
- *                                         thread.
+ *      RaftServerDispatcher (phase 8.2) — delegates to RaftServer
+ *                                         methods synchronously.
+ *      A recording adapter in the tests that returns fixed replies.
  *
  * Rusty-safety:
  *  - Polymorphism via pro::proxy; no inheritance.
- *  - Callbacks are rusty::Function; the reply payload is handed back
- *    by value.
+ *  - Reply structs are passed by value.
  */
 
 #include <cstdint>
-
-#include <rusty/arc.hpp>
-#include <rusty/function.hpp>
-#include <rusty/sync/atomic.hpp>
 
 // deptran/constants.h defines macro RR, which can collide with template
 // parameter names inside proxy headers. Protect proxy includes.
@@ -69,24 +60,6 @@ struct InstallSnapshotReq;
 struct InstallSnapshotReply;
 
 // ---------------------------------------------------------------------------
-// Per-handler reply callbacks. The dispatcher invokes these when a
-// handler finishes; the transport then marshals the reply back to the
-// caller.
-// ---------------------------------------------------------------------------
-
-using OnVoteReplyDispatch           = rusty::Function<void(VoteReply)>;
-using OnVoteDurableReplyDispatch    = rusty::Function<void(VoteDurableReply)>;
-using OnAppendEntriesReplyDispatch  = rusty::Function<void(AppendEntriesReply)>;
-using OnEmptyAppendEntriesReplyDispatch =
-    rusty::Function<void(EmptyAppendEntriesReply)>;
-using OnAppendEntriesDurableReplyDispatch =
-    rusty::Function<void(AppendEntriesDurableReply)>;
-using OnTimeoutNowReplyDispatch     = rusty::Function<void(TimeoutNowReply)>;
-using OnNotifyRestartReplyDispatch  = rusty::Function<void(NotifyRestartReply)>;
-using OnInstallSnapshotReplyDispatch =
-    rusty::Function<void(InstallSnapshotReply)>;
-
-// ---------------------------------------------------------------------------
 // Per-method dispatch tags.
 // ---------------------------------------------------------------------------
 
@@ -105,21 +78,21 @@ PRO_DEF_MEM_DISPATCH(DpHandleInstallSnapshot,       handle_install_snapshot);
 
 struct DispatcherFacade : pro::facade_builder
     ::add_convention<DpHandleVote,
-        void(VoteReq, OnVoteReplyDispatch)>
+        VoteReply(VoteReq)>
     ::add_convention<DpHandleVoteDurable,
-        void(VoteDurableReq, OnVoteDurableReplyDispatch)>
+        VoteDurableReply(VoteDurableReq)>
     ::add_convention<DpHandleAppendEntries,
-        void(AppendEntriesReq, OnAppendEntriesReplyDispatch)>
+        AppendEntriesReply(AppendEntriesReq)>
     ::add_convention<DpHandleEmptyAppendEntries,
-        void(EmptyAppendEntriesReq, OnEmptyAppendEntriesReplyDispatch)>
+        EmptyAppendEntriesReply(EmptyAppendEntriesReq)>
     ::add_convention<DpHandleAppendEntriesDurable,
-        void(AppendEntriesDurableReq, OnAppendEntriesDurableReplyDispatch)>
+        AppendEntriesDurableReply(AppendEntriesDurableReq)>
     ::add_convention<DpHandleTimeoutNow,
-        void(TimeoutNowReq, OnTimeoutNowReplyDispatch)>
+        TimeoutNowReply(TimeoutNowReq)>
     ::add_convention<DpHandleNotifyRestart,
-        void(NotifyRestartReq, OnNotifyRestartReplyDispatch)>
+        NotifyRestartReply(NotifyRestartReq)>
     ::add_convention<DpHandleInstallSnapshot,
-        void(InstallSnapshotReq, OnInstallSnapshotReplyDispatch)>
+        InstallSnapshotReply(InstallSnapshotReq)>
     ::build {};
 
 using DispatcherProxy = pro::proxy<DispatcherFacade>;

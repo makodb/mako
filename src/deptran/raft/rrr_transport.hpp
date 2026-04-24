@@ -2,39 +2,23 @@
 
 /**
  * @file rrr_transport.hpp
- * @brief Phase 2 of docs/dev/raft_decouple_plan.md — the production
- *        transport adapter that wraps RaftCommo / RaftProxy and exposes
- *        TransportFacade's callback-shaped API.
- *
- * Design note: the current RaftCommo return shape (shared_ptr<
- * SendAppendEntriesResults> / shared_ptr<RaftVoteQuorumEvent>) embeds a
- * QuorumEvent + FutureAttr callback slot. The TransportFacade however
- * exposes pure callback-shaped methods. For the MVP, this adapter
- * implements the fire-and-forget RPCs directly (send_timeout_now,
- * send_vote_durable, send_append_entries_durable, send_notify_restart,
- * self_site_id). The quorum-returning RPCs
- * (send_append_entries, send_empty_append_entries, broadcast_vote,
- * send_install_snapshot) are stubbed with `verify(0)` until RaftCommo is
- * refactored to accept callback parameters directly. This keeps the
- * facade compilable and callable from the test-side adapter without
- * regressing the production hot path, which will continue to call
- * RaftCommo directly from RaftServer until phase 2.5 completes the
- * refactor on the server.cc side.
+ * @brief Production TransportFacade adapter that wraps RaftCommo /
+ *        RaftProxy. Fiber-synchronous since Phase 8.0 — each
+ *        reply-expecting send_* blocks the calling fiber on an
+ *        rrr::IntEvent until the reply lands.
  *
  * Rusty-safety:
- *  - No inheritance (the adapter is a plain struct; polymorphism comes
- *    from the TransportProxy facade elsewhere).
- *  - Non-owning raw pointer to RaftCommo (@unsafe). RaftCommo lives on
+ *  - No inheritance; polymorphism via the TransportFacade proxy.
+ *  - Non-owning raw pointer to RaftCommo (@unsafe): RaftCommo lives on
  *    RaftServer, which outlives every adapter built on top of it.
- *    rusty::Arc<RaftCommo> is unusable here because Arc<T>::operator->
- *    yields const access but RaftCommo's Send* methods are non-const.
- *  - No std::shared_ptr / std::function in new fields — callbacks are
- *    rusty::Function.
+ *    rusty::Arc<RaftCommo> is unusable because Arc<T>::operator-> yields
+ *    const access but RaftCommo's Send* methods are non-const.
+ *  - The reply-slot + IntEvent pair is allocated via std::make_shared
+ *    at the rrr boundary; `RaftCommo::Send*Cb` takes a std::function
+ *    that captures it. One @unsafe boundary per method.
  */
 
 #include <cstdint>
-
-#include <rusty/function.hpp>
 
 // transport.hpp pulls in <proxy/proxy.h>; include it before `import rrr;`
 // so the proxy library's template machinery parses cleanly.
@@ -49,144 +33,135 @@ import rrr;
 namespace janus {
 namespace raft {
 
-// Wraps the in-tree RaftCommo so the proxy library can bind it via
-// TransportFacade. Intentionally a plain struct (no inheritance).
 class RrrTransportAdapter {
  public:
   // @unsafe { non-owning raw pointer; caller must ensure commo outlives this }
   RrrTransportAdapter(RaftCommo* commo, siteid_t self, parid_t par)
       : commo_(commo), self_(self), par_(par) {}
 
-  // ------------------------------------------------------------------
-  // TransportFacade conventions
-  // ------------------------------------------------------------------
-
   // @safe - identity read
   siteid_t self_site_id() const { return self_; }
 
-  // @unsafe { RaftCommo::SendTimeoutNow calls std::function }
-  void send_timeout_now(siteid_t dst,
-                        TimeoutNowReq req,
-                        OnTimeoutNowReply on_reply) {
-    // Bridge rusty::Function -> std::function through a shared holder so
-    // the closure survives the async boundary. The holder owns the
-    // rusty::Function and is kept alive by the lambda capture.
-    struct Holder { OnTimeoutNowReply cb; siteid_t dst; };
-    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply), dst});
-    // @unsafe { std::function bridge }
-    commo_->SendTimeoutNow(
-        dst, par_, req.leader_term, req.leader_site_id,
-        [holder](bool success, uint64_t follower_term) {
-          TimeoutNowReply r{};
-          r.follower_term = follower_term;
-          r.success = success;
-          holder->cb(holder->dst, std::move(r));
-        });
-  }
+  // ------------------------------------------------------------------
+  // Fire-and-forget RPCs — forwarded directly.
+  // ------------------------------------------------------------------
 
-  // @safe - forward fire-and-forget
+  // @safe
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) {
     commo_->SendVoteDurable(candidate, par_, req.term, req.voter_id);
   }
-
-  // @safe - forward fire-and-forget
+  // @safe
   void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) {
     commo_->SendAppendEntriesDurable(
         leader, par_, req.term, req.follower_id, req.last_log_index);
   }
-
-  // @safe - forward fire-and-forget
+  // @safe
   void send_notify_restart(siteid_t self, parid_t par) {
     commo_->SendNotifyRestart(self, par);
   }
 
   // ------------------------------------------------------------------
-  // Quorum-returning RPCs — implemented in phase 2.5 against the *Cb
-  // variants RaftCommo grew. Each bridges rusty::Function into
-  // std::function via a shared holder that keeps the rusty::Function
-  // alive across the async boundary.
+  // Reply-expecting RPCs — fiber-synchronous.
+  // Each method registers an IntEvent + reply slot with RaftCommo's
+  // callback-shaped Send* variant, then blocks the calling fiber on
+  // the event via Wait(). The callback stores the reply into the slot
+  // and sets the event, waking the fiber.
   // ------------------------------------------------------------------
 
-  // @unsafe { std::function bridge }
-  void send_append_entries(siteid_t dst,
-                           AppendEntriesReq req,
-                           OnAppendEntriesReply on_reply) {
-    // Holder keeps the rusty::Function alive until the reply fires.
-    struct Holder { OnAppendEntriesReply cb; };
-    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply)});
-    // @unsafe { MarshallDeputy::inner() returns a std::shared_ptr }
-    auto cmd = req.cmd.inner();
+  // @unsafe { std::function + shared_ptr bridge at rrr boundary }
+  AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) {
+    auto slot  = std::make_shared<AppendEntriesReply>();
+    auto ready = Reactor::create_sp_event<IntEvent>();
+    auto cmd   = req.cmd.inner();
     commo_->SendAppendEntriesCb(
-        dst, par_,
-        req.slot, req.ballot,
+        dst, par_, req.slot, req.ballot,
         /*isLeader=*/true,
-        req.leader_site_id,
-        req.leader_current_term,
-        req.leader_prev_log_index,
-        req.leader_prev_log_term,
-        req.leader_commit_index,
-        cmd,
-        req.leader_next_log_term,
+        req.leader_site_id, req.leader_current_term,
+        req.leader_prev_log_index, req.leader_prev_log_term,
+        req.leader_commit_index, cmd, req.leader_next_log_term,
         /*trigger_election_now=*/false,
-        [holder](siteid_t from, AppendEntriesReply r) {
-          holder->cb(from, std::move(r));
+        [slot, ready](siteid_t, AppendEntriesReply r) {
+          *slot = std::move(r);
+          ready->set(1);
         });
+    ready->wait();  // yields fiber until reply arrives or timeout
+    return *slot;
   }
 
-  // @unsafe { std::function bridge; cmd=null triggers heartbeat path }
-  void send_empty_append_entries(siteid_t dst,
-                                 EmptyAppendEntriesReq req,
-                                 OnAppendEntriesReply on_reply) {
-    struct Holder { OnAppendEntriesReply cb; };
-    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply)});
+  // @unsafe { std::function + shared_ptr bridge at rrr boundary }
+  EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
+                                                    EmptyAppendEntriesReq req) {
+    auto slot  = std::make_shared<AppendEntriesReply>();
+    auto ready = Reactor::create_sp_event<IntEvent>();
     commo_->SendAppendEntriesCb(
-        dst, par_,
-        req.slot, req.ballot,
+        dst, par_, req.slot, req.ballot,
         /*isLeader=*/true,
-        req.leader_site_id,
-        req.leader_current_term,
-        req.leader_prev_log_index,
-        req.leader_prev_log_term,
-        req.leader_commit_index,
-        /*cmd=*/nullptr,
-        /*cmdLogTerm=*/0,
+        req.leader_site_id, req.leader_current_term,
+        req.leader_prev_log_index, req.leader_prev_log_term,
+        req.leader_commit_index, /*cmd=*/nullptr, /*cmdLogTerm=*/0,
         req.trigger_election_now,
-        [holder](siteid_t from, AppendEntriesReply r) {
-          holder->cb(from, std::move(r));
+        [slot, ready](siteid_t, AppendEntriesReply r) {
+          *slot = std::move(r);
+          ready->set(1);
         });
+    ready->wait();
+    EmptyAppendEntriesReply out{};
+    out.follower_append_ok = slot->follower_append_ok;
+    out.follower_current_term = slot->follower_current_term;
+    out.follower_last_log_index = slot->follower_last_log_index;
+    out.follower_ack_type = slot->follower_ack_type;
+    return out;
+  }
+
+  // @unsafe { std::function + shared_ptr bridge at rrr boundary.
+  //            BroadcastVoteCb fires the callback once per peer reply;
+  //            send_vote is per-peer, so we filter on `from == dst`
+  //            and park on a dedicated IntEvent. }
+  VoteReply send_vote(siteid_t dst, VoteReq req) {
+    auto slot  = std::make_shared<VoteReply>();
+    auto ready = Reactor::create_sp_event<IntEvent>();
+    commo_->BroadcastVoteCb(
+        par_, req.last_log_idx, req.last_log_term,
+        req.candidate_site_id, req.current_term,
+        [slot, ready, dst](siteid_t from, VoteReply r) {
+          if (from == dst) {
+            *slot = std::move(r);
+            ready->set(1);
+          }
+        });
+    ready->wait();
+    return *slot;
   }
 
   // @unsafe { std::function bridge }
-  void broadcast_vote(parid_t par, VoteReq req, OnVoteReply on_reply) {
-    struct Holder { OnVoteReply cb; };
-    auto holder = std::make_shared<Holder>(Holder{std::move(on_reply)});
-    commo_->BroadcastVoteCb(
-        par,
-        req.last_log_idx, req.last_log_term,
-        req.candidate_site_id, req.current_term,
-        [holder](siteid_t from, VoteReply r) {
-          holder->cb(from, std::move(r));
+  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) {
+    auto slot  = std::make_shared<TimeoutNowReply>();
+    auto ready = Reactor::create_sp_event<IntEvent>();
+    commo_->SendTimeoutNow(
+        dst, par_, req.leader_term, req.leader_site_id,
+        [slot, ready](bool success, uint64_t follower_term) {
+          slot->success = success;
+          slot->follower_term = follower_term;
+          ready->set(1);
         });
+    ready->wait();
+    return *slot;
   }
 
-  // @unsafe { std::function bridge; existing SendInstallSnapshot already
-  //           takes a std::function, we just adapt its reply shape. }
-  void send_install_snapshot(siteid_t dst,
-                             InstallSnapshotReq req,
-                             OnInstallSnapshotReply on_reply) {
-    struct Holder { OnInstallSnapshotReply cb; siteid_t dst; };
-    auto holder = std::make_shared<Holder>(
-        Holder{std::move(on_reply), dst});
+  // @unsafe { std::function bridge; SendInstallSnapshot already takes
+  //           a std::function — we just wire it into a slot+event. }
+  InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) {
+    auto slot  = std::make_shared<InstallSnapshotReply>();
+    auto ready = Reactor::create_sp_event<IntEvent>();
     commo_->SendInstallSnapshot(
-        dst, par_,
-        req.term, req.leader_id,
-        req.last_included_index, req.last_included_term,
-        req.data,
-        [holder](uint64_t follower_term) {
-          InstallSnapshotReply r{};
-          r.term_out = follower_term;
-          holder->cb(holder->dst, std::move(r));
+        dst, par_, req.term, req.leader_id,
+        req.last_included_index, req.last_included_term, req.data,
+        [slot, ready](uint64_t follower_term) {
+          slot->term_out = follower_term;
+          ready->set(1);
         });
+    ready->wait();
+    return *slot;
   }
 
  private:

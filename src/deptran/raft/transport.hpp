@@ -2,38 +2,35 @@
 
 /**
  * @file transport.hpp
- * @brief Raft network transport abstraction (Phase 1 of decouple plan).
+ * @brief Raft network transport abstraction.
  *
  * Polymorphism via pro::proxy (no inheritance). Concrete adapters are
  * plain C++ classes with matching method names; the proxy binds to them
- * via PRO_DEF_MEM_DISPATCH + facade_builder. See the MarshallableFacade
- * / MarshallableProxy pattern in src/rrr/misc/marshal.hpp for the
- * canonical in-tree example.
+ * via PRO_DEF_MEM_DISPATCH + facade_builder.
  *
- * Design intent:
- *  - Every outbound Raft RPC has a fire-and-forget send_* method on the
- *    facade. Replies come back via a rusty::Function<void(Reply)> the
- *    caller supplies at the call site. No rrr::Future, no
- *    rrr::DeferredReply, no Fiber yield in the facade signature.
- *  - Concrete adapters in scope:
- *      RrrTransportAdapter    (phase 2) — wraps RaftProxy / rrr::Future.
- *      ChannelTransportAdapter(phase 4) — wraps rusty::sync::mpsc.
+ * Design intent (Phase 8.0 — fiber-synchronous):
+ *  - Every reply-expecting `send_*` method returns its reply type
+ *    directly. The calling fiber yields (via rrr::IntEvent::Wait on the
+ *    rrr side, or a reply-slot signaled by the channel worker on the
+ *    in-memory side) until the reply arrives. No callbacks, no
+ *    rusty::Function in the facade signatures.
+ *  - Fire-and-forget methods (vote-durable, append-durable,
+ *    notify-restart) stay `void`.
+ *  - No per-partition broadcast on the facade. Leaders that want to
+ *    vote a quorum spawn N fibers, each issuing a per-peer send_vote.
+ *
+ * Concrete adapters:
+ *    RrrTransportAdapter      — wraps RaftCommo / rrr::Future.
+ *    ChannelTransportAdapter  — wraps rusty::sync::mpsc.
  *
  * Rusty-safety:
- *  - All std::shared_ptr / std::function occurrences below come from
- *    the marshal.hpp rrr-module boundary (it's where our proxy library
- *    lives). Rusty facades live inside that module too, so the
- *    signatures below use rusty::Function to keep the contract clean.
- *  - The facade's send_install_snapshot and send_append_entries take
- *    ownership of the request by value; adapters move it into whatever
- *    downstream machinery they use.
+ *  - No inheritance; polymorphism via pro::proxy.
+ *  - std::shared_ptr appears only at the rrr-module boundary
+ *    (MarshallDeputy carries std::shared_ptr<Marshallable>). Every
+ *    such boundary is annotated `@unsafe`.
  */
 
 #include <cstdint>
-
-#include <rusty/arc.hpp>
-#include <rusty/function.hpp>
-#include <rusty/option.hpp>
 
 // deptran/constants.h defines macro RR, which collides with template
 // parameter names in proxy headers (e.g. class RR in proxy/v4/proxy.h).
@@ -55,8 +52,8 @@
 namespace janus {
 namespace raft {
 
-// Forward declarations to avoid pulling rrr module state into facade
-// construction order; complete definitions come from messages.hpp where needed.
+// Forward declarations to keep facade construction independent of
+// messages.hpp's import of the rrr module.
 struct VoteReq;
 struct VoteReply;
 struct VoteDurableReq;
@@ -65,32 +62,18 @@ struct TimeoutNowReply;
 struct AppendEntriesReq;
 struct AppendEntriesReply;
 struct EmptyAppendEntriesReq;
+struct EmptyAppendEntriesReply;
 struct AppendEntriesDurableReq;
 struct InstallSnapshotReq;
 struct InstallSnapshotReply;
 
 // ---------------------------------------------------------------------------
-// Callback aliases — reply types land on a rusty::Function delivered by the
-// adapter when the RPC (or its quorum) completes.
-// ---------------------------------------------------------------------------
-
-using OnAppendEntriesReply =
-    rusty::Function<void(siteid_t /* from */, AppendEntriesReply)>;
-using OnVoteReply =
-    rusty::Function<void(siteid_t /* from */, VoteReply)>;
-using OnTimeoutNowReply =
-    rusty::Function<void(siteid_t /* from */, TimeoutNowReply)>;
-using OnInstallSnapshotReply =
-    rusty::Function<void(siteid_t /* from */, InstallSnapshotReply)>;
-
-// ---------------------------------------------------------------------------
-// Per-method dispatch tags. The names chosen here are the method names a
-// concrete adapter must define; the proxy library binds by name.
+// Per-method dispatch tags.
 // ---------------------------------------------------------------------------
 
 PRO_DEF_MEM_DISPATCH(TrSendAppendEntries,       send_append_entries);
 PRO_DEF_MEM_DISPATCH(TrSendEmptyAppendEntries,  send_empty_append_entries);
-PRO_DEF_MEM_DISPATCH(TrBroadcastVote,           broadcast_vote);
+PRO_DEF_MEM_DISPATCH(TrSendVote,                send_vote);
 PRO_DEF_MEM_DISPATCH(TrSendTimeoutNow,          send_timeout_now);
 PRO_DEF_MEM_DISPATCH(TrSendVoteDurable,         send_vote_durable);
 PRO_DEF_MEM_DISPATCH(TrSendAppendEntriesDurable,send_append_entries_durable);
@@ -103,35 +86,25 @@ PRO_DEF_MEM_DISPATCH(TrSelfSiteId,              self_site_id);
 // ---------------------------------------------------------------------------
 
 struct TransportFacade : pro::facade_builder
+    // Reply-expecting RPCs: return reply by value. Caller blocks on a
+    // fiber-yielding primitive inside the adapter.
     ::add_convention<TrSendAppendEntries,
-        void(siteid_t /* dst */,
-             AppendEntriesReq,
-             OnAppendEntriesReply)>
+        AppendEntriesReply(siteid_t /* dst */, AppendEntriesReq)>
     ::add_convention<TrSendEmptyAppendEntries,
-        void(siteid_t /* dst */,
-             EmptyAppendEntriesReq,
-             OnAppendEntriesReply)>
-    // BroadcastVote sends to every peer of the partition; adapter
-    // fans out and invokes the callback once per reply received.
-    ::add_convention<TrBroadcastVote,
-        void(parid_t,
-             VoteReq,
-             OnVoteReply)>
+        EmptyAppendEntriesReply(siteid_t /* dst */, EmptyAppendEntriesReq)>
+    ::add_convention<TrSendVote,
+        VoteReply(siteid_t /* dst */, VoteReq)>
     ::add_convention<TrSendTimeoutNow,
-        void(siteid_t /* dst */,
-             TimeoutNowReq,
-             OnTimeoutNowReply)>
-    // Durable-ack RPCs are fire-and-forget on purpose.
+        TimeoutNowReply(siteid_t /* dst */, TimeoutNowReq)>
+    ::add_convention<TrSendInstallSnapshot,
+        InstallSnapshotReply(siteid_t /* dst */, InstallSnapshotReq)>
+    // Durable-ack and restart notifications are fire-and-forget by design.
     ::add_convention<TrSendVoteDurable,
         void(siteid_t /* candidate */, VoteDurableReq)>
     ::add_convention<TrSendAppendEntriesDurable,
         void(siteid_t /* leader */, AppendEntriesDurableReq)>
     ::add_convention<TrSendNotifyRestart,
         void(siteid_t /* self */, parid_t)>
-    ::add_convention<TrSendInstallSnapshot,
-        void(siteid_t /* dst */,
-             InstallSnapshotReq,
-             OnInstallSnapshotReply)>
     // Identity — useful for adapters that need to know their own site
     // for logging / loopback suppression.
     ::add_convention<TrSelfSiteId, siteid_t() const>

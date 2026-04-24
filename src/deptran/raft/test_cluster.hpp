@@ -14,7 +14,9 @@
  * 6.5 swaps DummyDispatcher for a RaftServer-backed impl.
  */
 
+#include <atomic>
 #include <cstdint>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -101,28 +103,21 @@ class TestCluster {
   }
 
   // ------------------------------------------------------------------
-  // Draining the dispatch queues. Tests call step() repeatedly to
-  // advance until the in-flight messages quiesce.
+  // Each node has a background worker thread draining its channel
+  // (Phase 8.0 — fiber-synchronous senders block on the reply channel,
+  // so they need a live consumer on the far side).
   // ------------------------------------------------------------------
 
-  // @safe - drain every node's channel once; returns total messages
-  // delivered across all nodes.
-  size_t step() {
-    size_t total = 0;
-    for (auto& w : workers_) total += w->run_until_empty();
-    return total;
-  }
-
-  // @safe - drain until every worker reports zero deliveries in one
-  // pass. Bounded by `max_rounds` to prevent runaway loops.
-  size_t step_until_quiesce(size_t max_rounds = 64) {
-    size_t total = 0;
-    for (size_t i = 0; i < max_rounds; ++i) {
-      size_t delivered = step();
-      if (delivered == 0) break;
-      total += delivered;
+  ~TestCluster() {
+    // Drop all senders FIRST so every worker's step_blocking() recv()
+    // returns Err and the loop exits. Then join the threads so the
+    // detached members (workers_/receivers) aren't destroyed while a
+    // worker is mid-recv on them.
+    stop_.store(true, std::memory_order_release);
+    sw_ = ChannelSwitchboard{};  // move-assign empty; drops all senders
+    for (auto& t : worker_threads_) {
+      if (t.joinable()) t.join();
     }
-    return total;
   }
 
  private:
@@ -147,8 +142,7 @@ class TestCluster {
       logs_.emplace_back(new InMemoryLogStorage());
       snaps_.emplace_back(new MemorySnapshotManager());
 
-      TransportProxy tr = make_channel_transport(&sw_, id, /*par=*/0,
-                                                 site_ids_);
+      TransportProxy tr = make_channel_transport(&sw_, id, /*par=*/0);
       rusty::Box<RaftNode> node(new RaftNode(
           id, std::move(tr), logs_.back().get(), snaps_.back().get()));
 
@@ -158,14 +152,30 @@ class TestCluster {
       nodes_.push_back(std::move(node));
       workers_.push_back(std::move(worker));
     }
+
+    // Spawn one background drainer per node.
+    // @unsafe { std::thread at test-harness boundary }
+    for (auto& w : workers_) {
+      ChannelNodeWorker* wptr = w.get();
+      worker_threads_.emplace_back(std::thread([wptr]() {
+        while (wptr->step_blocking()) {}
+      }));
+    }
   }
 
-  ChannelSwitchboard                            sw_;
-  std::vector<siteid_t>                         site_ids_;
-  std::vector<rusty::Box<InMemoryLogStorage>>     logs_;
+  // Declaration order matters: members are destroyed in REVERSE order,
+  // so sw_ must come LAST (destroyed first) to drop its Senders and
+  // let every worker's step_blocking() recv() return Err before the
+  // workers' Receivers are destroyed. Otherwise detached worker
+  // threads UAF on their receivers.
+  std::atomic<bool>                              stop_{false};
+  std::vector<std::thread>                       worker_threads_;
+  std::vector<rusty::Box<ChannelNodeWorker>>     workers_;
+  std::vector<rusty::Box<RaftNode>>              nodes_;
   std::vector<rusty::Box<MemorySnapshotManager>> snaps_;
-  std::vector<rusty::Box<RaftNode>>             nodes_;
-  std::vector<rusty::Box<ChannelNodeWorker>>    workers_;
+  std::vector<rusty::Box<InMemoryLogStorage>>    logs_;
+  std::vector<siteid_t>                          site_ids_;
+  ChannelSwitchboard                             sw_;
 };
 
 }  // namespace raft
