@@ -355,22 +355,212 @@ Phases completed will be checked off as commits land.
 - [x] Phase 6 — `RaftNode` + `TestCluster` (skeleton)      (b288a2bca)
 - [x] Phase 7 — `raft_lab_standalone` (skeleton)
 
-### Remaining follow-ups (deferred)
+### Related work already landed
 
-- [ ] Phase 3.5 — wire `RaftServiceImpl` to call through
-      `DispatcherProxy` (swap `rrr::DeferredReply` for the callback
-      shape). Currently the proxy is compile-verified but unused by
-      production handlers.
-- [ ] Phase 5.5 — retire the virtual `LogStorage` /
-      `SnapshotManager` interfaces in favor of `LogStorageProxy` /
-      `SnapshotManagerProxy` facades. Requires threading the proxy
-      types through `server.cc` where both are currently referenced
-      by virtual pointer.
-- [ ] Phase 6.5 — replace `DummyDispatcher` inside `RaftNode` with a
-      real `RaftServer`-backed dispatcher. Requires first decoupling
-      `RaftServer` from `rrr::PollThread` / `rrr::Fiber` (the outbound
-      transport abstraction is done; the fiber/timer abstraction is
-      Phase 8).
-- [ ] Phase 7.5 — port `RaftLabTest::Run()` to drive `TestCluster`
-      once Phase 6.5 is in. Today `raft_lab_standalone` only exercises
-      the transport + fault plumbing.
+- `raft: replace DeferredReply with Fiber-wrapped auto-reply`        (36766c1f0)
+- `raft: flip 10 RPCs from defer to fiber; remove RpcHandler macro`  (1ea323cfb)
+   — every raft RPC is now declared `fiber` in `src/deptran/rcc_rpc.rpc`;
+   the generated wrapper launches `Fiber::create_run` and marshals the
+   returned response struct. `RaftServiceImpl` overrides take a request
+   struct and return `Result<Resp, rrr::i32>` directly.
+- `raft: snapshot trigger in StartApplyThread (fixes TEST 55)`       (31dc57a37)
+   — unrelated snapshot bug fix.
+
+## Plan for the remaining work (phases 8.x)
+
+The phase 0–7 work shipped the callback-shaped facades in
+`transport.hpp` / `dispatcher.hpp` and the channel transport that feeds
+them. That was the right shape before the inbound DeferredReply → fiber
+migration; it is no longer. With `fiber` RPCs in place, both inbound
+and outbound should speak the same synchronous-return shape, using
+`rrr::Future::wait` (rrr side) or `IntEvent::wait` (channel side) to
+yield the caller's fiber until a reply arrives. That uniformity
+eliminates the `RaftQuorum` primitive the earlier plan needed, removes
+every `rusty::Function<void(...)>` reply callback from raft code, and
+makes every subsequent phase smaller.
+
+### Phase 8.0 — collapse facades to fiber-synchronous
+
+One commit, ~400 LOC across existing phase headers + tests. Nothing in
+`RaftServer` yet — this is a pure refactor of the facades from phases
+1 / 3 / 4.
+
+- `transport.hpp` — every quorum/reply-expecting `send_*` returns its
+  reply type (or `rusty::Result<Reply, rrr::i32>` to match the rrr
+  codegen convention). Fire-and-forget methods
+  (`send_vote_durable`, `send_append_entries_durable`,
+  `send_notify_restart`) stay `void`. Delete every `OnXReply` typedef.
+- `dispatcher.hpp` — every `handle_*` returns its reply type. Delete
+  every `OnXReplyDispatch` typedef.
+- `rrr_transport.hpp` — each reply-expecting method becomes a thin
+  wrapper that blocks on the rrr Future. The RaftCommo `*Cb` variants
+  added in phase 2.5 either get synchronous counterparts or get
+  rewritten to use `Future::wait` and return the reply. No
+  `std::shared_ptr` holder bridging.
+- `channel_transport.hpp` — `Envelope` now carries
+  `{from, to, rusty::Function<Reply(DispatcherProxy&)> run_and_return,
+    Reply* out_slot, rusty::Arc<IntEvent> ready}`. Sender pushes, then
+  `ready->Wait()` (yields the fiber); worker pops, calls
+  `*out_slot = run_and_return(disp);`, `ready->set(1)`. Sender's fiber
+  resumes with the reply.
+- Tests: `test_raft_transport_facade`, `test_raft_dispatcher_facade`,
+  `test_raft_channel_transport` — replace "call then wait for
+  callback" assertions with "call, check returned value".
+- `raft_node.hpp::DummyDispatcher` — each method returns a Reply
+  struct; delete the callback-calling code.
+- Gate: all existing phase gtests pass + `deptran_server -f
+  config/raft_lab_test.yml` still passes (no production path touched).
+
+### Phase 8.1 — route outbound through `TransportProxy`
+
+1–2 commits, ~800 LOC changed in `server.cc`.
+
+- Add `TransportProxy transport_` on `RaftServer`; initialize in
+  `Setup()` as `make_rrr_transport(commo_, site_id_, partition_id_)`.
+  Production path unchanged underneath.
+- Replace every `commo()->SendX(...)` with `transport_->send_x(...)`.
+  Because the facade is now fiber-synchronous, the leader's election
+  and replication fibers stop using `QuorumEvent::Wait()`: a vote
+  broadcast becomes N sub-fibers (`Fiber::create_run` × peers), each
+  blocking on `send_vote`, with a shared atomic counter signalling
+  quorum; append-entries replication is per-peer linear code that
+  blocks on the reply.
+- Delete `SendAppendEntriesResults` and `RaftVoteQuorumEvent`.
+- Gates: phase gtests + `raft_lab_test.yml` + throughput runs
+  (`shard1ReplicationRaft` ≥ 80k ops/sec).
+
+### Phase 8.2 — `RaftServerDispatcher`
+
+1 commit, ~300 LOC.
+
+- New `RaftServerDispatcher` adapter holding `RaftServer*` and
+  satisfying `DispatcherFacade`. Each `handle_X` allocates a local
+  `Reply`, calls the existing `RaftServer::OnX(...)` with
+  output-pointer args, returns the reply.
+- Factory `make_raft_server_dispatcher(RaftServer*) -> DispatcherProxy`.
+- Unit test analogous to `test_raft_dispatcher_facade`.
+
+### Phase 8.3 — `RaftServiceImpl` forwards to `DispatcherProxy`
+
+1 commit, ~150 LOC changed.
+
+- `RaftServiceImpl` builds a `DispatcherProxy` via
+  `make_raft_server_dispatcher(svr)` in its constructor.
+- Each `RaftServiceImpl::Vote(req)` etc. becomes:
+  `return Ok(dispatcher_->handle_vote(req));`.
+- Gate: `raft_lab_test.yml` still passes.
+
+### Phase 8.4 — storage proxies (optional)
+
+1 commit, ~400 LOC.
+
+- Define `LogStorageFacade` / `SnapshotManagerFacade` matching the
+  existing virtual methods.
+- Thread them through `RaftServer` — the field types move from
+  `std::shared_ptr<LogStorage>` + `std::shared_ptr<SnapshotManager>`
+  to the proxies.
+- Deferrable if time is short: the existing virtual interfaces are
+  already used by `MemoryLogStorage` / `MemorySnapshotManager`.
+
+### Phase 8.5 — `TestCluster` runs real `RaftServer`s
+
+1–2 commits, ~500 LOC.
+
+- `RaftNode` constructs a real `RaftServer` given a `TransportProxy`
+  pointing at `ChannelTransportAdapter`, a `MemoryLogStorage`, and a
+  `MemorySnapshotManager`. The server is wired to the switchboard via
+  `make_raft_server_dispatcher(server)`.
+- Bring up the server's timers / fibers
+  (`StartElectionTimer`, `HeartbeatLoop`, `StartApplyThread`) exactly
+  as `deptran_server` does today. `rrr::Reactor` is still loaded; no
+  sockets are involved.
+- Verify with small gtest cases: election converges, `DoAgreement`
+  commits across all nodes, `disconnect(follower)` silences AEs.
+
+### Phase 8.6 — port `RaftTestConfig` to `TestCluster`
+
+1–2 commits, ~600 LOC.
+
+- `Kill(i)` → destroy `nodes_[i]`'s server; switchboard drops its
+  traffic.
+- `Restart(i)` → rebuild server in place, re-register its dispatcher.
+- `Disconnect(i)` → `sw_.drop_direction(i, *)` + `sw_.drop_direction(*, i)`.
+- `Reconnect(i)` → per-pair undrop (small switchboard API addition).
+- `Partition(a, b)` → `sw_.partition({a, b})`.
+- `DoAgreement(cmd, n, wait)` → call leader's log-append path, poll
+  `commit_index()` across nodes.
+- `OneLeader()` → scan nodes for `is_leader()`.
+- Keep the existing rrr-based path under a build flag so
+  `deptran_server -f raft_lab_test.yml` continues to work.
+
+### Phase 8.7 — `raft_lab_standalone` runs the full `RaftLabTest::Run()`
+
+1 commit, ~100 LOC.
+
+- Replace the current 4-case skeleton with construction of a 5-node
+  `TestCluster` + `RaftTestConfig(cluster)` + `RaftLabTest::Run()`.
+- Completion criterion (matches the plan's original goal): the full
+  lab suite passes and `ss -lntp | grep raft_lab_standalone` prints
+  nothing.
+
+### Phase 8.8 (deferred) — `RaftClock` abstraction
+
+Only needed if deterministic scheduling becomes a goal. A `ManualClock`
+lets tests advance time explicitly. The real-time Fiber path works
+without it for a first pass.
+
+### Ordering and risk
+
+| Step | Depends on | Gate |
+|---|---|---|
+| 8.0 | — | phase gtests + `raft_lab_test.yml` |
+| 8.1 | 8.0 | phase gtests + `raft_lab_test.yml` + `shard1ReplicationRaft` ≥ 80k |
+| 8.2 | 8.1 | unit test |
+| 8.3 | 8.2 | `raft_lab_test.yml` |
+| 8.4 | — (orthogonal) | unit + `raft_lab_test.yml` |
+| 8.5 | 8.1, 8.2 | TestCluster gtest |
+| 8.6 | 8.5 | subset of `RaftLabTest` |
+| 8.7 | 8.6 | full `RaftLabTest` + `ss` verification |
+
+Highest risk: Phase 8.1. Every reply now yields the calling fiber via
+`Future::wait` / `IntEvent::wait`; we need to audit every site that
+holds `mtx_` across a send-and-wait for deadlocks (fiber yields while
+holding a recursive mutex are safe on the same thread but risky if
+replies dispatch on a different thread). Phase 8.0 should establish
+the fiber-yield pattern in the transport facade tests so the shape is
+validated before it ships into production server code.
+
+## Rusty-safety in the remaining work
+
+Every new file this plan introduces must follow the rusty-safety
+constraints at the top of this document (no inheritance, no std smart
+pointers / containers / mutex / thread / optional / function, every
+function annotated `@safe` or `@unsafe`). Beyond new code:
+
+- Prefer `rusty::Vec` / `rusty::HashMap` / `rusty::HashSet` /
+  `rusty::BTreeMap` over `std::vector` / `std::unordered_*` / `std::map`.
+- Prefer `rusty::Arc` / `rusty::Box` / `rusty::Rc` over their std
+  counterparts.
+- Prefer `rusty::Mutex` / `rusty::RefCell` / `rusty::Cell` over
+  `std::mutex` + raw mutable fields.
+- Prefer `rusty::Function<Sig>` over `std::function<Sig>`.
+- Prefer `rusty::thread::spawn` over `std::thread`.
+- Prefer `rusty::Option<T>` over `std::optional<T>`.
+
+When touching existing code as part of a phase 8.x step, migrate any
+std constructs that show up in the blast radius of your change to their
+rusty equivalents if it's safe to do so. Log each migration in the
+commit message. Do not attempt to migrate code outside the step's
+scope — that stretches review surface and makes bisection harder.
+
+## Tracking (phase 8)
+
+- [ ] Phase 8.0 — collapse facades to fiber-synchronous
+- [ ] Phase 8.1 — route outbound RPCs through `TransportProxy`
+- [ ] Phase 8.2 — `RaftServerDispatcher`
+- [ ] Phase 8.3 — `RaftServiceImpl` → `DispatcherProxy`
+- [ ] Phase 8.4 — storage proxies (optional)
+- [ ] Phase 8.5 — `TestCluster` with real `RaftServer`s
+- [ ] Phase 8.6 — port `RaftTestConfig` to `TestCluster`
+- [ ] Phase 8.7 — `raft_lab_standalone` runs full `RaftLabTest`
+- [ ] Phase 8.8 — `RaftClock` abstraction (deferred)
