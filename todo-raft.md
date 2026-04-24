@@ -394,6 +394,47 @@ if deterministic testing (advance-time-by-N-ms) becomes valuable.
 
 ---
 
+## Preexisting raft bugs surfaced during Phase 8.0 verification
+
+These are independent of the decouple plan — own commits, own
+verification. Listed here so they don't get lost.
+
+### P1 — TEST 60 `CompactLog` no-op without `log_storage_`
+
+- Location: `src/deptran/raft/server.cc:497` (`CompactLog`).
+- Current behavior: if `log_storage_ == nullptr`, `CompactLog`
+  returns 0 without trimming `raft_logs_` or advancing
+  `min_active_slot_`. TEST 60 asserts `leader_min_active > 1` after
+  a snapshot triggers compaction and fails with
+  `Leader min_active_slot_ should be > 1 after compaction, got 1`.
+- Fix: make `CompactLog` trim the in-memory `raft_logs_` +
+  advance `min_active_slot_` even when `log_storage_` is absent,
+  AND make `HeartbeatLoop`/`AppendEntries` fall back to
+  `InstallSnapshot` when `prevLogIndex < min_active_slot_` (the
+  current leader fabricates an empty `RaftData` via
+  `GetRaftInstance(id)` when a slot is missing — that returns
+  `term=0` which breaks the consistency check).
+- See commit `31dc57a37` message for what was tried and why it
+  cascaded into replication breakage.
+
+### P2 — TEST 63 mid-test crash at `server.cc:1420`
+
+- Location: `src/deptran/raft/server.cc:1420` (UnsecuredFailure
+  step-down path, inside `testSpeculativeLeaderElection` or a
+  related speculative test).
+- Observed during Phase 8.0 verification: lab test completes
+  TEST 1-60 + enters TEST 63 (UnsecuredFailure step-down rolls
+  back all entries), then aborts at the `verify(...)` on
+  `server.cc:1420`.
+- Fix: read the assertion context at that line, reproduce with
+  the minimum speculative test, trace the invariant. Likely
+  related to specVoters_ / durableVoters_ bookkeeping when
+  leader steps down mid-election.
+- Independent of the decouple plan. Should be fixed before anyone
+  relies on speculative voting correctness.
+
+---
+
 ## Tracking
 
 - [x] Phase 8.0 — fiber-sync facades (cf5db3fef)

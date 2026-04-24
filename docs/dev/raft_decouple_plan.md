@@ -555,7 +555,7 @@ scope — that stretches review surface and makes bisection harder.
 
 ## Tracking (phase 8)
 
-- [ ] Phase 8.0 — collapse facades to fiber-synchronous
+- [x] Phase 8.0 — collapse facades to fiber-synchronous  (cf5db3fef)
 - [ ] Phase 8.1 — route outbound RPCs through `TransportProxy`
 - [ ] Phase 8.2 — `RaftServerDispatcher`
 - [ ] Phase 8.3 — `RaftServiceImpl` → `DispatcherProxy`
