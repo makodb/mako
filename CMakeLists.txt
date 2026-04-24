@@ -483,6 +483,17 @@ add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/sr
 # Keep these checks gated behind ENABLE_BORROW_CHECKING so normal CI builds do
 # not require the checker's runtime libclang setup.
 if(ENABLE_BORROW_CHECKING)
+    # add_borrow_check pulls include paths from the current directory's
+    # INCLUDE_DIRECTORIES property. Make sure the masstree-generated
+    # config dir + its parent are visible at directory scope so that
+    # compiler.hh's `#include "config.h"` and src/mako's
+    # `#include "masstree/config.h"` both resolve during borrow checking
+    # (the force-include in target_compile_options is target-scoped and
+    # add_borrow_check doesn't see it).
+    include_directories(
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_BINARY_DIR}/generated
+    )
     # Phase 4.1: Enable borrow checking for masstree_context
     add_borrow_check(src/masstree/masstree_context.cc)
     #
@@ -499,6 +510,13 @@ set(CXXFLAGS
   -w
   -Wreturn-type
   -I${MASSTREE_CONFIG_INCLUDE_DIR}
+  # Parent of MASSTREE_CONFIG_INCLUDE_DIR so `#include "masstree/config.h"`
+  # (the prefixed form used by src/mako/varkey.h, tuple.cc, etc.) resolves
+  # to the generated config.h at <build>/generated/masstree/config.h.
+  # Without this, local checkouts that happen to have a stale
+  # src/masstree/config.h from an autoconf run work by accident via -Isrc;
+  # fresh worktrees and Docker CI fail with "masstree/config.h not found".
+  -I${CMAKE_BINARY_DIR}/generated
   -Isrc/mako
   -MD
   -MP
