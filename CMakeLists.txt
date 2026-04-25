@@ -1847,6 +1847,15 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_rrr_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_raft_rrr_transport_compile COMMAND test_raft_rrr_transport_compile)
 
+    # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
+    # Bootstraps an rrr::Reactor on the test thread to exercise the
+    # IntEvent-backed wait_until_quorum path; no heavy raft state needed.
+    add_executable(test_raft_quorum tests/raft_quorum_test.cc)
+    target_include_directories(test_raft_quorum PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_raft_quorum PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
+
     add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
     target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})

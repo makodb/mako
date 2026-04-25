@@ -359,9 +359,20 @@ from the repo-root `todo-raft.md`.)
 replication fiber loops stop waiting on `QuorumEvent` and instead
 count sub-fiber returns.
 
-### 8.1.a — Add a `RaftQuorum<Reply>` primitive
+### 8.1.a — Add a `RaftQuorum<Reply>` primitive [26:04:25, 12:30]
 
-- [ ] Create `src/deptran/raft/quorum.hpp` (new file).
+Done. Header at `src/deptran/raft/quorum.hpp`, design + user manual
+at `docs/dev/raft_quorum.md`, unit test at `tests/raft_quorum_test.cc`
+(8 cases, all green: construction/accessors, empty-collect,
+all-replies-arrive, early-quorum, timeout, counter advance, one-shot
+collect, non-trivial Reply type). One deviation from the original
+spec: the field is `std::shared_ptr<rrr::IntEvent>` rather than
+`rusty::Arc<rrr::IntEvent>` because rrr's reactor owns every event
+through `Reactor::all_events_` and the only legal constructor is
+`Reactor::create_sp_event<IntEvent>` which returns `shared_ptr` —
+documented inline + in the design doc.
+
+- [x] Create `src/deptran/raft/quorum.hpp` (new file).
   - `template<typename Reply> class RaftQuorum` with:
     - `rusty::Arc<rrr::IntEvent> ready_;`
     - `rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;`
@@ -377,9 +388,15 @@ count sub-fiber returns.
     wait-with-timeout, collect.
   - Add `add_executable(test_raft_quorum ...)` to `CMakeLists.txt`
     alongside other `test_raft_*` targets (around line 1799-1841).
-- [ ] Gate: `test_raft_quorum` passes + all existing `test_raft_*`
-  targets green.
-- [ ] **Commit**: `raft: phase 8.1a — RaftQuorum<Reply> primitive + unit test`.
+- [x] Gate: `test_raft_quorum` passes + all existing `test_raft_*`
+  targets green. [26:04:25, 12:30] All 22 raft unit tests pass
+  (test_raft_messages 2, test_raft_quorum 8 NEW, test_raft_transport_facade 1,
+  test_raft_rrr_transport_compile 1, test_raft_dispatcher_facade 1,
+  test_raft_channel_transport 2, test_raft_test_cluster 4,
+  test_raft_memory_snapshot_manager 3). All 4 Raft CI suites also
+  pass (shard1ReplicationRaft 54815 ops/sec; shard2ReplicationRaft
+  8542/8584 ops/sec; both Simple suites green).
+- [x] **Commit**: `raft: phase 8.1a — RaftQuorum<Reply> primitive + unit test`.
 
 ### 8.1.b — Give `RaftServer` a `TransportProxy transport_`
 
@@ -764,7 +781,7 @@ verification. Listed here so they don't get lost.
 ## Tracking
 
 - [x] Phase 8.0 — fiber-sync facades (cf5db3fef)
-- [ ] Phase 8.1a — RaftQuorum primitive
+- [x] Phase 8.1a — RaftQuorum primitive [26:04:25, 12:30]
 - [ ] Phase 8.1b — TransportProxy member on RaftServer
 - [ ] Phase 8.1c — migrate BroadcastVote
 - [ ] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2
