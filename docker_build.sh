@@ -24,6 +24,13 @@ COMPOSE_CMD_PREFIX="MAKO_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME} docker compose"
 
 # Environment variables/options for Docker runs
 DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e CARGO_HOME=/workspace/.cargo-docker -e BUILD_DIR=build_docker)
+# Forward MAKO_ASAN so CMakeLists.txt builds with -fsanitize=address + libc
+# malloc, and the dbtest runtime sees a sane ASAN_OPTIONS for the test run.
+if [ -n "${MAKO_ASAN:-}" ]; then
+    DOCKER_ENV_OPTS+=(-e "MAKO_ASAN=${MAKO_ASAN}")
+    : "${ASAN_OPTIONS:=abort_on_error=0:halt_on_error=0:detect_leaks=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:strict_init_order=1}"
+    DOCKER_ENV_OPTS+=(-e "ASAN_OPTIONS=${ASAN_OPTIONS}")
+fi
 DOCKER_INIT_OPTS=(--init)
 DOCKER_SECURITY_OPTS=()
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then

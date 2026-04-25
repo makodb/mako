@@ -532,6 +532,21 @@ set(CXXFLAGS
 list(APPEND CXXFLAGS -DREUSE_FIBER)
 message(STATUS "Reuse fiber enabled")
 
+# AddressSanitizer (MAKO_ASAN=1 in env). Diagnostic toggle used to localize
+# the shard2ReplicationRaft stack-corruption crash. Forces libc malloc — ASan
+# replaces malloc/free, so we cannot also link jemalloc/tcmalloc. Adds
+# `-fno-omit-frame-pointer` so backtraces are accurate.
+set(MAKO_ASAN_ENABLED OFF)
+if(DEFINED ENV{MAKO_ASAN} AND "$ENV{MAKO_ASAN}" STREQUAL "1")
+    set(MAKO_ASAN_ENABLED ON)
+    message(STATUS "MAKO_ASAN=1: building with -fsanitize=address; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.")
+    set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_ASAN" FORCE)
+    list(APPEND CXXFLAGS -fsanitize=address -fno-omit-frame-pointer)
+    list(APPEND LDFLAGS  -fsanitize=address)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
+
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
   message(STATUS "Raft lab testing fiber enabled")
@@ -1271,7 +1286,7 @@ function(add_apps exec_name exec_path)
       ${LIBEVENT_LDFLAGS}
       ${GFLAGS_LDFLAGS}
       ${PROTOBUF_LDFLAGS}
-      ${JEMALLOC_LDFLAGS}
+      $<$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>:${JEMALLOC_LDFLAGS}>
   )
 
   # Add dependencies

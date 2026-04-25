@@ -144,7 +144,57 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
     shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft). The
     fourth — shard2ReplicationRaft — fails for an unrelated,
     reproducible TPC-C crash tracked as a separate task below.
-- [ ] *high* Fix shard2ReplicationRaft TPC-C segfault in `tpcc_worker::txn_order_status`
+- [x] *high* Fix shard2ReplicationRaft TPC-C segfault in `tpcc_worker::txn_order_status` [26:04:25, 10:25]
+  - **Root cause**: 4-byte heap-buffer overflow in `mako::Client::InvokeInstall`
+    (`src/mako/lib/client.cc:303`). The function calls
+    `encode_single_timestamp()` (common.h:482), which `malloc`s exactly
+    `sizeof(uint32_t)` = 4 bytes for one timestamp, then memcpys
+    `sizeof(uint32_t) * config.nshards` bytes from that 4-byte buffer.
+    The receiver-side `HandleInstallRequest()` (server.cc:153–174)
+    only reads ONE uint32 via `decode_single_timestamp(req->value)`, so the
+    `* config.nshards` multiplier on the sender side is dead code from
+    an older "vector of timestamps per shard" wire format that the
+    install handler had already migrated away from. The receiver was
+    updated; the sender's memcpy/len weren't.
+  - **Why nshards=2 crashes but nshards=1 doesn't**: with nshards=1 the
+    memcpy reads exactly the 4 allocated bytes — benign. With nshards≥2
+    it reads `4*N` bytes, overrunning the 4-byte heap allocation by
+    `4*(N-1)` bytes into jemalloc's adjacent slab. Those overflowed
+    bytes get written into the request buffer, sent over the wire, and
+    eventually deserialized into a `customer::value` on a benchmark
+    worker's stack via `Decode(...)`. There an `inline_str_base<u8, N>::operator=`
+    reads the corrupted source's `sz` byte (e.g. 106) and `memcpy`s 106
+    bytes into a 21-byte `buf[N+1]` — that's the stack-buffer-overflow
+    that smashed `va` / `begin.len` / nearby locals in
+    `tpcc_worker::txn_order_status`'s frame.
+  - **Why simple-raft passes**: SimpleTransaction never calls
+    `Transaction::try_commit` → `ShardClient::remoteInstall`, so the
+    buggy code path is unreachable.
+  - **Why this looked like libc++**: it doesn't actually depend on the
+    standard library at all. Yesterday's bisect chase (clang-22,
+    libstdc++-15, fiber-revert, phase-8 revert, and so on) was wasted
+    effort — the bug fires on every clang/libc++ combination.
+    Confirmed via AddressSanitizer (`MAKO_ASAN=1` toggle added to
+    CMakeLists.txt 2026-04-25): ASan's first error on
+    shard2ReplicationRaft is the heap-buffer-overflow READ in
+    `InvokeInstall` (full report at
+    `logs/20260425-fix-shard2-asan-report.787.txt`).
+  - **Fix**: drop the `* config.nshards` multiplier in `client.cc:303`
+    so sender and receiver agree on a single 4-byte timestamp; also
+    add a defense-in-depth `min(that.sz, N)` clamp in
+    `inline_str_base::operator=` (record/inline_str.h) so a corrupt
+    source byte can never blow the destination stack frame again.
+  - **Verification**: all 4 Raft CI suites pass after the fix —
+    shard1ReplicationRaft (61993 ops/sec), shard2ReplicationRaft
+    (8610 / 8618 ops/sec, both shards green for the first time today),
+    shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft. CI logs
+    saved at `logs/20260425-fix-shard*ReplicationRaft.log`.
+  - **Diagnostic infrastructure left in tree**: `MAKO_ASAN=1` env var
+    in CMakeLists.txt + docker_build.sh forwards it; build forces
+    `USE_MALLOC_MODE=0` and adds `-fsanitize=address`. Re-usable for
+    future memory-safety regressions.
+
+  Original investigation notes (now historical):
   - Context: 2026-04-24 daily CI. With the three docker_build.sh /
     CMake fixes above in place the build completes, but
     shard2ReplicationRaft (2-shard TPC-C with Raft replication)
@@ -265,33 +315,12 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
       - Miscellaneous build-infra commits (be6fd3c2d, aff4e9536,
         2fcfc9164, 43d28b561, d335a0c50, e3b03918e, 76f259c96) —
         lower priority.
-  - [ ] *high* Next step — test `0cf5b9724` (libstdc++→libc++
-    migration) in isolation. Plain revert of `0cf5b9724` on top of
-    HEAD is impractical because every later commit pulls in
-    `import std;` which requires libc++. Two attack plans, in
-    order:
-    (a) Remove the `-stdlib=libc++` forcing in `CMakeLists.txt:
-        27-29` and strip the `import std;` lines (or revert the
-        module-based `.cpp` files back to header includes).
-        Re-build on HEAD with libstdc++. Risky/invasive but the
-        most direct test of the hypothesis.
-    (b) Build HEAD with libc++ but run under **ThreadSanitizer**
-        or **AddressSanitizer** (`-fsanitize=thread` or `=address`
-        + `-g -O1`). The crash signature (ASCII-bytes overwriting
-        a `str_arena*` on the stack, plus `begin.len` clobbered)
-        strongly suggests a stack buffer overflow or an
-        unsynchronized write into a struct that straddles a
-        pointer — both of which ASan/TSan can pinpoint to the
-        exact write. Start with ASan since TSan is noisier on
-        fiber-heavy code.
-    The fix will almost certainly be in application code
-    (deptran / rrr) whose layout or lifetime assumed a
-    libstdc++-sized `std::string` / `std::vector` and overflows
-    under libc++. This is compatible with the 2-shard-only
-    repro: only the 2-shard TPC-C path allocates enough of these
-    to trigger the overflow, whereas 1-shard TPC-C and Simple
-    benchmarks stay under the threshold.
-  - [ ] *high* Before merging any fix, re-run all 4 Raft CI suites
-    and verify the 3 currently-green ones stay green.
+  - [x] *high* Next step — test via AddressSanitizer.
+    [26:04:25, 10:11] ASan caught the bug on the first run.
+    Plan (a) above (rebuild with libstdc++) was unnecessary —
+    the libstdc++/libc++ angle was a red herring.
+  - [x] *high* Before merging any fix, re-run all 4 Raft CI suites
+    and verify the 3 currently-green ones stay green. [26:04:25, 10:25]
+    All 4 green.
 - [ ] *high* repeated task — daily Raft CI
-  - [ ] for every day, run all Raft CI tests (`./docker_build.sh ci shard1ReplicationRaft`, `./docker_build.sh ci shard2ReplicationRaft`, `./docker_build.sh ci shard1ReplicationSimpleRaft`, `./docker_build.sh ci shard2ReplicationSimpleRaft`) and verify all pass. If any fail, investigate root cause and add a fix task above. [partial 26:04:24, 11:30: 3/4 pass — shard1ReplicationRaft, shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft green after the three docker_build.sh/CMake fixes above; shard2ReplicationRaft still red, tracked as "shard2ReplicationRaft TPC-C segfault" above; not marking today "done" until that fix lands. Last fully-green run: 26:04:17 on `d4a3ab2b1`.]
+  - [ ] for every day, run all Raft CI tests (`./docker_build.sh ci shard1ReplicationRaft`, `./docker_build.sh ci shard2ReplicationRaft`, `./docker_build.sh ci shard1ReplicationSimpleRaft`, `./docker_build.sh ci shard2ReplicationSimpleRaft`) and verify all pass. If any fail, investigate root cause and add a fix task above. [last done: 26:04:25, 10:25 — all 4 suites green after fixing the heap overflow in client.cc:303 (`* config.nshards` removed) + defensive sz-clamp in inline_str.h::operator=. shard2ReplicationRaft 8610/8618 ops/sec, shard1ReplicationRaft 61993 ops/sec.]

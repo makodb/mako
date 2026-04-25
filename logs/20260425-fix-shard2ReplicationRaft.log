@@ -1,0 +1,2372 @@
+[0;32m=== Mako Ubuntu 24.04 Docker Build Script ===[0m
+
+[1;33mRunning CI test 'shard2ReplicationRaft' in container with 32 build jobs...[0m
+=========================================
+Running: ./ci/ci.sh compile
+=========================================
+Using 32 parallel build jobs
+Configuring CMake generator='Ninja', build_type='Release', build_dir='build_docker'
+-- The C compiler identification is Clang 18.1.3
+-- The CXX compiler identification is Clang 18.1.3
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++ - skipped
+-- Detecting CXX compile features
+CMake Warning (dev) at /opt/cmake-3.31.0/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake:248 (cmake_language):
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+Call Stack (most recent call first):
+  /opt/cmake-3.31.0/share/cmake-3.31/Modules/CMakeDetermineCompilerSupport.cmake:113 (cmake_create_cxx_import_std)
+  /opt/cmake-3.31.0/share/cmake-3.31/Modules/CMakeTestCXXCompiler.cmake:83 (CMAKE_DETERMINE_COMPILER_SUPPORT)
+  CMakeLists.txt:31 (project)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Detecting CXX compile features - done
+-- Auto-detected LIBCLANG_PATH=/usr/lib/llvm-18/lib (clang 18)
+-- Using CARGO_TARGET_DIR from environment: /workspace/target-docker
+-- RustyCpp parallel jobs: 64
+-- Rusty C++ Checker submodule found at: /workspace/third-party/rusty-cpp
+-- Checker will be built on demand at: /workspace/target-docker/release/rusty-cpp-checker
+-- C++ Borrow Checking enabled
+-- Checker will be built at: /workspace/target-docker/release/rusty-cpp-checker
+-- Build type: release
+-- Checking RustyCpp dependencies...
+-- Found cargo: /opt/rust/bin/cargo
+-- Found libclang: /usr/lib/llvm-18/lib/libclang.so
+-- Found libclang headers: /usr/lib/llvm-18/include
+-- Found llvm-config: /usr/bin/llvm-config
+-- Found Z3: /usr/lib/x86_64-linux-gnu/libz3.so
+-- Found Z3 headers: /usr/include
+-- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1")
+-- Checking for module 'libdpdk'
+--   Found libdpdk, version 23.11.4
+-- Found Python3: /usr/include/python3.12 (found version "3.12.3") found components: Development Development.Module Development.Embed
+-- I: /workspace/third-party/erpc
+-- Using CARGO_TARGET_DIR for rust-lib: /workspace/target-docker
+-- environment: eth
+CMake Deprecation Warning at third-party/erpc/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+-- Compilation optimized for performance.
+-- Debugging is disabled.
+CMake Deprecation Warning at third-party/erpc/third_party/HdrHistogram_c/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+-- Found ZLIB: /usr/lib/x86_64-linux-gnu/libz.so (found version "1.3")
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Looking for ceil in m
+-- Looking for ceil in m - found
+-- Looking for clock_gettime in rt
+-- Looking for clock_gettime in rt - found
+CMake Deprecation Warning at third-party/erpc/third_party/googletest/CMakeLists.txt:4 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+CMake Warning (dev) at third-party/erpc/third_party/googletest/CMakeLists.txt:26 (option):
+  Policy CMP0077 is not set: option() honors normal variables.  Run "cmake
+  --help-policy CMP0077" for policy details.  Use the cmake_policy command to
+  set the policy and suppress this warning.
+
+  For compatibility with older versions of CMake, option is clearing the
+  normal variable 'INSTALL_GTEST'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Deprecation Warning at third-party/erpc/third_party/googletest/googlemock/CMakeLists.txt:45 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+CMake Deprecation Warning at third-party/erpc/third_party/googletest/googletest/CMakeLists.txt:56 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+-- Found Python: /usr/bin/python3.12 (found version "3.12.3") found components: Interpreter
+CMake Deprecation Warning at third-party/erpc/third_party/gflags/CMakeLists.txt:73 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+-- Looking for C++ include unistd.h
+-- Looking for C++ include unistd.h - found
+-- Looking for C++ include stdint.h
+-- Looking for C++ include stdint.h - found
+-- Looking for C++ include inttypes.h
+-- Looking for C++ include inttypes.h - found
+-- Looking for C++ include sys/types.h
+-- Looking for C++ include sys/types.h - found
+-- Looking for C++ include sys/stat.h
+-- Looking for C++ include sys/stat.h - found
+-- Looking for C++ include fnmatch.h
+-- Looking for C++ include fnmatch.h - found
+-- Looking for C++ include stddef.h
+-- Looking for C++ include stddef.h - found
+-- Check size of uint32_t
+-- Check size of uint32_t - done
+-- Looking for strtoll
+-- Looking for strtoll - found
+-- Profile-guided optimization is disabled.
+-- Logging level = none.
+-- Testing is disabled, so tests may fail.
+-- Selected transport = fake.
+-- Compiling app = latency
+-- DPDK not needed to build eRPC
+STATUS,server compiles
+-- Default runtime Raft group mode: single (override with --raft-groups or MAKO_RAFT_GROUP_MODE)
+-- Looking for sys/epoll.h
+-- Looking for sys/epoll.h - found
+-- Looking for numa.h
+-- Looking for numa.h - found
+-- Looking for inttypes.h
+-- Looking for inttypes.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stdio.h
+-- Looking for stdio.h - found
+-- Looking for stdlib.h
+-- Looking for stdlib.h - found
+-- Looking for strings.h
+-- Looking for strings.h - found
+-- Looking for string.h
+-- Looking for string.h - found
+-- Looking for sys/stat.h
+-- Looking for sys/stat.h - found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for time.h
+-- Looking for time.h - found
+-- Looking for execinfo.h
+-- Looking for execinfo.h - found
+-- Looking for unistd.h
+-- Looking for unistd.h - found
+-- Looking for C++ include type_traits
+-- Looking for C++ include type_traits - found
+-- Looking for getline
+-- Looking for getline - found
+-- Looking for clock_gettime
+-- Looking for clock_gettime - found
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME - Success
+-- Looking for numa_available in numa
+-- Looking for numa_available in numa - found
+-- Performing Test _HAVE_CXX_CONSTEXPR
+-- Performing Test _HAVE_CXX_CONSTEXPR - Success
+-- Performing Test _HAVE_CXX_STATIC_ASSERT
+-- Performing Test _HAVE_CXX_STATIC_ASSERT - Success
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES - Success
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS - Success
+-- Performing Test _HAVE_STD_HASH
+-- Performing Test _HAVE_STD_HASH - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE - Success
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR - Success
+-- Performing Test _HAVE___BUILTIN_CLZ
+-- Performing Test _HAVE___BUILTIN_CLZ - Success
+-- Performing Test _HAVE___BUILTIN_CLZL
+-- Performing Test _HAVE___BUILTIN_CLZL - Success
+-- Performing Test _HAVE___BUILTIN_CLZLL
+-- Performing Test _HAVE___BUILTIN_CLZLL - Success
+-- Performing Test _HAVE___BUILTIN_CTZ
+-- Performing Test _HAVE___BUILTIN_CTZ - Success
+-- Performing Test _HAVE___BUILTIN_CTZL
+-- Performing Test _HAVE___BUILTIN_CTZL - Success
+-- Performing Test _HAVE___BUILTIN_CTZLL
+-- Performing Test _HAVE___BUILTIN_CTZLL - Success
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8 - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8 - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL - Success
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_INT64_T_IS_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG - Success
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG - Success
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG - Failed
+-- Check size of short
+-- Check size of short - done
+-- Check size of int
+-- Check size of int - done
+-- Check size of long
+-- Check size of long - done
+-- Check size of long long
+-- Check size of long long - done
+-- Check size of void *
+-- Check size of void * - done
+-- Performing Test _HAVE_MADV_HUGEPAGE
+-- Performing Test _HAVE_MADV_HUGEPAGE - Success
+-- Performing Test _HAVE_MAP_HUGETLB
+-- Performing Test _HAVE_MAP_HUGETLB - Success
+-- Generated Masstree config.h via CMake: /workspace/build_docker/generated/masstree/config.h
+-- Reuse fiber enabled
+-- Checking for module 'libevent'
+--   Found libevent, version 2.1.12-stable
+-- Checking for module 'gflags'
+--   Found gflags, version 2.2.2
+-- Checking for module 'protobuf'
+--   Found protobuf, version 3.21.12
+-- Checking for module 'jemalloc'
+--   Found jemalloc, version 5.3.0_0
+-- Building LZ4 library...
+make: Entering directory '/workspace/third-party/lz4'
+gcc -fPIC -O3 -I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration -c lz4.c -o lz4.o
+gcc -fPIC -O3 -I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration -c xxhash.c -o xxhash.o
+gcc -shared -Wl,-soname,liblz4.so -o liblz4.so lz4.o xxhash.o
+make: Leaving directory '/workspace/third-party/lz4'
+-- LZ4 library built successfully
+> out-perf.masstree/src/mako/buildstamp.masstree
+-- --- Configuring Mako Root & STO Borrow Checks ---
+-- Found 0 files to check in src/mako/ and benchmarks/sto/
+-- --- End Mako Borrow Checks Configuration ---
+-- GoogleTest configured from vendored source: /workspace/third-party/googletest/googletest
+-- Skipping test_masstree_legacy_scan: missing src/masstree/log.hh
+-- Test targets configured:
+--   RRR Framework Tests:
+--     - test_marshal: Marshal/Unmarshal tests
+--     - test_rpc: RPC client/server tests
+--     - test_rpc_extended: Extended RPC tests (timeouts, reconnection, load)
+--     - test_future: Future/async operation tests
+--     - test_masstree: Core Masstree b-tree regression tests
+--     - test_reactor: Reactor/event system tests
+--     - test_reactor_extended: Extended reactor tests (events, fibers, load)
+--     - rpcbench: RPC performance benchmark test
+--   Silo/STO Tests:
+--     - test_silo_varint: Varint encoding/decoding (22 tests)
+--     - test_silo_rcu_thread: RCU memory management (9 tests)
+--     - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)
+--     - test_sto_transaction: STO Transaction RCU (13 tests)
+--     - test_sto_transaction_real: STO Transaction integration tests
+-- Additional perf binaries:
+--   - masstree_perf: On-demand Masstree throughput benchmark (JSON output)
+-- 
+-- Run all tests with: make run_tests
+-- Run Silo/STO tests: make run_silo_sto_tests
+-- Or individually: make test && ctest
+-- Configuring done (18.4s)
+-- Generating done (0.6s)
+-- Build files have been written to: /workspace/build_docker
+[0/2] Re-checking globbed directories...
+[1/1402] Scanning /workspace/tests/fragile_gtest_main.cc for CXX dependencies
+[2/1402] Scanning /workspace/src/memdb/MurmurHash3.cc for CXX dependencies
+[3/1402] Scanning /workspace/src/memdb/xxhash.cc for CXX dependencies
+[4/1402] Scanning /workspace/src/masstree/compiler.cc for CXX dependencies
+[5/1402] Scanning /workspace/src/memdb/utils.cc for CXX dependencies
+[6/1402] Scanning /usr/lib/llvm-18/share/libc++/v1/std.compat.cppm for CXX dependencies
+[7/1402] Scanning /workspace/src/memdb/value.cc for CXX dependencies
+[8/1402] Scanning /workspace/src/memdb/txn.cc for CXX dependencies
+[9/1402] Scanning /workspace/src/memdb/txn_unsafe.cc for CXX dependencies
+[10/1402] Scanning /workspace/src/memdb/txn_occ.cc for CXX dependencies
+[11/1402] Scanning /workspace/src/masstree/straccum.cc for CXX dependencies
+[12/1402] Scanning /workspace/src/masstree/string.cc for CXX dependencies
+[13/1402] Scanning /workspace/src/memdb/row.cc for CXX dependencies
+[14/1402] Scanning /workspace/src/memdb/txn_2pl.cc for CXX dependencies
+[15/1402] Scanning /workspace/src/masstree/test_string.cc for CXX dependencies
+[16/1402] Scanning /workspace/src/rrr/tests/rpcbench.cc for CXX dependencies
+[17/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[18/1402] Scanning /workspace/src/memdb/schema.cc for CXX dependencies
+[19/1402] Scanning /workspace/tests/config_schema_test.cc for CXX dependencies
+[20/1402] Scanning /workspace/src/memdb/table.cc for CXX dependencies
+[21/1402] Scanning /workspace/src/memdb/txn_nested.cc for CXX dependencies
+[22/1402] Scanning /workspace/src/rrr/tests/fiber_test.cc for CXX dependencies
+[23/1402] Scanning /workspace/src/rrr/tests/test_idempotency.cc for CXX dependencies
+[24/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[25/1402] Scanning /workspace/tests/test_client_service.cc for CXX dependencies
+[26/1402] Scanning /workspace/src/rrr/tests/test_load_balancer.cc for CXX dependencies
+[27/1402] Scanning /workspace/src/rrr/tests/bench_future.cc for CXX dependencies
+[28/1402] Scanning /workspace/src/masstree/kvrandom.cc for CXX dependencies
+[29/1402] Scanning /workspace/src/rrr/tests/test_completion_tracker.cc for CXX dependencies
+[30/1402] Scanning /workspace/src/rrr/tests/test_future.cc for CXX dependencies
+[31/1402] Scanning /workspace/tests/sharding_policy_test.cc for CXX dependencies
+[32/1402] Scanning /workspace/src/rrr/tests/test_marshal.cc for CXX dependencies
+[33/1402] Scanning /workspace/src/masstree/string.cc for CXX dependencies
+[34/1402] Scanning /workspace/src/masstree/compiler.cc for CXX dependencies
+[35/1402] Scanning /workspace/src/masstree/compiler.cc for CXX dependencies
+[36/1402] Scanning /workspace/third-party/googletest/googletest/src/gtest-all.cc for CXX dependencies
+[37/1402] Scanning /workspace/src/masstree/straccum.cc for CXX dependencies
+[38/1402] Scanning /workspace/src/masstree/compiler.cc for CXX dependencies
+[39/1402] Scanning /workspace/src/masstree/test_atomics.cc for CXX dependencies
+[40/1402] Scanning /workspace/src/masstree/json.cc for CXX dependencies
+[41/1402] Scanning /workspace/src/masstree/str.cc for CXX dependencies
+[42/1402] Scanning /workspace/src/masstree/string.cc for CXX dependencies
+[43/1402] Scanning /workspace/src/masstree/string.cc for CXX dependencies
+[44/1402] Scanning /workspace/src/masstree/kvio.cc for CXX dependencies
+[45/1402] Scanning /workspace/src/masstree/json.cc for CXX dependencies
+[46/1402] Scanning /workspace/src/masstree/jsontest.cc for CXX dependencies
+[47/1402] Scanning /workspace/src/masstree/straccum.cc for CXX dependencies
+[48/1402] Scanning /workspace/src/masstree/json.cc for CXX dependencies
+[49/1402] Scanning /workspace/src/masstree/straccum.cc for CXX dependencies
+[50/1402] Scanning /workspace/src/masstree/msgpacktest.cc for CXX dependencies
+[51/1402] Scanning /workspace/src/masstree/msgpack.cc for CXX dependencies
+[52/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[53/1402] Scanning /workspace/src/rrr/tests/test_timeout_race.cc for CXX dependencies
+[54/1402] Scanning /workspace/src/rrr/tests/test_reactor_extended.cc for CXX dependencies
+[55/1402] Scanning /workspace/src/rrr/tests/test_reactor.cc for CXX dependencies
+[56/1402] Scanning /usr/lib/llvm-18/share/libc++/v1/std.cppm for CXX dependencies
+[57/1402] Generating CXX dyndep file CMakeFiles/__cmake_cxx23.dir/CXX.dd
+[58/1402] Scanning /workspace/src/rrr/tests/fiber_runtime.cc for CXX dependencies
+[59/1402] Scanning /workspace/src/rrr/tests/test_transport_backend.cc for CXX dependencies
+[60/1402] Scanning /workspace/src/rrr/tests/test_transport_integration.cc for CXX dependencies
+[61/1402] Scanning /workspace/tests/test_arc_mutex_thread.cc for CXX dependencies
+[62/1402] Generating CXX dyndep file CMakeFiles/mako_gtest.dir/CXX.dd
+[63/1402] Generating CXX dyndep file CMakeFiles/mako_gtest_main.dir/CXX.dd
+[64/1402] Generating CXX dyndep file CMakeFiles/test_masstree_legacy_string.dir/CXX.dd
+[65/1402] Generating CXX dyndep file CMakeFiles/test_masstree_legacy_atomics.dir/CXX.dd
+[66/1402] Scanning /workspace/src/rrr/tests/rpc_reconnect_policy_test.cc for CXX dependencies
+[67/1402] Scanning /workspace/src/rrr/tests/rpc_connection_state_test.cc for CXX dependencies
+[68/1402] Scanning /workspace/src/rrr/tests/rpc_circuit_breaker_test.cc for CXX dependencies
+[69/1402] Scanning /workspace/src/rrr/tests/stress_transport_backend.cc for CXX dependencies
+[70/1402] Scanning /workspace/src/rrr/tests/test_and_event.cc for CXX dependencies
+[71/1402] Scanning /workspace/src/rrr/tests/rpc_docs_symbols_test.cc for CXX dependencies
+[72/1402] Scanning /workspace/src/rrr/tests/rpc_errors_test.cc for CXX dependencies
+[73/1402] Scanning /workspace/src/rrr/tests/rpc_heartbeat_test.cc for CXX dependencies
+[74/1402] Building CXX object CMakeFiles/mako_gtest_main.dir/tests/fragile_gtest_main.cc.o
+[75/1402] Scanning /workspace/src/rrr/tests/rpc_pollthread_proxy_storage_test.cc for CXX dependencies
+[76/1402] Scanning /workspace/src/rrr/tests/rpc_proxy_dependency_test.cc for CXX dependencies
+[77/1402] Scanning /workspace/src/rrr/tests/rpc_service_proxy_facade_test.cc for CXX dependencies
+[78/1402] Generating CXX dyndep file CMakeFiles/test_masstree_legacy_json.dir/CXX.dd
+[79/1402] Generating CXX dyndep file CMakeFiles/test_masstree_legacy_msgpack.dir/CXX.dd
+[80/1402] Scanning /workspace/src/rrr/tests/test_rpc_extended.cc for CXX dependencies
+[81/1402] Scanning /workspace/src/rrr/tests/rpc_callbacks_test.cc for CXX dependencies
+[82/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[83/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[84/1402] Scanning /workspace/src/rrr/tests/rpc_deferred_handler_test.cc for CXX dependencies
+[85/1402] Scanning /workspace/src/rrr/tests/rpc_request_buffering_test.cc for CXX dependencies
+[86/1402] Scanning /workspace/src/rrr/tests/rpc_request_queue_test.cc for CXX dependencies
+[87/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[88/1402] Scanning /workspace/tests/test_erpc_integration.cc for CXX dependencies
+[89/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[90/1402] Scanning /workspace/src/rrr/tests/rpc_timeout_retry_test.cc for CXX dependencies
+[91/1402] Scanning /workspace/src/rrr/tests/rpc_reconnect_integration_test.cc for CXX dependencies
+[92/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[93/1402] Scanning /workspace/src/rrr/tests/rpc_state_integration_test.cc for CXX dependencies
+[94/1402] Generating CXX dyndep file CMakeFiles/test_rpc_docs_symbols.dir/CXX.dd
+[95/1402] Generating CXX dyndep file CMakeFiles/test_erpc_integration.dir/CXX.dd
+[96/1402] Generating CXX dyndep file CMakeFiles/test_rpc_proxy_dependency.dir/CXX.dd
+[97/1402] Scanning /workspace/src/rrr/tests/rpc_circuit_breaker_integration_test.cc for CXX dependencies
+[98/1402] Scanning /workspace/src/rrr/tests/rpc_error_integration_test.cc for CXX dependencies
+[99/1402] Building CXX object CMakeFiles/test_masstree_legacy_string.dir/src/masstree/compiler.cc.o
+[100/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/kvrandom.cc.o
+[101/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/compiler.cc.o
+[102/1402] Building CXX object CMakeFiles/test_masstree_legacy_json.dir/src/masstree/compiler.cc.o
+[103/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[104/1402] Building CXX object CMakeFiles/test_masstree_legacy_msgpack.dir/src/masstree/compiler.cc.o
+[105/1402] Scanning /workspace/src/rrr/tests/rpc_combined_reliability_test.cc for CXX dependencies
+[106/1402] Scanning /workspace/src/rrr/tests/rpc_graceful_shutdown_test.cc for CXX dependencies
+[107/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[108/1402] Scanning /workspace/src/rrr/tests/rpc_restart_detection_test.cc for CXX dependencies
+[109/1402] Scanning /workspace/src/rrr/tests/rpc_validation_test.cc for CXX dependencies
+[110/1402] Scanning /workspace/src/rrr/tests/rpc_metrics_test.cc for CXX dependencies
+[111/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[112/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[113/1402] Scanning /workspace/src/rrr/tests/rpc_client_pool_test.cc for CXX dependencies
+[114/1402] Scanning /workspace/src/rrr/tests/rpc_log_storage_test.cc for CXX dependencies
+[115/1402] Scanning /workspace/src/rrr/tests/rpc_rocksdb_log_storage_test.cc for CXX dependencies
+[116/1402] Scanning /workspace/tests/deptran/txn_timeout_test.cc for CXX dependencies
+[117/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[118/1402] Scanning /workspace/src/rrr/tests/rpc_stress_crash_test.cc for CXX dependencies
+[119/1402] Scanning /workspace/src/rrr/tests/rpc_partition_test.cc for CXX dependencies
+[120/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[121/1402] Scanning /workspace/third-party/yaml-cpp/src/binary.cpp for CXX dependencies
+[122/1402] Scanning /workspace/third-party/yaml-cpp/src/contrib/graphbuilderadapter.cpp for CXX dependencies
+[123/1402] Scanning /workspace/third-party/yaml-cpp/src/contrib/graphbuilder.cpp for CXX dependencies
+[124/1402] Scanning /workspace/third-party/yaml-cpp/src/directives.cpp for CXX dependencies
+[125/1402] Generating /workspace/src/deptran/rcc_rpc.h, /workspace/src/deptran/rcc_rpc.py
+[126/1402] Scanning /workspace/third-party/yaml-cpp/src/convert.cpp for CXX dependencies
+[127/1402] Scanning /workspace/third-party/yaml-cpp/src/depthguard.cpp for CXX dependencies
+[128/1402] Scanning /workspace/third-party/yaml-cpp/src/emitter.cpp for CXX dependencies
+[129/1402] Scanning /workspace/third-party/yaml-cpp/src/emitfromevents.cpp for CXX dependencies
+[130/1402] Scanning /workspace/third-party/yaml-cpp/src/emit.cpp for CXX dependencies
+[131/1402] Scanning /workspace/third-party/yaml-cpp/src/emitterstate.cpp for CXX dependencies
+[132/1402] Scanning /workspace/src/deptran/replication_helper.cc for CXX dependencies
+[133/1402] Scanning /workspace/src/deptran/paxos_main_helper.cc for CXX dependencies
+[134/1402] Scanning /workspace/src/deptran/raft_main_helper.cc for CXX dependencies
+[135/1402] Scanning /workspace/src/deptran/2pl/tx.cc for CXX dependencies
+[136/1402] Scanning /workspace/src/deptran/2pl/scheduler.cc for CXX dependencies
+[137/1402] Scanning /workspace/src/deptran/RW_command.cc for CXX dependencies
+[138/1402] Scanning /workspace/src/deptran/benchmark_registry.cc for CXX dependencies
+[139/1402] Scanning /workspace/src/deptran/benchmark_control_rpc.cc for CXX dependencies
+[140/1402] Scanning /workspace/src/deptran/classic/coordinator.cc for CXX dependencies
+[141/1402] Scanning /workspace/src/deptran/classic/scheduler.cc for CXX dependencies
+[142/1402] Scanning /workspace/src/deptran/client_status.cc for CXX dependencies
+[143/1402] Scanning /workspace/src/deptran/classic/tpc_command.cc for CXX dependencies
+[144/1402] Scanning /workspace/src/deptran/client_worker.cc for CXX dependencies
+[145/1402] Scanning /workspace/src/deptran/command_marshaler.cc for CXX dependencies
+[146/1402] Scanning /workspace/src/deptran/communicator.cc for CXX dependencies
+[147/1402] Scanning /workspace/src/deptran/config.cc for CXX dependencies
+[148/1402] Scanning /workspace/src/deptran/config_client.cc for CXX dependencies
+[149/1402] Scanning /workspace/src/deptran/config_store.cc for CXX dependencies
+[150/1402] Scanning /workspace/src/deptran/config_node_init.cc for CXX dependencies
+[151/1402] Scanning /workspace/src/deptran/config_service.cc for CXX dependencies
+[152/1402] Scanning /workspace/src/deptran/coordinator.cc for CXX dependencies
+[153/1402] Scanning /workspace/src/deptran/copilot/commo.cc for CXX dependencies
+[154/1402] Scanning /workspace/src/deptran/empty.cc for CXX dependencies
+[155/1402] Scanning /workspace/src/deptran/copilot/coordinator.cc for CXX dependencies
+[156/1402] Scanning /workspace/src/deptran/copilot/frame.cc for CXX dependencies
+[157/1402] Scanning /workspace/src/deptran/copilot/server.cc for CXX dependencies
+[158/1402] Scanning /workspace/src/deptran/copilot/service.cc for CXX dependencies
+[159/1402] Scanning /workspace/src/deptran/executor.cc for CXX dependencies
+[160/1402] Scanning /workspace/src/deptran/extern_c/sched.cc for CXX dependencies
+[161/1402] Scanning /workspace/src/deptran/extern_c/frame.cc for CXX dependencies
+[162/1402] Scanning /workspace/src/deptran/fpga_raft/commo.cc for CXX dependencies
+[163/1402] Scanning /workspace/src/deptran/fpga_raft/coordinator.cc for CXX dependencies
+[164/1402] Scanning /workspace/src/deptran/fpga_raft/exec.cc for CXX dependencies
+[165/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/kvio.cc.o
+[166/1402] Scanning /workspace/src/deptran/fpga_raft/frame.cc for CXX dependencies
+[167/1402] Scanning /workspace/src/deptran/fpga_raft/server.cc for CXX dependencies
+[168/1402] Scanning /workspace/src/deptran/frame.cc for CXX dependencies
+[169/1402] Scanning /workspace/src/deptran/fpga_raft/service.cc for CXX dependencies
+[170/1402] Building CXX object CMakeFiles/test_masstree_legacy_string.dir/src/masstree/test_string.cc.o
+[171/1402] Scanning /workspace/src/deptran/helloworld_client/helloworld_impl.cc for CXX dependencies
+[172/1402] Scanning /workspace/src/deptran/janus/coordinator.cc for CXX dependencies
+[173/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/str.cc.o
+[174/1402] Scanning /workspace/src/deptran/janus/commo.cc for CXX dependencies
+[175/1402] Scanning /workspace/src/deptran/janus/frame.cc for CXX dependencies
+[176/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/straccum.cc.o
+[177/1402] Scanning /workspace/src/deptran/janus/scheduler.cc for CXX dependencies
+[178/1402] Building CXX object CMakeFiles/test_masstree_legacy_json.dir/src/masstree/straccum.cc.o
+[179/1402] Building CXX object CMakeFiles/test_masstree_legacy_msgpack.dir/src/masstree/straccum.cc.o
+[180/1402] Scanning /workspace/src/deptran/janus/tx.cc for CXX dependencies
+[181/1402] Scanning /workspace/src/deptran/mencius/commo.cc for CXX dependencies
+[182/1402] Scanning /workspace/src/deptran/mencius/coordinator.cc for CXX dependencies
+[183/1402] Scanning /workspace/src/deptran/marshal-value.cc for CXX dependencies
+[184/1402] Scanning /workspace/src/deptran/mencius/exec.cc for CXX dependencies
+[185/1402] Building CXX object CMakeFiles/test_masstree_legacy_string.dir/src/masstree/straccum.cc.o
+[186/1402] Scanning /workspace/src/deptran/mencius/server.cc for CXX dependencies
+[187/1402] Scanning /workspace/src/deptran/mencius/frame.cc for CXX dependencies
+[188/1402] Scanning /workspace/src/deptran/mencius/service.cc for CXX dependencies
+[189/1402] Scanning /workspace/src/deptran/network_client/network_impl.cc for CXX dependencies
+[190/1402] Scanning /workspace/src/deptran/none/coordinator.cc for CXX dependencies
+[191/1402] Scanning /workspace/src/deptran/multi_value.cc for CXX dependencies
+[192/1402] Scanning /workspace/src/deptran/none/scheduler.cc for CXX dependencies
+[193/1402] Scanning /workspace/src/deptran/none_copilot/scheduler.cc for CXX dependencies
+[194/1402] Scanning /workspace/src/deptran/none_copilot/commo.cc for CXX dependencies
+[195/1402] Scanning /workspace/src/deptran/occ/tx.cc for CXX dependencies
+[196/1402] Scanning /workspace/src/deptran/occ/scheduler.cc for CXX dependencies
+[197/1402] Scanning /workspace/src/deptran/paxos/commo.cc for CXX dependencies
+[198/1402] Scanning /workspace/src/deptran/paxos/exec.cc for CXX dependencies
+[199/1402] Scanning /workspace/src/deptran/paxos/coordinator.cc for CXX dependencies
+[200/1402] Scanning /workspace/src/deptran/paxos/service.cc for CXX dependencies
+[201/1402] Scanning /workspace/src/deptran/paxos/frame.cc for CXX dependencies
+[202/1402] Scanning /workspace/src/deptran/paxos/server.cc for CXX dependencies
+[203/1402] Scanning /workspace/src/deptran/raft/cluster_config.cc for CXX dependencies
+[204/1402] Scanning /workspace/src/deptran/procedure.cc for CXX dependencies
+[205/1402] Scanning /workspace/src/deptran/paxos_worker.cc for CXX dependencies
+[206/1402] Scanning /workspace/src/deptran/raft/commo.cc for CXX dependencies
+[207/1402] Scanning /workspace/src/deptran/raft/config_manager.cc for CXX dependencies
+[208/1402] Scanning /workspace/src/deptran/raft/config_watcher.cc for CXX dependencies
+[209/1402] Scanning /workspace/src/deptran/raft/exec.cc for CXX dependencies
+[210/1402] Scanning /workspace/src/deptran/raft/coordinator.cc for CXX dependencies
+[211/1402] Scanning /workspace/src/deptran/raft/raft_worker.cc for CXX dependencies
+[212/1402] Scanning /workspace/src/deptran/raft/frame.cc for CXX dependencies
+[213/1402] Scanning /workspace/src/deptran/raft/replicated_db.cc for CXX dependencies
+[214/1402] Building CXX object CMakeFiles/test_masstree_legacy_msgpack.dir/src/masstree/msgpacktest.cc.o
+[215/1402] Scanning /workspace/src/deptran/raft/service.cc for CXX dependencies
+[216/1402] Scanning /workspace/src/deptran/raft/server.cc for CXX dependencies
+[217/1402] Scanning /workspace/src/deptran/raft/test.cc for CXX dependencies
+[218/1402] Building CXX object CMakeFiles/test_masstree_legacy_msgpack.dir/src/masstree/msgpack.cc.o
+[219/1402] Building CXX object CMakeFiles/test_masstree_legacy_string.dir/src/masstree/string.cc.o
+[220/1402] Scanning /workspace/src/deptran/raft/testconf.cc for CXX dependencies
+[221/1402] Scanning /workspace/src/deptran/rcc/coord.cc for CXX dependencies
+[222/1402] Scanning /workspace/src/deptran/rcc/commo.cc for CXX dependencies
+[223/1402] Scanning /workspace/src/deptran/rcc/dep_graph.cc for CXX dependencies
+[224/1402] Scanning /workspace/src/deptran/rcc/frame.cc for CXX dependencies
+[225/1402] Scanning /workspace/src/deptran/rcc/graph_marshaler.cc for CXX dependencies
+[226/1402] Scanning /workspace/src/deptran/rcc/row.cc for CXX dependencies
+[227/1402] Building CXX object CMakeFiles/test_masstree_legacy_msgpack.dir/src/masstree/string.cc.o
+[228/1402] Scanning /workspace/src/deptran/rcc/server.cc for CXX dependencies
+[229/1402] Scanning /workspace/src/deptran/rcc/tx.cc for CXX dependencies
+[230/1402] Scanning /workspace/src/deptran/rule/frame.cc for CXX dependencies
+[231/1402] Scanning /workspace/src/deptran/rule/commo.cc for CXX dependencies
+[232/1402] Scanning /workspace/src/deptran/rule/coordinator.cc for CXX dependencies
+[233/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/string.cc.o
+[234/1402] Scanning /workspace/src/deptran/txn_reg.cc for CXX dependencies
+[235/1402] Scanning /workspace/src/deptran/scheduler.cc for CXX dependencies
+[236/1402] Scanning /workspace/src/deptran/server_worker.cc for CXX dependencies
+[237/1402] Scanning /workspace/src/rrr/reactor/fiber_context_x86_64.cc for CXX dependencies
+[238/1402] Scanning /workspace/src/deptran/snow/ro6.cc for CXX dependencies
+[239/1402] Scanning /workspace/src/deptran/service.cc for CXX dependencies
+[240/1402] Scanning /workspace/src/deptran/sharding.cc for CXX dependencies
+[241/1402] Scanning /workspace/src/deptran/sharding_policy_cache.cc for CXX dependencies
+[242/1402] Scanning /workspace/src/deptran/shard_router.cc for CXX dependencies
+[243/1402] Scanning /workspace/src/deptran/snow/ro6_coord.cc for CXX dependencies
+[244/1402] Scanning /workspace/src/deptran/snow/ro6_row.cc for CXX dependencies
+[245/1402] Scanning /workspace/src/memdb/MurmurHash3.cc for CXX dependencies
+[246/1402] Scanning /workspace/src/deptran/stats_registry.cc for CXX dependencies
+[247/1402] Scanning /workspace/src/deptran/tapir/commo.cc for CXX dependencies
+[248/1402] Scanning /workspace/src/deptran/tapir/frame.cc for CXX dependencies
+[249/1402] Scanning /workspace/src/memdb/xxhash.cc for CXX dependencies
+[250/1402] Scanning /workspace/src/deptran/tapir/coordinator.cc for CXX dependencies
+[251/1402] Scanning /workspace/src/deptran/tapir/tx.cc for CXX dependencies
+[252/1402] Scanning /workspace/src/deptran/tapir/scheduler.cc for CXX dependencies
+[253/1402] Scanning /workspace/src/deptran/tpcc_sharding.cc for CXX dependencies
+[254/1402] Scanning /workspace/src/deptran/tx.cc for CXX dependencies
+[255/1402] Scanning /workspace/src/rrr/base/debugging.hpp for CXX dependencies
+[256/1402] Scanning /workspace/src/memdb/schema.cc for CXX dependencies
+[257/1402] Scanning /workspace/src/memdb/txn.cc for CXX dependencies
+[258/1402] Scanning /workspace/src/rrr/misc/netinfo.hpp for CXX dependencies
+[259/1402] Scanning /workspace/src/memdb/utils.cc for CXX dependencies
+[260/1402] Scanning /workspace/src/memdb/txn_nested.cc for CXX dependencies
+[261/1402] Scanning /workspace/src/memdb/table.cc for CXX dependencies
+[262/1402] Scanning /workspace/src/memdb/row.cc for CXX dependencies
+[263/1402] Scanning /workspace/src/memdb/txn_occ.cc for CXX dependencies
+[264/1402] Scanning /workspace/src/memdb/txn_2pl.cc for CXX dependencies
+[265/1402] Scanning /workspace/src/rrr/misc/stat.hpp for CXX dependencies
+[266/1402] Scanning /workspace/src/deptran/workload.cc for CXX dependencies
+[267/1402] Scanning /workspace/src/memdb/value.cc for CXX dependencies
+[268/1402] Scanning /workspace/src/memdb/txn_unsafe.cc for CXX dependencies
+[269/1402] Scanning /workspace/src/rrr/rpc/circuit_breaker.hpp for CXX dependencies
+[270/1402] Scanning /workspace/src/rrr/rpc/internal_protocol.hpp for CXX dependencies
+[271/1402] Scanning /workspace/src/rrr/rpc/connection_metrics.hpp for CXX dependencies
+[272/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/json.cc.o
+[273/1402] Scanning /workspace/src/rrr/rpc/request_options.hpp for CXX dependencies
+[274/1402] Scanning /workspace/src/rrr/misc/dball.hpp for CXX dependencies
+[275/1402] Scanning /workspace/src/rrr/rpc/errors.hpp for CXX dependencies
+[276/1402] Scanning /workspace/src/rrr/base/misc.hpp for CXX dependencies
+[277/1402] Scanning /workspace/src/rrr/rpc/connection_state.hpp for CXX dependencies
+[278/1402] Scanning /workspace/src/rrr/rpc/heartbeat.hpp for CXX dependencies
+[279/1402] Scanning /workspace/src/rrr/rpc/reconnect_policy.hpp for CXX dependencies
+[280/1402] Scanning /workspace/src/rrr/base/all.hpp for CXX dependencies
+[281/1402] Scanning /workspace/src/rrr/base/logging.hpp for CXX dependencies
+[282/1402] Scanning /workspace/src/rrr/misc/marshallable_proxy.h for CXX dependencies
+[283/1402] Building CXX object CMakeFiles/test_masstree_legacy_json.dir/src/masstree/string.cc.o
+[284/1402] Scanning /workspace/src/rrr/rpc/utils.hpp for CXX dependencies
+[285/1402] Scanning /workspace/src/rrr/rpc/load_balancer.hpp for CXX dependencies
+[286/1402] Scanning /workspace/src/rrr/base/unittest.hpp for CXX dependencies
+[287/1402] Scanning /workspace/src/rrr/base/strop.hpp for CXX dependencies
+[288/1402] Scanning /workspace/src/rrr/reactor/epoll_wrapper.h for CXX dependencies
+[289/1402] Scanning /workspace/src/rrr/reactor/fiber_impl.h for CXX dependencies
+[290/1402] Scanning /workspace/src/rrr/misc/rand.hpp for CXX dependencies
+[291/1402] Scanning /workspace/src/rrr/rrr.hpp for CXX dependencies
+[292/1402] Scanning /workspace/src/rrr/base/basetypes.hpp for CXX dependencies
+[293/1402] Scanning /workspace/src/rrr/reactor/future.h for CXX dependencies
+[294/1402] Scanning /workspace/src/rrr/rpc/pollable_proxy.h for CXX dependencies
+[295/1402] Scanning /workspace/src/rrr/base/threading.hpp for CXX dependencies
+[296/1402] Scanning /workspace/src/rrr/rpc/callbacks.hpp for CXX dependencies
+[297/1402] Scanning /workspace/src/rrr/base/basetypes.cpp for CXX dependencies
+[298/1402] Building CXX object CMakeFiles/test_masstree_legacy_msgpack.dir/src/masstree/json.cc.o
+[299/1402] Scanning /workspace/src/rrr/misc/cpuinfo.hpp for CXX dependencies
+[300/1402] Scanning /workspace/src/rrr/base/logging.cpp for CXX dependencies
+[301/1402] Scanning /workspace/src/rrr/reactor/event.h for CXX dependencies
+[302/1402] Scanning /workspace/src/rrr/base/misc.cpp for CXX dependencies
+[303/1402] Scanning /workspace/src/rrr/reactor/fiber.h for CXX dependencies
+[304/1402] Scanning /workspace/src/rrr/rpc/request_queue.hpp for CXX dependencies
+[305/1402] Scanning /workspace/src/rrr/misc/recorder.hpp for CXX dependencies
+[306/1402] Scanning /workspace/src/rrr/reactor/quorum_event.h for CXX dependencies
+[307/1402] Scanning /workspace/src/rrr/rpc/completion_tracker.hpp for CXX dependencies
+[308/1402] Scanning /workspace/src/rrr/misc/marshal.hpp for CXX dependencies
+[309/1402] Scanning /workspace/src/rrr/rpc/idempotency.hpp for CXX dependencies
+[310/1402] Scanning /workspace/src/rrr/reactor/reactor.h for CXX dependencies
+[311/1402] Scanning /workspace/src/rrr/misc/alarm.hpp for CXX dependencies
+[312/1402] Scanning /workspace/src/rrr/rpc/server.hpp for CXX dependencies
+[313/1402] Scanning /workspace/src/rrr/rpc/client.hpp for CXX dependencies
+[314/1402] Scanning /workspace/src/rrr/reactor/epoll_wrapper.cc for CXX dependencies
+[315/1402] Scanning /workspace/src/rrr/misc/alock.hpp for CXX dependencies
+[316/1402] Scanning /workspace/src/rrr/reactor/fiber_context_runtime.cc for CXX dependencies
+[317/1402] Scanning /workspace/src/rrr/reactor/fiber_impl.cc for CXX dependencies
+[318/1402] Scanning /workspace/src/rrr/misc/marshal.cpp for CXX dependencies
+[319/1402] Scanning /workspace/src/rrr/base/debugging.cpp for CXX dependencies
+[320/1402] Scanning /workspace/src/rrr/rpc/utils.cpp for CXX dependencies
+[321/1402] Scanning /workspace/src/rrr/misc/recorder.cpp for CXX dependencies
+[322/1402] Scanning /workspace/src/rrr/base/unittest.cpp for CXX dependencies
+[323/1402] Scanning /workspace/src/rrr/base/strop.cpp for CXX dependencies
+[324/1402] Scanning /workspace/src/rrr/misc/alock.cpp for CXX dependencies
+[325/1402] Building CXX object CMakeFiles/test_masstree_legacy_atomics.dir/src/masstree/test_atomics.cc.o
+[326/1402] Scanning /workspace/src/rrr/base/threading.cpp for CXX dependencies
+[327/1402] Scanning /workspace/src/rrr/misc/rand.cpp for CXX dependencies
+[328/1402] Scanning /workspace/src/rrr/reactor/event.cc for CXX dependencies
+[329/1402] Scanning /workspace/src/rrr/reactor/quorum_event.cc for CXX dependencies
+[330/1402] Scanning /workspace/src/rrr/reactor/reactor.cc for CXX dependencies
+[331/1402] Scanning /workspace/src/rrr/rpc/server.cpp for CXX dependencies
+[332/1402] Building CXX object CMakeFiles/test_masstree_legacy_json.dir/src/masstree/json.cc.o
+[333/1402] Scanning /workspace/src/rrr/rpc/client.cpp for CXX dependencies
+[334/1402] Scanning /workspace/src/bench/micro/procedure.cc for CXX dependencies
+[335/1402] Scanning /workspace/src/bench/micro/workload.cc for CXX dependencies
+[336/1402] Scanning /workspace/src/bench/rw/procedure.cc for CXX dependencies
+[337/1402] Scanning /workspace/src/bench/rw/workload.cc for CXX dependencies
+[338/1402] Scanning /workspace/src/bench/tpca/payment.cc for CXX dependencies
+[339/1402] Scanning /workspace/src/bench/tpca/sharding.cc for CXX dependencies
+[340/1402] Generating CXX dyndep file CMakeFiles/txlog_core_obj.dir/CXX.dd
+[341/1402] Scanning /workspace/src/bench/tpcc/new_order.cc for CXX dependencies
+[342/1402] Scanning /workspace/src/bench/tpcc/benchmark_registry_registration.cc for CXX dependencies
+[343/1402] Scanning /workspace/src/bench/tpca/workload.cc for CXX dependencies
+[344/1402] Scanning /workspace/src/bench/tpcc/delivery.cc for CXX dependencies
+[345/1402] Scanning /workspace/src/bench/tpcc/order_status.cc for CXX dependencies
+[346/1402] Scanning /workspace/src/mako/memory.cc for CXX dependencies
+[347/1402] Scanning /workspace/src/bench/tpcc/payment.cc for CXX dependencies
+[348/1402] Scanning /workspace/src/bench/tpcc/sharding.cc for CXX dependencies
+[349/1402] Scanning /workspace/src/bench/tpcc/procedure.cc for CXX dependencies
+[350/1402] Scanning /workspace/src/bench/tpcc/stock_level.cc for CXX dependencies
+[351/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/empty.cc.o
+[352/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/txn_reg.cc.o
+[353/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/fiber_context_x86_64.cc.o
+[354/1402] Scanning /workspace/src/bench/tpcc_dist/procedure.cc for CXX dependencies
+[355/1402] Scanning /workspace/src/bench/tpcc/workload.cc for CXX dependencies
+[356/1402] Scanning /workspace/src/bench/tpcc_real_dist/delivery.cc for CXX dependencies
+[357/1402] Scanning /workspace/src/bench/tpcc_real_dist/new_order.cc for CXX dependencies
+[358/1402] Scanning /workspace/src/bench/tpcc_real_dist/sharding.cc for CXX dependencies
+[359/1402] Scanning /workspace/src/bench/tpcc_real_dist/payment.cc for CXX dependencies
+[360/1402] Scanning /workspace/src/bench/tpcc_real_dist/workload.cc for CXX dependencies
+[361/1402] Scanning /workspace/src/bench/tpcc_real_dist/procedure.cc for CXX dependencies
+[362/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/MurmurHash3.cc.o
+[363/1402] Scanning /workspace/src/mako/btree.cc for CXX dependencies
+[364/1402] Scanning /workspace/src/masstree/compiler.cc for CXX dependencies
+[365/1402] Generating CXX dyndep file CMakeFiles/txlog_bench_obj.dir/CXX.dd
+[366/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/xxhash.cc.o
+[367/1402] Scanning /workspace/src/mako/rocksdb_persistence.cc for CXX dependencies
+[368/1402] Scanning /workspace/src/mako/allocator.cc for CXX dependencies
+[369/1402] Scanning /workspace/src/mako/core.cc for CXX dependencies
+[370/1402] Scanning /workspace/src/mako/stats_server.cc for CXX dependencies
+[371/1402] Scanning /workspace/src/mako/counter.cc for CXX dependencies
+[372/1402] Scanning /workspace/src/mako/ticker.cc for CXX dependencies
+[373/1402] Scanning /workspace/src/mako/txn.cc for CXX dependencies
+[374/1402] Scanning /workspace/src/masstree/str.cc for CXX dependencies
+[375/1402] Scanning /workspace/src/mako/varint.cc for CXX dependencies
+[376/1402] Scanning /workspace/src/masstree/string.cc for CXX dependencies
+[377/1402] Scanning /workspace/src/mako/rcu.cc for CXX dependencies
+[378/1402] Scanning /workspace/src/masstree/straccum.cc for CXX dependencies
+[379/1402] Scanning /workspace/src/masstree/masstree_context.cc for CXX dependencies
+[380/1402] Scanning /workspace/src/mako/tuple.cc for CXX dependencies
+[381/1402] Scanning /workspace/src/mako/txn_proto2_impl.cc for CXX dependencies
+[382/1402] Scanning /workspace/src/masstree/kvthread.cc for CXX dependencies
+[383/1402] Scanning /workspace/src/masstree/json.cc for CXX dependencies
+[384/1402] Scanning /workspace/src/mako/thread.cc for CXX dependencies
+[385/1402] Scanning /workspace/src/mako/lib/rust_wrapper.cc for CXX dependencies
+[386/1402] Scanning /workspace/src/mako/lib/lookup3.cc for CXX dependencies
+[387/1402] Scanning /workspace/src/mako/benchmarks/sto/TRcu.cc for CXX dependencies
+[388/1402] Scanning /workspace/src/mako/lib/memory.cc for CXX dependencies
+[389/1402] Building CXX object CMakeFiles/__cmake_cxx23.dir/usr/lib/llvm-18/share/libc++/v1/std.cppm.o
+[390/1402] Scanning /workspace/src/mako/txn_btree.cc for CXX dependencies
+[391/1402] Building CXX object CMakeFiles/test_rpc_proxy_dependency.dir/src/rrr/tests/rpc_proxy_dependency_test.cc.o
+[392/1402] Scanning /workspace/src/mako/silo_runtime.cc for CXX dependencies
+[393/1402] Scanning /workspace/src/mako/lib/message.cc for CXX dependencies
+[394/1402] Scanning /workspace/src/mako/benchmarks/sto/Packer.cc for CXX dependencies
+[395/1402] Scanning /workspace/src/mako/lib/kv_store.cc for CXX dependencies
+[396/1402] Scanning /workspace/src/mako/benchmarks/bid.cc for CXX dependencies
+[397/1402] Scanning /workspace/src/mako/benchmarks/encstress.cc for CXX dependencies
+[398/1402] Scanning /workspace/src/mako/lib/transport.cc for CXX dependencies
+[399/1402] Scanning /workspace/src/mako/benchmarks/bench.cc for CXX dependencies
+[400/1402] Scanning /workspace/src/mako/benchmarks/queue.cc for CXX dependencies
+[401/1402] Building CXX object CMakeFiles/test_rpc_docs_symbols.dir/src/rrr/tests/rpc_docs_symbols_test.cc.o
+[402/1402] Scanning /workspace/src/mako/benchmarks/rpc_setup.cc for CXX dependencies
+[403/1402] Scanning /workspace/src/mako/benchmarks/sync_util_init.cc for CXX dependencies
+[404/1402] Scanning /workspace/src/mako/benchmarks/tpcc.cc for CXX dependencies
+[405/1402] Scanning /workspace/src/mako/lib/helper_queue.cc for CXX dependencies
+[406/1402] Scanning /workspace/src/mako/benchmarks/sto/Transaction.cc for CXX dependencies
+[407/1402] Scanning /workspace/src/mako/benchmarks/sto/ReplayDB.cc for CXX dependencies
+[408/1402] Scanning /workspace/src/mako/benchmarks/sto/MassTrans.cc for CXX dependencies
+[409/1402] Scanning /workspace/src/mako/benchmarks/sto/common.cc for CXX dependencies
+[410/1402] Scanning /workspace/src/mako/lib/fasttransport.cc for CXX dependencies
+[411/1402] Scanning /workspace/src/mako/benchmarks/sto/ThreadPool.cc for CXX dependencies
+[412/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/debugging.hpp.o
+[413/1402] Scanning /workspace/src/mako/lib/timestamp.cc for CXX dependencies
+[414/1402] Scanning /workspace/src/mako/lib/erpc_backend.cc for CXX dependencies
+[415/1402] Scanning /workspace/src/mako/lib/rrr_rpc_backend.cc for CXX dependencies
+[416/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/stat.hpp.o
+[417/1402] Scanning /workspace/src/mako/lib/promise.cc for CXX dependencies
+[418/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/errors.hpp.o
+[419/1402] Scanning /workspace/src/mako/db.cc for CXX dependencies
+[420/1402] Building CXX object CMakeFiles/__cmake_cxx23.dir/usr/lib/llvm-18/share/libc++/v1/std.compat.cppm.o
+[421/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/internal_protocol.hpp.o
+[422/1402] Linking CXX static library lib__cmake_cxx23.a
+[423/1402] Scanning /workspace/src/mako/lib/configuration.cc for CXX dependencies
+[424/1402] Scanning /workspace/src/mako/lib/multi_transport_manager.cc for CXX dependencies
+[425/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/netinfo.hpp.o
+[426/1402] Scanning /workspace/src/mako/lib/client.cc for CXX dependencies
+[427/1402] Scanning /workspace/src/mako/lib/shardClient.cc for CXX dependencies
+[428/1402] Scanning /workspace/src/mako/benchmarks/abstract_db.cc for CXX dependencies
+[429/1402] Scanning /workspace/src/mako/lib/server.cc for CXX dependencies
+[430/1402] Scanning /workspace/src/mako/client_service.cc for CXX dependencies
+[431/1402] Scanning /workspace/tests/sharding_policy_cache_test.cc for CXX dependencies
+[432/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/dball.hpp.o
+[433/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/request_options.hpp.o
+[434/1402] Scanning /workspace/src/mako/client_proxy.cc for CXX dependencies
+[435/1402] Scanning /workspace/tests/shard_router_test.cc for CXX dependencies
+[436/1402] Scanning /workspace/tests/config_store_test.cc for CXX dependencies
+[437/1402] Generating CXX dyndep file CMakeFiles/mako.dir/CXX.dd
+[438/1402] Scanning /workspace/tests/tpcc_sharding_test.cc for CXX dependencies
+[439/1402] Scanning /workspace/tests/config_service_test.cc for CXX dependencies
+[440/1402] Scanning /workspace/tests/config_client_test.cc for CXX dependencies
+[441/1402] Scanning /workspace/tests/config_failure_test.cc for CXX dependencies
+[442/1402] Scanning /workspace/src/rrr/tests/sharding_startup_test.cc for CXX dependencies
+[443/1402] Linking CXX executable test_masstree_legacy_string
+[444/1402] Scanning /workspace/src/masstree/tests/test_masstree_internals.cc for CXX dependencies
+[445/1402] Scanning /workspace/src/masstree/tests/test_masstree.cc for CXX dependencies
+[446/1402] Building CXX object CMakeFiles/mako.dir/src/mako/memory.cc.o
+[447/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/connection_metrics.hpp.o
+[448/1402] Scanning /workspace/src/masstree/tests/test_masstree_multi_instance.cc for CXX dependencies
+[449/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/heartbeat.hpp.o
+[450/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/circuit_breaker.hpp.o
+[451/1402] Scanning /workspace/src/masstree/tests/masstree_perf.cc for CXX dependencies
+[452/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/connection_state.hpp.o
+[453/1402] Scanning /workspace/src/masstree/tests/test_silo_runtime.cc for CXX dependencies
+[454/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/reconnect_policy.hpp.o
+[455/1402] Scanning /workspace/src/masstree/tests/test_silo_multi_site_stress.cc for CXX dependencies
+[456/1402] Building CXX object CMakeFiles/mako.dir/src/masstree/compiler.cc.o
+[457/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/utils.hpp.o
+[458/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/load_balancer.hpp.o
+[459/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/benchmark_registry.cc.o
+[460/1402] Building CXX object CMakeFiles/mako.dir/src/masstree/str.cc.o
+[461/1402] Building CXX object CMakeFiles/test_masstree_legacy_json.dir/src/masstree/jsontest.cc.o
+[462/1402] Building CXX object CMakeFiles/test_erpc_integration.dir/tests/test_erpc_integration.cc.o
+[463/1402] Building CXX object CMakeFiles/mako.dir/src/mako/ticker.cc.o
+[464/1402] Building CXX object CMakeFiles/mako.dir/src/masstree/straccum.cc.o
+[465/1402] Building CXX object CMakeFiles/mako.dir/src/masstree/kvthread.cc.o
+[466/1402] Building CXX object CMakeFiles/mako.dir/src/mako/varint.cc.o
+[467/1402] Building CXX object CMakeFiles/mako.dir/src/mako/stats_server.cc.o
+[468/1402] Building CXX object CMakeFiles/mako.dir/src/masstree/masstree_context.cc.o
+[469/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/replication_helper.cc.o
+[470/1402] Building CXX object CMakeFiles/mako.dir/src/masstree/string.cc.o
+[471/1402] Building CXX object CMakeFiles/mako.dir/src/mako/txn.cc.o
+[472/1402] Building CXX object CMakeFiles/mako.dir/src/mako/tuple.cc.o
+[473/1402] Building CXX object CMakeFiles/mako.dir/src/masstree/json.cc.o
+[474/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/TRcu.cc.o
+[475/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/Packer.cc.o
+[476/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/lookup3.cc.o
+[477/1402] Building CXX object CMakeFiles/mako.dir/src/mako/core.cc.o
+[478/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/strop.hpp.o
+[479/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/rust_wrapper.cc.o
+[480/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/memory.cc.o
+[481/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/rand.hpp.o
+[482/1402] Building CXX object CMakeFiles/mako.dir/src/mako/allocator.cc.o
+[483/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/basetypes.hpp.o
+[484/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/fiber_impl.h.o
+[485/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/unittest.hpp.o
+[486/1402] Building CXX object CMakeFiles/mako.dir/src/mako/counter.cc.o
+[487/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/timestamp.cc.o
+[488/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/misc.hpp.o
+[489/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/message.cc.o
+[490/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/callbacks.hpp.o
+[491/1402] Building CXX object CMakeFiles/mako.dir/src/mako/thread.cc.o
+[492/1402] Building CXX object CMakeFiles/mako.dir/src/mako/rocksdb_persistence.cc.o
+[493/1402] Building CXX object CMakeFiles/mako.dir/src/mako/rcu.cc.o
+[494/1402] Building CXX object CMakeFiles/mako.dir/src/mako/db.cc.o
+[495/1402] Linking CXX executable test_masstree_legacy_atomics
+[496/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/transport.cc.o
+[497/1402] Linking CXX executable test_masstree_legacy_json
+[498/1402] Linking CXX executable test_masstree_legacy_msgpack
+[499/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/promise.cc.o
+[500/1402] Scanning /workspace/src/rrr/tests/rpc_pollable_proxy_facade_test.cc for CXX dependencies
+[501/1402] Generating CXX dyndep file CMakeFiles/test_rpc_pollable_proxy_facade.dir/CXX.dd
+[502/1402] Scanning /workspace/tests/raft_messages_test.cc for CXX dependencies
+[503/1402] Generating CXX dyndep file CMakeFiles/test_raft_messages.dir/CXX.dd
+[504/1402] Building CXX object CMakeFiles/mako.dir/src/mako/txn_proto2_impl.cc.o
+[505/1402] Scanning /workspace/tests/raft_transport_facade_test.cc for CXX dependencies
+[506/1402] Generating CXX dyndep file CMakeFiles/test_raft_transport_facade.dir/CXX.dd
+[507/1402] Scanning /workspace/tests/raft_rrr_transport_compile_test.cc for CXX dependencies
+[508/1402] Scanning /workspace/tests/raft_dispatcher_facade_test.cc for CXX dependencies
+[509/1402] Generating CXX dyndep file CMakeFiles/test_raft_rrr_transport_compile.dir/CXX.dd
+[510/1402] Generating CXX dyndep file CMakeFiles/test_raft_dispatcher_facade.dir/CXX.dd
+[511/1402] Scanning /workspace/tests/raft_channel_transport_test.cc for CXX dependencies
+[512/1402] Generating CXX dyndep file CMakeFiles/test_raft_channel_transport.dir/CXX.dd
+[513/1402] Scanning /workspace/tests/raft_memory_snapshot_manager_test.cc for CXX dependencies
+[514/1402] Generating CXX dyndep file CMakeFiles/test_raft_memory_snapshot_manager.dir/CXX.dd
+[515/1402] Scanning /workspace/tests/raft_test_cluster_test.cc for CXX dependencies
+[516/1402] Generating CXX dyndep file CMakeFiles/test_raft_test_cluster.dir/CXX.dd
+[517/1402] Scanning /workspace/src/deptran/raft/raft_lab_standalone.cc for CXX dependencies
+[518/1402] Generating CXX dyndep file CMakeFiles/raft_lab_standalone.dir/CXX.dd
+[519/1402] Scanning /workspace/tests/test_silo_varint.cc for CXX dependencies
+[520/1402] Scanning /workspace/src/rrr/tests/rpc_marshallable_proxy_test.cc for CXX dependencies
+[521/1402] Building CXX object CMakeFiles/mako.dir/src/mako/silo_runtime.cc.o
+[522/1402] Scanning /workspace/tests/test_silo_rcu_thread.cc for CXX dependencies
+[523/1402] Scanning /workspace/tests/test_silo_allocator_tuple.cc for CXX dependencies
+[524/1402] Scanning /workspace/tests/test_sto_transaction.cc for CXX dependencies
+[525/1402] Scanning /workspace/third-party/yaml-cpp/src/emitterutils.cpp for CXX dependencies
+[526/1402] Scanning /workspace/third-party/yaml-cpp/src/exceptions.cpp for CXX dependencies
+[527/1402] Scanning /workspace/third-party/yaml-cpp/src/fptostring.cpp for CXX dependencies
+[528/1402] Scanning /workspace/third-party/yaml-cpp/src/exp.cpp for CXX dependencies
+[529/1402] Scanning /workspace/tests/test_sto_transaction_real.cc for CXX dependencies
+[530/1402] Scanning /workspace/third-party/yaml-cpp/src/memory.cpp for CXX dependencies
+[531/1402] Scanning /workspace/third-party/yaml-cpp/src/null.cpp for CXX dependencies
+[532/1402] Scanning /workspace/third-party/yaml-cpp/src/node.cpp for CXX dependencies
+[533/1402] Scanning /workspace/third-party/yaml-cpp/src/nodebuilder.cpp for CXX dependencies
+[534/1402] Scanning /workspace/third-party/yaml-cpp/src/nodeevents.cpp for CXX dependencies
+[535/1402] Scanning /workspace/third-party/yaml-cpp/src/node_data.cpp for CXX dependencies
+[536/1402] Scanning /workspace/third-party/yaml-cpp/src/parse.cpp for CXX dependencies
+[537/1402] Scanning /workspace/third-party/yaml-cpp/src/ostream_wrapper.cpp for CXX dependencies
+[538/1402] Scanning /workspace/third-party/yaml-cpp/src/parser.cpp for CXX dependencies
+[539/1402] Scanning /workspace/third-party/yaml-cpp/src/regex_yaml.cpp for CXX dependencies
+[540/1402] Scanning /workspace/third-party/yaml-cpp/src/scanner.cpp for CXX dependencies
+[541/1402] Scanning /workspace/third-party/yaml-cpp/src/scantag.cpp for CXX dependencies
+[542/1402] Scanning /workspace/third-party/yaml-cpp/src/scanscalar.cpp for CXX dependencies
+[543/1402] Scanning /workspace/third-party/yaml-cpp/src/scantoken.cpp for CXX dependencies
+[544/1402] Scanning /workspace/third-party/yaml-cpp/src/simplekey.cpp for CXX dependencies
+[545/1402] Scanning /workspace/third-party/yaml-cpp/src/singledocparser.cpp for CXX dependencies
+[546/1402] Scanning /workspace/third-party/yaml-cpp/src/stream.cpp for CXX dependencies
+[547/1402] Scanning /workspace/third-party/yaml-cpp/src/tag.cpp for CXX dependencies
+[548/1402] Generating CXX dyndep file third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/CXX.dd
+[549/1402] Building Rust library if needed
+    Updating crates.io index
+    Blocking waiting for file lock on package cache
+     Locking 28 packages to latest compatible versions
+      Adding cookie-factory v0.3.2 (available: v0.3.3)
+      Adding socket2 v0.5.10 (available: v0.6.3)
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+ Downloading crates ...
+  Downloaded bytes-utils v0.1.4
+  Downloaded futures-sink v0.3.32
+  Downloaded futures-core v0.3.32
+  Downloaded cookie-factory v0.3.2
+  Downloaded crc16 v0.4.0
+  Downloaded itoa v1.0.18
+  Downloaded either v1.15.0
+  Downloaded log v0.4.29
+  Downloaded pin-project-lite v0.2.17
+  Downloaded socket2 v0.5.10
+  Downloaded bytes v1.11.1
+  Downloaded redis-protocol v6.0.0
+  Downloaded nom v7.1.3
+  Downloaded minimal-lexical v0.2.1
+  Downloaded memchr v2.8.0
+  Downloaded tokio-util v0.7.18
+  Downloaded tokio v1.52.1
+  Downloaded libc v0.2.186
+    Blocking waiting for file lock on package cache
+   Compiling bytes v1.11.1
+   Compiling pin-project-lite v0.2.17
+   Compiling crc16 v0.4.0
+   Compiling libc v0.2.186
+   Compiling minimal-lexical v0.2.1
+   Compiling memchr v2.8.0
+   Compiling either v1.15.0
+   Compiling futures-core v0.3.32
+   Compiling futures-sink v0.3.32
+   Compiling cookie-factory v0.3.2
+   Compiling log v0.4.29
+   Compiling rust_redis v0.1.0 (/workspace/third-party/makocon/mako/rust-lib)
+   Compiling itoa v1.0.18
+   Compiling tokio v1.52.1
+   Compiling nom v7.1.3
+   Compiling bytes-utils v0.1.4
+   Compiling tokio-util v0.7.18
+   Compiling redis-protocol v6.0.0
+   Compiling socket2 v0.5.10
+    Finished `release` profile [optimized] target(s) in 13.66s
+[550/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/contrib/graphbuilder.cpp.o
+[551/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/helper_queue.cc.o
+[552/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/common.cc.o
+[553/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sync_util_init.cc.o
+[554/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/contrib/graphbuilderadapter.cpp.o
+[555/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/nexus_impl/nexus_bg_thread.cc.o
+[556/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/threading.hpp.o
+[557/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/MassTrans.cc.o
+[558/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/directives.cpp.o
+[559/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/multi_transport_manager.cc.o
+[560/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/binary.cpp.o
+[561/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/abstract_db.cc.o
+[562/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/logging.hpp.o
+[563/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/depthguard.cpp.o
+[564/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/all.hpp.o
+[565/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/queue.cc.o
+[566/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/Transaction.cc.o
+[567/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/encstress.cc.o
+[568/1402] Building CXX object CMakeFiles/mako.dir/src/mako/btree.cc.o
+[569/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emit.cpp.o
+[570/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/bid.cc.o
+[571/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/ThreadPool.cc.o
+[572/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/convert.cpp.o
+[573/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/exceptions.cpp.o
+[574/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/null.cpp.o
+[575/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitfromevents.cpp.o
+[576/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/ReplayDB.cc.o
+[577/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/configuration.cc.o
+[578/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/rpc_setup.cc.o
+[579/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitter.cpp.o
+[580/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/exp.cpp.o
+[581/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/nexus_impl/nexus.cc.o
+/workspace/third-party/erpc/src/nexus_impl/nexus.cc:64:10: warning: unused variable 'sm_thread_lcore_index' [-Wunused-variable]
+   64 |   size_t sm_thread_lcore_index = sm_udp_port_ % num_lcores_per_numa_node();
+      |          ^~~~~~~~~~~~~~~~~~~~~
+/workspace/third-party/erpc/src/nexus_impl/nexus.cc:82:67: warning: use of old-style cast [-Wold-style-cast]
+   82 |     ERPC_INFO("[CPU_TIME] for sm_thread_ of nexus: %4jd.%03ld\n", (intmax_t) ts.tv_sec, ts.tv_nsec / 1000000);
+      |                                                                   ^          ~~~~~~~~~
+/workspace/third-party/erpc/src/util/logger.h:65:36: note: expanded from macro 'ERPC_INFO'
+   65 |   fprintf(ERPC_LOG_DEFAULT_STREAM, __VA_ARGS__);                        \
+      |                                    ^~~~~~~~~~~
+/workspace/third-party/erpc/src/nexus_impl/nexus.cc:76:7: warning: variable 's' set but not used [-Wunused-but-set-variable]
+   76 |   int s;
+      |       ^
+3 warnings generated.
+[582/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/node.cpp.o
+[583/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/fptostring.cpp.o
+[584/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/kv_store.cc.o
+[585/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc.cc.o
+[586/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitterstate.cpp.o
+[587/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/epoll_wrapper.h.o
+[588/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/client.cc.o
+[589/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/memory.cpp.o
+[590/1402] Building CXX object CMakeFiles/mako_gtest.dir/third-party/googletest/googletest/src/gtest-all.cc.o
+[591/1402] Linking CXX static library libmako_gtest.a
+[592/1402] Linking CXX static library libmako_gtest_main.a
+[593/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/nexus_impl/nexus_sm_thread.cc.o
+[594/1402] Linking CXX executable test_rpc_docs_symbols
+[595/1402] Linking CXX executable test_rpc_proxy_dependency
+[596/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitterutils.cpp.o
+[597/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/erpc_backend.cc.o
+[598/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/ostream_wrapper.cpp.o
+[599/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scantag.cpp.o
+[600/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/nodeevents.cpp.o
+[601/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/nodebuilder.cpp.o
+[602/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/regex_yaml.cpp.o
+[603/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/simplekey.cpp.o
+[604/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/node_data.cpp.o
+[605/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/shardClient.cc.o
+[606/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scanscalar.cpp.o
+[607/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/parse.cpp.o
+[608/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/tag.cpp.o
+[609/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/parser.cpp.o
+[610/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/dpdk/dpdk_transport.cc.o
+[611/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/dpdk/dpdk_init.cc.o
+[612/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/dpdk/dpdk_externs.cc.o
+[613/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/dpdk/dpdk_transport_datapath.cc.o
+[614/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/infiniband/ib_transport.cc.o
+[615/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/infiniband/ib_transport_datapath.cc.o
+[616/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/raw/raw_transport.cc.o
+[617/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/raw/raw_transport_datapath.cc.o
+[618/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/stream.cpp.o
+[619/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/server.cc.o
+[620/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/bench.cc.o
+[621/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scanner.cpp.o
+[622/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scantoken.cpp.o
+[623/1402] Building CXX object third-party/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/singledocparser.cpp.o
+[624/1402] Linking CXX shared library third-party/yaml-cpp/libyaml-cpp.so.0.8.0
+[625/1402] Creating library symlink third-party/yaml-cpp/libyaml-cpp.so.0.8 third-party/yaml-cpp/libyaml-cpp.so
+[626/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/util/tls_registry.cc.o
+[627/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/util/numautils.cc.o
+[628/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_rfr.cc.o
+[629/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/transport.cc.o
+[630/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_cr.cc.o
+[631/1402] Building CXX object CMakeFiles/mako.dir/src/mako/txn_btree.cc.o
+[632/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_kick.cc.o
+[633/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_queues.cc.o
+[634/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/transport_impl/fake/fake_transport.cc.o
+/workspace/third-party/erpc/src/transport_impl/fake/fake_transport.cc:388:26: warning: use of old-style cast [-Wold-style-cast]
+  388 |   if (connect(temp_sock, (struct sockaddr*)&remote_addr, sizeof(remote_addr)) < 0) {
+      |                          ^                 ~~~~~~~~~~~~
+/workspace/third-party/erpc/src/transport_impl/fake/fake_transport.cc:397:30: warning: use of old-style cast [-Wold-style-cast]
+  397 |   if (getsockname(temp_sock, (struct sockaddr*)&local_addr, &addr_len) < 0) {
+      |                              ^                 ~~~~~~~~~~~
+2 warnings generated.
+[635/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/pollable_proxy.h.o
+[636/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/cpuinfo.hpp.o
+[637/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_pkt_loss.cc.o
+[638/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/util/huge_alloc.cc.o
+[639/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_sm_api.cc.o
+[640/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_resp.cc.o
+[641/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_req.cc.o
+[642/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/nexus_impl/nexus_bg_thread.cc.o
+[643/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_fault_inject.cc.o
+[644/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/dpdk/dpdk_init.cc.o
+[645/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/dpdk/dpdk_transport.cc.o
+[646/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/dpdk/dpdk_externs.cc.o
+[647/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/dpdk/dpdk_transport_datapath.cc.o
+[648/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_ev_loop.cc.o
+[649/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/infiniband/ib_transport.cc.o
+[650/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/infiniband/ib_transport_datapath.cc.o
+[651/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/raw/raw_transport.cc.o
+[652/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/raw/raw_transport_datapath.cc.o
+[653/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_reset_handlers.cc.o
+[654/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_connect_handlers.cc.o
+[655/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/marshal.hpp.o
+[656/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_rx.cc.o
+[657/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_disconnect_handlers.cc.o
+[658/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/apps/latency/latency.cc.o
+[659/1402] Building CXX object third-party/erpc/CMakeFiles/erpc.dir/src/rpc_impl/rpc_sm_helpers.cc.o
+[660/1402] Linking CXX shared library liberpc.so
+[661/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/marshallable_proxy.h.o
+[662/1402] Linking CXX executable test_erpc_integration
+[663/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram.dir/hdr_encoding.c.o
+[664/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/util/tls_registry.cc.o
+[665/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_queues.cc.o
+[666/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/util/numautils.cc.o
+[667/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/nexus_impl/nexus.cc.o
+/workspace/third-party/erpc/src/nexus_impl/nexus.cc:64:10: warning: unused variable 'sm_thread_lcore_index' [-Wunused-variable]
+   64 |   size_t sm_thread_lcore_index = sm_udp_port_ % num_lcores_per_numa_node();
+      |          ^~~~~~~~~~~~~~~~~~~~~
+/workspace/third-party/erpc/src/nexus_impl/nexus.cc:82:67: warning: use of old-style cast [-Wold-style-cast]
+   82 |     ERPC_INFO("[CPU_TIME] for sm_thread_ of nexus: %4jd.%03ld\n", (intmax_t) ts.tv_sec, ts.tv_nsec / 1000000);
+      |                                                                   ^          ~~~~~~~~~
+/workspace/third-party/erpc/src/util/logger.h:65:36: note: expanded from macro 'ERPC_INFO'
+   65 |   fprintf(ERPC_LOG_DEFAULT_STREAM, __VA_ARGS__);                        \
+      |                                    ^~~~~~~~~~~
+/workspace/third-party/erpc/src/nexus_impl/nexus.cc:76:7: warning: variable 's' set but not used [-Wunused-but-set-variable]
+   76 |   int s;
+      |       ^
+3 warnings generated.
+[668/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/event.h.o
+[669/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram.dir/hdr_histogram.c.o
+[670/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram.dir/hdr_interval_recorder.c.o
+[671/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram.dir/hdr_histogram_log.c.o
+[672/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_rfr.cc.o
+[673/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram.dir/hdr_writer_reader_phaser.c.o
+[674/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram.dir/hdr_thread.c.o
+/workspace/third-party/erpc/third_party/HdrHistogram_c/src/hdr_thread.c:97:15: warning: a function declaration without a prototype is deprecated in all versions of C [-Wstrict-prototypes]
+   97 | void hdr_yield()
+      |               ^
+      |                void
+1 warning generated.
+[675/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram_static.dir/hdr_thread.c.o
+/workspace/third-party/erpc/third_party/HdrHistogram_c/src/hdr_thread.c:97:15: warning: a function declaration without a prototype is deprecated in all versions of C [-Wstrict-prototypes]
+   97 | void hdr_yield()
+      |               ^
+      |                void
+1 warning generated.
+[676/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram_static.dir/hdr_encoding.c.o
+[677/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram.dir/hdr_time.c.o
+[678/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram_static.dir/hdr_interval_recorder.c.o
+[679/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram_static.dir/hdr_time.c.o
+[680/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram_static.dir/hdr_writer_reader_phaser.c.o
+[681/1402] Linking C shared library third-party/erpc/third_party/HdrHistogram_c/src/libhdr_histogram.so.6.1.1
+[682/1402] Creating library symlink third-party/erpc/third_party/HdrHistogram_c/src/libhdr_histogram.so.6 third-party/erpc/third_party/HdrHistogram_c/src/libhdr_histogram.so
+[683/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_cr.cc.o
+[684/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/transport.cc.o
+[685/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram_static.dir/hdr_histogram.c.o
+[686/1402] Building C object third-party/erpc/third_party/HdrHistogram_c/src/CMakeFiles/hdr_histogram_static.dir/hdr_histogram_log.c.o
+[687/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_kick.cc.o
+[688/1402] Linking C static library third-party/erpc/third_party/HdrHistogram_c/src/libhdr_histogram_static.a
+[689/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/nexus_impl/nexus_sm_thread.cc.o
+[690/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/util/huge_alloc.cc.o
+[691/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_ev_loop.cc.o
+[692/1402] Scanning /workspace/src/rrr/reactor/fiber_context_x86_64.cc for CXX dependencies
+[693/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc.cc.o
+[694/1402] Scanning /workspace/src/rrr/base/debugging.hpp for CXX dependencies
+[695/1402] Scanning /workspace/src/rrr/misc/netinfo.hpp for CXX dependencies
+[696/1402] Scanning /workspace/src/rrr/base/strop.hpp for CXX dependencies
+[697/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/transport_impl/fake/fake_transport.cc.o
+/workspace/third-party/erpc/src/transport_impl/fake/fake_transport.cc:388:26: warning: use of old-style cast [-Wold-style-cast]
+  388 |   if (connect(temp_sock, (struct sockaddr*)&remote_addr, sizeof(remote_addr)) < 0) {
+      |                          ^                 ~~~~~~~~~~~~
+/workspace/third-party/erpc/src/transport_impl/fake/fake_transport.cc:397:30: warning: use of old-style cast [-Wold-style-cast]
+  397 |   if (getsockname(temp_sock, (struct sockaddr*)&local_addr, &addr_len) < 0) {
+      |                              ^                 ~~~~~~~~~~~
+2 warnings generated.
+[698/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_req.cc.o
+[699/1402] Scanning /workspace/src/rrr/misc/stat.hpp for CXX dependencies
+[700/1402] Scanning /workspace/src/rrr/misc/rand.hpp for CXX dependencies
+[701/1402] Scanning /workspace/src/rrr/base/unittest.hpp for CXX dependencies
+[702/1402] Scanning /workspace/src/rrr/rpc/circuit_breaker.hpp for CXX dependencies
+[703/1402] Scanning /workspace/src/rrr/rpc/connection_metrics.hpp for CXX dependencies
+[704/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_fault_inject.cc.o
+[705/1402] Scanning /workspace/src/rrr/rpc/errors.hpp for CXX dependencies
+[706/1402] Scanning /workspace/src/rrr/rpc/internal_protocol.hpp for CXX dependencies
+[707/1402] Scanning /workspace/src/rrr/rpc/heartbeat.hpp for CXX dependencies
+[708/1402] Scanning /workspace/src/rrr/rpc/reconnect_policy.hpp for CXX dependencies
+[709/1402] Scanning /workspace/src/rrr/rpc/request_options.hpp for CXX dependencies
+[710/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_resp.cc.o
+[711/1402] Scanning /workspace/src/rrr/misc/dball.hpp for CXX dependencies
+[712/1402] Scanning /workspace/src/rrr/rpc/load_balancer.hpp for CXX dependencies
+[713/1402] Scanning /workspace/src/rrr/base/misc.hpp for CXX dependencies
+[714/1402] Scanning /workspace/src/rrr/reactor/fiber_impl.h for CXX dependencies
+[715/1402] Scanning /workspace/src/rrr/rpc/connection_state.hpp for CXX dependencies
+[716/1402] Scanning /workspace/src/rrr/base/all.hpp for CXX dependencies
+[717/1402] Scanning /workspace/src/rrr/base/logging.hpp for CXX dependencies
+[718/1402] Scanning /workspace/src/rrr/base/basetypes.hpp for CXX dependencies
+[719/1402] Scanning /workspace/src/rrr/rpc/callbacks.hpp for CXX dependencies
+[720/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_pkt_loss.cc.o
+[721/1402] Scanning /workspace/src/rrr/rpc/utils.hpp for CXX dependencies
+[722/1402] Scanning /workspace/src/rrr/misc/marshallable_proxy.h for CXX dependencies
+[723/1402] Scanning /workspace/src/rrr/reactor/epoll_wrapper.h for CXX dependencies
+[724/1402] Scanning /workspace/src/rrr/base/threading.hpp for CXX dependencies
+[725/1402] Scanning /workspace/src/rrr/misc/cpuinfo.hpp for CXX dependencies
+[726/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_rx.cc.o
+[727/1402] Scanning /workspace/src/rrr/misc/marshal.hpp for CXX dependencies
+[728/1402] Scanning /workspace/src/rrr/rpc/pollable_proxy.h for CXX dependencies
+[729/1402] Scanning /workspace/src/rrr/reactor/event.h for CXX dependencies
+[730/1402] Scanning /workspace/src/rrr/misc/recorder.hpp for CXX dependencies
+[731/1402] Scanning /workspace/src/rrr/rpc/idempotency.hpp for CXX dependencies
+[732/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_disconnect_handlers.cc.o
+[733/1402] Scanning /workspace/src/rrr/rpc/request_queue.hpp for CXX dependencies
+[734/1402] Scanning /workspace/src/rrr/rrr.hpp for CXX dependencies
+[735/1402] Scanning /workspace/src/rrr/reactor/quorum_event.h for CXX dependencies
+[736/1402] Scanning /workspace/src/rrr/base/basetypes.cpp for CXX dependencies
+[737/1402] Scanning /workspace/src/rrr/reactor/reactor.h for CXX dependencies
+[738/1402] Scanning /workspace/src/rrr/rpc/completion_tracker.hpp for CXX dependencies
+[739/1402] Scanning /workspace/src/rrr/reactor/future.h for CXX dependencies
+[740/1402] Scanning /workspace/src/rrr/reactor/fiber.h for CXX dependencies
+[741/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_reset_handlers.cc.o
+[742/1402] Scanning /workspace/src/rrr/base/logging.cpp for CXX dependencies
+[743/1402] Scanning /workspace/src/rrr/base/misc.cpp for CXX dependencies
+[744/1402] Scanning /workspace/src/rrr/rpc/client.hpp for CXX dependencies
+[745/1402] Scanning /workspace/src/rrr/rpc/server.hpp for CXX dependencies
+[746/1402] Scanning /workspace/src/rrr/misc/alock.hpp for CXX dependencies
+[747/1402] Scanning /workspace/src/rrr/misc/alarm.hpp for CXX dependencies
+[748/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_connect_handlers.cc.o
+[749/1402] Scanning /workspace/src/rrr/misc/marshal.cpp for CXX dependencies
+[750/1402] Scanning /workspace/src/rrr/reactor/epoll_wrapper.cc for CXX dependencies
+[751/1402] Scanning /workspace/src/rrr/base/debugging.cpp for CXX dependencies
+[752/1402] Scanning /workspace/src/rrr/misc/recorder.cpp for CXX dependencies
+[753/1402] Scanning /workspace/src/rrr/base/strop.cpp for CXX dependencies
+[754/1402] Scanning /workspace/src/rrr/misc/alock.cpp for CXX dependencies
+[755/1402] Scanning /workspace/src/rrr/base/unittest.cpp for CXX dependencies
+[756/1402] Scanning /workspace/src/rrr/base/threading.cpp for CXX dependencies
+[757/1402] Scanning /workspace/src/rrr/misc/rand.cpp for CXX dependencies
+[758/1402] Scanning /workspace/src/rrr/reactor/fiber_context_runtime.cc for CXX dependencies
+[759/1402] Scanning /workspace/src/rrr/reactor/fiber_impl.cc for CXX dependencies
+[760/1402] Scanning /workspace/src/rrr/reactor/event.cc for CXX dependencies
+[761/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_sm_api.cc.o
+[762/1402] Scanning /workspace/src/rrr/rpc/utils.cpp for CXX dependencies
+[763/1402] Building CXX object third-party/erpc/CMakeFiles/hello_server.dir/hello_world/server.cc.o
+/workspace/third-party/erpc/hello_world/server.cc:18:48: warning: format string is not a string literal (potentially insecure) [-Wformat-security]
+   18 |   sprintf(reinterpret_cast<char *>(resp.buf_), v.data());
+      |                                                ^~~~~~~~
+/workspace/third-party/erpc/hello_world/server.cc:18:48: note: treat the string as an argument to avoid this
+   18 |   sprintf(reinterpret_cast<char *>(resp.buf_), v.data());
+      |                                                ^
+      |                                                "%s", 
+/workspace/third-party/erpc/hello_world/server.cc:54:9: warning: unused variable 'num_pkts' [-Wunused-variable]
+   54 |     int num_pkts = rpc->run_event_loop_once();
+      |         ^~~~~~~~
+2 warnings generated.
+[764/1402] Scanning /workspace/src/rrr/reactor/quorum_event.cc for CXX dependencies
+[765/1402] Scanning /workspace/src/rrr/reactor/reactor.cc for CXX dependencies
+[766/1402] Scanning /workspace/src/rrr/rpc/client.cpp for CXX dependencies
+[767/1402] Scanning /workspace/src/rrr/rpc/server.cpp for CXX dependencies
+[768/1402] Generating CXX dyndep file src/rrr/CMakeFiles/rrr.dir/CXX.dd
+[769/1402] Generating CXX dyndep file CMakeFiles/test_marshal.dir/CXX.dd
+[770/1402] Generating CXX dyndep file CMakeFiles/rpcbench.dir/CXX.dd
+[771/1402] Generating CXX dyndep file CMakeFiles/test_config_schema.dir/CXX.dd
+[772/1402] Generating CXX dyndep file CMakeFiles/test_sharding_policy.dir/CXX.dd
+[773/1402] Generating CXX dyndep file CMakeFiles/test_sharding_policy_cache.dir/CXX.dd
+[774/1402] Generating CXX dyndep file CMakeFiles/test_client_service.dir/CXX.dd
+[775/1402] Generating CXX dyndep file CMakeFiles/test_shard_router.dir/CXX.dd
+[776/1402] Generating CXX dyndep file CMakeFiles/test_tpcc_sharding.dir/CXX.dd
+[777/1402] Generating CXX dyndep file CMakeFiles/test_fiber.dir/CXX.dd
+[778/1402] Generating CXX dyndep file CMakeFiles/test_config_store.dir/CXX.dd
+[779/1402] Generating CXX dyndep file CMakeFiles/memdb.dir/CXX.dd
+[780/1402] Generating CXX dyndep file CMakeFiles/test_config_service.dir/CXX.dd
+[781/1402] Generating CXX dyndep file CMakeFiles/test_config_client.dir/CXX.dd
+[782/1402] Generating CXX dyndep file CMakeFiles/test_config_failure.dir/CXX.dd
+[783/1402] Generating CXX dyndep file CMakeFiles/test_sharding_startup.dir/CXX.dd
+[784/1402] Generating CXX dyndep file CMakeFiles/test_load_balancer.dir/CXX.dd
+[785/1402] Generating CXX dyndep file CMakeFiles/test_idempotency.dir/CXX.dd
+[786/1402] Generating CXX dyndep file CMakeFiles/test_completion_tracker.dir/CXX.dd
+[787/1402] Generating CXX dyndep file CMakeFiles/test_future.dir/CXX.dd
+[788/1402] Generating CXX dyndep file CMakeFiles/test_masstree.dir/CXX.dd
+[789/1402] Generating CXX dyndep file CMakeFiles/bench_future.dir/CXX.dd
+[790/1402] Generating CXX dyndep file CMakeFiles/test_masstree_multi_instance.dir/CXX.dd
+[791/1402] Generating CXX dyndep file CMakeFiles/test_masstree_internals.dir/CXX.dd
+[792/1402] Building CXX object third-party/erpc/CMakeFiles/latency.dir/src/rpc_impl/rpc_sm_helpers.cc.o
+[793/1402] Generating CXX dyndep file CMakeFiles/test_silo_runtime.dir/CXX.dd
+[794/1402] Generating CXX dyndep file CMakeFiles/test_silo_multi_site_stress.dir/CXX.dd
+[795/1402] Generating CXX dyndep file CMakeFiles/masstree_perf.dir/CXX.dd
+[796/1402] Generating CXX dyndep file CMakeFiles/test_reactor.dir/CXX.dd
+[797/1402] Generating CXX dyndep file CMakeFiles/test_fiber_runtime.dir/CXX.dd
+[798/1402] Generating CXX dyndep file CMakeFiles/test_rpc_extended.dir/CXX.dd
+[799/1402] Generating CXX dyndep file CMakeFiles/test_reactor_extended.dir/CXX.dd
+[800/1402] Generating CXX dyndep file CMakeFiles/test_arc_mutex_thread.dir/CXX.dd
+[801/1402] Generating CXX dyndep file CMakeFiles/test_timeout_race.dir/CXX.dd
+[802/1402] Generating CXX dyndep file CMakeFiles/test_and_event.dir/CXX.dd
+[803/1402] Generating CXX dyndep file CMakeFiles/test_transport_integration.dir/CXX.dd
+[804/1402] Generating CXX dyndep file CMakeFiles/test_transport_backend.dir/CXX.dd
+[805/1402] Generating CXX dyndep file CMakeFiles/stress_transport_backend.dir/CXX.dd
+[806/1402] Generating CXX dyndep file CMakeFiles/test_rpc_connection_state.dir/CXX.dd
+[807/1402] Generating CXX dyndep file CMakeFiles/test_rpc_reconnect_policy.dir/CXX.dd
+[808/1402] Generating CXX dyndep file CMakeFiles/test_rpc_circuit_breaker.dir/CXX.dd
+[809/1402] Generating CXX dyndep file CMakeFiles/test_rpc_heartbeat.dir/CXX.dd
+[810/1402] Generating CXX dyndep file CMakeFiles/test_rpc_errors.dir/CXX.dd
+[811/1402] Generating CXX dyndep file CMakeFiles/test_rpc_pollthread_proxy_storage.dir/CXX.dd
+[812/1402] Generating CXX dyndep file CMakeFiles/test_rpc_callbacks.dir/CXX.dd
+[813/1402] Generating CXX dyndep file CMakeFiles/test_rpc_service_proxy_facade.dir/CXX.dd
+[814/1402] Generating CXX dyndep file CMakeFiles/test_rpc_marshallable_proxy.dir/CXX.dd
+[815/1402] Generating CXX dyndep file CMakeFiles/test_rpc_request_queue.dir/CXX.dd
+[816/1402] Generating CXX dyndep file CMakeFiles/test_rpc_request_buffering.dir/CXX.dd
+[817/1402] Generating CXX dyndep file CMakeFiles/test_rpc_deferred_handler.dir/CXX.dd
+[818/1402] Generating CXX dyndep file CMakeFiles/test_rpc_timeout_retry.dir/CXX.dd
+[819/1402] Generating CXX dyndep file CMakeFiles/test_rpc_state_integration.dir/CXX.dd
+[820/1402] Generating CXX dyndep file CMakeFiles/test_rpc_circuit_breaker_integration.dir/CXX.dd
+[821/1402] Generating CXX dyndep file CMakeFiles/test_rpc_reconnect_integration.dir/CXX.dd
+[822/1402] Generating CXX dyndep file CMakeFiles/test_rpc_graceful_shutdown.dir/CXX.dd
+[823/1402] Generating CXX dyndep file CMakeFiles/test_rpc_error_integration.dir/CXX.dd
+[824/1402] Generating CXX dyndep file CMakeFiles/test_rpc_combined_reliability.dir/CXX.dd
+[825/1402] Building CXX object third-party/erpc/third_party/gflags/CMakeFiles/gflags_nothreads_static.dir/src/gflags_reporting.cc.o
+[826/1402] Generating CXX dyndep file CMakeFiles/test_rpc_restart_detection.dir/CXX.dd
+[827/1402] Generating CXX dyndep file CMakeFiles/test_rpc_validation.dir/CXX.dd
+[828/1402] Generating CXX dyndep file CMakeFiles/test_rpc_metrics.dir/CXX.dd
+[829/1402] Generating CXX dyndep file CMakeFiles/test_rpc_log_storage.dir/CXX.dd
+[830/1402] Generating CXX dyndep file CMakeFiles/test_rpc_client_pool.dir/CXX.dd
+[831/1402] Generating CXX dyndep file CMakeFiles/test_rpc_rocksdb_log_storage.dir/CXX.dd
+[832/1402] Generating CXX dyndep file CMakeFiles/test_txn_timeout.dir/CXX.dd
+[833/1402] Generating CXX dyndep file CMakeFiles/test_rpc_partition.dir/CXX.dd
+[834/1402] Generating CXX dyndep file CMakeFiles/test_silo_varint.dir/CXX.dd
+[835/1402] Generating CXX dyndep file CMakeFiles/test_rpc_stress_crash.dir/CXX.dd
+[836/1402] Generating CXX dyndep file CMakeFiles/test_silo_rcu_thread.dir/CXX.dd
+[837/1402] Generating CXX dyndep file CMakeFiles/test_silo_allocator_tuple.dir/CXX.dd
+[838/1402] Generating CXX dyndep file CMakeFiles/test_sto_transaction.dir/CXX.dd
+[839/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/xxhash.cc.o
+[840/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/MurmurHash3.cc.o
+[841/1402] Generating CXX dyndep file CMakeFiles/test_sto_transaction_real.dir/CXX.dd
+[842/1402] Building CXX object third-party/erpc/third_party/gflags/CMakeFiles/gflags_nothreads_shared.dir/src/gflags_reporting.cc.o
+[843/1402] Building CXX object third-party/erpc/third_party/googletest/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[844/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/fiber_context_x86_64.cc.o
+[845/1402] Building CXX object third-party/erpc/CMakeFiles/hello_client.dir/hello_world/client.cc.o
+/workspace/third-party/erpc/hello_world/client.cc:22:48: warning: use of old-style cast [-Wold-style-cast]
+   22 |   std::cout << "the held pointer(_tag): " << (*(int*)_tag) << std::endl;
+      |                                                ^     ~~~~
+/workspace/third-party/erpc/hello_world/client.cc:23:40: warning: use of old-style cast [-Wold-style-cast]
+   23 |   std::cout << "received message: " << (char*)resp.buf_ << std::endl;
+      |                                        ^      ~~~~~~~~~
+/workspace/third-party/erpc/hello_world/client.cc:18:35: warning: unused parameter '_context' [-Wunused-parameter]
+   18 | void hello_wrapper_response(void *_context, void *_tag) {
+      |                                   ^
+/workspace/third-party/erpc/hello_world/client.cc:34:41: warning: format specifies type 'int' but the argument has type 'size_t' (aka 'unsigned long') [-Wformat]
+   34 |   printf("hello_client send size:%d\n", strlen(chr));
+      |                                  ~~     ^~~~~~~~~~~
+      |                                  %zu
+/workspace/third-party/erpc/hello_world/client.cc:41:9: warning: unused variable 'num_pkts' [-Wunused-variable]
+   41 |     int num_pkts = rpc->run_event_loop_once();
+      |         ^~~~~~~~
+5 warnings generated.
+[846/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/debugging.hpp.o
+[847/1402] Building CXX object third-party/erpc/third_party/googletest/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o
+[848/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/stat.hpp.o
+[849/1402] Building CXX object third-party/erpc/third_party/gflags/CMakeFiles/gflags_nothreads_static.dir/src/gflags_completions.cc.o
+[850/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/netinfo.hpp.o
+[851/1402] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/tpcc.cc.o
+[852/1402] Building CXX object third-party/erpc/third_party/gflags/CMakeFiles/gflags_nothreads_shared.dir/src/gflags_completions.cc.o
+[853/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/connection_metrics.hpp.o
+[854/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/circuit_breaker.hpp.o
+[855/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/connection_state.hpp.o
+[856/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/errors.hpp.o
+[857/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/internal_protocol.hpp.o
+[858/1402] Building CXX object third-party/erpc/third_party/gflags/CMakeFiles/gflags_nothreads_shared.dir/src/gflags.cc.o
+[859/1402] Building CXX object third-party/erpc/third_party/gflags/CMakeFiles/gflags_nothreads_static.dir/src/gflags.cc.o
+[860/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/request_options.hpp.o
+[861/1402] Linking CXX static library third-party/erpc/third_party/gflags/libgflags_nothreads.a
+[862/1402] Linking CXX shared library third-party/erpc/third_party/gflags/libgflags_nothreads.so.2.2.2
+[863/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/heartbeat.hpp.o
+[864/1402] Linking CXX executable third-party/erpc/hello_server
+[865/1402] Creating library symlink third-party/erpc/third_party/gflags/libgflags_nothreads.so.2.2 third-party/erpc/third_party/gflags/libgflags_nothreads.so
+[866/1402] Linking CXX executable third-party/erpc/hello_client
+[867/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/reconnect_policy.hpp.o
+[868/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/dball.hpp.o
+[869/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/utils.hpp.o
+[870/1402] Building CXX object third-party/erpc/third_party/googletest/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o
+[871/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/load_balancer.hpp.o
+[872/1402] Building CXX object CMakeFiles/test_silo_varint.dir/tests/test_silo_varint.cc.o
+[873/1402] Building CXX object CMakeFiles/test_sto_transaction.dir/tests/test_sto_transaction.cc.o
+[874/1402] Building CXX object CMakeFiles/test_client_service.dir/tests/test_client_service.cc.o
+[875/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/recorder.hpp.o
+[876/1402] Building CXX object CMakeFiles/test_masstree_internals.dir/src/masstree/tests/test_masstree_internals.cc.o
+[877/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/strop.hpp.o
+[878/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/request_queue.hpp.o
+[879/1402] Building CXX object CMakeFiles/test_silo_rcu_thread.dir/tests/test_silo_rcu_thread.cc.o
+[880/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/rand.hpp.o
+[881/1402] Building CXX object CMakeFiles/test_arc_mutex_thread.dir/tests/test_arc_mutex_thread.cc.o
+[882/1402] Building CXX object CMakeFiles/test_silo_allocator_tuple.dir/tests/test_silo_allocator_tuple.cc.o
+[883/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/quorum_event.h.o
+[884/1402] Building CXX object CMakeFiles/stress_transport_backend.dir/src/rrr/tests/stress_transport_backend.cc.o
+[885/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/idempotency.hpp.o
+[886/1402] Building CXX object CMakeFiles/test_transport_backend.dir/src/rrr/tests/test_transport_backend.cc.o
+[887/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/fiber_impl.h.o
+[888/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/unittest.hpp.o
+[889/1402] Building CXX object CMakeFiles/test_masstree.dir/src/masstree/tests/test_masstree.cc.o
+[890/1402] Linking CXX executable third-party/erpc/latency
+[891/1402] Building CXX object CMakeFiles/masstree_perf.dir/src/masstree/tests/masstree_perf.cc.o
+[892/1402] Building CXX object CMakeFiles/test_masstree_multi_instance.dir/src/masstree/tests/test_masstree_multi_instance.cc.o
+[893/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/basetypes.hpp.o
+[894/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/misc.hpp.o
+[895/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/callbacks.hpp.o
+[896/1402] Building CXX object CMakeFiles/test_silo_runtime.dir/src/masstree/tests/test_silo_runtime.cc.o
+[897/1402] Building CXX object CMakeFiles/test_sto_transaction_real.dir/tests/test_sto_transaction_real.cc.o
+[898/1402] Building CXX object CMakeFiles/test_silo_multi_site_stress.dir/src/masstree/tests/test_silo_multi_site_stress.cc.o
+[899/1402] Building CXX object third-party/erpc/third_party/googletest/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[900/1402] Linking CXX shared library lib/libgtest.so.1.11.0
+[901/1402] Creating library symlink lib/libgtest.so
+[902/1402] Linking CXX shared library lib/libgtest_main.so.1.11.0
+[903/1402] Linking CXX shared library lib/libgmock.so.1.11.0
+[904/1402] Creating library symlink lib/libgtest_main.so
+[905/1402] Creating library symlink lib/libgmock.so
+[906/1402] Linking CXX shared library lib/libgmock_main.so.1.11.0
+[907/1402] Creating library symlink lib/libgmock_main.so
+[908/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/completion_tracker.hpp.o
+[909/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/threading.hpp.o
+[910/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/logging.hpp.o
+[911/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/all.hpp.o
+[912/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/reactor.h.o
+[913/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/epoll_wrapper.h.o
+[914/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/future.h.o
+[915/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/pollable_proxy.h.o
+[916/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/cpuinfo.hpp.o
+[917/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/event.h.o
+[918/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/fiber.h.o
+[919/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/marshal.hpp.o
+[920/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/marshallable_proxy.h.o
+[921/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/alarm.hpp.o
+[922/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/quorum_event.h.o
+[923/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/server.hpp.o
+[924/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/recorder.hpp.o
+[925/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/request_queue.hpp.o
+[926/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/idempotency.hpp.o
+[927/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/client.hpp.o
+[928/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/alock.hpp.o
+[929/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rrr.hpp.o
+[930/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/reactor.h.o
+[931/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/completion_tracker.hpp.o
+[932/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/config_store.cc.o
+[933/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/exec.cc.o
+[934/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/client_status.cc.o
+[935/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/command_marshaler.cc.o
+[936/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/classic/tpc_command.cc.o
+[937/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/2pl/tx.cc.o
+[938/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/executor.cc.o
+[939/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/extern_c/sched.cc.o
+[940/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/2pl/scheduler.cc.o
+[941/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/extern_c/frame.cc.o
+[942/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/RW_command.cc.o
+[943/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/config.cc.o
+[944/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/marshal-value.cc.o
+[945/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/helloworld_client/helloworld_impl.cc.o
+[946/1402] Building rusty-cpp-checker (release mode, 64 jobs) with environment: LIBCLANG_PATH=/usr/lib/llvm-18/lib;LLVM_CONFIG_PATH=/usr/bin/llvm-config;Z3_SYS_Z3_HEADER=/usr/include/z3.h
+    Blocking waiting for file lock on package cache
+    Updating crates.io index
+    Blocking waiting for file lock on package cache
+     Locking 241 packages to latest Rust 1.85 compatible versions
+      Adding icu_collections v2.1.1 (available: v2.2.0, requires Rust 1.86)
+      Adding icu_locale_core v2.1.1 (available: v2.2.0, requires Rust 1.86)
+      Adding icu_normalizer v2.1.1 (available: v2.2.0, requires Rust 1.86)
+      Adding icu_normalizer_data v2.1.1 (available: v2.2.0, requires Rust 1.86)
+      Adding icu_properties v2.1.2 (available: v2.2.0, requires Rust 1.86)
+      Adding icu_properties_data v2.1.2 (available: v2.2.0, requires Rust 1.86)
+      Adding icu_provider v2.1.1 (available: v2.2.0, requires Rust 1.86)
+      Adding rand v0.8.6 (available: v0.10.1)
+      Adding toml v0.8.23 (available: v1.1.2+spec-1.1.0)
+      Adding wasip2 v1.0.1+wasi-0.2.4 (available: v1.0.3+wasi-0.2.9, requires Rust 1.87.0)
+      Adding wasip3 v0.4.0+wasi-0.3.0-rc-2026-01-06 (requires Rust 1.87.0)
+      Adding wit-bindgen v0.51.0 (requires Rust 1.87.0)
+      Adding wit-bindgen-core v0.51.0 (requires Rust 1.87.0)
+      Adding wit-bindgen-rust v0.51.0 (requires Rust 1.87.0)
+      Adding z3 v0.19.15 (available: v0.20.0)
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+ Downloading crates ...
+  Downloaded atomic-waker v1.1.2
+  Downloaded anstyle-parse v1.0.0
+  Downloaded anstyle-query v1.1.5
+  Downloaded futures-io v0.3.32
+  Downloaded heck v0.5.0
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded equivalent v1.0.2
+  Downloaded futures-task v0.3.32
+  Downloaded colorchoice v1.0.5
+  Downloaded base64 v0.22.1
+  Downloaded utf8parse v0.2.2
+  Downloaded rustc-hash v2.1.2
+  Downloaded lru-slab v0.1.2
+  Downloaded try-lock v0.2.5
+  Downloaded idna_adapter v1.2.1
+  Downloaded clap_lex v1.1.0
+  Downloaded zerofrom-derive v0.1.7
+  Downloaded sync_wrapper v1.0.2
+  Downloaded displaydoc v0.2.5
+  Downloaded shlex v1.3.0
+  Downloaded zerofrom v0.1.7
+  Downloaded yoke-derive v0.8.2
+  Downloaded tower-service v0.3.3
+  Downloaded pkg-config v0.3.33
+  Downloaded tower-layer v0.3.3
+  Downloaded thiserror v2.0.18
+  Downloaded zmij v1.0.21
+  Downloaded zeroize v1.8.2
+  Downloaded tinyvec v1.11.0
+  Downloaded unicode-ident v1.0.24
+  Downloaded tracing-core v0.1.36
+  Downloaded z3-sys v0.10.9
+  Downloaded zerotrie v0.2.4
+  Downloaded itertools v0.13.0
+  Downloaded zerovec v0.11.6
+  Downloaded tower-http v0.6.8
+  Downloaded serde_json v1.0.149
+  Downloaded bindgen v0.72.1
+  Downloaded rayon v1.12.0
+  Downloaded webpki-roots v1.0.7
+  Downloaded quinn-proto v0.11.14
+  Downloaded futures-util v0.3.32
+  Downloaded zerocopy v0.8.48
+  Downloaded syn v2.0.117
+  Downloaded rustls v0.23.39
+  Downloaded unicode-width v0.1.14
+  Downloaded regex-syntax v0.8.10
+  Downloaded aho-corasick v1.1.4
+  Downloaded z3 v0.19.15
+  Downloaded tower v0.5.3
+  Downloaded reqwest v0.12.28
+  Downloaded regex v1.12.3
+  Downloaded rustls-pki-types v1.14.1
+  Downloaded tracing v0.1.44
+  Downloaded hyper v1.9.0
+  Downloaded regex-automata v0.4.14
+  Downloaded hashbrown v0.17.0
+  Downloaded clap_builder v4.6.0
+  Downloaded iri-string v0.7.12
+  Downloaded idna v1.1.0
+  Downloaded icu_properties_data v2.1.2
+  Downloaded url v2.5.8
+  Downloaded petgraph v0.8.3
+  Downloaded miette v7.6.0
+  Downloaded http v1.4.0
+  Downloaded hashbrown v0.15.5
+  Downloaded num-bigint v0.4.6
+  Downloaded indexmap v2.14.0
+  Downloaded hyper-util v0.1.20
+  Downloaded cc v1.2.61
+  Downloaded serde v1.0.228
+  Downloaded rustls-webpki v0.103.13
+  Downloaded rand v0.9.4
+  Downloaded quinn v0.11.9
+  Downloaded mio v1.2.0
+  Downloaded icu_locale_core v2.1.1
+  Downloaded icu_collections v2.1.1
+  Downloaded num-traits v0.2.19
+  Downloaded icu_normalizer v2.1.1
+  Downloaded yoke v0.8.2
+  Downloaded thiserror-impl v2.0.18
+  Downloaded synstructure v0.13.2
+  Downloaded socket2 v0.6.3
+  Downloaded serde_derive v1.0.228
+  Downloaded serde_core v1.0.228
+  Downloaded rayon-core v1.13.0
+  Downloaded icu_provider v2.1.1
+  Downloaded icu_properties v2.1.2
+  Downloaded icu_normalizer_data v2.1.1
+  Downloaded httparse v1.10.1
+  Downloaded getrandom v0.3.4
+  Downloaded clap v4.6.1
+  Downloaded clang v2.0.0
+  Downloaded zerovec-derive v0.11.3
+  Downloaded writeable v0.6.3
+  Downloaded untrusted v0.9.0
+  Downloaded tokio-rustls v0.26.4
+  Downloaded smallvec v1.15.1
+  Downloaded proc-macro2 v1.0.106
+  Downloaded getrandom v0.2.17
+  Downloaded clang-sys v1.8.1
+  Downloaded ring v0.17.14
+  Downloaded bitflags v2.11.1
+  Downloaded quinn-udp v0.5.14
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded litemap v0.8.2
+  Downloaded futures-channel v0.3.32
+  Downloaded crossbeam-epoch v0.9.18
+  Downloaded colored v3.1.1
+  Downloaded tinystr v0.8.3
+  Downloaded once_cell v1.21.4
+  Downloaded num-rational v0.4.2
+  Downloaded num-complex v0.4.6
+  Downloaded hyper-rustls v0.27.9
+  Downloaded fixedbitset v0.5.7
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded crossbeam-deque v0.8.6
+  Downloaded clap_derive v4.6.1
+  Downloaded miette-derive v7.6.0
+  Downloaded ipnet v2.12.0
+  Downloaded want v0.3.1
+  Downloaded utf8_iter v1.0.4
+  Downloaded rand_chacha v0.9.0
+  Downloaded libloading v0.8.9
+  Downloaded foldhash v0.1.5
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded cexpr v0.6.0
+  Downloaded anstream v1.0.0
+  Downloaded num-integer v0.1.46
+  Downloaded http-body-util v0.1.3
+  Downloaded glob v0.3.3
+  Downloaded anstyle v1.0.14
+  Downloaded strsim v0.11.1
+  Downloaded slab v0.4.12
+  Downloaded rand_core v0.9.5
+  Downloaded quote v1.0.45
+  Downloaded cfg_aliases v0.2.1
+  Downloaded autocfg v1.5.0
+  Downloaded num v0.4.3
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded tinyvec_macros v0.1.1
+  Downloaded subtle v2.6.1
+  Downloaded percent-encoding v2.3.2
+  Downloaded num-iter v0.1.45
+  Downloaded potential_utf v0.1.5
+  Downloaded http-body v1.0.1
+  Downloaded serde_urlencoded v0.7.1
+  Downloaded ryu v1.0.23
+  Downloaded form_urlencoded v1.2.2
+  Downloaded cfg-if v1.0.4
+    Blocking waiting for file lock on build directory
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.186
+   Compiling stable_deref_trait v1.2.1
+   Compiling shlex v1.3.0
+   Compiling bytes v1.11.1
+   Compiling pin-project-lite v0.2.17
+   Compiling futures-core v0.3.32
+   Compiling find-msvc-tools v0.1.9
+   Compiling cfg-if v1.0.4
+   Compiling glob v0.3.3
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling serde_core v1.0.228
+   Compiling writeable v0.6.3
+   Compiling litemap v0.8.2
+   Compiling futures-sink v0.3.32
+   Compiling smallvec v1.15.1
+   Compiling icu_properties_data v2.1.2
+   Compiling icu_normalizer_data v2.1.1
+   Compiling zeroize v1.8.2
+   Compiling once_cell v1.21.4
+   Compiling autocfg v1.5.0
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.32
+   Compiling untrusted v0.9.0
+   Compiling httparse v1.10.1
+   Compiling serde v1.0.228
+   Compiling percent-encoding v2.3.2
+   Compiling futures-io v0.3.32
+   Compiling try-lock v0.2.5
+   Compiling tower-service v0.3.3
+   Compiling rustls v0.23.39
+   Compiling subtle v2.6.1
+   Compiling atomic-waker v1.1.2
+   Compiling base64 v0.22.1
+   Compiling ipnet v2.12.0
+   Compiling bitflags v2.11.1
+   Compiling tower-layer v0.3.3
+   Compiling minimal-lexical v0.2.1
+   Compiling regex-syntax v0.8.10
+   Compiling utf8_iter v1.0.4
+   Compiling either v1.15.0
+   Compiling bindgen v0.72.1
+   Compiling iri-string v0.7.12
+   Compiling ryu v1.0.23
+   Compiling crossbeam-utils v0.8.21
+   Compiling rustc-hash v2.1.2
+   Compiling log v0.4.29
+   Compiling pkg-config v0.3.33
+   Compiling utf8parse v0.2.2
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling zmij v1.0.21
+   Compiling anstyle v1.0.14
+   Compiling rayon-core v1.13.0
+   Compiling anstyle-query v1.1.5
+   Compiling strsim v0.11.1
+   Compiling equivalent v1.0.2
+   Compiling serde_json v1.0.149
+   Compiling hashbrown v0.17.0
+   Compiling cc v1.2.61
+   Compiling rustls-pki-types v1.14.1
+   Compiling tracing-core v0.1.36
+   Compiling want v0.3.1
+   Compiling futures-channel v0.3.32
+   Compiling sync_wrapper v1.0.2
+   Compiling form_urlencoded v1.2.2
+   Compiling libloading v0.8.9
+   Compiling anstyle-parse v1.0.0
+   Compiling foldhash v0.1.5
+   Compiling heck v0.5.0
+   Compiling clap_lex v1.1.0
+   Compiling rusty-cpp v0.1.1 (/workspace/third-party/rusty-cpp)
+   Compiling fixedbitset v0.5.7
+   Compiling unicode-width v0.1.14
+   Compiling colored v3.1.1
+   Compiling futures-util v0.3.32
+   Compiling clang-sys v1.8.1
+   Compiling nom v7.1.3
+   Compiling itertools v0.13.0
+   Compiling http v1.4.0
+   Compiling num-traits v0.2.19
+   Compiling anstream v1.0.0
+   Compiling hashbrown v0.15.5
+   Compiling webpki-roots v1.0.7
+   Compiling tracing v0.1.44
+   Compiling clap_builder v4.6.0
+   Compiling indexmap v2.14.0
+   Compiling aho-corasick v1.1.4
+   Compiling crossbeam-epoch v0.9.18
+   Compiling crossbeam-deque v0.8.6
+   Compiling ring v0.17.14
+   Compiling http-body v1.0.1
+   Compiling http-body-util v0.1.3
+   Compiling syn v2.0.117
+   Compiling socket2 v0.6.3
+   Compiling mio v1.2.0
+   Compiling getrandom v0.2.17
+   Compiling regex-automata v0.4.14
+   Compiling rayon v1.12.0
+   Compiling petgraph v0.8.3
+   Compiling cexpr v0.6.0
+   Compiling tokio v1.52.1
+   Compiling num-integer v0.1.46
+   Compiling num-complex v0.4.6
+   Compiling clang v2.0.0
+   Compiling num-bigint v0.4.6
+   Compiling num-iter v0.1.45
+   Compiling serde_urlencoded v0.7.1
+   Compiling regex v1.12.3
+   Compiling num-rational v0.4.2
+   Compiling num v0.4.3
+   Compiling hyper v1.9.0
+   Compiling tower v0.5.3
+   Compiling synstructure v0.13.2
+   Compiling tower-http v0.6.8
+   Compiling zerovec-derive v0.11.3
+   Compiling displaydoc v0.2.5
+   Compiling miette-derive v7.6.0
+   Compiling clap_derive v4.6.1
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling rustls-webpki v0.103.13
+   Compiling hyper-util v0.1.20
+   Compiling zerofrom v0.1.7
+   Compiling yoke v0.8.2
+   Compiling miette v7.6.0
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+   Compiling clap v4.6.1
+   Compiling icu_collections v2.1.1
+   Compiling icu_locale_core v2.1.1
+   Compiling icu_provider v2.1.1
+   Compiling icu_properties v2.1.2
+   Compiling icu_normalizer v2.1.1
+   Compiling idna_adapter v1.2.1
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling tokio-rustls v0.26.4
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.12.28
+   Compiling z3-sys v0.10.9
+   Compiling z3 v0.19.15
+    Finished `release` profile [optimized] target(s) in 1m 43s
+[947/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/service.cc.o
+[948/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/config_service.cc.o
+[949/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/coordinator.cc.o
+[950/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/janus/tx.cc.o
+[951/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/coordinator.cc.o
+[952/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/client_worker.cc.o
+[953/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/frame.cc.o
+[954/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/benchmark_control_rpc.cc.o
+[955/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/commo.cc.o
+[956/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/config_node_init.cc.o
+[957/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/classic/scheduler.cc.o
+[958/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/config_client.cc.o
+[959/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/server.cc.o
+[960/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/coordinator.cc.o
+[961/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/classic/coordinator.cc.o
+[962/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/commo.cc.o
+[963/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/frame.cc.o
+[964/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/mencius/exec.cc.o
+[965/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft_main_helper.cc.o
+[966/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/server.cc.o
+[967/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/multi_value.cc.o
+[968/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/service.cc.o
+[969/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos_main_helper.cc.o
+[970/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/exec.cc.o
+[971/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/janus/coordinator.cc.o
+[972/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/occ/tx.cc.o
+[973/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/janus/scheduler.cc.o
+[974/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/network_client/network_impl.cc.o
+[975/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/janus/frame.cc.o
+[976/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/cluster_config.cc.o
+[977/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/occ/scheduler.cc.o
+[978/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/config_watcher.cc.o
+[979/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/config_manager.cc.o
+[980/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/janus/commo.cc.o
+[981/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/communicator.cc.o
+[982/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/exec.cc.o
+[983/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/mencius/commo.cc.o
+[984/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/mencius/coordinator.cc.o
+[985/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/frame.cc.o
+[986/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/mencius/server.cc.o
+[987/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none/scheduler.cc.o
+[988/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/mencius/frame.cc.o
+[989/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/mencius/service.cc.o
+[990/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none_copilot/scheduler.cc.o
+[991/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none_copilot/commo.cc.o
+[992/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none/coordinator.cc.o
+[993/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/row.cc.o
+[994/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/coordinator.cc.o
+[995/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/dep_graph.cc.o
+[996/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/service.cc.o
+[997/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/commo.cc.o
+[998/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/graph_marshaler.cc.o
+[999/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/frame.cc.o
+[1000/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/coordinator.cc.o
+[1001/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/server.cc.o
+[1002/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/procedure.cc.o
+[1003/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/tx.cc.o
+[1004/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos_worker.cc.o
+[1005/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/commo.cc.o
+[1006/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/frame.cc.o
+[1007/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/service.cc.o
+[1008/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/snow/ro6_row.cc.o
+[1009/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/coord.cc.o
+[1010/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/replicated_db.cc.o
+[1011/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/testconf.cc.o
+[1012/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/sharding.cc.o
+[1013/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/snow/ro6.cc.o
+[1014/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/commo.cc.o
+[1015/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/test.cc.o
+[1016/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/raft_worker.cc.o
+[1017/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/utils.cc.o
+[1018/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/row.cc.o
+[1019/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/frame.cc.o
+[1020/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/schema.cc.o
+[1021/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rule/coordinator.cc.o
+[1022/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/value.cc.o
+[1023/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/basetypes.cpp.o
+[1024/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/server.cc.o
+[1025/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn.cc.o
+[1026/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/logging.cpp.o
+[1027/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/misc.cpp.o
+[1028/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rule/commo.cc.o
+[1029/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/shard_router.cc.o
+[1030/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/table.cc.o
+[1031/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rule/frame.cc.o
+[1032/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_2pl.cc.o
+[1033/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/workload.cc.o
+[1034/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_nested.cc.o
+[1035/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_unsafe.cc.o
+[1036/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tx.cc.o
+[1037/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_occ.cc.o
+[1038/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/stats_registry.cc.o
+[1039/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/sharding_policy_cache.cc.o
+[1040/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/commo.cc.o
+[1041/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/snow/ro6_coord.cc.o
+[1042/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/epoll_wrapper.cc.o
+[1043/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/server.cc.o
+[1044/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/scheduler.cc.o
+[1045/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/fiber_context_runtime.cc.o
+[1046/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/utils.cpp.o
+[1047/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/frame.cc.o
+[1048/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/coordinator.cc.o
+[1049/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/tx.cc.o
+[1050/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/marshal.cpp.o
+[1051/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/fiber_impl.cc.o
+[1052/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tpcc_sharding.cc.o
+[1053/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/recorder.cpp.o
+[1054/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/micro/workload.cc.o
+[1055/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/rw/procedure.cc.o
+[1056/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/service.cc.o
+[1057/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/debugging.cpp.o
+[1058/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpca/sharding.cc.o
+[1059/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/threading.cpp.o
+[1060/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/unittest.cpp.o
+[1061/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/server_worker.cc.o
+[1062/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/rw/workload.cc.o
+[1063/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/rand.cpp.o
+[1064/1402] Scanning /workspace/examples/simpleTransaction.cc for CXX dependencies
+[1065/1402] Generating CXX dyndep file CMakeFiles/simpleTransaction.dir/CXX.dd
+[1066/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/scheduler.cc.o
+[1067/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpca/workload.cc.o
+[1068/1402] Scanning /workspace/examples/simpleTransactionRep.cc for CXX dependencies
+[1069/1402] Generating CXX dyndep file CMakeFiles/simpleTransactionRep.dir/CXX.dd
+[1070/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/misc/alock.cpp.o
+[1071/1402] Scanning /workspace/examples/continuousTransactions.cc for CXX dependencies
+[1072/1402] Generating CXX dyndep file CMakeFiles/continuousTransactions.dir/CXX.dd
+[1073/1402] Scanning /workspace/examples/simplePaxos.cc for CXX dependencies
+[1074/1402] Generating CXX dyndep file CMakeFiles/simplePaxos.dir/CXX.dd
+[1075/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/event.cc.o
+[1076/1402] Scanning /workspace/examples/test_rocksdb_persistence.cc for CXX dependencies
+[1077/1402] Generating CXX dyndep file CMakeFiles/test_rocksdb_persistence.dir/CXX.dd
+[1078/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/order_status.cc.o
+[1079/1402] Scanning /workspace/src/mako/benchmarks/rocksdb_replay_app.cc for CXX dependencies
+[1080/1402] Generating CXX dyndep file CMakeFiles/rocksdb_replay_app.dir/CXX.dd
+[1081/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/new_order.cc.o
+[1082/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/delivery.cc.o
+[1083/1402] Scanning /workspace/examples/test_ordered_callbacks.cc for CXX dependencies
+[1084/1402] Generating CXX dyndep file CMakeFiles/test_ordered_callbacks.dir/CXX.dd
+[1085/1402] Scanning /workspace/examples/test_callback_demo.cc for CXX dependencies
+[1086/1402] Generating CXX dyndep file CMakeFiles/test_callback_demo.dir/CXX.dd
+[1087/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/quorum_event.cc.o
+[1088/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/base/strop.cpp.o
+[1089/1402] Scanning /workspace/examples/test_partitioned_queues.cc for CXX dependencies
+[1090/1402] Generating CXX dyndep file CMakeFiles/test_partitioned_queues.dir/CXX.dd
+[1091/1402] Scanning /workspace/examples/test_stress_partitioned_queues.cc for CXX dependencies
+[1092/1402] Generating CXX dyndep file CMakeFiles/test_stress_partitioned_queues.dir/CXX.dd
+[1093/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/procedure.cc.o
+[1094/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc_dist/procedure.cc.o
+[1095/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/sharding.cc.o
+[1096/1402] Scanning /workspace/examples/makoCon.cc for CXX dependencies
+[1097/1402] Generating CXX dyndep file CMakeFiles/makoCon.dir/CXX.dd
+[1098/1402] Scanning /workspace/examples/makoConDBBench.cc for CXX dependencies
+[1099/1402] Generating CXX dyndep file CMakeFiles/makoConDBBench.dir/CXX.dd
+[1100/1402] Scanning /workspace/examples/makoConMultiTrd.cc for CXX dependencies
+[1101/1402] Generating CXX dyndep file CMakeFiles/makoConMultiTrd.dir/CXX.dd
+[1102/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/workload.cc.o
+[1103/1402] Building CXX object CMakeFiles/test_rocksdb_persistence.dir/examples/test_rocksdb_persistence.cc.o
+[1104/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/payment.cc.o
+[1105/1402] Scanning /workspace/src/mako/benchmarks/paxos_async_commit_test.cc for CXX dependencies
+[1106/1402] Generating CXX dyndep file CMakeFiles/paxos_async_commit_test.dir/CXX.dd
+[1107/1402] Scanning /workspace/src/mako/benchmarks/ut/basic.cc for CXX dependencies
+[1108/1402] Generating CXX dyndep file CMakeFiles/basic.dir/CXX.dd
+[1109/1402] Building CXX object CMakeFiles/test_callback_demo.dir/examples/test_callback_demo.cc.o
+[1110/1402] Scanning /workspace/src/mako/benchmarks/ut/erpc_client.cc for CXX dependencies
+[1111/1402] Generating CXX dyndep file CMakeFiles/erpc_client.dir/CXX.dd
+[1112/1402] Scanning /workspace/src/mako/benchmarks/ut/erpc_server.cc for CXX dependencies
+[1113/1402] Generating CXX dyndep file CMakeFiles/erpc_server.dir/CXX.dd
+[1114/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/server.cpp.o
+[1115/1402] Scanning /workspace/examples/rocksdbInterfaceTest.cc for CXX dependencies
+[1116/1402] Generating CXX dyndep file CMakeFiles/rocksdbInterfaceTest.dir/CXX.dd
+[1117/1402] Building CXX object CMakeFiles/test_ordered_callbacks.dir/examples/test_ordered_callbacks.cc.o
+[1118/1402] Building CXX object CMakeFiles/test_partitioned_queues.dir/examples/test_partitioned_queues.cc.o
+[1119/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/micro/procedure.cc.o
+[1120/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/stock_level.cc.o
+[1121/1402] Building CXX object CMakeFiles/test_stress_partitioned_queues.dir/examples/test_stress_partitioned_queues.cc.o
+[1122/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/fasttransport.cc.o
+[1123/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc_real_dist/procedure.cc.o
+[1124/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/reactor/reactor.cc.o
+[1125/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc_real_dist/delivery.cc.o
+[1126/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc_real_dist/workload.cc.o
+[1127/1402] Building CXX object CMakeFiles/txlog_core_obj.dir/src/rrr/rpc/client.cpp.o
+[1128/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc_real_dist/payment.cc.o
+[1129/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpca/payment.cc.o
+[1130/1402] Linking CXX static library libtxlog_core.a
+[1131/1402] Building CXX object CMakeFiles/mako.dir/src/mako/client_service.cc.o
+[1132/1402] Building CXX object CMakeFiles/erpc_server.dir/src/mako/benchmarks/ut/erpc_server.cc.o
+[1133/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc_real_dist/sharding.cc.o
+[1134/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc_real_dist/new_order.cc.o
+[1135/1402] Building CXX object CMakeFiles/test_rpc_pollable_proxy_facade.dir/src/rrr/tests/rpc_pollable_proxy_facade_test.cc.o
+[1136/1402] Building CXX object CMakeFiles/erpc_client.dir/src/mako/benchmarks/ut/erpc_client.cc.o
+[1137/1402] Building CXX object CMakeFiles/basic.dir/src/mako/benchmarks/ut/basic.cc.o
+[1138/1402] Building CXX object CMakeFiles/test_raft_messages.dir/tests/raft_messages_test.cc.o
+[1139/1402] Borrow checking src/deptran/empty.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/empty.cc
+✓ rusty-cpp: no violations found!
+[1140/1402] Building CXX object CMakeFiles/mako.dir/src/mako/client_proxy.cc.o
+[1141/1402] Building CXX object CMakeFiles/test_raft_dispatcher_facade.dir/tests/raft_dispatcher_facade_test.cc.o
+[1142/1402] Building CXX object CMakeFiles/test_raft_transport_facade.dir/tests/raft_transport_facade_test.cc.o
+[1143/1402] Building CXX object CMakeFiles/paxos_async_commit_test.dir/src/mako/benchmarks/paxos_async_commit_test.cc.o
+[1144/1402] Building CXX object CMakeFiles/txlog_bench_obj.dir/src/bench/tpcc/benchmark_registry_registration.cc.o
+[1145/1402] Linking CXX executable test_raft_messages
+[1146/1402] Linking CXX static library libtxlog_bench.a
+[1147/1402] Linking CXX executable test_rpc_pollable_proxy_facade
+[1148/1402] Building CXX object CMakeFiles/simpleTransaction.dir/examples/simpleTransaction.cc.o
+[1149/1402] Building CXX object CMakeFiles/mako.dir/src/mako/lib/rrr_rpc_backend.cc.o
+[1150/1402] Linking CXX executable test_raft_dispatcher_facade
+[1151/1402] Linking CXX executable test_raft_transport_facade
+[1152/1402] Building CXX object CMakeFiles/test_raft_memory_snapshot_manager.dir/tests/raft_memory_snapshot_manager_test.cc.o
+[1153/1402] Building CXX object CMakeFiles/simplePaxos.dir/examples/simplePaxos.cc.o
+[1154/1402] Borrow checking src/masstree/kvthread.cc
+Rusty C++ Checker
+Analyzing: /workspace/src/masstree/kvthread.cc
+✓ rusty-cpp: no violations found!
+[1155/1402] Borrow checking src/masstree/masstree_context.cc
+Rusty C++ Checker
+Analyzing: /workspace/src/masstree/masstree_context.cc
+✓ rusty-cpp: no violations found!
+[1156/1402] Linking CXX executable test_raft_memory_snapshot_manager
+[1157/1402] Building CXX object CMakeFiles/continuousTransactions.dir/examples/continuousTransactions.cc.o
+[1158/1402] Linking CXX static library libmako.a
+[1159/1402] Building CXX object CMakeFiles/rocksdb_replay_app.dir/src/mako/benchmarks/rocksdb_replay_app.cc.o
+[1160/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/future.h.o
+[1161/1402] Building CXX object CMakeFiles/test_raft_channel_transport.dir/tests/raft_channel_transport_test.cc.o
+[1162/1402] Linking CXX executable simpleTransaction
+[1163/1402] Building CXX object CMakeFiles/makoConDBBench.dir/examples/makoConDBBench.cc.o
+[1164/1402] Building CXX object CMakeFiles/makoConMultiTrd.dir/examples/makoConMultiTrd.cc.o
+[1165/1402] Linking CXX executable continuousTransactions
+[1166/1402] Linking CXX executable test_rocksdb_persistence
+[1167/1402] Linking CXX executable simplePaxos
+[1168/1402] Building CXX object CMakeFiles/raft_lab_standalone.dir/src/deptran/raft/raft_lab_standalone.cc.o
+[1169/1402] Building CXX object CMakeFiles/makoCon.dir/examples/makoCon.cc.o
+[1170/1402] Linking CXX executable test_callback_demo
+[1171/1402] Linking CXX executable rocksdb_replay_app
+[1172/1402] Linking CXX executable test_ordered_callbacks
+[1173/1402] Borrow checking src/masstree/value_versioned_array.cc
+Rusty C++ Checker
+Analyzing: /workspace/src/masstree/value_versioned_array.cc
+Auto-detected 7 C++ include path(s)
+✓ rusty-cpp: no violations found!
+[1174/1402] Linking CXX executable test_partitioned_queues
+[1175/1402] Linking CXX executable test_stress_partitioned_queues
+[1176/1402] Building CXX object CMakeFiles/test_raft_test_cluster.dir/tests/raft_test_cluster_test.cc.o
+[1177/1402] Linking CXX executable makoConDBBench
+[1178/1402] Linking CXX executable paxos_async_commit_test
+[1179/1402] Linking CXX executable erpc_client
+[1180/1402] Linking CXX executable erpc_server
+[1181/1402] Linking CXX executable test_raft_channel_transport
+[1182/1402] Linking CXX executable raft_lab_standalone
+[1183/1402] Linking CXX executable basic
+[1184/1402] Linking CXX executable test_raft_test_cluster
+[1185/1402] Building CXX object CMakeFiles/rocksdbInterfaceTest.dir/examples/rocksdbInterfaceTest.cc.o
+[1186/1402] Borrow checking src/deptran/replication_helper.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/replication_helper.cc
+✓ rusty-cpp: no violations found!
+[1187/1402] Building CXX object CMakeFiles/simpleTransactionRep.dir/examples/simpleTransactionRep.cc.o
+[1188/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/fiber.h.o
+[1189/1402] Linking CXX executable rocksdbInterfaceTest
+[1190/1402] Linking CXX executable simpleTransactionRep
+[1191/1402] Borrow checking /workspace/src/rrr/base/misc.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/base/misc.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1192/1402] Borrow checking /workspace/src/rrr/base/logging.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/base/logging.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1193/1402] Borrow checking /workspace/src/rrr/base/basetypes.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/base/basetypes.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1194/1402] Linking CXX executable makoCon
+[1195/1402] Linking CXX executable makoConMultiTrd
+[1196/1402] Borrow checking /workspace/src/rrr/reactor/fiber_impl.cc (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/reactor/fiber_impl.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1197/1402] Borrow checking /workspace/src/rrr/reactor/epoll_wrapper.cc (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/reactor/epoll_wrapper.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1198/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/alarm.hpp.o
+[1199/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/server.hpp.o
+[1200/1402] Borrow checking src/deptran/workload.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/workload.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1201/1402] Building CXX object CMakeFiles/test_raft_rrr_transport_compile.dir/tests/raft_rrr_transport_compile_test.cc.o
+[1202/1402] Borrow checking src/deptran/executor.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/executor.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1203/1402] Linking CXX executable test_raft_rrr_transport_compile
+[1204/1402] Borrow checking /workspace/src/rrr/rpc/utils.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/rpc/utils.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1205/1402] Borrow checking /workspace/src/rrr/misc/marshal.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/misc/marshal.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1206/1402] Borrow checking /workspace/src/rrr/misc/recorder.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/misc/recorder.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1207/1402] Borrow checking /workspace/src/rrr/reactor/quorum_event.cc (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/reactor/quorum_event.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1208/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/client.hpp.o
+[1209/1402] Borrow checking /workspace/src/rrr/reactor/event.cc (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/reactor/event.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1210/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/alock.hpp.o
+[1211/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rrr.hpp.o
+[1212/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/utils.cc.o
+[1213/1402] Borrow checking src/deptran/stats_registry.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/stats_registry.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1214/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/value.cc.o
+[1215/1402] Borrow checking src/deptran/paxos_worker.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/paxos_worker.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1216/1402] Borrow checking src/masstree/query_masstree.cc
+Rusty C++ Checker
+Analyzing: /workspace/src/masstree/query_masstree.cc
+Auto-detected 7 C++ include path(s)
+✓ rusty-cpp: no violations found!
+[1217/1402] Borrow checking /workspace/src/rrr/base/debugging.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/base/debugging.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1218/1402] Borrow checking /workspace/src/rrr/reactor/reactor.cc (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/reactor/reactor.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1219/1402] Borrow checking /workspace/src/rrr/misc/alock.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/misc/alock.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1220/1402] Building CXX object CMakeFiles/rpcbench.dir/src/rrr/tests/benchmark_service.cc.o
+[1221/1402] Borrow checking /workspace/src/rrr/base/unittest.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/base/unittest.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1222/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/schema.cc.o
+[1223/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/row.cc.o
+[1224/1402] Borrow checking /workspace/src/rrr/base/strop.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/base/strop.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1225/1402] Borrow checking /workspace/src/rrr/misc/rand.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/misc/rand.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1226/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn.cc.o
+[1227/1402] Borrow checking /workspace/src/rrr/base/threading.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/base/threading.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1228/1402] Building CXX object CMakeFiles/test_config_schema.dir/tests/config_schema_test.cc.o
+[1229/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_nested.cc.o
+[1230/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_unsafe.cc.o
+[1231/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_2pl.cc.o
+[1232/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_occ.cc.o
+[1233/1402] Building CXX object CMakeFiles/memdb.dir/src/memdb/table.cc.o
+[1234/1402] Building CXX object CMakeFiles/test_sharding_policy.dir/tests/sharding_policy_test.cc.o
+[1235/1402] Building CXX object CMakeFiles/test_fiber.dir/src/rrr/tests/fiber_test.cc.o
+[1236/1402] Borrow checking /workspace/src/rrr/rpc/client.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/rpc/client.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1237/1402] Building CXX object CMakeFiles/rpcbench.dir/src/rrr/tests/rpcbench.cc.o
+[1238/1402] Building CXX object CMakeFiles/test_load_balancer.dir/src/rrr/tests/benchmark_service.cc.o
+[1239/1402] Building CXX object CMakeFiles/test_config_store.dir/tests/config_store_test.cc.o
+[1240/1402] Building CXX object CMakeFiles/test_rpc_extended.dir/src/rrr/tests/benchmark_service.cc.o
+[1241/1402] Building CXX object CMakeFiles/test_completion_tracker.dir/src/rrr/tests/test_completion_tracker.cc.o
+[1242/1402] Building CXX object CMakeFiles/test_fiber_runtime.dir/src/rrr/tests/fiber_runtime.cc.o
+[1243/1402] Building CXX object CMakeFiles/test_marshal.dir/src/rrr/tests/test_marshal.cc.o
+[1244/1402] Building CXX object CMakeFiles/test_idempotency.dir/src/rrr/tests/test_idempotency.cc.o
+[1245/1402] Building CXX object CMakeFiles/test_timeout_race.dir/src/rrr/tests/test_timeout_race.cc.o
+[1246/1402] Building CXX object CMakeFiles/test_and_event.dir/src/rrr/tests/test_and_event.cc.o
+[1247/1402] Building CXX object CMakeFiles/bench_future.dir/src/rrr/tests/bench_future.cc.o
+[1248/1402] Building CXX object CMakeFiles/test_reactor_extended.dir/src/rrr/tests/test_reactor_extended.cc.o
+[1249/1402] Building CXX object CMakeFiles/test_rpc_reconnect_policy.dir/src/rrr/tests/rpc_reconnect_policy_test.cc.o
+[1250/1402] Building CXX object CMakeFiles/test_reactor.dir/src/rrr/tests/test_reactor.cc.o
+[1251/1402] Building CXX object CMakeFiles/test_rpc_errors.dir/src/rrr/tests/rpc_errors_test.cc.o
+[1252/1402] Building CXX object CMakeFiles/test_rpc_circuit_breaker.dir/src/rrr/tests/rpc_circuit_breaker_test.cc.o
+[1253/1402] Building CXX object CMakeFiles/test_load_balancer.dir/src/rrr/tests/test_load_balancer.cc.o
+[1254/1402] Borrow checking /workspace/src/rrr/rpc/server.cpp (from rrr_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/rrr/rpc/server.cpp
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1255/1402] Building CXX object CMakeFiles/test_rpc_connection_state.dir/src/rrr/tests/rpc_connection_state_test.cc.o
+[1256/1402] Building CXX object CMakeFiles/test_rpc_heartbeat.dir/src/rrr/tests/rpc_heartbeat_test.cc.o
+[1257/1402] Building CXX object CMakeFiles/test_rpc_service_proxy_facade.dir/src/rrr/tests/rpc_service_proxy_facade_test.cc.o
+[1258/1402] Building CXX object CMakeFiles/test_rpc_pollthread_proxy_storage.dir/src/rrr/tests/rpc_pollthread_proxy_storage_test.cc.o
+[1259/1402] Building CXX object CMakeFiles/test_future.dir/src/rrr/tests/test_future.cc.o
+[1260/1402] Building CXX object CMakeFiles/test_rpc_deferred_handler.dir/src/rrr/tests/benchmark_service.cc.o
+[1261/1402] Building CXX object CMakeFiles/test_transport_integration.dir/src/rrr/tests/test_transport_integration.cc.o
+[1262/1402] Building CXX object CMakeFiles/test_rpc_reconnect_integration.dir/src/rrr/tests/benchmark_service.cc.o
+[1263/1402] Building CXX object CMakeFiles/test_rpc_state_integration.dir/src/rrr/tests/benchmark_service.cc.o
+[1264/1402] Building CXX object CMakeFiles/test_rpc_extended.dir/src/rrr/tests/test_rpc_extended.cc.o
+[1265/1402] Building CXX object CMakeFiles/test_rpc_request_queue.dir/src/rrr/tests/rpc_request_queue_test.cc.o
+[1266/1402] Building CXX object CMakeFiles/test_rpc_circuit_breaker_integration.dir/src/rrr/tests/benchmark_service.cc.o
+[1267/1402] Borrow checking src/deptran/communicator.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/communicator.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1268/1402] Building CXX object CMakeFiles/test_rpc_error_integration.dir/src/rrr/tests/benchmark_service.cc.o
+[1269/1402] Building CXX object CMakeFiles/test_rpc_combined_reliability.dir/src/rrr/tests/benchmark_service.cc.o
+[1270/1402] Building CXX object CMakeFiles/test_tpcc_sharding.dir/tests/tpcc_sharding_test.cc.o
+[1271/1402] Building CXX object CMakeFiles/test_rpc_deferred_handler.dir/src/rrr/tests/rpc_deferred_handler_test.cc.o
+[1272/1402] Building CXX object CMakeFiles/test_shard_router.dir/tests/shard_router_test.cc.o
+[1273/1402] Building CXX object CMakeFiles/test_rpc_validation.dir/src/rrr/tests/benchmark_service.cc.o
+[1274/1402] Building CXX object CMakeFiles/test_rpc_restart_detection.dir/src/rrr/tests/rpc_restart_detection_test.cc.o
+[1275/1402] Building CXX object CMakeFiles/test_rpc_callbacks.dir/src/rrr/tests/rpc_callbacks_test.cc.o
+[1276/1402] Building CXX object CMakeFiles/test_rpc_graceful_shutdown.dir/src/rrr/tests/rpc_graceful_shutdown_test.cc.o
+[1277/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/basetypes.cpp.o
+[1278/1402] Building CXX object CMakeFiles/test_rpc_request_buffering.dir/src/rrr/tests/rpc_request_buffering_test.cc.o
+[1279/1402] Building CXX object CMakeFiles/test_sharding_policy_cache.dir/tests/sharding_policy_cache_test.cc.o
+[1280/1402] Building CXX object CMakeFiles/test_rpc_metrics.dir/src/rrr/tests/benchmark_service.cc.o
+[1281/1402] Building CXX object CMakeFiles/test_rpc_circuit_breaker_integration.dir/src/rrr/tests/rpc_circuit_breaker_integration_test.cc.o
+[1282/1402] Building CXX object CMakeFiles/test_rpc_error_integration.dir/src/rrr/tests/rpc_error_integration_test.cc.o
+[1283/1402] Building CXX object CMakeFiles/test_rpc_client_pool.dir/src/rrr/tests/benchmark_service.cc.o
+[1284/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/logging.cpp.o
+[1285/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/misc.cpp.o
+[1286/1402] Building CXX object CMakeFiles/test_rpc_stress_crash.dir/src/rrr/tests/benchmark_service.cc.o
+[1287/1402] Building CXX object CMakeFiles/test_config_failure.dir/tests/config_failure_test.cc.o
+[1288/1402] Building CXX object CMakeFiles/test_txn_timeout.dir/tests/deptran/txn_timeout_test.cc.o
+[1289/1402] Building CXX object CMakeFiles/test_config_service.dir/tests/config_service_test.cc.o
+[1290/1402] Building CXX object CMakeFiles/test_rpc_validation.dir/src/rrr/tests/rpc_validation_test.cc.o
+[1291/1402] Building CXX object CMakeFiles/test_rpc_partition.dir/src/rrr/tests/benchmark_service.cc.o
+[1292/1402] Scanning /workspace/src/rrr/tests/test_rpc.cc for CXX dependencies
+[1293/1402] Scanning /workspace/src/rrr/tests/benchmark_service.cc for CXX dependencies
+[1294/1402] Generating CXX dyndep file CMakeFiles/test_rpc.dir/CXX.dd
+[1295/1402] Building CXX object CMakeFiles/test_rpc_timeout_retry.dir/src/rrr/tests/rpc_timeout_retry_test.cc.o
+[1296/1402] Building CXX object CMakeFiles/test_rpc_combined_reliability.dir/src/rrr/tests/rpc_combined_reliability_test.cc.o
+[1297/1402] Building CXX object CMakeFiles/test_rpc_reconnect_integration.dir/src/rrr/tests/rpc_reconnect_integration_test.cc.o
+[1298/1402] Building CXX object CMakeFiles/test_sharding_startup.dir/src/rrr/tests/sharding_startup_test.cc.o
+[1299/1402] Building CXX object CMakeFiles/test_config_client.dir/tests/config_client_test.cc.o
+[1300/1402] Building CXX object CMakeFiles/test_rpc_rocksdb_log_storage.dir/src/rrr/tests/rpc_rocksdb_log_storage_test.cc.o
+[1301/1402] Building CXX object CMakeFiles/test_rpc_log_storage.dir/src/rrr/tests/rpc_log_storage_test.cc.o
+[1302/1402] Building CXX object CMakeFiles/test_rpc_client_pool.dir/src/rrr/tests/rpc_client_pool_test.cc.o
+[1303/1402] Borrow checking src/deptran/scheduler.cc (from deptran_borrow)
+Rusty C++ Checker
+Analyzing: /workspace/src/deptran/scheduler.cc
+Warning: module deserialization failed, retrying with std-only module inputs
+Warning (suppressed module fatal): module 'rrr' not found
+✓ rusty-cpp: no violations found!
+[1304/1402] Scanning /workspace/src/mako/benchmarks/dbtest.cc for CXX dependencies
+[1305/1402] Generating CXX dyndep file CMakeFiles/dbtest.dir/CXX.dd
+[1306/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/epoll_wrapper.cc.o
+[1307/1402] Building CXX object CMakeFiles/test_rpc.dir/src/rrr/tests/benchmark_service.cc.o
+[1308/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/fiber_context_runtime.cc.o
+[1309/1402] Building CXX object CMakeFiles/test_rpc_metrics.dir/src/rrr/tests/rpc_metrics_test.cc.o
+[1310/1402] Building CXX object CMakeFiles/test_rpc_stress_crash.dir/src/rrr/tests/rpc_stress_crash_test.cc.o
+[1311/1402] Building CXX object CMakeFiles/test_rpc_partition.dir/src/rrr/tests/rpc_partition_test.cc.o
+[1312/1402] Building CXX object CMakeFiles/test_rpc_state_integration.dir/src/rrr/tests/rpc_state_integration_test.cc.o
+[1313/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/fiber_impl.cc.o
+[1314/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/utils.cpp.o
+[1315/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/marshal.cpp.o
+[1316/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/recorder.cpp.o
+[1317/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/debugging.cpp.o
+[1318/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/rand.cpp.o
+[1319/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/strop.cpp.o
+[1320/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/unittest.cpp.o
+[1321/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/event.cc.o
+[1322/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/base/threading.cpp.o
+[1323/1402] Building CXX object CMakeFiles/test_rpc.dir/src/rrr/tests/test_rpc.cc.o
+[1324/1402] Building CXX object CMakeFiles/test_rpc_marshallable_proxy.dir/src/rrr/tests/rpc_marshallable_proxy_test.cc.o
+[1325/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/misc/alock.cpp.o
+[1326/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/quorum_event.cc.o
+[1327/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/server.cpp.o
+[1328/1402] Building CXX object CMakeFiles/dbtest.dir/src/mako/benchmarks/dbtest.cc.o
+[1329/1402] Linking CXX executable dbtest
+[1330/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/rpc/client.cpp.o
+[1331/1402] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/reactor.cc.o
+[1332/1402] Linking CXX static library src/rrr/librrr.a
+[1333/1402] Linking CXX static library libmemdb.a
+[1334/1402] Linking CXX executable rpcbench
+[1335/1402] Linking CXX executable test_rpc_connection_state
+[1336/1402] Linking CXX executable test_rpc_heartbeat
+[1337/1402] Linking CXX executable test_transport_integration
+[1338/1402] Linking CXX executable test_rpc_validation
+[1339/1402] Linking CXX executable test_rpc_timeout_retry
+[1340/1402] Linking CXX executable test_rpc_restart_detection
+[1341/1402] Linking CXX executable test_rpc_errors
+[1342/1402] Linking CXX executable test_rpc_circuit_breaker
+[1343/1402] Linking CXX executable test_rpc_combined_reliability
+[1344/1402] Linking CXX executable test_rpc_stress_crash
+[1345/1402] Linking CXX executable test_rpc_reconnect_policy
+[1346/1402] Linking CXX executable test_rpc_partition
+[1347/1402] Linking CXX executable test_rpc_request_queue
+[1348/1402] Linking CXX executable test_rpc_log_storage
+[1349/1402] Linking CXX executable test_rpc_deferred_handler
+[1350/1402] Linking CXX executable test_rpc_metrics
+[1351/1402] Linking CXX executable test_rpc_graceful_shutdown
+[1352/1402] Linking CXX executable test_rpc_extended
+[1353/1402] Linking CXX executable test_rpc_callbacks
+[1354/1402] Linking CXX executable test_rpc_error_integration
+[1355/1402] Linking CXX executable test_rpc
+[1356/1402] Linking CXX executable test_rpc_circuit_breaker_integration
+[1357/1402] Linking CXX executable test_rpc_reconnect_integration
+[1358/1402] Linking CXX executable test_rpc_request_buffering
+[1359/1402] Linking CXX executable test_rpc_state_integration
+[1360/1402] Linking CXX executable test_rpc_rocksdb_log_storage
+[1361/1402] Linking CXX executable test_rpc_client_pool
+[1362/1402] Linking CXX executable test_client_service
+[1363/1402] Linking CXX executable test_marshal
+[1364/1402] Linking CXX executable test_config_schema
+[1365/1402] Linking CXX executable test_sharding_policy
+[1366/1402] Linking CXX executable test_future
+[1367/1402] Linking CXX executable test_fiber
+[1368/1402] Linking CXX executable test_timeout_race
+[1369/1402] Linking CXX executable test_completion_tracker
+[1370/1402] Linking CXX executable masstree_perf
+[1371/1402] Linking CXX executable test_idempotency
+[1372/1402] Linking CXX executable test_fiber_runtime
+[1373/1402] Linking CXX executable test_load_balancer
+[1374/1402] Linking CXX executable test_masstree_internals
+[1375/1402] Linking CXX executable test_masstree
+[1376/1402] Linking CXX executable test_reactor
+[1377/1402] Linking CXX executable bench_future
+[1378/1402] Linking CXX executable test_masstree_multi_instance
+[1379/1402] Linking CXX executable test_reactor_extended
+[1380/1402] Linking CXX executable test_and_event
+[1381/1402] Linking CXX executable test_transport_backend
+[1382/1402] Linking CXX executable test_txn_timeout
+[1383/1402] Linking CXX executable test_arc_mutex_thread
+[1384/1402] Linking CXX executable test_silo_multi_site_stress
+[1385/1402] Linking CXX executable test_rpc_service_proxy_facade
+[1386/1402] Linking CXX executable test_rpc_pollthread_proxy_storage
+[1387/1402] Linking CXX executable test_silo_runtime
+[1388/1402] Linking CXX executable stress_transport_backend
+[1389/1402] Linking CXX executable test_sto_transaction_real
+[1390/1402] Linking CXX executable test_rpc_marshallable_proxy
+[1391/1402] Linking CXX executable test_config_failure
+[1392/1402] Linking CXX executable test_shard_router
+[1393/1402] Linking CXX executable test_tpcc_sharding
+[1394/1402] Linking CXX executable test_sto_transaction
+[1395/1402] Linking CXX executable test_silo_rcu_thread
+[1396/1402] Linking CXX executable test_silo_varint
+[1397/1402] Linking CXX executable test_config_store
+[1398/1402] Linking CXX executable test_silo_allocator_tuple
+[1399/1402] Linking CXX executable test_config_client
+[1400/1402] Linking CXX executable test_sharding_policy_cache
+[1401/1402] Linking CXX executable test_config_service
+[1402/1402] Linking CXX executable test_sharding_startup
+using partitions:  10
+using partitions:  10
+using partitions:  10
+[{'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}]
+work on template:  template_local-shards1-warehouses1.yml
+work on template:  template_local-shards2-warehouses1.yml
+work on template:  template_local-shards3-warehouses1.yml
+work on template:  template_local-shards4-warehouses1.yml
+work on template:  template_local-shards5-warehouses1.yml
+work on template:  template_local-shards6-warehouses1.yml
+work on template:  template_local-shards7-warehouses1.yml
+work on template:  template_local-shards8-warehouses1.yml
+work on template:  template_local-shards9-warehouses1.yml
+work on template:  template_local-shards10-warehouses1.yml
+using partitions:  10
+=========================================
+Running: ./ci/ci.sh shard2ReplicationRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with RAFT replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_UkM4.yml
+Starting shard 0 with Raft...
+Starting shard 1 with Raft...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 37s
+Stopping shards (graceful)...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication_raft.sh_rrr_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1777126649)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8610.01 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.98632 (< 40%)
+
+Checking test_2shard_replication_raft.sh_rrr_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8618.79 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 2.03465 (< 40%)
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+[0;32mCI test 'shard2ReplicationRaft' completed![0m

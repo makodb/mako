@@ -1,0 +1,230 @@
+==787==WARNING: ASan is ignoring requested __asan_handle_no_return: stack type: default top: 0x733281fe1400; bottom 0x733276c8d000; size: 0x00000b354400 (188040192)
+False positive error reports may follow
+For details see https://github.com/google/sanitizers/issues/189
+=================================================================
+==787==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x5020000e50f4 at pc 0x61845b531f66 bp 0x73320f682cf0 sp 0x73320f6824b0
+READ of size 8 at 0x5020000e50f4 thread T139
+    #0 0x61845b531f65 in __asan_memcpy (/workspace/build_docker/dbtest+0x18df65) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+    #1 0x61845bb221f4 in mako::Client::InvokeInstall(unsigned long, int, unsigned short, char*, std::__1::function<void (char*)>, std::__1::function<void (std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, mako::ErrorCode)>, unsigned int) /workspace/src/mako/lib/client.cc:303:9
+    #2 0x61845bb30ed6 in mako::ShardClient::remoteInstall(unsigned int) /workspace/src/mako/lib/shardClient.cc:341:17
+    #3 0x61845bacf14a in Transaction::try_commit(bool) /workspace/src/mako/benchmarks/sto/Transaction.cc:608:39
+    #4 0x61845b590421 in Sto::try_commit() /workspace/src/mako/benchmarks/sto/Transaction.hh:995:30
+    #5 0x61845b590421 in mbta_wrapper::commit_txn(void*) /workspace/src/mako/benchmarks/mbta_wrapper.hh:1141:10
+    #6 0x61845ba6b8e7 in tpcc_worker::txn_payment() /workspace/src/mako/benchmarks/tpcc.cc:3082:9
+    #7 0x61845bc87bd9 in bench_worker::run() /workspace/src/mako/benchmarks/bench.cc:296:26
+    #8 0x61845bc86dd4 in decltype(*std::declval<ndb_thread*>().*std::declval<void (ndb_thread::*)()>()()) std::__1::__invoke<void (ndb_thread::*)(), ndb_thread*, void>(void (ndb_thread::*&&)(), ndb_thread*&&) /usr/lib/llvm-18/bin/../include/c++/v1/__type_traits/invoke.h:312:25
+    #9 0x61845bc86dd4 in void std::__1::__thread_execute<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*, 2ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>&, std::__1::__tuple_indices<2ul>) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:193:3
+    #10 0x61845bc86dd4 in void* std::__1::__thread_proxy<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>>(void*) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:202:3
+    #11 0x61845b531b9c in asan_thread_start(void*) asan_interceptors.cpp.o
+    #12 0x733287965aa3 in start_thread nptl/pthread_create.c:447:8
+    #13 0x7332879f2a63 in clone misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:100
+
+0x5020000e50f4 is located 0 bytes after 4-byte region [0x5020000e50f0,0x5020000e50f4)
+allocated by thread T139 here:
+    #0 0x61845b5340b3 in malloc (/workspace/build_docker/dbtest+0x1900b3) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+    #1 0x61845bb30aed in mako::encode_single_timestamp(unsigned int) /workspace/src/mako/lib/common.h:483:25
+    #2 0x61845bb30aed in mako::ShardClient::remoteInstall(unsigned int) /workspace/src/mako/lib/shardClient.cc:335:20
+    #3 0x61845bacf14a in Transaction::try_commit(bool) /workspace/src/mako/benchmarks/sto/Transaction.cc:608:39
+    #4 0x61845b590421 in Sto::try_commit() /workspace/src/mako/benchmarks/sto/Transaction.hh:995:30
+    #5 0x61845b590421 in mbta_wrapper::commit_txn(void*) /workspace/src/mako/benchmarks/mbta_wrapper.hh:1141:10
+    #6 0x61845ba6b8e7 in tpcc_worker::txn_payment() /workspace/src/mako/benchmarks/tpcc.cc:3082:9
+    #7 0x61845bc87bd9 in bench_worker::run() /workspace/src/mako/benchmarks/bench.cc:296:26
+    #8 0x61845bc86dd4 in decltype(*std::declval<ndb_thread*>().*std::declval<void (ndb_thread::*)()>()()) std::__1::__invoke<void (ndb_thread::*)(), ndb_thread*, void>(void (ndb_thread::*&&)(), ndb_thread*&&) /usr/lib/llvm-18/bin/../include/c++/v1/__type_traits/invoke.h:312:25
+    #9 0x61845bc86dd4 in void std::__1::__thread_execute<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*, 2ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>&, std::__1::__tuple_indices<2ul>) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:193:3
+    #10 0x61845bc86dd4 in void* std::__1::__thread_proxy<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>>(void*) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:202:3
+    #11 0x61845b531b9c in asan_thread_start(void*) asan_interceptors.cpp.o
+
+Thread T139 created by T0 here:
+    #0 0x61845b519a25 in pthread_create (/workspace/build_docker/dbtest+0x175a25) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+    #1 0x61845bc86c4f in std::__1::__libcpp_thread_create(unsigned long*, void* (*)(void*), void*) /usr/lib/llvm-18/bin/../include/c++/v1/__threading_support:317:10
+    #2 0x61845bc86c4f in std::__1::thread::thread<void (ndb_thread::*)(), ndb_thread*, void>(void (ndb_thread::*&&)(), ndb_thread*&&) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:212:14
+    #3 0x61845bc86837 in ndb_thread::startBind(int) /workspace/src/mako/thread.cc:26:20
+    #4 0x61845bc8a4d1 in bench_runner::run() /workspace/src/mako/benchmarks/bench.cc:495:16
+    #5 0x61845ba74a21 in tpcc_do_test(abstract_db*, int, char**, int, bench_runner*) /workspace/src/mako/benchmarks/tpcc.cc:3728:31
+    #6 0x61845b575182 in start_workers_tpcc(int, abstract_db*, int, bool, int, bench_runner*) /workspace/src/mako/benchmarks/common2.h:68:23
+    #7 0x61845b57d41f in run_workers(abstract_db*) /workspace/src/mako/benchmarks/dbtest.cc:308:3
+    #8 0x61845b57d41f in main /workspace/src/mako/benchmarks/dbtest.cc:556:7
+    #9 0x7332878f31c9 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+    #10 0x7332878f328a in __libc_start_main csu/../csu/libc-start.c:360:3
+    #11 0x61845b499264 in _start (/workspace/build_docker/dbtest+0xf5264) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow (/workspace/build_docker/dbtest+0x18df65) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f) in __asan_memcpy
+Shadow bytes around the buggy address:
+  0x5020000e4e00: fa fa fd fd fa fa fd fd fa fa fd fd fa fa fd fd
+  0x5020000e4e80: fa fa fd fd fa fa fd fd fa fa fd fd fa fa fd fd
+  0x5020000e4f00: fa fa fd fd fa fa fd fd fa fa fd fd fa fa fd fd
+  0x5020000e4f80: fa fa fd fd fa fa fd fd fa fa fd fd fa fa fd fd
+  0x5020000e5000: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+=>0x5020000e5080: fa fa fa fa fa fa fa fa fa fa fa fa fa fa[04]fa
+  0x5020000e5100: fa fa fd fd fa fa fd fa fa fa fd fd fa fa fd fa
+  0x5020000e5180: fa fa 04 fa fa fa fd fa fa fa fd fa fa fa 04 fa
+  0x5020000e5200: fa fa 00 fa fa fa 00 00 fa fa fd fd fa fa fd fa
+  0x5020000e5280: fa fa fd fd fa fa fd fa fa fa fd fd fa fa 00 00
+  0x5020000e5300: fa fa fd fd fa fa fd fd fa fa fd fd fa fa fd fd
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+=================================================================
+==787==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x73320fe86d91 at pc 0x61845b531ff8 bp 0x73320fe85da0 sp 0x73320fe85560
+WRITE of size 106 at 0x73320fe86d91 thread T140
+    #0 0x61845b531ff7 in __asan_memcpy (/workspace/build_docker/dbtest+0x18dff7) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+    #1 0x61845bab49b2 in inline_str_base<unsigned char, 20u>::operator=(inline_str_base<unsigned char, 20u> const&) /workspace/src/mako/benchmarks/../record/inline_str.h:50:5
+    #2 0x61845bab49b2 in inline_str_8<20u>::operator=(inline_str_8<20u> const&) /workspace/src/mako/benchmarks/../record/inline_str.h:158:7
+    #3 0x61845bab49b2 in serializer<inline_str_8<20u>, true>::read(unsigned char const*, inline_str_8<20u>*) /workspace/src/mako/benchmarks/../record/serializer.h:82:10
+    #4 0x61845bab49b2 in encoder<customer::value>::encode_read(unsigned char const*, customer::value*) const /workspace/src/mako/benchmarks/tpcc.h:69:1
+    #5 0x61845ba58199 in encoder<customer::value>::read(unsigned char const*, customer::value*) const /workspace/src/mako/benchmarks/tpcc.h:69:1
+    #6 0x61845ba58199 in encoder<customer::value>::read(char const*, customer::value*) const /workspace/src/mako/benchmarks/tpcc.h:69:1
+    #7 0x61845ba58199 in customer::value const* Decode<customer::value>(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, customer::value&) /workspace/src/mako/benchmarks/../record/encoder.h:45:14
+    #8 0x61845ba58199 in tpcc_worker::txn_new_order() /workspace/src/mako/benchmarks/tpcc.cc:2379:34
+    #9 0x61845bc87bd9 in bench_worker::run() /workspace/src/mako/benchmarks/bench.cc:296:26
+    #10 0x61845bc86dd4 in decltype(*std::declval<ndb_thread*>().*std::declval<void (ndb_thread::*)()>()()) std::__1::__invoke<void (ndb_thread::*)(), ndb_thread*, void>(void (ndb_thread::*&&)(), ndb_thread*&&) /usr/lib/llvm-18/bin/../include/c++/v1/__type_traits/invoke.h:312:25
+    #11 0x61845bc86dd4 in void std::__1::__thread_execute<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*, 2ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>&, std::__1::__tuple_indices<2ul>) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:193:3
+    #12 0x61845bc86dd4 in void* std::__1::__thread_proxy<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>>(void*) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:202:3
+    #13 0x61845b531b9c in asan_thread_start(void*) asan_interceptors.cpp.o
+    #14 0x733287965aa3 in start_thread nptl/pthread_create.c:447:8
+    #15 0x7332879f2a63 in clone misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:100
+
+Address 0x73320fe86d91 is located in stack of thread T140 at offset 3441 in frame
+    #0 0x61845ba5615f in tpcc_worker::txn_new_order() /workspace/src/mako/benchmarks/tpcc.cc:2238
+
+  This frame has 13 object(s):
+    [32, 40) '__begin0.sroa.631.i' (line 146)
+    [64, 72) '__begin0.sroa.10.i' (line 146)
+    [96, 156) 'itemIDs' (line 2257)
+    [192, 252) 'supplierWarehouseIDs' (line 2257)
+    [288, 348) 'orderQuantities' (line 2257)
+    [384, 920) 'mlock' (line 2355)
+    [1056, 3120) 'lockset' (line 2360)
+    [3248, 3252) 'ref.tmp126' (line 2362)
+    [3264, 3268) 'ref.tmp152' (line 2366)
+    [3280, 3441) 'v_c_temp' (line 2378)
+    [3520, 3621) 'v_d_temp' (line 2394) <== Memory access at offset 3441 partially underflows this variable
+    [3664, 3765) 'v_d_new' (line 2408)
+    [3808, 3893) 'v_i_temp.sroa.6' (line 2439)
+HINT: this may be a false positive if your program uses some custom stack unwind mechanism, swapcontext or vfork
+      (longjmp and C++ exceptions *are* supported)
+Thread T140 created by T0 here:
+    #0 0x61845b519a25 in pthread_create (/workspace/build_docker/dbtest+0x175a25) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+    #1 0x61845bc86c4f in std::__1::__libcpp_thread_create(unsigned long*, void* (*)(void*), void*) /usr/lib/llvm-18/bin/../include/c++/v1/__threading_support:317:10
+    #2 0x61845bc86c4f in std::__1::thread::thread<void (ndb_thread::*)(), ndb_thread*, void>(void (ndb_thread::*&&)(), ndb_thread*&&) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:212:14
+    #3 0x61845bc86837 in ndb_thread::startBind(int) /workspace/src/mako/thread.cc:26:20
+    #4 0x61845bc8a4d1 in bench_runner::run() /workspace/src/mako/benchmarks/bench.cc:495:16
+    #5 0x61845ba74a21 in tpcc_do_test(abstract_db*, int, char**, int, bench_runner*) /workspace/src/mako/benchmarks/tpcc.cc:3728:31
+    #6 0x61845b575182 in start_workers_tpcc(int, abstract_db*, int, bool, int, bench_runner*) /workspace/src/mako/benchmarks/common2.h:68:23
+    #7 0x61845b57d41f in run_workers(abstract_db*) /workspace/src/mako/benchmarks/dbtest.cc:308:3
+    #8 0x61845b57d41f in main /workspace/src/mako/benchmarks/dbtest.cc:556:7
+    #9 0x7332878f31c9 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+    #10 0x7332878f328a in __libc_start_main csu/../csu/libc-start.c:360:3
+    #11 0x61845b499264 in _start (/workspace/build_docker/dbtest+0xf5264) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+
+SUMMARY: AddressSanitizer: stack-buffer-overflow (/workspace/build_docker/dbtest+0x18dff7) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f) in __asan_memcpy
+Shadow bytes around the buggy address:
+  0x73320fe86b00: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8
+  0x73320fe86b80: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8
+  0x73320fe86c00: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f2 f2 f2 f2 f2 f2
+  0x73320fe86c80: f2 f2 f2 f2 f2 f2 f2 f2 f2 f2 f8 f2 f8 f2 00 00
+  0x73320fe86d00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x73320fe86d80: 00 00[01]f2 f2 f2 f2 f2 f2 f2 f2 f2 f8 f8 f8 f8
+  0x73320fe86e00: f8 f8 f8 f8 f8 f8 f8 f8 f8 f2 f2 f2 f2 f2 f8 f8
+  0x73320fe86e80: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f2 f2 f2 f2 f2
+  0x73320fe86f00: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f3 f3 f3 f3 f3
+  0x73320fe86f80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x73320fe87000: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+=================================================================
+==787==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x52b0000925e3 at pc 0x61845bab4c39 bp 0x73320fe84060 sp 0x73320fe84058
+READ of size 4 at 0x52b0000925e3 thread T140
+    #0 0x61845bab4c38 in serializer<float, true>::read(unsigned char const*, float*) /workspace/src/mako/benchmarks/../record/serializer.h:82:12
+    #1 0x61845bab4c38 in encoder<customer::value>::encode_read(unsigned char const*, customer::value*) const /workspace/src/mako/benchmarks/tpcc.h:69:1
+    #2 0x61845ba69f7a in encoder<customer::value>::read(unsigned char const*, customer::value*) const /workspace/src/mako/benchmarks/tpcc.h:69:1
+    #3 0x61845ba69f7a in encoder<customer::value>::read(char const*, customer::value*) const /workspace/src/mako/benchmarks/tpcc.h:69:1
+    #4 0x61845ba69f7a in customer::value const* Decode<customer::value>(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, customer::value&) /workspace/src/mako/benchmarks/../record/encoder.h:45:14
+    #5 0x61845ba69f7a in tpcc_worker::txn_payment() /workspace/src/mako/benchmarks/tpcc.cc:2997:7
+    #6 0x61845bc87bd9 in bench_worker::run() /workspace/src/mako/benchmarks/bench.cc:296:26
+    #7 0x61845bc86dd4 in decltype(*std::declval<ndb_thread*>().*std::declval<void (ndb_thread::*)()>()()) std::__1::__invoke<void (ndb_thread::*)(), ndb_thread*, void>(void (ndb_thread::*&&)(), ndb_thread*&&) /usr/lib/llvm-18/bin/../include/c++/v1/__type_traits/invoke.h:312:25
+    #8 0x61845bc86dd4 in void std::__1::__thread_execute<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*, 2ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>&, std::__1::__tuple_indices<2ul>) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:193:3
+    #9 0x61845bc86dd4 in void* std::__1::__thread_proxy<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (ndb_thread::*)(), ndb_thread*>>(void*) /usr/lib/llvm-18/bin/../include/c++/v1/__thread/thread.h:202:3
+    #10 0x61845b531b9c in asan_thread_start(void*) asan_interceptors.cpp.o
+    #11 0x733287965aa3 in start_thread nptl/pthread_create.c:447:8
+    #12 0x7332879f2a63 in clone misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:100
+
+0x52b0000925e3 is located 3 bytes after 25568-byte region [0x52b00008c200,0x52b0000925e0)
+allocated by thread T0 here:
+    #0 0x61845b5726d1 in operator new(unsigned long) (/workspace/build_docker/dbtest+0x1ce6d1) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+    #1 0x61845ba8a269 in tpcc_bench_runner::make_workers() /workspace/src/mako/benchmarks/tpcc.cc:3656:11
+    #2 0x61845bc8a436 in bench_runner::run() /workspace/src/mako/benchmarks/bench.cc:487:42
+    #3 0x61845ba74a21 in tpcc_do_test(abstract_db*, int, char**, int, bench_runner*) /workspace/src/mako/benchmarks/tpcc.cc:3728:31
+    #4 0x61845b575182 in start_workers_tpcc(int, abstract_db*, int, bool, int, bench_runner*) /workspace/src/mako/benchmarks/common2.h:68:23
+    #5 0x61845b57d41f in run_workers(abstract_db*) /workspace/src/mako/benchmarks/dbtest.cc:308:3
+    #6 0x61845b57d41f in main /workspace/src/mako/benchmarks/dbtest.cc:556:7
+    #7 0x7332878f31c9 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+    #8 0x7332878f328a in __libc_start_main csu/../csu/libc-start.c:360:3
+    #9 0x61845b499264 in _start (/workspace/build_docker/dbtest+0xf5264) (BuildId: dbef10126188f2caed790c0fcb494d14a7bb7d2f)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /workspace/src/mako/benchmarks/../record/serializer.h:82:12 in serializer<float, true>::read(unsigned char const*, float*)
+Shadow bytes around the buggy address:
+  0x52b000092300: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x52b000092380: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x52b000092400: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x52b000092480: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x52b000092500: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x52b000092580: 00 00 00 00 00 00 00 00 00 00 00 00[fa]fa fa fa
+  0x52b000092600: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x52b000092680: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x52b000092700: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x52b000092780: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x52b000092800: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==787==ABORTING
