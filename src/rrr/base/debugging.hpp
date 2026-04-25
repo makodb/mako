@@ -1,5 +1,8 @@
 module;
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
 // @c-compat-added
 #include <cstddef>
 #include <cstdint>
@@ -25,7 +28,6 @@ module;
 
 export module rrr:base.debugging;
 
-import std;
 
 
 export namespace rrr {

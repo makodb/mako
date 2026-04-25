@@ -1,12 +1,9 @@
+#include <std_compat.hpp>
 #include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
-#include <random>
-#include <limits>
-#include <cmath>
-import std;
 import rrr;
 
 using namespace rrr;

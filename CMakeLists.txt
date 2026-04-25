@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.30)
 
-# MUST be set BEFORE project() so the toolchain probe recognizes the
-# experimental `import std;` feature and populates __CMAKE::CXX23.
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+# `import std;` was retired in favor of <std_compat.hpp> aggregate header
+# (see src/rrr/std_compat.hpp). The aggregate avoids the proxy.h
+# add_tuple_reduction ambiguity that surfaced when modules and
+# header-included templates both reached the same TU. Leaving the
+# experimental key unset; CMAKE_CXX_MODULE_STD stays OFF.
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -51,9 +53,10 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_link_options(-stdlib=libc++ -lc++abi)
 endif()
 
-# C++23 `import std;` support. libc++ 19 ships std.cppm; CMake 3.30+ builds it
-# automatically. The EXPERIMENTAL key was accepted above (before project()).
-set(CMAKE_CXX_MODULE_STD ON)
+# `import std;` retired in favor of <std_compat.hpp>. Keep
+# CMAKE_CXX_MODULE_STD OFF so CMake doesn't try to materialize std.pcm
+# for targets that no longer reference the std module.
+set(CMAKE_CXX_MODULE_STD OFF)
 
 # Check compiler and version.
 # The ngcpp/proxy dependency requires GCC >= 13.1 or Clang >= 17.

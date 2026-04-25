@@ -1,5 +1,8 @@
 module;
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
 // @c-compat-added
 #include <cstddef>
 #include <cstdint>
@@ -30,7 +33,6 @@ module;
 
 export module rrr:misc.alock;
 
-import std;
 
 
 import :base.all;

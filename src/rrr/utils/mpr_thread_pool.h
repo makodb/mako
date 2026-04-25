@@ -1,5 +1,8 @@
 module;
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
 // @c-compat-added
 #include <cstddef>
 #include <cstdint>
@@ -18,7 +21,6 @@ module;
 
 export module rrr:utils.mpr_thread_pool;
 
-import std;
 
 
 import :utils.logger;

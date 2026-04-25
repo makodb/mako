@@ -1,5 +1,8 @@
 module;
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
 // @c-compat-added
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +23,6 @@ module;
 
 module rrr:impl.reactor.epoll_wrapper;
 
-import std;
 
 import rrr;
 
