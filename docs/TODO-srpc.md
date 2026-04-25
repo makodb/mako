@@ -636,3 +636,71 @@ Replace virtual inheritance with the [proxy library](https://github.com/ngcpp/pr
     - Verified on 2026-04-16: All remaining ref_copy/release calls go through compatibility shims added in Leaves 3 and 4. Row and snapshot_group provide shims that return safe values (this/0) instead of actual reference counting. This is intentional for gradual migration - actual ownership transfer via Arc<T> will be implemented separately.
     - Verification: build succeeds (memdb, txlog_core_obj), RPC tests pass (test_marshal, test_rpc_errors, test_rpc_pollthread_proxy_storage, test_rpc_service_proxy_facade, rpcbench).
     - Phase 4 DoD: COMPLETE.
+
+---
+
+## Workstream K: Build SRPC on Top of a Cross-Machine Channel Layer (P1)
+
+### Goal
+Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC logic no longer directly manipulates sockets, stream framing, or poll registration.
+
+### Architecture constraints
+- [ ] Keep the current SRPC wire format unchanged during migration (no protocol break in this workstream).
+- [ ] Channel layer owns: socket lifecycle, epoll/poll integration, partial read/write handling, frame boundaries, close/error reporting.
+- [ ] RPC layer owns: xid/rpc_id semantics, request queueing, future lifecycle, timeout/retry/reconnect, heartbeat, circuit breaker, metrics.
+- [ ] Avoid split-brain reconnection behavior: reconnect policy remains in RPC only; channel reports connection state and errors but does not apply independent retry policy.
+
+### Code TODO
+- [ ] *high* Add new channel core interfaces in flat `src/rrr/rpc/` layout.
+  - Add `src/rrr/rpc/channel.hpp` with `ChannelConnection`, `ChannelListener`, `ChannelFactory`, `ChannelFrame`, `ChannelError`, and callback contracts (`on_frame`, `on_closed`, `on_error`).
+  - Document ordering/backpressure/ownership semantics in the header comments (especially callback threading and lifetime guarantees).
+  - Add initial CMake wiring for the new channel sources and tests.
+- [ ] *high* Extract stream framing into a reusable channel codec.
+  - Add `src/rrr/rpc/frame_codec.hpp` + `src/rrr/rpc/frame_codec.cpp`.
+  - Move/centralize frame header encode/decode logic currently coupled to RPC request/response stream handling (including response extended-header compatibility bits).
+  - Add explicit behavior for fragmented reads and coalesced writes (N frames in one read buffer).
+- [ ] *high* Implement TCP channel backend on existing poll thread infrastructure.
+  - Add `src/rrr/rpc/tcp_channel.hpp` + `src/rrr/rpc/tcp_channel.cpp`.
+  - Implement connect/listen/accept/send/flush/close using `PollThread` + `PollableProxy` plumbing.
+  - Ensure idempotent close and deterministic callback ordering (`on_closed` exactly once).
+- [ ] *high* Refactor RPC client to depend on `ChannelConnection` instead of raw socket APIs.
+  - Update `src/rrr/rpc/client.hpp` and `src/rrr/rpc/client.cpp` to remove direct socket read/write framing responsibilities from `ClientConnection`.
+  - Keep current public `Client` API unchanged.
+  - Keep all reliability features (retry/reconnect/heartbeat/circuit breaker/request buffering) in RPC layer, now driven by channel events.
+- [ ] *high* Refactor RPC server to depend on `ChannelListener`/`ChannelConnection`.
+  - Update `src/rrr/rpc/server.hpp` and `src/rrr/rpc/server.cpp` so accepted connections enter RPC dispatch through channel callbacks.
+  - Remove server-side raw socket stream parsing from RPC code paths.
+  - Keep service registration and dispatch contracts unchanged.
+- [ ] *medium* Add in-memory channel backend for deterministic tests.
+  - Add `src/rrr/rpc/inmemory_channel.hpp` (+ optional `.cpp`).
+  - Reuse switchboard-style semantics similar to Raft channel transport for drop/partition fault injection in SRPC tests.
+  - Ensure same callback contract as TCP channel backend.
+- [ ] *medium* Add migration switch and dual-path verification.
+  - Add a temporary runtime or build switch (`SRPC_USE_CHANNEL`) to choose legacy socket path vs channel path during migration.
+  - Run existing SRPC test suites in both modes until parity is demonstrated.
+  - Keep this switch only during migration; remove after parity closure.
+- [ ] *medium* Remove legacy direct socket path from SRPC after parity.
+  - Delete or retire redundant raw socket/stream code in RPC client/server once channel path is the only path.
+  - Remove temporary migration flag and dead compatibility glue.
+
+### Tests TODO
+- [ ] Add unit tests for channel core contracts.
+  - `test/rpc_channel_contract_test.cc`: lifecycle callbacks, close idempotence, send-after-close behavior.
+  - `test/rpc_frame_codec_test.cc`: fragmentation, multi-frame decode, malformed frame handling.
+- [ ] Add integration tests for TCP channel.
+  - `test/rpc_channel_tcp_integration_test.cc`: connect/listen/accept, bidirectional frame exchange, disconnect behavior.
+  - Add restart/disconnect tests verifying RPC reconnect logic still works when transport events come through channel callbacks.
+- [ ] Add in-memory channel tests.
+  - `test/rpc_channel_inmemory_test.cc`: deterministic ordering, drop/partition fault injection, closure semantics.
+- [ ] Run existing RPC reliability/integration suites with channel mode enabled.
+  - `ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_transport_backend|stress_transport_backend|test_transport_integration|test_erpc_integration)$'`
+  - Ensure no regressions in graceful shutdown, retry/reconnect, heartbeat, request buffering, and restart detection.
+- [ ] Add compatibility test for wire protocol continuity.
+  - New client (channel-backed) <-> old server (legacy path) and old client <-> new server if dual path is temporarily retained.
+
+### DoD
+- [ ] `src/rrr/rpc/client.*` and `src/rrr/rpc/server.*` no longer own raw socket stream framing logic.
+- [ ] Channel layer is the single owner of TCP stream parsing/serialization boundaries.
+- [ ] Existing SRPC public API remains source-compatible for current callsites.
+- [ ] Full RPC-focused test suite passes in channel mode.
+- [ ] Legacy direct-socket RPC path and migration switch are removed after parity sign-off.
