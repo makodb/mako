@@ -256,13 +256,29 @@ class RaftServer : public TxLogServer {
   // Dedicated apply fiber and background apply thread (single-Raft or multi-Raft experiment).
   void StartApplyFiber();
 
+  // Single apply thread drains apply_queue_ and calls app_next_. The heavy DB
+  // replay work is NOT done here anymore — it's dispatched to a ReplayPool.
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
   std::mutex apply_queue_mtx_;
   std::deque<std::pair<slotid_t, shared_ptr<Marshallable>>> apply_queue_;
 
+  // Evidence-collection counters (plain uint64_t; only the apply thread touches them).
+  uint64_t apply_us_sum_ = 0;
+  uint64_t apply_us_min_ = UINT64_MAX;
+  uint64_t apply_us_max_ = 0;
+  uint64_t apply_count_timed_ = 0;
+  size_t   apply_queue_peak_ = 0;
+
   void StartApplyThread();
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
+#else
+  // Multi-Raft: same evidence counters for the inline applyLogs() path.
+  uint64_t apply_us_sum_ = 0;
+  uint64_t apply_us_min_ = UINT64_MAX;
+  uint64_t apply_us_max_ = 0;
+  uint64_t apply_count_timed_ = 0;
+  size_t   apply_backlog_peak_ = 0;
 #endif
 
   // @safe - timer and atomic operations are safe internal operations

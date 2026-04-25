@@ -608,6 +608,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/abstract_db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/replay_pool.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_proxy.cc"
 )

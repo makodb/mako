@@ -476,7 +476,6 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
       apply_queue_.push_back(std::move(entry));
     }
   }
-  // Log if we couldn't enqueue the full range
   if (first_missing > 0) {
     Log_info("[ENQUEUE] Site %d: gap at slot %lu (range %lu..%lu, enqueued %zu)",
              site_id_, first_missing, old_commit + 1, new_commit, batch.size());
@@ -493,16 +492,19 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
   }
 }
 
-// SINGLE-RAFT: Background OS thread for entry application.
-// Drains from apply_queue_ (populated by OnAppendEntries) to avoid contention on mtx_.
+// SINGLE-RAFT: single background apply thread. It drains apply_queue_ and calls
+// app_next_ for each entry. app_next_ on a follower does only fast Raft
+// bookkeeping (timestamp update) and dispatches the heavy Masstree replay work
+// to a separate ReplayPool, so this thread is cheap and never the bottleneck.
 void RaftServer::StartApplyThread() {
   apply_thread_running_.store(true);
   apply_thread_ = std::thread([this]() {
     Log_info("[APPLY-THREAD] Site %d: Started background apply thread", site_id_);
     uint64_t apply_count = 0;
     auto last_log_time = std::chrono::steady_clock::now();
+    auto window_start = std::chrono::steady_clock::now();
+    uint64_t window_count = 0;
     while (!stop_ && apply_thread_running_.load()) {
-      // Drain entries from the queue
       std::pair<slotid_t, shared_ptr<Marshallable>> entry;
       bool got_entry = false;
       size_t queue_size = 0;
@@ -515,33 +517,41 @@ void RaftServer::StartApplyThread() {
           got_entry = true;
         }
       }
+      if (queue_size > apply_queue_peak_) apply_queue_peak_ = queue_size;
 
       if (got_entry) {
         slotid_t id = entry.first;
         auto& log_entry = entry.second;
-        // Log entries near the stall point for debugging
-        if (id >= 470 && id <= 500) {
-          Log_info("[APPLY-THREAD] Site %d: ABOUT TO APPLY entry %lu (queue_remaining=%zu)",
-                   site_id_, id, queue_size);
-        }
-        // @unsafe - callback may have side effects
         RuleWitnessGC(log_entry);
+        auto t0 = std::chrono::steady_clock::now();
         app_next_(id, log_entry);
-        if (id >= 470 && id <= 500) {
-          Log_info("[APPLY-THREAD] Site %d: DONE APPLYING entry %lu", site_id_, id);
-        }
+        auto dt_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        apply_us_sum_ += dt_us;
+        if ((uint64_t)dt_us < apply_us_min_) apply_us_min_ = dt_us;
+        if ((uint64_t)dt_us > apply_us_max_) apply_us_max_ = dt_us;
+        apply_count_timed_++;
         executeIndex = id;
         apply_count++;
+        window_count++;
 
-        // Log progress periodically
-        if (apply_count % 100 == 0) {
-          Log_info("[APPLY-THREAD] Site %d: applied %lu entries, executeIndex=%lu queue_remaining=%zu",
-                   site_id_, apply_count, executeIndex, queue_size);
+        if (apply_count % 500 == 0) {
+          auto now = std::chrono::steady_clock::now();
+          double window_sec = std::chrono::duration_cast<std::chrono::microseconds>(
+              now - window_start).count() / 1e6;
+          double window_eps = window_sec > 0 ? window_count / window_sec : 0.0;
+          uint64_t mean_us = apply_count_timed_ > 0
+              ? apply_us_sum_ / apply_count_timed_ : 0;
+          Log_info("[APPLY-TIMING] Site %d count=%lu mean_us=%lu min_us=%lu "
+                   "max_us=%lu peak_queue=%zu window_eps=%.1f executeIndex=%lu",
+                   site_id_, apply_count_timed_, mean_us,
+                   apply_us_min_ == UINT64_MAX ? 0 : apply_us_min_,
+                   apply_us_max_, apply_queue_peak_, window_eps, executeIndex);
+          window_start = now;
+          window_count = 0;
+          apply_queue_peak_ = 0;
         }
 
-        // Cleanup old log entries periodically to prevent memory buildup.
-        // Only erase from the map — skip DestroyTx since the apply callback
-        // may still reference transaction state on this thread.
         if (id % 5000 == 0) {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
           slotid_t cutoff = (executeIndex > 10000) ? executeIndex - 10000 : 0;
@@ -551,10 +561,10 @@ void RaftServer::StartApplyThread() {
           }
         }
       } else {
-        // Periodic heartbeat when queue is empty
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5) {
-          Log_info("[APPLY-THREAD] Site %d: IDLE executeIndex=%lu commitIndex=%lu queue_size=%zu applied_total=%lu",
+          Log_info("[APPLY-THREAD] Site %d: IDLE executeIndex=%lu commitIndex=%lu "
+                   "queue_size=%zu applied_total=%lu",
                    site_id_, executeIndex, commitIndex, queue_size, apply_count);
           last_log_time = now;
         }
@@ -822,6 +832,15 @@ void RaftServer::applyLogs() {
     // Clear the pending flag before processing
     apply_pending_.store(false, std::memory_order_release);
 
+#ifndef SINGLE_RAFT_INSTANCE
+    // Track backlog at the start of this pass — analogue of apply_queue_ depth.
+    size_t backlog = (commitIndex > executeIndex) ? (commitIndex - executeIndex) : 0;
+    if (backlog > apply_backlog_peak_) apply_backlog_peak_ = backlog;
+    static thread_local auto window_start_ml = std::chrono::steady_clock::now();
+    static thread_local uint64_t window_count_ml = 0;
+    static thread_local uint64_t apply_count_ml = 0;
+#endif
+
     // Apply all committed logs
     for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
       auto next_instance = GetRaftInstance(id);
@@ -829,8 +848,38 @@ void RaftServer::applyLogs() {
         // @unsafe
         {
         RuleWitnessGC(next_instance->log_);
+#ifndef SINGLE_RAFT_INSTANCE
+        auto t0_ml = std::chrono::steady_clock::now();
+        app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
+        auto dt_ml_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0_ml).count();
+        apply_us_sum_ += dt_ml_us;
+        if ((uint64_t)dt_ml_us < apply_us_min_) apply_us_min_ = dt_ml_us;
+        if ((uint64_t)dt_ml_us > apply_us_max_) apply_us_max_ = dt_ml_us;
+        apply_count_timed_++;
+        apply_count_ml++;
+        window_count_ml++;
+        executeIndex = id;
+        if (apply_count_ml % 500 == 0) {
+          auto now_ml = std::chrono::steady_clock::now();
+          double ws = std::chrono::duration_cast<std::chrono::microseconds>(
+              now_ml - window_start_ml).count() / 1e6;
+          double eps = ws > 0 ? window_count_ml / ws : 0.0;
+          uint64_t mean_us = apply_count_timed_ > 0
+              ? apply_us_sum_ / apply_count_timed_ : 0;
+          Log_info("[APPLY-TIMING] Site %d par %d count=%lu mean_us=%lu min_us=%lu "
+                   "max_us=%lu peak_backlog=%zu window_eps=%.1f executeIndex=%lu",
+                   site_id_, partition_id_, apply_count_timed_, mean_us,
+                   apply_us_min_ == UINT64_MAX ? 0 : apply_us_min_,
+                   apply_us_max_, apply_backlog_peak_, eps, (uint64_t)executeIndex);
+          window_start_ml = now_ml;
+          window_count_ml = 0;
+          apply_backlog_peak_ = 0;
+        }
+#else
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;
+#endif
         }
       } else {
         break;

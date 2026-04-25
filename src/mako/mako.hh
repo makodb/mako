@@ -22,6 +22,7 @@
 
 #include "benchmarks/bench.h"
 #include "benchmarks/sto/sync_util.hh"
+#include "replay_pool.h"
 #include "benchmarks/mbta_wrapper.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/common2.h"
@@ -317,20 +318,31 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         // Followers don't persist to disk, so immediately update disk_timestamp_ too
         sync_util::sync_logger::disk_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
 #endif
-        uint32_t w = sync_util::sync_logger::retrieveW();
 
-        // SINGLE-RAFT FIX: During loading phase (before noops), bypass safety_check.
-        // Loading entries are deterministic committed data that don't need watermark
-        // ordering protection. In single-Raft, loading tail entries can arrive after
-        // ADVANCER_MARKERs (which set worker_running=true and reset watermark), causing
-        // them to fail safety_check and enter un_replay_logs where drain replay stalls.
-        bool loading_phase = sync_util::sync_logger::noops_cnt.load(memory_order_acquire) == 0;
-        if (loading_phase || sync_util::sync_logger::safety_check(commit_info.timestamp, w)) {
-          benchConfig.incrementReplayBatch();
-          treplay_in_same_thread_opt_mbta_v2(par_id, (char*)log, len, db, benchConfig.getNthreads());
+        // Hand the heavy Masstree replay work to the ReplayPool so the Raft
+        // apply thread stays fast. The pool returns as soon as the entry is
+        // queued; actual replay happens on a worker thread.
+        if (mako::g_replay_pool) {
+          char* copy = static_cast<char*>(malloc(len));
+          assert(copy != nullptr);
+          memcpy(copy, log, len);
+          mako::g_replay_pool->Enqueue(par_id, copy, len, slot_id,
+                                       commit_info.timestamp);
           status = mako::PaxosStatus::STATUS_REPLAY_DONE;
         } else {
-          status = mako::PaxosStatus::STATUS_SAFETY_FAIL;
+          // Pool not initialised — fall back to synchronous inline replay.
+          uint32_t w = sync_util::sync_logger::retrieveW();
+          bool loading_phase =
+              sync_util::sync_logger::noops_cnt.load(memory_order_acquire) == 0;
+          if (loading_phase ||
+              sync_util::sync_logger::safety_check(commit_info.timestamp, w)) {
+            benchConfig.incrementReplayBatch();
+            treplay_in_same_thread_opt_mbta_v2(par_id, (char*)log, len, db,
+                                               benchConfig.getNthreads());
+            status = mako::PaxosStatus::STATUS_REPLAY_DONE;
+          } else {
+            status = mako::PaxosStatus::STATUS_SAFETY_FAIL;
+          }
         }
       }
     }
@@ -501,9 +513,19 @@ static void setup_paxos_leader_callbacks(vector<pair<uint32_t, uint32_t>>& advan
 static void setup_paxos_follower_callbacks(TSharedThreadPoolMbta& replicated_db)
 {
   if (!BenchmarkConfig::getInstance().getIsReplicated()) { return ; }
-    for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
-      register_paxos_follower_callback(replicated_db, i);
-    }
+
+  // Initialize the ReplayPool once, before callbacks are registered. The pool
+  // lets us move the heavy Masstree replay work off the Raft apply thread and
+  // run it on N worker threads in parallel (sharded by par_id). N is read from
+  // env var MAKO_REPLAY_THREADS (default 1 = previous synchronous behaviour).
+  if (!mako::g_replay_pool) {
+    mako::g_replay_pool.reset(new mako::ReplayPool(&replicated_db));
+    mako::g_replay_pool->Start(/*n=*/-1);  // -1 → read MAKO_REPLAY_THREADS env
+  }
+
+  for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
+    register_paxos_follower_callback(replicated_db, i);
+  }
 }
 
 static void run_latency_tracking()
