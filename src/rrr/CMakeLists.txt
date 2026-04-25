@@ -12,6 +12,7 @@ set(RRR_MODULE_INTERFACE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.hpp

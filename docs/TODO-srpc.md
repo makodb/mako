@@ -651,10 +651,15 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
 - [ ] Avoid split-brain reconnection behavior: reconnect policy remains in RPC only; channel reports connection state and errors but does not apply independent retry policy.
 
 ### Code TODO
-- [ ] *high* Add new channel core interfaces in flat `src/rrr/rpc/` layout.
+- [x] *high* Add new channel core interfaces in flat `src/rrr/rpc/` layout.
   - Add `src/rrr/rpc/channel.hpp` with `ChannelConnection`, `ChannelListener`, `ChannelFactory`, `ChannelFrame`, `ChannelError`, and callback contracts (`on_frame`, `on_closed`, `on_error`).
   - Document ordering/backpressure/ownership semantics in the header comments (especially callback threading and lifetime guarantees).
   - Add initial CMake wiring for the new channel sources and tests.
+  - Implemented on 2026-04-25 in `src/rrr/rpc/channel.hpp` as a C++23 named module partition `rrr:rpc.channel`. Defines `ChannelError` enum (with stringifier), `ChannelFrame`, `OnFrameCallback` / `OnClosedCallback` / `OnErrorCallback` / `OnAcceptCallback` aliases, and three proxy facades (`ChannelConnectionFacade`, `ChannelListenerFacade`, `ChannelFactoryFacade`) with `using …Proxy = pro::proxy<…>`. Header documents threading rules, ordering guarantees, idempotent close, and `WouldBlock` backpressure semantics.
+  - Re-exported from `src/rrr/rrr.hpp` and registered in `RRR_MODULE_INTERFACE_FILES`.
+  - Guard test `src/rrr/tests/rpc_channel_facade_test.cc` (CTest target `test_rpc_channel_facade`) confirms each facade dispatches correctly through a fake backend (forwarding for all ops, callback delivery, factory result types).
+  - Design rationale documented in `docs/dev/srpc_channel_layer.md`.
+  - Verification: full RPC-focused `ctest` suite green; new test passes 6/6.
 - [ ] *high* Extract stream framing into a reusable channel codec.
   - Add `src/rrr/rpc/frame_codec.hpp` + `src/rrr/rpc/frame_codec.cpp`.
   - Move/centralize frame header encode/decode logic currently coupled to RPC request/response stream handling (including response extended-header compatibility bits).
