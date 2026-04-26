@@ -510,3 +510,103 @@ factory produces connections and listeners that conform to
 and exchange frames end-to-end. The remaining workstream-K leaves
 refactor `client.cpp` and `server.cpp` to consume this factory
 instead of their inline socket code.
+
+---
+
+# Why callback primitive + fiber facade (Workstream K, sub-leaf 4c plan)
+
+A natural question once the channel layer is complete: should the
+primitive (`ChannelConnection::set_on_frame(callback)`) be replaced
+by a fiber-blocking interface (`channel.recv_frame()` suspends the
+calling fiber)? The latter is more ergonomic — code reads top-to-
+bottom — and the per-connection fiber stack (~8 KB) is negligible
+at the RPC layer's connection counts.
+
+The decision: **keep the callback at the primitive, add a
+`FiberChannel` wrapper for fiber-style consumers.**
+
+## Why callbacks at the primitive
+
+1. **Backend simplicity**. Every backend (TCP, in-memory, future
+   RDMA) needs to satisfy the callback facade. A backend doesn't
+   need to know about fibers or scheduling — it just dispatches
+   bytes through callbacks. Forcing the primitive to be fiber-
+   blocking would require every backend to integrate with the
+   fiber runtime.
+2. **Type erasure stays clean**. The proxy facade (`pro::proxy<F>`)
+   dispatches `set_on_frame(...)` as a regular non-suspending
+   method. Suspension semantics in the facade are awkward to type-
+   erase and would leak fiber concepts into every consumer.
+3. **Reactor integration is direct**. The poll thread is a
+   callback dispatcher by design (epoll → handler). Layering
+   fibers directly on top of epoll means the poll thread schedules
+   fibers, which then have to park again — a hop that adds nothing.
+4. **Non-fiber consumers still work**. Tests, lightweight tooling,
+   and code paths that already use futures (the existing RPC
+   client) can use the callback primitive directly.
+
+## Why a fiber facade on top
+
+The cost of *not* having fiber-style ergonomics shows up where the
+RPC layer wants to write loop-shaped code:
+
+```cpp
+// Without a fiber facade — callback unwinding:
+channel.set_on_frame([this](const ChannelFrame& f) {
+    decode_response(f);
+    notify_pending_future(f);
+});
+
+// With a fiber facade — top-to-bottom:
+while (auto f = fiber_channel.recv_frame()) {
+    decode_response(*f);
+    notify_pending_future(*f);
+}
+```
+
+For complex multi-step protocols (handshakes, streaming RPC), the
+fiber form composes much better. So the workstream provides a thin
+wrapper:
+
+```cpp
+class FiberChannel {
+public:
+    explicit FiberChannel(ChannelConnectionProxy ch);
+    rusty::Option<OwnedFrame> recv_frame();   // suspends fiber until frame or close
+    ChannelError send_frame(const ChannelFrame& f);  // forwards (non-suspending)
+    void close();
+    bool is_closed() const;
+private:
+    ChannelConnectionProxy             ch_;
+    SpinMutex<std::deque<OwnedFrame>>  queue_;
+    IntEvent                            event_;     // signalled on enqueue / close
+    rusty::Cell<bool>                  closed_;
+};
+```
+
+The implementation installs callbacks on the wrapped proxy; the
+on_frame callback enqueues a heap-copied frame and increments the
+`IntEvent`, waking any parked recv loop. `recv_frame()` checks the
+queue, and if empty waits via `event_.wait_until_gte(1)` then
+resets. Costs one heap allocation per inbound frame (the
+`OwnedFrame` copy), which is the same allocation profile the
+existing RPC layer already pays when it copies frame bytes into a
+Marshal during `handle_read`.
+
+## How the SRPC client will use it (sub-leaf 4c2)
+
+`ClientConnection::bind_channel` constructs a `FiberChannel` over
+the proxy and spawns a recv-loop fiber. The fiber's body is the
+existing inline frame-decode loop from `handle_read` — parse
+`[v64 xid][v32 error][optional ext_header][payload]`, look up
+`pending_fu_[xid]`, fill the future, fire `notify_ready`. The
+existing `await()` ergonomics on futures stay intact: code that
+calls `client.request(...).await()` continues to work; the
+fiber-blocking is now also visible at the *recv* end of the
+pipeline, not just at the await end.
+
+This is the trade-off articulated in the design discussion: lock-
+in is reversible (we could later push the fiber primitive into the
+facade), but adding the fiber facade as a wrapper *now* gives the
+ergonomics where they matter without forcing all backends to be
+fiber-aware.
