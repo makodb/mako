@@ -1095,6 +1095,16 @@ public:
     // - Marshal operator<< (serialization)
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
+        // Channel-mode dispatch (Workstream K, sub-leaf 4b). When a
+        // ChannelConnectionProxy has been bound, the channel layer
+        // owns the connection's health; the legacy `state_machine_`
+        // gating is bypassed because the channel proxy reports its
+        // own closed-state. Sub-leaves 4d / 4e wire reconnect logic
+        // back into this path.
+        if (is_channel_mode()) {
+            return request_via_channel(rpc_id, attr, std::forward<F>(write_fn));
+        }
+
         // Check connection status - if not connected, handle buffering
         if (!state_machine_.is_connected()) {
             // Check if buffering is enabled with QUEUE behavior
@@ -1183,6 +1193,110 @@ public:
     }
 
 private:
+    // @unsafe - Dispatch a fully-marshaled frame body (without the
+    // 4-byte size prefix) through the bound channel. The proxy's
+    // underlying TcpConnection (or in-memory backend) encodes the
+    // size prefix internally via `frame_codec_encode_into`.
+    //
+    // Used by `request_via_channel` and `enqueue_heartbeat_probe`
+    // when the client is in channel mode. Returns the channel's
+    // ChannelError; callers translate to errno where needed.
+    //
+    // SAFETY: `channel_` is technically a non-const member, but
+    // `request` / `enqueue_heartbeat_probe` are `const` methods that
+    // access it through interior mutability (the proxy's underlying
+    // type — e.g. TcpConnection — synchronizes its own outbound
+    // queue, mirroring how `out_`'s SpinMutex is touched from const
+    // request paths today). The const_cast here matches that idiom.
+    ChannelError dispatch_frame_via_channel(const std::uint8_t* body_bytes,
+                                            std::size_t body_size) const {
+        if (!channel_mode_.get()) return ChannelError::ConnectionReset;
+        // @unsafe - const_cast to satisfy non-const facade method
+        ChannelConnectionProxy& mut_channel =
+            const_cast<ChannelConnectionProxy&>(channel_);
+        return mut_channel->send_frame(ChannelFrame{body_bytes, body_size});
+    }
+
+    /**
+     * Channel-mode counterpart of `request` (Workstream K, sub-leaf
+     * 4b). Mirrors the legacy fd path's bookkeeping (state checks,
+     * `pending_fu_` insert, circuit-breaker accounting, metrics) but
+     * dispatches the outbound frame through the bound
+     * `ChannelConnectionProxy` instead of the legacy `out_` Marshal +
+     * `update_mode(WRITE)` plumbing.
+     *
+     * Frame body layout matches what the legacy path emits at the
+     * payload level — `[v64 xid][i32 rpc_id][user-marshaled args]` —
+     * so the on-the-wire bytes are identical once the channel layer
+     * prepends the 4-byte size header (via
+     * `frame_codec_encode_into` inside `TcpConnection::send_frame`).
+     *
+     * On `ChannelError::WouldBlock` / transport faults, the future
+     * is removed from `pending_fu_` and the call returns `EIO`. The
+     * RPC layer's existing reconnect / circuit-breaker policy
+     * handles the lifecycle from there (sub-leaves 4d / 4e wire the
+     * close / on_error callbacks).
+     */
+    // @unsafe - Counter::next, Marshal operators, channel proxy dispatch
+    template<typename F>
+    FutureResult request_via_channel(i32 rpc_id,
+                                     const FutureAttr& attr,
+                                     F&& write_fn) const {
+        if (!allow_request_with_circuit_metrics()) {
+            return FutureResult::Err(EBUSY);
+        }
+
+        // Channel-mode connection state is owned by the channel
+        // proxy; if it reports closed, fail-fast. The legacy
+        // `state_machine_` is intentionally not consulted here —
+        // sub-leaf 4d/4e re-introduces reconnect / buffering hooks
+        // through channel callbacks.
+        {
+            auto& mut_channel = const_cast<ChannelConnectionProxy&>(channel_);
+            if (mut_channel->is_closed()) {
+                record_circuit_result(ENOTCONN);
+                return FutureResult::Err(ENOTCONN);
+            }
+        }
+
+        // @unsafe { Counter::next }
+        auto fu = Future::create(xid_counter_.next(), attr);
+
+        {
+            auto pending_guard = pending_fu_.lock().unwrap();
+            pending_guard->insert(fu->xid_, fu);
+        }
+
+        // Build frame body — no size prefix; the channel adds it.
+        Marshal body;
+        // @unsafe { Marshal operators }
+        body << v64(fu->xid_);
+        body << rpc_id;
+        write_fn(body);
+
+        const std::size_t body_size = body.content_size();
+        std::vector<std::uint8_t> body_bytes;
+        if (body_size > 0) {
+            body_bytes.resize(body_size);
+            // @unsafe { Marshal::read writes into raw buffer }
+            verify(body.read(body_bytes.data(), body_size) == body_size);
+        }
+
+        const ChannelError ch_err =
+            dispatch_frame_via_channel(body_bytes.data(), body_size);
+        if (ch_err != ChannelError::None) {
+            {
+                auto pending_guard = pending_fu_.lock().unwrap();
+                pending_guard->remove(fu->xid_);
+            }
+            record_circuit_result(EIO);
+            return FutureResult::Err(EIO);
+        }
+
+        metrics_.record_request_sent();
+        return FutureResult::Ok(fu);
+    }
+
     // @unsafe - Queue request for later replay (called when disconnected)
     // Uses Counter::next, Marshal operators, and RequestQueue
     template<typename F>

@@ -662,8 +662,33 @@ size_t ClientConnection::replay_pending_requests() {
   return replayed;
 }
 
-// @unsafe - Enqueue one internal heartbeat probe into the output buffer.
+// @unsafe - Enqueue one internal heartbeat probe into the output
+// buffer (legacy fd mode) or directly through the bound channel
+// proxy (Workstream K, sub-leaf 4b channel mode).
 void ClientConnection::enqueue_heartbeat_probe() const {
+  if (is_channel_mode()) {
+    // Channel mode: build the heartbeat frame body and dispatch
+    // through the channel proxy. The channel layer adds the 4-byte
+    // size prefix internally; the body bytes match what
+    // `set_bookmark` / `write_bookmark` would have laid out for the
+    // legacy fd path, so the wire format is identical.
+    Marshal body;
+    body << v64(xid_counter_.next());
+    body << static_cast<i32>(kInternalHeartbeatRpcId);
+    const std::size_t body_size = body.content_size();
+    std::vector<std::uint8_t> body_bytes;
+    if (body_size > 0) {
+      body_bytes.resize(body_size);
+      verify(body.read(body_bytes.data(), body_size) == body_size);
+    }
+    // Errors here are observable via the `on_error` callback when
+    // sub-leaf 4d wires it; for now we ignore the return code, same
+    // as the legacy fd path which never surfaces send-side errors
+    // from the heartbeat probe.
+    (void)dispatch_frame_via_channel(body_bytes.data(), body_size);
+    return;
+  }
+
   auto guard = out_.lock().unwrap();
   Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
   *guard << v64(xid_counter_.next());
