@@ -12,6 +12,7 @@ export import :misc.rand;
 export import :misc.stat;
 export import :reactor.fiber_impl;
 export import :rpc.channel;
+export import :rpc.frame_codec;
 export import :rpc.circuit_breaker;
 export import :rpc.connection_metrics;
 export import :rpc.connection_state;

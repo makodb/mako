@@ -1839,6 +1839,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_channel_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_rpc_channel_facade COMMAND test_rpc_channel_facade)
 
+    # SRPC channel frame-codec wire-format guard tests (Workstream K, Phase 1 leaf 2)
+    add_executable(test_rpc_frame_codec src/rrr/tests/rpc_frame_codec_test.cc)
+    target_include_directories(test_rpc_frame_codec PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_frame_codec PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_frame_codec ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    add_test(NAME test_rpc_frame_codec COMMAND test_rpc_frame_codec)
+
     add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
@@ -1928,6 +1935,12 @@ if(BUILD_TESTS)
                 --min-snippets 8
                 --snippet-timeout-sec 60
     )
+    # The docs/rpcgen snippet checks shell out to clang `-fsyntax-only`
+    # against the rrr module. Each snippet has a 60s budget, which is
+    # plenty on an idle machine but fragile under ctest contention with
+    # other compile-heavy tests. RUN_SERIAL keeps these isolated so the
+    # CPU budget is honored.
+    set_tests_properties(test_rpc_docs_snippet_compile PROPERTIES RUN_SERIAL TRUE)
     add_test(
         NAME test_rpc_rpcgen_typed_structs
         COMMAND ${PYTHON3_EXECUTABLE}
@@ -1942,6 +1955,7 @@ if(BUILD_TESTS)
                 --build-dir ${CMAKE_BINARY_DIR}
                 --cxx ${RPC_DOCS_SNIPPET_CXX}
     )
+    set_tests_properties(test_rpc_rpcgen_compile PROPERTIES RUN_SERIAL TRUE)
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks src/rrr/tests/rpc_callbacks_test.cc)
     target_include_directories(test_rpc_callbacks PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

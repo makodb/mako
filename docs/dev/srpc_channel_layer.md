@@ -126,3 +126,95 @@ target.
 - We do not pick a serialization framework — the channel sees bytes.
 
 These are tackled in subsequent leaves of Workstream K.
+
+---
+
+# Frame codec (Workstream K, leaf 2)
+
+This section documents the frame codec module, layered between the
+channel and the existing RPC stream-handling code. It is a separate
+leaf because the codec is testable as a pure byte-level component and
+because three places in the RPC layer reimplement the same framing
+rules — extracting them into one module keeps the upcoming TCP
+backend honest.
+
+## What the codec does
+
+Centralizes:
+
+- `<size:int32_t> <payload>` header encode/decode.
+- Response extended-header high-bit flag (the `kResponseHeaderExtFlag`
+  bit on the size field that indicates the response includes a
+  `<server_instance_id>` after `<error_code>`).
+- Fragmented-read assembly: real TCP reads return arbitrary chunk
+  sizes — half a header, three frames coalesced, etc. — and the
+  buffered-stream reader is the only authority on whether a frame is
+  fully present.
+- Coalesced-write helper: append N frames into a single contiguous
+  buffer for one `send(2)` syscall.
+
+Wire format is unchanged. The codec writes the i32 size in host byte
+order to match `Marshal::set_bookmark` / `write_bookmark` semantics,
+which is what the existing client/server emit. Three guard tests pin
+this byte-for-byte equivalence:
+
+- `DecodesBytesProducedByDirectI32Write` — codec parses what
+  `ClientConnection::send_request` produces.
+- `DecodesBytesProducedByEncodeResponseSize` — codec parses what
+  `ServerConnection::reply` produces (with extended header).
+- `EncoderProducesBytesParseableByInternalProtocolHelpers` — codec
+  output is parseable by the existing `internal_protocol.hpp` decoders.
+
+## Why a stateless byte-buffer API plus a buffered reader
+
+The existing code is coupled to `Marshal` (which has its own
+`peek<T>` / `set_bookmark` / `write_bookmark` machinery). A future
+TCP backend (next leaf) will have raw byte buffers, not a `Marshal`
+instance. Forcing the codec to depend on `Marshal` would have leaked
+the abstraction.
+
+So the codec's primitives are:
+
+- `frame_codec_write_header(uint8_t* out, int32_t size, bool ext)`
+  — pure memcpy of the i32 prefix; rejects out-of-range payload sizes.
+- `frame_codec_peek_header(const uint8_t* buf, size_t available, FrameHeader&)`
+  — pure memcpy of the i32 prefix; reports `NeedMoreBytes` /
+  `Complete` / `Malformed` without requiring the full payload.
+- `FrameStreamReader` — buffered byte stream with `append` /
+  `next_frame` / `consume_frame`. The single non-trivial piece of
+  state in the module.
+
+The reader's `next_frame` returns a `FrameView` whose `payload`
+aliases the internal buffer; consumers either copy or invoke
+synchronous handlers before `consume_frame`. This matches the
+`ChannelFrame` lifetime contract in `channel.hpp` (payload valid only
+during the callback).
+
+## Why lazy compaction
+
+`FrameStreamReader` advances a `read_pos_` offset rather than
+relocating bytes on every `consume_frame`. That's fine for short-
+lived connections, but for long-lived ones (which this codec
+explicitly targets) the consumed prefix would grow without bound.
+The reader compacts (memmoves the unread tail to the front) when
+the consumed prefix exceeds 64 KiB. This is enough to amortize the
+memmove across many frames while bounding slack space at a constant
+multiple of one frame.
+
+## Backpressure stays at the channel level
+
+The codec does not enforce buffer limits. When inbound bytes arrive
+faster than the RPC layer drains them, the reader's vector grows
+unboundedly — but in practice the channel's `WouldBlock` outbound
+backpressure (documented above) and the OS-level TCP receive window
+prevent that from happening at the rate that matters. Adding a
+high-water mark on the reader would be premature complexity until
+we see a real throughput case where it matters.
+
+## What this leaf delivers
+
+`src/rrr/rpc/frame_codec.hpp` + `frame_codec.cpp` + a 25-test
+contract guard suite. **No behavior change for existing callers**:
+nothing in `client.cpp` / `server.cpp` imports the codec module yet.
+The next leaf (TCP backend) will use it; the leaf after (client.cpp
+refactor) will replace the inline framing.
