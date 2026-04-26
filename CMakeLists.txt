@@ -1867,6 +1867,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_tcp_factory ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_rpc_tcp_factory COMMAND test_rpc_tcp_factory)
 
+    # SRPC client channel-binding scaffolding (Workstream K, sub-leaf 4a)
+    add_executable(test_rpc_client_channel_binding src/rrr/tests/rpc_client_channel_binding_test.cc)
+    target_include_directories(test_rpc_client_channel_binding PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_client_channel_binding PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_client_channel_binding ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    add_test(NAME test_rpc_client_channel_binding COMMAND test_rpc_client_channel_binding)
+
     add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})

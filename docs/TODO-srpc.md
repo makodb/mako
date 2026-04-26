@@ -668,10 +668,11 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
   - 25-test guard suite `src/rrr/tests/rpc_frame_codec_test.cc` (CTest target `test_rpc_frame_codec`) covers header round-trip, response extended-header flag, zero/max payload boundaries, encode rejection of negative/oversize/null-with-size, byte-by-byte fragmentation, multi-frame coalesced reads, partial-header-then-payload feeds, idempotent reset/consume, extended-header tracking across frames, post-compaction continued operation, and pre-existing-buffer non-corruption on rejection.
   - Test infrastructure: marked `test_rpc_docs_snippet_compile` and `test_rpc_rpcgen_compile` `RUN_SERIAL TRUE` in `CMakeLists.txt`. Both shell out to `clang++ -fsyntax-only` against the rrr module and have per-snippet / per-rpc-source budgets that get fragile under ctest contention; serializing keeps the budget honest without relaxing what's tested.
   - Verification: full RPC-focused `ctest` suite green (42/42); new test passes 25/25.
-- [ ] *high* Implement TCP channel backend on existing poll thread infrastructure.
+- [x] *high* Implement TCP channel backend on existing poll thread infrastructure.
   - Add `src/rrr/rpc/tcp_channel.hpp` + `src/rrr/rpc/tcp_channel.cpp`.
   - Implement connect/listen/accept/send/flush/close using `PollThread` + `PollableProxy` plumbing.
   - Ensure idempotent close and deterministic callback ordering (`on_closed` exactly once).
+  - Completed 2026-04-26 across sub-leaves 3a/3b/3c (53 new tests). The TCP backend now produces channel proxies that conform to `ChannelConnectionFacade` / `ChannelListenerFacade` / `ChannelFactoryFacade`, register themselves with a `PollThread`, and exchange frames end-to-end over `127.0.0.1` loopback. Design rationale in `docs/dev/srpc_channel_layer.md`.
   - Sub-leaves (decomposed because the full TCP backend is ~1500-2000 LOC of code + ~600 LOC of tests; each piece is independently testable):
     - [x] *high* Sub-leaf 3a — `TcpConnection` (data path).
       - One side of a connected socket pair: owns an fd, an outbound byte buffer for coalesced sends, and a `FrameStreamReader` for inbound parsing.
@@ -699,6 +700,32 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
   - Update `src/rrr/rpc/client.hpp` and `src/rrr/rpc/client.cpp` to remove direct socket read/write framing responsibilities from `ClientConnection`.
   - Keep current public `Client` API unchanged.
   - Keep all reliability features (retry/reconnect/heartbeat/circuit breaker/request buffering) in RPC layer, now driven by channel events.
+  - Sub-leaves (decomposed because `client.{hpp,cpp}` totals ~3,900 LOC with deeply intertwined fd-using code paths; the refactor is too large to commit safely in one shot, and the RPC test suite is the critical regression surface — each sub-leaf must keep it green before the next one can land):
+    - [ ] *high* Sub-leaf 4a — Channel-binding scaffolding on `ClientConnection`.
+      - Add an optional `ChannelConnectionProxy channel_` member (default null/unbound) and a `bind_channel(ChannelConnectionProxy)` post-construction setter that records the proxy and flips a `channel_mode_` latch.
+      - Add `is_channel_mode()` accessor for routing logic in subsequent leaves.
+      - **No behavior change**: legacy fd path remains the only active code path; no method dispatches through the channel yet.
+      - Tests: a compile-only unit test that verifies the new accessor + setter exist with the correct signature; existing RPC tests continue to pass unchanged.
+      - Goal: lock down the scaffolding so subsequent leaves can add behavior without touching the type signature.
+    - [ ] *high* Sub-leaf 4b — Route outbound frames through the channel when bound.
+      - In `send_request` / `enqueue_heartbeat_probe` / replay paths, when `is_channel_mode()` is true, encode the frame via `frame_codec_encode_into` into a small scratch buffer and call `channel_->send_frame(...)`. Skip the legacy `out_` `Marshal` write + `update_mode(WRITE)` plumbing.
+      - Legacy fd path stays intact for `is_channel_mode() == false`.
+      - Tests: a new test that constructs a `ClientConnection` with a fake `ChannelConnectionProxy`, calls `send_request`-equivalent, and verifies the frame arrives at the fake's `send_frame` capture.
+    - [ ] *high* Sub-leaf 4c — Drive inbound demux from `on_frame` callback.
+      - On `bind_channel`, install an `on_frame` callback that decodes the response header, looks up the pending future, and notifies it. This replicates the loop body in `handle_read`. In channel mode, `Pollable::handle_read` short-circuits to a no-op; the channel feeds frames asynchronously.
+      - Tests: fake-channel test that delivers a frame through `on_frame` and observes the future fires.
+    - [ ] *high* Sub-leaf 4d — Map `on_closed` / `on_error` to the existing close/reconnect machinery.
+      - Replace direct `handle_error` calls during fd faults with channel-callback dispatch in channel mode. Reconnect policy still lives in `ClientConnection`.
+      - Tests: fake-channel triggers `on_closed` and verifies the pending-future error fan-out + reconnect attempt fire (with reconnect mocked to a no-op so the test stays unit-scope).
+    - [ ] *high* Sub-leaf 4e — Reconnect via `ChannelFactoryProxy`.
+      - When the client has been configured with a factory, the existing `connect(addr)` and reconnect path call `factory->connect(addr)` instead of `socket(2)` + `connect(2)` + `register pollable`. Wire the new `bind_channel` automatically when the factory returns a proxy.
+      - Default factory: TCP. Tests use the in-memory factory (which lands in a sibling workstream task once that backend is ready).
+    - [ ] *high* Sub-leaf 4f — Migration switch + parity verification.
+      - Add a temporary `SRPC_USE_CHANNEL` flag (env var or config). Default off (legacy mode). When on, the client uses channel mode end-to-end.
+      - Run the full RPC test suite with the flag both ways. Both modes must be green before sub-leaf 4g lands.
+    - [ ] *high* Sub-leaf 4g — Make channel mode the default; delete the legacy fd path.
+      - Remove `socket_`, `Pollable::handle_read`/`handle_write`/`handle_error`, the `out_` Marshal-as-syscall-buffer, and the inline frame parsing.
+      - The class shrinks to its reliability layer + a thin channel binding.
 - [ ] *high* Refactor RPC server to depend on `ChannelListener`/`ChannelConnection`.
   - Update `src/rrr/rpc/server.hpp` and `src/rrr/rpc/server.cpp` so accepted connections enter RPC dispatch through channel callbacks.
   - Remove server-side raw socket stream parsing from RPC code paths.

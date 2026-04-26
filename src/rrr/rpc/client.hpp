@@ -28,6 +28,7 @@ import :reactor.epoll_wrapper;
 import :reactor.reactor;
 
 
+import :rpc.channel;
 import :rpc.connection_state;
 import :rpc.errors;
 import :rpc.reconnect_policy;
@@ -653,6 +654,25 @@ class ClientConnection {
 
     int socket_;
 
+    // Workstream K migration (sub-leaf 4a scaffolding):
+    //
+    // When the client is constructed in channel mode, `channel_` holds
+    // the `ChannelConnectionProxy` that owns the underlying TCP /
+    // in-memory / etc. channel; `socket_` then becomes irrelevant and
+    // the I/O methods (`handle_read`, `handle_write`, frame send/recv)
+    // route through the channel instead. Default-constructed
+    // `ChannelConnectionProxy` is a null proxy (no underlying object);
+    // `channel_mode_` records whether `bind_channel` has been called so
+    // the routing logic can branch without inspecting the proxy itself
+    // (which has no public "is null" predicate at the facade level).
+    //
+    // For sub-leaf 4a, no method dispatches through `channel_` yet —
+    // the field exists only as scaffolding so subsequent leaves
+    // (4b/4c/4d) can wire send / receive / close paths without
+    // changing the class shape again.
+    ChannelConnectionProxy channel_;
+    rusty::Cell<bool>      channel_mode_{false};
+
     // Transaction ID counter for RPC requests
     // mutable because Counter uses atomics internally for thread-safe interior mutability
     mutable Counter xid_counter_;
@@ -745,6 +765,32 @@ public:
 
     // @safe - Initializes connection (only stores references)
     ClientConnection(rusty::Arc<PollThread> poll_thread_worker);
+
+    /**
+     * Bind a `ChannelConnectionProxy` to this connection
+     * (Workstream K, sub-leaf 4a scaffolding).
+     *
+     * Once bound, the connection enters "channel mode": all subsequent
+     * frame I/O is expected to flow through the channel rather than
+     * the legacy fd path. **Sub-leaf 4a wires the field but does NOT
+     * yet route any method through it** — the legacy code paths
+     * remain the only active dispatch targets. Subsequent leaves
+     * (4b/4c/4d) add the routing.
+     *
+     * Calling this more than once is undefined for now (subsequent
+     * leaves may relax that). Calling it with a default-constructed
+     * (null) proxy is a no-op.
+     */
+    // @safe - Records the proxy + flips channel-mode latch.
+    void bind_channel(ChannelConnectionProxy channel) {
+        if (!channel.has_value()) return;
+        // @unsafe - move-construction over a non-trivially-copyable proxy
+        { channel_ = std::move(channel); }
+        channel_mode_.set(true);
+    }
+
+    // @safe - True if `bind_channel` has been called with a non-null proxy.
+    bool is_channel_mode() const { return channel_mode_.get(); }
 
     // @safe - Simple status check using state machine
     bool connected() const {
