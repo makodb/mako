@@ -1881,6 +1881,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_client_channel_send ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME test_rpc_client_channel_send COMMAND test_rpc_client_channel_send)
 
+    # SRPC FiberChannel wrapper tests (Workstream K, sub-leaf 4c1)
+    add_executable(test_rpc_fiber_channel src/rrr/tests/rpc_fiber_channel_test.cc)
+    target_include_directories(test_rpc_fiber_channel PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_fiber_channel PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_fiber_channel ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    add_test(NAME test_rpc_fiber_channel COMMAND test_rpc_fiber_channel)
+
     add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
