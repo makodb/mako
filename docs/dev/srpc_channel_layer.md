@@ -218,3 +218,101 @@ contract guard suite. **No behavior change for existing callers**:
 nothing in `client.cpp` / `server.cpp` imports the codec module yet.
 The next leaf (TCP backend) will use it; the leaf after (client.cpp
 refactor) will replace the inline framing.
+
+---
+
+# TCP backend — `TcpConnection` (Workstream K, leaf 3a)
+
+`TcpConnection` is the connection-side half of the TCP backend: one
+side of a connected stream socket that conforms to both
+`ChannelConnectionFacade` and the reactor's `Pollable` interface. The
+listener and factory pieces (`TcpListener`, `TcpFactory`) land in
+sub-leaves 3b and 3c.
+
+## Why two adapters on one Arc
+
+The class needs to live in two places at once — it's exposed to the
+RPC layer as a `ChannelConnectionProxy` (typed as `pro::proxy<
+ChannelConnectionFacade>`) and registered with the poll thread as a
+`PollableProxy` (typed as `pro::proxy<PollableFacade>`). Building a
+single proxy that satisfies both facades would require a combined
+facade in the channel layer, which would couple it to the reactor.
+
+Instead we keep two adapters that wrap clones of the same
+`rusty::Arc<TcpConnection>`. The Arc reference count tracks both
+proxies; destroying either one alone doesn't tear down the
+connection. This mirrors how `PollableTypedArcAdapter` already works
+elsewhere in the codebase.
+
+## Threading model
+
+Two distinct interaction modes:
+
+1. **From any thread** — the RPC layer calls `send_frame`, `flush`,
+   `close`, `is_closed`, `peer_address`, and the `set_on_*` setters.
+   These are synchronized through small `SpinMutex` guards on the
+   outbound queue and on each callback slot.
+2. **From the poll thread only** — `handle_read`, `handle_write`,
+   `handle_error`, `poll_mode`, `content_size`,
+   `check_pending_write_update`. The inbound `FrameStreamReader` is
+   touched only from this thread, so no lock there.
+
+Callbacks (`on_frame`, `on_closed`, `on_error`) always fire on the
+poll thread, matching the channel-layer contract.
+
+## Idempotent close, on_closed once
+
+`close()` and the various error paths in `handle_read` /
+`handle_write` all funnel through two latches:
+
+- `closed_` (a `rusty::Cell<bool>`) flips to true on the first call;
+  subsequent calls are no-ops.
+- `on_closed_fired_` (also a `rusty::Cell<bool>`) flips on the first
+  `on_closed` delivery; the channel contract requires it fire exactly
+  once.
+
+The fd is closed exactly once because we check `fd_ >= 0` before
+`::close(fd_)` and reset `fd_ = -1` immediately after. `::shutdown`
+followed by `::close` ensures the peer observes a clean disconnect
+rather than a `RST`.
+
+## Backpressure: `WouldBlock` instead of unbounded buffering
+
+`send_frame` enforces a high-water mark on the outbound queue
+(default 4 MiB, configurable via `set_outbound_high_water`). When the
+queue is already past budget, the next `send_frame` returns
+`ChannelError::WouldBlock` *without* appending more bytes. The RPC
+layer is responsible for rate-limiting / queueing / dropping above
+that point — this matches the channel-layer contract that admission
+control belongs above the channel.
+
+## Why `errno` translation lives here
+
+Each `recv` / `send` / `connect` failure produces a POSIX errno that
+the RPC layer can't sensibly act on directly (e.g., it shouldn't have
+to know that `EPIPE` and `ECONNRESET` both mean "peer is gone"). The
+small `errno_to_channel_error` switch maps the relevant codes onto
+`ChannelError` values; everything not listed falls through to
+`ChannelError::Internal`. The mapping is small and well-tested
+because the surface is small — adding new errno values is one-line
+work.
+
+## Why `socketpair`-based tests instead of real TCP
+
+The data-path concerns being tested here are byte-stream semantics:
+fragmented reads, coalesced writes, idempotent close, callback
+ordering. `socketpair(2)` with `AF_UNIX` + `SOCK_STREAM` gives us
+exactly that with no `bind`/`listen`/`accept` ceremony and no
+network namespace. Real-TCP integration lands in sub-leaf 3c
+together with the factory; until then, the data-path contract is
+fully covered without the sources of flakiness that come with real
+network setup.
+
+## What this sub-leaf delivers
+
+`src/rrr/rpc/tcp_channel.hpp` + `tcp_channel.cpp` + a 20-test
+suite. **No behavior change for existing callers**: nothing in
+`client.cpp` / `server.cpp` uses `TcpConnection` yet. The
+listener (sub-leaf 3b), factory + integration tests (sub-leaf 3c),
+and the client/server refactor (subsequent leaves) build on top of
+this.

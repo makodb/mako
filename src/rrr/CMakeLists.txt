@@ -15,6 +15,7 @@ set(RRR_MODULE_INTERFACE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.hpp
@@ -69,6 +70,7 @@ set(RRR_MODULE_IMPL_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
 )
 

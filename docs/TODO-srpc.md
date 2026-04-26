@@ -672,6 +672,23 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
   - Add `src/rrr/rpc/tcp_channel.hpp` + `src/rrr/rpc/tcp_channel.cpp`.
   - Implement connect/listen/accept/send/flush/close using `PollThread` + `PollableProxy` plumbing.
   - Ensure idempotent close and deterministic callback ordering (`on_closed` exactly once).
+  - Sub-leaves (decomposed because the full TCP backend is ~1500-2000 LOC of code + ~600 LOC of tests; each piece is independently testable):
+    - [x] *high* Sub-leaf 3a — `TcpConnection` (data path).
+      - One side of a connected socket pair: owns an fd, an outbound byte buffer for coalesced sends, and a `FrameStreamReader` for inbound parsing.
+      - Implements both `ChannelConnectionFacade` (`send_frame`, `flush`, `close`, `is_closed`, `peer_address`, `set_on_*`) and the `Pollable` integration (`fd`, `poll_mode`, `handle_read`, `handle_write`, `handle_error`, `close`, `is_closed`, `check_pending_write_update`, `content_size`).
+      - Idempotent `close()` that fires `on_closed(None)` exactly once; transport faults route through `on_error` followed by `on_closed`.
+      - Tests use `socketpair(2)` for in-process loopback so the unit can be exercised end-to-end without TCP/network setup.
+      - Implemented on 2026-04-26 in `src/rrr/rpc/tcp_channel.hpp` + `tcp_channel.cpp` as C++23 named module partition `rrr:rpc.tcp_channel` (impl unit `rrr:impl.rpc.tcp_channel`). The `TcpConnection` class is heap-allocated and held as `rusty::Arc`; two adapters (`TcpConnectionChannelAdapter` for the channel facade, `TcpConnectionPollableAdapter` for the poll thread) wrap clones of the same Arc so the connection survives until both layers release. Outbound queue is guarded with `SpinMutex<std::vector<uint8_t>>` to allow `send_frame` from any thread; inbound `FrameStreamReader` is touched only from the poll thread. Per-callback storage uses `SpinMutex<std::function<...>>` for last-writer-wins setters that race with poll-thread reads. `close()` latches a `rusty::Cell<bool>` and `::shutdown(SHUT_RDWR)` + `::close(fd)` once; transport errors during `handle_read` / `handle_write` flow through `on_error` followed by `on_closed`. Outbound high-water mark (default 4 MiB) returns `WouldBlock` to push admission control to the RPC layer. `errno` translation maps ECONNREFUSED/ECONNRESET/EPIPE/ETIMEDOUT/EADDRINUSE/EADDRNOTAVAIL/EACCES/EMFILE to the corresponding `ChannelError` codes.
+      - 20-test suite `src/rrr/tests/rpc_tcp_channel_test.cc` (CTest `test_rpc_tcp_channel`) drives both directions across `socketpair(2)`. Coverage: peer address propagation, `send_frame` → wire bytes match `frame_codec`, multi-frame coalesced sends, byte-by-byte fragmented inbound reassembly, multi-frame coalesced reads, partial-frame followed by peer hangup → clean close, peer EOF fires `on_closed` exactly once, `close()` idempotence, `send_frame` after close → `ConnectionReset`, `handle_read` / `handle_write` no-op after close, outbound high-water → `WouldBlock`, `poll_mode` toggle on outbound queue, `check_pending_write_update` latch semantics, `content_size` reporting, channel proxy facade dispatch.
+      - Verification: 20/20 new tests pass. Frame-codec and channel-facade guards still pass at 25/25 and 6/6 respectively. Larger RPC suite is otherwise green; pre-existing flakes (`test_rpc_state_integration::HeartbeatTimeoutTriggersReconnectRecovery`, `test_rpc_partition::*`, docs/rpcgen snippet timeouts) all pass when run with low concurrency, which is the same load-induced flakiness pattern observed in leaf 2.
+    - [ ] *high* Sub-leaf 3b — `TcpListener` (accept path).
+      - Owns a listening socket, implements `Pollable::handle_read` as an accept loop, and emits each accepted fd as a `TcpConnection` proxy through `on_accept`.
+      - Idempotent `close()` that closes the listening fd and stops emitting `on_accept`. Existing accepted connections are unaffected.
+      - Tests bind to `127.0.0.1:0`, `connect()` from the same process, and verify `on_accept` delivery.
+    - [ ] *high* Sub-leaf 3c — `TcpFactory` + end-to-end integration.
+      - `connect(addr)` synchronously establishes a TCP connection, returns a `TcpConnection` proxy registered with the supplied `PollThread`.
+      - `make_listener()` returns a `TcpListener` proxy registered with the supplied `PollThread`.
+      - Integration tests do real localhost connect + listen + bidirectional frame exchange + disconnect.
 - [ ] *high* Refactor RPC client to depend on `ChannelConnection` instead of raw socket APIs.
   - Update `src/rrr/rpc/client.hpp` and `src/rrr/rpc/client.cpp` to remove direct socket read/write framing responsibilities from `ClientConnection`.
   - Keep current public `Client` API unchanged.
