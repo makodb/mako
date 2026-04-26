@@ -397,3 +397,116 @@ in `src/rrr/tests/rpc_tcp_listener_test.cc`. Sub-leaf 3c wires
 this and `TcpConnection` together via `TcpFactory` and registers
 both with a `PollThread`; the client / server refactor leaves come
 after that.
+
+---
+
+# TCP backend — `TcpFactory` (Workstream K, sub-leaf 3c)
+
+`TcpFactory` is the binding glue: it holds a reference to a
+`PollThread` and stamps that reference onto every `TcpConnection`
+or `TcpListener` it produces. Callers get back proxies they can use
+directly through the channel facade — no separate poll-thread
+wiring step.
+
+## Why the factory holds the poll thread
+
+Layered cleanly. `TcpConnection` and `TcpListener` know how to
+implement their respective channel facades and the `Pollable`
+interface, but neither should know which poll thread it lives on
+— that's deployment configuration. The factory is the natural
+place to glue the two together: one factory per poll thread, and
+every connection / listener that comes out is implicitly bound to
+that thread.
+
+This also gives us a single line for tests to draw: tests for
+`TcpConnection` and `TcpListener` exercise the unit's logic
+without any `PollThread`; tests for `TcpFactory` exercise the
+end-to-end flow with a live poll thread. The two layers don't
+overlap.
+
+## Connect path: synchronous from the caller's view
+
+`connect(addr)` returns either a usable `ChannelConnectionProxy`
+or a `ChannelError`. Internally it:
+
+1. `parse_inet4_addr` — same parser the listener uses.
+2. `socket(2)` + non-blocking via `fcntl(O_NONBLOCK)`.
+3. `connect(2)`. If the kernel returns `EINPROGRESS`, fall back
+   to `select(2)` with a configurable timeout (default 5s) and
+   then `getsockopt(SO_ERROR)` to learn the real outcome.
+4. On success, build the `TcpConnection`, register its pollable
+   proxy with the poll thread, and return the channel proxy.
+5. On failure, close the fd, translate the errno to
+   `ChannelError`, and return the typed error.
+
+The `select` window matters because non-blocking `connect` to a
+remote (or even a quiet localhost endpoint that's not actively
+refusing) takes more than zero time but usually a lot less than a
+TCP RTO. Without the wait we'd have to expose
+"connect-in-progress" to the caller, which the channel facade's
+`ConnectResult` doesn't model.
+
+## Listen path: weak self-ref for self-registration
+
+`TcpListener::listen` needs to register the listener as a
+`Pollable` on success — but the listener has no easy way to obtain
+its own `Arc<TcpListener>` (rusty::Arc doesn't expose a
+`shared_from_this`-style hook). The factory bridges this:
+
+1. Create the `Arc<TcpListener>` in `make_listener()`.
+2. Stash a `rusty::sync::Weak<TcpListener>` on the listener via
+   `set_self_weak`, and the `Arc<PollThread>` via
+   `set_poll_thread`.
+3. Return the channel proxy. The listener's pollable proxy isn't
+   registered yet — there's no fd to register against.
+4. When the user calls `proxy->listen(addr)` on the channel
+   proxy, the listener's `listen()` impl, on success, upgrades the
+   weak self-ref and hands the resulting Arc to
+   `make_tcp_listener_pollable_proxy`. The proxy goes to
+   `PollThread::add_proxy` and the poll thread starts driving
+   `handle_read`.
+
+This is the same trick `accept`-side connections use:
+`handle_read` builds the new `TcpConnection`, and if a poll
+thread is configured, registers the new connection's pollable
+proxy before invoking `on_accept`. The receiver of `on_accept`
+gets a connection that's *already wired up* — they just attach
+their callbacks.
+
+## Why all of this lives inside the factory
+
+Every backend that conforms to `ChannelFactoryFacade` has the
+same shape: a deployment object that knows which poll thread to
+use, and produces connections / listeners pre-bound to that
+thread. The in-memory backend (a future leaf) will look the same:
+its factory holds a switchboard, and produces in-memory
+connections / listeners pre-bound to that switchboard. Generalizing
+the registration mechanism above the backend would require a
+`Pollable`-shaped escape hatch in the channel facade, which is
+exactly the kind of leak the channel layer is designed to avoid.
+
+## Tests use a real PollThread; loopback over 127.0.0.1
+
+Unlike sub-leaf 3a (`socketpair` for byte-stream semantics) and
+sub-leaf 3b (a `127.0.0.1:0` listener with manually-driven
+`handle_read`), sub-leaf 3c starts a real `PollThread`, builds a
+`TcpFactory` against it, and lets the poll thread drive everything.
+The 7 integration tests exercise the full `factory.connect →
+listener.on_accept → bidirectional frame exchange → close →
+on_closed` loop. Helper `wait_for(predicate, max)` spin-waits with
+a 5-second cap; predicate evaluation is cheap and the poll thread
+typically completes a roundtrip in a few milliseconds, so the
+upper bound is mostly a safety net.
+
+## What this sub-leaf delivers
+
+`TcpFactory` declarations + impl in the existing
+`src/rrr/rpc/tcp_channel.{hpp,cpp}` files, plus a 7-test
+integration suite in
+`src/rrr/tests/rpc_tcp_factory_test.cc`. The TCP backend is
+now feature-complete from the channel layer's perspective: a
+factory produces connections and listeners that conform to
+`ChannelFactoryFacade`, register themselves with the poll thread,
+and exchange frames end-to-end. The remaining workstream-K leaves
+refactor `client.cpp` and `server.cpp` to consume this factory
+instead of their inline socket code.

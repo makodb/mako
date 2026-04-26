@@ -13,12 +13,15 @@ module;
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
 #include <rusty/arc.hpp>
+#include <rusty/sync/weak.hpp>
 
 module rrr:impl.rpc.tcp_channel;
 
@@ -573,7 +576,27 @@ ChannelError TcpListener::listen(std::string_view addr) {
 
     listen_fd_ = fd;
     listened_.set(true);
+
+    // Auto-register with the poll thread if the factory wired one in.
+    // The factory pre-installs `poll_thread_` and a weak self-ref
+    // before handing the listener proxy to the user; we upgrade the
+    // weak ref and hand a `PollableProxy` clone to the poll thread.
+    if (poll_thread_.is_some() && self_weak_.is_some()) {
+        auto self_opt = self_weak_.as_ref().unwrap().upgrade();
+        if (self_opt.is_some()) {
+            poll_thread_.as_ref().unwrap()->add_proxy(
+                make_tcp_listener_pollable_proxy(self_opt.unwrap()));
+        }
+    }
     return ChannelError::None;
+}
+
+void TcpListener::set_poll_thread(rusty::Arc<PollThread> pt) {
+    poll_thread_ = rusty::Some(std::move(pt));
+}
+
+void TcpListener::set_self_weak(rusty::sync::Weak<TcpListener> self_weak) {
+    self_weak_ = rusty::Some(std::move(self_weak));
 }
 
 void TcpListener::close() {
@@ -679,10 +702,18 @@ bool TcpListener::handle_read() {
 
         std::string peer_addr_str = sockaddr_to_string(peer);
 
-        // Build a TcpConnection for the new fd and hand the channel
-        // proxy to the accept callback.
+        // Build a TcpConnection for the new fd. If a factory wired
+        // in a poll thread, register the new connection's pollable
+        // proxy so the poll thread starts driving its I/O. Hand the
+        // channel proxy to the accept callback.
         auto conn = rusty::Arc<TcpConnection>::make(
             conn_fd, std::move(peer_addr_str));
+
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->add_proxy(
+                make_tcp_connection_pollable_proxy(conn.clone()));
+        }
+
         ChannelConnectionProxy proxy =
             make_tcp_connection_channel_proxy(std::move(conn));
 
@@ -725,6 +756,125 @@ ChannelError TcpListener::listen_errno_to_channel_error(int err) {
         case ENFILE:        return ChannelError::TooManyOpenFiles;
         case ECONNRESET:    return ChannelError::ConnectionReset;
         default:            return ChannelError::Internal;
+    }
+}
+
+// ===========================================================================
+// TcpFactory
+// ===========================================================================
+
+TcpFactory::TcpFactory(rusty::Arc<PollThread> poll_thread)
+    : poll_thread_(std::move(poll_thread)) {}
+
+ConnectResult TcpFactory::connect(std::string_view addr) {
+    sockaddr_in sa;
+    if (!parse_inet4_addr(addr, sa)) {
+        return ConnectResult{ChannelConnectionProxy{}, ChannelError::AddressInvalid};
+    }
+
+    // @unsafe — system call
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return ConnectResult{ChannelConnectionProxy{},
+                             connect_errno_to_channel_error(errno)};
+    }
+
+    // Make the socket non-blocking BEFORE the connect so we can apply
+    // a timeout via `select(2)` if the kernel doesn't fail-fast.
+    if (set_nonblocking_fd(fd) != 0) {
+        const int err = errno;
+        ::close(fd);
+        return ConnectResult{ChannelConnectionProxy{},
+                             connect_errno_to_channel_error(err)};
+    }
+
+    // @unsafe — system call
+    int rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa));
+    if (rc < 0) {
+        const int err = errno;
+        if (err == EINPROGRESS && connect_timeout_ms_ > 0) {
+            // Wait up to `connect_timeout_ms_` for the connect to
+            // complete. `select` returns with the fd writable on
+            // success or when the kernel surfaces an error via
+            // SO_ERROR.
+            fd_set wset;
+            FD_ZERO(&wset);
+            FD_SET(fd, &wset);
+            timeval tv;
+            tv.tv_sec  =  connect_timeout_ms_ / 1000;
+            tv.tv_usec = (connect_timeout_ms_ % 1000) * 1000;
+
+            // @unsafe — system call
+            int sel = ::select(fd + 1, nullptr, &wset, nullptr, &tv);
+            if (sel == 0) {
+                ::close(fd);
+                return ConnectResult{ChannelConnectionProxy{},
+                                     ChannelError::Timeout};
+            }
+            if (sel < 0) {
+                const int sel_err = errno;
+                ::close(fd);
+                return ConnectResult{ChannelConnectionProxy{},
+                                     connect_errno_to_channel_error(sel_err)};
+            }
+            // Check SO_ERROR for the actual connect outcome.
+            int so_err = 0;
+            socklen_t so_err_len = sizeof(so_err);
+            // @unsafe — system call
+            if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &so_err_len) < 0
+                || so_err != 0) {
+                const int eff_err = (so_err != 0) ? so_err : errno;
+                ::close(fd);
+                return ConnectResult{ChannelConnectionProxy{},
+                                     connect_errno_to_channel_error(eff_err)};
+            }
+        } else if (err != EISCONN) {
+            ::close(fd);
+            return ConnectResult{ChannelConnectionProxy{},
+                                 connect_errno_to_channel_error(err)};
+        }
+    }
+
+    // Build the TcpConnection and register its pollable proxy with
+    // the poll thread before returning. The channel proxy keeps one
+    // Arc; the pollable proxy keeps another, so the connection
+    // survives until both layers release.
+    auto conn = rusty::Arc<TcpConnection>::make(fd, std::string(addr));
+    poll_thread_->add_proxy(make_tcp_connection_pollable_proxy(conn.clone()));
+
+    return ConnectResult{
+        make_tcp_connection_channel_proxy(std::move(conn)),
+        ChannelError::None,
+    };
+}
+
+ChannelListenerProxy TcpFactory::make_listener() {
+    auto listener = rusty::Arc<TcpListener>::make();
+    // Wire the listener up with the poll thread + a weak self-ref so
+    // it can self-register on a successful `listen(addr)` and so
+    // accepted connections are auto-registered too.
+    {
+        auto& mut_l = const_cast<TcpListener&>(*listener.get());
+        mut_l.set_poll_thread(poll_thread_.clone());
+        mut_l.set_self_weak(rusty::sync::downgrade(listener));
+    }
+    return make_tcp_listener_channel_proxy(std::move(listener));
+}
+
+ChannelError TcpFactory::connect_errno_to_channel_error(int err) {
+    switch (err) {
+        case ECONNREFUSED:                 return ChannelError::ConnectionRefused;
+        case ECONNRESET:
+        case EPIPE:                        return ChannelError::ConnectionReset;
+        case ETIMEDOUT:                    return ChannelError::Timeout;
+        case EHOSTUNREACH:
+        case ENETUNREACH:
+        case EADDRNOTAVAIL:                return ChannelError::AddressInvalid;
+        case EACCES:
+        case EPERM:                        return ChannelError::PermissionDenied;
+        case EMFILE:
+        case ENFILE:                       return ChannelError::TooManyOpenFiles;
+        default:                           return ChannelError::Internal;
     }
 }
 

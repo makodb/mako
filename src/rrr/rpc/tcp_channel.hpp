@@ -9,6 +9,8 @@ module;
 
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/option.hpp>
+#include <rusty/sync/weak.hpp>
 
 #ifdef RR
 #pragma push_macro("RR")
@@ -27,6 +29,8 @@ export module rrr:rpc.tcp_channel;
 import :base.threading;
 import :rpc.channel;
 import :rpc.frame_codec;
+import :rpc.pollable_proxy;
+import :reactor.reactor;
 
 /**
  * SRPC TCP Channel Backend (Workstream K, Phase 1 leaf 3a — `TcpConnection`).
@@ -266,6 +270,12 @@ inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
                            TcpConnectionChannelAdapter>(std::move(conn));
 }
 
+inline PollableProxy make_tcp_connection_pollable_proxy(
+    rusty::Arc<TcpConnection> conn) {
+    return pro::make_proxy<PollableFacade,
+                           TcpConnectionPollableAdapter>(std::move(conn));
+}
+
 // ---------------------------------------------------------------------------
 // TcpListener
 // ---------------------------------------------------------------------------
@@ -341,6 +351,25 @@ class TcpListener {
     void   handle_error();
     bool   check_pending_write_update() const;
 
+    // -----------------------------------------------------------------------
+    // Auto-registration with a PollThread (used by `TcpFactory`).
+    // -----------------------------------------------------------------------
+
+    /**
+     * Configure auto-registration with a poll thread. Must be called
+     * BEFORE `listen()` for it to take effect. When set, a successful
+     * `listen(addr)` registers this listener with the poll thread,
+     * and each `handle_read`-accepted `TcpConnection` is also
+     * registered automatically.
+     *
+     * `self_weak` must be a weak reference to the same `Arc` that
+     * owns this listener; the factory wires it up after Arc creation
+     * because `Arc` does not expose `enable_shared_from_this`-style
+     * access.
+     */
+    void set_poll_thread(rusty::Arc<PollThread> pt);
+    void set_self_weak(rusty::sync::Weak<TcpListener> self_weak);
+
  private:
     // Translate a POSIX errno from a listening syscall into a
     // ChannelError.
@@ -355,6 +384,9 @@ class TcpListener {
 
     rusty::Cell<bool> closed_{false};
     rusty::Cell<bool> listened_{false};
+
+    rusty::Option<rusty::Arc<PollThread>>      poll_thread_{rusty::None};
+    rusty::Option<rusty::sync::Weak<TcpListener>> self_weak_{rusty::None};
 
     SpinMutex<OnAcceptCallback> on_accept_{OnAcceptCallback{}};
     SpinMutex<OnErrorCallback>  on_error_ {OnErrorCallback{}};
@@ -402,6 +434,85 @@ inline ChannelListenerProxy make_tcp_listener_channel_proxy(
     rusty::Arc<TcpListener> listener) {
     return pro::make_proxy<ChannelListenerFacade,
                            TcpListenerChannelAdapter>(std::move(listener));
+}
+
+inline PollableProxy make_tcp_listener_pollable_proxy(
+    rusty::Arc<TcpListener> listener) {
+    return pro::make_proxy<PollableFacade,
+                           TcpListenerPollableAdapter>(std::move(listener));
+}
+
+// ---------------------------------------------------------------------------
+// TcpFactory (Workstream K, Phase 1 leaf 3c)
+// ---------------------------------------------------------------------------
+
+/**
+ * Backend-aware factory for the TCP channel. Holds a reference to a
+ * `PollThread`; uses it to auto-register newly created connections
+ * (from `connect`) and listeners (from `make_listener`, on a
+ * successful `listen`).
+ *
+ * Conforms to `ChannelFactoryFacade`:
+ *
+ *   - `connect(addr)` synchronously does `socket(2) + connect(2)`,
+ *     wraps the fd in a `TcpConnection`, registers it with the poll
+ *     thread, and returns a `ChannelConnectionProxy`. On failure the
+ *     `ConnectResult::error` field carries the translated
+ *     `ChannelError` and `connection` is null.
+ *   - `make_listener()` constructs a `TcpListener` pre-wired with
+ *     the factory's `PollThread`. The listener auto-registers itself
+ *     with the poll thread on a successful `listen()` call, and
+ *     auto-registers each connection accepted via `handle_read`.
+ *   - `backend_name()` returns `"tcp"`.
+ *
+ * Thread safety: `connect` is safe to call from any thread; the
+ * registration is sent to the poll thread asynchronously via the
+ * MPSC command channel, matching `PollThread::add_proxy` semantics.
+ */
+class TcpFactory {
+ public:
+    explicit TcpFactory(rusty::Arc<PollThread> poll_thread);
+    ~TcpFactory() = default;
+
+    TcpFactory(const TcpFactory&)            = delete;
+    TcpFactory& operator=(const TcpFactory&) = delete;
+    TcpFactory(TcpFactory&&)                 = delete;
+    TcpFactory& operator=(TcpFactory&&)      = delete;
+
+    // ChannelFactoryFacade methods.
+    ConnectResult         connect(std::string_view addr);
+    ChannelListenerProxy  make_listener();
+    const char*           backend_name() const { return "tcp"; }
+
+    // Optional override for the connect-side IPv4 timeout (default
+    // 5s). Only used when the kernel doesn't fail-fast on
+    // unreachable destinations. Set to 0 for blocking behavior.
+    void set_connect_timeout_ms(int timeout_ms) { connect_timeout_ms_ = timeout_ms; }
+
+ private:
+    static ChannelError connect_errno_to_channel_error(int err);
+
+    rusty::Arc<PollThread> poll_thread_;
+    int                    connect_timeout_ms_ = 5000;
+};
+
+class TcpFactoryAdapter {
+ public:
+    explicit TcpFactoryAdapter(rusty::Arc<TcpFactory> factory)
+        : factory_(std::move(factory)) {}
+
+    ConnectResult        connect(std::string_view addr) { return mut_factory().connect(addr); }
+    ChannelListenerProxy make_listener()                { return mut_factory().make_listener(); }
+    const char*          backend_name() const           { return factory_->backend_name(); }
+
+ private:
+    TcpFactory& mut_factory() { return const_cast<TcpFactory&>(*factory_.get()); }
+    rusty::Arc<TcpFactory> factory_;
+};
+
+inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
+    return pro::make_proxy<ChannelFactoryFacade,
+                           TcpFactoryAdapter>(std::move(factory));
 }
 
 }  // namespace rrr
