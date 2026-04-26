@@ -266,4 +266,142 @@ inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
                            TcpConnectionChannelAdapter>(std::move(conn));
 }
 
+// ---------------------------------------------------------------------------
+// TcpListener
+// ---------------------------------------------------------------------------
+
+/**
+ * Server-side TCP listener (Workstream K, Phase 1 leaf 3b).
+ *
+ * Owns a single listening socket. `listen(addr)` creates the socket
+ * (`socket(2)` + `setsockopt(SO_REUSEADDR)` + `bind(2)` + `listen(2)`)
+ * and discovers the bound port via `getsockname(2)` so that callers can
+ * pass `"127.0.0.1:0"` and recover the actual port through
+ * `local_address()`.
+ *
+ * `handle_read()` runs an accept loop. Each successful `accept(2)`
+ * yields a connected fd; the listener wraps it in a `TcpConnection`,
+ * builds a `ChannelConnectionProxy` from it, and hands it to the
+ * `on_accept` callback. The peer address is decoded from the
+ * `accept(2)` `sockaddr` and stored on the connection so the RPC
+ * layer can use it for logging without an extra syscall.
+ *
+ * Idempotent close: `close()` flips a latch, closes the listening fd,
+ * and stops emitting `on_accept`. Connections already delivered
+ * through `on_accept` are unaffected — the listener does not retain
+ * references to them.
+ *
+ * Threading: the public mutators (`listen`, `close`, `set_on_*`) are
+ * safe to call from any thread; the `Pollable` methods
+ * (`handle_read`, `handle_error`, `poll_mode`, ...) run on the poll
+ * thread.
+ */
+class TcpListener {
+ public:
+    TcpListener();
+    ~TcpListener();
+
+    TcpListener(const TcpListener&)            = delete;
+    TcpListener& operator=(const TcpListener&) = delete;
+    TcpListener(TcpListener&&)                 = delete;
+    TcpListener& operator=(TcpListener&&)      = delete;
+
+    // -----------------------------------------------------------------------
+    // ChannelListenerFacade methods
+    // -----------------------------------------------------------------------
+
+    /**
+     * Bind and start listening on `addr` (format: `"host:port"`,
+     * e.g., `"127.0.0.1:0"`, `"0.0.0.0:8080"`). Returns
+     * `ChannelError::None` on success; on failure the listener is
+     * left in a closed state and `local_address()` returns `""`.
+     *
+     * If `listen` is called more than once on the same listener, the
+     * second call returns `ChannelError::AddressInUse` — listeners
+     * are single-use. The factory / RPC layer above can construct a
+     * fresh listener if it needs to rebind.
+     */
+    ChannelError listen(std::string_view addr);
+    void         close();
+    bool         is_closed() const;
+    std::string  local_address() const;
+
+    void set_on_accept(OnAcceptCallback cb);
+    void set_on_error (OnErrorCallback  cb);
+
+    // -----------------------------------------------------------------------
+    // Pollable methods
+    // -----------------------------------------------------------------------
+
+    int    fd() const;
+    int    poll_mode() const;
+    std::size_t content_size();
+    bool   handle_read();
+    int    handle_write();
+    void   handle_error();
+    bool   check_pending_write_update() const;
+
+ private:
+    // Translate a POSIX errno from a listening syscall into a
+    // ChannelError.
+    static ChannelError listen_errno_to_channel_error(int err);
+
+    // -----------------------------------------------------------------------
+    // State
+    // -----------------------------------------------------------------------
+
+    int         listen_fd_ = -1;
+    std::string bound_address_;
+
+    rusty::Cell<bool> closed_{false};
+    rusty::Cell<bool> listened_{false};
+
+    SpinMutex<OnAcceptCallback> on_accept_{OnAcceptCallback{}};
+    SpinMutex<OnErrorCallback>  on_error_ {OnErrorCallback{}};
+};
+
+class TcpListenerChannelAdapter {
+ public:
+    explicit TcpListenerChannelAdapter(rusty::Arc<TcpListener> listener)
+        : listener_(std::move(listener)) {}
+
+    ChannelError listen(std::string_view a) { return mut_listener().listen(a); }
+    void         close()                    { mut_listener().close(); }
+    bool         is_closed() const          { return listener_->is_closed(); }
+    std::string  local_address() const      { return listener_->local_address(); }
+
+    void set_on_accept(OnAcceptCallback cb) { mut_listener().set_on_accept(std::move(cb)); }
+    void set_on_error (OnErrorCallback  cb) { mut_listener().set_on_error (std::move(cb)); }
+
+ private:
+    TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
+    rusty::Arc<TcpListener> listener_;
+};
+
+class TcpListenerPollableAdapter {
+ public:
+    explicit TcpListenerPollableAdapter(rusty::Arc<TcpListener> listener)
+        : listener_(std::move(listener)) {}
+
+    int  fd() const                          { return listener_->fd(); }
+    int  poll_mode() const                   { return listener_->poll_mode(); }
+    std::size_t content_size()               { return mut_listener().content_size(); }
+    bool handle_read()                       { return mut_listener().handle_read(); }
+    int  handle_write()                      { return mut_listener().handle_write(); }
+    void handle_error()                      { mut_listener().handle_error(); }
+    void close()                             { mut_listener().close(); }
+    bool is_closed() const                   { return listener_->is_closed(); }
+    bool check_pending_write_update() const  { return listener_->check_pending_write_update(); }
+
+ private:
+    TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
+    rusty::Arc<TcpListener> listener_;
+};
+
+inline ChannelListenerProxy make_tcp_listener_channel_proxy(
+    rusty::Arc<TcpListener> listener) {
+    return pro::make_proxy<ChannelListenerFacade,
+                           TcpListenerChannelAdapter>(std::move(listener));
+}
+
 }  // namespace rrr

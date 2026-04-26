@@ -316,3 +316,84 @@ suite. **No behavior change for existing callers**: nothing in
 listener (sub-leaf 3b), factory + integration tests (sub-leaf 3c),
 and the client/server refactor (subsequent leaves) build on top of
 this.
+
+---
+
+# TCP backend — `TcpListener` (Workstream K, sub-leaf 3b)
+
+`TcpListener` is the server-side accept path: it owns a listening
+TCP socket, runs an accept loop on `handle_read`, and emits each
+new connection as a `ChannelConnectionProxy` through `on_accept`.
+The factory (sub-leaf 3c) wires it into a `PollThread`; until
+then, tests drive `handle_read` directly against a live
+`127.0.0.1:0` loopback socket.
+
+## Why `listen` discovers the bound port
+
+`local_address()` returns whatever address the kernel actually
+bound. The listener calls `getsockname` after `listen` so that
+callers can pass `"127.0.0.1:0"` (let-the-kernel-pick) and recover
+the assigned port — the natural pattern for tests and for any
+ephemeral-port server. The reported string is in the same
+`"host:port"` shape that `listen` accepts, so the upper layer can
+hand it back into a fresh listener if it needs to rebind on
+restart.
+
+## Why the listener is single-use
+
+The channel layer's design doesn't try to support "rebind without
+recreating" — that's a feature with very fuzzy semantics around
+already-emitted connections. Instead, `listen()` succeeds at most
+once per `TcpListener` instance; the second call (or any call
+after `close`) returns `ChannelError::AddressInUse`. The factory
+or RPC server above creates a fresh listener if it needs to
+rebind. This keeps the lifetime model unambiguous: at most one
+listening fd per object, no socket reuse across distinct lifetime
+windows.
+
+## Why EMFILE / ENFILE leave the listener open
+
+A per-process or per-system fd exhaustion isn't a fault of the
+listener — it's load. Closing the listener on EMFILE would push
+the symptom to all *future* connections, while the right move is
+to keep accepting once a few fds are freed. The listener reports
+`TooManyOpenFiles` through `on_error` so the caller can shed
+load, but it does not close itself. Other hard faults close
+because there's nothing useful to do.
+
+## Why the listener does not own accepted connections
+
+When `handle_read` accepts a fd, it builds a `TcpConnection` and
+hands it to the `on_accept` callback as a
+`ChannelConnectionProxy`. The listener does not retain a
+reference. This means:
+
+- The receiver of `on_accept` is responsible for registering the
+  new connection with the poll thread (that's the factory's job in
+  sub-leaf 3c).
+- `close()` on the listener does not affect already-emitted
+  connections — the contract documented in `channel.hpp`.
+- If no `on_accept` callback is installed, the proxy is dropped
+  right after construction and the connection is destroyed; this
+  matches the channel-layer rule that the channel never decides
+  policy.
+
+## Tests use real loopback, not socketpair
+
+Unlike `TcpConnection` (which uses `socketpair(2)` because the
+data path is byte-stream-shape regardless of TCP vs Unix), the
+listener tests need real `bind/listen/accept` against a real TCP
+endpoint — that's the whole point of the listener. They bind to
+`127.0.0.1:0`, open client TCP sockets in the same process, and
+drive `handle_read` to verify the accept loop without relying on
+a `PollThread`. End-to-end loopback (factory.connect calling into
+the listener) is sub-leaf 3c.
+
+## What this sub-leaf delivers
+
+`TcpListener` declarations and impl in the existing
+`src/rrr/rpc/tcp_channel.{hpp,cpp}` files, plus a 20-test suite
+in `src/rrr/tests/rpc_tcp_listener_test.cc`. Sub-leaf 3c wires
+this and `TcpConnection` together via `TcpFactory` and registers
+both with a `PollThread`; the client / server refactor leaves come
+after that.

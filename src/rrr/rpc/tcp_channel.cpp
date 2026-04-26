@@ -6,14 +6,19 @@ module;
 // @c-compat-added
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <cerrno>
 
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
+
+#include <rusty/arc.hpp>
 
 module rrr:impl.rpc.tcp_channel;
 
@@ -437,6 +442,289 @@ ChannelError TcpConnection::errno_to_channel_error(int err) {
         case EMFILE:
         case ENFILE:                       return ChannelError::TooManyOpenFiles;
         default:                           return ChannelError::Internal;
+    }
+}
+
+// ===========================================================================
+// TcpListener
+// ===========================================================================
+
+namespace {
+
+// Set the FD non-blocking. Returns 0 on success, errno on failure.
+int set_nonblocking_fd(int fd) {
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return errno;
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return errno;
+    return 0;
+}
+
+// Format an IPv4 sockaddr as "ip:port". Buffer is small; if the
+// formatted string would overflow, returns a "?" placeholder.
+std::string sockaddr_to_string(const sockaddr_in& sa) {
+    char buf[INET_ADDRSTRLEN] = {0};
+    if (::inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf)) == nullptr) {
+        return "?";
+    }
+    char out[INET_ADDRSTRLEN + 8] = {0};
+    std::snprintf(out, sizeof(out), "%s:%u",
+                  buf, static_cast<unsigned>(ntohs(sa.sin_port)));
+    return std::string(out);
+}
+
+// Parse a "host:port" address into an IPv4 `sockaddr_in`. Accepts
+// dotted-quad host literals (no DNS) and decimal port. Returns true
+// on success.
+bool parse_inet4_addr(std::string_view addr, sockaddr_in& out) {
+    auto colon = addr.find_last_of(':');
+    if (colon == std::string_view::npos) return false;
+    std::string host(addr.substr(0, colon));
+    std::string port_str(addr.substr(colon + 1));
+    if (host.empty() || port_str.empty()) return false;
+
+    long port = -1;
+    try {
+        port = std::stol(port_str);
+    } catch (...) {
+        return false;
+    }
+    if (port < 0 || port > 65535) return false;
+
+    std::memset(&out, 0, sizeof(out));
+    out.sin_family = AF_INET;
+    out.sin_port = htons(static_cast<uint16_t>(port));
+    if (::inet_pton(AF_INET, host.c_str(), &out.sin_addr) != 1) {
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+TcpListener::TcpListener() = default;
+
+TcpListener::~TcpListener() {
+    if (listen_fd_ >= 0) {
+        // @unsafe — system call
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+    }
+}
+
+ChannelError TcpListener::listen(std::string_view addr) {
+    if (closed_.get()) {
+        return ChannelError::AddressInUse;
+    }
+    if (listened_.get()) {
+        return ChannelError::AddressInUse;
+    }
+
+    sockaddr_in sa;
+    if (!parse_inet4_addr(addr, sa)) {
+        return ChannelError::AddressInvalid;
+    }
+
+    // @unsafe — system call
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return listen_errno_to_channel_error(errno);
+    }
+
+    int reuse = 1;
+    // @unsafe — system call
+    if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        const int err = errno;
+        ::close(fd);
+        return listen_errno_to_channel_error(err);
+    }
+
+    if (set_nonblocking_fd(fd) != 0) {
+        const int err = errno;
+        ::close(fd);
+        return listen_errno_to_channel_error(err);
+    }
+
+    // @unsafe — system call
+    if (::bind(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa)) < 0) {
+        const int err = errno;
+        ::close(fd);
+        return listen_errno_to_channel_error(err);
+    }
+    // Listen backlog: SOMAXCONN is the kernel's silent cap; the call
+    // tolerates higher values without erroring.
+    // @unsafe — system call
+    if (::listen(fd, 128) < 0) {
+        const int err = errno;
+        ::close(fd);
+        return listen_errno_to_channel_error(err);
+    }
+
+    // Discover actual bound address (port may have been 0).
+    sockaddr_in bound;
+    socklen_t bound_len = sizeof(bound);
+    std::memset(&bound, 0, sizeof(bound));
+    // @unsafe — system call
+    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &bound_len) == 0
+        && bound.sin_family == AF_INET) {
+        bound_address_ = sockaddr_to_string(bound);
+    } else {
+        bound_address_ = std::string(addr);
+    }
+
+    listen_fd_ = fd;
+    listened_.set(true);
+    return ChannelError::None;
+}
+
+void TcpListener::close() {
+    if (closed_.get()) return;
+    closed_.set(true);
+
+    if (listen_fd_ >= 0) {
+        // @unsafe — system call
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+    }
+}
+
+bool TcpListener::is_closed() const {
+    return closed_.get();
+}
+
+std::string TcpListener::local_address() const {
+    return bound_address_;
+}
+
+void TcpListener::set_on_accept(OnAcceptCallback cb) {
+    auto guard = on_accept_.lock().unwrap();
+    *guard = std::move(cb);
+}
+
+void TcpListener::set_on_error(OnErrorCallback cb) {
+    auto guard = on_error_.lock().unwrap();
+    *guard = std::move(cb);
+}
+
+int TcpListener::fd() const {
+    return listen_fd_;
+}
+
+int TcpListener::poll_mode() const {
+    return PollMode::READ;
+}
+
+std::size_t TcpListener::content_size() {
+    return 0;
+}
+
+bool TcpListener::handle_read() {
+    if (closed_.get()) return false;
+    if (listen_fd_ < 0) return false;
+
+    bool any_progress = false;
+    while (true) {
+        sockaddr_in peer;
+        socklen_t peer_len = sizeof(peer);
+        std::memset(&peer, 0, sizeof(peer));
+
+        // @unsafe — system call
+        int conn_fd = ::accept(listen_fd_,
+                               reinterpret_cast<sockaddr*>(&peer), &peer_len);
+        if (conn_fd < 0) {
+            const int err = errno;
+            if (err == EAGAIN || err == EWOULDBLOCK) {
+                break;
+            }
+            if (err == EINTR) {
+                continue;
+            }
+            // accept() can return EMFILE / ENFILE / ECONNABORTED / etc.
+            // ECONNABORTED is retriable but rare; we treat it like
+            // EAGAIN and break out so the caller doesn't spin.
+            if (err == ECONNABORTED) {
+                break;
+            }
+
+            // Non-recoverable failure.
+            const ChannelError ch = listen_errno_to_channel_error(err);
+            {
+                auto guard = on_error_.lock().unwrap();
+                if (*guard) {
+                    (*guard)(ch, std::strerror(err));
+                }
+            }
+            // For EMFILE/ENFILE we don't want to close — the listener
+            // is still functional once a fd is freed up. The caller's
+            // error callback decides whether to reduce load.
+            if (err != EMFILE && err != ENFILE) {
+                close();
+            }
+            return any_progress;
+        }
+
+        any_progress = true;
+
+        // Non-blocking accepted socket; matches the rest of the
+        // channel layer's expectations.
+        if (set_nonblocking_fd(conn_fd) != 0) {
+            const int err = errno;
+            ::close(conn_fd);
+            auto guard = on_error_.lock().unwrap();
+            if (*guard) {
+                (*guard)(listen_errno_to_channel_error(err),
+                         "accept: failed to set non-blocking");
+            }
+            continue;
+        }
+
+        std::string peer_addr_str = sockaddr_to_string(peer);
+
+        // Build a TcpConnection for the new fd and hand the channel
+        // proxy to the accept callback.
+        auto conn = rusty::Arc<TcpConnection>::make(
+            conn_fd, std::move(peer_addr_str));
+        ChannelConnectionProxy proxy =
+            make_tcp_connection_channel_proxy(std::move(conn));
+
+        auto guard = on_accept_.lock().unwrap();
+        if (*guard) {
+            (*guard)(std::move(proxy));
+        }
+        // If no on_accept callback is installed, the proxy drops here
+        // and the connection is destroyed.
+    }
+    return any_progress;
+}
+
+int TcpListener::handle_write() {
+    return PollMode::NO_CHANGE;
+}
+
+void TcpListener::handle_error() {
+    if (closed_.get()) return;
+    {
+        auto guard = on_error_.lock().unwrap();
+        if (*guard) {
+            (*guard)(ChannelError::Internal, "epoll/poll signaled error");
+        }
+    }
+    close();
+}
+
+bool TcpListener::check_pending_write_update() const {
+    return false;
+}
+
+ChannelError TcpListener::listen_errno_to_channel_error(int err) {
+    switch (err) {
+        case EADDRINUSE:    return ChannelError::AddressInUse;
+        case EADDRNOTAVAIL: return ChannelError::AddressInvalid;
+        case EACCES:
+        case EPERM:         return ChannelError::PermissionDenied;
+        case EMFILE:
+        case ENFILE:        return ChannelError::TooManyOpenFiles;
+        case ECONNRESET:    return ChannelError::ConnectionReset;
+        default:            return ChannelError::Internal;
     }
 }
 
