@@ -593,17 +593,57 @@ resets. Costs one heap allocation per inbound frame (the
 existing RPC layer already pays when it copies frame bytes into a
 Marshal during `handle_read`.
 
-## How the SRPC client will use it (sub-leaf 4c2)
+## How the SRPC client uses it (sub-leaf 4c2, implemented 2026-04-26)
 
-`ClientConnection::bind_channel` constructs a `FiberChannel` over
-the proxy and spawns a recv-loop fiber. The fiber's body is the
-existing inline frame-decode loop from `handle_read` — parse
-`[v64 xid][v32 error][optional ext_header][payload]`, look up
+`ClientConnection::bind_channel` moves the inbound proxy into a
+heap-allocated `rusty::Box<FiberChannel>` and spawns a recv-loop
+fiber via `Fiber::create_run`. The fiber's body is the existing
+inline frame-decode loop from `handle_read` — parse
+`[v64 xid][v32 error][v64 server_instance_id][payload]`, look up
 `pending_fu_[xid]`, fill the future, fire `notify_ready`. The
 existing `await()` ergonomics on futures stay intact: code that
 calls `client.request(...).await()` continues to work; the
 fiber-blocking is now also visible at the *recv* end of the
 pipeline, not just at the await end.
+
+A few non-obvious pieces of the implementation are worth recording
+because the surrounding code is opinionated about them:
+
+  - **`FiberChannel` is move-deleted.** Its constructor installs
+    callbacks that capture `this`, so any move would dangle them.
+    Storage is therefore `Option<Box<FiberChannel>>`, allocated via
+    `rusty::make_box<FiberChannel>(std::move(channel))` (perfect-
+    forwarded `new`).
+  - **The recv-loop fiber drops its `RefCell` borrow before
+    yielding.** It resolves the FiberChannel raw pointer once under
+    a brief `borrow()`, then enters `recv_frame()` with the guard
+    released. Holding a `RefCell` borrow across the fiber yield
+    would block any concurrent `request_via_channel` call (on the
+    same reactor) from re-entering the cell.
+  - **`Weak<ClientConnection>` capture, not `Arc`.** The fiber's
+    spawning lambda upgrades a weak self-pointer at the start; this
+    avoids the Connection ↔ fiber Arc cycle that would otherwise
+    leak the connection across teardown. Lifetime cleanup (close →
+    fiber exits → drops Arc → connection destroyed) is wired
+    explicitly in 4d/4e.
+  - **`handle_read` short-circuits to no-op in channel mode.** A
+    defensive guard against a stale poll-loop registration double-
+    consuming bytes from a socket the channel layer now owns. The
+    full `Pollable` registration cleanup is sub-leaf 4e.
+  - **Channel mode loses the `kResponseHeaderExtFlag` bit.** The
+    framing layer consumes the 4-byte size prefix that carries
+    that bit, so `decode_response_and_notify` cannot tell extended
+    from legacy responses. The current SRPC server unconditionally
+    emits the extended form (`server.hpp::reply` sets
+    `include_instance_id = true`), so we read the instance ID in
+    every response. Cross-version interop with a legacy server that
+    emits the non-extended form is sub-leaf 4f's migration concern.
+  - **`FiberChannel::is_closed()` returns the disjunction.** It
+    reports closed if either the local `closed_` latch is set
+    (`on_closed` fired on the reactor) or the underlying proxy
+    reports closed (caller may have closed it from another thread
+    before the reactor processed the callback). This is the
+    predicate request paths actually want.
 
 This is the trade-off articulated in the design discussion: lock-
 in is reversible (we could later push the fiber primitive into the

@@ -86,6 +86,16 @@ ChannelError FiberChannel::send_frame(const ChannelFrame& f) {
     return ch_->send_frame(f);
 }
 
+bool FiberChannel::is_closed() const {
+    if (closed_.get()) return true;
+    // Consult the proxy as well: a caller may have closed it from
+    // another thread before the reactor processed `on_closed`. The
+    // const_cast matches how `send_frame` reaches a non-const facade
+    // method through interior-mutable backends.
+    auto& mut_ch = const_cast<ChannelConnectionProxy&>(ch_);
+    return mut_ch->is_closed();
+}
+
 void FiberChannel::close() {
     ch_->close();
     // The on_closed callback fires later on the reactor thread.

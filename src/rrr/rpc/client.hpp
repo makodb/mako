@@ -12,6 +12,7 @@ module;
 #include <ctime>
 #include <rusty/rusty.hpp>
 #include <rusty/result.hpp>
+#include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/async.hpp>
@@ -29,6 +30,7 @@ import :reactor.reactor;
 
 
 import :rpc.channel;
+import :rpc.fiber_channel;
 import :rpc.connection_state;
 import :rpc.errors;
 import :rpc.reconnect_policy;
@@ -654,24 +656,39 @@ class ClientConnection {
 
     int socket_;
 
-    // Workstream K migration (sub-leaf 4a scaffolding):
+    // Workstream K migration (sub-leaves 4a/4b/4c2):
     //
-    // When the client is constructed in channel mode, `channel_` holds
-    // the `ChannelConnectionProxy` that owns the underlying TCP /
-    // in-memory / etc. channel; `socket_` then becomes irrelevant and
-    // the I/O methods (`handle_read`, `handle_write`, frame send/recv)
-    // route through the channel instead. Default-constructed
-    // `ChannelConnectionProxy` is a null proxy (no underlying object);
-    // `channel_mode_` records whether `bind_channel` has been called so
-    // the routing logic can branch without inspecting the proxy itself
-    // (which has no public "is null" predicate at the facade level).
+    // When the client is in channel mode, `fiber_channel_` owns a
+    // `FiberChannel` wrapper around the `ChannelConnectionProxy`; the
+    // wrapper exposes blocking `send_frame` / `recv_frame` so that the
+    // recv-loop fiber spawned in `bind_channel` can drive response
+    // demux top-to-bottom (no callback unrolling). The proxy itself is
+    // moved into the wrapper, so this field is the single owner of the
+    // channel-side state. `socket_` becomes irrelevant in channel mode
+    // and the inherited `Pollable` I/O methods (`handle_read`,
+    // `handle_write`) short-circuit to no-ops.
     //
-    // For sub-leaf 4a, no method dispatches through `channel_` yet —
-    // the field exists only as scaffolding so subsequent leaves
-    // (4b/4c/4d) can wire send / receive / close paths without
-    // changing the class shape again.
-    ChannelConnectionProxy channel_;
-    rusty::Cell<bool>      channel_mode_{false};
+    // `channel_mode_` is the opt-in latch flipped by `bind_channel` so
+    // the routing logic can branch without inspecting the Option (and
+    // without touching the FiberChannel from threads that don't own
+    // it).
+    //
+    // RefCell<Option<Box<>>> shape:
+    //   - RefCell — interior mutability so `request(...)` const paths
+    //     can borrow the wrapper to send outbound frames.
+    //   - Option  — None until `bind_channel` is called; Some after.
+    //   - Box     — stable address: the recv-loop fiber holds a raw
+    //     pointer to the wrapper (not the connection itself, which
+    //     could move under it via Arc clones).
+    //
+    // Lifetime: a parked recv-loop fiber holds a `Weak<ClientConnection>`
+    // and the FiberChannel pointer (the FiberChannel outlives the
+    // fiber as long as the wrapper sits in this field). Full close /
+    // reconnect cleanup is wired in sub-leaves 4d/4e — for 4c2, the
+    // fiber simply exits when the proxy's `on_closed` fires (the only
+    // way to break out of `recv_frame` other than process exit).
+    mutable rusty::RefCell<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_{rusty::None};
+    rusty::Cell<bool> channel_mode_{false};
 
     // Transaction ID counter for RPC requests
     // mutable because Counter uses atomics internally for thread-safe interior mutability
@@ -740,6 +757,24 @@ class ClientConnection {
     // Safe to call repeatedly; only first call for a given xid has effect.
     void fail_pending_future(i64 xid, int err) const;
 
+    // Workstream K, sub-leaf 4c2 — channel-mode response demux.
+    //
+    // `run_recv_loop` blocks the calling fiber on
+    // `FiberChannel::recv_frame` and dispatches each decoded response
+    // body to the matching pending future. The body wire layout
+    // mirrors the legacy fd path's frame layout, minus the 4-byte
+    // size prefix (the channel layer consumes that). See `client.cpp`
+    // for the exact bytes-to-future mapping.
+    //
+    // `decode_response_and_notify` is the single-frame helper called
+    // by the loop on each iteration; it parses the body and resolves
+    // / drops the matching future.
+    // @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
+    void run_recv_loop();
+    // @unsafe - Same body, factored for testability.
+    void decode_response_and_notify(const std::uint8_t* bytes,
+                                    std::size_t size);
+
 public:
     /**
      * Closes the connection and cleans up resources.
@@ -768,29 +803,44 @@ public:
 
     /**
      * Bind a `ChannelConnectionProxy` to this connection
-     * (Workstream K, sub-leaf 4a scaffolding).
+     * (Workstream K, sub-leaves 4a/4b/4c2).
      *
-     * Once bound, the connection enters "channel mode": all subsequent
-     * frame I/O is expected to flow through the channel rather than
-     * the legacy fd path. **Sub-leaf 4a wires the field but does NOT
-     * yet route any method through it** — the legacy code paths
-     * remain the only active dispatch targets. Subsequent leaves
-     * (4b/4c/4d) add the routing.
+     * Once bound, the connection enters "channel mode": outbound frames
+     * are routed through the channel via `request_via_channel`, and a
+     * recv-loop fiber is spawned to drive inbound response demux on
+     * top of a `FiberChannel` wrapper around the proxy.
+     *
+     * **Threading**: the recv-loop fiber is spawned on the *current*
+     * thread's reactor via `Fiber::create_run`. For the channel-layer
+     * threading contract to hold (callbacks fire on the same reactor
+     * the fiber lives on), `bind_channel` must be called from the
+     * thread that owns the proxy's callback dispatch — typically the
+     * poll thread for production, the test thread for fakes. Cross-
+     * thread scheduling of the fiber spawn is sub-leaf 4e's concern.
      *
      * Calling this more than once is undefined for now (subsequent
      * leaves may relax that). Calling it with a default-constructed
      * (null) proxy is a no-op.
      */
-    // @safe - Records the proxy + flips channel-mode latch.
-    void bind_channel(ChannelConnectionProxy channel) {
-        if (!channel.has_value()) return;
-        // @unsafe - move-construction over a non-trivially-copyable proxy
-        { channel_ = std::move(channel); }
-        channel_mode_.set(true);
-    }
+    // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
+    void bind_channel(ChannelConnectionProxy channel);
 
     // @safe - True if `bind_channel` has been called with a non-null proxy.
     bool is_channel_mode() const { return channel_mode_.get(); }
+
+    // Test-only: install the self-pointer before code paths that need
+    // to upgrade it (e.g., the recv-loop fiber spawned in
+    // `bind_channel`). Production code goes through `Client::connect`,
+    // which wires `weak_self_` automatically as part of the
+    // freshly-constructed-Arc init dance. Tests that construct
+    // `ClientConnection` directly via `Arc::make` must call this
+    // before any channel-mode code path that captures the weak.
+    // @unsafe - Direct field assignment; callers must guarantee the
+    // weak refers to the same Arc that owns this object.
+    void install_self_weak_for_testing(WeakClientConnection weak) {
+        // @unsafe { Weak copy-assign }
+        { weak_self_ = std::move(weak); }
+    }
 
     // @safe - Simple status check using state machine
     bool connected() const {
@@ -1194,27 +1244,28 @@ public:
 
 private:
     // @unsafe - Dispatch a fully-marshaled frame body (without the
-    // 4-byte size prefix) through the bound channel. The proxy's
-    // underlying TcpConnection (or in-memory backend) encodes the
-    // size prefix internally via `frame_codec_encode_into`.
+    // 4-byte size prefix) through the bound channel's FiberChannel
+    // wrapper. The proxy's underlying TcpConnection (or in-memory
+    // backend) encodes the size prefix internally via
+    // `frame_codec_encode_into`.
     //
     // Used by `request_via_channel` and `enqueue_heartbeat_probe`
     // when the client is in channel mode. Returns the channel's
     // ChannelError; callers translate to errno where needed.
     //
-    // SAFETY: `channel_` is technically a non-const member, but
-    // `request` / `enqueue_heartbeat_probe` are `const` methods that
-    // access it through interior mutability (the proxy's underlying
-    // type — e.g. TcpConnection — synchronizes its own outbound
-    // queue, mirroring how `out_`'s SpinMutex is touched from const
-    // request paths today). The const_cast here matches that idiom.
+    // SAFETY: `fiber_channel_` is borrow-checked through RefCell at
+    // runtime; `FiberChannel::send_frame` is non-suspending and
+    // forwards to the proxy whose outbound queue is internally
+    // thread-safe (mirroring how `out_`'s SpinMutex is touched from
+    // const request paths today).
     ChannelError dispatch_frame_via_channel(const std::uint8_t* body_bytes,
                                             std::size_t body_size) const {
         if (!channel_mode_.get()) return ChannelError::ConnectionReset;
-        // @unsafe - const_cast to satisfy non-const facade method
-        ChannelConnectionProxy& mut_channel =
-            const_cast<ChannelConnectionProxy&>(channel_);
-        return mut_channel->send_frame(ChannelFrame{body_bytes, body_size});
+        // @unsafe - RefCell::borrow_mut, Option::as_mut, Box deref
+        auto guard = fiber_channel_.borrow_mut();
+        if (guard->is_none()) return ChannelError::ConnectionReset;
+        return guard->as_mut().unwrap()->send_frame(
+            ChannelFrame{body_bytes, body_size});
     }
 
     /**
@@ -1247,13 +1298,14 @@ private:
         }
 
         // Channel-mode connection state is owned by the channel
-        // proxy; if it reports closed, fail-fast. The legacy
+        // wrapper; if it reports closed, fail-fast. The legacy
         // `state_machine_` is intentionally not consulted here —
         // sub-leaf 4d/4e re-introduces reconnect / buffering hooks
         // through channel callbacks.
         {
-            auto& mut_channel = const_cast<ChannelConnectionProxy&>(channel_);
-            if (mut_channel->is_closed()) {
+            auto guard = fiber_channel_.borrow();
+            if (guard->is_none() ||
+                guard->as_ref().unwrap()->is_closed()) {
                 record_circuit_result(ENOTCONN);
                 return FutureResult::Err(ENOTCONN);
             }
