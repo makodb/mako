@@ -689,6 +689,26 @@ class ClientConnection {
     mutable rusty::RefCell<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_{rusty::None};
     rusty::Cell<bool> channel_mode_{false};
 
+    // Workstream K, sub-leaf 4e — channel-mode factory.
+    //
+    // When a `ChannelFactoryProxy` is bound via `bind_factory()`,
+    // `connect(addr)` and the close fan-out's reconnect path route
+    // through `factory_->connect(addr)` instead of issuing a raw
+    // socket(2) + connect(2) + register-pollable sequence. The
+    // factory's returned proxy is then handed to `bind_channel(...)`
+    // automatically, so the connection enters channel mode without
+    // a separate caller-driven setup step.
+    //
+    // Default-constructed (`None`) means "no factory bound" — the
+    // legacy fd path stays in use. Sub-leaf 4f adds the migration
+    // switch that selects between the two paths; sub-leaf 4g removes
+    // the legacy fd path entirely.
+    //
+    // Boxed because `pro::proxy<F>` triggers a cyclic-constraint
+    // diagnostic when used directly as the value type of
+    // `rusty::Option` — same workaround we apply to `fiber_channel_`.
+    mutable rusty::RefCell<rusty::Option<rusty::Box<ChannelFactoryProxy>>> factory_{rusty::None};
+
     // Transaction ID counter for RPC requests
     // mutable because Counter uses atomics internally for thread-safe interior mutability
     mutable Counter xid_counter_;
@@ -779,6 +799,23 @@ class ClientConnection {
     // callbacks, pending-future cancellation, reconnect spawn.
     void on_channel_closed_fan_out();
 
+    // @unsafe - Channel-factory connect helper (sub-leaf 4e). Calls
+    // `factory_->connect(addr)` and routes the returned proxy
+    // through `bind_channel(...)`. Caller is `connect(addr)` which
+    // already verified the factory is bound.
+    int connect_via_factory(const char* addr);
+
+    // @unsafe - Reset channel-mode state so a subsequent `connect`
+    // call can re-bind. Used by the factory-driven reconnect path
+    // in `on_channel_closed_fan_out` (sub-leaf 4e). Drops the stale
+    // `FiberChannel` (its proxy is closed by definition at this
+    // point), clears the `channel_mode_` latch, and forces the
+    // state machine to DISCONNECTED so `connect`'s
+    // `verify(!is_connected())` passes. The recv-loop fiber from
+    // the old binding has already exited (recv_frame returned None
+    // before the fan-out ran).
+    void reset_channel_mode_for_reconnect();
+
     // Workstream K, sub-leaf 4d — observable counter for channel-mode
     // auto-reconnect attempts. Incremented before the reconnect
     // thread spawn in `on_channel_closed_fan_out`. Tests inspect
@@ -840,6 +877,40 @@ public:
 
     // @safe - True if `bind_channel` has been called with a non-null proxy.
     bool is_channel_mode() const { return channel_mode_.get(); }
+
+    /**
+     * Bind a `ChannelFactoryProxy` to this connection
+     * (Workstream K, sub-leaf 4e).
+     *
+     * Once bound, `connect(addr)` and the close fan-out's reconnect
+     * spawn route through `factory->connect(addr)` instead of the
+     * legacy socket(2) + connect(2) + register-pollable sequence.
+     * The factory's returned proxy is automatically handed to
+     * `bind_channel(...)` on success — callers don't need to wire
+     * channel mode manually.
+     *
+     * Calling with a default-constructed (null) proxy is a no-op.
+     * Calling more than once replaces the previously-bound factory;
+     * an in-flight reconnect that already grabbed the old factory
+     * will complete with the old factory.
+     */
+    // @unsafe - Records the factory under RefCell interior mutability.
+    void bind_factory(ChannelFactoryProxy factory) {
+        if (!factory.has_value()) return;
+        // @unsafe { RefCell::borrow_mut + make_box + ChannelFactoryProxy move }
+        {
+            auto guard = factory_.borrow_mut();
+            *guard = rusty::Some(
+                rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+        }
+    }
+
+    // @safe - True if `bind_factory` has been called with a non-null proxy.
+    bool is_factory_bound() const {
+        // @unsafe { RefCell::borrow }
+        auto guard = factory_.borrow();
+        return guard->is_some();
+    }
 
     // Test-only: install the self-pointer before code paths that need
     // to upgrade it (e.g., the recv-loop fiber spawned in
@@ -1739,6 +1810,22 @@ class Client {
     // Shared lifecycle callback manager, wired into active ClientConnection.
     rusty::Arc<CallbackManager> callback_manager_{rusty::Arc<CallbackManager>::make()};
 
+    // Workstream K, sub-leaf 4e — pending channel factory.
+    //
+    // When set via `set_channel_factory(...)`, every subsequent
+    // `Client::connect(addr)` pushes a clone-equivalent of this
+    // proxy into the freshly-constructed `ClientConnection`. The
+    // connection then routes its `connect(addr)` and reconnect
+    // spawn through the factory instead of the legacy fd path.
+    //
+    // RefCell because pro::proxy<F> is move-only and we need to
+    // assign through this const facade without exposing the
+    // private member to friends. Box wrapper sidesteps the
+    // cyclic-constraint diagnostic that surfaces when
+    // `Option<pro::proxy<F>>` is instantiated directly (same
+    // workaround as `ClientConnection::factory_`).
+    mutable rusty::RefCell<rusty::Option<rusty::Box<ChannelFactoryProxy>>> pending_factory_{rusty::None};
+
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
     // These are accessed through getters/setters for thread-safety
@@ -1880,6 +1967,49 @@ public:
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_buffering_config(config);  // @unsafe
         }
+    }
+
+    /**
+     * Install a `ChannelFactoryProxy` (Workstream K, sub-leaf 4e).
+     *
+     * Subsequent `Client::connect(addr)` calls will route through
+     * the factory: `factory->connect(addr)` returns a
+     * `ChannelConnectionProxy` that the client automatically hands
+     * to `ClientConnection::bind_channel(...)`. The legacy
+     * socket(2) + connect(2) path is bypassed entirely. The same
+     * factory is reused by the close fan-out's reconnect spawn
+     * (re-running `factory->connect(addr)`).
+     *
+     * Calling more than once replaces the previous pending factory
+     * for *future* `Client::connect` calls; an already-active
+     * `ClientConnection` keeps its previously-bound factory.
+     *
+     * Calling with a default-constructed (null) proxy is a no-op.
+     *
+     * Default factory: callers can build a `make_tcp_factory_proxy(
+     * rusty::Arc<TcpFactory>::make(poll_thread))` and install it
+     * here. The TCP backend is functionally equivalent to the
+     * legacy fd path; the abstraction lets test fixtures plug in
+     * an in-memory backend (sub-leaf "in-memory channel backend"
+     * in the workstream TODO).
+     */
+    // @unsafe - Records the factory under RefCell interior mutability.
+    void set_channel_factory(ChannelFactoryProxy factory) const {
+        if (!factory.has_value()) return;
+        // @unsafe { RefCell::borrow_mut + make_box + ChannelFactoryProxy move }
+        {
+            auto guard = pending_factory_.borrow_mut();
+            *guard = rusty::Some(
+                rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+        }
+    }
+
+    // @safe - True if `set_channel_factory` has been called and the
+    // factory hasn't been consumed by a `connect` yet.
+    bool has_pending_channel_factory() const {
+        // @unsafe { RefCell::borrow }
+        auto guard = pending_factory_.borrow();
+        return guard->is_some();
     }
 
     // @unsafe - Uses RequestQueue which uses std::list

@@ -1889,6 +1889,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_client_channel_close ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_client_channel_close COMMAND test_rpc_client_channel_close)
 
+    # SRPC client channel-mode factory-driven connect/reconnect (Workstream K, sub-leaf 4e)
+    add_executable(test_rpc_client_channel_factory src/rrr/tests/rpc_client_channel_factory_test.cc)
+    target_include_directories(test_rpc_client_channel_factory PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_client_channel_factory PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_client_channel_factory ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_client_channel_factory COMMAND test_rpc_client_channel_factory)
+
     add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
