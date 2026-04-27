@@ -4,7 +4,7 @@
 #include <atomic>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
-import rrr;
+#include "rrr/rrr.hpp"
 #include "lib/server.h"
 
 namespace mako {

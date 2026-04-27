@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -34,13 +34,12 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
 
-export module rrr:rpc.completion_tracker;
 
 
 
-import :rpc.idempotency;
+#include "idempotency.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 // ===========================================================================
 // CompletionTrackerConfig

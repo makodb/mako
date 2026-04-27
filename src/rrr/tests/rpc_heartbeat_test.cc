@@ -7,7 +7,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 using namespace std::chrono;

@@ -29,7 +29,7 @@
 #undef RRR_TESTS_RESTORE_RR_MACRO
 #endif
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 namespace {

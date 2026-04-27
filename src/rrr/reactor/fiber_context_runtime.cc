@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -23,10 +22,7 @@ module;
 #include <unistd.h>
 
 
-module rrr:impl.reactor.fiber_context_runtime;
-
-
-import rrr;
+#include "../rrr.hpp"
 
 /**
  * @file fiber_context_runtime.cc

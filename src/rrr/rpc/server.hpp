@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -99,20 +99,19 @@ module;
 
 // @unsafe - RPC module uses raw sockets, mutable spinlocks, and pthread primitives
 
-export module rrr:rpc.server;
 
 
 
-import :base.all;
-import :misc.marshal;
-import :reactor.epoll_wrapper;
-import :reactor.reactor;
+#include "../base/all.hpp"
+#include "../misc/marshal.hpp"
+#include "../reactor/epoll_wrapper.h"
+#include "../reactor/reactor.h"
 
 
-import :rpc.internal_protocol;
-import :rpc.utils;
+#include "internal_protocol.hpp"
+#include "utils.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 class Server;
 class ServerConnection;
@@ -543,7 +542,7 @@ public:
 } // namespace rrr
 
 
-export namespace rrr {
+namespace rrr {
 
 // @safe - RAII wrapper for deferred RPC replies with move semantics
 // Handler receives DeferredReply by value (moved) and calls defer.reply()

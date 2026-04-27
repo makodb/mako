@@ -5,7 +5,7 @@
  * and restart detection callback functionality.
  */
 #include "gtest/gtest.h"
-import rrr;
+#include "../rrr.hpp"
 #include <thread>
 #include <atomic>
 #include <chrono>

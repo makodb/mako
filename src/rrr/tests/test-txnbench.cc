@@ -1,6 +1,6 @@
 #include <vector>
 
-import rrr;
+#include "../rrr.hpp"
 #include "deptran/all.h"
 
 //using namespace base;

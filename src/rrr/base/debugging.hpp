@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -26,11 +26,10 @@ module;
 //   abort: [safe, () -> void]
 // }
 
-export module rrr:base.debugging;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 // @unsafe - Uses backtrace functions and raw memory operations
 // SAFETY: FILE* must be valid; backtrace functions are thread-safe

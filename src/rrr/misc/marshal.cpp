@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -26,10 +25,10 @@ module;
 
 
 
-module rrr:impl.misc.marshal;
+#include "marshal.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // External safety annotations for atomic operations
 // @external: {

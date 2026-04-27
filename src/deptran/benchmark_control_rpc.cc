@@ -6,7 +6,7 @@
 #include "client_worker.h"
 #include "stats_registry.h"
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 
 extern vector<unique_ptr<janus::ClientWorker>> client_workers_g;

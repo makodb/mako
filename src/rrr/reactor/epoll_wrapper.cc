@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -21,10 +20,10 @@ module;
 
 
 
-module rrr:impl.reactor.epoll_wrapper;
+#include "epoll_wrapper.h"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 

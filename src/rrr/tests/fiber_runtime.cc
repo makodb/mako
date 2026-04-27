@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <iostream>
 
-import rrr;
+#include "../rrr.hpp"
 
 using namespace std;
 using namespace rrr;

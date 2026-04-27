@@ -27,7 +27,7 @@
 #include <stdexcept>
 
 // RRR/RPC includes for direct testing
-import rrr;
+#include "../rrr.hpp"
 
 using namespace std::chrono;
 

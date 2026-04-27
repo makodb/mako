@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -31,10 +30,10 @@ module;
 
 
 
-module rrr:impl.reactor.reactor;
+#include "reactor.h"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // @external: {
 //   rrr::Log::debug: [safe],
@@ -47,11 +46,13 @@ import rrr;
 namespace rrr {
 
 const int64_t n_max_fiber = 2000;
-#ifdef REUSE_FIBER
-constexpr bool REUSING_FIBER = true;
-#else
-constexpr bool REUSING_FIBER = false;
-#endif
+// `REUSING_FIBER` is provided as a macro by reactor.h (line 203).
+// The original module-attached `constexpr bool REUSING_FIBER`
+// shadowed the macro inside the rrr module's purview; with
+// de-modularization (header-textual inclusion) the macro now
+// expands at parse time and the constexpr is redundant — the
+// existing call sites in this TU (lines below) consume the macro
+// directly.
 
 namespace {
 

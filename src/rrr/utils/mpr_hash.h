@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -30,16 +30,15 @@ module;
 //extern "C" {
 #endif
 
-export module rrr:utils.mpr_hash;
 
 
 
-import :utils.logger;
+#include "logger.h"
 
-export inline constexpr int MPR_HASH_THREAD_UNSAFE = 0x0;
-export inline constexpr int MPR_HASH_THREAD_SAFE = 0x1;
+inline constexpr int MPR_HASH_THREAD_UNSAFE = 0x0;
+inline constexpr int MPR_HASH_THREAD_SAFE = 0x1;
 
-export typedef struct {
+typedef struct {
     apr_pool_t *mp;
     apr_thread_mutex_t *mx;
     apr_thread_rwlock_t *rwl;
@@ -48,7 +47,7 @@ export typedef struct {
     int is_thread_safe;
 } mpr_hash_t;    
 
-export typedef struct {
+typedef struct {
     void *key;
     size_t sz_key;
     void *value;
@@ -56,7 +55,7 @@ export typedef struct {
 } mpr_hash_value_t;
 
 
-export inline void mpr_hash_create_ex(mpr_hash_t **hash, int flag) {
+inline void mpr_hash_create_ex(mpr_hash_t **hash, int flag) {
     *hash = (mpr_hash_t*)calloc(sizeof(mpr_hash_t), 1);
     apr_initialize();
     apr_pool_create(&(*hash)->mp, NULL);
@@ -66,11 +65,11 @@ export inline void mpr_hash_create_ex(mpr_hash_t **hash, int flag) {
     (*hash)->is_thread_safe = flag & MPR_HASH_THREAD_SAFE;
 }
 
-export inline void mpr_hash_create(mpr_hash_t **hash) {
+inline void mpr_hash_create(mpr_hash_t **hash) {
     mpr_hash_create_ex(hash, MPR_HASH_THREAD_SAFE); 
 }
 
-export inline void mpr_hash_destroy(mpr_hash_t *hash) {
+inline void mpr_hash_destroy(mpr_hash_t *hash) {
     // TODO [fix] remove all keys.
     
     apr_hash_index_t *hi;
@@ -91,7 +90,7 @@ export inline void mpr_hash_destroy(mpr_hash_t *hash) {
     atexit(apr_terminate);
 }
 
-export inline void mpr_hash_set(mpr_hash_t *hash, const void *key, size_t sz_key, 
+inline void mpr_hash_set(mpr_hash_t *hash, const void *key, size_t sz_key, 
         const void *value, size_t sz_value) {
 //    apr_thread_mutex_lock(hash->mx);
     apr_thread_rwlock_wrlock(hash->rwl);    
@@ -124,7 +123,7 @@ export inline void mpr_hash_set(mpr_hash_t *hash, const void *key, size_t sz_key
     apr_thread_rwlock_unlock(hash->rwl);
 }
 
-export inline void mpr_hash_get(mpr_hash_t *hash, const void *key, size_t sz_key, 
+inline void mpr_hash_get(mpr_hash_t *hash, const void *key, size_t sz_key, 
         void **value, size_t *sz_value) {
 //    apr_thread_mutex_lock(hash->mx);
     if (hash->is_thread_safe) {

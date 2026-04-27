@@ -1,7 +1,7 @@
 #include "service.h"
 #include "server.h"
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 // @external: {
 //   Log_info:   [safe, (...) -> void]

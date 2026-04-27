@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -20,13 +20,12 @@ module;
 #include <sys/sysinfo.h>
 #endif
 
-export module rrr:misc.cpuinfo;
 
 
 
-import :base.all;
+#include "../base/all.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 class CPUInfo {
 private:

@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -14,15 +14,14 @@ module;
 #include <rusty/rusty.hpp>
 
 
-export module rrr:reactor.quorum_event;
 
 
 
-import :base.debugging;
-import :base.basetypes;
+#include "../base/debugging.hpp"
+#include "../base/basetypes.hpp"
 
 
-import :reactor.event;
+#include "event.h"
 
 using rrr::Event;
 using rrr::IntEvent;
@@ -30,7 +29,7 @@ using rrr::verify;
 using std::function;
 using std::shared_ptr;
 
-export namespace janus {
+namespace janus {
 
 class QuorumEvent : public Event {
  public:

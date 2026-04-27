@@ -1,7 +1,7 @@
 // @safe - RRR RPC service implementation for Mako client API
 #include "client_service.h"
 #include "lib/common.h"
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace mako {
 

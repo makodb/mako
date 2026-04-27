@@ -6,7 +6,7 @@
 #include "recovery_manager.hpp"
 #include <cstring>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

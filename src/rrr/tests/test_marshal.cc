@@ -4,7 +4,7 @@
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 

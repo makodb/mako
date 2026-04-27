@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -34,10 +33,10 @@ module;
 
 
 
-module rrr:impl.rpc.utils;
+#include "utils.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
 // No external annotations needed here - utils.cpp doesn't use atomics directly

@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -11,9 +10,9 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 
-module rrr:impl.rpc.fiber_channel;
+#include "fiber_channel.hpp"
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 

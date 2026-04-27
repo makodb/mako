@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -36,14 +36,13 @@ module;
 //   std::min: [safe]
 // }
 
-export module rrr:misc.marshal;
 
 
 
-import :base.all;
+#include "../base/all.hpp"
 
 
-export namespace rrr {
+namespace rrr {
 
 // @safe - Wrapper for std::min (pure function, no side effects)
 template<typename T>

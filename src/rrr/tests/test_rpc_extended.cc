@@ -11,7 +11,7 @@
 #include <rusty/mutex.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/vec.hpp>
-import rrr;
+#include "../rrr.hpp"
 #include "benchmark_service.h"
 
 using namespace rrr;

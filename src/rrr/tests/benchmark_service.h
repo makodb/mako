@@ -8,7 +8,7 @@
 #include <errno.h>
 #include <memory>
 
-import rrr;
+#include "../rrr.hpp"
 
 // #include <math.h>
 

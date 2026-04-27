@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -23,10 +22,10 @@ module;
 #include <rusty/thread.hpp>
 
 
-module rrr:impl.misc.recorder;
+#include "recorder.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 /*
  *

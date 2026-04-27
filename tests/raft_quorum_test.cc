@@ -14,7 +14,7 @@
 
 #include "deptran/raft/quorum.hpp"
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 using janus::raft::RaftQuorum;
 using siteid_t_test = uint16_t;

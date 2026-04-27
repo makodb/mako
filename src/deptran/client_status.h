@@ -12,7 +12,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-import rrr;
+#include "rrr/rrr.hpp"
 #ifdef __APPLE__ // for OS X
 #include <mach/clock.h>
 #include <mach/mach.h>

@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 #define RPC_TEST_HOOKS
-import rrr;
+#include "../rrr.hpp"
 #undef RPC_TEST_HOOKS
 
 using namespace rrr;

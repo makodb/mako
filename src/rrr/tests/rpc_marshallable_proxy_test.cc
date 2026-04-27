@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <type_traits>
-import rrr;
+#include "../rrr.hpp"
 #include "deptran/classic/tpc_command.h"
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"

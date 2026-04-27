@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -14,13 +14,12 @@ module;
 #include <rusty/rusty.hpp>
 
 
-export module rrr:rpc.callbacks;
 
 
 
-import :rpc.errors;
+#include "errors.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 /**
  * Callback function types for connection events.

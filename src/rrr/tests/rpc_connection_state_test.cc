@@ -7,7 +7,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 

@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -16,10 +15,10 @@ module;
 #include <time.h>
 #include <sys/time.h>
 
-module rrr:impl.base.basetypes;
+#include "basetypes.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 
 

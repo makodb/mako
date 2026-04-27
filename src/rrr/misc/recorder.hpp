@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -15,18 +15,17 @@ module;
 
 
 
-export module rrr:misc.recorder;
 
 
 
-import :base.basetypes;
-import :base.misc;
-import :base.threading;
+#include "../base/basetypes.hpp"
+#include "../base/misc.hpp"
+#include "../base/threading.hpp"
 
-import :misc.marshal;
-import :misc.stat;
+#include "marshal.hpp"
+#include "stat.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 class Recorder : public FrequentJob {
 private:

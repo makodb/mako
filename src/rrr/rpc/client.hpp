@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -19,30 +19,29 @@ module;
 
 
 
-export module rrr:rpc.client;
 
 
 
-import :base.all;
-import :misc.marshal;
-import :reactor.epoll_wrapper;
-import :reactor.reactor;
+#include "../base/all.hpp"
+#include "../misc/marshal.hpp"
+#include "../reactor/epoll_wrapper.h"
+#include "../reactor/reactor.h"
 
 
-import :rpc.channel;
-import :rpc.fiber_channel;
-import :rpc.connection_state;
-import :rpc.errors;
-import :rpc.reconnect_policy;
-import :rpc.request_queue;
-import :rpc.connection_metrics;
-import :rpc.request_options;
-import :rpc.load_balancer;
-import :rpc.heartbeat;
-import :rpc.circuit_breaker;
-import :rpc.callbacks;
+#include "channel.hpp"
+#include "fiber_channel.hpp"
+#include "connection_state.hpp"
+#include "errors.hpp"
+#include "reconnect_policy.hpp"
+#include "request_queue.hpp"
+#include "connection_metrics.hpp"
+#include "request_options.hpp"
+#include "load_balancer.hpp"
+#include "heartbeat.hpp"
+#include "circuit_breaker.hpp"
+#include "callbacks.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 // Stream operator for RefMut<Marshal> - allows get_reply() >> x pattern
 // This forwards to Marshal's operator>> while caller holds the guard
@@ -121,7 +120,7 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 // NOTE: Marshal methods (set_bookmark, write_bookmark, get_and_reset_write_cnt, empty, content_size)
 // are now annotated @safe in-place in marshal.hpp
 
-export namespace rrr {
+namespace rrr {
 
 /**
  * Behavior when a request is made while disconnected.
@@ -757,14 +756,16 @@ class ClientConnection {
     // Safe to call repeatedly; only first call for a given xid has effect.
     void fail_pending_future(i64 xid, int err) const;
 
-    // Workstream K, sub-leaf 4c2 — channel-mode response demux.
+    // Workstream K, sub-leaves 4c2/4d — channel-mode response demux
+    // and close-side fan-out.
     //
     // `run_recv_loop` blocks the calling fiber on
     // `FiberChannel::recv_frame` and dispatches each decoded response
-    // body to the matching pending future. The body wire layout
-    // mirrors the legacy fd path's frame layout, minus the 4-byte
-    // size prefix (the channel layer consumes that). See `client.cpp`
-    // for the exact bytes-to-future mapping.
+    // body to the matching pending future. On `recv_frame` returning
+    // None (channel closed), it calls `on_channel_closed_fan_out`
+    // before exiting so the connection's reliability layer (error
+    // callback, pending-future cancellation, reconnect attempt) sees
+    // the close.
     //
     // `decode_response_and_notify` is the single-frame helper called
     // by the loop on each iteration; it parses the body and resolves
@@ -774,6 +775,18 @@ class ClientConnection {
     // @unsafe - Same body, factored for testability.
     void decode_response_and_notify(const std::uint8_t* bytes,
                                     std::size_t size);
+    // @unsafe - Channel-mode close fan-out: error/disconnected
+    // callbacks, pending-future cancellation, reconnect spawn.
+    void on_channel_closed_fan_out();
+
+    // Workstream K, sub-leaf 4d — observable counter for channel-mode
+    // auto-reconnect attempts. Incremented before the reconnect
+    // thread spawn in `on_channel_closed_fan_out`. Tests inspect
+    // this to verify the fan-out reached the reconnect-policy branch
+    // without having to drive a real reconnect (sub-leaf 4e wires
+    // the factory-based reconnect that supersedes the legacy fd
+    // path).
+    std::atomic<uint64_t> channel_reconnect_attempts_{0};
 
 public:
     /**
@@ -840,6 +853,35 @@ public:
     void install_self_weak_for_testing(WeakClientConnection weak) {
         // @unsafe { Weak copy-assign }
         { weak_self_ = std::move(weak); }
+    }
+
+    // Workstream K, sub-leaf 4d — observable counter for
+    // channel-mode close fan-out's reconnect spawn. Tests verify the
+    // fan-out reached the reconnect branch by checking this counter
+    // pre/post a synthesized `on_closed`.
+    // @safe - Atomic load.
+    uint64_t channel_reconnect_attempts_count() const {
+        return channel_reconnect_attempts_.load(std::memory_order_acquire);
+    }
+
+    // Test-only: seed the reconnect-target address. Production wires
+    // this through `connect(addr)`. Channel-mode tests that want to
+    // verify the close fan-out's reconnect-policy branch check this
+    // before the synthesized `on_closed`.
+    // @unsafe - Non-atomic std::string assignment from the test
+    // thread; safe in the test scope (no other thread is racing).
+    void set_reconnect_address_for_testing(std::string addr) {
+        // @unsafe { std::string move-assign }
+        { reconnect_address_ = std::move(addr); }
+    }
+
+    // Test-only: short-circuit the reconnect spawn body before it
+    // reaches the legacy fd `reconnect()` path. Tests rely on the
+    // close fan-out's counter bumping *before* the spawn, while the
+    // spawned thread itself aborts immediately.
+    // @safe - Atomic store.
+    void abort_reconnect() {
+        reconnect_abort_.store(true, std::memory_order_release);
     }
 
     // @safe - Simple status check using state machine
@@ -1665,7 +1707,7 @@ struct hash<rusty::Arc<rrr::ClientConnection>> {
 };
 }
 
-export namespace rrr {
+namespace rrr {
 
 // @unsafe - RPC client facade that owns a ClientConnection
 // (Marked unsafe due to mutable field for interior mutability)

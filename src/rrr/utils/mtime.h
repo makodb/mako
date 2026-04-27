@@ -1,4 +1,5 @@
-module;
+#pragma once
+
 /*
  * mtime.h
  *
@@ -33,4 +34,3 @@ module;
 //
 //#endif /* MTIME_H_ */
 
-export module rrr:utils.mtime;

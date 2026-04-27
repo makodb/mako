@@ -25,7 +25,7 @@
 #include "transport.hpp"
 #include "messages.hpp"
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 #include "../constants.h"
 #include "commo.h"

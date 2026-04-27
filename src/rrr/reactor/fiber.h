@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -39,16 +39,15 @@ module;
 #include <rusty/option.hpp>
 #include <rusty/rc.hpp>
 
-export module rrr:reactor.fiber;
 
 
 
-import :reactor.fiber_impl;
-import :reactor.event;
-import :reactor.future;
-import :base.basetypes;
+#include "fiber_impl.h"
+#include "event.h"
+#include "future.h"
+#include "../base/basetypes.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 // =============================================================================
 // Fiber is the primary class for stackful fibers

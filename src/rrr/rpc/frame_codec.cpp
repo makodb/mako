@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -8,9 +7,9 @@ module;
 #include <cstdint>
 #include <cstring>
 
-module rrr:impl.rpc.frame_codec;
+#include "frame_codec.hpp"
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 

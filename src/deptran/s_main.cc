@@ -8,7 +8,7 @@
 #include "server_worker.h"
 #include "scheduler.h"
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 // #define CPU_PROFILE 1
 

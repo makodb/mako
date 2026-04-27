@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -29,20 +29,19 @@ module;
 #include <apr_thread_mutex.h>
 
 
-export module rrr:utils.mpr_dag;
 
 
 
-import :utils.safe_assert;
-import :utils.logger;
-import :utils.mpr_queue;
+#include "safe_assert.h"
+#include "logger.h"
+#include "mpr_queue.h"
 
-export typedef uint32_t queueid_t;
+typedef uint32_t queueid_t;
 #define GRAY 0
 #define WHITE 1
 #define BLACK 2
 
-export typedef struct {
+typedef struct {
     apr_pool_t *mp;
     apr_queue_t *qu;
     apr_hash_t *ht;
@@ -51,14 +50,14 @@ export typedef struct {
     apr_uint32_t n_pop;
 } mpr_dag_t;
 
-export typedef struct {
+typedef struct {
     queueid_t* qids;
     size_t sz_qids;
     int color;
     void *data;
 } mpr_dag_node_t;
 
-export inline void mpr_dag_create(mpr_dag_t **pp_dag) {
+inline void mpr_dag_create(mpr_dag_t **pp_dag) {
     *pp_dag = (mpr_dag_t*) malloc(sizeof(mpr_dag_t));
     mpr_dag_t *d = *pp_dag;
     apr_pool_create(&d->mp, NULL);
@@ -69,7 +68,7 @@ export inline void mpr_dag_create(mpr_dag_t **pp_dag) {
     apr_thread_mutex_create(&d->mx, APR_THREAD_MUTEX_UNNESTED, d->mp);
 }
 
-export inline void mpr_dag_destroy(mpr_dag_t *dag) {
+inline void mpr_dag_destroy(mpr_dag_t *dag) {
     LOG_TRACE("dag to be destroied.");
     apr_queue_term(dag->qu);
     apr_thread_mutex_destroy(dag->mx);
@@ -78,11 +77,11 @@ export inline void mpr_dag_destroy(mpr_dag_t *dag) {
     LOG_DEBUG("dag destroied.");
 }
 
-export inline void mpr_dag_interrupt(mpr_dag_t *dag) {
+inline void mpr_dag_interrupt(mpr_dag_t *dag) {
     apr_queue_interrupt_all(dag->qu);
 }
 
-export inline void mpr_dag_push(mpr_dag_t *dag, queueid_t *qids, 
+inline void mpr_dag_push(mpr_dag_t *dag, queueid_t *qids, 
         size_t sz_qids, void* data) {
 
     mpr_dag_node_t *node = (mpr_dag_node_t*)malloc(sizeof(mpr_dag_node_t));
@@ -124,7 +123,7 @@ export inline void mpr_dag_push(mpr_dag_t *dag, queueid_t *qids,
     apr_thread_mutex_unlock(dag->mx);
 }
 
-export inline void mpr_dag_pop(mpr_dag_t *dag, queueid_t *qids, size_t sz_qids, void** data) {
+inline void mpr_dag_pop(mpr_dag_t *dag, queueid_t *qids, size_t sz_qids, void** data) {
     apr_thread_mutex_lock(dag->mx);
 
     // 1. pop it from the queue
@@ -177,7 +176,7 @@ export inline void mpr_dag_pop(mpr_dag_t *dag, queueid_t *qids, size_t sz_qids, 
  * @param sz_qids
  * @param data
  */
-export inline apr_status_t mpr_dag_getwhite(mpr_dag_t *dag, queueid_t **qids, 
+inline apr_status_t mpr_dag_getwhite(mpr_dag_t *dag, queueid_t **qids, 
         size_t* sz_qids, void** data) {
     apr_status_t status;
     mpr_dag_node_t *node = NULL;

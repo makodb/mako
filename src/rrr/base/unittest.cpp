@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -21,10 +20,10 @@ module;
 
 
 
-module rrr:impl.base.unittest;
+#include "unittest.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // @external: {
 //   printf: [unsafe],

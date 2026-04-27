@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -25,13 +25,12 @@ module;
 //   strlen: [safe, (const char*) -> size_t]
 // }
 
-export module rrr:base.logging;
 
 
 
-import :base.threading;
+#include "threading.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 // @safe - Thread-safe logging class using static mutex
 class Log {

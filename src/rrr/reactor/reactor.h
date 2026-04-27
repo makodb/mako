@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -86,20 +86,19 @@ module;
 //   verify: [unsafe, (auto) -> void]
 // }
 
-export module rrr:reactor.reactor;
 
 
 
-import :base.all;
-import :rpc.pollable_proxy;
+#include "../base/all.hpp"
+#include "../rpc/pollable_proxy.h"
 
 
-import :reactor.event;
-import :reactor.quorum_event;
-import :reactor.fiber_impl;
-import :reactor.epoll_wrapper;
+#include "event.h"
+#include "quorum_event.h"
+#include "fiber_impl.h"
+#include "epoll_wrapper.h"
 
-export namespace rrr {
+namespace rrr {
 
 // Note: Fiber is the primary class (defined in fiber_impl.h)
 // The full definition is available via #include "fiber_impl.h" above
@@ -400,7 +399,7 @@ template<>
 struct is_send<rrr::PollCommand> : std::true_type {};
 } // namespace rusty
 
-export namespace rrr {
+namespace rrr {
 
 // =============================================================================
 // PollThreadWorker - Owns all polling state, runs in dedicated thread

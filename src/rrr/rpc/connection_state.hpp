@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -13,11 +13,10 @@ module;
 
 #include <rusty/cell.hpp>
 
-export module rrr:rpc.connection_state;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 /**
  * Connection lifecycle states for RPC client connections.

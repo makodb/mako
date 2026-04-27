@@ -8,7 +8,7 @@
 #include <chrono>
 #include <thread>
 #include <rusty/arc.hpp>
-import rrr;
+#include "../rrr.hpp"
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 

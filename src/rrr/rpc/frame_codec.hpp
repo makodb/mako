@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -8,9 +8,8 @@ module;
 #include <cstdint>
 #include <cstring>
 
-export module rrr:rpc.frame_codec;
 
-import :rpc.internal_protocol;
+#include "internal_protocol.hpp"
 
 /**
  * SRPC Channel Frame Codec (Workstream K, Phase 2).
@@ -74,7 +73,7 @@ import :rpc.internal_protocol;
  * appends one frame to a `std::vector<uint8_t>`; callers loop to batch
  * N frames into a single `send(2)` syscall.
  */
-export namespace rrr {
+namespace rrr {
 
 // ---------------------------------------------------------------------------
 // Wire-format constants

@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -12,23 +12,22 @@ module;
 #include <ctime>
 
 
-export module rrr:utils.logger;
 
 
 
-export inline constexpr int LOG_LEVEL_OFF = 0;
-export inline constexpr int LOG_LEVEL_FATAL = 1;
-export inline constexpr int LOG_LEVEL_ERROR = 2;
-export inline constexpr int LOG_LEVEL_WARN = 3;
-export inline constexpr int LOG_LEVEL_INFO = 4;
-export inline constexpr int LOG_LEVEL_DEBUG = 5;
-export inline constexpr int LOG_LEVEL_TRACE = 6;
-export inline constexpr int LOG_LEVEL_ALL = 6;
+inline constexpr int LOG_LEVEL_OFF = 0;
+inline constexpr int LOG_LEVEL_FATAL = 1;
+inline constexpr int LOG_LEVEL_ERROR = 2;
+inline constexpr int LOG_LEVEL_WARN = 3;
+inline constexpr int LOG_LEVEL_INFO = 4;
+inline constexpr int LOG_LEVEL_DEBUG = 5;
+inline constexpr int LOG_LEVEL_TRACE = 6;
+inline constexpr int LOG_LEVEL_ALL = 6;
 
 #ifdef NDEBUG
-export inline constexpr int LOG_LEVEL = LOG_LEVEL_INFO;
+inline constexpr int LOG_LEVEL = LOG_LEVEL_INFO;
 #else
-export inline constexpr int LOG_LEVEL = LOG_LEVEL_DEBUG;
+inline constexpr int LOG_LEVEL = LOG_LEVEL_DEBUG;
 #endif
 
 inline void log_msg_impl(const char* level, const char* fmt, va_list args) {
@@ -40,7 +39,7 @@ inline void log_msg_impl(const char* level, const char* fmt, va_list args) {
     std::fflush(stdout);
 }
 
-export inline void LOG_FATAL(const char* fmt, ...) {
+inline void LOG_FATAL(const char* fmt, ...) {
     if constexpr (LOG_LEVEL >= LOG_LEVEL_FATAL) {
         va_list args;
         va_start(args, fmt);
@@ -49,7 +48,7 @@ export inline void LOG_FATAL(const char* fmt, ...) {
     }
 }
 
-export inline void LOG_ERROR(const char* fmt, ...) {
+inline void LOG_ERROR(const char* fmt, ...) {
     if constexpr (LOG_LEVEL >= LOG_LEVEL_ERROR) {
         va_list args;
         va_start(args, fmt);
@@ -58,7 +57,7 @@ export inline void LOG_ERROR(const char* fmt, ...) {
     }
 }
 
-export inline void LOG_WARN(const char* fmt, ...) {
+inline void LOG_WARN(const char* fmt, ...) {
     if constexpr (LOG_LEVEL >= LOG_LEVEL_WARN) {
         va_list args;
         va_start(args, fmt);
@@ -67,7 +66,7 @@ export inline void LOG_WARN(const char* fmt, ...) {
     }
 }
 
-export inline void LOG_INFO(const char* fmt, ...) {
+inline void LOG_INFO(const char* fmt, ...) {
     if constexpr (LOG_LEVEL >= LOG_LEVEL_INFO) {
         va_list args;
         va_start(args, fmt);
@@ -76,7 +75,7 @@ export inline void LOG_INFO(const char* fmt, ...) {
     }
 }
 
-export inline void LOG_DEBUG(const char* fmt, ...) {
+inline void LOG_DEBUG(const char* fmt, ...) {
     if constexpr (LOG_LEVEL >= LOG_LEVEL_DEBUG) {
         va_list args;
         va_start(args, fmt);
@@ -85,7 +84,7 @@ export inline void LOG_DEBUG(const char* fmt, ...) {
     }
 }
 
-export inline void LOG_TRACE(const char* fmt, ...) {
+inline void LOG_TRACE(const char* fmt, ...) {
     if constexpr (LOG_LEVEL >= LOG_LEVEL_TRACE) {
         va_list args;
         va_start(args, fmt);

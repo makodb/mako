@@ -2,7 +2,7 @@
 
 #include <sstream>
 
-import rrr;
+#include "../rrr.hpp"
 #include "memdb/row.h"
 #include "memdb/schema.h"
 #include "memdb/txn.h"

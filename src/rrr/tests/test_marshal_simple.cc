@@ -1,5 +1,5 @@
 #include "simple_test_runner.h"
-import rrr;
+#include "../rrr.hpp"
 #include <vector>
 #include <string>
 #include <map>

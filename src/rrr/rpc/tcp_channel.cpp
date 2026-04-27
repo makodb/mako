@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -23,9 +22,9 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/sync/weak.hpp>
 
-module rrr:impl.rpc.tcp_channel;
+#include "tcp_channel.hpp"
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 

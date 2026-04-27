@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <set>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 

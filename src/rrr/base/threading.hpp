@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -57,15 +57,14 @@ module;
 //   std::condition_variable::wait_for: [unsafe, (std::unique_lock<std::mutex>&, duration) -> std::cv_status]
 // }
 
-export module rrr:base.threading;
 
 
 
-import :base.basetypes;
-import :base.debugging;
-import :base.misc;
+#include "basetypes.hpp"
+#include "debugging.hpp"
+#include "misc.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 inline void Pthread_spin_init(pthread_spinlock_t* lock, int pshared) {
     verify(pthread_spin_init(lock, pshared) == 0);

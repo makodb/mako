@@ -650,3 +650,83 @@ in is reversible (we could later push the fiber primitive into the
 facade), but adding the fiber facade as a wrapper *now* gives the
 ergonomics where they matter without forcing all backends to be
 fiber-aware.
+
+## Channel-mode close fan-out (sub-leaf 4d, implemented 2026-04-27)
+
+When the recv-loop fiber's `FiberChannel::recv_frame()` returns
+`None` (channel closed), `ClientConnection::on_channel_closed_fan_out()`
+runs the same reliability fan-out the legacy `handle_error()` does
+on a socket fault, *minus* the socket-close half (the channel layer
+owns the transport and has already torn it down):
+
+  1. If the close was not user-initiated (state isn't `DISCONNECTING` /
+     `DISCONNECTED` and `reconnect_abort_` is false), invoke the
+     error callback with `ECONNRESET` and force the state machine
+     to `FAILED`.
+  2. Reset the heartbeat manager so the next reconnect starts from
+     a clean baseline.
+  3. Invalidate every pending future (`ENOTCONN` via the existing
+     `invalidate_pending_futures()` helper). Outbound paths
+     (`request_via_channel`) start failing fast immediately because
+     `FiberChannel::is_closed()` reports the disjunction of its
+     local latch and the proxy's view.
+  4. Invoke the disconnected callback (only on the non-user-
+     initiated path, matching `close()`'s contract).
+  5. If `reconnect_policy_.auto_reconnect` is set and
+     `reconnect_address_` is non-empty, increment the
+     `channel_reconnect_attempts_` counter and (when
+     `reconnect_abort_` is false) spawn a thread that calls
+     `reconnect()`. Sub-leaf 4e replaces the spawn body with a
+     factory-driven path; for 4d the spawn reuses the legacy fd
+     `reconnect()`.
+
+The counter increments **before** the abort short-circuit so it
+reliably observes "fan-out reached the reconnect-policy branch"
+even when tests set `reconnect_abort_=true` to keep the spawn out
+of socket(2). Two test-only setters — `set_reconnect_address_for_testing`
+and `abort_reconnect` — let direct-Arc-construction fixtures wire
+the same surface that `Client::connect`'s init dance normally
+sets.
+
+`on_error` is intentionally not handled separately: the channel-
+layer contract follows fatal errors with `on_closed`, so the same
+fan-out path picks them up. Non-fatal errors (rare per the
+contract) stay silent at this layer.
+
+## Building under clang21+ (rusty-cpp `RUSTY_PORTABLE_INTRINSICS`)
+
+Two `rusty-cpp` public headers reach `<immintrin.h>` for x86 SIMD:
+
+  - `rusty/hashmap.hpp` — SwissTable's `Group` probe uses
+    `_mm_loadu_si128` / `_mm_movemask_epi8` / `_mm_set1_epi8` /
+    `_mm_cmpeq_epi8` / `_mm_and_si128` for a 16-byte-at-a-time
+    scan.
+  - `rusty/sync/mpsc_lockfree.hpp` — defines `CPU_RELAX()` as
+    `_mm_pause()` on x86.
+
+When a module-interface unit's global module fragment includes
+`rusty/rusty.hpp` (the umbrella that pulls hashmap.hpp), the SIMD
+intrinsics propagate into the rrr module surface. clang21+
+introduced a strict static-inline mangle-name check that rejects
+duplicate definitions of intrinsics like `_mm_movemask_epi8` when
+the same TU reaches `<emmintrin.h>` both through the module GMF
+and through a direct include (deptran code paths reach it via
+masstree/jemalloc headers):
+
+    error: definition with same mangled name '_ZL17_mm_movemask_epi8Dv2_x'
+           as another definition
+
+The fix landed upstream in rusty-cpp commit `49e794d`: both
+headers now gate their `<immintrin.h>` include and SIMD branches
+behind a single project-wide opt-out, `RUSTY_PORTABLE_INTRINSICS`.
+When defined, HashMap uses a portable scalar Group probe (single-
+digit-percent slowdown on hot paths) and `CPU_RELAX()` falls back
+to `__builtin_ia32_pause()` on clang/gcc x86 (same `pause`
+instruction, no header).
+
+Mako defines this macro project-wide via
+`add_compile_definitions(RUSTY_PORTABLE_INTRINSICS=1)` in the
+top-level `CMakeLists.txt` so the setting is consistent across
+every TU (avoids ODR drift between TUs that see different inline
+bodies). Builds work under both clang19 (system) and clang21
+(brewed).

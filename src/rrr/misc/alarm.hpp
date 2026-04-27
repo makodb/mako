@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -21,15 +21,14 @@ module;
 
 // @unsafe
 
-export module rrr:misc.alarm;
 
 
 
-import :base.all;
-import :reactor.reactor;
+#include "../base/all.hpp"
+#include "../reactor/reactor.h"
 
 
-export namespace rrr {
+namespace rrr {
 
 class Alarm: public FrequentJob {
  public:
