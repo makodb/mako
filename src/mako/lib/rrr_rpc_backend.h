@@ -20,7 +20,7 @@
 #include <rusty/arc.hpp>
 
 // rrr/rpc library
-import rrr;
+#include "rrr/rrr.hpp"
 
 #include <map>
 #include <vector>

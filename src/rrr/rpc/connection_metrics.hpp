@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -25,11 +25,10 @@ module;
 
 #include <rusty/cell.hpp>
 
-export module rrr:rpc.connection_metrics;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 // @safe - All fields use Cell for thread-safe interior mutability
 class ConnectionMetrics {

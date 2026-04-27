@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -13,11 +13,10 @@ module;
 
 #include <rusty/cell.hpp>
 
-export module rrr:rpc.heartbeat;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 // @safe - Get current time in microseconds
 inline uint64_t heartbeat_time_us() {

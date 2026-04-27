@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -12,11 +12,10 @@ module;
 #include <ctime>
 
 
-export module rrr:utils.safe_assert;
 
 
 
-export inline void SAFE_ASSERT(bool expr) {
+inline void SAFE_ASSERT(bool expr) {
 #ifdef NDEBUG
     if (!expr) {
         std::abort();

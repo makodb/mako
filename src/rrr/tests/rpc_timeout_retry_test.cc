@@ -14,7 +14,7 @@
 #include <cmath>
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
-import rrr;
+#include "../rrr.hpp"
 #include "rpc_test_ports.h"
 
 using namespace rrr;

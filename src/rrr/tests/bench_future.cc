@@ -11,7 +11,7 @@
 #include <vector>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 using namespace std::chrono;

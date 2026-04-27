@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -33,13 +33,12 @@ module;
 // }
 // Note: struct types like 'timeval' are not functions - they're filtered out in the AST parser
 
-export module rrr:base.basetypes;
 
 
 
-import :base.debugging;
+#include "debugging.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 // @unsafe - Wrapper for atomic store to satisfy borrow checker
 template<typename T>

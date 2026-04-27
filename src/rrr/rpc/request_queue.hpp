@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -16,15 +16,14 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 
-export module rrr:rpc.request_queue;
 
 
 
-import :base.basetypes;
-import :misc.marshal;
+#include "../base/basetypes.hpp"
+#include "../misc/marshal.hpp"
 
 
-export namespace rrr {
+namespace rrr {
 
 /**
  * Strategy for handling queue overflow.

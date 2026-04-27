@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <cassert>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace mdb {
 

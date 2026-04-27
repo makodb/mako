@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -14,11 +14,10 @@ module;
 #include <rusty/rusty.hpp>
 
 
-export module rrr:base.unittest;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 class TestCase {
     const char* group_;

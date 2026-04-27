@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -12,11 +12,10 @@ module;
 #include <ctime>
 
 
-export module rrr:misc.stat;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 class AvgStat {
 public:

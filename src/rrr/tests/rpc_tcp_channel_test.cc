@@ -43,7 +43,7 @@
 
 #include <rusty/arc.hpp>
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 namespace {

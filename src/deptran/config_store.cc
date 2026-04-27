@@ -6,7 +6,7 @@
 #include "config_store.h"
 #include <cstring>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

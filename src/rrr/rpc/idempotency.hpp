@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -28,14 +28,13 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
 
-export module rrr:rpc.idempotency;
 
 
 
-import :misc.marshal;
+#include "../misc/marshal.hpp"
 
 
-export namespace rrr {
+namespace rrr {
 
 // Forward declarations
 class Counter;

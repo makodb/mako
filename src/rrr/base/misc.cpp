@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -23,10 +22,10 @@ module;
 
 
 
-module rrr:impl.base.misc;
+#include "misc.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // External safety annotations for system functions used in this module
 // @external: {

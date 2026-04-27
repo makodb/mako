@@ -5,7 +5,7 @@
 #include <rusty/condvar.hpp>
 #include <rusty/arc.hpp>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

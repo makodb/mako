@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -28,10 +27,10 @@ module;
 #include <netinet/tcp.h>
 
 
-module rrr:impl.rpc.client;
+#include "client.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
 // Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
@@ -777,9 +776,13 @@ void ClientConnection::run_recv_loop() {
   while (true) {
     rusty::Option<OwnedFrame> frame_opt = fc->recv_frame();
     if (frame_opt.is_none()) {
-      // Channel closed. Sub-leaves 4d/4e wire the close-side fan-out
-      // (cancel pending futures, schedule reconnect); for 4c2 we
-      // simply exit the loop.
+      // Channel closed. Run the close-side fan-out (sub-leaf 4d):
+      // cancel pending futures with ENOTCONN, fire error /
+      // disconnected callbacks, and trigger auto-reconnect if the
+      // policy allows. The fiber then exits, dropping its
+      // Arc<ClientConnection> capture so the connection can finish
+      // teardown if no other strong refs remain.
+      on_channel_closed_fan_out();
       return;
     }
     auto frame = std::move(frame_opt).unwrap();
@@ -866,6 +869,100 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
     // fd path's branch in `handle_read`.
     Marshal reply;
     reply.read_from_marshal(body, response_payload_bytes);
+  }
+}
+
+// @unsafe - Channel-mode close fan-out (Workstream K, sub-leaf 4d).
+//
+// Mirrors the legacy fd path's `handle_error` for channel-mode
+// connections: when the recv-loop fiber sees `recv_frame()` return
+// None (channel closed by peer or transport fault), this method
+// runs the same reliability fan-out:
+//
+//   1. Force the connection state to FAILED (unless the user
+//      already initiated the close — DISCONNECTING/DISCONNECTED).
+//   2. Invoke the error callback with ECONNRESET (only on
+//      non-user-initiated paths).
+//   3. Reset the heartbeat manager so a future reconnect starts
+//      from a clean baseline.
+//   4. Invalidate every pending future (`ENOTCONN`).
+//   5. Invoke the disconnected callback (only on
+//      non-user-initiated paths, matching `close()`'s contract).
+//   6. If `reconnect_policy_.auto_reconnect` is set and a
+//      `reconnect_address_` was recorded, increment the
+//      `channel_reconnect_attempts_` counter and spawn a thread
+//      that will call `reconnect()`. Sub-leaf 4e replaces the
+//      legacy `reconnect()` body with a factory-driven path; for
+//      4d the spawn is observable through the counter without
+//      requiring tests to actually drive the fd reconnect.
+//
+// Skips the socket-close half of `close()` (`::close(socket_)`,
+// state transitions through DISCONNECTING) — channel mode never
+// owned the fd, and the channel layer has already torn down its
+// underlying transport.
+void ClientConnection::on_channel_closed_fan_out() {
+  ConnectionState prev_state = state_machine_.state();
+  const bool user_initiated_closing =
+      prev_state == ConnectionState::DISCONNECTING ||
+      prev_state == ConnectionState::DISCONNECTED ||
+      reconnect_abort_.load(std::memory_order_acquire);
+
+  if (!user_initiated_closing) {
+    invoke_error_callback(ECONNRESET, "channel closed");
+    state_machine_.force_state(ConnectionState::FAILED);
+  }
+
+  heartbeat_manager_.reset();
+  invalidate_pending_futures();
+
+  if (!user_initiated_closing) {
+    invoke_disconnected_callback();
+  }
+
+  // Trigger auto-reconnect if the policy allows. Channel-mode
+  // reconnect is wired in sub-leaf 4e (factory-based); for 4d we
+  // bump an observable counter the moment the fan-out reaches the
+  // reconnect-policy branch, then conditionally spawn the legacy
+  // fd reconnect path. The counter is the observability signal:
+  // tests verify it incremented by setting
+  // `reconnect_abort_=true` (so the spawn short-circuits without
+  // actually calling `reconnect()`). Production callers that want
+  // a real reconnect leave the abort flag false and rely on the
+  // spawn.
+  if (reconnect_policy_.auto_reconnect &&
+      // @unsafe { std::string::empty }
+      !reconnect_address_.empty()) {
+    channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
+
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      // Caller requested no reconnect (typically: connection
+      // tearing down). Counter is still bumped for observability.
+      return;
+    }
+    auto weak_conn = weak_self_;
+    rusty::thread::spawn([weak_conn]() {
+      auto conn_opt = weak_conn.upgrade();
+      if (conn_opt.is_none()) {
+        return;
+      }
+      auto conn = conn_opt.unwrap();
+      if (!conn->reconnect_policy_.auto_reconnect ||
+          conn->reconnect_abort_.load(std::memory_order_acquire)) {
+        return;
+      }
+      auto state = conn->connection_state();
+      if (state == ConnectionState::FAILED ||
+          state == ConnectionState::DISCONNECTED) {
+        Log_info(
+            "rrr::ClientConnection: channel-mode auto-reconnect triggered "
+            "after on_closed");
+        // @unsafe - reconnect mutates socket/state and performs network I/O.
+        auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+        if (mut_conn != nullptr) {
+          mut_conn->reconnect();
+        }
+      }
+    }).detach();
   }
 }
 

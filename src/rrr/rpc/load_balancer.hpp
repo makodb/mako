@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -25,13 +25,12 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/arc.hpp>
 
-export module rrr:rpc.load_balancer;
 
 
 
-import :rpc.connection_metrics;
+#include "connection_metrics.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 // Forward declaration
 class Client;

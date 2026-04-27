@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -13,11 +13,10 @@ module;
 
 #include <rusty/cell.hpp>
 
-export module rrr:rpc.reconnect_policy;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 /**
  * Configuration for automatic reconnection behavior.

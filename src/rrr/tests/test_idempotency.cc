@@ -14,7 +14,7 @@
 #include <chrono>
 #include <vector>
 #include <atomic>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 using namespace std::chrono;

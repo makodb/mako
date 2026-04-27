@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -15,11 +15,10 @@ module;
 #include <netdb.h>
 #include <sys/socket.h>
 
-export module rrr:utils.hostname;
 
 
 
-export inline char* gethostip(const char* hostname) {
+inline char* gethostip(const char* hostname) {
     struct hostent* h = gethostbyname(hostname);
     if (h == nullptr) {
         return nullptr;

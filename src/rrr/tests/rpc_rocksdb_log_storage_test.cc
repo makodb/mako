@@ -11,7 +11,7 @@
 #include <filesystem>
 
 #include "deptran/raft/rocksdb_log_storage.hpp"
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 using namespace janus::raft;

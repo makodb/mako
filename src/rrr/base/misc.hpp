@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -25,13 +25,12 @@ module;
 //   free: [unsafe, (void*) -> void]
 // }
 
-export module rrr:base.misc;
 
 
 
-import :base.basetypes;
+#include "basetypes.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 // @unsafe - Uses inline assembly to read timestamp counter
 // SAFETY: rdtsc instruction is safe to execute, reads CPU timestamp counter

@@ -4,7 +4,7 @@
  */
 
 #include <gtest/gtest.h>
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 

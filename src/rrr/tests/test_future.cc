@@ -10,7 +10,7 @@
 #include <vector>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
-import rrr;
+#include "../rrr.hpp"
 
 // External safety annotations for std::shared_ptr atomic internals
 // and RPC server types with mutable fields

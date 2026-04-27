@@ -33,7 +33,7 @@
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 
-import rrr;  // for rrr::IntEvent, rrr::Reactor
+#include "rrr/rrr.hpp"
 
 #include "../constants.h"  // siteid_t
 

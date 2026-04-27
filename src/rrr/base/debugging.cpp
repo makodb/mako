@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -25,10 +24,10 @@ module;
 
 
 
-module rrr:impl.base.debugging;
+#include "debugging.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // External safety annotations for system and std library functions
 // @external: {

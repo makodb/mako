@@ -17,7 +17,7 @@
 #include <vector>
 #include <map>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

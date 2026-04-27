@@ -2,7 +2,7 @@
 #include "__dep__.h"
 #include "constants.h"
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 
 namespace janus {

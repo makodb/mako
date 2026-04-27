@@ -4,7 +4,7 @@
 #include <memory>
 #include <atomic>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

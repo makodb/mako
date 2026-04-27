@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -38,11 +38,10 @@ module;
 //   close: [unsafe, (int) -> int]
 // }
 
-export module rrr:rpc.utils;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 // RAII wrapper for addrinfo from getaddrinfo()
 // Automatically calls freeaddrinfo() on destruction

@@ -4,7 +4,7 @@
 #include <chrono>
 #include <vector>
 #include <unordered_set>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 using namespace std::chrono;

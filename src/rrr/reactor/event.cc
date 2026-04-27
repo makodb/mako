@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -23,10 +22,10 @@ module;
 
 
 
-module rrr:impl.reactor.event;
+#include "event.h"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace rrr {
 using std::function;

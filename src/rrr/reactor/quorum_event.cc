@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -19,10 +18,10 @@ module;
 
 
 
-module rrr:impl.reactor.quorum_event;
+#include "quorum_event.h"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 namespace janus {
 

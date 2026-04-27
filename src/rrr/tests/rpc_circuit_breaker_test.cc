@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <chrono>
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 using namespace std::chrono;

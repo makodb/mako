@@ -15,7 +15,7 @@
 #include <chrono>
 #include <atomic>
 #include <rusty/arc.hpp>
-import rrr;
+#include "../rrr.hpp"
 #include "../src/deptran/config_store.h"
 #include "../src/deptran/config_service.h"
 #include "../src/deptran/sharding_policy.h"

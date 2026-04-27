@@ -8,7 +8,7 @@
 #include "config_service.h"
 #include "config_client.h"
 #include "sharding_policy_cache.h"
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

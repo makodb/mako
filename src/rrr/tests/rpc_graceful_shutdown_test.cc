@@ -5,7 +5,7 @@
  * drain functionality, and full graceful shutdown sequence.
  */
 #include "gtest/gtest.h"
-import rrr;
+#include "../rrr.hpp"
 #include <thread>
 #include <atomic>
 #include <chrono>

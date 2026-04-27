@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -12,11 +12,10 @@ module;
 #include <ctime>
 
 
-export module rrr:rpc.internal_protocol;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 // Reserved RPC ID for internal heartbeat probes exchanged by ClientConnection.
 constexpr int32_t kInternalHeartbeatRpcId = std::numeric_limits<int32_t>::min();

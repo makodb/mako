@@ -188,6 +188,20 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # rpc_request_buffering_test relies on them; defining via macro at consumer
     # TU level doesn't work because module interfaces are pre-compiled.
     add_compile_definitions(RPC_TEST_HOOKS)
+
+    # rusty-cpp's HashMap (SwissTable) and mpsc_lockfree's CPU_RELAX
+    # default to including `<immintrin.h>` for SSE2 intrinsics. That
+    # header reaches the rrr module's global module fragment via
+    # `#include <rusty/rusty.hpp>` in module-interface units, and
+    # under clang21+ collides with the consumer's own
+    # `<immintrin.h>` (e.g. via masstree headers in deptran code) —
+    # see rusty-cpp commit 49e794d for the full diagnosis. Defining
+    # this macro project-wide swaps both to scalar / builtin
+    # fallbacks consistently across every TU, eliminating the
+    # collision and preserving ODR across the program. The
+    # measurable cost is tiny (single-digit-percent on hot hashmap
+    # paths); the build wins are clang21+ compatibility today.
+    add_compile_definitions(RUSTY_PORTABLE_INTRINSICS=1)
     # asio uses std::nested_exception / std::make_exception_ptr without
     # including <exception>; libstdc++ pulls it transitively, libc++ doesn't.
     # Manually #include <exception> in the asio-using consumer headers under
@@ -245,17 +259,10 @@ set(GFLAGS_BUILD_TESTING OFF CACHE BOOL "Disable gflags tests from eRPC dependen
 
 add_subdirectory(third-party/erpc)
 
-# Apply module-related compile options AFTER third-party subdirectories so
-# that third-party code (erpc, gflags, etc.) is not compiled with `-fmodules
-# -fimplicit-modules`. Those flags would poison the shared module cache
-# because third-party code uses a different C++ standard (C++14) than rrr.
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fprebuilt-module-path=${RRR_MODULE_PCM_DIR}>)
-    # Do NOT apply -fmodules / -fimplicit-modules globally: they conflict with
-    # the C++20 `module;` global module fragment used by rrr implementation
-    # .cpp files. Those flags are only needed at PCM bootstrap time (above)
-    # so clang can resolve `import <chrono>;` via libc++'s modulemap.
-endif()
+# rrr was previously a C++23 named-modules library with a per-build
+# PCM cache; de-modularized in 2026-04 (replaced module declarations
+# with plain headers). The PCM-cache compile options are no longer
+# needed.
 
 # eRPC's latency target enables -flto at compile time when PERF=ON. With Clang,
 # object files become LLVM bitcode and require matching link-time -flto.
@@ -820,30 +827,19 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so")
   message(STATUS "LZ4 library built successfully")
 endif()
 
-# Build and export rrr module/target wiring from a dedicated CMakeLists.
+# Build and export rrr target wiring from a dedicated CMakeLists.
 add_subdirectory(src/rrr)
 # Build and export masstree-specific test wiring from a dedicated CMakeLists.
 add_subdirectory(src/masstree)
-set_source_files_properties(${RRR_MODULE_INTERFACE_FILES} PROPERTIES
-    LANGUAGE CXX
-    CXX_SCAN_FOR_MODULES ON
-)
 
 # Build libtxlog.so natively with CMake instead of WAF
-# Collect RRR source files
+# Collect RRR source files (de-modularized: plain .cpp/.cc impl units).
 file(GLOB RRR_SRC
     "src/rrr/base/*.cpp"
     "src/rrr/misc/*.cpp"
     "src/rrr/reactor/*.cc"
     "src/rrr/rpc/*.cpp"
 )
-# _pyrpc.cpp is Python bindings that still reference the old STL-style
-# rusty::BTreeMap API; not needed for the core build. Skip it.
-# Remove the rrr module implementation partitions from RRR_SRC; they are
-# registered separately via the FILE_SET CXX_MODULES on txlog_core_obj.
-foreach(_RRR_MOD_IMPL IN LISTS RRR_MODULE_IMPL_FILES)
-    list(REMOVE_ITEM RRR_SRC "${_RRR_MOD_IMPL}")
-endforeach()
 
 # Collect MEMDB source files
 file(GLOB MEMDB_SRC
@@ -888,18 +884,9 @@ add_library(txlog_core_obj OBJECT
     ${RRR_SRC}
     ${MEMDB_SRC}
 )
-# Register rrr's C++20 module interfaces + implementation partitions on this
-# target. CMake 3.28+ scans dependencies and builds BMIs with flags matching
-# the consumer TUs.
-target_sources(txlog_core_obj PUBLIC
-    FILE_SET rrr_modules TYPE CXX_MODULES
-    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-    FILES ${RRR_MODULE_INTERFACE_FILES} ${RRR_MODULE_IMPL_FILES}
-)
 add_dependencies(txlog_core_obj rcc_rpc_gen)
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
-    CXX_SCAN_FOR_MODULES ON
 )
 target_include_directories(txlog_core_obj PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1829,88 +1816,95 @@ if(BUILD_TESTS)
     add_executable(test_rpc_pollable_proxy_facade src/rrr/tests/rpc_pollable_proxy_facade_test.cc)
     target_include_directories(test_rpc_pollable_proxy_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_pollable_proxy_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_pollable_proxy_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_pollable_proxy_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_pollable_proxy_facade COMMAND test_rpc_pollable_proxy_facade)
 
     # SRPC channel facade contract guard tests (Workstream K, Phase 1 leaf 1)
     add_executable(test_rpc_channel_facade src/rrr/tests/rpc_channel_facade_test.cc)
     target_include_directories(test_rpc_channel_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_channel_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_channel_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_channel_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_channel_facade COMMAND test_rpc_channel_facade)
 
     # SRPC channel frame-codec wire-format guard tests (Workstream K, Phase 1 leaf 2)
     add_executable(test_rpc_frame_codec src/rrr/tests/rpc_frame_codec_test.cc)
     target_include_directories(test_rpc_frame_codec PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_frame_codec PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_frame_codec ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_frame_codec ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_frame_codec COMMAND test_rpc_frame_codec)
 
     # SRPC TCP channel backend tests (Workstream K, Phase 1 leaf 3a — TcpConnection)
     add_executable(test_rpc_tcp_channel src/rrr/tests/rpc_tcp_channel_test.cc)
     target_include_directories(test_rpc_tcp_channel PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_tcp_channel PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_tcp_channel ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_tcp_channel ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_tcp_channel COMMAND test_rpc_tcp_channel)
 
     # SRPC TCP listener tests (Workstream K, Phase 1 leaf 3b — TcpListener)
     add_executable(test_rpc_tcp_listener src/rrr/tests/rpc_tcp_listener_test.cc)
     target_include_directories(test_rpc_tcp_listener PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_tcp_listener PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_tcp_listener ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_tcp_listener ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_tcp_listener COMMAND test_rpc_tcp_listener)
 
     # SRPC TCP factory + integration tests (Workstream K, Phase 1 leaf 3c — TcpFactory)
     add_executable(test_rpc_tcp_factory src/rrr/tests/rpc_tcp_factory_test.cc)
     target_include_directories(test_rpc_tcp_factory PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_tcp_factory PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_tcp_factory ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_tcp_factory ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_tcp_factory COMMAND test_rpc_tcp_factory)
 
     # SRPC client channel-binding scaffolding (Workstream K, sub-leaf 4a)
     add_executable(test_rpc_client_channel_binding src/rrr/tests/rpc_client_channel_binding_test.cc)
     target_include_directories(test_rpc_client_channel_binding PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_client_channel_binding PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_client_channel_binding ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_client_channel_binding ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_client_channel_binding COMMAND test_rpc_client_channel_binding)
 
     # SRPC client channel-mode outbound-send (Workstream K, sub-leaf 4b)
     add_executable(test_rpc_client_channel_send src/rrr/tests/rpc_client_channel_send_test.cc)
     target_include_directories(test_rpc_client_channel_send PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_client_channel_send PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_client_channel_send ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_client_channel_send ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_client_channel_send COMMAND test_rpc_client_channel_send)
 
     # SRPC FiberChannel wrapper tests (Workstream K, sub-leaf 4c1)
     add_executable(test_rpc_fiber_channel src/rrr/tests/rpc_fiber_channel_test.cc)
     target_include_directories(test_rpc_fiber_channel PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_fiber_channel PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_fiber_channel ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_fiber_channel ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_fiber_channel COMMAND test_rpc_fiber_channel)
 
     # SRPC client channel-mode response demux (Workstream K, sub-leaf 4c2)
     add_executable(test_rpc_client_channel_recv src/rrr/tests/rpc_client_channel_recv_test.cc)
     target_include_directories(test_rpc_client_channel_recv PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_client_channel_recv PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_client_channel_recv ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_rpc_client_channel_recv ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_client_channel_recv COMMAND test_rpc_client_channel_recv)
+
+    # SRPC client channel-mode close-side fan-out (Workstream K, sub-leaf 4d)
+    add_executable(test_rpc_client_channel_close src/rrr/tests/rpc_client_channel_close_test.cc)
+    target_include_directories(test_rpc_client_channel_close PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_client_channel_close PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_client_channel_close ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_client_channel_close COMMAND test_rpc_client_channel_close)
 
     add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_messages COMMAND test_raft_messages)
 
     add_executable(test_raft_transport_facade tests/raft_transport_facade_test.cc)
     target_include_directories(test_raft_transport_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_transport_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_transport_facade COMMAND test_raft_transport_facade)
 
     add_executable(test_raft_rrr_transport_compile tests/raft_rrr_transport_compile_test.cc)
     target_include_directories(test_raft_rrr_transport_compile PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_rrr_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_rrr_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_rrr_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_rrr_transport_compile COMMAND test_raft_rrr_transport_compile)
 
     # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
@@ -1919,31 +1913,31 @@ if(BUILD_TESTS)
     add_executable(test_raft_quorum tests/raft_quorum_test.cc)
     target_include_directories(test_raft_quorum PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_quorum PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
     add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
     target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_dispatcher_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_dispatcher_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_dispatcher_facade COMMAND test_raft_dispatcher_facade)
 
     add_executable(test_raft_channel_transport tests/raft_channel_transport_test.cc)
     target_include_directories(test_raft_channel_transport PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_channel_transport PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_channel_transport ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_channel_transport ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_channel_transport COMMAND test_raft_channel_transport)
 
     add_executable(test_raft_memory_snapshot_manager tests/raft_memory_snapshot_manager_test.cc)
     target_include_directories(test_raft_memory_snapshot_manager PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_memory_snapshot_manager PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_memory_snapshot_manager COMMAND test_raft_memory_snapshot_manager)
 
     add_executable(test_raft_test_cluster tests/raft_test_cluster_test.cc)
     target_include_directories(test_raft_test_cluster PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
 
     add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)

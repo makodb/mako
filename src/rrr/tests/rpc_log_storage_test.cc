@@ -11,7 +11,7 @@
 
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/memory_log_storage.hpp"
-import rrr;
+#include "../rrr.hpp"
 
 using namespace rrr;
 using namespace janus::raft;

@@ -1,5 +1,5 @@
 
-import rrr;
+#include "../rrr.hpp"
 
 #include "deptran/all.h"
 

@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -24,13 +24,12 @@ module;
 #undef RRR_RESTORE_RR_MACRO
 #endif
 
-export module rrr:rpc.tcp_channel;
 
-import :base.threading;
-import :rpc.channel;
-import :rpc.frame_codec;
-import :rpc.pollable_proxy;
-import :reactor.reactor;
+#include "../base/threading.hpp"
+#include "channel.hpp"
+#include "frame_codec.hpp"
+#include "pollable_proxy.h"
+#include "../reactor/reactor.h"
 
 /**
  * SRPC TCP Channel Backend (Workstream K, Phase 1 leaf 3a — `TcpConnection`).
@@ -79,7 +78,7 @@ import :reactor.reactor;
  *     outbound queue exceeds an implementation-defined high-water mark
  *     (default 4 MiB). Callers (the RPC layer) apply admission control.
  */
-export namespace rrr {
+namespace rrr {
 
 class TcpConnection;
 

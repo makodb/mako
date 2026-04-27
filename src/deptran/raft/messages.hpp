@@ -27,7 +27,7 @@
 #include <rusty/option.hpp>
 #include <rusty/vec.hpp>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 #include "../constants.h"
 

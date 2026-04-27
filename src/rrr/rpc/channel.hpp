@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -19,7 +19,6 @@ module;
 #undef RRR_RESTORE_RR_MACRO
 #endif
 
-export module rrr:rpc.channel;
 
 /**
  * SRPC Channel Layer Core Interfaces (Workstream K, Phase 1).
@@ -108,7 +107,7 @@ export module rrr:rpc.channel;
  * registration with a poll thread. Calls after `on_closed` are silently
  * ignored.
  */
-export namespace rrr {
+namespace rrr {
 
 // ---------------------------------------------------------------------------
 // Error reporting

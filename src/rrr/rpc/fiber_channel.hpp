@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -11,12 +11,11 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 
-export module rrr:rpc.fiber_channel;
 
-import :base.threading;
-import :rpc.channel;
-import :reactor.event;
-import :reactor.reactor;
+#include "../base/threading.hpp"
+#include "channel.hpp"
+#include "../reactor/event.h"
+#include "../reactor/reactor.h"
 
 /**
  * `FiberChannel` — fiber-blocking wrapper over a
@@ -74,7 +73,7 @@ import :reactor.reactor;
  * `closed_` latch. A blocked `recv_frame()` is woken via the same
  * callback path.
  */
-export namespace rrr {
+namespace rrr {
 
 /**
  * Heap-owned copy of an inbound frame's payload. The wrapping is

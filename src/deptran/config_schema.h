@@ -14,7 +14,7 @@
 #include <vector>
 #include <rusty/cell.hpp>
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

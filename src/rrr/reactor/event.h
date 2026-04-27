@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -42,13 +42,12 @@ module;
   ref_ev->wait_func; \
 } while(0)
 
-export module rrr:reactor.event;
 
 
 
-import :base.all;
+#include "../base/all.hpp"
 
-export namespace rrr {
+namespace rrr {
 using std::function;
 
 class Reactor;

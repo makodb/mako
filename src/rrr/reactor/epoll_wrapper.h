@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -31,14 +31,13 @@ module;
 #endif
 
 
-export module rrr:reactor.epoll_wrapper;
 
 
 
-import :base.all;
+#include "../base/all.hpp"
 
 
-export namespace rrr {
+namespace rrr {
 using std::shared_ptr;
 
 // Forward declaration

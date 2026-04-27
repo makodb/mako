@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -38,10 +37,10 @@ module;
 
 
 
-module rrr:impl.rpc.server;
+#include "server.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
 // Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types

@@ -1,6 +1,6 @@
 #pragma once
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 #include <errno.h>
 #include <memory>

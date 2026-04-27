@@ -11,7 +11,7 @@
 #include <signal.h>
 #include <math.h>
 
-import rrr;
+#include "../rrr.hpp"
 #include "benchmark_service.h"
 
 using namespace benchmark;

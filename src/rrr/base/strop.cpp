@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -20,10 +19,10 @@ module;
 
 
 
-module rrr:impl.base.strop;
+#include "strop.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // @external: {
 //   strlen: [unsafe],

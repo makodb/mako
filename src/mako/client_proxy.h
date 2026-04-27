@@ -3,7 +3,7 @@
 
 #include <rusty/arc.hpp>
 #include <string>
-import rrr;
+#include "rrr/rrr.hpp"
 #include "client_service.h"  // For RPC IDs
 
 namespace mako {

@@ -4,7 +4,7 @@
 #include "bench/rw/workload.h"
 #include "classic/tpc_command.h"
 
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

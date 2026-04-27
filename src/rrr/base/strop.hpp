@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -15,11 +15,10 @@ module;
 
 #include <string.h>
 
-export module rrr:base.strop;
 
 
 
-export namespace rrr {
+namespace rrr {
 
 #define streq(a, b) (strcmp((a), (b)) == 0)
 

@@ -1,4 +1,4 @@
-module;
+#pragma once
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -31,17 +31,16 @@ module;
 //   std::function::function: [unsafe]
 // }
 
-export module rrr:misc.alock;
 
 
 
-import :base.all;
+#include "../base/all.hpp"
 
 
-import :misc.alarm;
-import :misc.dball;
+#include "alarm.hpp"
+#include "dball.hpp"
 
-export namespace rrr {
+namespace rrr {
 
 inline constexpr uint64_t ALOCK_TIMEOUT = 200000; // 0.2s
 

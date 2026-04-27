@@ -1,4 +1,3 @@
-module;
 
 // import std; replacement — see <std_compat.hpp> for rationale.
 #include <std_compat.hpp>
@@ -22,10 +21,10 @@ module;
 
 
 
-module rrr:impl.base.logging;
+#include "logging.hpp"
 
 
-import rrr;
+#include "../rrr.hpp"
 
 // External safety annotations for functions used in this module
 // @external: {
