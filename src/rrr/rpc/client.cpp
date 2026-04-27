@@ -256,6 +256,21 @@ int ClientConnection::connect(const char* addr) {
     invoke_error_callback(EINVAL, "invalid state for connect");
     return EINVAL;
   }
+
+  // Workstream K, sub-leaf 4e — factory-driven connect.
+  //
+  // If a `ChannelFactoryProxy` has been bound, route through it
+  // instead of the legacy socket(2) + connect(2) path. The factory
+  // returns a fully-wired `ChannelConnectionProxy` that we then
+  // hand to `bind_channel(...)` so the connection enters channel
+  // mode automatically. `reconnect_address_` is recorded the same
+  // way the legacy path does it, so the close fan-out's reconnect
+  // spawn can re-call the factory with the same target.
+  if (is_factory_bound()) {
+    int rc = connect_via_factory(addr);
+    return rc;
+  }
+
   string addr_str(addr);
   size_t idx = addr_str.find(":");
   if (idx == string::npos) {
@@ -696,6 +711,96 @@ void ClientConnection::enqueue_heartbeat_probe() const {
   guard->write_bookmark(bmark, packet_size);
 }
 
+// @unsafe - Reset channel-mode state for a factory-driven reconnect
+// (Workstream K, sub-leaf 4e). Drops the closed FiberChannel,
+// flips `channel_mode_` off, and forces the state machine to
+// DISCONNECTED so `connect()`'s `verify(!is_connected())` passes.
+// Caller: the spawn body inside `on_channel_closed_fan_out` when a
+// factory is bound.
+void ClientConnection::reset_channel_mode_for_reconnect() {
+  // @unsafe { RefCell::borrow_mut + Option::take }
+  {
+    auto guard = fiber_channel_.borrow_mut();
+    *guard = rusty::None;
+  }
+  channel_mode_.set(false);
+  state_machine_.force_state(ConnectionState::DISCONNECTED);
+}
+
+// @unsafe - Channel-factory connect path (Workstream K, sub-leaf 4e).
+//
+// Calls the bound `ChannelFactoryProxy::connect(addr)` to obtain a
+// `ChannelConnectionProxy`, then hands it to `bind_channel(...)`.
+// Mirrors the legacy fd-path's bookkeeping: records the address for
+// reconnect, transitions the state machine to CONNECTED on success,
+// invokes the connected callback, and reports errors through the
+// usual `invoke_error_callback` path. Caller is `connect(addr)`,
+// which already transitioned the state to CONNECTING and verified
+// the factory binding.
+int ClientConnection::connect_via_factory(const char* addr) {
+  ChannelFactoryProxy factory;
+  // Take a *clone* of the bound factory so we can call `connect` on
+  // it without holding the RefCell guard across what may be a
+  // blocking syscall (TCP handshake, address resolution). The
+  // ChannelFactoryProxy's underlying type (e.g. TcpFactory wrapped in
+  // an Arc<TcpFactory> adapter) is reference-counted, so copying the
+  // proxy is cheap. We don't have a generic clone() on
+  // pro::proxy<F>, so we copy through the Option's Arc-equivalent
+  // semantics by re-binding via std::move from a fresh borrow.
+  // @unsafe { RefCell::borrow + ChannelFactoryProxy copy }
+  {
+    auto guard = factory_.borrow();
+    if (guard->is_none()) {
+      Log_error(
+          "rrr::ClientConnection::connect_via_factory: factory unbound at "
+          "the moment of connect (race against bind_factory)");
+      state_machine_.transition_to(ConnectionState::FAILED);
+      invoke_error_callback(ENOTCONN, "factory unbound");
+      return ENOTCONN;
+    }
+    // pro::proxy is move-only; we can't clone. Use the proxy in
+    // place via the Box wrapper. Releasing the guard immediately
+    // after the call is safe because `connect` is documented
+    // synchronous from the caller's perspective (channel-layer
+    // contract).
+    auto* bound = const_cast<ChannelFactoryProxy*>(
+        guard->as_ref().unwrap().get());
+    ConnectResult result = (*bound)->connect(std::string_view(addr));
+    if (result.error != ChannelError::None || !result.connection.has_value()) {
+      const auto err_str = std::string("factory connect failed: ")
+          + channel_error_to_string(result.error);
+      Log_error("rrr::ClientConnection: %s (addr=%s)", err_str.c_str(), addr);
+      state_machine_.transition_to(ConnectionState::FAILED);
+      // Map the channel error onto an errno-shaped value the legacy
+      // call sites expect.
+      const int rc = (result.error == ChannelError::ConnectionRefused)
+                       ? ECONNREFUSED
+                     : (result.error == ChannelError::AddressInvalid)
+                       ? EINVAL
+                       : ENOTCONN;
+      invoke_error_callback(rc, err_str);
+      return rc;
+    }
+    bind_channel(std::move(result.connection));
+  }
+
+  // Record address for the close fan-out's reconnect spawn — it
+  // re-runs the factory connect with the same target.
+  // @unsafe { std::string assignment }
+  { reconnect_address_ = addr; }
+
+  // Mirror the fd path's terminal transition: the channel layer's
+  // own state (proxy.is_closed()) becomes the source of truth, but
+  // we still drive the legacy state machine through CONNECTED so
+  // existing health-check / metric APIs (`connected()`,
+  // `connection_state()`) keep working.
+  if (!state_machine_.transition_to(ConnectionState::CONNECTED)) {
+    state_machine_.force_state(ConnectionState::CONNECTED);
+  }
+  invoke_connected_callback();
+  return 0;
+}
+
 // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
 //
 // Workstream K, sub-leaves 4a/4b/4c2:
@@ -953,14 +1058,40 @@ void ClientConnection::on_channel_closed_fan_out() {
       auto state = conn->connection_state();
       if (state == ConnectionState::FAILED ||
           state == ConnectionState::DISCONNECTED) {
-        Log_info(
-            "rrr::ClientConnection: channel-mode auto-reconnect triggered "
-            "after on_closed");
-        // @unsafe - reconnect mutates socket/state and performs network I/O.
+        // Workstream K, sub-leaf 4e — factory-driven reconnect.
+        //
+        // When a `ChannelFactoryProxy` is bound, the fan-out's
+        // reconnect spawn re-runs the same factory connect path
+        // that the original `connect(addr)` took (factory ->
+        // connect -> bind_channel) instead of the legacy fd
+        // `reconnect()` (which re-opens a raw socket). The
+        // factory-aware path also re-arms the recv-loop fiber via
+        // `bind_channel`, so a successful reconnect resumes
+        // request demux without a manual setup step.
         auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-        if (mut_conn != nullptr) {
-          mut_conn->reconnect();
+        if (mut_conn == nullptr) {
+          return;
         }
+        if (conn->is_factory_bound()) {
+          Log_info(
+              "rrr::ClientConnection: channel-mode auto-reconnect "
+              "(factory) triggered after on_closed");
+          // Reset the channel-mode latch + drop the stale
+          // FiberChannel before calling connect again — connect's
+          // verify(!is_connected()) requires the state machine to
+          // be non-CONNECTED, and the new bind_channel needs the
+          // option slot empty so it can install fresh callbacks.
+          mut_conn->reset_channel_mode_for_reconnect();
+          // `connect` reads `reconnect_address_` itself (set by
+          // the original connect call), so we just call it.
+          (void)mut_conn->connect(conn->reconnect_address_.c_str());
+          return;
+        }
+        Log_info(
+            "rrr::ClientConnection: channel-mode auto-reconnect (legacy) "
+            "triggered after on_closed");
+        // @unsafe - reconnect mutates socket/state and performs network I/O.
+        mut_conn->reconnect();
       }
     }).detach();
   }
@@ -1426,9 +1557,32 @@ int Client::connect(const char* addr, bool client) const {
   // Apply pending reconnect policy before connecting
   mut_conn.set_reconnect_policy(pending_reconnect_policy_.get());
 
+  // Workstream K, sub-leaf 4e — push the pending channel factory
+  // into the new ClientConnection. Once bound, the connection's
+  // `connect(addr)` and reconnect spawn route through the factory
+  // (`factory->connect(addr)` -> `bind_channel(...)`) instead of
+  // the legacy fd path. Take the proxy by std::move because
+  // pro::proxy is move-only; the factory is a one-shot push per
+  // Client lifecycle (re-bind via `set_channel_factory` to install
+  // a different one — affects subsequent Client::connect calls).
+  // @unsafe { RefCell::borrow_mut + Box deref + ChannelFactoryProxy move }
+  {
+    auto guard = pending_factory_.borrow_mut();
+    if (guard->is_some()) {
+      // Move the proxy out of the boxed Option. The Box stays
+      // alive on the stack until the end of this scope; we move
+      // the inner proxy into the new ClientConnection's bind_factory
+      // (which re-boxes it on the connection side).
+      auto box = std::move(*guard).unwrap();
+      ChannelFactoryProxy moved = std::move(*box);
+      mut_conn.bind_factory(std::move(moved));
+      *guard = rusty::None;  // single-use; tests can re-bind
+    }
+  }
+
   // Call connect through mutable reference
   int result = 0;
-  // @unsafe - Low-level TCP/IPC connection
+  // @unsafe - Low-level TCP/IPC connection (or factory-driven)
   {
     result = mut_conn.connect(addr);
   }
