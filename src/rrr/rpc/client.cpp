@@ -63,6 +63,76 @@ static uint64_t current_time_ms() {
 }
 
 // ============================================================================
+// Workstream K, sub-leaf 4f — migration switch (`SRPC_USE_CHANNEL`).
+// ============================================================================
+//
+// When set to a truthy value in the environment ("1", "true", "yes",
+// "on" — case-insensitive), `Client::connect` automatically installs
+// a default TCP-backed `ChannelFactoryProxy` if the caller hasn't
+// already installed one via `set_channel_factory(...)`. The new
+// connection then runs entirely in channel mode (factory connect ->
+// bind_channel -> recv-loop fiber).
+//
+// Default off so existing callers see no behavior change. Tests
+// (especially `test_rpc` and `test_rpc_extended`) can be run with
+// the env var both set and unset to verify dual-path parity before
+// sub-leaf 4g flips the default and removes the legacy fd path.
+//
+// The query is cached in an atomic Cell on first use; subsequent
+// calls are lock-free reads. The override (set via
+// `srpc_set_use_channel_for_testing`) lets unit tests flip the
+// switch without spawning a child process — it ALSO flips the
+// cached value to `Some(override)`.
+namespace {
+
+enum class UseChannelChoice : int { Unset = -1, Off = 0, On = 1 };
+
+// Cached resolution of the env var. Reads `SRPC_USE_CHANNEL` once,
+// then memoizes; later changes to the env var are intentionally
+// ignored (the channel-mode decision is per-process, not per-call,
+// to keep call sites consistent across the connection lifecycle).
+rusty::Cell<UseChannelChoice> g_use_channel_choice{UseChannelChoice::Unset};
+
+// @unsafe - Reads getenv (not borrow-checked); strncasecmp.
+bool resolve_srpc_use_channel_from_env() {
+    // @unsafe { std::getenv }
+    const char* val = std::getenv("SRPC_USE_CHANNEL");
+    if (val == nullptr) return false;
+    if (val[0] == '\0') return false;
+    // Truthy: "1", "true", "yes", "on" (case-insensitive).
+    auto eq_ci = [](const char* a, const char* b) {
+        return ::strcasecmp(a, b) == 0;
+    };
+    return eq_ci(val, "1") || eq_ci(val, "true") || eq_ci(val, "yes")
+           || eq_ci(val, "on");
+}
+
+}  // namespace
+
+// @safe - Reads cached choice; lazy-initializes from env on first call.
+bool srpc_use_channel() {
+    UseChannelChoice cached = g_use_channel_choice.get();
+    if (cached != UseChannelChoice::Unset) {
+        return cached == UseChannelChoice::On;
+    }
+    bool env = resolve_srpc_use_channel_from_env();
+    g_use_channel_choice.set(env ? UseChannelChoice::On
+                                 : UseChannelChoice::Off);
+    return env;
+}
+
+// @safe - Test-only override; replaces the cached value.
+void srpc_set_use_channel_for_testing(bool on) {
+    g_use_channel_choice.set(on ? UseChannelChoice::On
+                                : UseChannelChoice::Off);
+}
+
+// @safe - Test-only reset; forces re-resolution from env on next call.
+void srpc_reset_use_channel_for_testing() {
+    g_use_channel_choice.set(UseChannelChoice::Unset);
+}
+
+// ============================================================================
 // Future implementation
 // ============================================================================
 
@@ -781,7 +851,11 @@ int ClientConnection::connect_via_factory(const char* addr) {
       invoke_error_callback(rc, err_str);
       return rc;
     }
-    bind_channel(std::move(result.connection));
+    // Sub-leaf 4f: factory path runs on the user thread, but the
+    // returned proxy's callbacks fire on the poll thread (e.g.
+    // TcpConnection::handle_read). Schedule the recv-loop fiber
+    // onto the poll thread so they share a reactor.
+    bind_channel_via_poll_thread(std::move(result.connection));
   }
 
   // Record address for the close fan-out's reconnect spawn — it
@@ -840,19 +914,76 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   // @unsafe { Weak copy is currently treated as non-safe. }
   { weak_self = weak_self_; }
 
-  // Fiber body: drive `run_recv_loop` for as long as the connection
-  // is alive. On weak-upgrade failure (connection already dropped),
-  // the fiber exits immediately; `recv_frame()` returning None (i.e.,
-  // channel closed) also terminates the loop inside `run_recv_loop`.
+  // Spawn the recv-loop fiber on the *current* thread's reactor.
+  // Per the channel-layer threading contract, the recv-loop fiber
+  // must live on the same reactor that fires the proxy's
+  // `on_frame` / `on_closed` callbacks (so the `IntEvent` it parks
+  // on can be signaled cross-fiber within one thread —
+  // cross-thread `IntEvent::set` is unsafe). Caller is responsible
+  // for choosing the right thread:
+  //   - Fake-channel unit tests call `bind_channel(...)` from the
+  //     test thread, where they also drive `deliver()` /
+  //     `deliver_closed()`. The recv-loop fiber lives on the test
+  //     thread; everything stays single-threaded.
+  //   - Production TCP / factory paths use
+  //     `bind_channel_via_poll_thread(...)` (sub-leaf 4f) which
+  //     submits a `OneTimeJob` to the poll thread, where the
+  //     spawn — and therefore the resulting fiber — lands on the
+  //     same reactor that fires `TcpConnection::handle_read`'s
+  //     `on_frame` callback.
   Fiber::create_run([weak_self]() mutable {
     auto conn_opt = weak_self.upgrade();
     if (conn_opt.is_none()) return;
     auto conn = conn_opt.unwrap();
-    // @unsafe { const_cast — connection methods on rusty::Arc<T>
-    // expose const refs by default; recv-loop body needs mut. }
     auto* mut_conn = const_cast<ClientConnection*>(conn.get());
     mut_conn->run_recv_loop();
   }, __FILE__, __LINE__);
+}
+
+// @unsafe - Channel-mode bind that schedules the recv-loop fiber
+// spawn onto the *poll thread*. Workstream K, sub-leaf 4f.
+//
+// Used by production code paths (factory-driven `connect` /
+// reconnect) that run on the user thread but need the recv-loop
+// fiber on the poll thread — same thread the channel proxy's
+// callbacks fire on. Submits a `OneTimeJob` whose `Work()` runs
+// `run_recv_loop()` from a fiber that the poll thread's
+// `trigger_job` spawns on its own reactor.
+void ClientConnection::bind_channel_via_poll_thread(
+    ChannelConnectionProxy channel) {
+  if (!channel.has_value()) return;
+
+  // Move the proxy into the heap-allocated FiberChannel and flip
+  // the latch on the calling thread — these are pure data
+  // mutations and the recv-loop fiber doesn't observe them until
+  // after we submit the OneTimeJob below.
+  // @unsafe { make_box + RefCell mutation }
+  {
+    auto guard = fiber_channel_.borrow_mut();
+    *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
+  }
+  channel_mode_.set(true);
+
+  WeakClientConnection weak_self;
+  // @unsafe { Weak copy }
+  { weak_self = weak_self_; }
+
+  // Schedule the recv-loop fiber spawn onto the poll thread. The
+  // poll thread's `trigger_job` calls `Fiber::create_run` from
+  // its own reactor, so the resulting fiber's IntEvent waits and
+  // the `on_frame` callback's signal both land on the same
+  // thread.
+  // @unsafe { Arc::new_ + std::function + cross-thread queue }
+  auto recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([weak_self]() {
+    auto conn_opt = weak_self.upgrade();
+    if (conn_opt.is_none()) return;
+    auto conn = conn_opt.unwrap();
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    mut_conn->run_recv_loop();
+  }));
+  // Upcast Arc<OneTimeJob> -> Arc<Job> for the PollThread queue.
+  auto recv_job_base = rusty::Arc<Job>(recv_job);
+  poll_thread_worker_->add(std::move(recv_job_base));
 }
 
 // @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
@@ -1556,6 +1687,23 @@ int Client::connect(const char* addr, bool client) const {
   mut_conn.set_circuit_breaker_config(pending_circuit_breaker_config_.get());
   // Apply pending reconnect policy before connecting
   mut_conn.set_reconnect_policy(pending_reconnect_policy_.get());
+
+  // Workstream K, sub-leaf 4f — migration switch.
+  //
+  // If `SRPC_USE_CHANNEL=1` is set in the environment AND no factory
+  // has been installed via `set_channel_factory(...)`, install a
+  // default TCP factory now. This routes the subsequent
+  // `connect(addr)` through `factory->connect(addr)` ->
+  // `bind_channel(...)`, exercising the channel-mode path
+  // end-to-end without forcing every existing call site to opt in.
+  // The flag default-off keeps the legacy fd path active for
+  // unsuspecting consumers; sub-leaf 4g flips the default and
+  // removes the legacy path.
+  if (srpc_use_channel() && !has_pending_channel_factory()) {
+    auto tcp_factory =
+        rusty::Arc<TcpFactory>::make(poll_thread_worker_);
+    set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
+  }
 
   // Workstream K, sub-leaf 4e — push the pending channel factory
   // into the new ClientConnection. Once bound, the connection's

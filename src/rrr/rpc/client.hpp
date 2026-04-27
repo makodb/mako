@@ -122,6 +122,36 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 
 namespace rrr {
 
+// ============================================================================
+// Workstream K, sub-leaf 4f — migration switch.
+// ============================================================================
+
+/**
+ * Returns true when the `SRPC_USE_CHANNEL` env var is set to a
+ * truthy value ("1", "true", "yes", "on" — case-insensitive). When
+ * true, every `Client::connect(addr)` call that hasn't already
+ * installed a factory via `set_channel_factory(...)` auto-installs
+ * a default TCP-backed `ChannelFactoryProxy`, putting the
+ * connection in channel mode end-to-end.
+ *
+ * The env var is read once on first call and cached; subsequent
+ * runtime changes are ignored so the per-connection decision stays
+ * consistent.
+ */
+// @safe - Reads cached choice; lazy-initializes from env on first call.
+bool srpc_use_channel();
+
+/**
+ * Test-only override: flip the cached choice without spawning a
+ * child process. Subsequent `srpc_use_channel()` calls return the
+ * forced value. Use `srpc_reset_use_channel_for_testing()` to clear
+ * and re-read the env var on the next query.
+ */
+// @safe - Test-only override.
+void srpc_set_use_channel_for_testing(bool on);
+// @safe - Test-only reset.
+void srpc_reset_use_channel_for_testing();
+
 /**
  * Behavior when a request is made while disconnected.
  */
@@ -874,6 +904,25 @@ public:
      */
     // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
     void bind_channel(ChannelConnectionProxy channel);
+
+    /**
+     * Workstream K, sub-leaf 4f — bind that schedules the recv-loop
+     * fiber spawn onto the poll thread.
+     *
+     * Used by production code paths (factory-driven `connect` /
+     * reconnect) that run on the user thread but need the
+     * recv-loop fiber on the poll thread — same reactor that fires
+     * the channel proxy's callbacks (e.g. `TcpConnection::handle_read`'s
+     * `on_frame`). Submits a `OneTimeJob` to the poll thread whose
+     * `Work()` calls `run_recv_loop()` from a fiber that the
+     * `trigger_job` body spawns on its own reactor.
+     *
+     * Use `bind_channel(...)` (above) when the calling thread is
+     * also the thread that fires the proxy's callbacks
+     * (single-threaded fake-channel unit tests).
+     */
+    // @unsafe - Submits a OneTimeJob across thread boundary.
+    void bind_channel_via_poll_thread(ChannelConnectionProxy channel);
 
     // @safe - True if `bind_channel` has been called with a non-null proxy.
     bool is_channel_mode() const { return channel_mode_.get(); }
