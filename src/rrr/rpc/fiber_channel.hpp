@@ -131,12 +131,18 @@ class FiberChannel {
     void close();
 
     /**
-     * True after `on_closed` has fired (set on the reactor thread).
-     * The channel proxy's own `is_closed()` may report true earlier
-     * if the user explicitly closed it from another thread before
-     * the reactor processed the callback.
+     * True if either:
+     *   - the FiberChannel's local close latch has been set
+     *     (`on_closed` callback fired on the reactor thread), OR
+     *   - the underlying proxy reports closed.
+     *
+     * The two can disagree briefly: a caller on another thread may
+     * `proxy.close()` before the reactor processes the resulting
+     * `on_closed` callback. `is_closed()` returning the conjunction
+     * means "from this point on, frame I/O is unsafe" — which is
+     * the predicate request paths actually want.
      */
-    bool is_closed() const { return closed_.get(); }
+    bool is_closed() const;
 
     /** Underlying channel proxy access (non-owning). For tests. */
     ChannelConnectionProxy& channel_for_test() { return ch_; }

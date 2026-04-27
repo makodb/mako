@@ -697,6 +697,178 @@ void ClientConnection::enqueue_heartbeat_probe() const {
   guard->write_bookmark(bmark, packet_size);
 }
 
+// @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
+//
+// Workstream K, sub-leaves 4a/4b/4c2:
+//   - 4a flipped the `channel_mode_` latch.
+//   - 4b routed outbound frames through the proxy.
+//   - 4c2 wraps the proxy in a `FiberChannel` and spawns a recv-loop
+//     fiber that drives response demux from `recv_frame()` calls.
+//
+// The fiber is spawned on the *current* thread's reactor. Per the
+// channel-layer threading contract, the proxy's callbacks fire on the
+// reactor that owns the underlying connection — typically the poll
+// thread for production TCP, or the test thread for fake channels.
+// Calling `bind_channel` from any other thread leaves the recv-loop
+// fiber on the wrong reactor and would race the IntEvent signaling
+// path. Cross-thread scheduling of the spawn is sub-leaf 4e's
+// concern; for 4c2 we document the constraint and rely on the
+// caller.
+void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
+  if (!channel.has_value()) return;
+
+  // Move the proxy into a heap-allocated `FiberChannel` so the
+  // recv-loop fiber can hold a stable pointer to the wrapper across
+  // its parking lifetime. `FiberChannel` is move-deleted (its
+  // callbacks capture `this`), so we use `make_box` which constructs
+  // in-place via perfect-forwarded `new` rather than moving.
+  // @unsafe { make_box + RefCell mutation }
+  {
+    auto guard = fiber_channel_.borrow_mut();
+    *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
+  }
+  channel_mode_.set(true);
+
+  // Capture a Weak<> so the parked fiber doesn't extend the
+  // connection's lifetime (which would create a cycle via
+  // `fiber_channel_` ownership).
+  WeakClientConnection weak_self;
+  // @unsafe { Weak copy is currently treated as non-safe. }
+  { weak_self = weak_self_; }
+
+  // Fiber body: drive `run_recv_loop` for as long as the connection
+  // is alive. On weak-upgrade failure (connection already dropped),
+  // the fiber exits immediately; `recv_frame()` returning None (i.e.,
+  // channel closed) also terminates the loop inside `run_recv_loop`.
+  Fiber::create_run([weak_self]() mutable {
+    auto conn_opt = weak_self.upgrade();
+    if (conn_opt.is_none()) return;
+    auto conn = conn_opt.unwrap();
+    // @unsafe { const_cast — connection methods on rusty::Arc<T>
+    // expose const refs by default; recv-loop body needs mut. }
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    mut_conn->run_recv_loop();
+  }, __FILE__, __LINE__);
+}
+
+// @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
+//
+// Recv-loop body: blocks on `FiberChannel::recv_frame()` and forwards
+// each frame's body to `decode_response_and_notify`. Returns when
+// the channel closes (recv_frame returns None) or when the wrapper
+// goes away.
+//
+// We resolve the FiberChannel raw pointer ONCE under a brief borrow
+// and then drop the RefCell guard — `recv_frame()` yields the fiber
+// (parking on an `IntEvent`), and holding a borrow across the yield
+// would prevent any other fiber on the same reactor (e.g., the test
+// thread's `request_via_channel` call) from re-entering the
+// RefCell. The raw pointer stays valid because the spawning lambda
+// keeps an `Arc<ClientConnection>` alive for the fiber's lifetime,
+// and the connection owns the `Box<FiberChannel>`.
+void ClientConnection::run_recv_loop() {
+  FiberChannel* fc = nullptr;
+  {
+    auto guard = fiber_channel_.borrow();
+    if (guard->is_none()) return;
+    // @unsafe { Box::get returns raw pointer }
+    fc = const_cast<FiberChannel*>(guard->as_ref().unwrap().get());
+  }
+  while (true) {
+    rusty::Option<OwnedFrame> frame_opt = fc->recv_frame();
+    if (frame_opt.is_none()) {
+      // Channel closed. Sub-leaves 4d/4e wire the close-side fan-out
+      // (cancel pending futures, schedule reconnect); for 4c2 we
+      // simply exit the loop.
+      return;
+    }
+    auto frame = std::move(frame_opt).unwrap();
+    decode_response_and_notify(frame.bytes.data(), frame.bytes.size());
+  }
+}
+
+// @unsafe - Marshal operators, Future::notify_ready, pending_fu_ map.
+//
+// Decode one response frame body and resolve the matching pending
+// future. The body layout mirrors the legacy fd path's payload (i.e.,
+// what arrives after the 4-byte size prefix in `client.cpp::handle_read`):
+//
+//     [v64 reply_xid][v32 error_code][v64 server_instance_id][user-marshaled reply]
+//
+// The channel layer consumes the size prefix (and with it the
+// `kResponseHeaderExtFlag` bit), so we lose the runtime signal that
+// distinguishes legacy responses (no instance ID) from extended
+// responses (with instance ID). The current SRPC server always emits
+// the extended form (`server.hpp::reply` sets
+// `include_instance_id = true`), so channel mode unconditionally
+// reads the instance ID. Sub-leaf 4f's migration switch / parity
+// pass will revisit if a legacy-server interop path needs the bit
+// surfaced through `ChannelFrame`.
+void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
+                                                  std::size_t size) {
+  // Wrap the bytes in a Marshal so we can reuse the existing
+  // operator>> codecs for v64 / v32 / Marshal::read.
+  Marshal body;
+  if (size > 0) {
+    body.write(bytes, size);
+  }
+
+  v64 v_reply_xid;
+  v32 v_error_code;
+  size_t parsed_header_size = 0;
+
+  body >> v_reply_xid >> v_error_code;
+  parsed_header_size += v_reply_xid.val_size() + v_error_code.val_size();
+
+  // See the function-header note: in channel mode the extended-header
+  // flag is consumed by the framing layer. We assume the server
+  // always emits the extended form (matches `server.hpp` today).
+  v64 v_server_instance_id;
+  body >> v_server_instance_id;
+  parsed_header_size += v_server_instance_id.val_size();
+  check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
+
+  if (size < parsed_header_size) {
+    invoke_error_callback(EPROTO, "response header larger than packet payload");
+    return;
+  }
+
+  size_t response_payload_bytes = size - parsed_header_size;
+  heartbeat_manager_.on_pong_received();
+
+  rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
+  {
+    auto guard = pending_fu_.lock().unwrap();
+    auto fu_ptr = guard->get(v_reply_xid.get());
+    if (fu_ptr.is_some()) {
+      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());
+      guard->remove(v_reply_xid.get());
+    }
+  }
+
+  if (fu_opt.is_some()) {
+    auto fu = fu_opt.unwrap();
+    verify(fu->xid_ == v_reply_xid.get());
+    fu->error_code_.set(v_error_code.get());
+    fu->reply_.borrow_mut()->read_from_marshal(body, response_payload_bytes);
+
+    if (v_error_code.get() == 0) {
+      metrics_.record_request_completed();
+    } else {
+      metrics_.record_request_failed();
+    }
+    record_circuit_result(v_error_code.get());
+
+    fu->notify_ready(fu);
+  } else {
+    // No matching future (timed out or replaced). Drain the payload
+    // anyway to keep the Marshal balanced — same idiom as the legacy
+    // fd path's branch in `handle_read`.
+    Marshal reply;
+    reply.read_from_marshal(body, response_payload_bytes);
+  }
+}
+
 // @unsafe - Route allow_request through metrics (rejections + state transitions).
 bool ClientConnection::allow_request_with_circuit_metrics() const {
   CircuitState before = circuit_breaker_.state();
@@ -945,6 +1117,17 @@ int ClientConnection::handle_write() {
 
 // @unsafe - Calls Future::notify_ready (uses interior mutability)
 bool ClientConnection::handle_read() {
+  // Workstream K, sub-leaf 4c2: in channel mode, response demux is
+  // owned by the recv-loop fiber driven from `run_recv_loop` over the
+  // bound `FiberChannel`. The legacy `Pollable::handle_read` is
+  // short-circuited as a defensive guard so a stale poll-loop
+  // registration (from a connection that pre-dates `bind_channel`)
+  // can't double-consume bytes from a socket the channel layer
+  // already owns. Sub-leaf 4e removes the registration entirely.
+  if (is_channel_mode()) {
+    return false;
+  }
+
   if (!state_machine_.is_connected()) {
     return false;
   }
