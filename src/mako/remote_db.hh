@@ -38,7 +38,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
-import rrr;
+#include "rrr/rrr.hpp"
 #include <string>
 #include <atomic>
 #include <unordered_map>

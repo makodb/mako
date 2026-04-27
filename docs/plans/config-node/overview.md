@@ -300,7 +300,7 @@ private:
 
 #pragma once
 
-import rrr;
+#include "rrr/rrr.hpp"
 #include "config.h"
 
 namespace janus {
@@ -346,7 +346,7 @@ private:
 #include <string>
 #include <memory>
 #include "config.h"
-import rrr;
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

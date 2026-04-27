@@ -156,7 +156,7 @@ def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
     if profile == "reliability":
         return f"""{COMMON_SNIPPET_PREAMBLE}
 #include <time.h>
-import rrr;
+#include "rrr/rrr.hpp"
 
 using namespace rrr;
 
@@ -172,7 +172,7 @@ int main() {{
     if profile == "client":
         return f"""{COMMON_SNIPPET_PREAMBLE}
 #include <time.h>
-import rrr;
+#include "rrr/rrr.hpp"
 
 using namespace rrr;
 
@@ -216,7 +216,7 @@ int main() {{
     if profile == "server":
         return f"""{COMMON_SNIPPET_PREAMBLE}
 #include <time.h>
-import rrr;
+#include "rrr/rrr.hpp"
 
 using namespace rrr;
 
@@ -249,7 +249,7 @@ int main() {{
     if profile == "codegen":
         return f"""{COMMON_SNIPPET_PREAMBLE}
 #include <time.h>
-import rrr;
+#include "rrr/rrr.hpp"
 
 using namespace rrr;
 
