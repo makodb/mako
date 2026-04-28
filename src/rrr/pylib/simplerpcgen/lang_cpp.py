@@ -501,7 +501,7 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
         f.writeln("#pragma once")
         f.writeln()
 #        f.writeln('#include "rpc/server.h"')
-        f.writeln('import rrr;')
+        f.writeln('#include "rrr/rrr.hpp"')
         f.writeln('#include <rusty/async.hpp>')
         f.writeln('#include <rusty/arc.hpp>')
         f.writeln('#include <rusty/box.hpp>')

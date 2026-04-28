@@ -702,11 +702,17 @@ class ClientConnection {
     // without touching the FiberChannel from threads that don't own
     // it).
     //
-    // RefCell<Option<Box<>>> shape:
-    //   - RefCell — interior mutability so `request(...)` const paths
-    //     can borrow the wrapper to send outbound frames.
-    //   - Option  — None until `bind_channel` is called; Some after.
-    //   - Box     — stable address: the recv-loop fiber holds a raw
+    // SpinMutex<Option<Box<>>> shape:
+    //   - SpinMutex — thread-safe interior mutability so `request(...)`
+    //     const paths can lock the wrapper to send outbound frames
+    //     concurrently from many user threads while the poll thread's
+    //     recv-loop fiber briefly locks to extract the FiberChannel
+    //     pointer. (Sub-leaf 4g1 swapped this from `RefCell` because
+    //     RefCell's non-atomic borrow_state corrupts under multi-thread
+    //     access — observed in `RPCTest.MultiThreadedStressTest` with
+    //     100 user threads.)
+    //   - Option   — None until `bind_channel` is called; Some after.
+    //   - Box      — stable address: the recv-loop fiber holds a raw
     //     pointer to the wrapper (not the connection itself, which
     //     could move under it via Arc clones).
     //
@@ -716,7 +722,7 @@ class ClientConnection {
     // reconnect cleanup is wired in sub-leaves 4d/4e — for 4c2, the
     // fiber simply exits when the proxy's `on_closed` fires (the only
     // way to break out of `recv_frame` other than process exit).
-    mutable rusty::RefCell<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_{rusty::None};
+    mutable SpinMutex<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_{rusty::Option<rusty::Box<FiberChannel>>(rusty::None)};
     rusty::Cell<bool> channel_mode_{false};
 
     // Workstream K, sub-leaf 4e — channel-mode factory.
@@ -737,7 +743,11 @@ class ClientConnection {
     // Boxed because `pro::proxy<F>` triggers a cyclic-constraint
     // diagnostic when used directly as the value type of
     // `rusty::Option` — same workaround we apply to `fiber_channel_`.
-    mutable rusty::RefCell<rusty::Option<rusty::Box<ChannelFactoryProxy>>> factory_{rusty::None};
+    // SpinMutex (not RefCell) for the same reason as `fiber_channel_`:
+    // the close fan-out's reconnect spawn calls `connect_via_factory`
+    // from a separate thread, which can race against user-thread
+    // accessors like `is_factory_bound()` (sub-leaf 4g1).
+    mutable SpinMutex<rusty::Option<rusty::Box<ChannelFactoryProxy>>> factory_{rusty::Option<rusty::Box<ChannelFactoryProxy>>(rusty::None)};
 
     // Transaction ID counter for RPC requests
     // mutable because Counter uses atomics internally for thread-safe interior mutability
@@ -943,12 +953,12 @@ public:
      * an in-flight reconnect that already grabbed the old factory
      * will complete with the old factory.
      */
-    // @unsafe - Records the factory under RefCell interior mutability.
+    // @unsafe - Records the factory under SpinMutex interior mutability.
     void bind_factory(ChannelFactoryProxy factory) {
         if (!factory.has_value()) return;
-        // @unsafe { RefCell::borrow_mut + make_box + ChannelFactoryProxy move }
+        // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
         {
-            auto guard = factory_.borrow_mut();
+            auto guard = factory_.lock().unwrap();
             *guard = rusty::Some(
                 rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
         }
@@ -956,8 +966,8 @@ public:
 
     // @safe - True if `bind_factory` has been called with a non-null proxy.
     bool is_factory_bound() const {
-        // @unsafe { RefCell::borrow }
-        auto guard = factory_.borrow();
+        // @unsafe { SpinMutex::lock }
+        auto guard = factory_.lock().unwrap();
         return guard->is_some();
     }
 
@@ -1415,16 +1425,16 @@ private:
     // when the client is in channel mode. Returns the channel's
     // ChannelError; callers translate to errno where needed.
     //
-    // SAFETY: `fiber_channel_` is borrow-checked through RefCell at
-    // runtime; `FiberChannel::send_frame` is non-suspending and
-    // forwards to the proxy whose outbound queue is internally
-    // thread-safe (mirroring how `out_`'s SpinMutex is touched from
-    // const request paths today).
+    // SAFETY: `fiber_channel_` is protected by SpinMutex (sub-leaf
+    // 4g1). `FiberChannel::send_frame` is non-suspending and forwards
+    // to the proxy whose outbound queue is internally thread-safe
+    // (mirroring how `out_`'s SpinMutex is touched from const request
+    // paths today).
     ChannelError dispatch_frame_via_channel(const std::uint8_t* body_bytes,
                                             std::size_t body_size) const {
         if (!channel_mode_.get()) return ChannelError::ConnectionReset;
-        // @unsafe - RefCell::borrow_mut, Option::as_mut, Box deref
-        auto guard = fiber_channel_.borrow_mut();
+        // @unsafe - SpinMutex::lock, Option::as_mut, Box deref
+        auto guard = fiber_channel_.lock().unwrap();
         if (guard->is_none()) return ChannelError::ConnectionReset;
         return guard->as_mut().unwrap()->send_frame(
             ChannelFrame{body_bytes, body_size});
@@ -1465,7 +1475,7 @@ private:
         // sub-leaf 4d/4e re-introduces reconnect / buffering hooks
         // through channel callbacks.
         {
-            auto guard = fiber_channel_.borrow();
+            auto guard = fiber_channel_.lock().unwrap();
             if (guard->is_none() ||
                 guard->as_ref().unwrap()->is_closed()) {
                 record_circuit_result(ENOTCONN);
@@ -1867,13 +1877,16 @@ class Client {
     // connection then routes its `connect(addr)` and reconnect
     // spawn through the factory instead of the legacy fd path.
     //
-    // RefCell because pro::proxy<F> is move-only and we need to
+    // SpinMutex because pro::proxy<F> is move-only and we need to
     // assign through this const facade without exposing the
     // private member to friends. Box wrapper sidesteps the
     // cyclic-constraint diagnostic that surfaces when
     // `Option<pro::proxy<F>>` is instantiated directly (same
     // workaround as `ClientConnection::factory_`).
-    mutable rusty::RefCell<rusty::Option<rusty::Box<ChannelFactoryProxy>>> pending_factory_{rusty::None};
+    // SpinMutex (not RefCell) because Client::connect can be called
+    // from any thread and reads/consumes pending_factory_ on each
+    // call — sub-leaf 4g1.
+    mutable SpinMutex<rusty::Option<rusty::Box<ChannelFactoryProxy>>> pending_factory_{rusty::Option<rusty::Box<ChannelFactoryProxy>>(rusty::None)};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -2042,12 +2055,12 @@ public:
      * an in-memory backend (sub-leaf "in-memory channel backend"
      * in the workstream TODO).
      */
-    // @unsafe - Records the factory under RefCell interior mutability.
+    // @unsafe - Records the factory under SpinMutex interior mutability.
     void set_channel_factory(ChannelFactoryProxy factory) const {
         if (!factory.has_value()) return;
-        // @unsafe { RefCell::borrow_mut + make_box + ChannelFactoryProxy move }
+        // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
         {
-            auto guard = pending_factory_.borrow_mut();
+            auto guard = pending_factory_.lock().unwrap();
             *guard = rusty::Some(
                 rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
         }
@@ -2056,8 +2069,8 @@ public:
     // @safe - True if `set_channel_factory` has been called and the
     // factory hasn't been consumed by a `connect` yet.
     bool has_pending_channel_factory() const {
-        // @unsafe { RefCell::borrow }
-        auto guard = pending_factory_.borrow();
+        // @unsafe { SpinMutex::lock }
+        auto guard = pending_factory_.lock().unwrap();
         return guard->is_some();
     }
 

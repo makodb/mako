@@ -788,9 +788,9 @@ void ClientConnection::enqueue_heartbeat_probe() const {
 // Caller: the spawn body inside `on_channel_closed_fan_out` when a
 // factory is bound.
 void ClientConnection::reset_channel_mode_for_reconnect() {
-  // @unsafe { RefCell::borrow_mut + Option::take }
+  // @unsafe { SpinMutex::lock + Option::take }
   {
-    auto guard = fiber_channel_.borrow_mut();
+    auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::None;
   }
   channel_mode_.set(false);
@@ -817,9 +817,9 @@ int ClientConnection::connect_via_factory(const char* addr) {
   // proxy is cheap. We don't have a generic clone() on
   // pro::proxy<F>, so we copy through the Option's Arc-equivalent
   // semantics by re-binding via std::move from a fresh borrow.
-  // @unsafe { RefCell::borrow + ChannelFactoryProxy copy }
+  // @unsafe { SpinMutex::lock + ChannelFactoryProxy copy }
   {
-    auto guard = factory_.borrow();
+    auto guard = factory_.lock().unwrap();
     if (guard->is_none()) {
       Log_error(
           "rrr::ClientConnection::connect_via_factory: factory unbound at "
@@ -829,10 +829,14 @@ int ClientConnection::connect_via_factory(const char* addr) {
       return ENOTCONN;
     }
     // pro::proxy is move-only; we can't clone. Use the proxy in
-    // place via the Box wrapper. Releasing the guard immediately
-    // after the call is safe because `connect` is documented
-    // synchronous from the caller's perspective (channel-layer
-    // contract).
+    // place via the Box wrapper. The SpinMutex guard is held across
+    // the connect() syscall — the caller's perspective is that
+    // connect is synchronous (channel-layer contract), and the
+    // factory itself is read-only (bind_factory is essentially
+    // one-shot per Client lifecycle), so holding the lock briefly
+    // while we issue the syscall doesn't introduce contention with
+    // the dispatch path (which locks `fiber_channel_`, not
+    // `factory_`).
     auto* bound = const_cast<ChannelFactoryProxy*>(
         guard->as_ref().unwrap().get());
     ConnectResult result = (*bound)->connect(std::string_view(addr));
@@ -900,9 +904,9 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   // its parking lifetime. `FiberChannel` is move-deleted (its
   // callbacks capture `this`), so we use `make_box` which constructs
   // in-place via perfect-forwarded `new` rather than moving.
-  // @unsafe { make_box + RefCell mutation }
+  // @unsafe { make_box + SpinMutex mutation }
   {
-    auto guard = fiber_channel_.borrow_mut();
+    auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
   }
   channel_mode_.set(true);
@@ -957,9 +961,9 @@ void ClientConnection::bind_channel_via_poll_thread(
   // the latch on the calling thread — these are pure data
   // mutations and the recv-loop fiber doesn't observe them until
   // after we submit the OneTimeJob below.
-  // @unsafe { make_box + RefCell mutation }
+  // @unsafe { make_box + SpinMutex mutation }
   {
-    auto guard = fiber_channel_.borrow_mut();
+    auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
   }
   channel_mode_.set(true);
@@ -993,18 +997,18 @@ void ClientConnection::bind_channel_via_poll_thread(
 // the channel closes (recv_frame returns None) or when the wrapper
 // goes away.
 //
-// We resolve the FiberChannel raw pointer ONCE under a brief borrow
-// and then drop the RefCell guard — `recv_frame()` yields the fiber
-// (parking on an `IntEvent`), and holding a borrow across the yield
-// would prevent any other fiber on the same reactor (e.g., the test
-// thread's `request_via_channel` call) from re-entering the
-// RefCell. The raw pointer stays valid because the spawning lambda
-// keeps an `Arc<ClientConnection>` alive for the fiber's lifetime,
-// and the connection owns the `Box<FiberChannel>`.
+// We resolve the FiberChannel raw pointer ONCE under a brief lock
+// and then drop the SpinMutex guard — `recv_frame()` yields the
+// fiber (parking on an `IntEvent`), and holding a lock across the
+// yield would block other threads racing on `dispatch_frame_via_channel`
+// (or, on the same reactor, prevent other fibers from running). The
+// raw pointer stays valid because the spawning lambda keeps an
+// `Arc<ClientConnection>` alive for the fiber's lifetime, and the
+// connection owns the `Box<FiberChannel>`.
 void ClientConnection::run_recv_loop() {
   FiberChannel* fc = nullptr;
   {
-    auto guard = fiber_channel_.borrow();
+    auto guard = fiber_channel_.lock().unwrap();
     if (guard->is_none()) return;
     // @unsafe { Box::get returns raw pointer }
     fc = const_cast<FiberChannel*>(guard->as_ref().unwrap().get());
@@ -1713,9 +1717,9 @@ int Client::connect(const char* addr, bool client) const {
   // pro::proxy is move-only; the factory is a one-shot push per
   // Client lifecycle (re-bind via `set_channel_factory` to install
   // a different one — affects subsequent Client::connect calls).
-  // @unsafe { RefCell::borrow_mut + Box deref + ChannelFactoryProxy move }
+  // @unsafe { SpinMutex::lock + Box deref + ChannelFactoryProxy move }
   {
-    auto guard = pending_factory_.borrow_mut();
+    auto guard = pending_factory_.lock().unwrap();
     if (guard->is_some()) {
       // Move the proxy out of the boxed Option. The Box stays
       // alive on the stack until the end of this scope; we move

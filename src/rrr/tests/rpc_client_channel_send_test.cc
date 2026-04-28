@@ -36,6 +36,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -227,6 +228,54 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
         EXPECT_EQ(rpc_id, 0x100 + i) << "iteration " << i;
         EXPECT_EQ(user_arg, i)       << "iteration " << i;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent dispatch — sub-leaf 4g1a regression guard.
+//
+// Pre-fix: `fiber_channel_` was a `rusty::RefCell<Option<Box<…>>>`. With many
+// user threads concurrently calling `request(...)` (which calls
+// `dispatch_frame_via_channel` → `borrow_mut()`), the non-atomic
+// `borrow_state` int races and either throws `std::runtime_error` from
+// `add_writer` (best case — observable) or silently corrupts state.
+//
+// Post-fix: `fiber_channel_` is `SpinMutex<Option<Box<…>>>`. The lock
+// serialises concurrent dispatchers; every request must succeed and every
+// frame must reach the stub.
+// ---------------------------------------------------------------------------
+
+TEST_F(ClientChannelSendTest, ConcurrentDispatchIsThreadSafe) {
+    constexpr int kThreads             = 100;
+    constexpr int kRequestsPerThread   = 10;
+
+    std::atomic<int> ok_count{0};
+    std::atomic<int> err_count{0};
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([this, t, &ok_count, &err_count]() {
+            for (int i = 0; i < kRequestsPerThread; ++i) {
+                const i32 rpc_id = (t << 8) | i;
+                auto fr = mut_conn().request(rpc_id, FutureAttr{},
+                                             [t, i](Marshal& m) {
+                                                 m << static_cast<i32>(t);
+                                                 m << static_cast<i32>(i);
+                                             });
+                if (fr.is_ok()) {
+                    ok_count.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    err_count.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+
+    constexpr int kExpected = kThreads * kRequestsPerThread;
+    EXPECT_EQ(ok_count.load(),  kExpected);
+    EXPECT_EQ(err_count.load(), 0);
+    EXPECT_EQ(stub_->capture_count(), static_cast<std::size_t>(kExpected));
 }
 
 }  // namespace
