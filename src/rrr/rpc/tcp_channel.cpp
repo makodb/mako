@@ -114,8 +114,39 @@ ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
         return ChannelError::Internal;
     }
 
-    pending_write_update_.set(true);
+    // Wake the poll thread so the new outbound bytes actually leave
+    // the buffer. Two paths, mirroring the legacy fd path's idiom in
+    // `ClientConnection::replay_pending_requests`:
+    //
+    //   * On the poll thread: just set the deferred flag — the
+    //     poll_loop will pick it up at the bottom of the current
+    //     iteration via `check_pending_write_update`.
+    //
+    //   * Off the poll thread (the common case — RPC user threads
+    //     calling `send_frame` from `dispatch_frame_via_channel`):
+    //     post `update_mode(fd, READ|WRITE)` directly. Posting writes
+    //     to the mpsc channel's eventfd, which wakes the poll thread's
+    //     `epoll_wait` immediately. Without this, multi-threaded
+    //     senders contend on the non-atomic `pending_write_update_`
+    //     `Cell<bool>` and lose wake-ups, producing the
+    //     `MultiThreadedStressTest` 100-thread wedge documented in
+    //     `docs/TODO-srpc.md` sub-leaf 4g1b.
+    //
+    // The `poll_thread_` slot may be `None` for unit tests that drive
+    // `TcpConnection` directly via `socketpair(2)` without a poll
+    // thread (those tests are single-threaded — flag-poll is fine).
+    // Workstream K, sub-leaf 4g1b.
+    if (poll_thread_.is_some() && !PollThreadWorker::is_on_poll_thread()) {
+        poll_thread_.as_ref().unwrap()->update_mode(
+            fd_, PollMode::READ | PollMode::WRITE);
+    } else {
+        pending_write_update_.set(true);
+    }
     return ChannelError::None;
+}
+
+void TcpConnection::set_poll_thread(rusty::Arc<PollThread> pt) {
+    poll_thread_ = rusty::Some(std::move(pt));
 }
 
 void TcpConnection::flush() {
@@ -709,6 +740,14 @@ bool TcpListener::handle_read() {
             conn_fd, std::move(peer_addr_str));
 
         if (poll_thread_.is_some()) {
+            // Workstream K, sub-leaf 4g1b — wire the poll thread into
+            // the accepted connection BEFORE registering its pollable
+            // proxy, so non-poll-thread `send_frame` callers on the
+            // server side can also post `update_mode` actively.
+            {
+                auto& mut_conn = const_cast<TcpConnection&>(*conn.get());
+                mut_conn.set_poll_thread(poll_thread_.as_ref().unwrap().clone());
+            }
             poll_thread_.as_ref().unwrap()->add_proxy(
                 make_tcp_connection_pollable_proxy(conn.clone()));
         }
@@ -839,6 +878,14 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
     // Arc; the pollable proxy keeps another, so the connection
     // survives until both layers release.
     auto conn = rusty::Arc<TcpConnection>::make(fd, std::string(addr));
+    // Workstream K, sub-leaf 4g1b — wire the poll thread reference into
+    // the connection BEFORE the channel proxy is handed back, so any
+    // user-thread `send_frame` call can post `update_mode` actively
+    // (without the lost-wake-up race against `pending_write_update_`).
+    {
+        auto& mut_conn = const_cast<TcpConnection&>(*conn.get());
+        mut_conn.set_poll_thread(poll_thread_.clone());
+    }
     poll_thread_->add_proxy(make_tcp_connection_pollable_proxy(conn.clone()));
 
     return ConnectResult{

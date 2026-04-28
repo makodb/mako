@@ -149,6 +149,20 @@ class TcpConnection {
     void   handle_error();
     bool   check_pending_write_update() const;
 
+    // Wire a `PollThread` reference into the connection so non-poll-thread
+    // callers of `send_frame(...)` can post `update_mode(fd, READ|WRITE)`
+    // commands directly to wake `epoll_wait` instead of waiting for the
+    // poll thread to poll the `pending_write_update_` flag.
+    //
+    // Workstream K, sub-leaf 4g1b: must be called *before* the connection
+    // starts receiving outbound traffic. `TcpFactory::connect()` and
+    // `TcpListener::handle_read()` (accept loop) wire this in immediately
+    // after the connection is constructed and before its proxy is handed
+    // to user code. When unset (e.g. the socketpair-driven unit tests),
+    // `send_frame` falls back to the legacy flag-poll behavior — fine
+    // because those tests exercise the connection from a single thread.
+    void set_poll_thread(rusty::Arc<PollThread> pt);
+
  private:
     // Post-close cleanup and on_closed delivery. Idempotent — only the
     // first call actually fires the callback. Always invoked on the
@@ -197,6 +211,15 @@ class TcpConnection {
     // `update_mode` after the current callback returns (mirrors the
     // existing `ClientConnection::pending_write_update_`).
     rusty::Cell<bool> pending_write_update_{false};
+
+    // Optional `PollThread` reference for non-poll-thread `send_frame`
+    // callers to post `update_mode(fd, READ|WRITE)` directly. See
+    // `set_poll_thread()`. None until wired up by the factory / accept
+    // loop. Touched read-only from `send_frame` (any thread) and
+    // `set_poll_thread` (which the factory only calls before any other
+    // thread can observe the connection), so a plain `Option` without
+    // a lock is fine.
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_{rusty::None};
 
     // User callbacks, last-writer-wins. Setters and reads are
     // serialized by the spinlock so that `send_frame` and the poll
