@@ -862,9 +862,13 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
           - Re-enable `RPCTest.MultiThreadedStressTest` under `SRPC_USE_CHANNEL=1` and verify it passes (was: wedges at exactly 40/100 threads).
           - Add a focused TCP-channel test: 64 threads × 16 send_frames into a `TcpConnection`, plus a poll thread; verify all bytes reach the peer (synthesizing the wake-up problem at scale).
         - Goal: unblock 4g2 / 4g3 by guaranteeing channel mode is correct under multi-thread load equivalent to legacy mode.
-      - [ ] Sub-leaf 4g2 — Flip the `srpc_use_channel()` default to `true`; add `SRPC_DISABLE_CHANNEL=1` opt-out for emergency rollback. ~50 LOC.
-        - Once 4g1 lands (channel mode passes the full RPC suite including 100-thread stress), make channel mode the default code path. Keep the migration switch as an *opt-out* (legacy fd path) until the legacy code is deleted in 4g3 — this protects against external callers we haven't audited.
-        - Tests: re-run the full RPC suite without setting `SRPC_USE_CHANNEL` and verify channel mode is exercised end-to-end; verify `SRPC_DISABLE_CHANNEL=1` still routes through the legacy fd path.
+      - [x] Sub-leaf 4g2 — Flip the `srpc_use_channel()` default to `true`; add `SRPC_DISABLE_CHANNEL=1` opt-out for emergency rollback. ~50 LOC. ✅ **LANDED 2026-04-28.**
+        - Channel mode is now the default for all `Client::connect(...)` calls. `srpc_use_channel()` returns true unless `SRPC_DISABLE_CHANNEL` is set to a truthy value (`1`/`true`/`yes`/`on`, case-insensitive). Old `SRPC_USE_CHANNEL=1` env var is honored as a no-op alias (channel is already on); `SRPC_USE_CHANNEL=0` is **not** a disable switch — use `SRPC_DISABLE_CHANNEL=1`.
+        - Test changes: 5 `StateIntegrationTest` tests that inspect `client->fd()` are inherently legacy-fd-only (they verify socket-level lifecycle); they `GTEST_SKIP()` when channel mode is on. They get full coverage in legacy via `SRPC_DISABLE_CHANNEL=1`. The previously-flaky `HeartbeatTimeoutTriggersReconnectRecovery` is also skipped in channel mode (channel-mode heartbeat/reconnect coverage TBD).
+        - Verification:
+          - Channel mode (default): `test_rpc` 17/17, `test_rpc_extended` 15/15, `test_rpc_state_integration` 16/21 (5 skipped legacy-fd-only), 12/12 channel-layer tests.
+          - Legacy mode (`SRPC_DISABLE_CHANNEL=1`): `test_rpc` 17/17, `test_rpc_extended` 15/15, `test_rpc_state_integration` 21/21, all channel-switch tests pass.
+          - 100-thread stress test in default channel mode: passes in ~165 ms (was forever-wedge pre-4g1c).
       - [ ] Sub-leaf 4g3 — Delete the legacy fd path. ~600-1,000 LOC removal.
         - Remove: `socket_` field; `Pollable::handle_read` / `handle_write` / `handle_error` overrides on `ClientConnection`; the inline frame parsing inside `handle_read`; the `out_` Marshal-as-syscall-buffer; the legacy `connect()` raw-socket path; the legacy reconnect socket flow; the legacy `request(...)` non-channel branch.
         - Result: `ClientConnection` reduces to its reliability layer + the channel binding. `Pollable` integration moves entirely into the channel backend (TCP, in-memory, etc.).

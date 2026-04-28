@@ -63,31 +63,36 @@ static uint64_t current_time_ms() {
 }
 
 // ============================================================================
-// Workstream K, sub-leaf 4f — migration switch (`SRPC_USE_CHANNEL`).
+// Workstream K, sub-leaf 4g2 — migration switch flipped to default-on.
 // ============================================================================
 //
-// When set to a truthy value in the environment ("1", "true", "yes",
-// "on" — case-insensitive), `Client::connect` automatically installs
-// a default TCP-backed `ChannelFactoryProxy` if the caller hasn't
-// already installed one via `set_channel_factory(...)`. The new
-// connection then runs entirely in channel mode (factory connect ->
-// bind_channel -> recv-loop fiber).
+// Channel mode is now the **default** for new connections.
+// `Client::connect` automatically installs a default TCP-backed
+// `ChannelFactoryProxy` if the caller hasn't already installed one
+// via `set_channel_factory(...)`. The new connection then runs
+// entirely in channel mode (factory connect -> bind_channel_direct ->
+// inline on_frame callbacks; no recv-loop fiber per 4g1c).
 //
-// Default off so existing callers see no behavior change. Tests
-// (especially `test_rpc` and `test_rpc_extended`) can be run with
-// the env var both set and unset to verify dual-path parity before
-// sub-leaf 4g flips the default and removes the legacy fd path.
+// Opt-out: set `SRPC_DISABLE_CHANNEL=1` (or `true`/`yes`/`on`) in the
+// environment to force the legacy fd path. This is an emergency
+// rollback for callers that hit unexpected regressions; the legacy
+// path is removed entirely in sub-leaf 4g3.
 //
-// The query is cached in an atomic Cell on first use; subsequent
-// calls are lock-free reads. The override (set via
-// `srpc_set_use_channel_for_testing`) lets unit tests flip the
-// switch without spawning a child process — it ALSO flips the
-// cached value to `Some(override)`.
+// Legacy compatibility: the old `SRPC_USE_CHANNEL=1` env var is
+// honored as a no-op alias (channel mode is already default), but the
+// kill-switch is now `SRPC_DISABLE_CHANNEL=1`. Tests that explicitly
+// set `SRPC_USE_CHANNEL=0` to disable channel mode should migrate to
+// `SRPC_DISABLE_CHANNEL=1`.
+//
+// The query is cached in a Cell on first use; subsequent calls are
+// lock-free reads. The override (set via
+// `srpc_set_use_channel_for_testing`) lets unit tests flip the switch
+// without spawning a child process — it ALSO flips the cached value.
 namespace {
 
 enum class UseChannelChoice : int { Unset = -1, Off = 0, On = 1 };
 
-// Cached resolution of the env var. Reads `SRPC_USE_CHANNEL` once,
+// Cached resolution of the env var. Reads `SRPC_DISABLE_CHANNEL` once,
 // then memoizes; later changes to the env var are intentionally
 // ignored (the channel-mode decision is per-process, not per-call,
 // to keep call sites consistent across the connection lifecycle).
@@ -95,16 +100,23 @@ rusty::Cell<UseChannelChoice> g_use_channel_choice{UseChannelChoice::Unset};
 
 // @unsafe - Reads getenv (not borrow-checked); strncasecmp.
 bool resolve_srpc_use_channel_from_env() {
-    // @unsafe { std::getenv }
-    const char* val = std::getenv("SRPC_USE_CHANNEL");
-    if (val == nullptr) return false;
-    if (val[0] == '\0') return false;
-    // Truthy: "1", "true", "yes", "on" (case-insensitive).
     auto eq_ci = [](const char* a, const char* b) {
         return ::strcasecmp(a, b) == 0;
     };
-    return eq_ci(val, "1") || eq_ci(val, "true") || eq_ci(val, "yes")
-           || eq_ci(val, "on");
+    auto is_truthy = [&](const char* val) {
+        if (val == nullptr || val[0] == '\0') return false;
+        return eq_ci(val, "1") || eq_ci(val, "true") || eq_ci(val, "yes")
+               || eq_ci(val, "on");
+    };
+    // 4g2: opt-out. If SRPC_DISABLE_CHANNEL is truthy, use legacy.
+    // @unsafe { std::getenv }
+    const char* disable = std::getenv("SRPC_DISABLE_CHANNEL");
+    if (is_truthy(disable)) return false;
+    // Channel mode is now the default. The old SRPC_USE_CHANNEL env
+    // var is honored for backward compatibility but is functionally a
+    // no-op (channel is already on); we do NOT honor `SRPC_USE_CHANNEL=0`
+    // as a disable switch — use SRPC_DISABLE_CHANNEL=1 for that.
+    return true;
 }
 
 }  // namespace

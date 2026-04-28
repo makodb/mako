@@ -71,40 +71,46 @@ class SrpcUseChannelSwitchTest : public ::testing::Test {
 };
 
 // ---------------------------------------------------------------------------
-// `srpc_use_channel()` reads env on first call.
+// `srpc_use_channel()` reads env on first call. (4g2: channel mode is
+// now the default; SRPC_DISABLE_CHANNEL is the kill-switch.)
 // ---------------------------------------------------------------------------
 
-TEST_F(SrpcUseChannelSwitchTest, EnvUnsetReturnsFalse) {
-    ::unsetenv("SRPC_USE_CHANNEL");
+TEST_F(SrpcUseChannelSwitchTest, EnvUnsetReturnsTrue) {
+    // 4g2: channel mode is the default — no env var means channel on.
+    ::unsetenv("SRPC_DISABLE_CHANNEL");
+    EXPECT_TRUE(srpc_use_channel());
+}
+
+TEST_F(SrpcUseChannelSwitchTest, DisableEnvOneReturnsFalse) {
+    ::setenv("SRPC_DISABLE_CHANNEL", "1", /*overwrite=*/1);
     EXPECT_FALSE(srpc_use_channel());
+    ::unsetenv("SRPC_DISABLE_CHANNEL");
 }
 
-TEST_F(SrpcUseChannelSwitchTest, EnvOneReturnsTrue) {
-    ::setenv("SRPC_USE_CHANNEL", "1", /*overwrite=*/1);
+TEST_F(SrpcUseChannelSwitchTest, DisableEnvFalseLiteralReturnsTrue) {
+    ::setenv("SRPC_DISABLE_CHANNEL", "false", /*overwrite=*/1);
     EXPECT_TRUE(srpc_use_channel());
+    ::unsetenv("SRPC_DISABLE_CHANNEL");
 }
 
-TEST_F(SrpcUseChannelSwitchTest, EnvFalseLiteralReturnsFalse) {
-    ::setenv("SRPC_USE_CHANNEL", "false", /*overwrite=*/1);
+TEST_F(SrpcUseChannelSwitchTest, DisableEnvUppercaseTrueReturnsFalse) {
+    ::setenv("SRPC_DISABLE_CHANNEL", "TRUE", /*overwrite=*/1);
     EXPECT_FALSE(srpc_use_channel());
+    ::unsetenv("SRPC_DISABLE_CHANNEL");
 }
 
-TEST_F(SrpcUseChannelSwitchTest, EnvUppercaseTrueReturnsTrue) {
-    ::setenv("SRPC_USE_CHANNEL", "TRUE", /*overwrite=*/1);
-    EXPECT_TRUE(srpc_use_channel());
-}
-
-TEST_F(SrpcUseChannelSwitchTest, EnvOnReturnsTrue) {
-    ::setenv("SRPC_USE_CHANNEL", "on", /*overwrite=*/1);
-    EXPECT_TRUE(srpc_use_channel());
+TEST_F(SrpcUseChannelSwitchTest, DisableEnvOnReturnsFalse) {
+    ::setenv("SRPC_DISABLE_CHANNEL", "on", /*overwrite=*/1);
+    EXPECT_FALSE(srpc_use_channel());
+    ::unsetenv("SRPC_DISABLE_CHANNEL");
 }
 
 TEST_F(SrpcUseChannelSwitchTest, EnvIsCachedAfterFirstRead) {
-    ::setenv("SRPC_USE_CHANNEL", "1", /*overwrite=*/1);
-    EXPECT_TRUE(srpc_use_channel());
+    ::setenv("SRPC_DISABLE_CHANNEL", "1", /*overwrite=*/1);
+    EXPECT_FALSE(srpc_use_channel());
     // Subsequent env change is ignored (decision is per-process).
-    ::setenv("SRPC_USE_CHANNEL", "0", /*overwrite=*/1);
-    EXPECT_TRUE(srpc_use_channel());
+    ::unsetenv("SRPC_DISABLE_CHANNEL");
+    EXPECT_FALSE(srpc_use_channel());
 }
 
 // ---------------------------------------------------------------------------
