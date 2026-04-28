@@ -18,6 +18,8 @@
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+
+#include <rusty/box.hpp>
 #include <fstream>
 #include <cstdlib>
 #include <map>
@@ -406,10 +408,10 @@ TEST(MockReceiverTest, ThreadSafety) {
 // ============= Interface Polymorphism Tests =============
 
 TEST(PolymorphismTest, MultipleBackends) {
-    std::vector<std::unique_ptr<MockTransportBackend>> backends;
+    std::vector<rusty::Box<MockTransportBackend>> backends;
 
-    backends.push_back(std::make_unique<MockTransportBackend>(mako::TransportType::RRR_RPC));
-    backends.push_back(std::make_unique<MockTransportBackend>(mako::TransportType::ERPC));
+    backends.push_back(rusty::make_box<MockTransportBackend>(mako::TransportType::RRR_RPC));
+    backends.push_back(rusty::make_box<MockTransportBackend>(mako::TransportType::ERPC));
 
     EXPECT_EQ(backends[0]->GetType(), mako::TransportType::RRR_RPC);
     EXPECT_EQ(backends[1]->GetType(), mako::TransportType::ERPC);

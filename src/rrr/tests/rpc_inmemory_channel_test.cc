@@ -24,6 +24,7 @@
 #include <vector>
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 
 #include "../rrr.hpp"
 #include "../rpc/inmemory_channel.hpp"
@@ -462,9 +463,9 @@ struct PairAndProxies {
     }
 };
 
-inline std::unique_ptr<PairAndProxies> make_pair_with_capture(
+inline rusty::Box<PairAndProxies> make_pair_with_capture(
         std::string a_addr, std::string b_addr) {
-    auto out = std::make_unique<PairAndProxies>();
+    auto out = rusty::make_box<PairAndProxies>();
     auto pair = make_channel_pair_for_testing(std::move(a_addr),
                                               std::move(b_addr));
     out->a.emplace(std::move(pair.first));
