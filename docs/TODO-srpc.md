@@ -1181,11 +1181,15 @@ Per CLAUDE.md exceptions:
     - `rpc/completion_tracker.hpp` (1 site) — iterator-stable cache; same constraint.
   - Per-leaf verification: full RPC-focused suite green.
   - Goal: zero non-carve-out `std::list` in rrr prod code after L2b–L2e land. Marshalling overloads keep std::list as a serialization-level interop type only.
-- [ ] *medium* Sub-leaf L3 — `std::set` / `std::unordered_set` → `rusty::HashSet<T>` / `rusty::BTreeSet<T>` (37 sites combined). ~150 LOC.
-  - Choose `HashSet` for unordered uses, `BTreeSet` for ordered uses.
-  - API drift: `set.find(x) != set.end()` → `set.contains(&x)`; iteration order is non-deterministic for HashSet (verify no tests rely on insertion order).
-  - Decompose by type if needed (set vs unordered_set).
-  - Goal: zero `std::set` / `std::unordered_set` in rrr after this leaf lands.
+- [x] *medium* Sub-leaf L3 — `std::set` / `std::unordered_set` → `rusty::HashSet<T>` / `rusty::BTreeSet<T>` in rrr prod code. ✅ **LANDED 2026-04-28**.
+  - **Survey refinement (2026-04-28)**: of the 37 mentions in the original Workstream L survey, only 6 are actual code uses in rrr prod — and all 6 are in `misc/marshal.hpp`'s public `operator<<` / `operator>>` overloads for `std::set<T>` / `std::unordered_set<T>` serialization (a documented carve-out — removing breaks user code that serializes std::set/std::unordered_set across the wire). The remaining 17 prod mentions are stale `@external:` annotation comments in server.{hpp,cpp} and stale `// @unsafe - uses std::set...` comments in reactor.cc (which already migrated to rusty::BTreeSet / rusty::HashSet but the annotations were never updated). 14 sites are in tests.
+  - **Done in this leaf** — annotation cleanup that brings rrr's documentation in line with reality:
+    - Deleted 5 stale `std::unordered_set::*: [safe...]` annotation lines from `server.hpp`'s `@external:` block.
+    - Deleted 4 stale `std::set::*: [safe]` annotation lines from `server.cpp`'s `@external:` block.
+    - Updated 4 stale `// @unsafe - uses std::set::*` / `std::unordered_set::*` comments in reactor.cc to reference the actual rusty types (`rusty::BTreeSet::insert/remove`, `rusty::HashSet::clone (via clear/swap)`).
+  - **Carve-out (stays std)**: `misc/marshal.hpp`'s `std::set<T>` / `std::unordered_set<T>` `operator<<` / `operator>>` overloads — public marshal API; removing them breaks user serialization. Same rationale as the marshal `std::list<T>` carve-out documented under L2.
+  - Verification (regression-free): `test_rpc` 17/17, `test_rpc_extended` 14/14, `test_rpc_state_integration` 16/16, `test_rpc_combined_reliability` 9/9, `test_rpc_request_buffering` 8/8, `test_rpc_reconnect_integration` 12/12, `test_rpc_request_queue` 30/30, `test_marshal` 23/23, `test_load_balancer` 21/21, `test_reactor` 15/15. Annotation-only changes — no behavioral risk.
+  - Goal: zero non-carve-out `std::set` / `std::unordered_set` in rrr **prod** code achieved. The 14 test sites and the 6 marshal carve-outs remain, both documented; tests are a separate sweep.
 
 #### Bigger migrations (require decomposition into multiple leaves each)
 
