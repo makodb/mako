@@ -17,6 +17,8 @@
 #include <proxy/proxy.h>
 #include <proxy/proxy_macros.h>
 
+#include "../base/threading.hpp"  // rrr::SpinMutex
+
 
 #include <sys/time.h>
 #include <rusty/rc.hpp>
@@ -509,9 +511,6 @@ Marshal::bookmark Marshal::set_bookmark(size_t n) {
     }
 }
 
-std::mutex md_mutex_g;
-std::mutex mdi_mutex_g;
-// Note: mc_ removed - now using Construct On First Use idiom in get_initializers()
 // @safe - Thread-local factory registry copy
 // SAFETY: Each thread has its own copy, no locking needed for access
 thread_local MarshallDeputy::MarContainer mc_th_;
@@ -519,45 +518,50 @@ thread_local bool mc_th_initialized_ = false;
 std::atomic<uint64_t> mc_version_g{0};
 thread_local uint64_t mc_th_version_ = 0;
 
-// @unsafe - Registers initializer with mutex locking and map insertion
+namespace {
+// SpinMutex-owned global factory registry. Replaces the prior
+// `std::mutex md_mutex_g` + `static MarContainer mc_` pair with a
+// single rusty-style "data inside the mutex" container. Construct
+// On First Use idiom avoids static initialization order fiasco.
+//
+// The unused `mdi_mutex_g` (declared but never locked) was retired
+// alongside the migration.
+rrr::SpinMutex<MarshallDeputy::MarContainer>& md_registry_locked() {
+    static rrr::SpinMutex<MarshallDeputy::MarContainer> registry;
+    return registry;
+}
+} // namespace
+
+// @unsafe - Registers initializer with SpinMutex locking and map insertion
 int MarshallDeputy::reg_initializer(int32_t cmd_type,
                                    MarInitializerFn init) {
-  md_mutex_g.lock();
-  auto& container = get_initializers();
-  verify(!container.contains_key(cmd_type));
-  container.insert(cmd_type, init);
+  {
+    auto guard = md_registry_locked().lock().unwrap();
+    verify(!guard->contains_key(cmd_type));
+    guard->insert(cmd_type, init);
+  }
+  // Bump version after releasing the lock so concurrent
+  // get_initializer readers see the new contents on next refresh.
   mc_version_g.fetch_add(1, std::memory_order_release);
-  md_mutex_g.unlock();
   return 0;
 }
 
-// @unsafe - Calls std::mutex::lock, rusty::HashMap::get, std::function constructor
+// @unsafe - Calls rrr::SpinMutex::lock, rusty::HashMap::get, std::function constructor
 MarshallDeputy::MarInitializerFn
 MarshallDeputy::get_initializer(int32_t type) {
   if (!mc_th_initialized_ ||
       mc_th_version_ != mc_version_g.load(std::memory_order_acquire)) {
-    md_mutex_g.lock();
-    auto& global_container = get_initializers();
-    // Copy the container into thread-local storage
-    mc_th_ = global_container.clone();
+    {
+      auto guard = md_registry_locked().lock().unwrap();
+      // Copy the container into thread-local storage
+      mc_th_ = guard->clone();
+    }
     mc_th_initialized_ = true;
     mc_th_version_ = mc_version_g.load(std::memory_order_relaxed);
-    md_mutex_g.unlock();
   }
   auto opt = mc_th_.get(type);
   verify(opt.is_some());
   return *opt.unwrap();
-}
-
-// Returns reference to global factory registry
-// SAFETY: Protected by mutex, initializes on first access
-// Uses Construct On First Use idiom to avoid static initialization order fiasco
-MarshallDeputy::MarContainer&
-MarshallDeputy::get_initializers() {
-  // Note: Caller must hold md_mutex_g
-  // Local static is guaranteed to be initialized on first access
-  static MarshallDeputy::MarContainer mc_;
-  return mc_;
 }
 
 // @unsafe - Calls initializer factory and unmarshals into proxied payload.
