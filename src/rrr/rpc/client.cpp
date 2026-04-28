@@ -433,11 +433,9 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
       // Record reconnection in metrics
       metrics_.record_reconnect();
 
-      // Replay any queued requests
-      size_t replayed = replay_pending_requests();
-      if (replayed > 0) {
-        Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
-      }
+      // 4g3c2: replay_pending_requests() removed — the queue
+      // (queue_request<F>) was deleted in 4g3b, so the queue is
+      // always empty in channel mode.
       return complete_callback(0);
     } else {
       if (result == ECANCELED) {
@@ -455,8 +453,10 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
     if (reconnect_abort_.load(std::memory_order_acquire)) {
       return ECANCELED;
     }
-    // Reset socket for each reconnect attempt.
-    socket_ = -1;
+    // 4g3c2: `socket_ = -1` reset removed. socket_ is unused in
+    // channel mode (the channel proxy's TcpConnection owns the fd);
+    // the `connect()` call below routes through `connect_via_factory`
+    // which produces a fresh proxy + fresh fd internally.
     return connect(reconnect_address_.c_str());
   };
 
@@ -573,71 +573,15 @@ CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
 }
 
 // @unsafe - Uses RequestQueue methods (not borrow-checked)
+// 4g3c2: replay_pending_requests() reduced to a no-op stub. The
+// underlying queue (`pending_queue_`) is always empty in channel mode
+// because `queue_request<F>(...)` was deleted in 4g3b. The function
+// itself is kept for the test-only accessor
+// `replay_pending_requests_for_test()` (used by 3 DISABLED_*
+// buffering tests as documentation of prior behavior). It returns
+// the dequeue count, which is 0 by construction now.
 size_t ClientConnection::replay_pending_requests() {
-  size_t replayed = 0;
-
-  while (true) {
-    auto req_opt = pending_queue_.dequeue();
-    if (req_opt.is_none()) break;
-
-    auto req = req_opt.unwrap();
-
-    // Check if expired
-    if (req.is_expired()) {
-      metrics_.record_queue_drop();
-      if (req.callback) req.callback(kRequestQueueExpiredError);
-      continue;
-    }
-
-    // Check if still connected
-    if (!state_machine_.is_connected()) {
-      // Connection lost during replay, re-queue
-      // Note: This could lead to infinite loop if connection keeps failing
-      // The TTL will eventually expire stale requests
-      i64 replay_xid = req.xid;
-      req.callback = [this, replay_xid](int err) {
-        if (err != 0) {
-          fail_pending_future(replay_xid, err);
-        }
-      };
-      if (!pending_queue_.enqueue(std::move(req))) {
-        // Explicit fallback: even if queue policy rejects without invoking
-        // callback, do not leave the pending future orphaned.
-        metrics_.record_queue_drop();
-        fail_pending_future(replay_xid, kRequestQueueRejectedError);
-        Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy (xid=%lld)",
-                 static_cast<long long>(replay_xid));
-      }
-      break;
-    }
-
-    // Copy payload to output buffer
-    auto* payload = const_cast<Marshal*>(req.payload.get());
-    if (payload->content_size() > 0) {
-      size_t payload_size = payload->content_size();
-      std::string payload_bytes;
-      payload_bytes.resize(payload_size);
-      verify(payload->read(payload_bytes.data(), payload_size) == payload_size);
-
-      auto guard = out_.lock().unwrap();
-      verify(guard->write(payload_bytes.data(), payload_size) == payload_size);
-      // Reset write_cnt_ so that subsequent set_bookmark() calls work
-      // The replayed payload already contains the packet size
-      guard->get_and_reset_write_cnt();
-      replayed++;
-    }
-  }
-
-  // Trigger write if we replayed any requests
-  if (replayed > 0) {
-    if (PollThreadWorker::is_on_poll_thread()) {
-      pending_write_update_.set(true);
-    } else {
-      poll_thread_worker_->update_mode(fd(), PollMode::READ | PollMode::WRITE);
-    }
-  }
-
-  return replayed;
+  return 0;
 }
 
 // @unsafe - Enqueue one internal heartbeat probe into the output

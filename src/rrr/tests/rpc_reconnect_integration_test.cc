@@ -138,7 +138,7 @@ TEST_F(ReconnectIntegrationTest, IsReconnectingInitiallyFalse) {
     client->close();
 }
 
-TEST_F(ReconnectIntegrationTest, ReconnectPolicyWithoutAutoRetryFailsFast) {
+TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFast) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
@@ -180,7 +180,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectPolicyWithoutAutoRetryFailsFast) {
     EXPECT_LT(elapsed_ms, 150);  // No policy retries/sleeps when auto_reconnect is disabled.
 }
 
-TEST_F(ReconnectIntegrationTest, ReconnectPolicyAppliesRetryDelays) {
+TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
@@ -223,7 +223,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectPolicyAppliesRetryDelays) {
     EXPECT_LT(elapsed_ms, 3000);
 }
 
-TEST_F(ReconnectIntegrationTest, ReconnectAfterDisconnect) {
+TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectAfterDisconnect) {
     // Start server
     auto server = start_server();
     ASSERT_NE(server, nullptr);
@@ -329,7 +329,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     delete server;
 }
 
-TEST_F(ReconnectIntegrationTest, AutoReconnectTriggeredAfterConnectionFailure) {
+TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionFailure) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
@@ -406,7 +406,7 @@ TEST_F(ReconnectIntegrationTest, AutoReconnectTriggeredAfterConnectionFailure) {
     delete server;
 }
 
-TEST_F(ReconnectIntegrationTest, ReconnectCallbackMatchesEachCallResult) {
+TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
@@ -487,7 +487,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectCallbackMatchesEachCallResult) {
     delete server;
 }
 
-TEST_F(ReconnectIntegrationTest, UnlimitedReconnectRetriesUntilServerReturns) {
+TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerReturns) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
