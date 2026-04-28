@@ -1171,14 +1171,44 @@ the bytes exactly as `Marshal::operator>>` would (Phase 1's
 byte-for-byte commitment). Use these adapters when integrating the
 new archive layer with the existing TCP TX/RX path.
 
+#### Marshallable ↔ Serializable bridge adapters (transitional)
+
+While Phase 4 migrates per-command types from `Marshallable` to
+`Serializable`, both interfaces coexist. The bridge in
+`marshal_serializable_bridge.hpp` lets a value satisfying one
+interface be presented as the other:
+
+```cpp srpc-no-compile
+// Wrap a SerializableProxy as a Marshallable (full bidirectional).
+rrr::SerializableProxy proxy = ...;
+std::shared_ptr<rrr::Marshallable> m =
+    rrr::as_marshallable(std::move(proxy));
+// `m` can now go anywhere a Marshallable does — to_marshal /
+// from_marshal route through Phase 3a's MarshalSink / MarshalSource
+// bridges.
+
+// Wrap a Marshallable as a SerializableProxy (SAVE-only).
+auto serial = rrr::as_serializable(my_marshallable);
+serial->save(writer);  // OK
+// serial->load(reader); -- aborts; the streaming Marshal model
+//   doesn't invert on demand. Migrate the type to Serializable in
+//   Phase 4 instead.
+
+// Save-only view of a MarshallDeputy's inner Marshallable.
+rrr::MarshallDeputy md{...};
+auto view = rrr::as_serializable(md);
+view->save(writer);  // bytes match md.inner()->to_marshal(...)
+```
+
 Status: Phase 1a (primitives + std::string), Phase 1b (containers),
 Phase 1c (`FdSink`/`FdSource`), Phase 2 (`SerializableProxy` +
-registry), and Phase 3a (Marshal↔Archive bridges) have landed.
-Phase 3b–3f (`MarshallDeputy::serializable()` accessor, `rpcgen`
-archive emission, reactor TX/RX path, default emission switch,
-`MarshallDeputy` internals rewrite) and Phase 4+ (per-command
-migrations from `Marshallable` to `Serializable`) are upcoming.
-See [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
+registry), Phase 3a (Marshal↔Archive bridges), and Phase 3b
+(Marshallable↔Serializable adapters) have landed. Phase 3c–3f
+(`rpcgen` archive emission, reactor TX/RX path, default emission
+switch, `MarshallDeputy` internals rewrite) and Phase 4+
+(per-command migrations from `Marshallable` to `Serializable`) are
+upcoming. See
+[`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 
 ---
