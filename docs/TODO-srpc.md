@@ -878,9 +878,12 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
             - Make `srpc_use_channel()` always return `true` (channel mode is non-negotiable). The env var becomes a deprecated no-op (with a one-time stderr warning if set, to surface external callers that still rely on it).
             - Delete the 5 `StateIntegrationTest` tests that `GTEST_SKIP()` in channel mode (they test legacy fd lifecycle that won't exist after 4g3b/c). They're already skipped in default config; their only purpose is the SRPC_DISABLE_CHANNEL=1 path which is going away.
             - Goal: lock down channel mode as the only path, so subsequent leaves can delete the legacy code without breaking the SRPC_DISABLE_CHANNEL semantics.
-          - [ ] **4g3b — Delete the legacy `request(...)` non-channel branch and `request_with_options(...)` legacy fallback.** ~250 LOC.
-            - `ClientConnection::request` becomes "always call `request_via_channel`". Removes the `out_.lock()` path, the `state_machine_.is_connected()` precheck, the `queue_request(...)` buffering helper, and dead branches.
-            - `request_with_options(...)` similarly drops its fd-write-path branch.
+          - [x] **4g3b — Delete the legacy `request(...)` non-channel branch.** ✅ **LANDED 2026-04-28.**
+            - `ClientConnection::request<F>` is now a one-line wrapper: always calls `request_via_channel(...)`. Removed: the `is_channel_mode()` branch, the `out_.lock()` Marshal-as-syscall path, the `state_machine_.is_connected()` precheck, and the `queue_request<F>(...)` helper (~100 LOC of legacy buffering code).
+            - 13 `RequestBufferingTest` tests that exercised disconnect-buffering replay (only valid against the legacy branch) are renamed `DISABLED_*` for visibility — they remain in tree as documentation; channel-mode buffering, if ever needed, would require a different design (the channel layer's reconnect already handles transient disconnects).
+            - The `BufferingConfig` data class and `RequestQueue` underlying queue stay in place pending 4g3c (which will inspect whether they're still referenced).
+            - `request_with_options(...)` is unaffected by this leaf — its retry loop routes through `request(...)` which now goes via channel.
+            - Verification: full RPC-focused suite green (test_rpc 17/17, test_rpc_extended 15/15, test_rpc_state_integration 16/16, test_rpc_combined_reliability 9/9, test_rpc_request_buffering 8 pass + 13 disabled, 12 channel-layer tests).
           - [ ] **4g3c — Delete the legacy `connect(...)` socket+register-pollable path; legacy `reconnect()` socket flow; `socket_` field; `out_` Marshal field.** ~300 LOC.
             - `ClientConnection::connect` always goes through `connect_via_factory`. The factory is auto-installed at `Client::connect` time (post-4g2 default).
             - `Pollable::handle_read` / `handle_write` / `handle_error` overrides on `ClientConnection` are removed (the channel layer's `TcpConnection` now owns the pollable role).

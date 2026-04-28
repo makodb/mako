@@ -1357,107 +1357,13 @@ public:
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected and buffering disabled)
      */
     // @unsafe - Thread-safe RPC request with lambda for marshaling
-    // Contains multiple operations requiring unsafe context:
-    // - Counter::next (atomic but not annotated)
-    // - STL map operations (well-defined but not annotated)
-    // - Marshal operator<< (serialization)
+    // 4g3b: channel mode is the only path. Always dispatch through
+    // `request_via_channel(...)`. The legacy fd-path branch (with
+    // `out_.lock()`, state_machine gating, queue_request fallback)
+    // has been removed.
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
-        // Channel-mode dispatch (Workstream K, sub-leaf 4b). When a
-        // ChannelConnectionProxy has been bound, the channel layer
-        // owns the connection's health; the legacy `state_machine_`
-        // gating is bypassed because the channel proxy reports its
-        // own closed-state. Sub-leaves 4d / 4e wire reconnect logic
-        // back into this path.
-        if (is_channel_mode()) {
-            return request_via_channel(rpc_id, attr, std::forward<F>(write_fn));
-        }
-
-        // Check connection status - if not connected, handle buffering
-        if (!state_machine_.is_connected()) {
-            // Check if buffering is enabled with QUEUE behavior
-            if (buffering_config_.enabled &&
-                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
-                // Queue the request for later replay
-                return queue_request(rpc_id, attr, std::forward<F>(write_fn));
-            }
-            if (!allow_request_with_circuit_metrics()) {
-                return FutureResult::Err(EBUSY);
-            }
-            record_circuit_result(ENOTCONN);
-            return FutureResult::Err(ENOTCONN);
-        }
-
-        auto guard = out_.lock().unwrap();
-
-        // Double-check connection status after acquiring lock
-        if (!state_machine_.is_connected()) {
-            // Check if buffering is enabled with QUEUE behavior
-            if (buffering_config_.enabled &&
-                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
-                return queue_request(rpc_id, attr, std::forward<F>(write_fn));
-            }
-            if (!allow_request_with_circuit_metrics()) {
-                return FutureResult::Err(EBUSY);
-            }
-            record_circuit_result(ENOTCONN);
-            return FutureResult::Err(ENOTCONN);
-        }
-
-        if (!allow_request_with_circuit_metrics()) {
-            return FutureResult::Err(EBUSY);
-        }
-
-        auto fu = Future::create(xid_counter_.next(), attr);
-
-        {
-            auto pending_guard = pending_fu_.lock().unwrap();
-            pending_guard->insert(fu->xid_, fu);
-        }
-
-        // Check if connection closed while we were setting up
-        if (!state_machine_.is_connected()) {
-            {
-                auto pending_guard = pending_fu_.lock().unwrap();
-                pending_guard->remove(fu->xid_);
-            }
-            // Check if buffering is enabled with QUEUE behavior
-            if (buffering_config_.enabled &&
-                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
-                return queue_request(rpc_id, attr, std::forward<F>(write_fn));
-            }
-            record_circuit_result(ENOTCONN);
-            return FutureResult::Err(ENOTCONN);
-        }
-
-        // Set bookmark for packet size (will fill after marshaling)
-        Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
-
-        *guard << v64(fu->xid_);
-        *guard << rpc_id;
-
-        // Call user's write function to marshal arguments
-        write_fn(*guard);
-
-        // Fill in the packet size
-        i32 request_size = guard->get_and_reset_write_cnt();
-        guard->write_bookmark(bmark, request_size);
-
-        // Reset Jetpack flags
-        guard->found_dep = false;
-        guard->valid_id = false;
-
-        // Signal that we have data to write
-        if (PollThreadWorker::is_on_poll_thread()) {
-            pending_write_update_.set(true);
-        } else {
-            poll_thread_worker_->update_mode(fd(), PollMode::READ | PollMode::WRITE);
-        }
-
-        // Record request sent in metrics
-        metrics_.record_request_sent();
-
-        return FutureResult::Ok(fu);
+        return request_via_channel(rpc_id, attr, std::forward<F>(write_fn));
     }
 
 private:
@@ -1591,57 +1497,11 @@ private:
         return FutureResult::Ok(fu);
     }
 
-    // @unsafe - Queue request for later replay (called when disconnected)
-    // Uses Counter::next, Marshal operators, and RequestQueue
-    template<typename F>
-    FutureResult queue_request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
-        // @unsafe { Counter::next }
-        auto fu = Future::create(xid_counter_.next(), attr);
-
-        // Create queued request with serialized payload
-        QueuedRequest queued;
-        queued.xid = fu->xid_;
-        queued.rpc_id = rpc_id;
-        queued.ttl_ms = buffering_config_.default_ttl_ms;
-        auto payload = rusty::Arc<Marshal>::make();
-        queued.payload = payload.clone();
-        auto* payload_mut = const_cast<Marshal*>(payload.get());
-
-        // Serialize request to payload (including size placeholder)
-        Marshal::bookmark bmark = payload_mut->set_bookmark(sizeof(i32));
-        // @unsafe { Marshal operators }
-        *payload_mut << v64(queued.xid);
-        *payload_mut << rpc_id;
-        write_fn(*payload_mut);  // User writes arguments
-
-        // Fill in packet size (not counting the size field itself)
-        i32 request_size = payload_mut->get_and_reset_write_cnt();
-        payload_mut->write_bookmark(bmark, request_size);
-
-        // Store future in pending map (for response handling)
-        {
-            auto pending_guard = pending_fu_.lock().unwrap();
-            pending_guard->insert(fu->xid_, fu);
-        }
-
-        // Set callback to notify future on queue failure (e.g., overflow, expiry)
-        queued.callback = [this, xid = fu->xid_](int err) {
-            if (err != 0) {
-                fail_pending_future(xid, err);
-            }
-        };
-
-        // Try to enqueue
-        if (!pending_queue_.enqueue(std::move(queued))) {
-            // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure no pending future
-            // remains if queue policy rejects without invoking callback.
-            metrics_.record_queue_drop();
-            fail_pending_future(fu->xid_, kRequestQueueRejectedError);
-            return FutureResult::Err(kRequestQueueRejectedError);
-        }
-
-        return FutureResult::Ok(fu);
-    }
+    // 4g3b: queue_request<F> removed — it was the legacy
+    // disconnect-buffering replay helper invoked only by the
+    // pre-channel `request()` branch. Channel mode owns its own
+    // close-side fan-out (`on_channel_closed_fan_out`) and reconnect
+    // path (`reconnect_via_factory`).
 
 public:
 
