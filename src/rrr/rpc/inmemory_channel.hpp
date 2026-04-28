@@ -84,6 +84,8 @@
 #include <rusty/option.hpp>
 #include <rusty/sync/weak.hpp>
 
+#include "../base/threading.hpp"  // SpinMutex<T>
+
 #ifdef RR
 #pragma push_macro("RR")
 #undef RR
@@ -114,9 +116,9 @@ class InMemoryListener;
  * an `Arc<InMemorySwitchboard>`; each listener registers itself in
  * the switchboard on `listen(addr)` and unregisters on `close()`.
  *
- * Thread-safe: an internal `std::mutex` guards the map. Most tests
- * are single-threaded but the locking lets a test fire `on_frame` on
- * one thread while another connects.
+ * Thread-safe: an internal `SpinMutex` owns the listener map. Most
+ * tests are single-threaded but the locking lets a test fire
+ * `on_frame` on one thread while another connects.
  */
 class InMemorySwitchboard {
  public:
@@ -133,8 +135,9 @@ class InMemorySwitchboard {
      *
      * `const` so callers holding `Arc<InMemorySwitchboard>` (which
      * dereferences to `const InMemorySwitchboard*`) can register
-     * directly. Internal state (`mu_` / `listeners_`) is `mutable`
-     * — the standard pattern for thread-safe shared registries.
+     * directly. Internal state (the SpinMutex-wrapped `listeners_`)
+     * is `mutable` — the standard pattern for thread-safe shared
+     * registries.
      */
     bool register_listener(std::string addr,
                            rusty::sync::Weak<InMemoryListener> listener) const;
@@ -152,9 +155,10 @@ class InMemorySwitchboard {
         const std::string& addr) const;
 
  private:
-    mutable std::mutex mu_;
-    mutable rusty::HashMap<std::string,
-                           rusty::sync::Weak<InMemoryListener>> listeners_;
+    // SpinMutex owns the HashMap (rusty-style "data inside the mutex").
+    // Replaces the prior pair `mu_` + `listeners_` pattern.
+    mutable SpinMutex<rusty::HashMap<std::string,
+                                     rusty::sync::Weak<InMemoryListener>>> listeners_;
 };
 
 // ---------------------------------------------------------------------------
