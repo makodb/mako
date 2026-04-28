@@ -1112,11 +1112,44 @@ int fd = ::open("/tmp/snap.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 ::close(fd);
 ```
 
+#### Polymorphic command types — `SerializableProxy` + registry
+
+For tag-dispatched polymorphism (the role currently filled by
+`Marshallable` + `MarshallDeputy::reg_initializer`), Layer 4 of the
+new system is `SerializableProxy`:
+
+```cpp srpc-no-compile
+struct MyCommand {
+  int32_t id;
+  std::string name;
+
+  // Required by SerializableFacade.
+  static constexpr int32_t kKind = 0xCAFE;
+  int32_t kind() const { return kKind; }
+  void save(rrr::BinaryWriteArchive& ar) const { ar << id << name; }
+  void load(rrr::BinaryReadArchive& ar) { ar >> id >> name; }
+};
+
+// Static-initializer registration.
+static int _reg =
+    rrr::SerializableRegistry::reg<MyCommand>(MyCommand::kKind);
+
+// Read-side: factory create + load.
+rrr::SerializableProxy proxy =
+    rrr::SerializableRegistry::create(kind_from_wire);
+proxy->load(reader);
+```
+
+`SerializableProxy::save` emits only the payload bytes (no kind
+prefix); the kind tag is framed by the next-higher layer
+(`MarshallDeputy` in the existing codebase, which Phase 3 will
+rewrite atop `SerializableProxy`).
+
 Status: Phase 1a (primitives + std::string), Phase 1b (containers),
-and Phase 1c (`FdSink`/`FdSource`) have landed. Phase 2+
-(`SerializableProxy` + factory registry replacing `MarshallDeputy`'s
-internals) are upcoming. See
-[`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
+Phase 1c (`FdSink`/`FdSource`), and Phase 2 (`SerializableProxy` +
+registry) have landed. Phase 3+ (RPC framework boundary; per-command
+type migrations from `Marshallable` to `Serializable`) are upcoming.
+See [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 
 ---

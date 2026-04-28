@@ -1334,11 +1334,12 @@ Full design: see [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_desi
   - [x] **Phase 1a — Primitives + std::string** ✅ **LANDED 2026-04-28**. `SinkFacade`/`SinkProxy` + `SourceFacade`/`SourceProxy` (with adapter wrapper pattern matching `TcpConnectionChannelAdapter`), `BufferSink`/`BufferSource`, `BinaryWriteArchive`/`BinaryReadArchive` operator<< / operator>> for all integer primitives, `double`, `v32`, `v64`, `std::string`, `std::string_view`. 19 byte-compat + round-trip tests.
   - [x] **Phase 1b — Containers** ✅ **LANDED 2026-04-28**. Added operator<< / operator>> for `std::pair`, `rusty::Vec<T>`, `std::vector<T>`, `std::list<T>`, `rusty::BTreeSet<T>`, `std::set<T>`, `rusty::HashSet<T>`, `std::unordered_set<T>`, `rusty::BTreeMap<K,V>`, `std::map<K,V>`, `rusty::HashMap<K,V>`, `std::unordered_map<K,V>`. Byte-for-byte tests against `Marshal` for std-only containers; round-trip-only for rusty containers (the existing `Marshal` rusty-container templates use a non-existent `const_iterator` typedef and are dead code). 38 tests total. +287 test LOC, +300 hpp LOC.
   - [x] **Phase 1c — FdSink / FdSource** ✅ **LANDED 2026-04-28**. `FdSink::write` calls `::write` in a loop (EINTR retry; `verify`-aborts on other errors). `FdSource::read` calls `::read` in a loop (EINTR retry; returns short read at EOF). `BinaryWriteArchive(FdSink*)` / `BinaryReadArchive(FdSource*)` convenience constructors. 8 new tests: pipe round-trip, byte-for-byte vs `BufferSink`, large-payload chunked write (200 KB), temp-file round-trip with composite sequence, chunked-read across pipe boundaries (1-byte producer writes), EOF semantics, empty-write/empty-read no-ops. 46 tests total.
-- [ ] **Phase 2 — Serializable proxy + factory registry**.
-  - `SerializableFacade` / `SerializableProxy` in `marshal_archive.hpp`.
-  - `SerializableRegistry::reg<T>(kind)` and `SerializableRegistry::get(kind)` — equivalent to the existing `MarshallDeputy::reg_initializer<T>` / `get_initializer(kind)`.
-  - One canary command type (e.g. `EmptyCommand` from `tpc_command.hpp`) implements both the old `Marshallable` interface AND the new `serialize` method; tests verify the proxy path produces the same bytes as the old path.
-  - Estimated +300 LOC.
+- [x] **Phase 2 — Serializable proxy + factory registry** ✅ **LANDED 2026-04-28**.
+  - `SerializableFacade` (conventions: `save(BinaryWriteArchive&) const`, `load(BinaryReadArchive&)`, `kind() const`) + `SerializableProxy` in `marshal_archive.hpp`.
+  - `SerializableRegistry::reg<T>(kind)` registers a default-construct factory. `SerializableRegistry::create(kind)` returns a fresh `SerializableProxy`. `is_registered`, `clear_for_testing` round out the surface. Implementation in `marshal_archive.cpp` behind a file-local `SpinMutex<rusty::HashMap<int32_t, Factory>>`.
+  - Wire format commitment: `SerializableProxy::save` emits ONLY the payload bytes (no kind prefix). The kind framing remains at the higher `MarshallDeputy` layer; Phase 3 rewrites `MarshallDeputy` internals on top of `SerializableProxy`.
+  - Test-local `CanaryCommand` carries BOTH old (`to_marshal` / `from_marshal`) AND new (`save` / `load` / `kind`) interfaces. 5 new tests verify byte-for-byte parity vs the old path, kind exposure through the proxy, save→load round-trip, registry create + load + re-save round-trip, and multi-kind coexistence.
+  - +130 LOC hpp, +57 LOC cpp, +173 LOC test. 51 tests in `test_rpc_marshal_archive`. Full RPC suite green: 14 binaries, 272 tests, no regressions.
 - [ ] **Phase 3 — RPC framework boundary**.
   - The auto-generated `rcc_rpc.h` (and the `rpcgen` tool) switches from emitting `Marshal` operator<</>> calls to emitting `BinaryWriteArchive` / `BinaryReadArchive` calls.
   - `MarshallDeputy` rewritten in terms of `SerializableProxy` while keeping its public surface (constructors, `sp_data_`, etc.). Internally it uses the new system.
@@ -1361,7 +1362,7 @@ Full design: see [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_desi
 
 ### Tests TODO
 - [ ] Phase 1: byte-for-byte primitive + composite compatibility test. Every primitive, every container shape — encoded via old `Marshal` AND new `BinaryWriteArchive`+`BufferSink` produces identical bytes.
-- [ ] Phase 2: round-trip canary test via `SerializableProxy` + factory registry produces same bytes as the old `MarshallDeputy` path.
+- [x] Phase 2: round-trip canary test via `SerializableProxy` + factory registry produces same bytes as the old `MarshallDeputy` path. ✅ **LANDED 2026-04-28** in `test_rpc_marshal_archive` (`SerializableProxy.ByteCompatVsMarshalDirect` and `SerializableRegistry.RegisterCreateAndRoundTrip`).
 - [ ] Phase 3: full RPC suite green after the `rcc_rpc.h` regenerator switch.
 - [ ] Phase 4: per-command-type — RPC integration tests + (for Raft commands) raft persistence round-trip tests.
 - [ ] Phase 5: full RPC + raft suite green after old-infrastructure deletion.

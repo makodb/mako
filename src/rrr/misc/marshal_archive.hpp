@@ -717,4 +717,93 @@ class BinaryReadArchive {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Layer 4: Serializable proxy + factory registry (Phase 2).
+//
+// A type T satisfies the Serializable concept if it provides:
+//   - void save(BinaryWriteArchive&) const  -- emit bytes
+//   - void load(BinaryReadArchive&)         -- consume bytes
+//   - int32_t kind() const                  -- factory tag
+//
+// SerializableFacade type-erases over any such T. SerializableRegistry
+// maps a kind tag to a factory that constructs a fresh
+// SerializableProxy (default-constructing the underlying T).
+//
+// Wire format:
+//   - SerializableProxy::save emits ONLY the payload bytes (no kind
+//     prefix). This matches the existing `Marshallable::to_marshal`
+//     contract. The kind prefix is at the next-higher framing layer
+//     (currently `MarshallDeputy`; in Phase 3 it will be rewritten in
+//     terms of SerializableProxy).
+//
+// This is the new replacement for `Marshallable` + `MarshallableProxy`
+// + `MarshallDeputy::reg_initializer`. It runs in parallel with the
+// old system; per-command-type migrations happen in Phase 4.
+// ---------------------------------------------------------------------------
+
+PRO_DEF_MEM_DISPATCH(SerializableMemSave, save);
+PRO_DEF_MEM_DISPATCH(SerializableMemLoad, load);
+PRO_DEF_MEM_DISPATCH(SerializableMemKind, kind);
+
+struct SerializableFacade : pro::facade_builder
+    ::add_convention<SerializableMemSave, void(BinaryWriteArchive&) const>
+    ::add_convention<SerializableMemLoad, void(BinaryReadArchive&)>
+    ::add_convention<SerializableMemKind, int32_t() const>
+    ::build {};
+
+using SerializableProxy = pro::proxy<SerializableFacade>;
+
+// Construct a SerializableProxy that owns a T constructed from the
+// forwarded arguments (default-constructed if no args). T must
+// satisfy:
+//   - void save(BinaryWriteArchive&) const
+//   - void load(BinaryReadArchive&)
+//   - int32_t kind() const
+template<class T, class... Args>
+inline SerializableProxy make_serializable_proxy(Args&&... args) {
+  return pro::make_proxy<SerializableFacade, T>(std::forward<Args>(args)...);
+}
+
+// Factory registry: maps int32_t kind tags to factories that produce
+// fresh SerializableProxy instances.
+//
+// Usage:
+//   static int reg_canary = SerializableRegistry::reg<CanaryCommand>(0xCAFE);
+//
+//   SerializableProxy proxy = SerializableRegistry::create(0xCAFE);
+//   proxy->load(reader);  // populate from wire
+//
+// Implementation lives in marshal_archive.cpp behind a SpinMutex —
+// registration runs at static init time and lookups during RPC
+// dispatch are concurrent across reactor threads.
+class SerializableRegistry {
+ public:
+  using Factory = std::function<SerializableProxy()>;
+
+  // Register T under `kind`. Returns 0 so it can sit at namespace
+  // scope as a static-initializer return value:
+  //   static int _reg = SerializableRegistry::reg<CanaryCommand>(0xCAFE);
+  template<class T>
+  static int reg(int32_t kind) {
+    register_factory(kind, []() {
+      return make_serializable_proxy<T>();
+    });
+    return 0;
+  }
+
+  // Create a fresh proxy for the given kind. Aborts via verify() if
+  // the kind is not registered.
+  static SerializableProxy create(int32_t kind);
+
+  // Test helper: check if a kind is registered.
+  static bool is_registered(int32_t kind);
+
+  // Test helper: clear the registry. Not thread-safe; use only
+  // between tests in single-threaded fixtures.
+  static void clear_for_testing();
+
+ private:
+  static void register_factory(int32_t kind, Factory factory);
+};
+
 }  // namespace rrr
