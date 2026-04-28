@@ -802,7 +802,8 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
             * **The fibers' yield_() is broken** — fibers go from "calling wait()" straight to "running" without yielding. Then `wait()` would never return after `yield_()`. But they wouldn't be parked either. Where are they?
             * **The poll thread is stuck inside `continue_fiber` for one specific fiber** — that fiber yields, control returns to continue_fiber, but instead of returning to Reactor::loop, control jumps back into the fiber. Inifinite recursion or longjmp anomaly.
           - **Next iteration plan**: write a unit test that drives `Vec::push_back` under simulated extract_if/retain churn to rule out (a). Also instrument `continue_fiber`'s entry/exit and `Fiber::yield_()`'s entry/exit with fiber id, to determine if some fibers are stuck inside `continue_fiber`.
-      - [ ] Sub-leaf 4g1c — **Workaround: bypass FiberChannel + recv-loop fiber via direct on_frame callback path.** ~150 LOC.
+      - [x] Sub-leaf 4g1c — **Workaround: bypass FiberChannel + recv-loop fiber via direct on_frame callback path.** ~150 LOC. ✅ **LANDED 2026-04-28.**
+        - **Result: channel-mode `MultiThreadedStressTest` now passes 3/3 at 100 threads × 10 cycles in ~165 ms (vs forever-wedge with FiberChannel path).**
         - Rationale: 4g1b investigation has been multi-iteration and the root cause is deep in the reactor/fiber/event interaction, requiring more focused effort. Meanwhile 4g2/4g3/4g4 are all blocked. A workaround that bypasses the fiber-based recv path entirely would unblock the migration without fixing the underlying reactor bug.
         - Design:
           - Add an alternate ClientConnection binding method `bind_channel_direct(ChannelConnectionProxy)` that:

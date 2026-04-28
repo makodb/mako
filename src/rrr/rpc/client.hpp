@@ -723,6 +723,28 @@ class ClientConnection {
     // fiber simply exits when the proxy's `on_closed` fires (the only
     // way to break out of `recv_frame` other than process exit).
     mutable SpinMutex<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_{rusty::Option<rusty::Box<FiberChannel>>(rusty::None)};
+
+    // Workstream K, sub-leaf 4g1c — direct-callback channel binding.
+    //
+    // When `bind_channel_direct(...)` is called instead of
+    // `bind_channel*(...)`, this slot owns the channel proxy and
+    // installs `on_frame` / `on_closed` callbacks directly on it.
+    // No `FiberChannel`, no recv-loop fiber, no `IntEvent` per
+    // received frame — `on_frame` invokes `decode_response_and_notify`
+    // inline on whichever thread the channel layer fires it on
+    // (typically the poll thread for TCP). Closer to the legacy
+    // fd-path's `handle_read → notify_ready` flow that scales to
+    // 200+ threads on a shared poll thread.
+    //
+    // Bypasses the deeper reactor/fiber wedge documented in 4g1b.
+    // The legacy `fiber_channel_` slot stays for unit-test
+    // compatibility (those tests use `bind_channel(...)` and drive
+    // FakeChannelStub::deliver() from the test thread).
+    //
+    // Box-wrapped for the same `pro::proxy<F>` cyclic-constraint
+    // workaround applied to `fiber_channel_` and `factory_`.
+    mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>> direct_channel_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
+
     rusty::Cell<bool> channel_mode_{false};
 
     // Workstream K, sub-leaf 4e — channel-mode factory.
@@ -933,6 +955,30 @@ public:
      */
     // @unsafe - Submits a OneTimeJob across thread boundary.
     void bind_channel_via_poll_thread(ChannelConnectionProxy channel);
+
+    /**
+     * Workstream K, sub-leaf 4g1c — direct on_frame callback.
+     *
+     * Bind the channel without `FiberChannel` and without the
+     * recv-loop fiber. Installs `on_frame` and `on_closed` callbacks
+     * directly on the channel proxy; on_frame calls
+     * `decode_response_and_notify` inline; on_closed calls
+     * `on_channel_closed_fan_out` inline. Both fire on whichever
+     * thread the channel layer drives them on (typically the poll
+     * thread for TCP). No `IntEvent` allocation per frame, no
+     * fiber yield, no `waiting_events_` churn.
+     *
+     * Used by `connect_via_factory(...)` for production TCP. The
+     * legacy `bind_channel(...)` / `bind_channel_via_poll_thread(...)`
+     * paths stay for unit-test compatibility (they use FiberChannel
+     * + recv-loop fiber, which works fine in single-threaded test
+     * contexts).
+     *
+     * After this call, `is_channel_mode()` returns true. The
+     * `direct_channel_` slot owns the proxy.
+     */
+    // @unsafe - Captures Weak<ClientConnection> in proxy callbacks.
+    void bind_channel_direct(ChannelConnectionProxy channel);
 
     // @safe - True if `bind_channel` has been called with a non-null proxy.
     bool is_channel_mode() const { return channel_mode_.get(); }
@@ -1425,14 +1471,25 @@ private:
     // when the client is in channel mode. Returns the channel's
     // ChannelError; callers translate to errno where needed.
     //
-    // SAFETY: `fiber_channel_` is protected by SpinMutex (sub-leaf
-    // 4g1). `FiberChannel::send_frame` is non-suspending and forwards
-    // to the proxy whose outbound queue is internally thread-safe
-    // (mirroring how `out_`'s SpinMutex is touched from const request
-    // paths today).
+    // SAFETY: both `direct_channel_` and `fiber_channel_` are
+    // protected by SpinMutex (sub-leaf 4g1). The underlying
+    // `send_frame` is non-suspending and the proxy's outbound queue
+    // is internally thread-safe.
     ChannelError dispatch_frame_via_channel(const std::uint8_t* body_bytes,
                                             std::size_t body_size) const {
         if (!channel_mode_.get()) return ChannelError::ConnectionReset;
+        // 4g1c: direct-channel binding takes precedence over the
+        // FiberChannel binding (only one is bound at a time per
+        // ClientConnection lifecycle).
+        // @unsafe - SpinMutex::lock, Option::as_mut, Box deref
+        {
+            auto guard = direct_channel_.lock().unwrap();
+            if (guard->is_some()) {
+                auto& mut_proxy = *guard->as_mut().unwrap();
+                return mut_proxy->send_frame(
+                    ChannelFrame{body_bytes, body_size});
+            }
+        }
         // @unsafe - SpinMutex::lock, Option::as_mut, Box deref
         auto guard = fiber_channel_.lock().unwrap();
         if (guard->is_none()) return ChannelError::ConnectionReset;
@@ -1474,12 +1531,25 @@ private:
         // `state_machine_` is intentionally not consulted here —
         // sub-leaf 4d/4e re-introduces reconnect / buffering hooks
         // through channel callbacks.
+        // 4g1c: check both bindings — direct_channel_ takes
+        // precedence over fiber_channel_ when both are present
+        // (in practice only one is bound per ClientConnection
+        // lifecycle).
         {
-            auto guard = fiber_channel_.lock().unwrap();
-            if (guard->is_none() ||
-                guard->as_ref().unwrap()->is_closed()) {
-                record_circuit_result(ENOTCONN);
-                return FutureResult::Err(ENOTCONN);
+            auto direct_guard = direct_channel_.lock().unwrap();
+            if (direct_guard->is_some()) {
+                auto& proxy = *direct_guard->as_ref().unwrap();
+                if (proxy->is_closed()) {
+                    record_circuit_result(ENOTCONN);
+                    return FutureResult::Err(ENOTCONN);
+                }
+            } else {
+                auto guard = fiber_channel_.lock().unwrap();
+                if (guard->is_none() ||
+                    guard->as_ref().unwrap()->is_closed()) {
+                    record_circuit_result(ENOTCONN);
+                    return FutureResult::Err(ENOTCONN);
+                }
             }
         }
 
