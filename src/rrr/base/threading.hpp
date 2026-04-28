@@ -18,6 +18,7 @@
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
+#include <rusty/vecdeque.hpp>
 
 #include <pthread.h>
 
@@ -485,13 +486,13 @@ public:
  */
 template<class T>
 class Queue: public NoCopy {
-    rusty::Box<std::list<T>> q_;
+    rusty::Box<rusty::VecDeque<T>> q_;
     pthread_cond_t not_empty_;
     pthread_mutex_t m_;
 
 public:
     // @unsafe - Initializes pthread primitives
-    Queue(): q_(rusty::Box<std::list<T>>::make(std::list<T>())), not_empty_(), m_() {
+    Queue(): q_(rusty::Box<rusty::VecDeque<T>>::make(rusty::VecDeque<T>())), not_empty_(), m_() {
         Pthread_mutex_init(&m_, nullptr);
         Pthread_cond_init(&not_empty_, nullptr);
     }
@@ -516,10 +517,9 @@ public:
     bool try_pop(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
-        if (!q_->empty()) {
+        if (!q_->is_empty()) {
             ret = true;
-            *t = std::move(q_->front());
-            q_->pop_front();
+            *t = q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
         return ret;
@@ -531,10 +531,9 @@ public:
     bool try_pop_but_ignore_invalid(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
-        if (!q_->empty() && q_->front().is_valid()) {
+        if (!q_->is_empty() && q_->front().is_valid()) {
             ret = true;
-            *t = std::move(q_->front());
-            q_->pop_front();
+            *t = q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
         return ret;
@@ -544,11 +543,10 @@ public:
     // SAFETY: Returns by value (move), not by reference. Borrow checker false positive.
     T pop() {
         Pthread_mutex_lock(&m_);
-        while (q_->empty()) {
+        while (q_->is_empty()) {
             Pthread_cond_wait(&not_empty_, &m_);
         }
-        auto result = std::move(q_->front());
-        q_->pop_front();
+        auto result = q_->pop_front();
         Pthread_mutex_unlock(&m_);
         return result;
     }

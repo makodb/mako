@@ -1136,15 +1136,32 @@ Per CLAUDE.md exceptions:
 
 #### Targeted single-type migrations (decomposed by file)
 
-- [ ] *high* Sub-leaf L2 — `std::list<T>` → `rusty::Vec<T>` (76 prod sites + 8 test sites). ~200 LOC across ~15 files.
-  - **Easiest big-leaf win**: per CLAUDE.md, `Vec` is already aliased to `std::vector`, so the change is a sed-ish rename plus an `<rusty/vec.hpp>` include swap, then verify no API drift (e.g. `splice`, `merge`, `front`/`back` reference invalidation, O(1) splice — none of which are documented use cases in rrr).
-  - Decompose by directory (each can land independently):
-    - L2a — `src/rrr/base/` (TBD count from file-level grep)
-    - L2b — `src/rrr/reactor/` 
-    - L2c — `src/rrr/rpc/` (excluding generated `rcc_rpc.h`)
-    - L2d — `src/rrr/coroutine/`, `src/rrr/misc/`, `src/rrr/utils/`
+- [ ] *high* Sub-leaf L2 — `std::list<T>` → rusty equivalents (76 prod sites total). **PARTIAL — L2a-base done (2026-04-28)**.
+  - **Survey refinement (2026-04-28)**: of the 76 prod-side `std::list` mentions, only ~36 are actual code uses; the other ~40 are stale safety annotations in `@external:` comments and `@unsafe` documentation that reference RequestQueue / std::list. Breakdown:
+    - `base/threading.hpp` (2 actual sites) — Queue<T> FIFO with O(1) push_back / pop_front / front + cond_var. ✅ **MIGRATED to `rusty::VecDeque<T>`** (correct target for FIFO queue with both-end O(1) access; not `Vec` since Vec has no pop_front).
+    - `misc/alock.{hpp,cpp}` (22 actual sites) — TBD; async lock waiter queues, likely benefit from VecDeque or another structure.
+    - `rpc/request_queue.hpp` (19 actual sites) — push_back/pop_front queue, **migrate to `rusty::VecDeque`**, NOT Vec (front-pop is O(n) on Vec).
+    - `misc/recorder.{hpp,cpp}` (8 actual sites) — raw `std::list<io_req_t*>*` heap pointer pattern; needs design rework before migration. Defer.
+    - `misc/marshal.hpp` (5 sites) — **public marshal API**: `operator<<(Marshal&, const std::list<T>&)` etc. Removing breaks user code that serializes std::list across the wire. **Carve-out** — stays std::list. Could ADD parallel `rusty::Vec<T>` / `rusty::VecDeque<T>` overloads; would not change anything else.
+    - `rpc/server.{hpp,cpp}` (14 sites) — **all in `@external:` safety annotation comments** (`std::list::push_back: [safe...]`, etc.). No actual std::list types or methods in production code. These are stale annotations; cleanup task = delete the dead annotations.
+    - `rpc/client.hpp` (4 sites) — all in `@unsafe - Uses RequestQueue which uses std::list` comments. Become stale once request_queue is migrated.
+    - `rpc/idempotency.hpp` (1 site) — LRU cache uses `std::list::splice` for O(1) iterator-stable node moves, with `HashMap<Key, list::iterator>` cache. **Carve-out** — Vec/VecDeque can't replace splice + iterator-stable storage without redesigning the LRU.
+    - `rpc/completion_tracker.hpp` (1 site) — same iterator-stability pattern (uses `erase(iterator)` returned from external storage). **Carve-out** for the same reason.
+  - Decomposed:
+    - [x] **L2a-base — `src/rrr/base/threading.hpp`** (2 sites). ✅ **LANDED 2026-04-28**.
+      - `rusty::Box<std::list<T>> q_` → `rusty::Box<rusty::VecDeque<T>> q_`.
+      - API mappings: `q_->push_back(x)` unchanged (VecDeque has push_back); `q_->empty()` → `q_->is_empty()`; `auto x = std::move(q_->front()); q_->pop_front();` → `auto x = q_->pop_front();` (VecDeque's pop_front returns the popped T, simplifying the move-then-destroy pattern).
+      - Verification: `test_rpc` 17/17, `test_rpc_extended` 14/14, `test_rpc_state_integration` 16/16, `test_rpc_combined_reliability` 9/9, `test_rpc_request_buffering` 8/8, `test_rpc_reconnect_integration` 12/12, `test_load_balancer` 21/21, `test_rpc_client_pool` 20/20, `test_marshal` 23/23, full channel-layer suite green. Same 4 pre-existing flakes — none new.
+    - [ ] **L2b-request_queue — `src/rrr/rpc/request_queue.hpp`** (19 sites). Migrate `std::list<QueuedRequest>` → `rusty::VecDeque<QueuedRequest>`. Operations used: `size`, `empty`, `front`, `pop_front`, `push_back`, `begin/end iteration`, `erase(iterator)`, `clear`. Iterator-erase needs replacement via `retain(predicate)` (VecDeque has it).
+    - [ ] **L2c-alock — `src/rrr/misc/alock.{hpp,cpp}`** (22 sites). Survey + plan.
+    - [ ] **L2d-server-cleanup — `src/rrr/rpc/server.{hpp,cpp}` + `client.hpp`** (~18 stale-annotation sites). Pure annotation cleanup; delete dead `std::list::*: [safe...]` lines. No code change. Trivial.
+    - [ ] **L2e-recorder — `src/rrr/misc/recorder.{hpp,cpp}`** (8 sites). Raw-pointer heap-list pattern needs design rework first.
+  - Carve-outs (stay std::list, with recorded rationale):
+    - `misc/marshal.hpp` (5 sites) — public marshal API; removing breaks user serialization. ADD rusty equivalents alongside if useful, never remove std::list overloads.
+    - `rpc/idempotency.hpp` (1 site) — splice-based LRU cache; needs LRU redesign before VecDeque can replace.
+    - `rpc/completion_tracker.hpp` (1 site) — iterator-stable cache; same constraint.
   - Per-leaf verification: full RPC-focused suite green.
-  - Goal: zero `std::list` in rrr after L2d lands.
+  - Goal: zero non-carve-out `std::list` in rrr prod code after L2b–L2e land. Marshalling overloads keep std::list as a serialization-level interop type only.
 - [ ] *medium* Sub-leaf L3 — `std::set` / `std::unordered_set` → `rusty::HashSet<T>` / `rusty::BTreeSet<T>` (37 sites combined). ~150 LOC.
   - Choose `HashSet` for unordered uses, `BTreeSet` for ordered uses.
   - API drift: `set.find(x) != set.end()` → `set.contains(&x)`; iteration order is non-deterministic for HashSet (verify no tests rely on insertion order).
