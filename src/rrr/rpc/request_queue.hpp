@@ -17,6 +17,8 @@
 #include <rusty/option.hpp>
 #include <rusty/vecdeque.hpp>
 
+#include "../base/threading.hpp"  // SpinMutex<T>
+
 
 
 
@@ -149,13 +151,13 @@ struct RequestQueueConfig {
 class RequestQueue {
 private:
     RequestQueueConfig config_;
-    // VecDeque ring-buffer with pre-allocated slot construction (placement new)
-    // — same property as std::list of "no move-assignment of QueuedRequest's
-    // Marshal-bearing payload after enqueue", since elements are constructed
-    // in place and only moved on grow/contiguous-rotate.
-    rusty::VecDeque<QueuedRequest> queue_;
-    // @unsafe { std::mutex for thread-safe concurrent access }
-    mutable std::mutex mutex_;
+    // VecDeque ring-buffer wrapped in SpinMutex for thread-safe access.
+    // SpinMutex owns its T, replacing the prior `mutex_ + queue_` pair
+    // pattern with a single rusty-style "data inside the lock" container.
+    // The VecDeque's placement-new ring-buffer preserves the same
+    // "no move-assignment of QueuedRequest's Marshal-bearing payload
+    // after enqueue" property the prior std::list comment cited.
+    mutable SpinMutex<rusty::VecDeque<QueuedRequest>> queue_;
 
 public:
     // @unsafe - Constructor uses defaults() which returns struct
@@ -165,7 +167,7 @@ public:
 
     // === Enqueue/Dequeue Operations ===
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     // Returns true if queued, false if rejected
     bool enqueue(QueuedRequest request) {
         if (!config_.enabled) {
@@ -178,15 +180,15 @@ public:
             return false;
         }
 
-        // @unsafe { std::mutex lock, VecDeque operations }
-        std::lock_guard<std::mutex> lock(mutex_);
+        // @unsafe { SpinMutex lock, VecDeque operations }
+        auto guard = queue_.lock().unwrap();
 
-        if (queue_.size() >= config_.max_size) {
+        if (guard->size() >= config_.max_size) {
             switch (config_.overflow_strategy) {
                 case OverflowStrategy::DROP_OLDEST:
                     // Remove oldest and proceed
-                    if (!queue_.is_empty()) {
-                        auto oldest = queue_.pop_front();
+                    if (!guard->is_empty()) {
+                        auto oldest = guard->pop_front();
                         // Invoke callback outside lock would be better,
                         // but for simplicity we do it here with error code
                         if (oldest.callback) {
@@ -224,53 +226,53 @@ public:
         }
 
         // @unsafe { VecDeque push_back }
-        queue_.push_back(std::move(request));
+        guard->push_back(std::move(request));
         return true;
     }
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     rusty::Option<QueuedRequest> dequeue() {
-        // @unsafe { std::mutex lock, VecDeque operations }
-        std::lock_guard<std::mutex> lock(mutex_);
+        // @unsafe { SpinMutex lock, VecDeque operations }
+        auto guard = queue_.lock().unwrap();
 
-        if (queue_.is_empty()) {
+        if (guard->is_empty()) {
             return rusty::None;
         }
 
-        return rusty::Some(queue_.pop_front());
+        return rusty::Some(guard->pop_front());
     }
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     // Note: Returns pointer that should be used immediately while lock is held
     // For thread-safety, prefer dequeue() instead
     bool peek(QueuedRequest& out) const {
-        // @unsafe { std::mutex lock, VecDeque operations }
-        std::lock_guard<std::mutex> lock(mutex_);
+        // @unsafe { SpinMutex lock, VecDeque operations }
+        auto guard = queue_.lock().unwrap();
 
-        if (queue_.is_empty()) {
+        if (guard->is_empty()) {
             return false;
         }
 
         // @unsafe { struct assignment }
-        out = queue_.front();
+        out = guard->front();
         return true;
     }
 
     // === Expiration ===
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     size_t expire_stale() {
         rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
         size_t removed = 0;
 
         {
-            // @unsafe { std::mutex lock }
-            std::lock_guard<std::mutex> lock(mutex_);
+            // @unsafe { SpinMutex lock }
+            auto guard = queue_.lock().unwrap();
 
             // Extract expired elements via extract_if. The predicate is
             // const-only (rusty::Function<bool(const T&)>) and cannot mutate
             // the element, so we drain callbacks via pop_front afterward.
-            auto expired = queue_.extract_if(
+            auto expired = guard->extract_if(
                 rusty::Function<bool(const QueuedRequest&)>(
                     [](const QueuedRequest& r) { return r.is_expired(); }));
             removed = expired.size();
@@ -295,51 +297,51 @@ public:
 
     // === Size and State ===
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     size_t size() const {
-        // @unsafe { std::mutex lock, VecDeque::size }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.size();
+        // @unsafe { SpinMutex lock, VecDeque::size }
+        auto guard = queue_.lock().unwrap();
+        return guard->size();
     }
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     bool empty() const {
-        // @unsafe { std::mutex lock, VecDeque::is_empty }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.is_empty();
+        // @unsafe { SpinMutex lock, VecDeque::is_empty }
+        auto guard = queue_.lock().unwrap();
+        return guard->is_empty();
     }
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     bool full() const {
-        // @unsafe { std::mutex lock, VecDeque::size }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.size() >= config_.max_size;
+        // @unsafe { SpinMutex lock, VecDeque::size }
+        auto guard = queue_.lock().unwrap();
+        return guard->size() >= config_.max_size;
     }
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     size_t remaining_capacity() const {
-        // @unsafe { std::mutex lock, VecDeque::size }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return config_.max_size > queue_.size() ?
-               config_.max_size - queue_.size() : 0;
+        // @unsafe { SpinMutex lock, VecDeque::size }
+        auto guard = queue_.lock().unwrap();
+        return config_.max_size > guard->size() ?
+               config_.max_size - guard->size() : 0;
     }
 
     // === Clear and Reset ===
 
-    // @unsafe - Uses rusty::VecDeque and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     void clear_all(int error_code = -3) {
         rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
 
         {
-            // @unsafe { std::mutex lock, VecDeque operations }
-            std::lock_guard<std::mutex> lock(mutex_);
+            // @unsafe { SpinMutex lock, VecDeque operations }
+            auto guard = queue_.lock().unwrap();
 
-            for (auto& req : queue_) {
+            for (auto& req : *guard) {
                 if (req.callback) {
                     callbacks_to_invoke.push(std::move(req.callback));
                 }
             }
-            queue_.clear();
+            guard->clear();
         }
 
         // Invoke callbacks outside lock
@@ -371,8 +373,12 @@ public:
 
     // @unsafe - Update configuration (clears queue if not empty)
     void update_config(const RequestQueueConfig& config) {
-        // @unsafe { std::mutex lock, config assignment }
-        std::lock_guard<std::mutex> lock(mutex_);
+        // Take the queue's lock to serialize against in-flight enqueue/dequeue
+        // operations so config_ updates are observed atomically with respect
+        // to those operations.
+        // @unsafe { SpinMutex lock, config assignment }
+        auto guard = queue_.lock().unwrap();
+        (void)guard;
         config_ = config;
         // Note: Caller should clear queue before calling if needed
     }
