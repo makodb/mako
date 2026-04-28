@@ -217,10 +217,11 @@ class MarshallDeputy {
     };
     typedef std::function<MarInitializerState()> MarInitializerFn;
     typedef rusty::HashMap<int32_t, MarInitializerFn> MarContainer;
-    // @safe - Returns reference to global factory registry
-    // SAFETY: Protected by mutex, returns reference to static container
-    // @lifetime: () -> &'static
-    static MarContainer& get_initializers();
+    // The factory registry is now a file-local
+    // `SpinMutex<MarContainer>`-protected static inside marshal.cpp
+    // — see md_registry() / md_registry_locked() in marshal.cpp.
+    // No external code referenced the prior `get_initializers()`
+    // accessor; removed to keep the SpinMutex contained.
     // @unsafe - Registers proxy-backed initializer metadata factory.
     static int reg_initializer(int32_t, MarInitializerFn);
     // @unsafe - Registers typed default-constructible marshallable.
