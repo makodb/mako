@@ -1097,21 +1097,36 @@ Per CLAUDE.md exceptions:
 
 #### Quick wins (~1 leaf each, bounded scope)
 
-- [ ] *high* Sub-leaf L1a — `std::weak_ptr` → custom `Weak<T>` (2 prod sites). ~30 LOC.
-  - The custom `Weak<T>` wrapper used elsewhere in rrr (e.g. `Weak<Coroutine>`, `Weak<ClientConnection>`) is the standard replacement.
-  - Sites: identify both prod uses (1 in `src/rrr/reactor/coroutine.h` already migrated; the remaining 2 likely sit in legacy reactor or pollthread bookkeeping).
-  - Tests: existing reactor tests cover the weak-ref invalidation contract; add a focused unit test if the migrated sites' lifetime semantics differ from `std::weak_ptr::lock()`.
-  - Goal: zero `std::weak_ptr` in rrr after this leaf lands.
-- [ ] *high* Sub-leaf L1b — `std::unique_ptr<T>` → `rusty::Box<T>` (11 prod sites). ~80 LOC.
-  - 1:1 conversion: `std::unique_ptr<T>` → `rusty::Box<T>`; `std::make_unique<T>(args...)` → `rusty::make_box<T>(args...)`. Borrow-check requires the wrapped type be at least move-constructible.
-  - Sites: enumerate via `grep -rEn 'std::unique_ptr|std::make_unique' src/rrr --include='*.cpp' --include='*.cc' --include='*.hpp' --include='*.h'`.
-  - Tests: existing tests cover the wrapped types' lifecycle; verify by running the rrr-focused test suite.
-  - Goal: zero `std::unique_ptr` in rrr after this leaf lands.
-- [ ] *high* Sub-leaf L1c — `std::optional<T>` → `rusty::Option<T>` in rrr production code (1 prod site, 33 test sites). ~40 LOC for prod; tests can be a follow-up.
-  - 1:1 conversion: `std::optional<T>` → `rusty::Option<T>`; `std::nullopt` → `rusty::None`; `opt.has_value()` → `opt.is_some()`; `*opt` → `*opt.as_ref()` or `opt.unwrap()`.
-  - Note: API drift between optional types — `std::optional`'s implicit `bool` conversion and `*` dereference don't have direct equivalents in `rusty::Option`; touch sites need review for ownership intent (some `std::optional<T>` sites may want `Option<Box<T>>` or `Option<Arc<T>>` instead, depending on whether the contained type is move-only).
-  - Tests: most call sites are in test-only code where the conversion is purely mechanical.
-  - Goal: zero `std::optional` in rrr prod code; tests remain a separate sweep.
+- [ ] *low* Sub-leaf L1a — `std::weak_ptr<Event>` → `rusty::sync::Weak<Event>` (2 prod sites in `src/rrr/reactor/event.h`). **DEFERRED** — coupled to a much larger Event-subsystem migration.
+  - **Survey finding (2026-04-28)**: the 2 sites are `Event::self_` (event.h:59) and the `set_self(...)` setter (event.h:111). `std::weak_ptr<T>` only interoperates with `std::shared_ptr<T>`, so a real migration here forces migrating the entire `std::shared_ptr<Event>` chain to `rusty::Arc<Event>` (or `Rc<Event>`).
+  - **Coupling extent**: ~37 sites of `std::shared_ptr<Event>` / `std::make_shared<...Event>` across `src/rrr/reactor/event.h` (`WaitAll`/`WaitAny`/`WaitN`/`SharedIntEvent` containers + `get_self()` return type), `src/rrr/reactor/reactor.h` (`all_events_`, `waiting_events_`, `timeout_events_`, `composite_events_` queues + `check_timeout` parameter + `CreateSpEvent` return type), `src/rrr/reactor/reactor.cc` (`Reactor::loop`'s `check_timeout` / `extract_if` predicates that take `const std::shared_ptr<Event>&`), `src/rrr/reactor/quorum_event.cc`. Plus all callers in `deptran` / `mako` that build events.
+  - **Documented unsafe boundary**: `event.h` has explicit `@external:` safety annotations marking `std::make_shared`, `std::shared_ptr::operator*`, `std::shared_ptr::operator->`, `std::shared_ptr::get`, `std::shared_ptr::operator=` as unsafe — this is the rrr Event subsystem's documented unsafe island, not an oversight.
+  - **Recommendation**: do not migrate as part of L1. Instead, treat the whole Event subsystem (including the 2 weak_ptr sites) as a single follow-up workstream — call it "Workstream M: Event subsystem rusty migration": `std::shared_ptr<Event>` → `rusty::Arc<Event>` + `std::weak_ptr<Event>` → `rusty::sync::Weak<Event>` together. ~200-400 LOC, requires careful Reactor refactor, RPC suite must remain green throughout. Pulled out of L1 (which is supposed to be quick wins).
+- [ ] *high* Sub-leaf L1b — `std::unique_ptr<T>` → `rusty::Box<T>` in rrr test files. **PARTIAL — 4 of 11 files migrated (2026-04-28)**.
+  - **Survey correction (2026-04-28)**: the original Workstream L survey miscounted these as "11 prod sites" — all 27 occurrences are actually in `src/rrr/tests/` test files. There are zero `std::unique_ptr` uses in rrr production code (verified via `grep -rE 'std::unique_ptr|std::make_unique' src/rrr | grep -v tests/` returning empty).
+  - **Pattern chosen**: `std::optional<rusty::Box<T>> field_;` (rather than `rusty::Option<rusty::Box<T>>`) — `rusty::Option<T>::operator*` returns the Option itself (a transpilation shim for migrated rust code), not the inner T, so `(*opt)->method()` doesn't compile. `std::optional` preserves natural `(*opt)->method()` semantics for the test-fixture pattern. The remaining `std::optional` is L1c's concern, not L1b's.
+  - 1:1 conversion: `std::unique_ptr<T> field_;` → `std::optional<rusty::Box<T>> field_;`; `field_ = std::make_unique<T>(args)` → `field_ = rusty::make_box<T>(args)`; `field_->method()` → `(*field_)->method()`; `field_.reset()` → `field_.reset()` (unchanged); `*field_ << ...` → `**field_ << ...` (Option→Box→T deref).
+  - **Done (2026-04-28)** — 10 sites across 4 simple test-fixture files:
+    - `tests/rpc_server_channel_factory_test.cc` (2 sites — fixture)
+    - `tests/rpc_server_channel_binding_test.cc` (2 sites — fixture)
+    - `tests/rpc_inmemory_channel_e2e_test.cc` (4 sites — 1 field, 3 inline assignments)
+    - `tests/test_marshal.cc` (2 sites — fixture + 40 `**m << / >>` rewrites)
+    - Verification: all 4 migrated test binaries build and pass: `test_marshal` 23/23, `test_rpc_server_channel_factory` 6/6, `test_rpc_server_channel_binding` 4/4, `test_rpc_inmemory_channel_e2e` 4/4. Full RPC suite remains green modulo 4 pre-existing flakes (`IdleDetectionBecomesIdle`, `ActivityUpdatesOnRequest`, `QueueRejectSetsRequestTimeoutType`, `DisconnectedFailFastSetsConnectTimeoutType`) — none new in this leaf.
+  - **Remaining (deferred to L1b-followup)** — 17 sites across 7 files where the migration is not a clean fixture-pattern swap:
+    - `tests/rpc_proxy_dependency_test.cc` (1 site) — **intentional carve-out**: the test `FacadeDispatchesToUniquePtrObject` specifically validates `pro::proxy` wrapping `std::unique_ptr`; the unique_ptr usage IS the test contract. Migration would change what's tested. Stay std.
+    - `tests/sharding_startup_test.cc` (2 sites) — function `create_cnode_server(int port)` returns `std::unique_ptr<CNodeServer>` with `return nullptr` failure path. Migrating to `std::optional<rusty::Box<CNodeServer>>` requires changing 12+ `cnode->method()` callers to `(*cnode)->method()` and `ASSERT_NE(nullptr, cnode)` to `ASSERT_TRUE(cnode.has_value())`. Larger blast radius — separate leaf.
+    - `tests/rpc_inmemory_channel_test.cc` (2 sites) — function `make_pair_with_capture(...)` returns `std::unique_ptr<PairAndProxies>` plus `std::vector<std::unique_ptr<MockTransportBackend>>` patterns. Mixed function-return + container-of-unique_ptr.
+    - `tests/stress_transport_backend.cc` (4 sites) — `std::vector<std::unique_ptr<StressMockBackend>>`. Migrating outer vector is L2's concern; inner Box swap can land independently as a `std::vector<rusty::Box<StressMockBackend>>` interim state.
+    - `tests/test_transport_backend.cc` (3 sites) — same `std::vector<std::unique_ptr<MockTransportBackend>>` pattern.
+    - `tests/test_alock.cc` (2 sites) — `std::vector<std::unique_ptr<TimeoutALock>>` pattern.
+    - `tests/rpc_rocksdb_log_storage_test.cc` (3 sites) — fixture pattern; deferred only because the rocksdb test was not in the regression-suite scope of this iteration.
+  - Goal: one focused follow-up leaf to retire the 7 remaining files. Naming: L1b-followup or L1b-tail.
+- [ ] *medium* Sub-leaf L1c — `std::optional<T>` → `rusty::Option<T>` (1 prod site, ~33 test sites). ~80 LOC.
+  - **Survey finding (2026-04-28)**: 1 prod site (`src/rrr/reactor/reactor.h:mutable std::optional<OnReady> on_ready`); 33 test sites mostly under `std::optional<rusty::Arc<T>>` or `std::optional<ChannelConnectionProxy>` patterns.
+  - 1:1 conversion: `std::optional<T>` → `rusty::Option<T>`; `std::nullopt` → `rusty::None`; `opt.has_value()` → `opt.is_some()`; `*opt` → `opt.as_ref().unwrap()` (read) or `opt.unwrap()` (consume); `opt = std::nullopt` → `opt = rusty::None`; `opt.emplace(...)` → `opt = rusty::Some(...)`.
+  - **API drift caveat**: `rusty::Option<T>` doesn't have an `emplace(...)` method analogous to `std::optional::emplace`; sites need either `opt = rusty::Some(T(...))` or `opt = rusty::Some(rusty::Box<T>(...))` depending on whether `T` is movable.
+  - Decompose: L1c-prod (1 site), L1c-tests (33 sites split by file/group).
+  - Goal: zero `std::optional` in rrr after this leaf lands.
 
 #### Targeted single-type migrations (decomposed by file)
 
