@@ -81,22 +81,9 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 //   std::chrono::duration: [safe]
 //   std::function: [safe]
 //   std::function::operator(): [safe]
-//   std::unordered_map::find: [safe, (&'a, const K&) -> iterator where return: 'a]
-//   std::unordered_map::end: [safe, (&'a) -> iterator]
-//   std::unordered_map::begin: [safe, (&'a) -> iterator]
-//   std::unordered_map::insert: [safe, (&'a mut, const K&, V) -> pair]
-//   std::unordered_map::insert_or_assign: [safe, (&'a mut, const K&, V) -> pair]
-//   std::unordered_map::operator[]: [safe, (&'a mut, const K&) -> V& where return: 'a]
-//   std::unordered_map::erase: [safe, (&'a mut, iterator) -> iterator]
-//   std::unordered_map::clear: [safe, (&'a mut) -> void]
 //   std::vector::push_back: [safe, (&'a mut, const T&) -> void]
 //   std::vector::empty: [safe, (&'a) -> bool]
 //   std::vector::size: [safe, (&'a) -> size_t]
-//   std::map::find: [safe, (&'a, const K&) -> iterator where return: 'a]
-//   std::map::end: [safe, (&'a) -> iterator]
-//   std::map::begin: [safe, (&'a) -> iterator]
-//   std::map::insert: [safe, (&'a mut, const K&, V) -> pair]
-//   std::map::operator[]: [safe, (&'a mut, const K&) -> V& where return: 'a]
 //   operator!=: [safe]
 //   operator==: [safe]
 //   std::__detail::operator!=: [safe]
@@ -1103,7 +1090,7 @@ public:
         return pending_queue_.size();
     }
 
-    // @unsafe - Uses SpinMutex + std::unordered_map access
+    // @unsafe - Uses SpinMutex + rusty::HashMap access
     size_t pending_future_count() const {
         auto pending_guard = pending_fu_.lock().unwrap();
         return pending_guard->len();

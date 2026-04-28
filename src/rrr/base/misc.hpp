@@ -85,7 +85,7 @@ char (& ArraySizeHelper(const T (& array)[N]))[N];
 
 #define arraysize(array) (sizeof(base::ArraySizeHelper(array)))
 
-// @unsafe - Calls std::map::insert (external unsafe)
+// @unsafe - Calls Map::insert (template; external unsafe regardless of concrete container)
 // SAFETY: Standard container insertion, caller ensures map is valid
 template<class K, class V, class Map>
 inline void insert_into_map(Map& map, const K& key, const V& value) {

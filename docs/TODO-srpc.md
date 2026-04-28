@@ -1193,11 +1193,14 @@ Per CLAUDE.md exceptions:
 
 #### Bigger migrations (require decomposition into multiple leaves each)
 
-- [ ] *medium* Sub-leaf L4 — `std::map` / `std::unordered_map` → `rusty::HashMap<K,V>` / `rusty::BTreeMap<K,V>` (75 sites combined). ~400 LOC.
-  - API drift: `map[key]` (which inserts a default-constructed value if absent) has no direct equivalent — must use `map.entry(key).or_insert(...)` or similar; `map.find(key)` semantics also differ.
-  - Decompose along the same boundaries as L2 (per-directory).
-  - Each sub-leaf must keep the RPC-focused suite green.
-  - Goal: zero `std::map` / `std::unordered_map` in rrr after this workstream lands.
+- [x] *medium* Sub-leaf L4 — `std::map` / `std::unordered_map` → `rusty::HashMap<K,V>` / `rusty::BTreeMap<K,V>` in rrr prod code. ✅ **LANDED 2026-04-28**.
+  - **Survey refinement (2026-04-28)**: of the 48 prod-side mentions, only 7 are actual code uses — 1 in `inmemory_channel.hpp`'s `InMemorySwitchboard::listeners_` field, 6 in `marshal.hpp`'s public `operator<<` / `operator>>` overloads (carve-out: stays std for user serialization compat). The remaining 41 are stale `@external:` / `@unsafe` annotation comments scattered across `client.{hpp,cpp}`, `server.{hpp,cpp}`, `alarm.hpp`, `alock.cpp`, `base/misc.hpp`, `marshal.cpp`. The fields they document were already migrated to `rusty::HashMap` / `rusty::BTreeMap` long before but the annotations were never updated.
+  - **Done in this leaf**:
+    - Migrated `InMemorySwitchboard::listeners_` from `std::unordered_map<std::string, rusty::sync::Weak<InMemoryListener>>` to `rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>`. API mappings: `find(key) != end()` → `contains_key(key)`; `find(key) + it->second.upgrade()` → `get(key) + val_opt.unwrap()->upgrade()` (Option<V*> + pointer deref); `emplace(key, val)` → `insert(key, val)`; `erase(key)` → `remove(key)`; `erase(iterator)` → not used after migration (replaced with `remove(addr)`).
+    - Cleaned up stale annotations in `client.hpp` (8 `std::unordered_map` + 5 `std::map` lines + 1 `// @unsafe - Uses SpinMutex + std::unordered_map access` comment now reading `rusty::HashMap`), `server.hpp` (8 `std::unordered_map` lines), `server.cpp` (4 `std::unordered_map` lines), `client.cpp` (6 `std::map` / `std::unordered_map` lines), `alarm.hpp` (2 comments updated to reference `rusty::HashMap`), `alock.cpp` (1 line), `base/misc.hpp` (1 line, made template-generic), `marshal.cpp` (1 comment updated to reference `rusty::HashMap::get`).
+  - **Carve-out (stays std)**: `misc/marshal.hpp` `operator<<` / `operator>>` overloads for `std::map<K,V>` / `std::unordered_map<K,V>` — public marshal API; same rationale as the `std::list`/`std::set` carve-outs.
+  - Verification (regression-free): `test_rpc` 17/17, `test_rpc_extended` 14/14, `test_rpc_state_integration` 16/16, `test_rpc_request_buffering` 8/8, `test_rpc_combined_reliability` 9/9, `test_rpc_inmemory_channel` 24/24 (the dedicated suite that exercises the migrated `InMemorySwitchboard`), `test_rpc_inmemory_channel_e2e` 4/4, `test_marshal` 23/23, `test_load_balancer` 21/21, `test_reactor` 15/15, `test_rpc_request_queue` 30/30.
+  - Goal: zero non-carve-out `std::map` / `std::unordered_map` in rrr **prod** code achieved.
 - [ ] *medium* Sub-leaf L5 — `std::function<F>` → `rusty::Function<F>` (143 prod sites, 24 test sites). ~600 LOC across ~30 files.
   - **Semantic concern**: `rusty::Function` is move-only by default; `std::function` is copyable. Sites that store callbacks in containers requiring copyability (e.g. `std::vector<std::function<...>>`) need either container migration first (L2) or explicit `Arc<Function<F>>` wrapping. Audit for copy-in-storage sites before starting.
   - Decompose by file/directory; the rrr/rpc/ subset alone has 30+ sites in `client.{hpp,cpp}` + `server.{hpp,cpp}` that all need ownership review (which fields are moved-from once invoked, which are stored for repeated invocation).

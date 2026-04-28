@@ -531,7 +531,7 @@ int MarshallDeputy::reg_initializer(int32_t cmd_type,
   return 0;
 }
 
-// @unsafe - Calls std::mutex::lock, std::unordered_map::find, std::function constructor
+// @unsafe - Calls std::mutex::lock, rusty::HashMap::get, std::function constructor
 MarshallDeputy::MarInitializerFn
 MarshallDeputy::get_initializer(int32_t type) {
   if (!mc_th_initialized_ ||

@@ -80,6 +80,7 @@
 #include <vector>
 
 #include <rusty/arc.hpp>
+#include <rusty/hashmap.hpp>
 #include <rusty/option.hpp>
 #include <rusty/sync/weak.hpp>
 
@@ -152,8 +153,8 @@ class InMemorySwitchboard {
 
  private:
     mutable std::mutex mu_;
-    mutable std::unordered_map<std::string,
-                               rusty::sync::Weak<InMemoryListener>> listeners_;
+    mutable rusty::HashMap<std::string,
+                           rusty::sync::Weak<InMemoryListener>> listeners_;
 };
 
 // ---------------------------------------------------------------------------

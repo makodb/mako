@@ -26,32 +26,32 @@ bool InMemorySwitchboard::register_listener(
         std::string addr,
         rusty::sync::Weak<InMemoryListener> listener) const {
     std::lock_guard<std::mutex> lk(mu_);
-    auto it = listeners_.find(addr);
-    if (it != listeners_.end()) {
+    if (listeners_.contains_key(addr)) {
         // Address already taken. The caller must close the existing
         // listener first.
         return false;
     }
-    listeners_.emplace(std::move(addr), std::move(listener));
+    listeners_.insert(std::move(addr), std::move(listener));
     return true;
 }
 
 void InMemorySwitchboard::unregister_listener(const std::string& addr) const {
     std::lock_guard<std::mutex> lk(mu_);
-    listeners_.erase(addr);
+    listeners_.remove(addr);
 }
 
 rusty::Option<rusty::Arc<InMemoryListener>>
 InMemorySwitchboard::find_listener(const std::string& addr) const {
     std::lock_guard<std::mutex> lk(mu_);
-    auto it = listeners_.find(addr);
-    if (it == listeners_.end()) {
+    auto val_opt = listeners_.get(addr);
+    if (val_opt.is_none()) {
         return rusty::None;
     }
-    auto upgraded = it->second.upgrade();
+    // Upgrade through the pointer before any mutation invalidates it.
+    auto upgraded = val_opt.unwrap()->upgrade();
     if (upgraded.is_none()) {
         // The listener was destroyed without unregistering. Clean up.
-        listeners_.erase(it);
+        listeners_.remove(addr);
         return rusty::None;
     }
     return upgraded;
