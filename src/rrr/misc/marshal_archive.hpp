@@ -13,8 +13,8 @@
 // Layered design (see docs/dev/marshal_archive_design.md):
 //
 //   Layer 1+2: SinkProxy / SourceProxy — type-erased byte sinks/sources.
-//              Concrete impls in this file: BufferSink, BufferSource.
-//              FdSink / FdSource arrive in Phase 1b.
+//              Concrete impls in this file: BufferSink, BufferSource,
+//              FdSink, FdSource.
 //
 //   Layer 3:   BinaryWriteArchive / BinaryReadArchive — knows the wire
 //              format, holds a Sink/Source proxy, exposes operator<< /
@@ -26,9 +26,11 @@
 #include <std_compat.hpp>
 
 // @c-compat-added
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <unistd.h>
 
 #include <list>
 #include <map>
@@ -178,6 +180,100 @@ inline SourceProxy make_source_proxy(BufferSource* source) {
 }
 
 // ---------------------------------------------------------------------------
+// File descriptor Sink / Source (Phase 1c).
+//
+// FdSink::write — full-write loop. Calls ::write in a loop until n bytes
+// have been written, retrying transparently on EINTR. On any other
+// transport error (or unexpected ::write returning 0) it aborts via
+// `verify`.
+//
+// FdSource::read — full-read loop. Calls ::read in a loop until n bytes
+// have been read or EOF is reached. Returns the number of bytes
+// actually read (may be < n at EOF). Retries on EINTR. Aborts on any
+// other transport error.
+//
+// Lifetime: FdSink/FdSource hold a non-owning fd. Caller owns the fd
+// and must keep it open for the lifetime of the Sink/Source. Same
+// convention as BufferSink (caller owns the underlying storage).
+//
+// Threading: not thread-safe. Caller is responsible for serializing
+// concurrent access (e.g. via SpinMutex around the Sink) if shared.
+// ---------------------------------------------------------------------------
+
+class FdSink {
+  int fd_;
+ public:
+  explicit FdSink(int fd) noexcept : fd_(fd) {}
+
+  int fd() const noexcept { return fd_; }
+
+  // @safe - the only raw-pointer op is ::write itself, which is
+  // annotated below.
+  void write(const void* p, size_t n) {
+    if (n == 0) return;
+    const auto* b = static_cast<const uint8_t*>(p);
+    size_t written = 0;
+    while (written < n) {
+      // @unsafe { ::write — raw libc syscall on a fd we don't own }
+      ssize_t r = ::write(fd_, b + written, n - written);
+      if (r < 0) {
+        if (errno == EINTR) continue;
+        verify(false);
+      }
+      verify(r > 0);
+      written += static_cast<size_t>(r);
+    }
+  }
+};
+
+class FdSource {
+  int fd_;
+ public:
+  explicit FdSource(int fd) noexcept : fd_(fd) {}
+
+  int fd() const noexcept { return fd_; }
+
+  // @safe - the only raw-pointer op is ::read itself, annotated below.
+  size_t read(void* p, size_t n) {
+    if (n == 0) return 0;
+    auto* b = static_cast<uint8_t*>(p);
+    size_t got = 0;
+    while (got < n) {
+      // @unsafe { ::read — raw libc syscall on a fd we don't own }
+      ssize_t r = ::read(fd_, b + got, n - got);
+      if (r < 0) {
+        if (errno == EINTR) continue;
+        verify(false);
+      }
+      if (r == 0) break;  // EOF — return short read.
+      got += static_cast<size_t>(r);
+    }
+    return got;
+  }
+};
+
+class FdSinkAdapter {
+  FdSink* sink_;
+ public:
+  explicit FdSinkAdapter(FdSink* s) noexcept : sink_(s) {}
+  void write(const void* p, size_t n) { sink_->write(p, n); }
+};
+
+class FdSourceAdapter {
+  FdSource* source_;
+ public:
+  explicit FdSourceAdapter(FdSource* s) noexcept : source_(s) {}
+  size_t read(void* p, size_t n) { return source_->read(p, n); }
+};
+
+inline SinkProxy make_sink_proxy(FdSink* sink) {
+  return pro::make_proxy<SinkFacade, FdSinkAdapter>(sink);
+}
+inline SourceProxy make_source_proxy(FdSource* source) {
+  return pro::make_proxy<SourceFacade, FdSourceAdapter>(source);
+}
+
+// ---------------------------------------------------------------------------
 // Layer 3: Binary archive — knows the wire format.
 //
 // Wire format (BYTE-FOR-BYTE COMPATIBLE with the existing `Marshal`
@@ -205,6 +301,10 @@ class BinaryWriteArchive {
 
   // Convenience: build directly atop a concrete BufferSink.
   explicit BinaryWriteArchive(BufferSink* sink)
+      : sink_(make_sink_proxy(sink)) {}
+
+  // Convenience: build directly atop a concrete FdSink.
+  explicit BinaryWriteArchive(FdSink* sink)
       : sink_(make_sink_proxy(sink)) {}
 
   // Emit raw bytes (used for unstructured payloads).
@@ -377,6 +477,10 @@ class BinaryReadArchive {
 
   // Convenience: build directly atop a concrete BufferSource.
   explicit BinaryReadArchive(BufferSource* source)
+      : source_(make_source_proxy(source)) {}
+
+  // Convenience: build directly atop a concrete FdSource.
+  explicit BinaryReadArchive(FdSource* source)
       : source_(make_source_proxy(source)) {}
 
   // Read into raw bytes; verifies n bytes were actually read.

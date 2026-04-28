@@ -1096,8 +1096,24 @@ Wire format is **byte-for-byte identical** to `Marshal`'s output for
 all overlapping types — switching transports does not change the
 on-the-wire bytes.
 
-Status: Phase 1a (primitives + std::string) and Phase 1b (containers)
-have landed. Phase 1c (`FdSink`/`FdSource`) and Phase 2+
+Sinks ship for in-memory buffers (`BufferSink`) and for raw file
+descriptors (`FdSink` / `FdSource`). The fd variants drive a
+synchronous full-write / full-read loop with EINTR retry — useful for
+log replay paths, snapshots, or any consumer that wants to bypass the
+`Marshal`-based intermediate buffer:
+
+```cpp srpc-no-compile
+int fd = ::open("/tmp/snap.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+{
+  rrr::FdSink sink(fd);
+  rrr::BinaryWriteArchive writer(&sink);
+  writer << (rrr::i32)42 << std::string("snapshot payload");
+}
+::close(fd);
+```
+
+Status: Phase 1a (primitives + std::string), Phase 1b (containers),
+and Phase 1c (`FdSink`/`FdSource`) have landed. Phase 2+
 (`SerializableProxy` + factory registry replacing `MarshallDeputy`'s
 internals) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)

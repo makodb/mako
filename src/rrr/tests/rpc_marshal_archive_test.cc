@@ -13,10 +13,16 @@
 
 #include <std_compat.hpp>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -622,6 +628,297 @@ TEST(MarshalArchiveRoundTrip, RustyHashMapPrimitives) {
   reader >> decoded;
   ASSERT_EQ(decoded.len(), m.len());
   EXPECT_TRUE(source.eof());
+}
+
+// ---- FdSink / FdSource (Phase 1c) ------------------------------------
+
+// RAII wrapper around a pipe pair so test failures don't leak fds.
+struct ScopedPipe {
+  int fds[2] = {-1, -1};
+  ScopedPipe() {
+    int rc = ::pipe(fds);
+    EXPECT_EQ(rc, 0);
+  }
+  ~ScopedPipe() {
+    if (fds[0] >= 0) ::close(fds[0]);
+    if (fds[1] >= 0) ::close(fds[1]);
+  }
+  void close_read() {
+    if (fds[0] >= 0) { ::close(fds[0]); fds[0] = -1; }
+  }
+  void close_write() {
+    if (fds[1] >= 0) { ::close(fds[1]); fds[1] = -1; }
+  }
+};
+
+// RAII wrapper around a temp file. Lives only inside the test.
+struct ScopedTempFile {
+  char path[64] = "/tmp/mako_archive_test_XXXXXX";
+  int fd = -1;
+  ScopedTempFile() {
+    fd = ::mkstemp(path);
+    EXPECT_GE(fd, 0);
+  }
+  ~ScopedTempFile() {
+    if (fd >= 0) ::close(fd);
+    ::unlink(path);
+  }
+  // Reopen by path read-only, returning a fresh fd. Caller closes it.
+  int reopen_ro() const {
+    int rfd = ::open(path, O_RDONLY);
+    EXPECT_GE(rfd, 0);
+    return rfd;
+  }
+};
+
+TEST(FdSinkSemantics, EmptyWriteIsNoop) {
+  ScopedPipe p;
+  FdSink sink(p.fds[1]);
+  // Calling write(p, 0) should not block and should not consume bytes.
+  sink.write(nullptr, 0);
+  // Close the write end. The read end should immediately see EOF.
+  p.close_write();
+  uint8_t buf[1];
+  ssize_t r = ::read(p.fds[0], buf, sizeof(buf));
+  EXPECT_EQ(r, 0);
+}
+
+TEST(FdSourceSemantics, EmptyReadIsNoop) {
+  ScopedPipe p;
+  FdSource src(p.fds[0]);
+  size_t got = src.read(nullptr, 0);
+  EXPECT_EQ(got, 0u);
+}
+
+TEST(FdSourceSemantics, EofReturnsShortRead) {
+  ScopedPipe p;
+
+  // Write 3 bytes, close write end.
+  const uint8_t payload[] = {0x01, 0x02, 0x03};
+  ssize_t w = ::write(p.fds[1], payload, sizeof(payload));
+  ASSERT_EQ(w, 3);
+  p.close_write();
+
+  // Try to read 16 bytes. We should get 3 (then EOF).
+  FdSource src(p.fds[0]);
+  uint8_t buf[16];
+  std::memset(buf, 0, sizeof(buf));
+  size_t got = src.read(buf, sizeof(buf));
+  EXPECT_EQ(got, 3u);
+  EXPECT_EQ(buf[0], 0x01);
+  EXPECT_EQ(buf[1], 0x02);
+  EXPECT_EQ(buf[2], 0x03);
+
+  // Subsequent read on the closed pipe sees EOF immediately.
+  size_t again = src.read(buf, 4);
+  EXPECT_EQ(again, 0u);
+}
+
+TEST(FdSinkArchive, PipeRoundTripPrimitives) {
+  ScopedPipe p;
+
+  // Write side runs in this thread; read side in another to avoid
+  // blocking on the kernel pipe buffer for small payloads (this is
+  // small enough that we wouldn't block, but the threaded pattern
+  // matches the larger-payload test below).
+  std::vector<uint8_t> drained_bytes;
+  std::thread reader_thread([&] {
+    uint8_t chunk[64];
+    while (true) {
+      ssize_t r = ::read(p.fds[0], chunk, sizeof(chunk));
+      if (r <= 0) break;
+      drained_bytes.insert(drained_bytes.end(), chunk, chunk + r);
+    }
+  });
+
+  {
+    FdSink sink(p.fds[1]);
+    BinaryWriteArchive writer(&sink);
+    writer << static_cast<int32_t>(0x12345678);
+    writer << static_cast<int64_t>(-1);
+    writer << std::string("hello");
+    writer << v32(5);
+    writer << v64(1024);
+  }
+  p.close_write();
+  reader_thread.join();
+
+  // Now decode via BufferSource (deterministic, no kernel timing) and
+  // verify each value.
+  BufferSource source(drained_bytes.data(), drained_bytes.size());
+  BinaryReadArchive reader(&source);
+
+  int32_t a; int64_t b; std::string c; v32 d{0}; v64 e{0};
+  reader >> a >> b >> c >> d >> e;
+  EXPECT_EQ(a, 0x12345678);
+  EXPECT_EQ(b, -1);
+  EXPECT_EQ(c, "hello");
+  EXPECT_EQ(d.get(), 5);
+  EXPECT_EQ(e.get(), 1024);
+  EXPECT_TRUE(source.eof());
+}
+
+TEST(FdSinkArchive, ByteForByteCompatVsBufferSink) {
+  // Encode the same payload via FdSink and BufferSink; compare bytes.
+  // This proves FdSink does not introduce any framing/transformation.
+  ScopedPipe p;
+
+  std::vector<uint8_t> fd_bytes;
+  std::thread reader_thread([&] {
+    uint8_t chunk[256];
+    while (true) {
+      ssize_t r = ::read(p.fds[0], chunk, sizeof(chunk));
+      if (r <= 0) break;
+      fd_bytes.insert(fd_bytes.end(), chunk, chunk + r);
+    }
+  });
+
+  {
+    FdSink sink(p.fds[1]);
+    BinaryWriteArchive writer(&sink);
+    writer << static_cast<uint32_t>(42);
+    writer << std::string("the quick brown fox");
+    writer << v64(0x123456789ABCDEFLL);
+    std::vector<int32_t> vec{1, 2, 3, 4, 5};
+    writer << vec;
+  }
+  p.close_write();
+  reader_thread.join();
+
+  BufferSink ref_sink;
+  BinaryWriteArchive ref_writer(&ref_sink);
+  ref_writer << static_cast<uint32_t>(42);
+  ref_writer << std::string("the quick brown fox");
+  ref_writer << v64(0x123456789ABCDEFLL);
+  std::vector<int32_t> vec{1, 2, 3, 4, 5};
+  ref_writer << vec;
+
+  std::vector<uint8_t> ref_bytes(ref_sink.bytes.len());
+  for (size_t i = 0; i < ref_sink.bytes.len(); ++i) ref_bytes[i] = ref_sink.bytes[i];
+
+  EXPECT_EQ(fd_bytes, ref_bytes);
+}
+
+TEST(FdSourceArchive, TempFileRoundTripCompositeSequence) {
+  ScopedTempFile tf;
+
+  // Encode via FdSink directly to the temp file.
+  {
+    FdSink sink(tf.fd);
+    BinaryWriteArchive writer(&sink);
+    writer << static_cast<int32_t>(7);
+    writer << static_cast<int64_t>(-99);
+    writer << std::string("temp file payload");
+    std::vector<std::string> strs{"a", "bb", "ccc"};
+    writer << strs;
+    std::map<int32_t, int64_t> m{{1, 100}, {2, 200}, {3, 300}};
+    writer << m;
+  }
+  // Flush by closing — done by ScopedTempFile dtor at scope end. Force
+  // it now since we want to reopen for reading.
+  ::fsync(tf.fd);
+
+  // Reopen and decode via FdSource.
+  int rfd = tf.reopen_ro();
+  {
+    FdSource src(rfd);
+    BinaryReadArchive reader(&src);
+    int32_t a; int64_t b; std::string c;
+    std::vector<std::string> strs;
+    std::map<int32_t, int64_t> m;
+    reader >> a >> b >> c >> strs >> m;
+    EXPECT_EQ(a, 7);
+    EXPECT_EQ(b, -99);
+    EXPECT_EQ(c, "temp file payload");
+    EXPECT_EQ(strs.size(), 3u);
+    EXPECT_EQ(strs[0], "a");
+    EXPECT_EQ(strs[1], "bb");
+    EXPECT_EQ(strs[2], "ccc");
+    EXPECT_EQ(m.size(), 3u);
+    EXPECT_EQ(m[1], 100);
+    EXPECT_EQ(m[2], 200);
+    EXPECT_EQ(m[3], 300);
+  }
+  ::close(rfd);
+}
+
+TEST(FdSinkArchive, LargePayloadChunkedWrite) {
+  // Exceeds typical 64KB pipe buffer — exercises FdSink's full-write
+  // loop. We use a thread to drain the pipe in parallel.
+  ScopedPipe p;
+
+  std::vector<uint8_t> drained;
+  std::thread reader_thread([&] {
+    uint8_t chunk[8192];
+    while (true) {
+      ssize_t r = ::read(p.fds[0], chunk, sizeof(chunk));
+      if (r <= 0) break;
+      drained.insert(drained.end(), chunk, chunk + r);
+    }
+  });
+
+  // 200KB payload of std::vector<int32_t> = 50000 * 4 bytes + length
+  // prefix.
+  std::vector<int32_t> big;
+  big.reserve(50000);
+  for (int32_t i = 0; i < 50000; ++i) big.push_back(i);
+
+  {
+    FdSink sink(p.fds[1]);
+    BinaryWriteArchive writer(&sink);
+    writer << big;
+  }
+  p.close_write();
+  reader_thread.join();
+
+  // Decode and verify.
+  BufferSource source(drained.data(), drained.size());
+  BinaryReadArchive reader(&source);
+  std::vector<int32_t> decoded;
+  reader >> decoded;
+  EXPECT_EQ(decoded.size(), big.size());
+  EXPECT_EQ(decoded, big);
+  EXPECT_TRUE(source.eof());
+}
+
+TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
+  // The producer writes in tiny chunks (1 byte at a time) so that
+  // FdSource's full-read loop exercises multiple ::read calls per
+  // operator>>. We feed enough data to encode several primitives.
+  ScopedPipe p;
+
+  // Pre-encode the payload into a buffer so the producer thread just
+  // splatters bytes onto the pipe in 1-byte writes.
+  BufferSink prep_sink;
+  BinaryWriteArchive prep(&prep_sink);
+  prep << static_cast<int32_t>(0xDEADBEEF);
+  prep << static_cast<int64_t>(0x1122334455667788LL);
+  prep << std::string("chunked across syscalls");
+  prep << v64(987654321LL);
+
+  std::vector<uint8_t> payload(prep_sink.bytes.len());
+  for (size_t i = 0; i < prep_sink.bytes.len(); ++i) payload[i] = prep_sink.bytes[i];
+
+  std::thread writer_thread([&] {
+    for (uint8_t b : payload) {
+      // 1-byte writes maximize ::read short-returns on the consumer.
+      ssize_t r = ::write(p.fds[1], &b, 1);
+      EXPECT_EQ(r, 1);
+    }
+    ::close(p.fds[1]);
+    p.fds[1] = -1;
+  });
+
+  FdSource src(p.fds[0]);
+  BinaryReadArchive reader(&src);
+  int32_t a; int64_t b; std::string c; v64 d{0};
+  reader >> a >> b >> c >> d;
+  EXPECT_EQ(static_cast<uint32_t>(a), 0xDEADBEEFu);
+  EXPECT_EQ(b, 0x1122334455667788LL);
+  EXPECT_EQ(c, "chunked across syscalls");
+  EXPECT_EQ(d.get(), 987654321LL);
+
+  writer_thread.join();
 }
 
 }  // namespace
