@@ -650,6 +650,51 @@ remains (for `EINVAL` / `ENOENT` constants in the dispatch
 path). `Server` is now reduced to its dispatch + lifecycle
 state plus the channel binding.
 
+Workstream K, sub-leaves 6a–6d — in-memory channel backend.
+`src/rrr/rpc/inmemory_channel.{hpp,cpp}` adds a deterministic
+in-process channel implementation conforming to the same
+`ChannelConnectionFacade` / `ChannelListenerFacade` /
+`ChannelFactoryFacade` contracts as the TCP backend. Components:
+
+  * `InMemorySwitchboard` — thread-safe address → `Weak<InMemoryListener>`
+    map. Thin lookup surface (`bind`, `unbind`, `lookup`); the address
+    space is whatever string the caller chooses (e.g.
+    `"inmemory://server-1"`).
+  * `InMemoryConnectionState` — shared `Arc<>` state between the two
+    sides of an in-memory channel pair: per-side callback storage
+    (`on_frame` / `on_closed` / `on_error`), closed flags, and
+    test-only fault-injection counters (drop / error). Mutated under
+    a single `SpinMutex`.
+  * `InMemoryChannel` — one side of a pair. `send_frame(...)` copies
+    the bytes (the channel-layer contract requires the buffer to be
+    valid only during the callback) and synchronously invokes the
+    *peer's* `on_frame` callback. `close()` fires the peer's
+    `on_closed` (not self's, mirroring TCP's "remote saw FIN"
+    semantics). `is_closed()` reports the joint state
+    (`a_closed || b_closed`).
+  * `InMemoryListener` — registers itself with the switchboard at
+    `listen(addr)` and unregisters at `close()`. `on_accept` fires
+    synchronously inside `connect(...)` after the channel pair is
+    constructed.
+  * `InMemoryFactory` — `connect(addr)` looks up the listener for
+    `addr`, builds a fresh `Arc<InMemoryConnectionState>`, splits it
+    into two `InMemoryChannel`s with a synthesized client peer
+    address, fires the listener's `on_accept` with the server-side
+    proxy, and returns the client-side proxy. If no listener is
+    registered, returns `ChannelError::ConnectionRefused`.
+
+Fault-injection knobs (`inject_drop_next_sends(N)`,
+`inject_send_error(err, N)`, `clear_fault_injection()`) live on
+`InMemoryChannel` and are exposed through a test-only
+`make_channel_pair_for_testing(a_addr, b_addr)` helper. Drops fire
+before errors when both are queued; `closed` always wins.
+
+The end-to-end test `src/rrr/tests/rpc_inmemory_channel_e2e_test.cc`
+drives a real `Server` + `Client` through the `InMemoryFactory`
+without any real sockets — useful as a deterministic foundation for
+RPC-layer reliability tests (reconnect coverage, partition-induced
+timeout coverage) that previously had to rely on TCP timing.
+
 ### Error Codes
 
 | Code | Meaning |
