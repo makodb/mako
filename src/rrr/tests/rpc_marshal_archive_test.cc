@@ -921,5 +921,180 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
   writer_thread.join();
 }
 
+// ---- SerializableProxy / SerializableRegistry (Phase 2) --------------
+
+// Canary command for Phase 2: implements BOTH the new Serializable
+// interface (`save` / `load` / `kind`) AND the old Marshal-based
+// interface (`to_marshal` / `from_marshal`) so we can byte-compare
+// the two paths.
+//
+// This type is intentionally test-local — Phase 2 only validates the
+// new infrastructure. Per-command-type production migrations land in
+// Phase 4.
+struct CanaryCommand {
+  int32_t id{0};
+  std::string name;
+  std::vector<int64_t> values;
+
+  static constexpr int32_t kKind = 0xCAFE;
+
+  // ---- New Serializable interface (Layer 4 of marshal_archive) ----
+  int32_t kind() const { return kKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << id << name << values;
+  }
+
+  void load(BinaryReadArchive& ar) {
+    ar >> id >> name >> values;
+  }
+
+  // ---- Old Marshal-based interface (for byte-compat verification) -
+  Marshal& to_marshal(Marshal& m) const {
+    m << id << name << values;
+    return m;
+  }
+
+  Marshal& from_marshal(Marshal& m) {
+    m >> id >> name >> values;
+    return m;
+  }
+};
+
+TEST(SerializableProxy, ByteCompatVsMarshalDirect) {
+  // Encode the same payload via:
+  //   (a) the old Marshal path: canary.to_marshal(m)
+  //   (b) the new SerializableProxy path: proxy->save(writer)
+  // and assert the two byte streams are identical.
+  CanaryCommand canary;
+  canary.id = 42;
+  canary.name = "hello, world";
+  canary.values = {1, 2, 3, 4, 5};
+
+  // Path (a): old Marshal.
+  Marshal old_m;
+  canary.to_marshal(old_m);
+  auto old_bytes = drain_marshal(old_m);
+
+  // Path (b): SerializableProxy.
+  SerializableProxy proxy = make_serializable_proxy<CanaryCommand>(canary);
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  proxy->save(writer);
+  auto new_bytes = sink_to_vector(sink);
+
+  ASSERT_EQ(old_bytes.size(), new_bytes.size());
+  EXPECT_EQ(old_bytes, new_bytes);
+}
+
+TEST(SerializableProxy, KindIsExposedThroughProxy) {
+  SerializableProxy proxy = make_serializable_proxy<CanaryCommand>();
+  EXPECT_EQ(proxy->kind(), CanaryCommand::kKind);
+}
+
+TEST(SerializableProxy, RoundTripSaveLoadViaProxy) {
+  // Serialize an instance through the proxy, then deserialize into a
+  // fresh proxy. Verify that re-serializing the loaded proxy gives
+  // identical bytes (proves the load populated state correctly).
+  CanaryCommand orig;
+  orig.id = 7;
+  orig.name = "round trip";
+  orig.values = {-100, 0, 100};
+
+  // Save orig.
+  SerializableProxy save_proxy = make_serializable_proxy<CanaryCommand>(orig);
+  BufferSink sink_orig;
+  BinaryWriteArchive writer_orig(&sink_orig);
+  save_proxy->save(writer_orig);
+  auto orig_bytes = sink_to_vector(sink_orig);
+
+  // Load into a fresh (default-constructed) proxy.
+  SerializableProxy load_proxy = make_serializable_proxy<CanaryCommand>();
+  BufferSource source(orig_bytes.data(), orig_bytes.size());
+  BinaryReadArchive reader(&source);
+  load_proxy->load(reader);
+  EXPECT_TRUE(source.eof());
+
+  // Re-save via the loaded proxy. Bytes must match exactly.
+  BufferSink sink_loaded;
+  BinaryWriteArchive writer_loaded(&sink_loaded);
+  load_proxy->save(writer_loaded);
+  auto loaded_bytes = sink_to_vector(sink_loaded);
+
+  EXPECT_EQ(orig_bytes, loaded_bytes);
+}
+
+TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
+  // Phase 2 DoD test: factory registry produces a fresh proxy whose
+  // bytes match an independently-saved instance after load.
+  SerializableRegistry::clear_for_testing();
+  ASSERT_FALSE(SerializableRegistry::is_registered(CanaryCommand::kKind));
+
+  // Register CanaryCommand under its kind.
+  (void)SerializableRegistry::reg<CanaryCommand>(CanaryCommand::kKind);
+  EXPECT_TRUE(SerializableRegistry::is_registered(CanaryCommand::kKind));
+
+  // Create + populate the source.
+  CanaryCommand orig;
+  orig.id = 1234;
+  orig.name = "registry path";
+  orig.values = {7, 8, 9};
+
+  BufferSink sink_src;
+  BinaryWriteArchive writer_src(&sink_src);
+  orig.save(writer_src);
+  auto src_bytes = sink_to_vector(sink_src);
+
+  // Use the registry to create a fresh proxy from the kind, then load.
+  SerializableProxy proxy = SerializableRegistry::create(CanaryCommand::kKind);
+  EXPECT_EQ(proxy->kind(), CanaryCommand::kKind);
+
+  BufferSource source(src_bytes.data(), src_bytes.size());
+  BinaryReadArchive reader(&source);
+  proxy->load(reader);
+  EXPECT_TRUE(source.eof());
+
+  // Save via the loaded proxy; compare bytes.
+  BufferSink sink_loaded;
+  BinaryWriteArchive writer_loaded(&sink_loaded);
+  proxy->save(writer_loaded);
+  auto loaded_bytes = sink_to_vector(sink_loaded);
+  EXPECT_EQ(src_bytes, loaded_bytes);
+
+  SerializableRegistry::clear_for_testing();
+}
+
+TEST(SerializableRegistry, MultipleKindsCoexist) {
+  // Two different kinds should be retrievable independently.
+  // We re-use CanaryCommand as the underlying type (the registry
+  // doesn't know or care about T identity, only the kind tag and the
+  // factory's return value).
+  SerializableRegistry::clear_for_testing();
+
+  constexpr int32_t kKindA = 0xAAAA;
+  constexpr int32_t kKindB = 0xBBBB;
+
+  // Different factories under different kinds. The factories happen
+  // to construct CanaryCommand here, but in production they'd be
+  // distinct types.
+  (void)SerializableRegistry::reg<CanaryCommand>(kKindA);
+  (void)SerializableRegistry::reg<CanaryCommand>(kKindB);
+
+  EXPECT_TRUE(SerializableRegistry::is_registered(kKindA));
+  EXPECT_TRUE(SerializableRegistry::is_registered(kKindB));
+  EXPECT_FALSE(SerializableRegistry::is_registered(0xCCCC));
+
+  auto pa = SerializableRegistry::create(kKindA);
+  auto pb = SerializableRegistry::create(kKindB);
+  // Both proxies report the kind that the underlying type's kind()
+  // returns — `CanaryCommand::kKind` (0xCAFE), because we registered
+  // CanaryCommand under both. This is the expected behavior: the
+  // proxy reflects the CONCRETE type's kind, not the registry slot.
+  EXPECT_EQ(pa->kind(), CanaryCommand::kKind);
+  EXPECT_EQ(pb->kind(), CanaryCommand::kKind);
+
+  SerializableRegistry::clear_for_testing();
+}
+
 }  // namespace
 }  // namespace rrr

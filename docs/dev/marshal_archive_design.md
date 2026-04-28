@@ -190,14 +190,25 @@ The user's `serialize` method **is** templated on archive (so that `BinaryWriteA
 ### Layer 4: Serializable proxy (runtime polymorphism)
 
 ```cpp
-PRO_DEF_MEM_DISPATCH(SerializableMemSerialize, serialize);
-PRO_DEF_MEM_DISPATCH(SerializableMemKind,      kind);
+PRO_DEF_MEM_DISPATCH(SerializableMemSave, save);
+PRO_DEF_MEM_DISPATCH(SerializableMemLoad, load);
+PRO_DEF_MEM_DISPATCH(SerializableMemKind, kind);
 struct SerializableFacade : pro::facade_builder
-    ::add_convention<SerializableMemSerialize, void(BinaryWriteArchive&) const>
-    ::add_convention<SerializableMemKind,      int32_t() const>
+    ::add_convention<SerializableMemSave, void(BinaryWriteArchive&) const>
+    ::add_convention<SerializableMemLoad, void(BinaryReadArchive&)>
+    ::add_convention<SerializableMemKind, int32_t() const>
     ::build {};
 using SerializableProxy = pro::proxy<SerializableFacade>;
 ```
+
+(Implementation note — Phase 2 split the original single `serialize`
+template method into separate `save` / `load` overloads, matching the
+operator<< / operator>> split between `BinaryWriteArchive` and
+`BinaryReadArchive`. cereal's unified `serialize` only works because
+its archive types share an `operator()` interface; with separate
+operator<< / operator>> the symmetry breaks down. save+load is also
+cereal's documented fallback for asymmetric round-trips and adds
+zero per-call overhead.)
 
 Open-set polymorphism (mako needs this for arbitrary command kinds) goes through this proxy + a factory registry indexed by `kind`:
 
@@ -206,14 +217,12 @@ Open-set polymorphism (mako needs this for arbitrary command kinds) goes through
 SerializableRegistry::reg<TpcCommitCmd>(KIND_TPC_COMMIT);
 
 // Send side:
-TpcCommitCmd cmd{...};
-SerializableProxy proxy = pro::make_proxy<SerializableFacade>(std::move(cmd));
-proxy->serialize(write_archive);   // encodes the payload only
+SerializableProxy proxy = make_serializable_proxy<TpcCommitCmd>(args...);
+proxy->save(write_archive);   // encodes the payload only
 
 // Receive side (the kind has been read from the wire by the framework):
-auto factory = SerializableRegistry::get(kind);
-SerializableProxy obj = factory();  // default-constructs the right type
-obj->deserialize(read_archive);     // decodes the payload
+SerializableProxy obj = SerializableRegistry::create(kind);
+obj->load(read_archive);      // decodes the payload
 ```
 
 For closed-set sites (where the codebase knows all the command types statically), a `std::variant<TpcCommitCmd, NoopCmd, ...>` + the BinaryArchive is more efficient (no virtual call) — but the open-set proxy is the canonical replacement for `MarshallDeputy`.
