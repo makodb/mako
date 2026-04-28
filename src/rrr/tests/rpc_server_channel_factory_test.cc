@@ -282,6 +282,15 @@ TEST_F(ServerChannelFactoryTest, DestructorClosesChannelListener) {
     EXPECT_EQ(listener_stub->close_calls_, 0);
 
     server_.reset();
+    // 5f: ~Server schedules listener close on the poll thread via a
+    // OneTimeJob (to avoid the CmdAddPollable race), so we poll for
+    // the close to take effect.
+    auto deadline = std::chrono::steady_clock::now()
+                  + std::chrono::milliseconds(2000);
+    while (listener_stub->close_calls_ == 0
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     EXPECT_GE(listener_stub->close_calls_, 1);
 }
 
@@ -309,17 +318,22 @@ TEST_F(ServerChannelFactoryTest, StopAcceptingClosesListenerOnly) {
 }
 
 // ---------------------------------------------------------------------------
-// Without bound factory, start() takes the legacy listener path
-// (verified indirectly: the test factory was never installed, so
-// make_listener_calls_ stays 0 even after start succeeds on a real
-// loopback bind).
+// 5f: without an explicitly-bound factory, `Server::start` auto-installs
+// a default `TcpFactory` and goes through the channel path. The
+// stub-factory in this fixture is unused (never set on the server),
+// so it sees zero make_listener_calls_; the real bind happens via
+// the auto-installed TcpFactory against the loopback address.
 // ---------------------------------------------------------------------------
 
-TEST_F(ServerChannelFactoryTest, StartWithoutFactoryUsesLegacyPath) {
+TEST_F(ServerChannelFactoryTest, StartWithoutFactoryAutoInstallsDefault) {
     auto factory_stub = std::make_shared<FactoryStub>();
     // Note: factory NOT installed on the server.
     EXPECT_EQ(server_->start("127.0.0.1:0"), 0);
+    // The fixture's stub was never bound, so it sees no calls.
     EXPECT_EQ(factory_stub->make_listener_calls_, 0);
+    // The server is now in channel mode by virtue of auto-install
+    // (real TcpFactory bound from inside `start`); destruction via
+    // fixture teardown closes the auto-installed channel listener.
 }
 
 }  // namespace

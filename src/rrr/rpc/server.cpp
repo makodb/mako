@@ -516,13 +516,31 @@ void ServerConnection::handle_error() {
 
 // @safe - Closes connection
 // SAFETY: Internal @unsafe block for system calls and pointer operations
+//
+// 5f: also drive the bound channel proxy's close() so the underlying
+// `TcpConnection` (or other backend) tears down the peer-facing fd.
+// The channel-layer proxy.close() is idempotent and safe under
+// recursive entry: close() may be called from `on_closed` which 5d
+// installs, and 5d's on_closed → close() → proxy.close() →
+// (idempotent) on_closed re-fires without effect.
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
         status_ = CLOSED;
-        // @unsafe - system call
+        // @unsafe - system call (no-op for socket_ == -1 in channel mode)
         {
             ::close(socket_);
             Log_debug("server@%s close ServerConnection at fd=%d", ctx_->addr.c_str(), socket_);
+        }
+        // 5f: tear down the channel proxy. Idempotent per channel-
+        // layer contract.
+        // @unsafe { SpinMutex::lock + ChannelConnectionProxy method dispatch }
+        {
+            auto guard = channel_proxy_.lock().unwrap();
+            if (guard->is_some()) {
+                auto* proxy = const_cast<ChannelConnectionProxy*>(
+                    guard->as_ref().unwrap().get());
+                (*proxy)->close();
+            }
         }
         // Note: We don't remove fd from Server's sconn_fds_ list.
         // At shutdown, Server will request_close on all fds (closed ones are no-ops).
@@ -605,28 +623,57 @@ Server::~Server() noexcept {
         server_listener_ = rusty::None;  // Reset to None
     }
 
-    // 5e: tear down the channel-mode listener (if bound). The proxy's
-    // close() is idempotent; dropping the Box afterwards releases the
-    // proxy's underlying TcpListener (or other backend), which closes
-    // its listening fd via its destructor.
+    // 5e/5f: tear down the channel-mode listener (if bound). The
+    // proxy's close() is idempotent; dropping the Box afterwards
+    // releases the proxy's underlying TcpListener (or other backend),
+    // which closes its listening fd via its destructor.
+    //
+    // Note: the listener may have just been registered with the
+    // poll thread (the channel layer auto-registers via add_proxy
+    // inside `listen()`). Calling close() directly from the user
+    // thread races against the poll thread's pending CmdAddPollable
+    // — by the time the poll thread reads `fd()`, it could already
+    // be -1, tripping `Epoll::Add`'s fd>=0 verify. We schedule the
+    // close on the poll thread via a OneTimeJob so commands are
+    // processed in order (mirrors `Client::close`'s 4g3c3 fix). The
+    // proxy holds an Arc<TcpListener> so the close() call inside
+    // the job sees a live listener even though the original Box has
+    // been moved into the lambda.
     if (channel_listener_.is_some()) {
-        // @unsafe { Box::get + ChannelListenerProxy method dispatch }
-        {
-            auto* listener = const_cast<ChannelListenerProxy*>(
-                channel_listener_.as_ref().unwrap().get());
-            (*listener)->close();
-        }
+        // Box is move-only and pro::proxy<F> is move-only, so wrap
+        // in std::shared_ptr to make the lambda copyable (required
+        // by std::function inside OneTimeJob).
+        auto listener_sp = std::make_shared<rusty::Box<ChannelListenerProxy>>(
+            std::move(channel_listener_).unwrap());
+        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
+            [listener_sp]() mutable {
+                auto* listener = listener_sp->get();
+                (*listener)->close();
+            }));
+        auto close_job_base = rusty::Arc<Job>(close_job);
+        poll_thread_.as_ref().unwrap()->add(std::move(close_job_base));
         channel_listener_ = rusty::None;
     }
-    // Drop accepted-connection Arcs. Each connection's `bind_channel`
-    // callbacks captured a Weak<ServerConnection> so dropping the
-    // last Arc here releases the ServerConnection. The
-    // ChannelConnectionProxy stored inside each ServerConnection is
-    // dropped along with it, which releases the underlying
-    // TcpConnection's pollable Arc; that fd is then closed by the
-    // poll-thread cleanup.
+    // 5f: actively close each accepted channel-mode ServerConnection
+    // before dropping the Arcs. ServerConnection::close() drives the
+    // bound channel proxy's close() which closes the underlying
+    // TcpConnection's fd, so the peer (Client) sees EOF immediately
+    // — without this active close, the TcpConnection's other Arc
+    // (held by the poll thread's pollable proxy) would keep it alive
+    // and the client would only notice on its next request attempt.
+    // close() is idempotent (gated on status_ == CONNECTED), so
+    // already-closed connections are no-ops.
     {
         auto guard = channel_sconns_.lock().unwrap();
+        for (auto& sconn : *guard) {
+            // @unsafe - const_cast through Arc::get for close()
+            auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());
+            mut_sconn.close();
+        }
+        // Drop the Arcs. The ChannelConnectionProxy stored inside
+        // each ServerConnection drops along with the ServerConnection,
+        // releasing the underlying TcpConnection's other refcount;
+        // that fd is then closed by the poll-thread cleanup chain.
         guard->clear();
     }
 
@@ -870,16 +917,30 @@ int Server::start(const char* bind_addr) {
       drop_heartbeat_replies_,
       instance_id_));
 
+  // Workstream K, server sub-leaf 5f — auto-install default TcpFactory.
+  //
+  // If the caller hasn't bound a factory via `set_channel_factory(...)`,
+  // construct one wrapping a default `TcpFactory(poll_thread_)` so the
+  // channel-mode path below is unconditional. Mirrors the client-side
+  // post-4g4 pattern (`Client::connect` auto-installs a default TCP
+  // factory). The legacy `ServerListener` socket path remains in
+  // `server.cpp` for now but is unreachable from `Server::start` — 5g
+  // deletes it.
+  if (!is_channel_factory_bound()) {
+    auto tcp_factory = rusty::Arc<TcpFactory>::make(
+        poll_thread_.as_ref().unwrap().clone());
+    set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
+  }
+
   // Workstream K, server sub-leaf 5e — channel-mode listen path.
   //
-  // When a `ChannelFactoryProxy` has been bound via
-  // `set_channel_factory(...)`, route `start(addr)` through
-  // `factory->make_listener() -> listener.set_on_accept(...) ->
-  // listener->listen(addr)` instead of the legacy `ServerListener`
-  // socket path. The on_accept callback constructs a
-  // `ServerConnection` bound to the new channel proxy (via 5b/5c/5d's
-  // `bind_channel(...)`) and parks it in `channel_sconns_` so its
-  // lifetime is tied to the `Server` (not the on_accept stack frame).
+  // Routes `start(addr)` through `factory->make_listener() ->
+  // listener.set_on_accept(...) -> listener->listen(addr)` instead
+  // of the legacy `ServerListener` socket path. The on_accept
+  // callback constructs a `ServerConnection` bound to the new
+  // channel proxy (via 5b/5c/5d's `bind_channel(...)`) and parks
+  // it in `channel_sconns_` so its lifetime is tied to the
+  // `Server` (not the on_accept stack frame).
   if (is_channel_factory_bound()) {
     ChannelListenerProxy listener;
     // @unsafe { Box<ChannelFactoryProxy>::get + proxy method dispatch }
@@ -1026,6 +1087,13 @@ void Server::stop_accepting() {
         Log_info("Server::stop_accepting: channel listener closed, "
                  "no longer accepting connections");
     }
+    // Note: stop_accepting() is typically called well after the
+    // listener has been registered with the poll thread (via the
+    // channel-layer's auto-register in TcpListener::listen), so the
+    // direct `proxy->close()` above doesn't race with a pending
+    // `CmdAddPollable`. ~Server's teardown takes a more defensive
+    // approach (scheduling the close via a OneTimeJob) because in
+    // tests the listener may have just been registered.
 }
 
 // @unsafe - Uses std::atomic::load
