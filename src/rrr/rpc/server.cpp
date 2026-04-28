@@ -605,6 +605,31 @@ Server::~Server() noexcept {
         server_listener_ = rusty::None;  // Reset to None
     }
 
+    // 5e: tear down the channel-mode listener (if bound). The proxy's
+    // close() is idempotent; dropping the Box afterwards releases the
+    // proxy's underlying TcpListener (or other backend), which closes
+    // its listening fd via its destructor.
+    if (channel_listener_.is_some()) {
+        // @unsafe { Box::get + ChannelListenerProxy method dispatch }
+        {
+            auto* listener = const_cast<ChannelListenerProxy*>(
+                channel_listener_.as_ref().unwrap().get());
+            (*listener)->close();
+        }
+        channel_listener_ = rusty::None;
+    }
+    // Drop accepted-connection Arcs. Each connection's `bind_channel`
+    // callbacks captured a Weak<ServerConnection> so dropping the
+    // last Arc here releases the ServerConnection. The
+    // ChannelConnectionProxy stored inside each ServerConnection is
+    // dropped along with it, which releases the underlying
+    // TcpConnection's pollable Arc; that fd is then closed by the
+    // poll-thread cleanup.
+    {
+        auto guard = channel_sconns_.lock().unwrap();
+        guard->clear();
+    }
+
     // No need to wait for connections - Arc<RpcServiceContext> ensures services
     // stay alive until the last ServerConnection drops its Arc reference.
     // Services are automatically cleaned up when last Arc is dropped.
@@ -845,6 +870,82 @@ int Server::start(const char* bind_addr) {
       drop_heartbeat_replies_,
       instance_id_));
 
+  // Workstream K, server sub-leaf 5e — channel-mode listen path.
+  //
+  // When a `ChannelFactoryProxy` has been bound via
+  // `set_channel_factory(...)`, route `start(addr)` through
+  // `factory->make_listener() -> listener.set_on_accept(...) ->
+  // listener->listen(addr)` instead of the legacy `ServerListener`
+  // socket path. The on_accept callback constructs a
+  // `ServerConnection` bound to the new channel proxy (via 5b/5c/5d's
+  // `bind_channel(...)`) and parks it in `channel_sconns_` so its
+  // lifetime is tied to the `Server` (not the on_accept stack frame).
+  if (is_channel_factory_bound()) {
+    ChannelListenerProxy listener;
+    // @unsafe { Box<ChannelFactoryProxy>::get + proxy method dispatch }
+    {
+      auto* factory = const_cast<ChannelFactoryProxy*>(
+          channel_factory_.as_ref().unwrap().get());
+      listener = (*factory)->make_listener();
+    }
+    if (!listener.has_value()) {
+      Log_error("rrr::Server::start: factory->make_listener() returned a "
+                "null proxy (factory backend=%s)",
+                /*best-effort name*/ "unknown");
+      ctx_ = rusty::None;
+      return -1;
+    }
+
+    // Capture for the on_accept lambda. `this` outlives the listener
+    // because Server owns `channel_listener_` (and `channel_sconns_`)
+    // — destroying Server drops the listener which in turn waits for
+    // any in-flight on_accept callback to complete (channel-layer
+    // contract).
+    Server* server_ptr = this;
+    rusty::Arc<RpcServiceContext> ctx_arc = ctx_.as_ref().unwrap().clone();
+
+    // @unsafe - lambda capture, channel proxy mutator
+    listener->set_on_accept([server_ptr, ctx_arc](
+                                ChannelConnectionProxy conn_proxy) {
+      if (!conn_proxy.has_value()) return;
+      auto sconn = rusty::Arc<ServerConnection>::make(
+          ctx_arc.clone(), /*socket=*/-1);
+      auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());
+      // Wire `weak_self_` so bind_channel's installed callbacks can
+      // upgrade to a strong ref.
+      mut_sconn.install_self_weak_for_testing(rusty::sync::downgrade(sconn));
+      mut_sconn.bind_channel(std::move(conn_proxy));
+      // Park the Arc on the server so the on_frame / on_closed
+      // callbacks (which only hold a Weak) keep observing a live
+      // connection.
+      // @unsafe { SpinMutex::lock + Vec::push }
+      {
+        auto guard = server_ptr->channel_sconns_.lock().unwrap();
+        guard->push(std::move(sconn));
+      }
+    });
+    listener->set_on_error([](ChannelError err, std::string_view msg) {
+      // @unsafe - Log_warn formatting + std::string_view bridge
+      Log_warn("rrr::Server: channel listener error %s: %.*s",
+               channel_error_to_string(err),
+               static_cast<int>(msg.size()), msg.data());
+    });
+
+    ChannelError listen_err = listener->listen(std::string_view(bind_addr));
+    if (listen_err != ChannelError::None) {
+      Log_error("rrr::Server::start: channel listener failed to bind %s: %s",
+                bind_addr, channel_error_to_string(listen_err));
+      ctx_ = rusty::None;
+      return -1;
+    }
+
+    // Park the listener on the server so its lifetime matches Server's.
+    // @unsafe { make_box + Option assignment }
+    channel_listener_ = rusty::Some(
+        rusty::make_box<ChannelListenerProxy>(std::move(listener)));
+    return 0;
+  }
+
   server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
       ctx_.as_ref().unwrap().clone(), addr_str));
 
@@ -910,6 +1011,20 @@ void Server::stop_accepting() {
         auto& listener = server_listener_.as_ref().unwrap();
         poll_thread_.as_ref().unwrap()->request_close(listener->fd());
         Log_info("Server::stop_accepting: listener closed, no longer accepting connections");
+    }
+    // 5e: also close the channel-mode listener if bound. The proxy's
+    // close() is idempotent and refuses further accepts; existing
+    // accepted connections in `channel_sconns_` are unaffected (they
+    // continue to serve in-flight requests until drained / shut down).
+    if (channel_listener_.is_some()) {
+        // @unsafe { Box::get + ChannelListenerProxy method dispatch }
+        {
+            auto* listener = const_cast<ChannelListenerProxy*>(
+                channel_listener_.as_ref().unwrap().get());
+            (*listener)->close();
+        }
+        Log_info("Server::stop_accepting: channel listener closed, "
+                 "no longer accepting connections");
     }
 }
 

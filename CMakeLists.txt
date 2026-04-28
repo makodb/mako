@@ -1889,6 +1889,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_server_channel_close ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_server_channel_close COMMAND test_rpc_server_channel_close)
 
+    # SRPC server channel-factory listen path (Workstream K, server sub-leaf 5e)
+    add_executable(test_rpc_server_channel_factory src/rrr/tests/rpc_server_channel_factory_test.cc)
+    target_include_directories(test_rpc_server_channel_factory PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_server_channel_factory PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_server_channel_factory ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_server_channel_factory COMMAND test_rpc_server_channel_factory)
+
     # SRPC client channel-mode outbound-send (Workstream K, sub-leaf 4b)
     add_executable(test_rpc_client_channel_send src/rrr/tests/rpc_client_channel_send_test.cc)
     target_include_directories(test_rpc_client_channel_send PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

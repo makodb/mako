@@ -770,16 +770,36 @@ class Server: public NoCopy {
     // Workstream K, server sub-leaf 5a — channel-factory scaffolding.
     //
     // When a `ChannelFactoryProxy` is bound via `set_channel_factory(...)`,
-    // subsequent leaves (5e/5f) will route `Server::start(addr)` through
-    // `factory->make_listener() -> listener.set_on_accept(...) ->
-    // listener->listen(addr)` instead of the legacy `ServerListener`'s
-    // `socket(2)+bind(2)+listen(2)+accept(2)+epoll` path. For 5a this
-    // field is purely a holder — no code path reads it yet.
+    // 5e routes `Server::start(addr)` through `factory->make_listener()
+    // -> listener.set_on_accept(...) -> listener->listen(addr)` instead
+    // of the legacy `ServerListener`'s `socket(2)+bind(2)+listen(2)+
+    // accept(2)+epoll` path.
     //
     // `Box`ed because `pro::proxy<F>` triggers a cyclic-constraint
     // diagnostic when used directly as the value type of `rusty::Option`
     // (same workaround applied to `ClientConnection::factory_`).
     rusty::Option<rusty::Box<ChannelFactoryProxy>> channel_factory_{rusty::None};
+
+    // Workstream K, server sub-leaf 5e — channel-mode listener +
+    // accepted-connection tracking.
+    //
+    // `channel_listener_` owns the `ChannelListenerProxy` returned by
+    // `factory->make_listener()`. It is held on the server so the
+    // listener's lifetime matches the server's; dropping it (in
+    // `~Server` or `stop_accepting`) tears down the listening socket
+    // via the proxy's `close()` and the underlying TcpListener's
+    // destructor.
+    //
+    // `channel_sconns_` holds Arcs to each accepted channel-mode
+    // ServerConnection so they outlive the on_accept callback's stack
+    // frame. Each on_closed (wired in 5d) marks the connection CLOSED
+    // but does not remove it from the vec — eviction is deferred to
+    // `~Server`'s drop. SpinMutex so concurrent on_accept invocations
+    // (the channel layer can fire on_accept on the poll thread while
+    // a user thread iterates) stay safe.
+    rusty::Option<rusty::Box<ChannelListenerProxy>> channel_listener_{rusty::None};
+    mutable SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>
+        channel_sconns_{rusty::Vec<rusty::Arc<ServerConnection>>()};
 
 public:
     // @safe - Creates server with optional PollThread
