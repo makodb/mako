@@ -772,14 +772,44 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
         - Tests: added `ClientChannelSendTest.ConcurrentDispatchIsThreadSafe` in `src/rrr/tests/rpc_client_channel_send_test.cc` — drives 100 threads × 10 requests = 1,000 concurrent `request(...)` calls through a fake channel and asserts every dispatch succeeds and every frame reaches the stub. Passes; pre-fix, the same test would have either thrown from RefCell or silently lost frames.
         - Verification: 17/17 `test_rpc` + 15/15 `test_rpc_extended` legacy-path regression suite green; all 12 channel-layer tests green; new concurrent dispatch test passes 100/100 thread × request combinations in 8 ms.
         - Out of scope: the channel-mode `MultiThreadedStressTest` wedge documented in 4f. Investigation under this leaf confirmed the wedge is *not* caused by the RefCell race — legacy mode passes 200 threads / 2,000 requests in 231 ms but channel mode still wedges at 100 threads even after the SpinMutex fix. The wedge symptom is the reactor's event loop spinning in `Event::test()` on already-`READY` events (logging "event status ready, triggered?" 700+ times in <50 ms) and then going completely idle. Tracked separately as 4g1b.
-      - [ ] Sub-leaf 4g1b — Investigate and fix the `MultiThreadedStressTest` 100-thread wedge in channel mode (deeper).
-        - Symptom: `RPCTest.MultiThreadedStressTest` wedges in channel mode (under `SRPC_USE_CHANNEL=1`) at 100 user threads sharing one `PollThread`. Same test passes in legacy mode at 200 threads in 231 ms. Wedge profile: ~190 ms of activity (server start, all 100 connections accepted, ~720 "event status ready, triggered?" reactor logs), then complete silence. No deadlock detector / strace evidence yet.
-        - Hypotheses to test:
-          1. **OneTimeJob spawn ↔ first-request race**: with 100 connections submitting one OneTimeJob each, the recv-loop fibers are spawned by `trigger_job` in batches; if the first `request()` from a user thread arrives before that connection's fiber has parked, the response could be enqueued onto a FiberChannel whose `pending_recv_event_` is null at the moment of `signal_pending_recv` — but the queue still has the frame, so the next `recv_frame()` should pick it up. Verify with synthetic delay between `Client::connect` and `request`.
-          2. **`pending_recv_event_` shared_ptr non-atomic mutation**: the FiberChannel writes/reads `pending_recv_event_` from the recv-loop fiber and reads it from the on_inbound_frame callback. Both run on the poll thread — but if the recv-loop fiber yielded mid-write, a callback could fire reading a partially-constructed shared_ptr. Audit single-threaded reasoning carefully.
-          3. **Reactor::loop infinite-spin on stuck READY events**: 720 "event status ready, triggered?" logs in 50 ms suggests the same READY event is being test()d repeatedly. Check whether `extract_if` is correctly removing READY events under high churn (the `Vec::extract_if` impl looks correct; verify with a printf in the loop).
-          4. **`Future::wait()` ↔ `Future::notify_ready` deadlock**: the recv-loop fiber on the poll thread acquires `Future::state_.lock()` to call `notify_ready`. The user thread holds the same lock during `wait_while`. If the recv-loop fiber's `notify_ready` blocks on user-side state somehow (e.g., the completion callbacks captured a handle that re-enters the connection), we'd deadlock.
-        - Likely fix shape (depending on root cause): redesign the FiberChannel parking primitive so the on_frame callback can wake any thread (not just a fiber on the same reactor) — use a `std::condition_variable` or pthread futex instead of `IntEvent`. This would also let the recv-loop "fiber" become a regular thread, eliminating the OneTimeJob spawn dance.
+      - [ ] Sub-leaf 4g1b — Fix the `MultiThreadedStressTest` 100-thread wedge in channel mode by waking the poll thread on every `send_frame` (root cause located).
+        - Symptom: `RPCTest.MultiThreadedStressTest` wedges in channel mode at 100 user threads sharing one `PollThread`. Same test passes in legacy mode at 200 threads in 231 ms.
+        - Diagnostic findings (instrumentation under `SRPC_USE_CHANNEL=1`, 2026-04-27):
+          - All 100 client connections complete `connect()` successfully (`pre_connect=100`, `post_connect=100`, `result=0` for all).
+          - All 101 recv-loop OneTimeJob fibers spawn and start (`Submit=101`, `Started=101`, none upgrade-fail or exit).
+          - All 100 user threads reach the first `Client::request(...)` and get back `Ok(future)` (`first_req=100`, `first_req_returned=100`, `err=0` for all).
+          - Only 40 of 100 user threads' first `fu->wait()` returns (`first_wait_done=40`); those same 40 finish all 10 cycles, the other 60 stall on the FIRST `fu->wait()` forever.
+          - End-to-end channel-layer counters: `req_enter≥460`, `dispatch_frame≥460`, `req_ok≥460`, but `on_inbound_frame=400`, `recv=400`, `notify_ready=400`. So ~60 frames are dispatched (added to `outbound_` buffer) but never reach the wire (no server reply for them ⇒ no response frame ⇒ no `notify_ready` ⇒ permanent `fu->wait()` block).
+          - Server logs all 100 "got new client" accepts and replies are returning for the first 40 connections completely, then silence — server never sees the missing send_frames.
+        - **Root cause: lost `pending_write_update_` wakeup** in `TcpConnection::send_frame`. The send path appends bytes to the outbound buffer and calls `pending_write_update_.set(true)` (a `rusty::Cell<bool>` — non-atomic, no memory barrier). The poll thread *polls* this flag at the bottom of `poll_loop()` once per epoll iteration. Under heavy contention from 100 user threads concurrently calling `send_frame`, the flag's set-and-poll race can drop a wake-up: the poll thread reads `false` (cached), the user thread sets `true` (in store buffer), the poll thread sleeps in `epoll_wait` until the next 1ms timeout. With *many* connections all in this state simultaneously, the poll thread services some on each cycle but enough get permanently stuck because (a) the kernel never issues an EPOLLOUT for them since EPOLLOUT was never re-armed, and (b) without inbound bytes (because no outbound bytes were sent) there's nothing to wake `epoll_wait` for those fds.
+        - Compare: the **legacy fd path** in `ClientConnection::replay_pending_requests` (and equivalent paths) explicitly distinguishes:
+          ```cpp
+          if (PollThreadWorker::is_on_poll_thread()) {
+            pending_write_update_.set(true);          // poll thread can defer
+          } else {
+            poll_thread_worker_->update_mode(fd(),    // user thread must ACTIVELY post
+                                             PollMode::READ | PollMode::WRITE);
+          }
+          ```
+          Posting `update_mode` writes to the mpsc command channel's eventfd, which wakes `epoll_wait` immediately. This guarantees the user thread's "I have outbound bytes" intent reaches the poll thread within one epoll cycle, not "eventually when epoll happens to time out".
+        - **Fix shape** (~80 LOC):
+          - Add `rusty::Option<rusty::Arc<PollThread>> poll_thread_` field + `set_poll_thread(...)` setter to `TcpConnection` (mirror `TcpListener` which already has one).
+          - `TcpFactory::connect(...)` calls `conn.set_poll_thread(poll_thread_.clone())` immediately after constructing the TcpConnection and before `add_proxy(...)`.
+          - `TcpListener::handle_read`'s accepted-connection path also wires `poll_thread_` into each accepted connection.
+          - In `TcpConnection::send_frame`, replace the lone `pending_write_update_.set(true)` with:
+            ```cpp
+            if (PollThreadWorker::is_on_poll_thread()) {
+                pending_write_update_.set(true);
+            } else if (poll_thread_.is_some()) {
+                poll_thread_.as_ref().unwrap()->update_mode(
+                    fd_, PollMode::READ | PollMode::WRITE);
+            } else {
+                pending_write_update_.set(true);  // fallback — pre-factory tests
+            }
+            ```
+        - Tests:
+          - Re-enable `RPCTest.MultiThreadedStressTest` under `SRPC_USE_CHANNEL=1` and verify it passes (was: wedges at exactly 40/100 threads).
+          - Add a focused TCP-channel test: 64 threads × 16 send_frames into a `TcpConnection`, plus a poll thread; verify all bytes reach the peer (synthesizing the wake-up problem at scale).
         - Goal: unblock 4g2 / 4g3 by guaranteeing channel mode is correct under multi-thread load equivalent to legacy mode.
       - [ ] Sub-leaf 4g2 — Flip the `srpc_use_channel()` default to `true`; add `SRPC_DISABLE_CHANNEL=1` opt-out for emergency rollback. ~50 LOC.
         - Once 4g1 lands (channel mode passes the full RPC suite including 100-thread stress), make channel mode the default code path. Keep the migration switch as an *opt-out* (legacy fd path) until the legacy code is deleted in 4g3 — this protects against external callers we haven't audited.
