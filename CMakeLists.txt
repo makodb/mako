@@ -1903,6 +1903,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_inmemory_channel ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_inmemory_channel COMMAND test_rpc_inmemory_channel)
 
+    # SRPC in-memory channel end-to-end RPC (Workstream K, leaf 6d)
+    add_executable(test_rpc_inmemory_channel_e2e src/rrr/tests/rpc_inmemory_channel_e2e_test.cc)
+    target_include_directories(test_rpc_inmemory_channel_e2e PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_inmemory_channel_e2e PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_inmemory_channel_e2e ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_inmemory_channel_e2e COMMAND test_rpc_inmemory_channel_e2e)
+
     # SRPC client channel-mode outbound-send (Workstream K, sub-leaf 4b)
     add_executable(test_rpc_client_channel_send src/rrr/tests/rpc_client_channel_send_test.cc)
     target_include_directories(test_rpc_client_channel_send PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
