@@ -177,40 +177,45 @@ class InMemorySwitchboard {
  * called `close()`.
  */
 struct InMemoryConnectionState {
-    // A-side state
-    std::string       a_peer_address;
-    OnFrameCallback   a_on_frame;
-    OnClosedCallback  a_on_closed;
-    OnErrorCallback   a_on_error;
-    bool              a_closed = false;
+    // SpinMutex-owned inner state (rusty-style "data inside the mutex").
+    // All per-side callbacks, closed flags, and fault-injection knobs
+    // live here; access through `inner.lock().unwrap()->...`.
+    struct Inner {
+        // A-side state
+        std::string       a_peer_address;
+        OnFrameCallback   a_on_frame;
+        OnClosedCallback  a_on_closed;
+        OnErrorCallback   a_on_error;
+        bool              a_closed = false;
 
-    // B-side state
-    std::string       b_peer_address;
-    OnFrameCallback   b_on_frame;
-    OnClosedCallback  b_on_closed;
-    OnErrorCallback   b_on_error;
-    bool              b_closed = false;
+        // B-side state
+        std::string       b_peer_address;
+        OnFrameCallback   b_on_frame;
+        OnClosedCallback  b_on_closed;
+        OnErrorCallback   b_on_error;
+        bool              b_closed = false;
 
-    // 6c — Fault injection state. Per-side knobs decide whether
-    // each upcoming `send_frame` should:
-    //   * be silently dropped (returns `ChannelError::None`, peer
-    //     gets nothing), OR
-    //   * return a specific `ChannelError`, OR
-    //   * proceed normally.
-    //
-    // Counters tick down on each `send_frame` call from the
-    // corresponding side; when zero, the channel returns to normal
-    // delivery. Drop counters take precedence — when both are set
-    // the drop fires first while its counter is positive, then the
-    // error injection takes over.
-    int               drop_next_sends_a  = 0;
-    int               drop_next_sends_b  = 0;
-    int               send_error_count_a = 0;
-    int               send_error_count_b = 0;
-    ChannelError      send_error_a       = ChannelError::None;
-    ChannelError      send_error_b       = ChannelError::None;
+        // 6c — Fault injection state. Per-side knobs decide whether
+        // each upcoming `send_frame` should:
+        //   * be silently dropped (returns `ChannelError::None`, peer
+        //     gets nothing), OR
+        //   * return a specific `ChannelError`, OR
+        //   * proceed normally.
+        //
+        // Counters tick down on each `send_frame` call from the
+        // corresponding side; when zero, the channel returns to normal
+        // delivery. Drop counters take precedence — when both are set
+        // the drop fires first while its counter is positive, then the
+        // error injection takes over.
+        int               drop_next_sends_a  = 0;
+        int               drop_next_sends_b  = 0;
+        int               send_error_count_a = 0;
+        int               send_error_count_b = 0;
+        ChannelError      send_error_a       = ChannelError::None;
+        ChannelError      send_error_b       = ChannelError::None;
+    };
 
-    std::mutex        mu;
+    mutable SpinMutex<Inner> inner;
 };
 
 // ---------------------------------------------------------------------------
@@ -371,14 +376,20 @@ class InMemoryListener {
     }
 
  private:
+    // Fields outside the SpinMutex: switchboard_ is set once at
+    // construction (immutable Arc), self_weak_ is set once via
+    // set_self_weak() before any concurrent listener access.
     rusty::Arc<InMemorySwitchboard> switchboard_;
     rusty::Option<rusty::sync::Weak<InMemoryListener>> self_weak_{rusty::None};
 
-    mutable std::mutex mu_;
-    std::string        local_address_;
-    bool               closed_ = false;
-    OnAcceptCallback   on_accept_;
-    OnErrorCallback    on_error_;
+    // SpinMutex-owned mutable state (rusty-style "data inside the mutex").
+    struct InnerState {
+        std::string        local_address;
+        bool               closed = false;
+        OnAcceptCallback   on_accept;
+        OnErrorCallback    on_error;
+    };
+    mutable SpinMutex<InnerState> inner_;
 };
 
 // Adapter wrapping `Arc<InMemoryListener>` for the listener-proxy
