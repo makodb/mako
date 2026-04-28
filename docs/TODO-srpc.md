@@ -884,10 +884,14 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
             - The `BufferingConfig` data class and `RequestQueue` underlying queue stay in place pending 4g3c (which will inspect whether they're still referenced).
             - `request_with_options(...)` is unaffected by this leaf — its retry loop routes through `request(...)` which now goes via channel.
             - Verification: full RPC-focused suite green (test_rpc 17/17, test_rpc_extended 15/15, test_rpc_state_integration 16/16, test_rpc_combined_reliability 9/9, test_rpc_request_buffering 8 pass + 13 disabled, 12 channel-layer tests).
-          - [ ] **4g3c — Delete the legacy `connect(...)` socket+register-pollable path; legacy `reconnect()` socket flow; `socket_` field; `out_` Marshal field.** ~300 LOC.
-            - `ClientConnection::connect` always goes through `connect_via_factory`. The factory is auto-installed at `Client::connect` time (post-4g2 default).
-            - `Pollable::handle_read` / `handle_write` / `handle_error` overrides on `ClientConnection` are removed (the channel layer's `TcpConnection` now owns the pollable role).
-            - `socket_`, `out_`, `pending_write_update_` (on ClientConnection — TcpConnection still has its own), and the `make_pollable_proxy_from_typed_arc(connection)` registration in `Client::connect` all go.
+          - [ ] **4g3c — Delete the legacy `connect(...)` socket path; legacy `reconnect()` socket flow; `socket_` field; `out_` Marshal field; Pollable overrides on ClientConnection.** ~300 LOC. Decomposed:
+            - [x] **4g3c1 — Delete the legacy `connect()` body.** ✅ **LANDED 2026-04-28.** ~125 LOC removed.
+              - `ClientConnection::connect` is now: state machine transition to CONNECTING → `is_factory_bound()` check → `connect_via_factory(addr)`. The legacy `socket(2) + connect(2) + register-pollable` path (~125 LOC including the `USE_IPC` Unix-socket variant, `getaddrinfo` resolution, `setsockopt`, keepalive, and `make_pollable_proxy_from_typed_arc` registration) has been deleted. If a caller invokes connect without a factory bound, it returns `EINVAL` (channel mode is non-negotiable).
+              - Verification: full RPC suite green (test_rpc 17/17, test_rpc_extended 15/15, test_rpc_state_integration 16/16, test_rpc_combined_reliability 9/9, 12 channel-layer tests).
+            - [ ] **4g3c2 — Delete the legacy `reconnect()` socket flow body.** ~100 LOC.
+              - The legacy reconnect's `reconnect_once = [&] { socket_ = -1; return connect(...); }` lambda still works (connect now always goes through factory) but the `socket_ = -1` line is dead. Clean it up. Also: `replay_pending_requests()` is invoked on success — it walks `pending_queue_` which is empty in channel mode (queue_request was deleted in 4g3b). Remove that call.
+            - [ ] **4g3c3 — Delete `Pollable::handle_read` / `handle_write` / `handle_error` overrides + `socket_` / `out_` / `pending_write_update_` fields.** ~200 LOC.
+              - Once 4g3c1+c2 are in, `ClientConnection` is no longer registered as a Pollable. Remove the override implementations, the underlying socket/out fields, and the `Pollable` base inheritance/concept conformance.
           - [ ] **4g3d — Delete the heartbeat/health probe + reconnect plumbing's fd-specific accessors and verify nothing references `client->fd()` anymore.** ~100 LOC.
             - Remove `ClientConnection::fd()` accessor and any callsite still using it. Leaves only the channel-facade `peer_address()` for debug.
             - Final cleanup: any `#include <sys/socket.h>` / `#include <netinet/in.h>` that were only used by the legacy fd path.

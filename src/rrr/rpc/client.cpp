@@ -340,145 +340,26 @@ int ClientConnection::connect(const char* addr) {
     return EINVAL;
   }
 
-  // Workstream K, sub-leaf 4e — factory-driven connect.
+  // Workstream K, sub-leaf 4g3c — channel mode is the only path.
   //
-  // If a `ChannelFactoryProxy` has been bound, route through it
-  // instead of the legacy socket(2) + connect(2) path. The factory
-  // returns a fully-wired `ChannelConnectionProxy` that we then
-  // hand to `bind_channel(...)` so the connection enters channel
-  // mode automatically. `reconnect_address_` is recorded the same
-  // way the legacy path does it, so the close fan-out's reconnect
-  // spawn can re-call the factory with the same target.
-  if (is_factory_bound()) {
-    int rc = connect_via_factory(addr);
-    return rc;
-  }
-
-  string addr_str(addr);
-  size_t idx = addr_str.find(":");
-  if (idx == string::npos) {
-    Log_error("rrr::ClientConnection: bad connect address: %s", addr);
+  // Channel mode is non-negotiable post-4g3a, and `Client::connect`
+  // always installs a default TCP factory before calling this method
+  // (see `Client::connect` for the auto-install logic). The legacy
+  // socket(2) + connect(2) + register-pollable path has been deleted.
+  //
+  // `connect_via_factory` issues `factory->connect(addr)`, hands the
+  // returned proxy to `bind_channel_direct(...)`, and records
+  // `reconnect_address_` for the close-side reconnect spawn.
+  if (!is_factory_bound()) {
+    Log_error("rrr::ClientConnection::connect: factory not bound. "
+              "Channel mode requires a ChannelFactoryProxy installed via "
+              "Client::set_channel_factory(...) or auto-installed by "
+              "Client::connect (the latter happens unconditionally now).");
     state_machine_.transition_to(ConnectionState::FAILED);
-    invoke_error_callback(EINVAL, "invalid connect address");
+    invoke_error_callback(EINVAL, "no channel factory bound");
     return EINVAL;
   }
-  // @unsafe { - string operations
-  string host = addr_str.substr(0, idx);
-  host_ = host;
-  string port = addr_str.substr(idx + 1);
-  // }
-
-#ifdef USE_IPC
-  // @unsafe { - IPC socket creation and connect syscalls
-  struct sockaddr_un saun;
-  saun.sun_family = AF_UNIX;
-  string ipc_addr = "rsock" + port;
-  strcpy(saun.sun_path, ipc_addr.data());
-  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (sock < 0) {
-    Log_error("rrr::ClientConnection: socket() failed: %s", strerror(errno));
-    return errno;
-  }
-  socket_ = sock;
-  auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-  if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
-    int err = errno;
-    Log_error("rrr::ClientConnection: connect() failed: %s", strerror(err));
-    ::close(socket_);
-    socket_ = -1;
-    return err;
-  }
-  // }
-#else
-
-  struct addrinfo hints;
-  // @unsafe { - memset
-  memset(&hints, 0, sizeof(struct addrinfo));
-  // }
-
-  hints.ai_family = AF_INET; // ipv4
-  hints.ai_socktype = SOCK_STREAM; // tcp
-
-  // Use AddrInfo RAII wrapper - automatically frees on scope exit
-  auto addr_result = AddrInfo::resolve(host.c_str(), port.c_str(), &hints);
-  if (addr_result.is_err()) {
-    Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
-    invoke_error_callback(EINVAL, "address resolution failed");
-    return EINVAL;
-  }
-  auto addr_info = addr_result.unwrap();
-
-  // @unsafe { - TCP socket creation, options, and connect syscalls
-  struct addrinfo* rp = nullptr;
-  for (rp = addr_info.get(); rp != nullptr; rp = rp->ai_next) {
-      int sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-      if (sock == -1) {
-        continue;
-      }
-      socket_ = sock;
-
-      const int yes = 1;
-      verify(setsockopt(socket_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
-      verify(setsockopt(socket_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
-      int buf_len = 1024 * 1024;
-      setsockopt(socket_, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
-      setsockopt(socket_, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
-
-      if (::connect(socket_, rp->ai_addr, rp->ai_addrlen) == 0) {
-        break;
-      }
-      ::close(socket_);
-      socket_ = -1;
-    }
-  // AddrInfo automatically freed when addr_info goes out of scope
-  // }
-
-  if (rp == nullptr) {
-    // failed to connect
-    state_machine_.transition_to(ConnectionState::FAILED);
-    invoke_error_callback(ENOTCONN, "connect failed");
-    return ENOTCONN;
-  }
-#endif
-
-  // @unsafe - set_nonblocking syscall
-  {
-    verify(set_nonblocking(socket_, true) == 0);
-  }
-
-  // Apply TCP keepalive options after socket is connected
-  // @unsafe { setsockopt system calls }
-  apply_keepalive_options();
-
-  // Initialize last activity time and record connection in metrics
-  auto now_ms = current_time_ms();
-  update_last_activity(now_ms);
-  metrics_.record_connect(now_ms);
-
-  Log_debug("rrr::ClientConnection: connected to %s", addr);
-
-  // Transition to CONNECTED state
-  state_machine_.transition_to(ConnectionState::CONNECTED);
-  heartbeat_manager_.reset();
-
-  // Register with poll thread using weak_self_
-  // @unsafe { - Weak::upgrade and PollThread::add
-  auto self = weak_self_.upgrade();
-  if (self.is_some()) {
-    auto poll_proxy = make_pollable_proxy_from_typed_arc(self.unwrap());
-    poll_thread_worker_->add_proxy(std::move(poll_proxy));
-  // }
-  } else {
-    Log_error("rrr::ClientConnection: weak_self_ upgrade failed - connection may not have been created properly");
-    invoke_error_callback(EINVAL, "connection registration failed");
-    return EINVAL;
-  }
-
-  // Store address for potential reconnection
-  reconnect_address_ = addr;
-  invoke_connected_callback();
-
-  return 0;
+  return connect_via_factory(addr);
 }
 
 // @unsafe - Attempts to reconnect to the last connected address
