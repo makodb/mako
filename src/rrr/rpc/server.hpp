@@ -341,22 +341,21 @@ class ServerConnection {
     // SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
 
     friend class Server;
-    friend class ServerListener;
+    // 5g1: ServerListener class deleted; the friend declaration is
+    // retired along with it.
 
-    Marshal in_;
-    SpinMutex<Marshal> out_;  // Lock + data combined (has interior mutability)
+    // 5g2: legacy fd-path fields removed:
+    //   - `Marshal in_` (read buffer)
+    //   - `SpinMutex<Marshal> out_` (write buffer)
+    //   - `int socket_` (fd; channel layer's TcpConnection owns it)
+    //   - `Cell<bool> pending_write_update_` (was poll-loop write
+    //     mode flag — TcpConnection manages its own equivalent now)
 
     rusty::Arc<RpcServiceContext> ctx_;  // Shared dispatch context
-    int socket_;
 
     enum {
         CONNECTED, CLOSED
     } status_;
-
-    // Flag set by end_reply() to indicate write mode update needed
-    // Checked by poll loop after processing events
-    // Cell provides interior mutability for safe access through const methods
-    rusty::Cell<bool> pending_write_update_{false};
 
     // Weak pointer to self, initialized after creation
     // Used to pass weak reference to async handlers
@@ -406,8 +405,12 @@ public:
     // @safe - Simple destructor
     ~ServerConnection();
 
-    // @safe - Initializes connection with socket
-    ServerConnection(rusty::Arc<RpcServiceContext> ctx, int socket);
+    // @safe - Initializes connection. The `socket` parameter is
+    // retained for source-compatibility with existing call sites
+    // (e.g. `Server::start`'s on_accept hook still passes -1) but is
+    // no longer stored — the channel layer's `TcpConnection` owns
+    // the fd. New callers should pass -1.
+    ServerConnection(rusty::Arc<RpcServiceContext> ctx, int /*socket*/);
 
     // Test-only: install the self-pointer before code paths that need
     // to upgrade it (e.g., the on_frame callback installed in
@@ -459,69 +462,40 @@ public:
      * ENOENT: method not found
      * EINVAL: invalid packet (field missing)
      */
-    // @safe - Sends reply with callback for marshaling response data
-    // All operations use interior mutability:
-    // - SpinMutex::lock() const: uses UnsafeCell for interior mutability
-    // - Cell::set(): interior mutability for pending_write_update_
-    // - status_: read-only access
+    // @safe - Sends reply with callback for marshaling response data.
+    //
+    // 5g2: legacy `out_` Marshal-as-syscall-buffer branch deleted.
+    // Channel mode is the only path. The body's wire layout is
+    // `[xid:v64][error_code:v32][server_instance_id:v64][reply_data]`
+    // — the channel layer prepends the 4-byte size header on the
+    // wire. The legacy fd path's high-bit "extended-header" flag is
+    // implicit (server always emits the instance id; the client
+    // always reads it).
+    //
+    // Tests that construct a ServerConnection without calling
+    // `bind_channel(...)` will silently drop replies (the channel
+    // proxy is unbound — `dispatch_response_frame_via_channel` logs
+    // a warning and returns). Production paths via Server::start
+    // always bind_channel before any reply.
     template<typename F>
     void reply(const Request& req, i32 error_code, F&& write_fn) const {
-        // Workstream K, server sub-leaf 5b — when the connection is
-        // bound to a `ChannelConnectionProxy`, build the response
-        // body in a scratch `Marshal` and dispatch via
-        // `proxy->send_frame(...)` (the channel layer prepends the
-        // 4-byte size header on the wire). The body's wire layout is
-        // `[xid:v64][error_code:v32][server_instance_id:v64][reply_data]`
-        // — the legacy fd path's high-bit "extended-header" flag
-        // is implicit in channel mode (server always emits the
-        // instance id; the client always reads it).
-        if (is_channel_mode()) {
-            Marshal body;
-            v64 v_reply_xid = req.xid;
-            v32 v_error_code = error_code;
-            // @unsafe { Marshal::operator<< }
-            {
-                body << v_reply_xid;
-                body << v_error_code;
-                body << v64(static_cast<i64>(ctx_->server_instance_id));
-            }
-            write_fn(body);
-            const std::size_t body_size = body.content_size();
-            std::vector<std::uint8_t> body_bytes;
-            if (body_size > 0) {
-                body_bytes.resize(body_size);
-                verify(body.read(body_bytes.data(), body_size) == body_size);
-            }
-            dispatch_response_frame_via_channel(body_bytes.data(), body_size);
-            return;
-        }
-
-        // @unsafe
-        {
-        auto guard = out_.lock().unwrap();
-        v32 v_error_code = error_code;
+        Marshal body;
         v64 v_reply_xid = req.xid;
-        const bool include_instance_id = true;
-
-        Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
-        // @unsafe
+        v32 v_error_code = error_code;
+        // @unsafe { Marshal::operator<< }
         {
-            *guard << v_reply_xid;
-            *guard << v_error_code;
-            if (include_instance_id) {
-                *guard << v64(static_cast<i64>(ctx_->server_instance_id));
-            }
+            body << v_reply_xid;
+            body << v_error_code;
+            body << v64(static_cast<i64>(ctx_->server_instance_id));
         }
-
-        write_fn(*guard);
-
-        i32 reply_size = guard->get_and_reset_write_cnt();
-        guard->write_bookmark(bm, encode_response_size(reply_size, include_instance_id));
-
-        if (status_ == CONNECTED) {
-            pending_write_update_.set(true);
+        write_fn(body);
+        const std::size_t body_size = body.content_size();
+        std::vector<std::uint8_t> body_bytes;
+        if (body_size > 0) {
+            body_bytes.resize(body_size);
+            verify(body.read(body_bytes.data(), body_size) == body_size);
         }
-        }
+        dispatch_response_frame_via_channel(body_bytes.data(), body_size);
     }
 
     // @safe - Sends empty reply
@@ -533,9 +507,11 @@ public:
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
     int run_async(std::function<void()> f);
 
-    // @safe - Returns file descriptor
+    // @safe - 5g2: ServerConnection no longer owns an fd. Always
+    // returns -1; retained only for ABI compatibility with the
+    // PollableProxy facade.
     int fd() const {
-        return socket_;
+        return -1;
     }
 
     // @safe - Returns poll mode based on output buffer
@@ -558,13 +534,11 @@ public:
     // @safe - Error handler
     void handle_error();
 
-    // @safe - Check and clear pending write update flag
-    // Called by poll loop after processing events
+    // @safe - 5g2: `pending_write_update_` field deleted; the
+    // channel layer's `TcpConnection` manages its own
+    // pending-write tracking. Always returns false; retained for
+    // ABI compatibility with the PollableProxy facade.
     bool check_pending_write_update() const {
-        if (pending_write_update_.get()) {
-            pending_write_update_.set(false);
-            return true;
-        }
         return false;
     }
 

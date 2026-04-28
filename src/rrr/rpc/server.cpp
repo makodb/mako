@@ -151,9 +151,12 @@ static void stat_server_rpc_counting(i32 rpc_id) {
 SpinMutex<rusty::HashSet<i32>> ServerConnection::rpc_id_missing_s{rusty::HashSet<i32>()};
 
 
-// @safe - Initializes connection
-ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx, int socket)
-        : ctx_(std::move(ctx)), socket_(socket), status_(CONNECTED) {
+// @safe - Initializes connection. 5g2: `socket_` field deleted;
+// `socket` parameter is ignored (kept on the signature for source
+// compatibility with existing call sites).
+ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx,
+                                   int /*socket*/)
+        : ctx_(std::move(ctx)), status_(CONNECTED) {
 }
 
 // @safe - Arc prevents premature destruction of RpcServiceContext
@@ -365,10 +368,11 @@ int ServerConnection::run_async(std::function<void()> f) {
   return 0;
 }
 
-// @unsafe - Returns total buffered bytes owned by this connection.
+// @safe - 5g2: stubbed. The legacy `in_`/`out_` Marshal buffers are
+// gone; channel mode buffers frames inside `TcpConnection`. Returns
+// 0 for ABI compatibility with PollableProxy facade conformance.
 size_t ServerConnection::content_size() {
-    auto out_guard = out_.lock().unwrap();
-    return in_.content_size() + out_guard->content_size();
+    return 0;
 }
 
 // @unsafe - Explicit no-op for server connection API compatibility.
@@ -376,149 +380,36 @@ void ServerConnection::handle_free() {
     Log_warn("rrr::ServerConnection::handle_free() is a no-op on server connections");
 }
 
-// @unsafe - Reads requests from socket and dispatches to handlers
-// Memory-safe: Uses Box for request ownership, virtual dispatch for handlers.
+// @safe - 5g2: stubbed. ServerConnection no longer implements the
+// Pollable role — the channel layer's `TcpConnection` owns the fd
+// and drives `handle_read`/`handle_write`/`handle_error` on its own
+// pollable proxy. Inbound dispatch happens via the on_frame
+// callback installed in `bind_channel(...)` (5c). This stub remains
+// only for ABI compatibility (PollableProxy facade conformance);
+// the body is unreachable from production paths.
 bool ServerConnection::handle_read() {
-    if (status_ == CLOSED) {
-        return false;
-    }
-
-    // CRITICAL FIX: With edge-triggered epoll (EPOLLET), we must:
-    // 1. Drain all data from the socket
-    // 2. Process ALL complete packets in the buffer
-    // The old code only processed ONE packet per handle_read() call,
-    // causing hangs when multiple requests arrive together.
-
-    size_t bytes_read = in_.read_from_fd(socket_);
-    if (bytes_read == 0 && in_.content_size() < sizeof(i32)) {
-        return false;
-    }
-
-    std::list<rusty::Box<Request>> complete_requests;
-
-    // Parse ALL complete packets from the buffer
-    // Pattern: add to list first, then fill via reference to avoid move tracking issues
-    for (;;) {
-        i32 packet_size;
-        int n_peek = in_.peek(packet_size);
-
-        // Check exit condition first (inverted logic)
-        if (!(n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32))) {
-            break;
-        }
-
-        verify(in_.read(packet_size) == sizeof(i32));
-
-        // Add to list first, then fill via reference (avoids move tracking issues)
-        complete_requests.push_back(rusty::make_box<Request>());
-        Request& req = *complete_requests.back();
-        verify(req.m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
-
-        v64 v_xid;
-        req.m >> v_xid;
-        req.xid = v_xid.get();
-    }
-
-#ifdef RPC_STATISTICS
-    stat_server_batching(complete_requests.size());
-#endif // RPC_STATISTICS
-
-    // Process each request
-    while (!complete_requests.empty()) {
-        // @unsafe - std::list::front() and pop_front()
-        rusty::Box<Request> req = [&complete_requests]() {
-            auto r = std::move(complete_requests.front());
-            complete_requests.pop_front();
-            return r;
-        }();
-        req->attach_pending_guard(ctx_->pending_requests);
-
-        if (req->m.content_size() < sizeof(i32)) {
-            reply(*req, EINVAL);
-        } else {
-            i32 rpc_id;
-            req->m >> rpc_id;
-            if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
-                // Internal liveness probe from client heartbeat loop.
-                if (!ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
-                    reply(*req, 0);
-                }
-                continue;
-            }
-
-#ifdef RPC_STATISTICS
-            stat_server_rpc_counting(rpc_id);
-#endif // RPC_STATISTICS
-
-            auto svc_index_opt = ctx_->rpc_to_service.get(rpc_id);
-            if (svc_index_opt.is_none()) {
-                // Handler not found - track missing RPC IDs
-                bool surpress_warning = false;
-                {
-                    auto guard = rpc_id_missing_s.lock().unwrap();
-                    if (!guard->contains(rpc_id)) {
-                        guard->insert(rpc_id);
-                    } else {
-                        surpress_warning = true;
-                    }
-                }
-                if (!surpress_warning) {
-                    Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
-                }
-                reply(*req, ENOENT);
-            } else {
-                // Service found - dispatch via proxy facade using RefCell
-                size_t svc_index = *svc_index_opt.unwrap();
-                auto weak_this = weak_self_;
-                if (ctx_->fast_rpc_ids.contains(rpc_id)) {
-                    auto guard = ctx_->services[svc_index].borrow_mut();
-                    (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
-                } else {
-                    auto ctx = ctx_.clone();  // Clone Arc for the fiber
-                    Fiber::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
-                        // Borrow inside fiber - guard released when lambda exits
-                        // (*guard) dereferences RefMut to get Box<Service>&
-                        // (*guard)-> calls Box::operator-> to get Service*
-                        auto guard = ctx->services[svc_index].borrow_mut();
-                        (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
-                    }, __FILE__, __LINE__);
-                }
-            }
-        }
-    }
-
-    Reactor::get_reactor()->loop();
-
     return false;
 }
 
-// @unsafe - Writes buffered data to socket, protected by SpinMutex
+// @safe - 5g2: stubbed (Pollable facade ABI only). Channel mode's
+// outbound writes go through `proxy->send_frame(...)` directly; no
+// `out_` Marshal buffer to drain.
 int ServerConnection::handle_write() {
-    if (status_ == CLOSED) {
-        return PollMode::NO_CHANGE;
-    }
-
-    int result = PollMode::NO_CHANGE;
-    auto guard = out_.lock().unwrap();
-    guard->write_to_fd(socket_);
-    if (guard->empty()) {
-        // Return READ-only mode - PollThreadWorker will update epoll
-        result = PollMode::READ;
-    }
-    // Guard auto-unlocks here
-    return result;
+    return PollMode::NO_CHANGE;
 }
 
-// @safe - Error handler
+// @safe - Error handler. In channel mode, the bound channel proxy's
+// `on_error` callback (wired in 5d) calls `close()` directly; this
+// remains for legacy callers and as a defensive entry point.
 void ServerConnection::handle_error() {
     this->close();
 }
 
-// @safe - Closes connection
-// SAFETY: Internal @unsafe block for system calls and pointer operations
+// @safe - Closes connection.
 //
-// 5f: also drive the bound channel proxy's close() so the underlying
-// `TcpConnection` (or other backend) tears down the peer-facing fd.
+// 5g2: legacy `::close(socket_)` block deleted (the field is gone).
+// Channel proxy close is the only fd-tearing-down path.
+//
 // The channel-layer proxy.close() is idempotent and safe under
 // recursive entry: close() may be called from `on_closed` which 5d
 // installs, and 5d's on_closed → close() → proxy.close() →
@@ -526,12 +417,9 @@ void ServerConnection::handle_error() {
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
         status_ = CLOSED;
-        // @unsafe - system call (no-op for socket_ == -1 in channel mode)
-        {
-            ::close(socket_);
-            Log_debug("server@%s close ServerConnection at fd=%d", ctx_->addr.c_str(), socket_);
-        }
-        // 5f: tear down the channel proxy. Idempotent per channel-
+        Log_debug("server@%s close ServerConnection",
+                  ctx_->addr.c_str());
+        // Tear down the channel proxy. Idempotent per channel-
         // layer contract.
         // @unsafe { SpinMutex::lock + ChannelConnectionProxy method dispatch }
         {
@@ -542,20 +430,15 @@ void ServerConnection::close() {
                 (*proxy)->close();
             }
         }
-        // Note: We don't remove fd from Server's sconn_fds_ list.
-        // At shutdown, Server will request_close on all fds (closed ones are no-ops).
     }
 }
 
-// @unsafe - Returns poll mode based on output buffer, protected by SpinMutex
+// @safe - 5g2: stubbed. The channel layer's `TcpConnection` manages
+// its own poll-mode state via `pending_write_update_` on the
+// TcpConnection itself; this `ServerConnection` Pollable accessor
+// is unreachable from production but kept for ABI compatibility.
 int ServerConnection::poll_mode() const {
-    int mode = PollMode::READ;
-    auto guard = out_.lock().unwrap();
-    if (!guard->empty()) {
-        mode |= PollMode::WRITE;
-    }
-    // Guard auto-unlocks here
-    return mode;
+    return PollMode::READ;
 }
 
 // @unsafe - Executes callback inline for API compatibility.

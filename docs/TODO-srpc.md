@@ -980,10 +980,13 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
         - Re-implemented `Server::get_bound_port()` atop the channel-layer's `ChannelListenerProxy::local_address()`: parses `host:port` and returns the port suffix. Equivalent behavior — `TcpListener::local_address()` calls `getsockname` after a successful `bind(2)`.
         - Replaced `ServerListenerUnsupportedHooksAreNonFatal` in `test_rpc_extended.cc` with a comment pointing at `test_rpc_tcp_listener` (20 tests covering the channel-layer `TcpListener`'s bind/listen/accept/close lifecycle).
         - Verification: full RPC-focused suite green — same 3 pre-existing flaky failures as 4g4 / 5b–5f.
-      - [ ] **5g2 — Delete `ServerConnection`'s legacy fd-path methods + fields.** ~250 LOC removal.
-        - Stub `handle_read`/`handle_write`/`handle_error`/`poll_mode`/`content_size`/`check_pending_write_update`/`is_closed`/`fd` to no-ops on `ServerConnection` (kept for ABI compatibility if any test/doc still references them; future leaf may delete entirely if unused).
-        - Delete `socket_`, `in_` (read buffer), `out_` (write buffer), `pending_write_update_` fields.
-        - The `::close(socket_)` in `ServerConnection::close()` becomes a no-op once `socket_` is gone.
+      - [x] **5g2 — Delete `ServerConnection`'s legacy fd-path methods + fields.** ✅ **LANDED 2026-04-28.** −245 LOC.
+        - Stubbed `handle_read`, `handle_write`, `poll_mode`, `content_size`, `check_pending_write_update`, `fd` to no-op bodies on `ServerConnection` (kept for ABI compatibility with `PollableProxy` facade conformance; the methods themselves are unreachable from production paths post-5g1).
+        - Deleted fields: `Marshal in_`, `SpinMutex<Marshal> out_`, `int socket_`, `Cell<bool> pending_write_update_`. Constructor now ignores its `int /*socket*/` parameter (kept on the signature for source compatibility — existing callers like `Server::start`'s on_accept hook pass -1).
+        - Updated `ServerConnection::close()` to drop the `::close(socket_)` block (the field is gone). The channel proxy close (5f) is now the only fd-tearing-down path.
+        - Updated `reply<F>` template to drop the legacy `out_` Marshal-as-syscall-buffer branch — channel mode is unconditional. Tests that build a `ServerConnection` without calling `bind_channel(...)` will silently drop replies (the proxy is unbound; `dispatch_response_frame_via_channel` logs a warning and returns); production paths via `Server::start` always bind_channel before any reply.
+        - Removed the `friend class ServerListener` declaration (the class is gone post-5g1).
+        - Verification: full RPC-focused suite green — same 3 pre-existing flaky failures as 4g4 / 5b–5g1.
       - [ ] **5g3 — Cleanup unused system headers from `server.{hpp,cpp}`.** ~50 LOC removal.
         - Drop `<sys/socket.h>`, `<netdb.h>`, `<sys/un.h>` (etc.) once no `socket(2)` / `bind(2)` / `listen(2)` / `accept(2)` / `getaddrinfo` / `setsockopt` calls remain in `server.{hpp,cpp}`.
 - [ ] *medium* Add in-memory channel backend for deterministic tests.
