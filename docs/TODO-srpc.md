@@ -869,10 +869,25 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
           - Channel mode (default): `test_rpc` 17/17, `test_rpc_extended` 15/15, `test_rpc_state_integration` 16/21 (5 skipped legacy-fd-only), 12/12 channel-layer tests.
           - Legacy mode (`SRPC_DISABLE_CHANNEL=1`): `test_rpc` 17/17, `test_rpc_extended` 15/15, `test_rpc_state_integration` 21/21, all channel-switch tests pass.
           - 100-thread stress test in default channel mode: passes in ~165 ms (was forever-wedge pre-4g1c).
-      - [ ] Sub-leaf 4g3 — Delete the legacy fd path. ~600-1,000 LOC removal.
+      - [ ] Sub-leaf 4g3 — Delete the legacy fd path. ~600-1,000 LOC removal total.
         - Remove: `socket_` field; `Pollable::handle_read` / `handle_write` / `handle_error` overrides on `ClientConnection`; the inline frame parsing inside `handle_read`; the `out_` Marshal-as-syscall-buffer; the legacy `connect()` raw-socket path; the legacy reconnect socket flow; the legacy `request(...)` non-channel branch.
         - Result: `ClientConnection` reduces to its reliability layer + the channel binding. `Pollable` integration moves entirely into the channel backend (TCP, in-memory, etc.).
         - Tests: full RPC suite must remain green throughout; if any legacy-path-only test exists, port it to channel mode or delete it as obsolete.
+        - Decomposed into smaller leaves to keep each commit reviewable + RPC-suite green:
+          - [ ] **4g3a — Deprecate `SRPC_DISABLE_CHANNEL`; delete the 5 fd-only legacy state-integration tests.** ~80 LOC.
+            - Make `srpc_use_channel()` always return `true` (channel mode is non-negotiable). The env var becomes a deprecated no-op (with a one-time stderr warning if set, to surface external callers that still rely on it).
+            - Delete the 5 `StateIntegrationTest` tests that `GTEST_SKIP()` in channel mode (they test legacy fd lifecycle that won't exist after 4g3b/c). They're already skipped in default config; their only purpose is the SRPC_DISABLE_CHANNEL=1 path which is going away.
+            - Goal: lock down channel mode as the only path, so subsequent leaves can delete the legacy code without breaking the SRPC_DISABLE_CHANNEL semantics.
+          - [ ] **4g3b — Delete the legacy `request(...)` non-channel branch and `request_with_options(...)` legacy fallback.** ~250 LOC.
+            - `ClientConnection::request` becomes "always call `request_via_channel`". Removes the `out_.lock()` path, the `state_machine_.is_connected()` precheck, the `queue_request(...)` buffering helper, and dead branches.
+            - `request_with_options(...)` similarly drops its fd-write-path branch.
+          - [ ] **4g3c — Delete the legacy `connect(...)` socket+register-pollable path; legacy `reconnect()` socket flow; `socket_` field; `out_` Marshal field.** ~300 LOC.
+            - `ClientConnection::connect` always goes through `connect_via_factory`. The factory is auto-installed at `Client::connect` time (post-4g2 default).
+            - `Pollable::handle_read` / `handle_write` / `handle_error` overrides on `ClientConnection` are removed (the channel layer's `TcpConnection` now owns the pollable role).
+            - `socket_`, `out_`, `pending_write_update_` (on ClientConnection — TcpConnection still has its own), and the `make_pollable_proxy_from_typed_arc(connection)` registration in `Client::connect` all go.
+          - [ ] **4g3d — Delete the heartbeat/health probe + reconnect plumbing's fd-specific accessors and verify nothing references `client->fd()` anymore.** ~100 LOC.
+            - Remove `ClientConnection::fd()` accessor and any callsite still using it. Leaves only the channel-facade `peer_address()` for debug.
+            - Final cleanup: any `#include <sys/socket.h>` / `#include <netinet/in.h>` that were only used by the legacy fd path.
       - [ ] Sub-leaf 4g4 — Remove the `SRPC_USE_CHANNEL` / `SRPC_DISABLE_CHANNEL` switch and test helpers. ~50 LOC.
         - With the legacy path deleted, the migration switch has no work left to do. Delete `srpc_use_channel()`, `srpc_set_use_channel_for_testing(...)`, `srpc_reset_use_channel_for_testing()`, the channel-switch test (`test_rpc_client_channel_switch`), and update the docs.
 - [ ] *high* Refactor RPC server to depend on `ChannelListener`/`ChannelConnection`.

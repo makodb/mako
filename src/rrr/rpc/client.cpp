@@ -63,43 +63,35 @@ static uint64_t current_time_ms() {
 }
 
 // ============================================================================
-// Workstream K, sub-leaf 4g2 — migration switch flipped to default-on.
+// Workstream K, sub-leaf 4g3a — channel mode is non-negotiable.
 // ============================================================================
 //
-// Channel mode is now the **default** for new connections.
-// `Client::connect` automatically installs a default TCP-backed
-// `ChannelFactoryProxy` if the caller hasn't already installed one
-// via `set_channel_factory(...)`. The new connection then runs
-// entirely in channel mode (factory connect -> bind_channel_direct ->
-// inline on_frame callbacks; no recv-loop fiber per 4g1c).
+// Channel mode is the only SRPC client path. `srpc_use_channel()`
+// always returns true. `Client::connect` automatically installs a
+// default TCP-backed `ChannelFactoryProxy` if the caller hasn't
+// already installed one, and the new connection runs entirely in
+// channel mode (factory connect -> bind_channel_direct -> inline
+// on_frame callbacks).
 //
-// Opt-out: set `SRPC_DISABLE_CHANNEL=1` (or `true`/`yes`/`on`) in the
-// environment to force the legacy fd path. This is an emergency
-// rollback for callers that hit unexpected regressions; the legacy
-// path is removed entirely in sub-leaf 4g3.
+// Deprecated env vars (with a one-time stderr warning when set):
+//   - `SRPC_DISABLE_CHANNEL` (4g2 kill-switch) — no-op.
+//   - `SRPC_USE_CHANNEL=0` (4f migration switch's "off" form) — no-op.
 //
-// Legacy compatibility: the old `SRPC_USE_CHANNEL=1` env var is
-// honored as a no-op alias (channel mode is already default), but the
-// kill-switch is now `SRPC_DISABLE_CHANNEL=1`. Tests that explicitly
-// set `SRPC_USE_CHANNEL=0` to disable channel mode should migrate to
-// `SRPC_DISABLE_CHANNEL=1`.
+// External callers should remove their references; the env vars and
+// the test-only override helpers will be deleted in sub-leaf 4g4.
 //
-// The query is cached in a Cell on first use; subsequent calls are
-// lock-free reads. The override (set via
-// `srpc_set_use_channel_for_testing`) lets unit tests flip the switch
-// without spawning a child process — it ALSO flips the cached value.
+// The test-only override (`srpc_set_use_channel_for_testing`) is now
+// also a no-op — channel mode cannot be disabled.
 namespace {
 
-enum class UseChannelChoice : int { Unset = -1, Off = 0, On = 1 };
+bool& srpc_warn_once_flag() {
+    static bool warned = false;
+    return warned;
+}
 
-// Cached resolution of the env var. Reads `SRPC_DISABLE_CHANNEL` once,
-// then memoizes; later changes to the env var are intentionally
-// ignored (the channel-mode decision is per-process, not per-call,
-// to keep call sites consistent across the connection lifecycle).
-rusty::Cell<UseChannelChoice> g_use_channel_choice{UseChannelChoice::Unset};
-
-// @unsafe - Reads getenv (not borrow-checked); strncasecmp.
-bool resolve_srpc_use_channel_from_env() {
+// @unsafe - Reads getenv (not borrow-checked); strcasecmp.
+void warn_if_deprecated_env_set() {
+    if (srpc_warn_once_flag()) return;
     auto eq_ci = [](const char* a, const char* b) {
         return ::strcasecmp(a, b) == 0;
     };
@@ -108,40 +100,49 @@ bool resolve_srpc_use_channel_from_env() {
         return eq_ci(val, "1") || eq_ci(val, "true") || eq_ci(val, "yes")
                || eq_ci(val, "on");
     };
-    // 4g2: opt-out. If SRPC_DISABLE_CHANNEL is truthy, use legacy.
     // @unsafe { std::getenv }
     const char* disable = std::getenv("SRPC_DISABLE_CHANNEL");
-    if (is_truthy(disable)) return false;
-    // Channel mode is now the default. The old SRPC_USE_CHANNEL env
-    // var is honored for backward compatibility but is functionally a
-    // no-op (channel is already on); we do NOT honor `SRPC_USE_CHANNEL=0`
-    // as a disable switch — use SRPC_DISABLE_CHANNEL=1 for that.
-    return true;
+    if (is_truthy(disable)) {
+        Log_warn("SRPC_DISABLE_CHANNEL=%s is set but ignored: channel mode "
+                 "is now the only SRPC code path. Remove this env var.",
+                 disable);
+        srpc_warn_once_flag() = true;
+        return;
+    }
+    // @unsafe { std::getenv }
+    const char* use = std::getenv("SRPC_USE_CHANNEL");
+    if (use != nullptr && use[0] != '\0' && !is_truthy(use)) {
+        Log_warn("SRPC_USE_CHANNEL=%s is set but ignored: channel mode "
+                 "is now the only SRPC code path. Remove this env var.",
+                 use);
+        srpc_warn_once_flag() = true;
+    }
 }
 
 }  // namespace
 
-// @safe - Reads cached choice; lazy-initializes from env on first call.
+// @safe - Channel mode is unconditional; emit one-time warning if a
+// deprecated env var was set.
 bool srpc_use_channel() {
-    UseChannelChoice cached = g_use_channel_choice.get();
-    if (cached != UseChannelChoice::Unset) {
-        return cached == UseChannelChoice::On;
-    }
-    bool env = resolve_srpc_use_channel_from_env();
-    g_use_channel_choice.set(env ? UseChannelChoice::On
-                                 : UseChannelChoice::Off);
-    return env;
+    warn_if_deprecated_env_set();
+    return true;
 }
 
-// @safe - Test-only override; replaces the cached value.
+// @safe - Test-only override is now a no-op (channel mode cannot be
+// disabled). Kept for binary compatibility until 4g4 deletes the
+// helper. Calls with `false` emit a one-time warning.
 void srpc_set_use_channel_for_testing(bool on) {
-    g_use_channel_choice.set(on ? UseChannelChoice::On
-                                : UseChannelChoice::Off);
+    if (!on && !srpc_warn_once_flag()) {
+        Log_warn("srpc_set_use_channel_for_testing(false) is a no-op: "
+                 "channel mode is now the only SRPC code path.");
+        srpc_warn_once_flag() = true;
+    }
 }
 
-// @safe - Test-only reset; forces re-resolution from env on next call.
+// @safe - Test-only reset is a no-op (channel mode is non-negotiable).
+// Kept for binary compatibility until 4g4 deletes the helper.
 void srpc_reset_use_channel_for_testing() {
-    g_use_channel_choice.set(UseChannelChoice::Unset);
+    // No-op.
 }
 
 // ============================================================================

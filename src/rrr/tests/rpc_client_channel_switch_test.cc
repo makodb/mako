@@ -71,58 +71,42 @@ class SrpcUseChannelSwitchTest : public ::testing::Test {
 };
 
 // ---------------------------------------------------------------------------
-// `srpc_use_channel()` reads env on first call. (4g2: channel mode is
-// now the default; SRPC_DISABLE_CHANNEL is the kill-switch.)
+// 4g3a: channel mode is non-negotiable. The env vars
+// (SRPC_DISABLE_CHANNEL, SRPC_USE_CHANNEL) and the test-only
+// override are deprecated no-ops; `srpc_use_channel()` always
+// returns true. These tests assert the deprecated semantics (no-op).
 // ---------------------------------------------------------------------------
 
 TEST_F(SrpcUseChannelSwitchTest, EnvUnsetReturnsTrue) {
-    // 4g2: channel mode is the default — no env var means channel on.
     ::unsetenv("SRPC_DISABLE_CHANNEL");
     EXPECT_TRUE(srpc_use_channel());
 }
 
-TEST_F(SrpcUseChannelSwitchTest, DisableEnvOneReturnsFalse) {
+TEST_F(SrpcUseChannelSwitchTest, DisableEnvIsIgnored) {
+    // 4g3a: SRPC_DISABLE_CHANNEL is now a deprecated no-op.
     ::setenv("SRPC_DISABLE_CHANNEL", "1", /*overwrite=*/1);
-    EXPECT_FALSE(srpc_use_channel());
-    ::unsetenv("SRPC_DISABLE_CHANNEL");
-}
-
-TEST_F(SrpcUseChannelSwitchTest, DisableEnvFalseLiteralReturnsTrue) {
-    ::setenv("SRPC_DISABLE_CHANNEL", "false", /*overwrite=*/1);
     EXPECT_TRUE(srpc_use_channel());
     ::unsetenv("SRPC_DISABLE_CHANNEL");
 }
 
-TEST_F(SrpcUseChannelSwitchTest, DisableEnvUppercaseTrueReturnsFalse) {
-    ::setenv("SRPC_DISABLE_CHANNEL", "TRUE", /*overwrite=*/1);
-    EXPECT_FALSE(srpc_use_channel());
-    ::unsetenv("SRPC_DISABLE_CHANNEL");
-}
-
-TEST_F(SrpcUseChannelSwitchTest, DisableEnvOnReturnsFalse) {
-    ::setenv("SRPC_DISABLE_CHANNEL", "on", /*overwrite=*/1);
-    EXPECT_FALSE(srpc_use_channel());
-    ::unsetenv("SRPC_DISABLE_CHANNEL");
-}
-
-TEST_F(SrpcUseChannelSwitchTest, EnvIsCachedAfterFirstRead) {
-    ::setenv("SRPC_DISABLE_CHANNEL", "1", /*overwrite=*/1);
-    EXPECT_FALSE(srpc_use_channel());
-    // Subsequent env change is ignored (decision is per-process).
-    ::unsetenv("SRPC_DISABLE_CHANNEL");
-    EXPECT_FALSE(srpc_use_channel());
+TEST_F(SrpcUseChannelSwitchTest, UseChannelEnvIsIgnored) {
+    // 4g3a: legacy SRPC_USE_CHANNEL env var is also a no-op.
+    ::setenv("SRPC_USE_CHANNEL", "0", /*overwrite=*/1);
+    EXPECT_TRUE(srpc_use_channel());
+    ::unsetenv("SRPC_USE_CHANNEL");
 }
 
 // ---------------------------------------------------------------------------
-// Test-only override flips the cached value.
+// Test-only override is a no-op (channel mode is unconditional).
 // ---------------------------------------------------------------------------
 
-TEST_F(SrpcUseChannelSwitchTest, OverrideFlipsCached) {
+TEST_F(SrpcUseChannelSwitchTest, OverrideIsNoop) {
     srpc_set_use_channel_for_testing(true);
     EXPECT_TRUE(srpc_use_channel());
 
+    // 4g3a: setting to false is a no-op.
     srpc_set_use_channel_for_testing(false);
-    EXPECT_FALSE(srpc_use_channel());
+    EXPECT_TRUE(srpc_use_channel());
 }
 
 // ---------------------------------------------------------------------------
@@ -161,26 +145,9 @@ TEST_F(SrpcUseChannelSwitchTest,
     poll_thread->shutdown();
 }
 
-TEST_F(SrpcUseChannelSwitchTest,
-       ClientConnectDoesNotInstallFactoryWhenSwitchOff) {
-    srpc_set_use_channel_for_testing(false);
-
-    auto poll_thread = PollThread::create();
-    Client client(poll_thread);
-
-    EXPECT_FALSE(client.has_pending_channel_factory());
-
-    // Connect to an unreachable port — fails, but the legacy fd
-    // path is taken (no factory).
-    int rc = client.connect("127.0.0.1:1");
-
-    // Pending factory slot remains empty.
-    EXPECT_FALSE(client.has_pending_channel_factory());
-
-    (void)rc;
-
-    poll_thread->shutdown();
-}
+// 4g3a: ClientConnectDoesNotInstallFactoryWhenSwitchOff removed —
+// channel mode is now non-negotiable; the "switch off" path no
+// longer exists.
 
 TEST_F(SrpcUseChannelSwitchTest,
        ClientConnectRespectsExplicitFactoryWhenSwitchOn) {

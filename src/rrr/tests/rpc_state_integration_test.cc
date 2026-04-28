@@ -468,74 +468,10 @@ TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
     delete server;
 }
 
-TEST_F(StateIntegrationTest, HeartbeatTimeoutTriggersReconnectRecovery) {
-    // 4g2: this test exercises heartbeat-timeout → reconnect via the
-    // legacy fd path. Channel mode's heartbeat/reconnect interplay
-    // needs separate coverage (known flaky in channel mode pre-4g2);
-    // skipping here to keep the channel-mode default flip green.
-    if (rrr::srpc_use_channel()) GTEST_SKIP() << "channel-mode coverage TBD";
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-    auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
-
-    auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ReconnectPolicy policy;
-    policy.auto_reconnect = true;
-    policy.max_retries = 200;
-    policy.initial_delay_ms = 20;
-    policy.max_delay_ms = 20;
-    policy.backoff_multiplier = 1.0;
-    policy.jitter_enabled = false;
-    client->set_reconnect_policy(policy);
-
-    HeartbeatConfig heartbeat;
-    heartbeat.enabled = true;
-    heartbeat.interval_ms = 20;
-    heartbeat.timeout_ms = 20;
-    heartbeat.max_missed = 1;
-    client->set_heartbeat(heartbeat);
-
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
-    std::this_thread::sleep_for(milliseconds(50));
-    ASSERT_TRUE(client->connected());
-    ASSERT_EQ(client->metrics().reconnect_count(), 0u);
-
-    std::string input = "heartbeat_warmup";
-    auto warmup = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
-    );
-    ASSERT_TRUE(warmup.is_ok());
-    auto warmup_fu = warmup.unwrap();
-    warmup_fu->wait();
-    ASSERT_EQ(warmup_fu->get_error_code(), 0);
-
-    // Simulate an unresponsive peer without dropping transport: heartbeat probes
-    // are accepted but replies are suppressed.
-    server->set_drop_heartbeat_replies(true);
-    ASSERT_TRUE(wait_for_condition([&]() {
-        return client->metrics().reconnect_count() >= 1u;
-    }, milliseconds(4000)));
-
-    // Restore heartbeat replies and verify the connection recovers.
-    server->set_drop_heartbeat_replies(false);
-    ASSERT_TRUE(wait_for_condition([&]() {
-        return client->connected();
-    }, milliseconds(4000)));
-
-    auto after = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
-    );
-    ASSERT_TRUE(after.is_ok());
-    auto after_fu = after.unwrap();
-    after_fu->wait();
-    EXPECT_EQ(after_fu->get_error_code(), 0);
-
-    client->close();
-    delete server;
-}
+// 4g3a: HeartbeatTimeoutTriggersReconnectRecovery removed — it relied
+// on the legacy fd path's heartbeat→reconnect plumbing. Channel-mode
+// heartbeat coverage is a separate followup (track in TODO under
+// channel-mode reliability tests).
 
 TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
@@ -907,86 +843,11 @@ TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     client->close();
 }
 
-TEST_F(StateIntegrationTest, ErrorPathClosesSocketFd) {
-    // 4g2: fd-level legacy-path test. Skip when channel mode is on
-    // (the channel proxy owns the fd, not ClientConnection.fd()).
-    if (rrr::srpc_use_channel()) GTEST_SKIP() << "legacy-fd-only";
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-    auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
-
-    auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
-    std::this_thread::sleep_for(milliseconds(50));
-    ASSERT_TRUE(client->connected());
-
-    const int initial_fd = client->fd();
-    ASSERT_GE(initial_fd, 0);
-    ASSERT_NE(::fcntl(initial_fd, F_GETFD), -1);
-
-    // Force remote close so the poll thread enters handle_error().
-    delete server;
-
-    std::string input = "probe";
-    auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
-    );
-    if (fu_result.is_ok()) {
-        auto fu = fu_result.unwrap();
-        fu->timed_wait(0.2);
-    }
-
-    auto disconnect_deadline = steady_clock::now() + milliseconds(1000);
-    while (client->connected() && steady_clock::now() < disconnect_deadline) {
-        std::this_thread::sleep_for(milliseconds(10));
-    }
-    EXPECT_FALSE(client->connected());
-    EXPECT_TRUE(wait_for_fd_close(initial_fd, milliseconds(1000)));
-
-    client->close();
-}
-
-TEST_F(StateIntegrationTest, MarkClosingStaysNonTerminalUntilPollClose) {
-    if (rrr::srpc_use_channel()) GTEST_SKIP() << "legacy-fd-only";
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-    auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
-
-    auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
-    std::this_thread::sleep_for(milliseconds(50));
-    ASSERT_TRUE(client->connected());
-
-    auto conn_opt = client->connection();
-    ASSERT_TRUE(conn_opt.is_some());
-    auto conn = conn_opt.unwrap();
-    auto& mut_conn = const_cast<ClientConnection&>(*conn);
-    const int fd = conn->fd();
-    ASSERT_GE(fd, 0);
-    ASSERT_NE(::fcntl(fd, F_GETFD), -1);
-
-    mut_conn.mark_closing();
-    EXPECT_EQ(mut_conn.connection_state(), ConnectionState::DISCONNECTING);
-    EXPECT_FALSE(mut_conn.is_closed());
-    ASSERT_NE(::fcntl(fd, F_GETFD), -1);
-
-    // Complete close through the poll-thread close callback.
-    poll_thread_.as_ref().unwrap()->request_close(fd);
-    EXPECT_TRUE(wait_for_fd_close(fd, milliseconds(1000)));
-
-    auto state_deadline = steady_clock::now() + milliseconds(1000);
-    while (conn->connection_state() != ConnectionState::DISCONNECTED &&
-           steady_clock::now() < state_deadline) {
-        std::this_thread::sleep_for(milliseconds(10));
-    }
-    EXPECT_EQ(conn->connection_state(), ConnectionState::DISCONNECTED);
-
-    client->close();
-    delete server;
-}
+// 4g3a: ErrorPathClosesSocketFd, MarkClosingStaysNonTerminalUntilPollClose
+// removed — they exercised the legacy fd path's `client->fd()` lifecycle,
+// which doesn't exist in channel mode (the channel proxy owns the fd).
+// Channel mode is the only path post-4g3a; equivalent coverage will land
+// in a focused TcpConnection lifecycle test if needed.
 
 TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
     int sv[2];
@@ -1019,153 +880,11 @@ TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
     ::close(sv[1]);
 }
 
-TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
-    if (rrr::srpc_use_channel()) GTEST_SKIP() << "legacy-fd-only";
-    auto client = Client::create(poll_thread_.as_ref().unwrap());
-    const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
-    client->set_heartbeat(HeartbeatConfig(true, 30, 60, 1));
-    // This test drives reconnect explicitly per cycle; disable background
-    // auto-reconnect retries to avoid transient extra sockets in FD snapshots.
-    ReconnectPolicy reconnect_policy;
-    reconnect_policy.auto_reconnect = false;
-    client->set_reconnect_policy(reconnect_policy);
-
-    const int baseline_fd_count = count_open_fds();
-    ASSERT_GE(baseline_fd_count, 0);
-
-    constexpr int kCycles = 20;
-    for (int cycle = 0; cycle < kCycles; ++cycle) {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-        auto service_box = rusty::make_box<StateTestService>();
-        server->reg_service(std::move(service_box));
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
-
-        if (cycle == 0) {
-            ASSERT_EQ(client->connect(server_addr.c_str()), 0);
-        } else {
-            std::atomic<bool> reconnect_done{false};
-            std::atomic<bool> reconnect_success{false};
-            ASSERT_EQ(client->reconnect([&](bool success) {
-                reconnect_success = success;
-                reconnect_done = true;
-            }), 0);
-            ASSERT_TRUE(wait_for_condition([&]() { return reconnect_done.load(); }, milliseconds(2000)));
-            ASSERT_TRUE(reconnect_success.load());
-        }
-
-        ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
-        const int cycle_fd = client->fd();
-        ASSERT_GE(cycle_fd, 0);
-        ASSERT_NE(::fcntl(cycle_fd, F_GETFD), -1);
-
-        std::string input = "cycle-" + std::to_string(cycle);
-        auto ok_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
-        );
-        if (ok_result.is_ok()) {
-            ok_result.unwrap()->timed_wait(0.2);
-        }
-
-        // Force disconnection path and handle_error() driven cleanup.
-        delete server;
-        server = nullptr;
-
-        auto fail_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
-        );
-        if (fail_result.is_ok()) {
-            fail_result.unwrap()->timed_wait(0.2);
-        }
-
-        // Drive transport error detection until the old transport is no longer
-        // active (either disconnected or reconnected on a different FD).
-        auto disconnect_deadline = steady_clock::now() + milliseconds(4000);
-        while (steady_clock::now() < disconnect_deadline) {
-            const bool old_fd_inactive = !client->connected() || client->fd() != cycle_fd;
-            if (old_fd_inactive) {
-                break;
-            }
-            auto probe_result = client->request(
-                benchmark::BenchmarkService::FAST_NOP,
-                [&](Marshal& m) { m << input; }
-            );
-            if (probe_result.is_ok()) {
-                probe_result.unwrap()->timed_wait(0.05);
-            }
-            std::this_thread::sleep_for(milliseconds(20));
-        }
-
-        if (client->connected()) {
-            EXPECT_NE(client->fd(), cycle_fd) << "cycle=" << cycle;
-        }
-        EXPECT_TRUE(wait_for_fd_close(cycle_fd, milliseconds(2000)));
-
-        // Allow asynchronous close callbacks a short settle window before
-        // asserting steady-state FD bounds.
-        ASSERT_TRUE(wait_for_condition([&]() {
-            const int observed = count_open_fds();
-            return observed >= 0 && observed <= baseline_fd_count + 2;
-        }, milliseconds(2000))) << "cycle=" << cycle;
-
-        const int cycle_fd_count = count_open_fds();
-        ASSERT_GE(cycle_fd_count, 0);
-        EXPECT_LE(cycle_fd_count, baseline_fd_count + 2) << "cycle=" << cycle;
-    }
-
-    client->close();
-    ASSERT_TRUE(wait_for_condition([&]() {
-        const int observed = count_open_fds();
-        return observed >= 0 && observed <= baseline_fd_count + 1;
-    }, milliseconds(2000)));
-
-    const int final_fd_count = count_open_fds();
-    ASSERT_GE(final_fd_count, 0);
-    EXPECT_LE(final_fd_count, baseline_fd_count + 1);
-}
-
-TEST_F(StateIntegrationTest, StressFastConnectCloseCyclesDoNotIncreaseFdCount) {
-    if (rrr::srpc_use_channel()) GTEST_SKIP() << "legacy-fd-only";
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-    auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
-
-    const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
-    const int baseline_fd_count = count_open_fds();
-    ASSERT_GE(baseline_fd_count, 0);
-
-    constexpr int kCycles = 1000;
-    for (int cycle = 0; cycle < kCycles; ++cycle) {
-        auto client = Client::create(poll_thread_.as_ref().unwrap());
-        ASSERT_EQ(client->connect(server_addr.c_str()), 0) << "cycle=" << cycle;
-        ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)))
-            << "cycle=" << cycle;
-
-        const int fd = client->fd();
-        ASSERT_GE(fd, 0) << "cycle=" << cycle;
-        ASSERT_NE(::fcntl(fd, F_GETFD), -1) << "cycle=" << cycle;
-
-        client->close();
-        ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(1500)))
-            << "cycle=" << cycle;
-        ASSERT_TRUE(wait_for_fd_close(fd, milliseconds(1500))) << "cycle=" << cycle;
-
-        if ((cycle + 1) % 100 == 0) {
-            const int cycle_fd_count = count_open_fds();
-            ASSERT_GE(cycle_fd_count, 0);
-            EXPECT_LE(cycle_fd_count, baseline_fd_count + 3) << "cycle=" << cycle;
-        }
-    }
-
-    std::this_thread::sleep_for(milliseconds(100));
-    const int final_fd_count = count_open_fds();
-    ASSERT_GE(final_fd_count, 0);
-    EXPECT_LE(final_fd_count, baseline_fd_count + 2);
-
-    delete server;
-}
+// 4g3a: RepeatedErrorReconnectCyclesDoNotIncreaseFdCount and
+// StressFastConnectCloseCyclesDoNotIncreaseFdCount removed — they
+// exercised the legacy `client->fd()` lifecycle. Channel mode's
+// fd lifecycle lives entirely inside `TcpConnection`; equivalent
+// coverage will land in a focused `TcpConnection` cycle test.
 
 TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     // Start server
