@@ -1003,7 +1003,19 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
       - Listener registers in the switchboard on `listen(addr)` (returns `AddressInUse` if already taken); unregisters on `close()`. `local_address()` returns the bound address.
       - Tests: 9-test suite at `src/rrr/tests/rpc_inmemory_channel_test.cc` (CTest target `test_rpc_inmemory_channel`). Coverage: backend_name, connect-to-unbound-addr → Refused, listener lifecycle (listen/close idempotent), AddressInUse, single-direction frame send, bidirectional frame exchange (incl. ordering across 11 frames), multiple connections to one listener, connect-after-listener-close → Refused, peer_address propagation.
       - Verification: full RPC-focused suite green — no regressions; the in-memory backend is purely additive (existing TCP-backed paths are untouched).
-    - [ ] **6b — Close semantics and on_closed propagation.** ~80 LOC. Closing one side delivers `on_closed(ChannelError::None)` to the peer (on the next dispatched callback). Idempotent close. Send-after-close returns `ConnectionReset`.
+    - [x] **6b — Close semantics and on_closed propagation.** ✅ **LANDED 2026-04-28.** ~150 LOC (mostly tests + comments).
+      - Tightened `InMemoryChannel::is_closed()` to report joint state (`a_closed || b_closed`) so peer-close is observable from both halves. This matches the channel-layer contract: "After `is_closed()` returns true, `send_frame` must return a non-None error" — the implication now holds in both directions (verified by `SendFrameAfterPeerCloseReturnsReset` test).
+      - Documented the `close()` semantics: peer-only on_closed fire (does NOT fire self's on_closed, unlike `TcpConnection::close()`'s `deliver_on_closed_locked`). The InMemory backend keeps things simple — the user-thread caller invoking close() typically does its own cleanup inline; only the peer needs an asynchronous notification.
+      - Added 8 close-semantics tests to `rpc_inmemory_channel_test.cc`:
+        - `ClientCloseFiresServerOnClosed` — close on one side fires peer's on_closed exactly once.
+        - `ServerCloseFiresClientOnClosed` — symmetric.
+        - `CloseIsIdempotent` — multiple close() calls don't re-fire on_closed.
+        - `IsClosedReflectsEitherSide` — is_closed() returns true on both halves once one side closes.
+        - `SendFrameAfterSelfCloseReturnsReset` — explicitly verified.
+        - `SendFrameAfterPeerCloseReturnsReset` — peer-close drops further sends.
+        - `CloseWithoutPeerCallbackIsSafe` — close() works even if on_closed isn't installed.
+        - `BothSidesCloseFiresOnClosedOnce` — second close() doesn't re-fire (peer-already-closed branch).
+      - Verification: full RPC-focused suite green; test_rpc_inmemory_channel 17/17 (9 from 6a + 8 new).
     - [ ] **6c — Fault injection hooks.** ~150 LOC. `set_drop_next_send_count(n)`, `set_drop_until_token(token)`, `partition(addrA, addrB, drop)`. Deterministic; no timing-dependent fault injection.
     - [ ] **6d — End-to-end RPC test using `InMemoryFactory`.** ~150 LOC. Drives a real `Client` + `Server` through the in-memory channel, verifies request/response round-trip and close-fan-out without any sockets.
 - [x] *medium* Add migration switch and dual-path verification. ✅ **LANDED 2026-04-27 / 04-28** as Workstream K leaves 4f (`srpc_use_channel()` + `SRPC_USE_CHANNEL` env var) and 4g2 (default flipped on, `SRPC_DISABLE_CHANNEL` opt-out added). Switch then retired in 4g4 once the legacy path was deleted.

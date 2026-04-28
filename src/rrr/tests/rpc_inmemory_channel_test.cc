@@ -240,5 +240,206 @@ TEST_F(InMemoryChannelTest, PeerAddress) {
               std::string::npos);
 }
 
+// ---------------------------------------------------------------------------
+// 6b — Close semantics
+// ---------------------------------------------------------------------------
+
+namespace close_test_helpers {
+// Convenience: build a connected pair of channel proxies. The
+// caller can then drive `send_frame` and `close()` directly. The
+// fixture re-uses the same listener & address each call.
+struct ConnectedPair {
+    ChannelConnectionProxy client;
+    ChannelConnectionProxy server;
+};
+
+inline ConnectedPair make_connected_pair(
+        ChannelFactoryProxy& factory,
+        ChannelListenerProxy& listener,
+        std::string_view addr) {
+    ConnectedPair pair;
+    listener->set_on_accept([&pair](ChannelConnectionProxy peer) {
+        pair.server = std::move(peer);
+    });
+    auto result = factory->connect(addr);
+    if (result.error == ChannelError::None) {
+        pair.client = std::move(result.connection);
+    }
+    return pair;
+}
+}  // namespace close_test_helpers
+
+// ---------------------------------------------------------------------------
+// close() on one side delivers on_closed(None) to the peer.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, ClientCloseFiresServerOnClosed) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-1"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-1");
+    ASSERT_TRUE(pair.client.has_value());
+    ASSERT_TRUE(pair.server.has_value());
+
+    int server_on_closed_calls = 0;
+    ChannelError observed_reason = ChannelError::Internal;
+    pair.server->set_on_closed([&](ChannelError r) {
+        ++server_on_closed_calls;
+        observed_reason = r;
+    });
+    EXPECT_EQ(server_on_closed_calls, 0);
+
+    pair.client->close();
+
+    EXPECT_EQ(server_on_closed_calls, 1);
+    EXPECT_EQ(observed_reason, ChannelError::None);
+}
+
+TEST_F(InMemoryChannelTest, ServerCloseFiresClientOnClosed) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-2"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-2");
+
+    int client_on_closed_calls = 0;
+    pair.client->set_on_closed([&](ChannelError) {
+        ++client_on_closed_calls;
+    });
+
+    pair.server->close();
+
+    EXPECT_EQ(client_on_closed_calls, 1);
+}
+
+// ---------------------------------------------------------------------------
+// close() is idempotent — multiple calls don't re-fire the peer's
+// on_closed callback.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, CloseIsIdempotent) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-idem"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-idem");
+
+    int server_on_closed_calls = 0;
+    pair.server->set_on_closed([&](ChannelError) {
+        ++server_on_closed_calls;
+    });
+
+    pair.client->close();
+    pair.client->close();
+    pair.client->close();
+
+    EXPECT_EQ(server_on_closed_calls, 1);
+}
+
+// ---------------------------------------------------------------------------
+// is_closed() reflects either-side-closed (both halves observe true
+// once one side closes).
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, IsClosedReflectsEitherSide) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-isclosed"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-isclosed");
+
+    EXPECT_FALSE(pair.client->is_closed());
+    EXPECT_FALSE(pair.server->is_closed());
+
+    pair.client->close();
+
+    EXPECT_TRUE(pair.client->is_closed());
+    EXPECT_TRUE(pair.server->is_closed());
+}
+
+// ---------------------------------------------------------------------------
+// send_frame after self.close() returns ConnectionReset.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, SendFrameAfterSelfCloseReturnsReset) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-send-self"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-send-self");
+
+    pair.client->close();
+
+    std::vector<std::uint8_t> bytes = {1, 2, 3};
+    ChannelFrame f{bytes.data(), bytes.size()};
+    EXPECT_EQ(pair.client->send_frame(f), ChannelError::ConnectionReset);
+}
+
+// ---------------------------------------------------------------------------
+// send_frame after peer.close() returns ConnectionReset.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, SendFrameAfterPeerCloseReturnsReset) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-send-peer"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-send-peer");
+
+    pair.client->close();
+
+    std::vector<std::uint8_t> bytes = {1, 2, 3};
+    ChannelFrame f{bytes.data(), bytes.size()};
+    // Server still has its own closed_ flag at false, but the peer
+    // (client) is closed → send_frame surfaces ConnectionReset.
+    EXPECT_EQ(pair.server->send_frame(f), ChannelError::ConnectionReset);
+}
+
+// ---------------------------------------------------------------------------
+// close() with no on_closed callback installed on the peer is still
+// safe: state still flips, no callback fires, send_frame still
+// reports ConnectionReset.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, CloseWithoutPeerCallbackIsSafe) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-no-cb"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-no-cb");
+
+    // Deliberately do NOT install on_closed on the server side.
+    pair.client->close();
+
+    EXPECT_TRUE(pair.client->is_closed());
+    EXPECT_TRUE(pair.server->is_closed());
+
+    std::vector<std::uint8_t> bytes = {0xff};
+    ChannelFrame f{bytes.data(), bytes.size()};
+    EXPECT_EQ(pair.server->send_frame(f), ChannelError::ConnectionReset);
+}
+
+// ---------------------------------------------------------------------------
+// Both sides close: each side's on_closed fires at most once. The
+// second-to-close side does NOT fire the first side's on_closed
+// (since the first side already observed close locally).
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, BothSidesCloseFiresOnClosedOnce) {
+    auto listener = factory_->make_listener();
+    ASSERT_EQ(listener->listen("inmemory://close-both"), ChannelError::None);
+    auto pair = close_test_helpers::make_connected_pair(
+        factory_, listener, "inmemory://close-both");
+
+    int client_on_closed_calls = 0;
+    int server_on_closed_calls = 0;
+    pair.client->set_on_closed([&](ChannelError) { ++client_on_closed_calls; });
+    pair.server->set_on_closed([&](ChannelError) { ++server_on_closed_calls; });
+
+    pair.client->close();  // fires server's on_closed
+    EXPECT_EQ(client_on_closed_calls, 0);
+    EXPECT_EQ(server_on_closed_calls, 1);
+
+    pair.server->close();  // does NOT fire client's on_closed (peer
+                           // already closed; server merely flips its
+                           // own closed flag).
+    EXPECT_EQ(client_on_closed_calls, 0);
+    EXPECT_EQ(server_on_closed_calls, 1);
+}
+
 }  // namespace
 }  // namespace rrr

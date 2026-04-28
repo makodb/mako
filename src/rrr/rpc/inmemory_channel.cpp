@@ -105,6 +105,27 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
     return ChannelError::None;
 }
 
+// 6b: close semantics — peer-only on_closed fire.
+//
+// close() flips the local-side closed flag, then synchronously fires
+// the *peer's* on_closed callback (if the peer hasn't already
+// closed, in which case its callback was — or will be — fired by
+// its own close()). close() is idempotent: subsequent calls return
+// without re-firing the peer's callback.
+//
+// Note: unlike `TcpConnection::close()` (which also delivers
+// on_closed to *self* via `deliver_on_closed_locked`), this
+// implementation does NOT fire self's on_closed. That choice keeps
+// the InMemory backend semantics simple — the user-thread caller
+// who invoked close() typically does its own cleanup inline; only
+// the peer needs an asynchronous notification. Tests that want
+// self-close → self-on_closed mirroring should explicitly invoke
+// the on_closed callback they installed.
+//
+// `send_frame` already returns `ChannelError::ConnectionReset` if
+// either side is closed, so once close() returns the connection is
+// observably dead in both directions (verified by the
+// `SendFrameAfterPeerCloseReturnsReset` test).
 void InMemoryChannel::close() {
     OnClosedCallback peer_on_closed;
     bool fire_peer_closed = false;
@@ -133,8 +154,17 @@ void InMemoryChannel::close() {
 }
 
 bool InMemoryChannel::is_closed() const {
+    // 6b: report closed if EITHER side has been closed. This matches
+    // the TCP backend's behavior — once the peer disconnects, the
+    // connection is unusable and `send_frame` will return
+    // `ConnectionReset` (verified in `send_frame`'s peer_already_closed
+    // check). The channel-layer contract (`channel.hpp`):
+    //   "After `is_closed()` returns true, `send_frame` must return
+    //    a non-None error..."
+    // Reporting joint state (a_closed || b_closed) ensures the
+    // implication holds in both directions.
     std::lock_guard<std::mutex> lk(mut_state().mu);
-    return is_a_side_ ? mut_state().a_closed : mut_state().b_closed;
+    return mut_state().a_closed || mut_state().b_closed;
 }
 
 std::string InMemoryChannel::peer_address() const {
