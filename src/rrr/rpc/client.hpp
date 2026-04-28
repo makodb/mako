@@ -1097,7 +1097,7 @@ public:
         return buffering_config_;
     }
 
-    // @unsafe - Uses RequestQueue which uses std::list
+    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
     size_t pending_request_count() const {
         // @unsafe { RequestQueue::size }
         return pending_queue_.size();
@@ -1121,7 +1121,7 @@ public:
     }
 #endif
 
-    // @unsafe - Uses RequestQueue which uses std::list
+    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
     // Note: const because pending_queue_ is mutable
     void clear_pending_requests(int error_code = ECONNABORTED) const {
         // @unsafe { RequestQueue::clear_all }
@@ -1987,7 +1987,7 @@ public:
         return guard->is_some();
     }
 
-    // @unsafe - Uses RequestQueue which uses std::list
+    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
     size_t pending_request_count() const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -1997,7 +1997,7 @@ public:
         return 0;
     }
 
-    // @unsafe - Uses RequestQueue which uses std::list
+    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
     void clear_pending_requests(int error_code = ECONNABORTED) const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
