@@ -161,14 +161,42 @@ ServerConnection::~ServerConnection() {
     // Arc reference to RpcServiceContext is automatically released
 }
 
-// @unsafe - 5b: bind a channel proxy and flip the channel-mode latch.
+// @unsafe - 5b/5c: bind a channel proxy and flip the channel-mode latch.
 //
-// Mirrors `ClientConnection::bind_channel_direct` minus the inbound
-// callback wiring (5c will install `on_frame` / `on_closed` here in
-// a follow-up leaf). For 5b the proxy slot is purely an outbound
-// dispatch sink — `reply<F>(...)` calls `send_frame(...)` on it.
+// Mirrors `ClientConnection::bind_channel_direct`. After binding, the
+// proxy serves as both the outbound dispatch sink (5b — `reply<F>(...)`
+// calls `proxy->send_frame(...)`) and the inbound demux source (5c
+// — installs `on_frame(...)` to call `decode_request_and_dispatch`).
+//
+// `weak_self_` MUST be initialized before calling this (the
+// `on_frame` callback captures it; if the connection is destroyed,
+// the upgrade fails and the callback short-circuits). The accept
+// path in subsequent leaves (5e) wires `weak_self_` immediately
+// after construction.
 void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
     if (!proxy.has_value()) return;
+
+    // 5c: install on_frame callback BEFORE moving the proxy into the
+    // slot, so the callback can capture a Weak<ServerConnection>
+    // without holding the SpinMutex.
+    WeakServerConnection weak_self;
+    // @unsafe { Weak copy is currently treated as non-safe }
+    { weak_self = weak_self_; }
+
+    // @unsafe - lambda capture, channel proxy mutator
+    proxy->set_on_frame([weak_self](const ChannelFrame& f) {
+        auto sconn_opt = weak_self.upgrade();
+        if (sconn_opt.is_none()) return;
+        auto sconn = sconn_opt.unwrap();
+        auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
+        mut_sconn->decode_request_and_dispatch(f.payload, f.size);
+    });
+    // 5d will wire on_closed / on_error here. For 5c we explicitly
+    // clear them so any prior installation (e.g. from a re-bind in
+    // tests) doesn't leak through.
+    proxy->set_on_closed([](ChannelError) {});
+    proxy->set_on_error([](ChannelError, std::string_view) {});
+
     // @unsafe { SpinMutex::lock + make_box + ChannelConnectionProxy move }
     {
         auto guard = channel_proxy_.lock().unwrap();
@@ -176,6 +204,100 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
             rusty::make_box<ChannelConnectionProxy>(std::move(proxy)));
     }
     channel_mode_.set(true);
+}
+
+// @unsafe - 5c: decode one channel-mode request frame and dispatch.
+//
+// Mirrors the per-packet body of `handle_read` minus the size-framed
+// I/O loop: the channel layer has already stripped the 4-byte size
+// prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
+void ServerConnection::decode_request_and_dispatch(
+        const std::uint8_t* bytes, std::size_t size) {
+    if (status_ == CLOSED) {
+        return;
+    }
+
+    // Build a Request and copy the frame's bytes into its Marshal.
+    // The channel-layer contract makes `bytes` valid only for the
+    // duration of this callback, so we must copy before any code path
+    // that may yield (e.g. `Fiber::create_run`).
+    auto req_box = rusty::make_box<Request>();
+    Request& req = *req_box;
+    if (size > 0) {
+        req.m.write(bytes, size);
+    }
+
+    // Header parse: xid + rpc_id. If the frame is malformed (less
+    // than enough bytes for xid), drop it (no valid xid to reply
+    // against). v64 is variable-length 1-8 bytes; an empty Marshal
+    // means there's no xid.
+    if (req.m.content_size() == 0) {
+        Log_warn("rrr::ServerConnection: empty channel-mode request frame, "
+                 "dropping");
+        return;
+    }
+    v64 v_xid;
+    req.m >> v_xid;
+    req.xid = v_xid.get();
+    req.attach_pending_guard(ctx_->pending_requests);
+
+    if (req.m.content_size() < sizeof(i32)) {
+        reply(req, EINVAL);
+        return;
+    }
+
+    i32 rpc_id;
+    req.m >> rpc_id;
+    if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
+        // @unsafe - std::atomic::load
+        if (!ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
+            reply(req, 0);
+        }
+        return;
+    }
+
+#ifdef RPC_STATISTICS
+    stat_server_rpc_counting(rpc_id);
+#endif // RPC_STATISTICS
+
+    auto svc_index_opt = ctx_->rpc_to_service.get(rpc_id);
+    if (svc_index_opt.is_none()) {
+        bool surpress_warning = false;
+        {
+            auto guard = rpc_id_missing_s.lock().unwrap();
+            if (!guard->contains(rpc_id)) {
+                guard->insert(rpc_id);
+            } else {
+                surpress_warning = true;
+            }
+        }
+        if (!surpress_warning) {
+            Log_warn("rrr::ServerConnection: no handler for rpc_id = %d "
+                     "(channel-mode dispatch)", rpc_id);
+        }
+        reply(req, ENOENT);
+        return;
+    }
+
+    size_t svc_index = *svc_index_opt.unwrap();
+    auto weak_this = weak_self_;
+    if (ctx_->fast_rpc_ids.contains(rpc_id)) {
+        // Fast inline dispatch — no fiber spawn.
+        auto guard = ctx_->services[svc_index].borrow_mut();
+        (*guard)->__dispatch__(rpc_id, std::move(req_box), weak_this);
+    } else {
+        // Slow path — spawn a fiber so the handler can yield (e.g.
+        // for nested RPC calls). Capture an Arc<RpcServiceContext>
+        // clone so the fiber stays valid even if the connection is
+        // closed mid-flight.
+        auto ctx = ctx_.clone();
+        Fiber::create_run([ctx, svc_index, rpc_id,
+                           req = std::move(req_box),
+                           weak_this]() mutable {
+            auto guard = ctx->services[svc_index].borrow_mut();
+            (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
+        }, __FILE__, __LINE__);
+    }
 }
 
 // @unsafe - 5b: dispatch a reply-frame body through the bound proxy.

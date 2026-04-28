@@ -450,6 +450,19 @@ public:
     // @safe - Initializes connection with socket
     ServerConnection(rusty::Arc<RpcServiceContext> ctx, int socket);
 
+    // Test-only: install the self-pointer before code paths that need
+    // to upgrade it (e.g., the on_frame callback installed in
+    // `bind_channel`). Production wires `weak_self_` via the listener
+    // accept path. Tests that construct `ServerConnection` directly
+    // via `Arc::make` must call this before any channel-mode code
+    // path that captures the weak.
+    // @unsafe - Direct field assignment; callers must guarantee the
+    // weak refers to the same Arc that owns this object.
+    void install_self_weak_for_testing(WeakServerConnection weak) {
+        // @unsafe { Weak copy-assign }
+        { weak_self_ = std::move(weak); }
+    }
+
     /**
      * Workstream K, server sub-leaf 5b — bind a `ChannelConnectionProxy`
      * to this connection.
@@ -616,6 +629,16 @@ private:
     // @unsafe - SpinMutex::lock + ChannelConnectionProxy method dispatch.
     void dispatch_response_frame_via_channel(const std::uint8_t* bytes,
                                              std::size_t size) const;
+
+    // 5c: channel-mode inbound demux. Parses one decoded frame
+    // (`[xid:v64][rpc_id:i32][user-args]` — the channel layer has
+    // already stripped the 4-byte size prefix) and routes to the
+    // service registered for that rpc_id, mirroring the per-packet
+    // body of `handle_read` minus the size-framed I/O loop. Called
+    // from the `on_frame` callback installed by `bind_channel(...)`.
+    // @unsafe - Drives Marshal / Box<Request> / Service dispatch.
+    void decode_request_and_dispatch(const std::uint8_t* bytes,
+                                     std::size_t size);
 
 };
 
