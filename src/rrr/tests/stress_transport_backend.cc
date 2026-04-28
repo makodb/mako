@@ -18,6 +18,8 @@
 #include <thread>
 #include <memory>
 #include <mutex>
+
+#include <rusty/box.hpp>
 #include <cstdlib>
 #include <vector>
 #include <random>
@@ -266,11 +268,11 @@ TEST_F(TransportStressTest, ConcurrentBackendOperations) {
     const int num_threads = 8;
     const int iterations_per_thread = 10000;
     std::vector<std::thread> threads;
-    std::vector<std::unique_ptr<StressMockBackend>> backends;
+    std::vector<rusty::Box<StressMockBackend>> backends;
     std::atomic<uint64_t> total_ops{0};
 
     for (int t = 0; t < num_threads; t++) {
-        backends.push_back(std::make_unique<StressMockBackend>());
+        backends.push_back(rusty::make_box<StressMockBackend>());
         backends[t]->Initialize("127.0.0.1:29850", 0, 0, 1, 10);
     }
 
@@ -569,12 +571,12 @@ TEST_F(TransportStressTest, ThroughputBenchmark) {
 
 TEST_F(TransportStressTest, MixedWorkload) {
     const int num_backends = 4;
-    std::vector<std::unique_ptr<StressMockBackend>> backends;
+    std::vector<rusty::Box<StressMockBackend>> backends;
     std::vector<std::thread> threads;
     std::atomic<uint64_t> total_ops{0};
 
     for (int i = 0; i < num_backends; i++) {
-        backends.push_back(std::make_unique<StressMockBackend>());
+        backends.push_back(rusty::make_box<StressMockBackend>());
         backends[i]->Initialize("127.0.0.1:29850", 0, 0, 1, 10);
     }
 

@@ -4,6 +4,9 @@
 #include <chrono>
 #include <vector>
 #include <random>
+
+#include <rusty/box.hpp>
+
 #include "../rrr.hpp"
 
 using namespace rrr;
@@ -336,9 +339,9 @@ TEST_F(ALockTest, ConcurrentStressTest) {
     const int num_threads = 20;
     const int ops_per_thread = 100;
     
-    std::vector<std::unique_ptr<TimeoutALock>> locks;
+    std::vector<rusty::Box<TimeoutALock>> locks;
     for (int i = 0; i < num_locks; ++i) {
-        locks.push_back(std::make_unique<TimeoutALock>());
+        locks.push_back(rusty::make_box<TimeoutALock>());
     }
     
     std::atomic<int> success_count{0};
