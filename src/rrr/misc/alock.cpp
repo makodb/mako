@@ -29,7 +29,6 @@
 //   std::__atomic_base::store: [unsafe]
 //   std::__atomic_base::fetch_add: [unsafe]
 //   std::__atomic_base::fetch_sub: [unsafe]
-//   std::map::erase: [unsafe]
 //   std::list::erase: [unsafe]
 //   std::list::emplace_back: [unsafe]
 //   std::vector::push_back: [unsafe]

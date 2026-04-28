@@ -41,12 +41,6 @@
 // @external: {
 //   const_cast: [unsafe]
 //   std::__cxx11::basic_string::basic_string: [safe]
-//   std::map::find: [safe]
-//   std::map::erase: [safe]
-//   std::map::end: [safe]
-//   std::unordered_map::find: [safe]
-//   std::unordered_map::erase: [safe]
-//   std::unordered_map::end: [safe]
 // }
 
 

@@ -49,10 +49,6 @@
 // @external: {
 //   const_cast: [unsafe]
 //   std::function::operator=: [safe]
-//   std::unordered_map::find: [safe]
-//   std::unordered_map::end: [safe]
-//   std::unordered_map::iterator::operator!=: [safe]
-//   std::unordered_map::iterator::operator->: [safe]
 //   std::vector::operator[]: [safe]
 //   rusty::sync::Weak::Weak: [safe]
 //   rrr::WeakServerConnection: [safe]
