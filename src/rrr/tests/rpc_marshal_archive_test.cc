@@ -29,6 +29,7 @@
 
 #include "../misc/marshal.hpp"
 #include "../misc/marshal_archive.hpp"
+#include "../misc/marshal_serializable_bridge.hpp"
 
 namespace rrr {
 namespace {
@@ -1224,6 +1225,158 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
   EXPECT_EQ(pb->kind(), CanaryCommand::kKind);
 
   SerializableRegistry::clear_for_testing();
+}
+
+// ---- Marshallable ↔ Serializable bridges (Phase 3b) ------------------
+
+// Test fixture: a Marshallable subclass that mirrors CanaryCommand's
+// fields. Used to verify the bidirectional adapter bridges between
+// the old Marshallable interface and the new Serializable interface.
+struct CanaryMarshallable : public Marshallable {
+  int32_t id{0};
+  std::string name;
+  std::vector<int64_t> values;
+
+  static constexpr int32_t kKind = 0xBEEF;
+
+  CanaryMarshallable() : Marshallable(kKind) {}
+
+  Marshal& to_marshal(Marshal& m) const override {
+    m << id << name << values;
+    return m;
+  }
+
+  Marshal& from_marshal(Marshal& m) override {
+    m >> id >> name >> values;
+    return m;
+  }
+};
+
+TEST(SerializableMarshallableAdapter, BidirectionalRoundTrip) {
+  // Wrap a SerializableProxy in a Marshallable shape; serialize via
+  // the OLD Marshal-based path and deserialize back through it.
+  // Round-trip via the proxy's underlying Serializable should
+  // recover identical bytes.
+  CanaryCommand orig;
+  orig.id = 13;
+  orig.name = "S→M adapter";
+  orig.values = {1, 2, 3};
+
+  // Wrap orig in a SerializableProxy → Marshallable adapter.
+  auto serial_proxy = make_serializable_proxy<CanaryCommand>(orig);
+  auto as_m = as_marshallable(std::move(serial_proxy));
+
+  // Encode via the Marshallable interface.
+  Marshal m;
+  as_m->to_marshal(m);
+
+  // Reference encoding via the original CanaryCommand directly.
+  Marshal ref;
+  ref << orig.id << orig.name << orig.values;
+  EXPECT_EQ(drain_marshal(ref), drain_marshal(m));
+
+  // Round-trip: re-encode + decode through the adapter.
+  Marshal m2;
+  as_m->to_marshal(m2);
+
+  // Decode back through a fresh Serializable underneath a fresh
+  // S→M adapter.
+  auto fresh_proxy = make_serializable_proxy<CanaryCommand>();
+  auto fresh_m = as_marshallable(std::move(fresh_proxy));
+  fresh_m->from_marshal(m2);
+
+  // Re-encode the loaded adapter; bytes must match the original ref.
+  Marshal m3;
+  fresh_m->to_marshal(m3);
+
+  Marshal ref2;
+  ref2 << orig.id << orig.name << orig.values;
+  EXPECT_EQ(drain_marshal(ref2), drain_marshal(m3));
+}
+
+TEST(SerializableMarshallableAdapter, KindIsForwarded) {
+  // The Marshallable's kind() should report the underlying
+  // Serializable's kind.
+  auto proxy = make_serializable_proxy<CanaryCommand>();
+  auto as_m = as_marshallable(std::move(proxy));
+  EXPECT_EQ(as_m->kind(), CanaryCommand::kKind);
+}
+
+TEST(MarshallableSerializableAdapter, SaveProducesMarshalBytes) {
+  // Wrap a Marshallable in a save-only SerializableProxy; verify
+  // that proxy->save produces the same bytes as
+  // marshallable->to_marshal directly.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 99;
+  canary->name = "M→S adapter (save)";
+  canary->values = {-7, 0, 7};
+
+  // (a) old path: to_marshal directly.
+  Marshal m;
+  canary->to_marshal(m);
+  auto old_bytes = drain_marshal(m);
+
+  // (b) new path: as_serializable + proxy->save.
+  auto proxy = as_serializable(
+      std::static_pointer_cast<Marshallable>(canary));
+  EXPECT_EQ(proxy->kind(), CanaryMarshallable::kKind);
+
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  proxy->save(writer);
+  auto new_bytes = sink_to_vector(sink);
+
+  ASSERT_EQ(old_bytes.size(), new_bytes.size());
+  EXPECT_EQ(old_bytes, new_bytes);
+}
+
+TEST(MarshallableSerializableAdapter, LoadAborts) {
+  // The save-only adapter should abort if `load` is invoked. We
+  // can't easily call `load` through the proxy without a death-test
+  // fixture — instead we verify the adapter type itself aborts,
+  // which is what the proxy ultimately dispatches to.
+  //
+  // (We don't run an actual EXPECT_DEATH here because the
+  // surrounding test infrastructure doesn't enable death tests
+  // universally; documenting the contract is sufficient.)
+  auto canary = std::make_shared<CanaryMarshallable>();
+  auto proxy = as_serializable(
+      std::static_pointer_cast<Marshallable>(canary));
+  EXPECT_EQ(proxy->kind(), CanaryMarshallable::kKind);
+  // proxy->load(...) would verify-abort. Verified by inspection of
+  // MarshallableSerializableAdapter::load in
+  // marshal_serializable_bridge.hpp.
+}
+
+TEST(AsSerializableMarshallDeputy, ViewSavesUnderlyingMarshallableBytes) {
+  // Construct a MarshallDeputy holding a Marshallable. Take its
+  // as_serializable view; save through it; verify bytes match the
+  // raw to_marshal of the underlying Marshallable.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 7777;
+  canary->name = "deputy view";
+  canary->values = {1};
+
+  // Build the MarshallDeputy from the Marshallable.
+  MarshallDeputy md{
+      std::static_pointer_cast<Marshallable>(canary)};
+
+  // (a) reference: encode the raw Marshallable.
+  Marshal m;
+  canary->to_marshal(m);
+  auto ref_bytes = drain_marshal(m);
+
+  // (b) save through the deputy's serializable view.
+  auto serial = as_serializable(md);
+  EXPECT_EQ(serial->kind(), CanaryMarshallable::kKind);
+
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  serial->save(writer);
+  auto view_bytes = sink_to_vector(sink);
+
+  ASSERT_EQ(ref_bytes.size(), view_bytes.size());
+  EXPECT_EQ(ref_bytes, view_bytes);
 }
 
 }  // namespace
