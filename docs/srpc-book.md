@@ -1145,10 +1145,39 @@ prefix); the kind tag is framed by the next-higher layer
 (`MarshallDeputy` in the existing codebase, which Phase 3 will
 rewrite atop `SerializableProxy`).
 
+#### Marshal ↔ Archive bridges (transitional)
+
+For incremental migration, the new system bridges the existing
+`Marshal` buffer abstraction. `MarshalSink` lets new
+`BinaryWriteArchive`-based code emit bytes directly into a Marshal
+that legacy code is also writing to:
+
+```cpp srpc-no-compile
+rrr::Marshal m;
+m << static_cast<rrr::i32>(1);   // legacy
+
+{
+  rrr::MarshalSink sink(&m);
+  rrr::BinaryWriteArchive writer(&sink);
+  writer << static_cast<rrr::i32>(2);  // new code, same buffer
+}
+
+m << std::string("trailing");  // legacy
+```
+
+`MarshalSource` is the dual: a `BinaryReadArchive` over a
+`Marshal` that was filled by the legacy `operator<<` path decodes
+the bytes exactly as `Marshal::operator>>` would (Phase 1's
+byte-for-byte commitment). Use these adapters when integrating the
+new archive layer with the existing TCP TX/RX path.
+
 Status: Phase 1a (primitives + std::string), Phase 1b (containers),
-Phase 1c (`FdSink`/`FdSource`), and Phase 2 (`SerializableProxy` +
-registry) have landed. Phase 3+ (RPC framework boundary; per-command
-type migrations from `Marshallable` to `Serializable`) are upcoming.
+Phase 1c (`FdSink`/`FdSource`), Phase 2 (`SerializableProxy` +
+registry), and Phase 3a (Marshal↔Archive bridges) have landed.
+Phase 3b–3f (`MarshallDeputy::serializable()` accessor, `rpcgen`
+archive emission, reactor TX/RX path, default emission switch,
+`MarshallDeputy` internals rewrite) and Phase 4+ (per-command
+migrations from `Marshallable` to `Serializable`) are upcoming.
 See [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 

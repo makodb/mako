@@ -65,6 +65,13 @@
 
 namespace rrr {
 
+// Forward declaration so Phase 3a's `MarshalSink` / `MarshalSource`
+// can hold a `Marshal*` without dragging the heavy `marshal.hpp`
+// header into every translation unit that uses the new archive
+// system. Method bodies for those classes live in
+// `marshal_archive.cpp`.
+class Marshal;
+
 // ---------------------------------------------------------------------------
 // Layer 1+2: Sink / Source pro::proxy facades.
 // ---------------------------------------------------------------------------
@@ -274,6 +281,72 @@ inline SourceProxy make_source_proxy(FdSource* source) {
 }
 
 // ---------------------------------------------------------------------------
+// Marshal ↔ Archive bridges (Phase 3a).
+//
+// MarshalSink wraps an `rrr::Marshal*` and forwards `write(p, n)` to
+// `Marshal::write(p, n)`, so new `BinaryWriteArchive`-based code can
+// emit bytes directly into an existing `Marshal` buffer without the
+// caller having to allocate a separate `BufferSink` and copy.
+//
+// MarshalSource is the dual: wraps a `Marshal*` and forwards
+// `read(p, n)` to `Marshal::read(p, n)`. Wire format is byte-for-byte
+// identical (Phase 1 commitment), so a Marshal accumulated by old
+// `Marshal::operator<<` calls can be drained by a `BinaryReadArchive`
+// over `MarshalSource` and produce the same decoded values.
+//
+// Lifetime: non-owning. Caller owns the underlying `Marshal` and must
+// keep it alive for the lifetime of the Sink/Source.
+//
+// Method bodies live in `marshal_archive.cpp` to avoid pulling
+// `marshal.hpp` into every translation unit that uses this header.
+// ---------------------------------------------------------------------------
+
+class MarshalSink {
+  Marshal* m_;
+ public:
+  explicit MarshalSink(Marshal* m) noexcept : m_(m) {}
+
+  Marshal* marshal() const noexcept { return m_; }
+
+  // @unsafe - delegates to Marshal::write; verifies the underlying
+  // chunk allocator accepted all n bytes.
+  void write(const void* p, size_t n);
+};
+
+class MarshalSource {
+  Marshal* m_;
+ public:
+  explicit MarshalSource(Marshal* m) noexcept : m_(m) {}
+
+  Marshal* marshal() const noexcept { return m_; }
+
+  // Returns the number of bytes actually read. May return < n at EOF
+  // (consistent with BufferSource / FdSource).
+  size_t read(void* p, size_t n);
+};
+
+class MarshalSinkAdapter {
+  MarshalSink* sink_;
+ public:
+  explicit MarshalSinkAdapter(MarshalSink* s) noexcept : sink_(s) {}
+  void write(const void* p, size_t n) { sink_->write(p, n); }
+};
+
+class MarshalSourceAdapter {
+  MarshalSource* source_;
+ public:
+  explicit MarshalSourceAdapter(MarshalSource* s) noexcept : source_(s) {}
+  size_t read(void* p, size_t n) { return source_->read(p, n); }
+};
+
+inline SinkProxy make_sink_proxy(MarshalSink* sink) {
+  return pro::make_proxy<SinkFacade, MarshalSinkAdapter>(sink);
+}
+inline SourceProxy make_source_proxy(MarshalSource* source) {
+  return pro::make_proxy<SourceFacade, MarshalSourceAdapter>(source);
+}
+
+// ---------------------------------------------------------------------------
 // Layer 3: Binary archive — knows the wire format.
 //
 // Wire format (BYTE-FOR-BYTE COMPATIBLE with the existing `Marshal`
@@ -305,6 +378,10 @@ class BinaryWriteArchive {
 
   // Convenience: build directly atop a concrete FdSink.
   explicit BinaryWriteArchive(FdSink* sink)
+      : sink_(make_sink_proxy(sink)) {}
+
+  // Convenience: build directly atop a concrete MarshalSink (Phase 3a).
+  explicit BinaryWriteArchive(MarshalSink* sink)
       : sink_(make_sink_proxy(sink)) {}
 
   // Emit raw bytes (used for unstructured payloads).
@@ -481,6 +558,10 @@ class BinaryReadArchive {
 
   // Convenience: build directly atop a concrete FdSource.
   explicit BinaryReadArchive(FdSource* source)
+      : source_(make_source_proxy(source)) {}
+
+  // Convenience: build directly atop a concrete MarshalSource (Phase 3a).
+  explicit BinaryReadArchive(MarshalSource* source)
       : source_(make_source_proxy(source)) {}
 
   // Read into raw bytes; verifies n bytes were actually read.

@@ -1064,6 +1064,136 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
   SerializableRegistry::clear_for_testing();
 }
 
+// ---- Marshal ↔ Archive bridges (Phase 3a) ----------------------------
+
+TEST(MarshalSinkBridge, WriteIntoMarshalProducesIdenticalBytes) {
+  // Encode a payload via:
+  //   (a) BinaryWriteArchive over BufferSink (reference)
+  //   (b) BinaryWriteArchive over MarshalSink wrapping a Marshal
+  // and verify the two byte streams are identical. Confirms
+  // MarshalSink does not introduce any framing or transformation.
+  const int32_t i = 0xDEADBEEFu;
+  const std::string s = "bridge to marshal";
+  std::vector<int64_t> v{1, -2, 3, -4, 5};
+
+  // (a) reference via BufferSink.
+  BufferSink ref_sink;
+  BinaryWriteArchive ref_writer(&ref_sink);
+  ref_writer << i << s << v;
+  auto ref_bytes = sink_to_vector(ref_sink);
+
+  // (b) via MarshalSink.
+  Marshal m;
+  MarshalSink mark_sink(&m);
+  BinaryWriteArchive mark_writer(&mark_sink);
+  mark_writer << i << s << v;
+  auto bridge_bytes = drain_marshal(m);
+
+  ASSERT_EQ(ref_bytes.size(), bridge_bytes.size());
+  EXPECT_EQ(ref_bytes, bridge_bytes);
+}
+
+TEST(MarshalSinkBridge, MixedMarshalAndArchiveWrites) {
+  // Interleave old-style `Marshal::operator<<` writes with new-style
+  // BinaryWriteArchive writes through a MarshalSink wrapping the same
+  // Marshal. The combined byte stream should be the concatenation —
+  // proving the bridge is safe to use alongside legacy code.
+  Marshal m;
+  m << static_cast<int32_t>(1);
+
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(&sink);
+    writer << static_cast<int32_t>(2);
+  }
+
+  m << std::string("trailing");
+
+  // Compare against a reference encoded entirely through Marshal.
+  Marshal ref;
+  ref << static_cast<int32_t>(1);
+  ref << static_cast<int32_t>(2);
+  ref << std::string("trailing");
+
+  auto bridge_bytes = drain_marshal(m);
+  auto ref_bytes = drain_marshal(ref);
+  EXPECT_EQ(bridge_bytes, ref_bytes);
+}
+
+TEST(MarshalSourceBridge, ReadOldMarshalBytesViaArchive) {
+  // Encode a payload via the OLD `Marshal::operator<<` path, then
+  // decode it through a `BinaryReadArchive` over `MarshalSource`.
+  // Expected: identical decoded values, source drained at the end.
+  const int32_t i = 42;
+  const std::string s = "marshal-encoded";
+  std::vector<int64_t> v{10, 20, 30};
+
+  Marshal m;
+  m << i << s << v;
+
+  MarshalSource src(&m);
+  BinaryReadArchive reader(&src);
+
+  int32_t i2;
+  std::string s2;
+  std::vector<int64_t> v2;
+  reader >> i2 >> s2 >> v2;
+
+  EXPECT_EQ(i2, i);
+  EXPECT_EQ(s2, s);
+  EXPECT_EQ(v2, v);
+  EXPECT_EQ(m.content_size(), 0u);  // Marshal drained.
+}
+
+TEST(MarshalBridges, RoundTripThroughMarshalSinkAndSource) {
+  // Write via BinaryWriteArchive(MarshalSink) -> Marshal ->
+  // BinaryReadArchive(MarshalSource). Should round-trip cleanly.
+  Marshal m;
+
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(&sink);
+    writer << static_cast<int32_t>(7);
+    writer << static_cast<int64_t>(-99);
+    writer << std::string("hello");
+    std::vector<int32_t> ints{4, 5, 6};
+    writer << ints;
+  }
+
+  MarshalSource src(&m);
+  BinaryReadArchive reader(&src);
+
+  int32_t a;
+  int64_t b;
+  std::string c;
+  std::vector<int32_t> d;
+  reader >> a >> b >> c >> d;
+
+  EXPECT_EQ(a, 7);
+  EXPECT_EQ(b, -99);
+  EXPECT_EQ(c, "hello");
+  EXPECT_EQ(d, (std::vector<int32_t>{4, 5, 6}));
+  EXPECT_EQ(m.content_size(), 0u);
+}
+
+TEST(MarshalSourceBridge, ShortReadAtEofMatchesBufferSourceSemantics) {
+  // Drain a Marshal, then attempt to read past its end via
+  // MarshalSource. Should return 0 (not abort), consistent with
+  // BufferSource and FdSource EOF semantics.
+  Marshal m;
+  m << static_cast<int32_t>(1);
+
+  MarshalSource src(&m);
+  int32_t v;
+  BinaryReadArchive reader(&src);
+  reader >> v;
+  EXPECT_EQ(v, 1);
+
+  uint8_t extra[4];
+  size_t got = src.read(extra, sizeof(extra));
+  EXPECT_EQ(got, 0u);
+}
+
 TEST(SerializableRegistry, MultipleKindsCoexist) {
   // Two different kinds should be retrievable independently.
   // We re-use CanaryCommand as the underlying type (the registry
