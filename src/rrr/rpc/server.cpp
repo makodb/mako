@@ -605,23 +605,8 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
 // @safe - Destroys server and requests close for all connections
 // Arc<RpcServiceContext> ensures services live until all connections are done
 Server::~Server() noexcept {
-    // Request close for server listener and all its connections via poll thread
-    if (server_listener_.is_some()) {
-        auto& listener = server_listener_.as_ref().unwrap();
-
-        // Request close for all connections accepted by this listener
-        {
-            auto guard = listener->sconn_fds_.lock().unwrap();
-            for (int fd : *guard) {
-                poll_thread_.as_ref().unwrap()->request_close(fd);
-            }
-            // Note: Some fds may already be closed, request_close on closed fds is a no-op.
-        }
-
-        // Request close for the listener itself
-        poll_thread_.as_ref().unwrap()->request_close(listener->fd());
-        server_listener_ = rusty::None;  // Reset to None
-    }
+    // 5g1: legacy `server_listener_` cleanup branch deleted (the
+    // class is gone). Channel-mode listener cleanup follows.
 
     // 5e/5f: tear down the channel-mode listener (if bound). The
     // proxy's close() is idempotent; dropping the Box afterwards
@@ -683,217 +668,12 @@ Server::~Server() noexcept {
     ctx_ = rusty::None;
 }
 
-// @safe - Accepts new client connections
-// SAFETY: All unsafe operations wrapped in @unsafe blocks
-size_t ServerListener::content_size() {
-  return 0;
-}
+// 5g1: legacy `ServerListener` implementation deleted. The
+// channel layer's `TcpListener` handles bind/listen/accept; see
+// `Server::start` (channel-mode listen path) and
+// `src/rrr/rpc/tcp_channel.cpp`.
 
-int ServerListener::handle_write() {
-  static std::atomic<bool> warned{false};
-  bool expected = false;
-  if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
-    Log_warn("rrr::ServerListener::handle_write() is unsupported for READ-only listener");
-  }
-  return PollMode::NO_CHANGE;
-}
-
-void ServerListener::handle_error() {
-  static std::atomic<bool> warned{false};
-  bool expected = false;
-  if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
-    Log_warn("rrr::ServerListener::handle_error() closing listener after poll error");
-  }
-  close();
-}
-
-bool ServerListener::handle_read() {
-//  fd_set fds;
-//  FD_ZERO(&fds);
-//  FD_SET(server_sock_, &fds);
-
-  while (true) {
-    int clnt_socket = -1;  // Initialize to invalid fd
-    // @unsafe - syscall with raw pointers
-    {
-#ifdef USE_IPC
-      struct sockaddr_un fsaun;
-      uint32_t from_len;
-      clnt_socket = ::accept(server_sock_, (struct sockaddr*)&fsaun, &from_len);
-#else
-      clnt_socket = ::accept(server_sock_, p_svr_addr_->ai_addr, &p_svr_addr_->ai_addrlen);
-#endif
-    }
-    if (clnt_socket >= 0) {
-      Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
-      // @unsafe - set_nonblocking
-      {
-        if (set_nonblocking(clnt_socket, true) != 0) {
-          Log_error("server@%s failed to set nonblocking on accepted fd=%d: errno=%d (%s)",
-                    this->addr_.c_str(), clnt_socket, errno, strerror(errno));
-          ::close(clnt_socket);
-          continue;
-        }
-      }
-
-      auto sconn = rusty::Arc<ServerConnection>::make(ctx_.clone(), clnt_socket);
-      // @unsafe - const_cast to initialize weak_self_ (safe: we just created this object)
-      { const_cast<ServerConnection&>(*sconn).weak_self_ = sconn; }
-      {
-          // Track fd for shutdown cleanup (Server reads this list in destructor)
-          auto guard = sconn_fds_.lock().unwrap();
-          guard->push(clnt_socket);
-      }
-      auto poll_proxy = make_pollable_proxy_from_typed_arc(sconn);
-      PollThreadWorker::add_pollable_from_current_thread(std::move(poll_proxy));
-    } else {
-      break;
-    }
-  }
-  return false;
-}
-
-// @safe - Closes server socket
-// SAFETY: Internal @unsafe block for ::close() system call
-void ServerListener::close() {
-  if (server_sock_ >= 0) {
-    // @unsafe - system call
-    { ::close(server_sock_); }
-    server_sock_ = -1;
-  }
-}
-
-// @safe - Creates listener socket and binds to address
-// All socket operations are marked safe via external annotations
-ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
-    : ctx_(std::move(ctx)), addr_(addr) {
-  size_t idx = addr.find(":");
-  if (idx == string::npos) {
-    Log_error("rrr::Server: bad bind address: %s", addr.c_str());
-    server_sock_ = -1;
-    return;
-  }
-  string host = addr.substr(0, idx);
-  string port = addr.substr(idx + 1);
-
-#ifdef USE_IPC
-  struct sockaddr_un saun;
-  if ((server_sock_ = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-    Log_error("rrr::Server: ipc socket() failed for %s: errno=%d (%s)",
-              addr.c_str(), errno, strerror(errno));
-    server_sock_ = -1;
-    return;
-  }
-  saun.sun_family = AF_UNIX;
-  string ipc_addr = "rsock" + port;
-  strcpy(saun.sun_path, ipc_addr.data());
-  auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-  ::unlink(ipc_addr.data());
-  if (::bind(server_sock_, (struct sockaddr*)&saun, len) != 0) {
-    Log_error("rrr::Server: ipc bind() failed for %s: errno=%d (%s)",
-              addr.c_str(), errno, strerror(errno));
-    ::close(server_sock_);
-    server_sock_ = -1;
-    return;
-  }
-
-#else
-  struct addrinfo hints;
-  memset(&hints, 0, sizeof(struct addrinfo));
-  hints.ai_family = AF_INET; // ipv4
-  hints.ai_socktype = SOCK_STREAM; // tcp
-  hints.ai_flags = AI_PASSIVE; // server side
-
-  // Use AddrInfo RAII wrapper
-  auto addr_result = AddrInfo::resolve(
-      (host == "0.0.0.0") ? nullptr : host.c_str(),
-      port.c_str(),
-      &hints);
-  if (addr_result.is_err()) {
-    Log_error("rrr::Server: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
-    server_sock_ = -1;
-    return;
-  }
-  gai_result_ = addr_result.unwrap();
-
-  struct addrinfo* rp = nullptr;
-  for (rp = gai_result_.get(); rp != nullptr; rp = rp->ai_next) {
-    server_sock_ = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-    if (server_sock_ == -1) {
-      continue;
-    }
-
-    const int yes = 1;
-    // Set SO_REUSEADDR to allow binding to ports in TIME_WAIT state
-    if (setsockopt(server_sock_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) != 0) {
-      Log_error("SO_REUSEADDR failed for %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
-      ::close(server_sock_);
-      server_sock_ = -1;
-      continue;  // Try next address
-    }
-
-#ifdef SO_REUSEPORT
-    // Set SO_REUSEPORT to allow multiple binds (helps with rapid restart)
-    if (setsockopt(server_sock_, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) != 0) {
-      Log_debug("SO_REUSEPORT failed for %s: errno=%d (%s) - continuing anyway", addr.c_str(), errno, strerror(errno));
-      // Not fatal - continue without SO_REUSEPORT
-    }
-#endif
-
-    if (setsockopt(server_sock_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) != 0) {
-      Log_error("TCP_NODELAY failed for %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
-      ::close(server_sock_);
-      server_sock_ = -1;
-      continue;  // Try next address
-    }
-
-    if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
-      break;  // Successfully bound
-    } else {
-      Log_error("port bind error for %s:%s, errno: %d (%s)", host.c_str(), port.c_str(), errno, strerror(errno));
-      ::close(server_sock_);
-      server_sock_ = -1;
-      // Continue to next address in the list
-    }
-  }
-
-  if (rp == nullptr) {
-    // Failed to bind to any address
-    Log_error("rrr::Server: failed to bind to %s:%s after trying all addresses", host.c_str(), port.c_str());
-    Log_error("rrr::Server: This is likely because the port is already in use by another process");
-    Log_error("rrr::Server: Please check: sudo lsof -i :%s or sudo ss -tulpn | grep %s", port.c_str(), port.c_str());
-    // gai_result_ RAII wrapper handles freeaddrinfo automatically
-    // Mark socket as invalid so start() can detect failure
-    server_sock_ = -1;
-    return;  // Caller should check server_sock_ for failure
-  } else {
-    // gai_result_ already stores the AddrInfo, just save pointer into the list
-    p_svr_addr_ = rp;
-  }
-#endif
-
-  // about backlog: http://www.linuxjournal.com/files/linuxjournal.com/linuxjournal/articles/023/2333/2333s2.html
-  const int backlog = SOMAXCONN;
-  int listen_ret = listen(server_sock_, backlog);
-  if (listen_ret != 0) {
-    Log_error("rrr::Server: listen() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
-    ::close(server_sock_);
-    server_sock_ = -1;
-    return;
-  }
-
-  int nonblock_ret = set_nonblocking(server_sock_, true);
-  if (nonblock_ret != 0) {
-    Log_error("rrr::Server: set_nonblocking() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
-    ::close(server_sock_);
-    server_sock_ = -1;
-    return;
-  }
-
-  Log_debug("rrr::Server: started on %s", addr.c_str());
-}
-
-// @unsafe - Starts server listening (pointer dereference: server_listener_->)
+// @unsafe - Starts server listening (pointer dereference)
 int Server::start(const char* bind_addr) {
   if (!bind_addr) {
     Log_error("rrr::Server::start: bind_addr is NULL!");
@@ -1007,20 +787,13 @@ int Server::start(const char* bind_addr) {
     return 0;
   }
 
-  server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
-      ctx_.as_ref().unwrap().clone(), addr_str));
-
-  // Check if listener was created successfully (binding may have failed)
-  if (server_listener_.as_ref().unwrap()->server_sock_ < 0) {
-    Log_error("rrr::Server::start: failed to bind to %s", bind_addr);
-    server_listener_ = rusty::None;
-    ctx_ = rusty::None;
-    return -1;
-  }
-
-  auto listener_proxy = make_pollable_proxy_from_typed_arc(server_listener_.as_ref().unwrap().clone());
-  poll_thread_.as_ref().unwrap()->add_proxy(std::move(listener_proxy));
-  return 0;
+  // 5g1: legacy `ServerListener` fallback deleted. The
+  // `is_channel_factory_bound()` guard above is unconditionally true
+  // post-5f (auto-installed default `TcpFactory`), so this fallthrough
+  // is unreachable. We `verify(false)` defensively in case a future
+  // refactor reintroduces a path that bypasses the auto-install.
+  verify(false);
+  return -1;
 }
 
 // @unsafe - Unregisters RPC mapping from pending map (must be called before start())
@@ -1067,13 +840,10 @@ void Server::stop_accepting() {
     Log_info("Server::stop_accepting: transitioning to STOP_ACCEPTING");
     shutdown_phase_.set(ShutdownPhase::STOP_ACCEPTING);
 
-    // Close the server listener to stop accepting new connections
-    if (server_listener_.is_some()) {
-        auto& listener = server_listener_.as_ref().unwrap();
-        poll_thread_.as_ref().unwrap()->request_close(listener->fd());
-        Log_info("Server::stop_accepting: listener closed, no longer accepting connections");
-    }
-    // 5e: also close the channel-mode listener if bound. The proxy's
+    // 5g1: legacy `server_listener_` close branch deleted (the
+    // class is gone). Channel-mode listener close follows.
+
+    // 5e: close the channel-mode listener if bound. The proxy's
     // close() is idempotent and refuses further accepts; existing
     // accepted connections in `channel_sconns_` are unaffected (they
     // continue to serve in-flight requests until drained / shut down).
@@ -1175,28 +945,35 @@ void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
     shutdown_phase_.set(ShutdownPhase::STOPPED);
 }
 
-// @unsafe - Calls getsockname
+// @safe - 5g1: re-implemented atop the channel-layer's
+// `ChannelListenerProxy::local_address()` (which `TcpListener` fills
+// in via `getsockname` after a successful `bind(2)`). The returned
+// string is `host:port`; we parse out the port suffix.
 int Server::get_bound_port() const {
-    if (server_listener_.is_none()) {
+    if (channel_listener_.is_none()) {
         return -1;
     }
-
-    int sock = server_listener_.as_ref().unwrap()->server_sock_;
-    if (sock < 0) {
+    std::string local;
+    // @unsafe { Box<ChannelListenerProxy>::get + proxy method dispatch }
+    {
+        auto* listener = const_cast<ChannelListenerProxy*>(
+            channel_listener_.as_ref().unwrap().get());
+        local = (*listener)->local_address();
+    }
+    auto colon = local.rfind(':');
+    if (colon == std::string::npos) {
+        Log_error("Server::get_bound_port: malformed local_address %s",
+                  local.c_str());
         return -1;
     }
-
-    struct sockaddr_in addr;
-    socklen_t addrlen = sizeof(addr);
-    memset(&addr, 0, sizeof(addr));
-
-    if (getsockname(sock, (struct sockaddr*)&addr, &addrlen) != 0) {
-        Log_error("Server::get_bound_port: getsockname failed, errno=%d (%s)",
-                  errno, strerror(errno));
+    try {
+        int port = std::stoi(local.substr(colon + 1));
+        return port;
+    } catch (const std::exception&) {
+        Log_error("Server::get_bound_port: failed to parse port from %s",
+                  local.c_str());
         return -1;
     }
-
-    return ntohs(addr.sin_port);
 }
 
 } // namespace rrr

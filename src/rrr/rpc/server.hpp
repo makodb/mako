@@ -328,52 +328,11 @@ struct RpcServiceContext {
         , server_instance_id(instance_id) {}
 };
 
-// @unsafe - Server listener handling incoming connections
-// SAFETY: Manages socket lifecycle and address info properly
-class ServerListener {
-  friend class Server;
- public:
-  std::string addr_;
-  rusty::Arc<RpcServiceContext> ctx_;  // Shared dispatch context
-  // File descriptors of accepted connections - Server reads this at shutdown
-  SpinMutex<rusty::Vec<int>> sconn_fds_{rusty::Vec<int>()};
-  // AddrInfo RAII wrapper - automatically frees addrinfo on destruction
-  AddrInfo gai_result_;
-  // Pointer into the linked list of addresses (points within gai_result_)
-  struct addrinfo* p_svr_addr_{nullptr};
-
-  int server_sock_{0};
-
-  int poll_mode() const {
-    return PollMode::READ;
-  }
-
-  size_t content_size();
-
-  int handle_write();
-
-  bool handle_read();
-
-  void handle_error();
-
-  void close();
-
-  bool is_closed() const { return server_sock_ < 0; }
-
-  bool check_pending_write_update() const { return false; }
-
-  int fd() const {return server_sock_;}
-
-  // @safe - Constructor with proper error handling
-  ServerListener(rusty::Arc<RpcServiceContext> ctx, std::string addr);
-
-//protected:
-  // @safe - AddrInfo RAII wrapper handles freeaddrinfo automatically
-  virtual ~ServerListener() noexcept {
-    // gai_result_ RAII wrapper automatically calls freeaddrinfo
-    p_svr_addr_ = nullptr;  // Clear pointer into freed memory
-  };
-};
+// 5g1: legacy `ServerListener` class deleted. The channel layer's
+// `TcpListener` (registered via `ChannelFactoryProxy::make_listener()`)
+// is the sole accept-loop implementation; `Server::start(addr)`
+// auto-installs a default TCP factory (5f) when no explicit factory
+// is bound.
 
 // @unsafe - Socket-backed connection handler exposed to poll loop via Pollable proxy facade.
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
@@ -746,10 +705,14 @@ class Server: public NoCopy {
     // None until start() is called
     rusty::Option<rusty::Arc<RpcServiceContext>> ctx_;
 
-    // Poll thread for async I/O - shared with ServerListener
+    // Poll thread for async I/O — shared with the channel layer's
+    // TcpListener / TcpFactory. Was previously also shared with the
+    // legacy `ServerListener` (deleted in 5g1).
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
 
-    rusty::Option<rusty::Arc<ServerListener>> server_listener_;
+    // 5g1: `Option<Arc<ServerListener>> server_listener_` deleted
+    // (the legacy listener class is gone — channel mode is the only
+    // accept-loop path).
 
     // Shutdown coordination - allows workers to wait for shutdown signal
     struct ShutdownState { bool shutdown = false; };

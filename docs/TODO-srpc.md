@@ -971,10 +971,21 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
         3. **`~Server` schedules the channel listener's close on the poll thread via a `OneTimeJob`** (mirroring `Client::close`'s 4g3c3 pattern). Direct `proxy->close()` from the user thread races against the poll thread's pending `CmdAddPollable` (the listener auto-registers itself when `listen()` succeeds, then close happens almost immediately in tests where the server is destroyed right after `start()`); by the time the poll thread reads `fd()`, it could already be -1, tripping `Epoll::Add`'s `fd >= 0` verify. Same fix as 4g3c3 client-side. `stop_accepting()` keeps the synchronous direct close (called well after the listener is registered in production).
       - Updated 5e's `StartWithoutFactoryUsesLegacyPath` test → renamed to `StartWithoutFactoryAutoInstallsDefault` reflecting the new behavior. The fixture's stub-factory is unused (never bound on the server), so `make_listener_calls_` stays 0; the real bind happens through the auto-installed `TcpFactory`. `DestructorClosesChannelListener` now polls for the close (the OneTimeJob is async).
       - Verification: full RPC-focused suite green — test_rpc 17/17, test_rpc_extended 15/15, test_rpc_state_integration 16/16 (incl. the previously-failing `CircuitOpenFailFastThenHalfOpenRecovery`), test_rpc_combined_reliability 9/9, test_rpc_request_buffering 8 PASS + 13 DISABLED, test_rpc_reconnect_integration 12 PASS + 6 DISABLED, channel-layer 12 tests, test_load_balancer 21/21, test_rpc_server_channel_factory 6/6 (updated). Same 3 pre-existing flaky failures as 4g4 / 5b–5e — unrelated to 5f.
-    - [ ] *high* Sub-leaf 5g — Delete the legacy `ServerListener` + `ServerConnection` fd path.
-      - Remove `ServerListener::handle_read`/`handle_write`/`handle_error`/`fd()`/`server_sock_`, the AddrInfo RAII wrapper, getaddrinfo+socket+bind+listen+accept calls, the `socket_` field on `ServerConnection`, the `in_`/`out_` Marshal buffers, the inline request parsing in `handle_read`. Reduce `ServerConnection` to its reply path + the channel binding.
-      - Drop unused includes (`<sys/socket.h>`, `<netdb.h>`, etc.) from `server.{hpp,cpp}`.
-      - Tests: full RPC suite green. Decompose into 5g1/5g2/5g3 if the diff exceeds ~500 LOC removal.
+    - [ ] *high* Sub-leaf 5g — Delete the legacy `ServerListener` + `ServerConnection` fd path. Decomposed:
+      - [x] **5g1 — Delete `ServerListener` class + `Server::server_listener_` field + Server::start/~Server/stop_accepting legacy paths.** ✅ **LANDED 2026-04-28.** −260 LOC.
+        - Deleted `class ServerListener` from `server.hpp` (45 LOC declaration) and its implementation from `server.cpp` (~210 LOC: constructor with `getaddrinfo` + `socket(2)` + `setsockopt` + `bind(2)` + `listen(2)` + `set_nonblocking`; `handle_read` accept loop; `handle_write`/`handle_error`/`close` Pollable hooks; `content_size`).
+        - Deleted `Option<Arc<ServerListener>> server_listener_` field on `Server`.
+        - Deleted the legacy fallback in `Server::start` (replaced with `verify(false)` defensively — `is_channel_factory_bound()` is unconditionally true post-5f's auto-install).
+        - Deleted the legacy `server_listener_` cleanup branches in `~Server` and `stop_accepting`.
+        - Re-implemented `Server::get_bound_port()` atop the channel-layer's `ChannelListenerProxy::local_address()`: parses `host:port` and returns the port suffix. Equivalent behavior — `TcpListener::local_address()` calls `getsockname` after a successful `bind(2)`.
+        - Replaced `ServerListenerUnsupportedHooksAreNonFatal` in `test_rpc_extended.cc` with a comment pointing at `test_rpc_tcp_listener` (20 tests covering the channel-layer `TcpListener`'s bind/listen/accept/close lifecycle).
+        - Verification: full RPC-focused suite green — same 3 pre-existing flaky failures as 4g4 / 5b–5f.
+      - [ ] **5g2 — Delete `ServerConnection`'s legacy fd-path methods + fields.** ~250 LOC removal.
+        - Stub `handle_read`/`handle_write`/`handle_error`/`poll_mode`/`content_size`/`check_pending_write_update`/`is_closed`/`fd` to no-ops on `ServerConnection` (kept for ABI compatibility if any test/doc still references them; future leaf may delete entirely if unused).
+        - Delete `socket_`, `in_` (read buffer), `out_` (write buffer), `pending_write_update_` fields.
+        - The `::close(socket_)` in `ServerConnection::close()` becomes a no-op once `socket_` is gone.
+      - [ ] **5g3 — Cleanup unused system headers from `server.{hpp,cpp}`.** ~50 LOC removal.
+        - Drop `<sys/socket.h>`, `<netdb.h>`, `<sys/un.h>` (etc.) once no `socket(2)` / `bind(2)` / `listen(2)` / `accept(2)` / `getaddrinfo` / `setsockopt` calls remain in `server.{hpp,cpp}`.
 - [ ] *medium* Add in-memory channel backend for deterministic tests.
   - Add `src/rrr/rpc/inmemory_channel.hpp` (+ optional `.cpp`).
   - Reuse switchboard-style semantics similar to Raft channel transport for drop/partition fault injection in SRPC tests.

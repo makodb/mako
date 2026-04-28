@@ -205,16 +205,10 @@ TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCall
     EXPECT_TRUE(cleanup_called);
 }
 
-TEST(ServerApiSafetyTest, ServerListenerUnsupportedHooksAreNonFatal) {
-    ServerListener listener(make_test_rpc_context(), "127.0.0.1:0");
-    ASSERT_GE(listener.fd(), 0);
-
-    EXPECT_EQ(listener.content_size(), 0u);
-    EXPECT_EQ(listener.handle_write(), PollMode::NO_CHANGE);
-
-    listener.handle_error();
-    EXPECT_TRUE(listener.is_closed());
-}
+// 5g1: legacy `ServerListener` class deleted — channel mode is the
+// only accept-loop path post-5f. `TcpListener`'s equivalent
+// behaviors are exercised in `test_rpc_tcp_listener` (20 tests
+// covering bind/listen/accept/close lifecycle).
 
 TEST(ServerApiSafetyTest, ServerStartWithInvalidHostReturnsError) {
     auto poll_thread = PollThread::create();
