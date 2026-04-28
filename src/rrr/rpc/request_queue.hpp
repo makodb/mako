@@ -15,6 +15,7 @@
 
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
+#include <rusty/vecdeque.hpp>
 
 
 
@@ -148,7 +149,11 @@ struct RequestQueueConfig {
 class RequestQueue {
 private:
     RequestQueueConfig config_;
-    std::list<QueuedRequest> queue_;  // Using list to avoid move assignment issues with Marshal
+    // VecDeque ring-buffer with pre-allocated slot construction (placement new)
+    // — same property as std::list of "no move-assignment of QueuedRequest's
+    // Marshal-bearing payload after enqueue", since elements are constructed
+    // in place and only moved on grow/contiguous-rotate.
+    rusty::VecDeque<QueuedRequest> queue_;
     // @unsafe { std::mutex for thread-safe concurrent access }
     mutable std::mutex mutex_;
 
@@ -160,7 +165,7 @@ public:
 
     // === Enqueue/Dequeue Operations ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     // Returns true if queued, false if rejected
     bool enqueue(QueuedRequest request) {
         if (!config_.enabled) {
@@ -173,16 +178,15 @@ public:
             return false;
         }
 
-        // @unsafe { std::mutex lock, std::list operations }
+        // @unsafe { std::mutex lock, VecDeque operations }
         std::lock_guard<std::mutex> lock(mutex_);
 
         if (queue_.size() >= config_.max_size) {
             switch (config_.overflow_strategy) {
                 case OverflowStrategy::DROP_OLDEST:
                     // Remove oldest and proceed
-                    if (!queue_.empty()) {
-                        auto oldest = std::move(queue_.front());
-                        queue_.pop_front();
+                    if (!queue_.is_empty()) {
+                        auto oldest = queue_.pop_front();
                         // Invoke callback outside lock would be better,
                         // but for simplicity we do it here with error code
                         if (oldest.callback) {
@@ -219,33 +223,31 @@ public:
             request.ttl_ms = config_.default_ttl_ms;
         }
 
-        // @unsafe { std::list push_back }
+        // @unsafe { VecDeque push_back }
         queue_.push_back(std::move(request));
         return true;
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     rusty::Option<QueuedRequest> dequeue() {
-        // @unsafe { std::mutex lock, std::list operations }
+        // @unsafe { std::mutex lock, VecDeque operations }
         std::lock_guard<std::mutex> lock(mutex_);
 
-        if (queue_.empty()) {
+        if (queue_.is_empty()) {
             return rusty::None;
         }
 
-        auto request = std::move(queue_.front());
-        queue_.pop_front();
-        return rusty::Some(std::move(request));
+        return rusty::Some(queue_.pop_front());
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     // Note: Returns pointer that should be used immediately while lock is held
     // For thread-safety, prefer dequeue() instead
     bool peek(QueuedRequest& out) const {
-        // @unsafe { std::mutex lock, std::list operations }
+        // @unsafe { std::mutex lock, VecDeque operations }
         std::lock_guard<std::mutex> lock(mutex_);
 
-        if (queue_.empty()) {
+        if (queue_.is_empty()) {
             return false;
         }
 
@@ -256,7 +258,7 @@ public:
 
     // === Expiration ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     size_t expire_stale() {
         rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
         size_t removed = 0;
@@ -265,20 +267,19 @@ public:
             // @unsafe { std::mutex lock }
             std::lock_guard<std::mutex> lock(mutex_);
 
-            size_t original_size = queue_.size();
-            auto it = queue_.begin();
-            while (it != queue_.end()) {
-                if (it->is_expired()) {
-                    if (it->callback) {
-                        callbacks_to_invoke.push(std::move(it->callback));
-                    }
-                    it = queue_.erase(it);
-                } else {
-                    ++it;
+            // Extract expired elements via extract_if. The predicate is
+            // const-only (rusty::Function<bool(const T&)>) and cannot mutate
+            // the element, so we drain callbacks via pop_front afterward.
+            auto expired = queue_.extract_if(
+                rusty::Function<bool(const QueuedRequest&)>(
+                    [](const QueuedRequest& r) { return r.is_expired(); }));
+            removed = expired.size();
+            while (!expired.is_empty()) {
+                auto req = expired.pop_front();
+                if (req.callback) {
+                    callbacks_to_invoke.push(std::move(req.callback));
                 }
             }
-
-            removed = original_size - queue_.size();
         }
 
         // Invoke callbacks outside lock
@@ -294,30 +295,30 @@ public:
 
     // === Size and State ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     size_t size() const {
-        // @unsafe { std::mutex lock, std::list::size }
+        // @unsafe { std::mutex lock, VecDeque::size }
         std::lock_guard<std::mutex> lock(mutex_);
         return queue_.size();
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     bool empty() const {
-        // @unsafe { std::mutex lock, std::list::empty }
+        // @unsafe { std::mutex lock, VecDeque::is_empty }
         std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.empty();
+        return queue_.is_empty();
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     bool full() const {
-        // @unsafe { std::mutex lock, std::list::size }
+        // @unsafe { std::mutex lock, VecDeque::size }
         std::lock_guard<std::mutex> lock(mutex_);
         return queue_.size() >= config_.max_size;
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     size_t remaining_capacity() const {
-        // @unsafe { std::mutex lock, std::list::size }
+        // @unsafe { std::mutex lock, VecDeque::size }
         std::lock_guard<std::mutex> lock(mutex_);
         return config_.max_size > queue_.size() ?
                config_.max_size - queue_.size() : 0;
@@ -325,12 +326,12 @@ public:
 
     // === Clear and Reset ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and std::mutex
     void clear_all(int error_code = -3) {
         rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
 
         {
-            // @unsafe { std::mutex lock, std::list operations }
+            // @unsafe { std::mutex lock, VecDeque operations }
             std::lock_guard<std::mutex> lock(mutex_);
 
             for (auto& req : queue_) {
