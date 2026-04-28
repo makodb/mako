@@ -161,24 +161,28 @@ ServerConnection::~ServerConnection() {
     // Arc reference to RpcServiceContext is automatically released
 }
 
-// @unsafe - 5b/5c: bind a channel proxy and flip the channel-mode latch.
+// @unsafe - 5b/5c/5d: bind a channel proxy and flip the channel-mode latch.
 //
 // Mirrors `ClientConnection::bind_channel_direct`. After binding, the
 // proxy serves as both the outbound dispatch sink (5b — `reply<F>(...)`
-// calls `proxy->send_frame(...)`) and the inbound demux source (5c
-// — installs `on_frame(...)` to call `decode_request_and_dispatch`).
+// calls `proxy->send_frame(...)`) and the inbound demux source (5c —
+// installs `on_frame(...)` to call `decode_request_and_dispatch`).
+// 5d also wires `on_closed` / `on_error` to transition the connection
+// to CLOSED so the server's poll loop / accept-tracking notices the
+// peer-side close (no orphan ServerConnection in the per-listener
+// connection map).
 //
 // `weak_self_` MUST be initialized before calling this (the
-// `on_frame` callback captures it; if the connection is destroyed,
-// the upgrade fails and the callback short-circuits). The accept
-// path in subsequent leaves (5e) wires `weak_self_` immediately
-// after construction.
+// callbacks capture it; if the connection is destroyed, the upgrade
+// fails and the callback short-circuits). The accept path in
+// subsequent leaves (5e) wires `weak_self_` immediately after
+// construction.
 void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
     if (!proxy.has_value()) return;
 
-    // 5c: install on_frame callback BEFORE moving the proxy into the
-    // slot, so the callback can capture a Weak<ServerConnection>
-    // without holding the SpinMutex.
+    // Install callbacks BEFORE moving the proxy into the slot, so
+    // the callbacks can capture a Weak<ServerConnection> without
+    // holding the SpinMutex.
     WeakServerConnection weak_self;
     // @unsafe { Weak copy is currently treated as non-safe }
     { weak_self = weak_self_; }
@@ -191,11 +195,32 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
         auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
         mut_sconn->decode_request_and_dispatch(f.payload, f.size);
     });
-    // 5d will wire on_closed / on_error here. For 5c we explicitly
-    // clear them so any prior installation (e.g. from a re-bind in
-    // tests) doesn't leak through.
-    proxy->set_on_closed([](ChannelError) {});
-    proxy->set_on_error([](ChannelError, std::string_view) {});
+    // 5d: on_closed runs the existing close path so the connection
+    // transitions to CLOSED. The channel-layer contract guarantees
+    // on_closed fires exactly once; close() is itself idempotent
+    // (status_ == CLOSED short-circuits).
+    proxy->set_on_closed([weak_self](ChannelError /*reason*/) {
+        auto sconn_opt = weak_self.upgrade();
+        if (sconn_opt.is_none()) return;
+        auto sconn = sconn_opt.unwrap();
+        auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
+        mut_sconn->close();
+    });
+    // 5d: on_error logs and force-closes. Per the channel-layer
+    // contract, fatal errors are followed by on_closed, so the
+    // close() here is also defensive — close() is idempotent.
+    proxy->set_on_error([weak_self](ChannelError err,
+                                    std::string_view message) {
+        auto sconn_opt = weak_self.upgrade();
+        if (sconn_opt.is_none()) return;
+        auto sconn = sconn_opt.unwrap();
+        // @unsafe - Log_warn formatting + std::string_view bridge
+        Log_warn("rrr::ServerConnection: channel error %s: %.*s",
+                 channel_error_to_string(err),
+                 static_cast<int>(message.size()), message.data());
+        auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
+        mut_sconn->close();
+    });
 
     // @unsafe { SpinMutex::lock + make_box + ChannelConnectionProxy move }
     {
