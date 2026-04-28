@@ -1220,15 +1220,27 @@ Per CLAUDE.md exceptions:
   - API drift: `std::make_shared<T>(args...)` → `rusty::Arc<T>::make(args...)` or `rusty::Rc<T>::make(args...)`; `weak_from_this` patterns need conversion to the codebase's `Weak<T>` adapter.
   - Decompose by directory (rrr/rpc/, rrr/reactor/, rrr/base/, rrr/misc/).
   - Goal: zero `std::shared_ptr` in rrr prod code after this workstream lands.
-- [ ] *medium* Sub-leaf L7 — `std::mutex` + `std::lock_guard` → `rusty::Mutex<T>` or `rusty::SpinMutex<T>` (129 prod sites for mutex, ~127 lock_guard sites). ~700 LOC.
-  - **Semantic concern**: `rusty::Mutex<T>` and `SpinMutex<T>` *own* the protected data (Rust-style "data inside the mutex"), unlike `std::mutex` which is a separate primitive. Most sites need refactoring of the surrounding fields, not just a rename. Pick `Mutex<T>` for blocking/long-held locks; `SpinMutex<T>` for short critical sections (the rrr/rpc layer uses SpinMutex extensively).
-  - Decompose by file: each `.cpp` file's mutex pattern is local enough to migrate independently. Largest concentrations: `src/rrr/rpc/client.cpp`, `src/rrr/rpc/server.cpp`, `src/rrr/reactor/poll_thread.cc`, `src/rrr/base/threading.cc`.
-  - Per-file verification: full RPC-focused suite green.
-  - Goal: zero `std::mutex` in rrr prod code after this workstream lands.
-- [ ] *low* Sub-leaf L8 — `std::thread` → `rusty::thread::spawn` (47 sites). ~150 LOC.
-  - 1:1 conversion: `std::thread t(fn, args...)` → `rusty::thread::spawn([&] { fn(args...); })`; the rusty wrapper owns the join handle and provides RAII semantics.
-  - Sites: rrr/base/threading.{cc,hpp}, rrr/misc/, rrr/reactor/poll_thread.cc.
-  - Goal: zero `std::thread` in rrr prod code after this workstream lands.
+- [ ] *medium* Sub-leaf L7 — `std::mutex` + `std::lock_guard` → `rrr::SpinMutex<T>` / `rusty::Mutex<T>` ownership-style. **PARTIAL — L7-request_queue done (2026-04-28)**.
+  - **Semantic concern**: `rusty::Mutex<T>` and `rrr::SpinMutex<T>` *own* the protected data (Rust-style "data inside the mutex"), unlike `std::mutex` which is a separate primitive. Most sites need refactoring of the surrounding fields, not just a rename. Pick `Mutex<T>` for blocking/long-held locks; `SpinMutex<T>` for short critical sections (the rrr/rpc layer uses SpinMutex extensively).
+  - **Survey refinement (2026-04-28)**: of 117 prod-side `std::mutex` mentions, the largest concentrations are in `rpc/callbacks.hpp` (36, blocked by L5 Vec<Function>::clone() concern), `rpc/request_queue.hpp` (31; **DONE in L7-request_queue**), `rpc/inmemory_channel.cpp` (21), `misc/alock.hpp` (8), `misc/recorder.cpp` (6), `misc/marshal.cpp` (2 — global registry; non-trivial). `alarm.hpp`'s 4 mentions and `dball.hpp`'s 2 are dead commented-out code (not actual mutex usage).
+  - **Decomposed**:
+    - [x] **L7-request_queue — `src/rrr/rpc/request_queue.hpp`** (1 mutex field + 9 method-body lock sites). ✅ **LANDED 2026-04-28**.
+      - Replaced `mutable std::mutex mutex_; rusty::VecDeque<QueuedRequest> queue_;` with `mutable SpinMutex<rusty::VecDeque<QueuedRequest>> queue_;` (data-inside-the-mutex pattern; the SpinMutex owns the VecDeque).
+      - Each method-body `std::lock_guard<std::mutex> lock(mutex_); queue_.X` becomes `auto guard = queue_.lock().unwrap(); guard->X` (or `(*guard).X` / `for(... : *guard)` for iteration).
+      - `update_config` keeps the lock to maintain the same "config_ updates serialize against in-flight enqueue/dequeue" external behavior; the lock is held briefly without using its data.
+      - Added `#include "../base/threading.hpp"` for `rrr::SpinMutex<T>` / `SpinMutexGuard<T>`.
+      - Verification: `test_rpc_request_queue` 30/30 (the dedicated suite that exercises every method's lock path — concurrent enqueue/dequeue, drop-oldest overflow, expire_stale extract_if, clear_all + callback drain). Full RPC suite green: `test_rpc` 17/17, `test_rpc_extended` 14/14, `test_rpc_state_integration` 16/16, `test_rpc_request_buffering` 8/8, `test_rpc_combined_reliability` 9/9, `test_rpc_reconnect_integration` 12/12, `test_load_balancer` 21/21, `test_marshal` 23/23, `test_reactor` 15/15, `test_rpc_client_pool` 20/20, `test_rpc_heartbeat` 20/20, `test_rpc_inmemory_channel` 24/24, `test_rpc_inmemory_channel_e2e` 4/4. Same 4 pre-existing flakes elsewhere; none new.
+    - [ ] **L7-inmemory_channel (DEFERRED)** — `inmemory_channel.cpp`'s `InMemorySwitchboard::mu_` protects the `listeners_` HashMap (already migrated in L4). Migration would wrap as `SpinMutex<HashMap<...>>`. ~21 mutex-line site cleanups.
+    - [ ] **L7-callbacks (DEFERRED)** — `callbacks.hpp`'s 36 mutex sites protect `Vec<std::function<...>>` callbacks. Blocked by the L5-callbacks concern (Vec<Function>::clone() requires copyability) — best to do L5-callbacks design first.
+    - [ ] **L7-alock (DEFERRED)** — alock.hpp/cpp's 8 mutex sites are intertwined with the iterator-stable list patterns documented under L2c-alock. Same blocker.
+    - [ ] **L7-recorder (DEFERRED)** — recorder.cpp's 6 mutex sites + raw-pointer list pattern documented under L2e-recorder.
+    - [ ] **L7-marshal (DEFERRED)** — marshal.cpp's 2 global `std::mutex md_mutex_g` / `mdi_mutex_g` protect a Construct-On-First-Use HashMap registry. Migration to `SpinMutex<HashMap<...>>` is doable but reorganizes the global state pattern — separate leaf with care.
+    - [ ] **L7-cleanup (small)** — `alarm.hpp` has 4 dead-code commented-out `std::mutex` lines; `dball.hpp` has 2 same. Pure deletion, no behavior change.
+  - Goal: zero non-carve-out `std::mutex` / `std::lock_guard` in rrr prod after all L7 sub-leaves land.
+- [x] *low* Sub-leaf L8 — `std::thread` → `rusty::thread::spawn`. ✅ **LANDED 2026-04-28** (survey correction — zero prod sites).
+  - **Survey correction (2026-04-28)**: original Workstream L survey said "47 sites" for std::thread. Verification (`grep -rE '\bstd::thread\b' src/rrr | grep -v tests/`) returns zero prod-side mentions. All 47 mentions are in test files (rpc_request_queue_test.cc, rpc_deferred_handler_test.cc, rpc_circuit_breaker_test.cc, rpc_reconnect_integration_test.cc, etc.). rrr production code already uses `rusty::thread::spawn` and `pthread_*` (in base/threading.cc) — no `std::thread`. Goal achieved.
+  - Test sites are deferred (per the broader L1c-tests pattern — tests are a separate sweep) but rusty::thread::spawn is move-friendly and migration is mechanical when needed.
+- (Sub-leaf L8 has moved up — see L8 entry above; folded into L7's section block.)
 
 ### Migration-as-you-go reminder
 Per CLAUDE.md: when touching any rrr file outside this workstream, *also* migrate STL constructs in the immediate blast radius of the change in the same commit (mention each migration in the commit message). This workstream is the *backstop* for sites that haven't been touched recently — it shouldn't be the only path for migration. The opportunistic-migration channel keeps the survey baseline shrinking between dedicated workstream commits.
