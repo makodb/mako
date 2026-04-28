@@ -583,6 +583,17 @@ stubs only because deptran's host-scoped retention map
 (`Reactor::clients_`) still wraps `ClientConnection` in
 `PollableProxy`.
 
+Workstream K, sub-leaf 4g3d — `Client::fd()` (the public RPC
+client's file-descriptor accessor) is gone. Users that need a
+peer identifier should use `Client::host()` instead.
+`ClientConnection::fd()` survives only as a no-op (returns -1)
+to keep `PollableTypedArcAdapter<ClientConnection>` compilable
+for the deptran retention proxy. The RPC client's translation
+unit also dropped its socket-path system headers
+(`<sys/socket.h>`, `<sys/un.h>`, `<unistd.h>`, `<netdb.h>`,
+`<netinet/tcp.h>`, `<sys/types.h>`, `<string.h>`) — none of
+their symbols are reachable from the RPC layer post-4g3c3.
+
 ### Error Codes
 
 | Code | Meaning |

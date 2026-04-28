@@ -17,14 +17,15 @@
 #include <rusty/async.hpp>
 
 
+// 4g3d: socket-path system headers (`<sys/socket.h>`, `<sys/un.h>`,
+// `<unistd.h>`, `<netdb.h>`, `<netinet/tcp.h>`, `<sys/types.h>`,
+// `<string.h>`) removed — no `socket(2)` / `connect(2)` / `bind(2)` /
+// `setsockopt(2)` / `getaddrinfo(3)` / `::close(fd)` calls remain in
+// the RPC client; the channel layer's `TcpConnection` owns the fd
+// and the syscalls. `<errno.h>` is kept for the errno-shaped error
+// codes (`ENOTCONN`, `ECONNREFUSED`, `EPROTO`, `ETIMEDOUT`, ...) the
+// RPC layer still surfaces through `invoke_error_callback`.
 #include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
 
 
 #include "client.hpp"

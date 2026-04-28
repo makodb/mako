@@ -1694,9 +1694,14 @@ public:
         return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
     }
 
-    // @safe - 4g3c3: ClientConnection no longer owns an fd. Returns -1
-    // for ABI compatibility with the PollableProxy facade and any
-    // legacy callers (e.g. logs identifying the connection by fd).
+    // @safe - 4g3c3/4g3d: `ClientConnection` no longer owns an fd; the
+    // channel layer's `TcpConnection` does. This accessor always
+    // returns -1 and is retained ONLY for `PollableProxy` facade
+    // conformance — `PollableTypedArcAdapter<ClientConnection>::fd()`
+    // (in `pollable_proxy.h`) is instantiated by deptran's
+    // host-scoped retention map (`Reactor::clients_` —
+    // `src/deptran/communicator.cc`). Do not add new callers; use
+    // `host()` for a peer identifier.
     int fd() const {
         return -1;
     }
@@ -2086,17 +2091,10 @@ public:
         close();
     }
 
-    // @safe - Returns file descriptor
-    int fd() const {
-        // @unsafe
-        {
-        auto guard = connection_.borrow();
-        if (guard->is_some()) {
-            return guard->as_ref().unwrap()->fd();
-        }
-        return -1;
-        }
-    }
+    // 4g3d: Client::fd() removed — `Client` no longer owns a socket.
+    // The channel layer's `TcpConnection` owns the fd; users that need
+    // a peer identifier should use `host()` (or `peer_address()` on
+    // the underlying channel proxy in the future).
 
     // @safe - Returns host string
     std::string host() const {
