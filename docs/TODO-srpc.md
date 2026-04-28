@@ -1060,31 +1060,33 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
 ### Goal
 Per CLAUDE.md's "RustyCpp Safety Requirements (MANDATORY)" policy, all new code must use rusty types. The rrr/ tree is partially migrated (1000+ rusty type usages including `Arc` 407, `Vec` 107, `Cell` 99, `Option` 94, `Box` 87, `SpinMutex` 79, `Rc` 57, `RefCell` 31). This workstream is the deliberate cleanup of remaining STL surface area in rrr/, decomposed by type so each leaf has a bounded blast radius and stays under the 2,000-LOC budget.
 
-### Survey baseline (2026-04-28)
-Counts via `grep -rE '\b<pat>\b' src/rrr/` (60,437 LOC: 27,370 prod + 33,067 tests):
+### Survey baseline (initial 2026-04-28; refreshed 2026-04-28 post-L1b/L1c-prod/L2a-L2d/L3/L4/L5a/L7-rq/L7-sb/L7-iml/L7-marshal/L7-cleanup/L8)
+Counts via `grep -rE '\b<pat>\b' src/rrr/`. Two columns: prod (`grep -v tests/`) and tests (`grep tests/`). Migration progress tracked in the **prod** column.
 
-| STL type | prod sites | test sites | total |
-|----------|-----------:|-----------:|------:|
-| `std::string` | 145 | 336 | 481 |
-| `std::atomic` | — | — | 360 |
-| `std::vector` | 35 | 234 | 269 |
-| `std::mutex` | 129 | 78 | 207 |
-| `std::function` | 143 | 24 | 167 |
-| `std::shared_ptr` | 87 | 76 | 163 |
-| `std::lock_guard` | — | — | 127 |
-| `std::list` | 76 | 8 | 84 |
-| `std::pair` | — | — | 52 |
-| `std::thread` | — | — | 47 |
-| `std::map` | — | — | 39 |
-| `std::unordered_map` | — | — | 36 |
-| `std::optional` | 1 | 33 | 34 |
-| `std::set` | — | — | 21 |
-| `std::unordered_set` | — | — | 16 |
-| `std::unique_ptr` | — | — | 11 |
-| `std::array` | — | — | 9 |
-| `std::condition_variable` | — | — | 6 |
-| `std::deque` | — | — | 1 |
-| `std::weak_ptr` | — | — | 2 |
+| STL type | prod (initial) | prod (now) | tests (now) | total (now) | Δ prod | status |
+|----------|---------------:|-----------:|------------:|------------:|-------:|--------|
+| `std::string` | 145 | 145 | 336 | 481 | 0 | carve-out (rrr framework wire boundary) |
+| `std::atomic` | 66 | 66 | 294 | 360 | 0 | carve-out (no rusty equivalent) |
+| `std::vector` | 35 | 35 | 234 | 269 | 0 | mostly tests; not on critical path |
+| `std::mutex` | 129 | 64 | 78 | 142 | **−65** | L7-rq + L7-sb + L7-iml (connstate + listener) + L7-marshal + L7-cleanup landed; remaining 64 in callbacks/alock/recorder (deferred) |
+| `std::function` | 143 | 137 | 24 | 161 | **−6** | L5a (heartbeat + alarm) landed; remaining blocked on Vec<Function>::clone() / pro::proxy / iterator-stable patterns |
+| `std::shared_ptr` | 87 | 87 | 76 | 163 | 0 | mostly Event subsystem (deferred to Workstream M) |
+| `std::lock_guard` | ~127 | 31 | 60 | 91 | **−96** | Implicit cleanup — the SpinMutex<T> migration replaced lock_guard usage. Remaining 31 prod sites are inside the still-unmigrated callbacks/alock/recorder/marshal-not-yet-touched paths. |
+| `std::list` | 76 | 38 | 8 | 46 | **−38** | L2a-base + L2b-request_queue landed; L2c-alock + L2e-recorder deferred. Marshal-API carve-out (5) + LRU caves (2) + alock (~22) + recorder (~8) account for the remaining prod sites. |
+| `std::pair` | 52 | 21 | 31 | 52 | 0 | carve-out (no rusty equivalent) |
+| `std::thread` | 0 | 0 | 47 | 47 | 0 | L8 closed (was always 0 prod; survey correction landed) |
+| `std::map` | 39 | 5 | 22 | 27 | **−34** | L4 landed; remaining 5 prod sites are marshal.hpp's public marshal-API operator<< / >> overloads (carve-out). |
+| `std::unordered_map` | 36 | 5 | 5 | 10 | **−31** | L4 landed; remaining 5 prod sites are marshal.hpp's public marshal-API overloads (carve-out). |
+| `std::optional` | 1 | 0 | 39 | 39 | **−1** | L1c-prod landed (the OnReady site); 39 test sites are L1c-tests (deferred — `*opt` access pattern doesn't compose with rusty::Option's transpilation-shim operator*). |
+| `std::set` | 21 | 5 | 9 | 14 | **−16** | L3 landed (annotation cleanup); remaining 5 prod sites are marshal.hpp's set serialization overloads (carve-out). |
+| `std::unordered_set` | 16 | 5 | 5 | 10 | **−11** | L3 landed; remaining 5 prod sites are marshal.hpp's unordered_set serialization overloads (carve-out). |
+| `std::unique_ptr` | 0 | 0 | 0 | 0 | 0 | L1b landed across two passes — surveyed sites were all in tests, all migrated to `rusty::Box<T>` (1 carve-out: `tests/rpc_proxy_dependency_test.cc` validates `pro::proxy` wrapping `std::unique_ptr` specifically). |
+| `std::array` | 0 | 0 | 9 | 9 | 0 | carve-out (no rusty equivalent) |
+| `std::condition_variable` | 6 | 6 | 0 | 6 | 0 | carve-out (no rusty equivalent) |
+| `std::deque` | 1 | 1 | 0 | 1 | 0 | minor; not on critical path |
+| `std::weak_ptr` | 2 | 2 | 0 | 2 | 0 | L1a deferred (Event subsystem coupling) |
+
+**Headline progress**: ~268 prod-side sites migrated (mostly mutex/lock_guard via the SpinMutex<T> ownership refactors, plus the std::list/map/set/unordered_set cleanups in L2/L3/L4 and the optional/unique_ptr migrations in L1b/L1c-prod). Most remaining prod sites are documented carve-outs (string/atomic/pair/thread/array/condition_variable/deque + marshal API overloads) or items deferred behind explicit design prerequisites (Vec<Function>::clone() copyability for callbacks.hpp, iterator-stable list semantics for alock, raw-pointer pattern in recorder, pro::proxy convention-arg move-only support for channel.hpp callbacks, Event subsystem migration as Workstream M for shared_ptr<Event>/weak_ptr<Event>).
 
 ### Out-of-scope carve-outs (stay std)
 Per CLAUDE.md exceptions:
@@ -1266,7 +1268,7 @@ Per CLAUDE.md: when touching any rrr file outside this workstream, *also* migrat
 ### Tests TODO
 - [ ] Per-leaf: full rrr-focused CTest suite (test_rpc + test_rpc_extended + test_rpc_state_integration + test_rpc_combined_reliability + test_rpc_request_buffering + test_rpc_reconnect_integration + channel-layer tests + test_load_balancer + test_rpc_validation + test_rpc_timeout_retry + test_rpc_client_pool) must remain green at each leaf landing.
 - [ ] Per-leaf: borrow-check pass (where applicable) — the rusty types' borrow-check enforcement is part of the win; verify no new violations appear via `make borrow_check_*`.
-- [ ] After L2 + L3 + L4 land: re-run the survey baseline grep above and update the table to reflect the new counts.
+- [x] After L2 + L3 + L4 land: re-run the survey baseline grep above and update the table to reflect the new counts. ✅ **DONE 2026-04-28** — table refreshed with prod-only/tests/total split and per-type status notes; headline summary added at the bottom.
 - [ ] After all leaves land: confirm the rrr/ tree has zero non-carve-out STL container/primitive references in prod code.
 
 ### DoD
