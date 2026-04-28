@@ -1833,6 +1833,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_frame_codec ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_frame_codec COMMAND test_rpc_frame_codec)
 
+    # Marshal Archive byte-for-byte compatibility tests (Workstream N Phase 1)
+    add_executable(test_rpc_marshal_archive src/rrr/tests/rpc_marshal_archive_test.cc)
+    target_include_directories(test_rpc_marshal_archive PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_marshal_archive PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_marshal_archive ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_marshal_archive COMMAND test_rpc_marshal_archive)
+
     # SRPC TCP channel backend tests (Workstream K, Phase 1 leaf 3a — TcpConnection)
     add_executable(test_rpc_tcp_channel src/rrr/tests/rpc_tcp_channel_test.cc)
     target_include_directories(test_rpc_tcp_channel PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
