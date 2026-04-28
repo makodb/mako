@@ -1240,7 +1240,10 @@ Per CLAUDE.md exceptions:
     - [ ] **L7-alock (DEFERRED)** — alock.hpp/cpp's 8 mutex sites are intertwined with the iterator-stable list patterns documented under L2c-alock. Same blocker.
     - [ ] **L7-recorder (DEFERRED)** — recorder.cpp's 6 mutex sites + raw-pointer list pattern documented under L2e-recorder.
     - [ ] **L7-marshal (DEFERRED)** — marshal.cpp's 2 global `std::mutex md_mutex_g` / `mdi_mutex_g` protect a Construct-On-First-Use HashMap registry. Migration to `SpinMutex<HashMap<...>>` is doable but reorganizes the global state pattern — separate leaf with care.
-    - [ ] **L7-cleanup (small)** — `alarm.hpp` has 4 dead-code commented-out `std::mutex` lines; `dball.hpp` has 2 same. Pure deletion, no behavior change.
+    - [x] **L7-cleanup — `alarm.hpp` + `dball.hpp` dead-code mutex comments**. ✅ **LANDED 2026-04-28**.
+      - Deleted 4 stale `// std::mutex lock_` / `// std::lock_guard<std::mutex> guard(lock_);` commented-out lines from `alarm.hpp` (the class previously had a mutex but the field was already removed — only the orphan comments remained).
+      - Deleted 3 stale `// std::mutex mtx_` / `// std::lock_guard<std::mutex> guard(mtx_);` commented-out lines from `dball.hpp` (same pattern: the field was already removed).
+      - No behavior change; surrounding RPC suite remained green: `test_rpc` 17/17, `test_rpc_extended` 14/14, `test_rpc_state_integration` 16/16, `test_marshal` 23/23, `test_reactor` 15/15, `test_rpc_request_queue` 30/30, `test_rpc_inmemory_channel` 24/24.
   - Goal: zero non-carve-out `std::mutex` / `std::lock_guard` in rrr prod after all L7 sub-leaves land.
 - [x] *low* Sub-leaf L8 — `std::thread` → `rusty::thread::spawn`. ✅ **LANDED 2026-04-28** (survey correction — zero prod sites).
   - **Survey correction (2026-04-28)**: original Workstream L survey said "47 sites" for std::thread. Verification (`grep -rE '\bstd::thread\b' src/rrr | grep -v tests/`) returns zero prod-side mentions. All 47 mentions are in test files (rpc_request_queue_test.cc, rpc_deferred_handler_test.cc, rpc_circuit_breaker_test.cc, rpc_reconnect_integration_test.cc, etc.). rrr production code already uses `rusty::thread::spawn` and `pthread_*` (in base/threading.cc) — no `std::thread`. Goal achieved.

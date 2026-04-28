@@ -33,7 +33,6 @@ namespace rrr {
 class Alarm: public FrequentJob {
  public:
   bool run_ = true;
-  //    std::mutex lock_;
 
   uint64_t next_id_ = 1;
 
@@ -64,7 +63,6 @@ class Alarm: public FrequentJob {
   }
 
   bool exe_next() {
-    //	std::lock_guard<std::mutex> guard(lock_);
     bool ret = false;
     auto it = waiting_.begin();
     if (it != waiting_.end()) {
@@ -100,7 +98,6 @@ class Alarm: public FrequentJob {
 
   // @unsafe - Adds alarm callback (uses rusty::HashMap::insert and std::make_pair)
   uint64_t add(uint64_t time, rusty::Function<void(void)> func) {
-    //	std::lock_guard<std::mutex> guard(lock_);
     //Log::debug("add timeout callback");
     uint64_t id = next_id_++;
     waiting_.insert(id, std::make_pair(time, std::move(func)));
@@ -117,7 +114,6 @@ class Alarm: public FrequentJob {
    */
   // @unsafe - Removes alarm callback (calls rusty::HashMap::remove)
   bool remove(uint64_t id) {
-    //	std::lock_guard<std::mutex> guard(lock_);
     return waiting_.remove(id).is_some();
   }
 

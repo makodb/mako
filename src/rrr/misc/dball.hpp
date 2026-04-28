@@ -40,8 +40,6 @@ class DragonBall {
   bool th_safe_ = false;
   bool auto_trigger = true;
 
-//    std::mutex mtx_;
-
   DragonBall(bool th_safe = false)
       : th_safe_(th_safe), n_wait_() { }
 
@@ -56,12 +54,10 @@ class DragonBall {
   DragonBall& operator=(const DragonBall&) = delete;
 
   void set_wait(int64_t n_wait) {
-    //std::lock_guard<std::mutex> guard(mtx_);
     n_wait_ = n_wait;
   }
 
   //oid collect(int64_t n) {
-  //    std::lock_guard<std::mutex> guard(mtx_);
   //    n_ready_ += n;
   //    if (auto_trigger) {
   //        trigger();
