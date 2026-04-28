@@ -18,6 +18,8 @@
 #include <string>
 #include <utility>
 
+#include <rusty/box.hpp>
+
 #ifdef RR
 #pragma push_macro("RR")
 #undef RR
@@ -75,7 +77,7 @@ class ServerChannelBindingTest : public ::testing::Test {
  protected:
     void SetUp() override {
         poll_thread_.emplace(PollThread::create());
-        server_ = std::make_unique<Server>(rusty::Some((*poll_thread_).clone()));
+        server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
     }
 
     void TearDown() override {
@@ -86,10 +88,10 @@ class ServerChannelBindingTest : public ::testing::Test {
         }
     }
 
-    Server& server() { return *server_; }
+    Server& server() { return **server_; }
 
-    std::optional<rusty::Arc<PollThread>> poll_thread_;
-    std::unique_ptr<Server>               server_;
+    std::optional<rusty::Arc<PollThread>>     poll_thread_;
+    std::optional<rusty::Box<Server>>         server_;
 };
 
 // ---------------------------------------------------------------------------

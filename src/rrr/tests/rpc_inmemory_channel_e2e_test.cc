@@ -24,6 +24,7 @@
 #include <utility>
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 
 #include "../rrr.hpp"
 #include "../rpc/inmemory_channel.hpp"
@@ -106,7 +107,7 @@ class InMemoryE2ETest : public ::testing::Test {
 
     std::optional<rusty::Arc<InMemorySwitchboard>> switchboard_;
     std::optional<rusty::Arc<PollThread>>          poll_thread_;
-    std::unique_ptr<Server>                        server_;
+    std::optional<rusty::Box<Server>>              server_;
     rusty::Option<rusty::Arc<Client>>              client_{rusty::None};
 };
 
@@ -116,12 +117,12 @@ class InMemoryE2ETest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
-    server_ = std::make_unique<Server>(rusty::Some((*poll_thread_).clone()));
+    server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
     auto svc_box = rusty::make_box<EchoService>();
     auto* svc_raw = svc_box.get();
-    server_->reg_service<EchoService>(std::move(svc_box));
-    server_->set_channel_factory(make_factory());
-    ASSERT_EQ(server_->start("inmemory://e2e-server-1"), 0);
+    (*server_)->reg_service<EchoService>(std::move(svc_box));
+    (*server_)->set_channel_factory(make_factory());
+    ASSERT_EQ((*server_)->start("inmemory://e2e-server-1"), 0);
 
     auto client = Client::create((*poll_thread_).clone());
     client_ = rusty::Some(client.clone());
@@ -150,12 +151,12 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
-    server_ = std::make_unique<Server>(rusty::Some((*poll_thread_).clone()));
+    server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
     auto svc_box = rusty::make_box<EchoService>();
     auto* svc_raw = svc_box.get();
-    server_->reg_service<EchoService>(std::move(svc_box));
-    server_->set_channel_factory(make_factory());
-    ASSERT_EQ(server_->start("inmemory://e2e-server-2"), 0);
+    (*server_)->reg_service<EchoService>(std::move(svc_box));
+    (*server_)->set_channel_factory(make_factory());
+    ASSERT_EQ((*server_)->start("inmemory://e2e-server-2"), 0);
 
     auto client = Client::create((*poll_thread_).clone());
     client_ = rusty::Some(client.clone());
@@ -190,11 +191,11 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, ServerDestroyTriggersClientDisconnect) {
-    server_ = std::make_unique<Server>(rusty::Some((*poll_thread_).clone()));
+    server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
     auto svc_box = rusty::make_box<EchoService>();
-    server_->reg_service<EchoService>(std::move(svc_box));
-    server_->set_channel_factory(make_factory());
-    ASSERT_EQ(server_->start("inmemory://e2e-server-3"), 0);
+    (*server_)->reg_service<EchoService>(std::move(svc_box));
+    (*server_)->set_channel_factory(make_factory());
+    ASSERT_EQ((*server_)->start("inmemory://e2e-server-3"), 0);
 
     auto client = Client::create((*poll_thread_).clone());
     client_ = rusty::Some(client.clone());
