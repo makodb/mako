@@ -1868,6 +1868,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_server_channel_binding ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_server_channel_binding COMMAND test_rpc_server_channel_binding)
 
+    # SRPC server channel-mode reply path (Workstream K, server sub-leaf 5b)
+    add_executable(test_rpc_server_channel_send src/rrr/tests/rpc_server_channel_send_test.cc)
+    target_include_directories(test_rpc_server_channel_send PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_server_channel_send PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_server_channel_send ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_server_channel_send COMMAND test_rpc_server_channel_send)
+
     # SRPC client channel-mode outbound-send (Workstream K, sub-leaf 4b)
     add_executable(test_rpc_client_channel_send src/rrr/tests/rpc_client_channel_send_test.cc)
     target_include_directories(test_rpc_client_channel_send PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

@@ -403,6 +403,26 @@ class ServerConnection {
     // Used to pass weak reference to async handlers
     WeakServerConnection weak_self_;
 
+    // Workstream K, server sub-leaf 5b — outbound reply through the
+    // channel layer.
+    //
+    // When `bind_channel(...)` is called with a non-null
+    // `ChannelConnectionProxy`, `channel_proxy_` owns it and
+    // `channel_mode_` flips to true. From that point on, `reply(...)`
+    // builds the response body in a temporary `Marshal`, extracts
+    // the bytes, and dispatches via `proxy->send_frame(...)`. The
+    // legacy `out_` Marshal-as-syscall-buffer + `pending_write_update_`
+    // poll-loop write plumbing is bypassed.
+    //
+    // Boxed for the same `pro::proxy<F>` cyclic-constraint workaround
+    // applied to `ClientConnection::direct_channel_`. Mutable +
+    // SpinMutex so the const `reply<F>` template path can lock it
+    // briefly to dispatch a frame from any thread (mirrors the
+    // client-side `direct_channel_` discipline).
+    mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>>
+        channel_proxy_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
+    rusty::Cell<bool> channel_mode_{false};
+
 public:
     /**
      * Closes the connection and cleans up resources.
@@ -429,6 +449,23 @@ public:
 
     // @safe - Initializes connection with socket
     ServerConnection(rusty::Arc<RpcServiceContext> ctx, int socket);
+
+    /**
+     * Workstream K, server sub-leaf 5b — bind a `ChannelConnectionProxy`
+     * to this connection.
+     *
+     * Once bound, outbound `reply(...)` calls route through
+     * `proxy->send_frame(...)` and skip the legacy `out_` Marshal +
+     * `pending_write_update_` poll-loop write plumbing.
+     *
+     * Calling with a default-constructed (null) proxy is a no-op.
+     * Calling more than once replaces the previously-bound proxy.
+     */
+    // @unsafe - Records the proxy under SpinMutex interior storage.
+    void bind_channel(ChannelConnectionProxy proxy);
+
+    // @safe - True if `bind_channel` has been called with a non-null proxy.
+    bool is_channel_mode() const { return channel_mode_.get(); }
 
     // @safe - Simple status check
     bool connected() {
@@ -457,6 +494,36 @@ public:
     // - status_: read-only access
     template<typename F>
     void reply(const Request& req, i32 error_code, F&& write_fn) const {
+        // Workstream K, server sub-leaf 5b — when the connection is
+        // bound to a `ChannelConnectionProxy`, build the response
+        // body in a scratch `Marshal` and dispatch via
+        // `proxy->send_frame(...)` (the channel layer prepends the
+        // 4-byte size header on the wire). The body's wire layout is
+        // `[xid:v64][error_code:v32][server_instance_id:v64][reply_data]`
+        // — the legacy fd path's high-bit "extended-header" flag
+        // is implicit in channel mode (server always emits the
+        // instance id; the client always reads it).
+        if (is_channel_mode()) {
+            Marshal body;
+            v64 v_reply_xid = req.xid;
+            v32 v_error_code = error_code;
+            // @unsafe { Marshal::operator<< }
+            {
+                body << v_reply_xid;
+                body << v_error_code;
+                body << v64(static_cast<i64>(ctx_->server_instance_id));
+            }
+            write_fn(body);
+            const std::size_t body_size = body.content_size();
+            std::vector<std::uint8_t> body_bytes;
+            if (body_size > 0) {
+                body_bytes.resize(body_size);
+                verify(body.read(body_bytes.data(), body_size) == body_size);
+            }
+            dispatch_response_frame_via_channel(body_bytes.data(), body_size);
+            return;
+        }
+
         // @unsafe
         {
         auto guard = out_.lock().unwrap();
@@ -537,6 +604,18 @@ public:
 
     // @safe - Explicit server-side no-op (kept for API compatibility).
     void handle_free();
+
+private:
+    // 5b: extracted reply dispatch path, kept out of the templated
+    // `reply<F>` body so the implementation can sit in `server.cpp`.
+    // Locks the `channel_proxy_` SpinMutex briefly to call
+    // `proxy->send_frame({bytes, size})`. Errors from `send_frame`
+    // (`ChannelError::WouldBlock`, `ConnectionReset`, ...) are
+    // observable via the proxy's `on_error` / `on_closed` callbacks
+    // — the reply-side return value is intentionally discarded.
+    // @unsafe - SpinMutex::lock + ChannelConnectionProxy method dispatch.
+    void dispatch_response_frame_via_channel(const std::uint8_t* bytes,
+                                             std::size_t size) const;
 
 };
 

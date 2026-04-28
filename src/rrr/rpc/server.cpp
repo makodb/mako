@@ -161,6 +161,53 @@ ServerConnection::~ServerConnection() {
     // Arc reference to RpcServiceContext is automatically released
 }
 
+// @unsafe - 5b: bind a channel proxy and flip the channel-mode latch.
+//
+// Mirrors `ClientConnection::bind_channel_direct` minus the inbound
+// callback wiring (5c will install `on_frame` / `on_closed` here in
+// a follow-up leaf). For 5b the proxy slot is purely an outbound
+// dispatch sink — `reply<F>(...)` calls `send_frame(...)` on it.
+void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
+    if (!proxy.has_value()) return;
+    // @unsafe { SpinMutex::lock + make_box + ChannelConnectionProxy move }
+    {
+        auto guard = channel_proxy_.lock().unwrap();
+        *guard = rusty::Some(
+            rusty::make_box<ChannelConnectionProxy>(std::move(proxy)));
+    }
+    channel_mode_.set(true);
+}
+
+// @unsafe - 5b: dispatch a reply-frame body through the bound proxy.
+//
+// Locks the SpinMutex briefly to extract the proxy pointer, then
+// drops the guard so the actual `send_frame` happens without holding
+// the lock (the proxy's `send_frame` is internally thread-safe per
+// the channel-layer contract). Errors are observable via the
+// proxy's installed `on_error` / `on_closed` callbacks; the return
+// value is intentionally discarded — the RPC layer mirrors the
+// legacy fd path's behavior of not surfacing send-side errors from
+// `reply()`.
+void ServerConnection::dispatch_response_frame_via_channel(
+        const std::uint8_t* bytes, std::size_t size) const {
+    ChannelConnectionProxy* proxy = nullptr;
+    // @unsafe { SpinMutex::lock + raw pointer extraction }
+    {
+        auto guard = channel_proxy_.lock().unwrap();
+        if (guard->is_none()) {
+            Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: "
+                     "channel mode flipped on but proxy is unbound (race?). "
+                     "Dropping reply.");
+            return;
+        }
+        proxy = const_cast<ChannelConnectionProxy*>(
+            guard->as_ref().unwrap().get());
+    }
+    ChannelFrame frame{bytes, size};
+    // @unsafe - proxy method dispatch through pro::proxy
+    (void)(*proxy)->send_frame(frame);
+}
+
 // @unsafe - Executes callback inline for API compatibility.
 int ServerConnection::run_async(std::function<void()> f) {
   if (!f) {
