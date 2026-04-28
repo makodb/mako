@@ -1059,6 +1059,50 @@ i32 payload_size = m.get_and_reset_write_cnt();
 m.write_bookmark(bookmark, &payload_size);  // Fill in size
 ```
 
+### Sink/Source Archive (Workstream N — in-flight)
+
+A new serde / cereal-style serialization layer is being introduced in
+parallel to `Marshal`. It decouples **format** (how bytes are laid out)
+from **target** (where bytes go), so the same `BinaryWriteArchive` can
+write into a memory buffer, an fd, a TCP channel, or a hash without
+copying through `Marshal` first.
+
+```cpp srpc-no-compile
+#include <rrr/misc/marshal_archive.hpp>
+
+// Sink: holds the bytes (Layer 1 — concrete; Layer 2 — `pro::proxy`)
+rrr::BufferSink sink;
+
+// Archive: knows the wire format (Layer 3)
+rrr::BinaryWriteArchive writer(&sink);
+writer << (rrr::i32)42 << std::string("hello");
+
+// Source: drains from a byte view
+rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
+rrr::BinaryReadArchive reader(&source);
+rrr::i32 x; std::string s;
+reader >> x >> s;
+```
+
+The archive supports the same primitive set as `Marshal`
+(`int8..int64`, `uint8..uint64`, `double`, `v32`, `v64`, `std::string`,
+`std::string_view`) plus the same containers (`std::pair`,
+`rusty::Vec`, `std::vector`, `std::list`, `std::set`,
+`std::unordered_set`, `std::map`, `std::unordered_map`, plus
+`rusty::BTreeSet`, `rusty::HashSet`, `rusty::BTreeMap`,
+`rusty::HashMap`).
+
+Wire format is **byte-for-byte identical** to `Marshal`'s output for
+all overlapping types — switching transports does not change the
+on-the-wire bytes.
+
+Status: Phase 1a (primitives + std::string) and Phase 1b (containers)
+have landed. Phase 1c (`FdSink`/`FdSource`) and Phase 2+
+(`SerializableProxy` + factory registry replacing `MarshallDeputy`'s
+internals) are upcoming. See
+[`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
+for the full design.
+
 ---
 
 ## 11. Reliability Features

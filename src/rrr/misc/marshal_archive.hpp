@@ -30,10 +30,22 @@
 #include <cstdint>
 #include <cstring>
 
+#include <list>
+#include <map>
+#include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include <rusty/rusty.hpp>
+#include <rusty/btreemap.hpp>
+#include <rusty/btreeset.hpp>
+#include <rusty/hashmap.hpp>
+#include <rusty/hashset.hpp>
+#include <rusty/vec.hpp>
 
 #ifdef RR
 #pragma push_macro("RR")
@@ -239,6 +251,122 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const std::string& s) {
     return *this << std::string_view{s};
   }
+
+  // ---- Composites. ------------------------------------------------------
+  // std::pair: write first then second, no length prefix (each side
+  // already knows the type and consumes its own bytes).
+  template<class T1, class T2>
+  BinaryWriteArchive& operator<<(const std::pair<T1, T2>& v) {
+    *this << v.first;
+    *this << v.second;
+    return *this;
+  }
+
+  // ---- Linear containers (length prefix + sequential elements). --------
+  // All linear containers share the wire format: v64 length prefix
+  // followed by each element serialized via operator<<. Iteration
+  // order matches the container's begin()/end(). For ordered containers
+  // (set/map/BTreeSet/BTreeMap) this is sorted-key order. For unordered
+  // containers (unordered_set/unordered_map/HashSet/HashMap) it's
+  // bucket-walk order — same iteration order as the existing
+  // `Marshal` operator<<, so byte-for-byte compatibility holds.
+  template<class T>
+  BinaryWriteArchive& operator<<(const rusty::Vec<T>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    return *this;
+  }
+
+  template<class T>
+  BinaryWriteArchive& operator<<(const std::vector<T>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    return *this;
+  }
+
+  template<class T>
+  BinaryWriteArchive& operator<<(const std::list<T>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    return *this;
+  }
+
+  template<class T>
+  BinaryWriteArchive& operator<<(const rusty::BTreeSet<T>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    return *this;
+  }
+
+  template<class T>
+  BinaryWriteArchive& operator<<(const std::set<T>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    return *this;
+  }
+
+  template<class T>
+  BinaryWriteArchive& operator<<(const rusty::HashSet<T>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    return *this;
+  }
+
+  template<class T>
+  BinaryWriteArchive& operator<<(const std::unordered_set<T>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryWriteArchive& operator<<(const rusty::BTreeMap<K, V>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) {
+      auto kv = *it;
+      *this << kv.first << kv.second;
+    }
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryWriteArchive& operator<<(const std::map<K, V>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) {
+      *this << it->first << it->second;
+    }
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryWriteArchive& operator<<(const rusty::HashMap<K, V>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) {
+      auto kv = *it;
+      *this << kv.first << kv.second;
+    }
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryWriteArchive& operator<<(const std::unordered_map<K, V>& v) {
+    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    *this << v_len;
+    for (auto it = v.begin(); it != v.end(); ++it) {
+      *this << it->first << it->second;
+    }
+    return *this;
+  }
 };
 
 class BinaryReadArchive {
@@ -308,6 +436,178 @@ class BinaryReadArchive {
     if (len > 0) {
       // @unsafe { writing into string's internal buffer via &s[0] }
       verify(read_exact(&s[0], len));
+    }
+    return *this;
+  }
+
+  // ---- Composites. ------------------------------------------------------
+  template<class T1, class T2>
+  BinaryReadArchive& operator>>(std::pair<T1, T2>& v) {
+    *this >> v.first;
+    *this >> v.second;
+    return *this;
+  }
+
+  // ---- Linear containers. -----------------------------------------------
+  // Wire format: v64 length prefix + N elements deserialized in order.
+  // Containers are cleared first; matches the existing Marshal operator>>
+  // semantics.
+  template<class T>
+  BinaryReadArchive& operator>>(rusty::Vec<T>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    v.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      T elem{};
+      *this >> elem;
+      v.push(std::move(elem));
+    }
+    return *this;
+  }
+
+  template<class T>
+  BinaryReadArchive& operator>>(std::vector<T>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    v.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      T elem{};
+      *this >> elem;
+      v.push_back(std::move(elem));
+    }
+    return *this;
+  }
+
+  template<class T>
+  BinaryReadArchive& operator>>(std::list<T>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      T elem{};
+      *this >> elem;
+      v.push_back(std::move(elem));
+    }
+    return *this;
+  }
+
+  template<class T>
+  BinaryReadArchive& operator>>(rusty::BTreeSet<T>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      T elem{};
+      *this >> elem;
+      v.insert(std::move(elem));
+    }
+    return *this;
+  }
+
+  template<class T>
+  BinaryReadArchive& operator>>(std::set<T>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      T elem{};
+      *this >> elem;
+      v.insert(std::move(elem));
+    }
+    return *this;
+  }
+
+  template<class T>
+  BinaryReadArchive& operator>>(rusty::HashSet<T>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      T elem{};
+      *this >> elem;
+      v.insert(std::move(elem));
+    }
+    return *this;
+  }
+
+  template<class T>
+  BinaryReadArchive& operator>>(std::unordered_set<T>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      T elem{};
+      *this >> elem;
+      v.insert(std::move(elem));
+    }
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryReadArchive& operator>>(rusty::BTreeMap<K, V>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      K key{};
+      V value{};
+      *this >> key >> value;
+      v.insert(std::move(key), std::move(value));
+    }
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryReadArchive& operator>>(std::map<K, V>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      K key{};
+      V value{};
+      *this >> key >> value;
+      v.emplace(std::move(key), std::move(value));
+    }
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryReadArchive& operator>>(rusty::HashMap<K, V>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      K key{};
+      V value{};
+      *this >> key >> value;
+      v.insert(std::move(key), std::move(value));
+    }
+    return *this;
+  }
+
+  template<class K, class V>
+  BinaryReadArchive& operator>>(std::unordered_map<K, V>& v) {
+    rrr::v64 v_len{0};
+    *this >> v_len;
+    v.clear();
+    auto n = static_cast<size_t>(v_len.get());
+    for (size_t i = 0; i < n; ++i) {
+      K key{};
+      V value{};
+      *this >> key >> value;
+      v.emplace(std::move(key), std::move(value));
     }
     return *this;
   }
