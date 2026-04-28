@@ -294,7 +294,7 @@ class Reactor {
 
     struct TaskState {
       mutable rusty::Task<T> task;
-      mutable std::optional<OnReady> on_ready;
+      mutable rusty::Option<OnReady> on_ready;
       rusty::Arc<EarlyWakeState> early_wake;
 
       TaskState(rusty::Task<T> t, OnReady cb, rusty::Arc<EarlyWakeState> ew)
@@ -309,9 +309,9 @@ class Reactor {
         return false;
       }
       state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
-      if (state->on_ready.has_value()) {
-        auto cb = std::move(state->on_ready.value());
-        state->on_ready.reset();
+      if (state->on_ready.is_some()) {
+        // unwrap() consumes: moves out and sets to None in one step.
+        auto cb = state->on_ready.unwrap();
         cb(std::move(poll_result.value));
       }
       return true;

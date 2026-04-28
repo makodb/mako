@@ -1127,12 +1127,20 @@ Per CLAUDE.md exceptions:
     - Regression check: `test_rpc` 17/17, `test_rpc_extended` 14/14, `test_rpc_state_integration` 16/16, `test_rpc_combined_reliability` 9/9, `test_rpc_request_buffering` 8/8, `test_rpc_reconnect_integration` 12/12, `test_load_balancer` 21/21, `test_rpc_client_pool` 20/20.
     - Same 4 pre-existing flakes remain (`IdleDetectionBecomesIdle`, `ActivityUpdatesOnRequest`, `QueueRejectSetsRequestTimeoutType`, `DisconnectedFailFastSetsConnectTimeoutType`) — none new in this leaf.
   - **Goal achieved**: zero non-carve-out `std::unique_ptr` / `std::make_unique` in `src/rrr/`.
-- [ ] *medium* Sub-leaf L1c — `std::optional<T>` → `rusty::Option<T>` (1 prod site, ~33 test sites). ~80 LOC.
-  - **Survey finding (2026-04-28)**: 1 prod site (`src/rrr/reactor/reactor.h:mutable std::optional<OnReady> on_ready`); 33 test sites mostly under `std::optional<rusty::Arc<T>>` or `std::optional<ChannelConnectionProxy>` patterns.
+- [ ] *medium* Sub-leaf L1c — `std::optional<T>` → `rusty::Option<T>` (1 prod site, ~33 test sites). **PARTIAL — L1c-prod done (2026-04-28)**.
+  - **Survey finding (2026-04-28)**: 1 prod site (`src/rrr/reactor/reactor.h:mutable std::optional<OnReady> on_ready`); 33 test sites mostly under `std::optional<rusty::Arc<T>>` or `std::optional<ChannelConnectionProxy>` patterns. Tests use `*opt` and `opt.emplace(...)` heavily — patterns that don't translate cleanly to `rusty::Option` (whose `operator*` returns the Option itself, not the inner T, and which has no `emplace`).
   - 1:1 conversion: `std::optional<T>` → `rusty::Option<T>`; `std::nullopt` → `rusty::None`; `opt.has_value()` → `opt.is_some()`; `*opt` → `opt.as_ref().unwrap()` (read) or `opt.unwrap()` (consume); `opt = std::nullopt` → `opt = rusty::None`; `opt.emplace(...)` → `opt = rusty::Some(...)`.
-  - **API drift caveat**: `rusty::Option<T>` doesn't have an `emplace(...)` method analogous to `std::optional::emplace`; sites need either `opt = rusty::Some(T(...))` or `opt = rusty::Some(rusty::Box<T>(...))` depending on whether `T` is movable.
-  - Decompose: L1c-prod (1 site), L1c-tests (33 sites split by file/group).
-  - Goal: zero `std::optional` in rrr after this leaf lands.
+  - **API drift caveats**:
+    - `rusty::Option<T>::operator*` returns the Option itself (a transpilation shim for migrated rust code), not the inner T. Code that uses `*opt` for read access needs to switch to `opt.as_ref().unwrap()` or chain through some other accessor.
+    - `rusty::Option<T>` doesn't have an `emplace(...)` method analogous to `std::optional::emplace`; sites need either `opt = rusty::Some(T(...))` or `opt = rusty::Some(rusty::Box<T>(...))` depending on whether `T` is movable.
+  - Decompose:
+    - [x] **L1c-prod — `src/rrr/reactor/reactor.h`** (1 site, 16 LOC). ✅ **LANDED 2026-04-28**.
+      - `mutable std::optional<OnReady> on_ready` (line 297) → `mutable rusty::Option<OnReady> on_ready`.
+      - The TaskState ctor's member-init `on_ready(std::move(cb))` works as-is via `rusty::Option<T>::Option(T val)` implicit-from-T constructor.
+      - Body changes: `state->on_ready.has_value()` → `state->on_ready.is_some()`; the two-step `auto cb = std::move(state->on_ready.value()); state->on_ready.reset();` collapses into a single `auto cb = state->on_ready.unwrap();` (Option::unwrap moves out and sets to None in one step, equivalent to Rust's `Option::take()` followed by unwrap).
+      - Verification: `test_reactor` 15/15 (the dedicated reactor unit test), full RPC suite green: `test_rpc` 17/17, `test_rpc_extended` 14/14, `test_rpc_state_integration` 16/16, `test_rpc_request_queue` 30/30, `test_rpc_request_buffering` 8/8, `test_rpc_combined_reliability` 9/9, `test_rpc_reconnect_integration` 12/12, `test_load_balancer` 21/21, `test_rpc_client_pool` 20/20, `test_marshal` 23/23, full channel-layer suite 154/154. Same 4 pre-existing flakes elsewhere; none new.
+    - [ ] **L1c-tests** — 33 test sites, mostly `std::optional<rusty::Arc<T>>` test-fixture members. Migration is mechanical for sites accessed via `(*opt).clone()` (most rrr/tests are this pattern; `(*opt)` works on std::optional but returns Option itself on rusty::Option, so callers would need `opt.as_ref().unwrap().clone()` instead — adds verbosity without clear borrow-check benefit since the inner type is already `rusty::Arc<T>` which carries its own safety story). **DEFERRED** as a separate sweep — not on the critical RPC migration path; revisit when there's a borrow-check or readability win to justify the verbosity.
+  - Goal: zero `std::optional` in rrr **prod** code achieved post-L1c-prod. Tests remain a separate sweep (L1c-tests).
 
 #### Targeted single-type migrations (decomposed by file)
 
