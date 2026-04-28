@@ -1295,3 +1295,83 @@ Per CLAUDE.md: when touching any rrr file outside this workstream, *also* migrat
 - [ ] Carve-out documentation in CLAUDE.md remains accurate: `std::string`, `std::atomic`, `std::condition_variable`, `std::pair`, `std::tuple`, `std::array` stay std with documented rationale.
 - [ ] Borrow-check coverage extended over the migrated files (where the corresponding `make borrow_check_*` target exists).
 - [ ] Survey baseline counts updated in this doc to reflect the post-migration state.
+
+---
+
+## Workstream N: Marshal Archive Refactor (P2)
+
+### Goal
+Replace the current `Marshallable` + `MarshallDeputy` + `Marshal` + `MarshallableProxy` design with a serde / cereal-style architecture that decouples **format** (how bytes are laid out) from **target** (where bytes go).
+
+### Design rationale
+- **Buffer-vs-target coupling**: `Marshal::write_to_fd(int fd, size_t)` conflates "I am a buffer of bytes" with "I drain myself to an fd". Sending bytes over a TCP socket or hashing them requires copying through Marshal first.
+- **Redundant `pro::proxy` over virtual dispatch**: `Marshallable` is already abstract with virtual methods. Wrapping it in a second `pro::proxy` layer (`MarshallableFacade` + `MarshallableSharedPtrAdapter` + `PRO_DEF_MEM_DISPATCH` macros) adds zero functionality. `MarshallDeputy` mirrors the same data twice (`sp_data_` + `inner_sp_data_`).
+- **Save-and-load split**: each command type writes a separate `to_marshal(Marshal&)` AND `from_marshal(Marshal&)` — duplicate field-walking code per type. Serde / cereal collapse these into a single archive-templated `serialize` method.
+
+### Architecture (4 layers, each independently composable)
+1. **Sink / Source** (Layer 1+2): `SinkProxy` (`void write(const void*, size_t)`) and `SourceProxy` (`size_t read(void*, size_t)`) are `pro::proxy` facades. Concrete impls: `BufferSink`, `FdSink`, `TcpSink`, `HashSink`, `BufferSource`, `FdSource`, `TcpSource`.
+2. **Archive** (Layer 3): `BinaryWriteArchive` / `BinaryReadArchive` know the wire format, hold a Sink/Source proxy, expose `operator<<` / `operator>>` for primitives + dispatch to user types' `serialize` method.
+3. **Serializable trait** (Layer 4): `pro::proxy<SerializableFacade>` + `SerializableRegistry::reg<T>(kind)` factory registry replace `Marshallable` + `MarshallDeputy::reg_initializer<T>`.
+
+### Reference design
+- **Rust serde**: `Serialize` / `Deserialize` traits, format-agnostic, monomorphic per type. Sink is anything implementing `std::io::Write`. Polymorphism over heterogeneous command sets via tagged enums (closed) or `Box<dyn Trait>` + registry (open).
+- **C++ cereal**: archive-templated single-method `template<class Archive> void serialize(Archive& ar)`, `cereal::BinaryOutputArchive` writes to `std::ostream`-shaped sinks, `CEREAL_REGISTER_TYPE` factory registry.
+
+Full design: see [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md).
+
+### Wire format compatibility
+**The byte layout must remain unchanged**. Every existing wire-format test must continue to pass byte-for-byte through every phase. Phase 1 includes byte-for-byte regression tests against the existing `Marshal` for every primitive + composite.
+
+### Code TODO
+
+- [x] **Phase 0 — Design + workstream entry**. ✅ **LANDED 2026-04-28** — this entry plus `docs/dev/marshal_archive_design.md`.
+- [ ] **Phase 1 — New abstractions (parallel, no caller migration)**.
+  - Add `src/rrr/misc/marshal_archive.{hpp,cpp}` with `SinkFacade` / `SinkProxy`, `SourceFacade` / `SourceProxy`, `BufferSink`, `FdSink`, `BufferSource`, `FdSource`, `BinaryWriteArchive`, `BinaryReadArchive`.
+  - Cover all primitives (`uint8_t..uint64_t`, `int8_t..int64_t`, `double`, `v32`, `v64`, `std::string`, `std::string_view`) + standard containers (`rusty::Vec`, `std::vector`, `std::list`, `std::set`, `std::unordered_set`, `std::map`, `std::unordered_map`).
+  - Add `tests/rpc_marshal_archive_test.cc`: byte-for-byte compatibility test that takes a primitive/composite, encodes via the existing `Marshal` AND via `BinaryWriteArchive`+`BufferSink`, asserts the two byte buffers are identical.
+  - Existing `Marshal` / `Marshallable` / `MarshallDeputy` untouched in this phase.
+  - Estimated +600 LOC.
+- [ ] **Phase 2 — Serializable proxy + factory registry**.
+  - `SerializableFacade` / `SerializableProxy` in `marshal_archive.hpp`.
+  - `SerializableRegistry::reg<T>(kind)` and `SerializableRegistry::get(kind)` — equivalent to the existing `MarshallDeputy::reg_initializer<T>` / `get_initializer(kind)`.
+  - One canary command type (e.g. `EmptyCommand` from `tpc_command.hpp`) implements both the old `Marshallable` interface AND the new `serialize` method; tests verify the proxy path produces the same bytes as the old path.
+  - Estimated +300 LOC.
+- [ ] **Phase 3 — RPC framework boundary**.
+  - The auto-generated `rcc_rpc.h` (and the `rpcgen` tool) switches from emitting `Marshal` operator<</>> calls to emitting `BinaryWriteArchive` / `BinaryReadArchive` calls.
+  - `MarshallDeputy` rewritten in terms of `SerializableProxy` while keeping its public surface (constructors, `sp_data_`, etc.). Internally it uses the new system.
+  - Generator change + `MarshallDeputy` impl change. Public API unchanged.
+- [ ] **Phase 4 — Per-command-type migrations** (decompose by directory):
+  - 4a — `deptran/classic/` (TPC commands)
+  - 4b — `deptran/janus/` (Janus commands)
+  - 4c — `deptran/raft/` (Raft commands — careful, persisted log format)
+  - 4d — `deptran/copilot/`, `deptran/paxos/`, `deptran/rcc/`, `deptran/fpga_raft/`
+  - 4e — Test fixtures + benchmark commands
+  - Each migration: add `template<Archive> void serialize(Archive&)`, remove old `to_marshal`/`from_marshal` pair, run RPC suite + verify byte-for-byte against persisted/recorded wire dumps.
+- [ ] **Phase 5 — Remove old infrastructure**.
+  - Delete `MarshallableProxy`, `MarshallableFacade`, `MarshallableSharedPtrAdapter`, the `PRO_DEF_MEM_DISPATCH` macros tied to it, `make_marshallable_proxy`, `marshallable_proxy_inner`, `wrap_typed_marshallable`, `TypedMarshallableAdapter`.
+  - Delete `Marshallable::to_marshal` / `from_marshal` virtual methods (keep the class as a tag base if useful; otherwise delete entirely).
+  - `MarshallDeputy::inner_sp_data_` (the shared_ptr mirror of `sp_data_`) goes away; only the proxy field remains.
+  - `Marshal::write_to_fd` removed (callers compose `BufferSink` + `FdSink`).
+  - Estimated −800 LOC.
+- [ ] **Phase N — Sink / Source / Archive coverage**.
+  - Add sinks/sources beyond the initial set as new transports come online (e.g. zero-copy sinks for io_uring, hash sinks for content addressing, JSON archive for debug dumps).
+
+### Tests TODO
+- [ ] Phase 1: byte-for-byte primitive + composite compatibility test. Every primitive, every container shape — encoded via old `Marshal` AND new `BinaryWriteArchive`+`BufferSink` produces identical bytes.
+- [ ] Phase 2: round-trip canary test via `SerializableProxy` + factory registry produces same bytes as the old `MarshallDeputy` path.
+- [ ] Phase 3: full RPC suite green after the `rcc_rpc.h` regenerator switch.
+- [ ] Phase 4: per-command-type — RPC integration tests + (for Raft commands) raft persistence round-trip tests.
+- [ ] Phase 5: full RPC + raft suite green after old-infrastructure deletion.
+
+### DoD
+- [ ] Each user-defined command type has ONE `template<Archive> void serialize(Archive&)` method (or save+load pair only when asymmetric).
+- [ ] `MarshallDeputy` has one field for the carrier (the proxy), one for the kind tag — no shared_ptr mirror.
+- [ ] `Marshal::write_to_fd` is gone; callers compose `BufferSink` (or use `FdSink` directly).
+- [ ] Adding a new transport (e.g. RDMA) is a new Sink class + tests; no command-type code changes.
+- [ ] Adding a new format (e.g. JSON debug dumps) is a new Archive class; no command-type code changes.
+- [ ] Wire format byte layout is byte-for-byte unchanged across the migration (verified at every phase).
+
+### Out of scope
+- Switching the wire format — preservation of byte-for-byte compatibility is mandatory.
+- Removing `std::shared_ptr<Marshallable>` from public APIs — that's L6 and remains blocked on the non-owning-shared_ptr pattern in `scheduler.cc:375` and the persisted log format in `LogEntry::command`.
+- `rusty::Arc` adoption — separate concern; can be layered atop the new design later without touching command-type serialization.
