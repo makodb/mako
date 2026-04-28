@@ -43,11 +43,11 @@ class Alarm: public FrequentJob {
 
   // id -> <alarm_time, func>;
   rusty::BTreeMap<uint64_t,
-           std::pair<uint64_t, std::function<void(void)>>> waiting_;
+           std::pair<uint64_t, rusty::Function<void(void)>>> waiting_;
 
   // <time, id> -> func
   rusty::BTreeMap<std::pair<uint64_t, uint64_t>,
-           std::function<void(void)> > idx_time_;
+           rusty::Function<void(void)> > idx_time_;
 
   Alarm() : waiting_(), idx_time_()
   {
@@ -99,7 +99,7 @@ class Alarm: public FrequentJob {
 //    }
 
   // @unsafe - Adds alarm callback (uses rusty::HashMap::insert and std::make_pair)
-  uint64_t add(uint64_t time, std::function<void(void)> func) {
+  uint64_t add(uint64_t time, rusty::Function<void(void)> func) {
     //	std::lock_guard<std::mutex> guard(lock_);
     //Log::debug("add timeout callback");
     uint64_t id = next_id_++;

@@ -12,6 +12,7 @@
 #include <ctime>
 
 #include <rusty/cell.hpp>
+#include <rusty/function.hpp>
 
 
 
@@ -135,7 +136,7 @@ private:
     rusty::Cell<bool> timed_out_{false};
 
     // Callback for timeout
-    std::function<void()> on_timeout_;
+    rusty::Function<void()> on_timeout_;
 
 public:
     // @safe - Constructor with config
@@ -151,7 +152,7 @@ public:
     }
 
     // @safe - Set timeout callback
-    void set_on_timeout(std::function<void()> callback) {
+    void set_on_timeout(rusty::Function<void()> callback) {
         on_timeout_ = std::move(callback);
     }
 
@@ -218,7 +219,7 @@ public:
                 timed_out_.set(true);
 
                 // Invoke callback
-                // @unsafe - std::function::operator bool
+                // @unsafe - rusty::Function::operator bool
                 {
                     if (on_timeout_) {
                         on_timeout_();
