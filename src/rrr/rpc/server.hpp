@@ -108,6 +108,7 @@
 #include "../reactor/reactor.h"
 
 
+#include "channel.hpp"
 #include "internal_protocol.hpp"
 #include "utils.hpp"
 
@@ -664,6 +665,20 @@ class Server: public NoCopy {
     // Used by clients to detect server restarts (ID changes after restart)
     uint64_t instance_id_;
 
+    // Workstream K, server sub-leaf 5a — channel-factory scaffolding.
+    //
+    // When a `ChannelFactoryProxy` is bound via `set_channel_factory(...)`,
+    // subsequent leaves (5e/5f) will route `Server::start(addr)` through
+    // `factory->make_listener() -> listener.set_on_accept(...) ->
+    // listener->listen(addr)` instead of the legacy `ServerListener`'s
+    // `socket(2)+bind(2)+listen(2)+accept(2)+epoll` path. For 5a this
+    // field is purely a holder — no code path reads it yet.
+    //
+    // `Box`ed because `pro::proxy<F>` triggers a cyclic-constraint
+    // diagnostic when used directly as the value type of `rusty::Option`
+    // (same workaround applied to `ClientConnection::factory_`).
+    rusty::Option<rusty::Box<ChannelFactoryProxy>> channel_factory_{rusty::None};
+
 public:
     // @safe - Creates server with optional PollThread
     // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
@@ -674,6 +689,32 @@ public:
 
     // @unsafe - Starts server on specified address (raw pointer dereference)
     int start(const char* bind_addr);
+
+    /**
+     * Workstream K, server sub-leaf 5a — bind a `ChannelFactoryProxy`
+     * to this server.
+     *
+     * Once bound, subsequent leaves (5e/5f) will route `start(addr)`
+     * through `factory->make_listener() -> listener.set_on_accept(...)
+     * -> listener->listen(addr)` instead of the legacy
+     * `ServerListener` socket path. For 5a this setter is purely
+     * scaffolding — `start()` does not read the field yet.
+     *
+     * Calling with a default-constructed (null) proxy is a no-op.
+     * Calling more than once replaces the previously-bound factory.
+     */
+    // @unsafe - Records the factory under Box+Option interior storage.
+    void set_channel_factory(ChannelFactoryProxy factory) {
+        if (!factory.has_value()) return;
+        // @unsafe { make_box + ChannelFactoryProxy move }
+        channel_factory_ = rusty::Some(
+            rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+    }
+
+    // @safe - True if `set_channel_factory` has been called with a non-null proxy.
+    bool is_channel_factory_bound() const {
+        return channel_factory_.is_some();
+    }
 
     // @safe - Registers legacy virtual service and transfers ownership to Server.
     // Must be called before start().
