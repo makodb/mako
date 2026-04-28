@@ -677,13 +677,14 @@ class ClientConnection {
     friend class Client;
     friend class ClientPool;
 
-    Marshal in_;
-    SpinMutex<Marshal> out_;  // Lock + data combined (has interior mutability)
-
-    // Shared reference to PollThread for async communication
+    // Shared reference to PollThread for async communication.
+    // 4g3c3: ClientConnection no longer owns an fd or in/out Marshal
+    // buffers; the channel layer's `TcpConnection` owns the fd and
+    // drives the read/write loop. The `poll_thread_worker_` field
+    // remains because tests construct `ClientConnection` directly
+    // with an Arc<PollThread> and the channel-factory production
+    // path still routes through it for thread affinity.
     rusty::Arc<PollThread> poll_thread_worker_;
-
-    int socket_;
 
     // Workstream K migration (sub-leaves 4a/4b/4c2):
     //
@@ -814,11 +815,6 @@ class ClientConnection {
 
     // Connection health metrics
     ConnectionMetrics metrics_;
-
-    // Flag set by request() to indicate write mode update needed
-    // Checked by poll loop after processing events (only used when on poll thread)
-    // Cell provides interior mutability for safe access through const methods
-    rusty::Cell<bool> pending_write_update_{false};
 
     // Weak pointer to self, initialized after creation
     // Used to pass weak reference for poll thread registration
@@ -1698,9 +1694,11 @@ public:
         return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
     }
 
-    // @safe - Returns file descriptor
+    // @safe - 4g3c3: ClientConnection no longer owns an fd. Returns -1
+    // for ABI compatibility with the PollableProxy facade and any
+    // legacy callers (e.g. logs identifying the connection by fd).
     int fd() const {
-        return socket_;
+        return -1;
     }
 
     // @safe - Simple getter (string copy is safe)
@@ -1717,9 +1715,11 @@ public:
     // @safe - Returns poll mode based on output buffer
     int poll_mode() const;
 
-    // @safe - Jetpack: content_size helper
+    // @safe - 4g3c3: in_/out_ Marshal buffers removed; the channel
+    // layer owns frame buffering. Returns 0 for ABI compatibility
+    // with the PollableProxy facade.
     size_t content_size() {
-        return in_.content_size();
+        return 0;
     }
 
     // @safe - Writes buffered data to socket

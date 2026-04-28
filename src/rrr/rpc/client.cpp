@@ -217,7 +217,6 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 // State machine defaults to NEW state
 ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
-      socket_(-1),
       state_machine_(),
       heartbeat_manager_(HeartbeatConfig::disabled()),
       circuit_breaker_(CircuitBreakerConfig::disabled()),
@@ -271,7 +270,14 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
   }
 }
 
-// @unsafe - Closes socket and invalidates futures (call from poll thread only)
+// @unsafe - Drives channel proxy close + invalidates futures.
+//
+// 4g3c3: The legacy `if (socket_ >= 0) ::close(socket_)` block has
+// been removed; channel mode is unconditional and the channel layer
+// (TcpConnection) owns its own fd. We instead drive `close()` on the
+// bound channel proxy(ies). Close is idempotent (channel-layer
+// contract), so it's fine if `on_channel_closed_fan_out` then fires
+// `on_closed` after this method returns.
 void ClientConnection::close() {
   ConnectionState prev_state = state_machine_.state();
   const bool was_connected = state_machine_.is_connected();
@@ -280,13 +286,25 @@ void ClientConnection::close() {
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
   }
 
-  // Always close the socket when it is valid, regardless of state.
-  if (socket_ >= 0) {
-    // @unsafe - system call
-    {
-      ::close(socket_);
+  // Tear down the channel proxy(ies). The channel layer's `close()`
+  // is idempotent and thread-safe per the facade contract.
+  // @unsafe { SpinMutex::lock + proxy method dispatch }
+  {
+    auto guard = direct_channel_.lock().unwrap();
+    if (guard->is_some()) {
+      auto* proxy = const_cast<ChannelConnectionProxy*>(
+          guard->as_ref().unwrap().get());
+      (*proxy)->close();
     }
-    socket_ = -1;
+  }
+  // @unsafe { SpinMutex::lock + FiberChannel::close }
+  {
+    auto guard = fiber_channel_.lock().unwrap();
+    if (guard->is_some()) {
+      auto* fc = const_cast<FiberChannel*>(
+          guard->as_ref().unwrap().get());
+      fc->close();
+    }
   }
 
   if (was_connected) {
@@ -584,39 +602,33 @@ size_t ClientConnection::replay_pending_requests() {
   return 0;
 }
 
-// @unsafe - Enqueue one internal heartbeat probe into the output
-// buffer (legacy fd mode) or directly through the bound channel
-// proxy (Workstream K, sub-leaf 4b channel mode).
+// @unsafe - Enqueue one internal heartbeat probe through the bound
+// channel proxy (Workstream K, sub-leaf 4b channel mode).
+//
+// 4g3c3: legacy fd path removed. Channel mode is the only path; the
+// `out_` Marshal that backed the fd path is gone. Callers (the
+// poll-loop tick) only fire heartbeats on connected clients, which
+// always have a bound channel by construction.
 void ClientConnection::enqueue_heartbeat_probe() const {
-  if (is_channel_mode()) {
-    // Channel mode: build the heartbeat frame body and dispatch
-    // through the channel proxy. The channel layer adds the 4-byte
-    // size prefix internally; the body bytes match what
-    // `set_bookmark` / `write_bookmark` would have laid out for the
-    // legacy fd path, so the wire format is identical.
-    Marshal body;
-    body << v64(xid_counter_.next());
-    body << static_cast<i32>(kInternalHeartbeatRpcId);
-    const std::size_t body_size = body.content_size();
-    std::vector<std::uint8_t> body_bytes;
-    if (body_size > 0) {
-      body_bytes.resize(body_size);
-      verify(body.read(body_bytes.data(), body_size) == body_size);
-    }
-    // Errors here are observable via the `on_error` callback when
-    // sub-leaf 4d wires it; for now we ignore the return code, same
-    // as the legacy fd path which never surfaces send-side errors
-    // from the heartbeat probe.
-    (void)dispatch_frame_via_channel(body_bytes.data(), body_size);
-    return;
+  // Build the heartbeat frame body and dispatch through the channel
+  // proxy. The channel layer adds the 4-byte size prefix internally;
+  // the body bytes match what the legacy fd path's
+  // `set_bookmark` / `write_bookmark` produced, so the wire format
+  // is unchanged.
+  Marshal body;
+  body << v64(xid_counter_.next());
+  body << static_cast<i32>(kInternalHeartbeatRpcId);
+  const std::size_t body_size = body.content_size();
+  std::vector<std::uint8_t> body_bytes;
+  if (body_size > 0) {
+    body_bytes.resize(body_size);
+    verify(body.read(body_bytes.data(), body_size) == body_size);
   }
-
-  auto guard = out_.lock().unwrap();
-  Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
-  *guard << v64(xid_counter_.next());
-  *guard << static_cast<i32>(kInternalHeartbeatRpcId);
-  i32 packet_size = guard->get_and_reset_write_cnt();
-  guard->write_bookmark(bmark, packet_size);
+  // Errors here are observable via the `on_error` callback when
+  // sub-leaf 4d wires it; for now we ignore the return code, same
+  // as the legacy fd path which never surfaced send-side errors
+  // from the heartbeat probe.
+  (void)dispatch_frame_via_channel(body_bytes.data(), body_size);
 }
 
 // @unsafe - Reset channel-mode state for a factory-driven reconnect
@@ -1342,7 +1354,20 @@ void ClientConnection::handle_error() {
   }
 }
 
-// @unsafe - Poll-loop heartbeat tick and pending write-update handling.
+// @unsafe - Poll-loop heartbeat tick.
+//
+// 4g3c3: ClientConnection is no longer registered as a Pollable on
+// the poll thread, so this method is unreachable from the poll loop
+// itself. The heartbeat manager is still driven from internal
+// timers; this method is preserved on the Pollable facade for ABI
+// compatibility (deptran's `Reactor::clients_` still wraps
+// ClientConnection in `PollableProxy` for host-scoped lifetime
+// retention — see `src/deptran/communicator.cc`). The body retains
+// the heartbeat probe so any caller that does drive it (e.g. tests
+// invoking through the proxy) keeps working. The
+// `pending_write_update_` flag has been removed: it gated the
+// legacy fd-path's write-mode flip, which the channel layer now
+// owns internally.
 bool ClientConnection::check_pending_write_update() const {
   if (state_machine_.is_connected() && !paused_.get()) {
     if (heartbeat_manager_.check_timeout()) {
@@ -1355,162 +1380,24 @@ bool ClientConnection::check_pending_write_update() const {
       return true;
     }
   }
-
-  if (pending_write_update_.get()) {
-    pending_write_update_.set(false);
-    return true;
-  }
   return false;
 }
 
-// @unsafe - Writes buffered data to socket, protected by SpinMutex
+// 4g3c3: ClientConnection no longer implements the Pollable role.
+// The channel layer's TcpConnection owns the fd and the
+// handle_read/write/error duty. These overrides remain for ABI
+// compatibility (PollableProxy facade conformance via the templated
+// adapter) but their bodies are no-ops.
 int ClientConnection::handle_write() {
-  if (!state_machine_.is_connected()) {
-    return PollMode::NO_CHANGE;
-  }
-  // Jetpack: respect pause state
-  if (paused_.get()) return PollMode::NO_CHANGE;
-
-  int result = PollMode::NO_CHANGE;
-  auto guard = out_.lock().unwrap();
-  size_t before_size = guard->content_size();
-  guard->write_to_fd(socket_);
-  size_t after_size = guard->content_size();
-
-  // Update activity timestamp and metrics if we wrote any data
-  if (after_size < before_size) {
-    size_t bytes_written = before_size - after_size;
-    update_last_activity(current_time_ms());
-    metrics_.record_bytes_sent(bytes_written);
-  }
-
-  if (guard->empty()) {
-    // Return READ-only mode - PollThreadWorker will update epoll
-    result = PollMode::READ;
-  }
-  // Guard auto-unlocks here
-  return result;
+  return PollMode::NO_CHANGE;
 }
 
-// @unsafe - Calls Future::notify_ready (uses interior mutability)
 bool ClientConnection::handle_read() {
-  // Workstream K, sub-leaf 4c2: in channel mode, response demux is
-  // owned by the recv-loop fiber driven from `run_recv_loop` over the
-  // bound `FiberChannel`. The legacy `Pollable::handle_read` is
-  // short-circuited as a defensive guard so a stale poll-loop
-  // registration (from a connection that pre-dates `bind_channel`)
-  // can't double-consume bytes from a socket the channel layer
-  // already owns. Sub-leaf 4e removes the registration entirely.
-  if (is_channel_mode()) {
-    return false;
-  }
-
-  if (!state_machine_.is_connected()) {
-    return false;
-  }
-
-  int bytes_read = in_.read_from_fd(socket_);
-  if (bytes_read == 0) {
-    return false;
-  }
-
-  // Update activity timestamp and metrics on successful read
-  update_last_activity(current_time_ms());
-  if (bytes_read > 0) {
-    metrics_.record_bytes_received(static_cast<uint64_t>(bytes_read));
-  }
-
-  // Process all available packets
-  while (state_machine_.is_connected()) {
-    i32 encoded_packet_size = 0;
-    int n_peek = in_.peek(encoded_packet_size);
-    if (n_peek != sizeof(i32)) {
-      break;
-    }
-    i32 packet_size = response_payload_size(encoded_packet_size);
-    if (in_.content_size() >= static_cast<size_t>(packet_size) + sizeof(i32)) {
-
-      verify(in_.read(&encoded_packet_size, sizeof(i32)) == sizeof(i32));
-
-      const bool has_extended_header = response_has_extended_header(encoded_packet_size);
-      packet_size = response_payload_size(encoded_packet_size);
-
-      v64 v_reply_xid;
-      v32 v_error_code;
-      size_t parsed_header_size = 0;
-
-      in_ >> v_reply_xid >> v_error_code;
-      parsed_header_size += v_reply_xid.val_size() + v_error_code.val_size();
-
-      if (has_extended_header) {
-        v64 v_server_instance_id;
-        in_ >> v_server_instance_id;
-        parsed_header_size += v_server_instance_id.val_size();
-        check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
-      }
-
-      if (packet_size < static_cast<i32>(parsed_header_size)) {
-        invoke_error_callback(EPROTO, "response header larger than packet payload");
-        handle_error();
-        return false;
-      }
-
-      size_t response_payload_size_bytes = static_cast<size_t>(packet_size) - parsed_header_size;
-      heartbeat_manager_.on_pong_received();
-
-      rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
-      {
-        auto guard = pending_fu_.lock().unwrap();
-        auto fu_ptr = guard->get(v_reply_xid.get());
-        if (fu_ptr.is_some()) {
-          fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());  // Copy Arc (refcount still 2)
-          guard->remove(v_reply_xid.get());  // Remove from map (refcount 2→1)
-        }
-      }  // Guard dropped here, releasing lock
-
-      if (fu_opt.is_some()) {
-        auto fu = fu_opt.unwrap();
-        verify(fu->xid_ == v_reply_xid.get());
-
-        fu->error_code_.set(v_error_code.get());
-        fu->reply_.borrow_mut()->read_from_marshal(in_, response_payload_size_bytes);
-
-        // Record request completion in metrics
-        if (v_error_code.get() == 0) {
-          metrics_.record_request_completed();
-        } else {
-          metrics_.record_request_failed();
-        }
-        record_circuit_result(v_error_code.get());
-
-        fu->notify_ready(fu);  // Pass Arc to self for callback safety
-
-        // Arc auto-released when scope exits (refcount 1→0 if user released theirs)
-      } else {
-        // the future might have timed out - consume data anyway
-        Marshal reply;
-        reply.read_from_marshal(in_, response_payload_size_bytes);
-      }
-    } else {
-      // No complete packet available
-      break;
-    }
-  }
-
-  Reactor::get_reactor()->loop();
-
-  return true;
+  return false;
 }
 
-// @unsafe - Determines polling mode based on output buffer, protected by SpinMutex
 int ClientConnection::poll_mode() const {
-  int mode = PollMode::READ;
-  auto guard = out_.lock().unwrap();
-  if (!guard->empty()) {
-    mode |= PollMode::WRITE;
-  }
-  // Guard auto-unlocks here
-  return mode;
+  return PollMode::READ;
 }
 
 // ============================================================================
@@ -1522,20 +1409,37 @@ Client::~Client() {
   close();  // Delegate to close() which uses request_close()
 }
 
-// @unsafe - Sets connection validity using RefCell
+// @safe - 4g3c3: legacy `out_` Marshal removed; `valid_id` was a flag
+// on the (now-deleted) outbound buffer used by the Python jetpack
+// bindings. In channel mode, outbound framing is owned by the
+// channel layer and there's no per-connection `valid_id` flag to
+// flip. Kept on the API surface for binding compatibility; behavior
+// is now a no-op.
 void Client::set_valid(bool valid) const {
-  auto guard = connection_.borrow_mut();
-  if (guard->is_some()) {
-    auto out_guard = guard->as_mut().unwrap()->out_.lock().unwrap();
-    out_guard->valid_id = valid;
-  }
+  (void)valid;
 }
 
-// @unsafe - Closes socket via request_close() for thread-safe cleanup
-// Note: Does NOT clear the connection object so reconnect() can work.
+// @unsafe - 4g3c3: schedules ClientConnection::close on the poll thread.
+//
+// The legacy `request_close(fd)` path was for fd-path teardown
+// ordering: the close() body needed to run on the poll thread to
+// avoid racing with pending `CmdAddPollable` commands. The same
+// ordering constraint exists in channel mode — the TcpConnection's
+// `add_proxy` call is asynchronous (it queues `CmdAddPollable` to
+// the poll thread). If `Client::close` were to drive
+// `TcpConnection::close()` from the user thread, the proxy's `fd()`
+// could read -1 by the time the poll thread processed the still-
+// queued `CmdAddPollable`, tripping `Epoll::Add`'s fd>=0 verify.
+//
+// We instead submit a `OneTimeJob` to the poll thread; by the time
+// it runs, every `CmdAddPollable` queued before the job has already
+// been processed (the MPSC queue + per-thread reactor preserves
+// command ordering). The job drives `ClientConnection::close()`
+// which closes the channel proxy synchronously on the poll thread
+// (no further enqueue).
+//
+// Note: does NOT clear the connection object so reconnect() can work.
 // The connection object retains the address for reconnection.
-// IMPORTANT: Does NOT call conn.close() directly! The socket close must happen
-// in the poll thread to avoid race conditions with pending CmdAddPollable commands.
 void Client::close() const {
   auto guard = connection_.borrow_mut();
   if (guard->is_some()) {
@@ -1543,10 +1447,14 @@ void Client::close() const {
     const bool was_connected = conn.connected();
     conn.mark_closing();
     if (was_connected) {
-      // Request poll thread to close the connection
-      // The poll thread will call ClientConnection::close() via do_close_pollable()
-      // @unsafe - PollThread::request_close
-      { poll_thread_worker_->request_close(conn.fd()); }
+      // @unsafe - schedules channel proxy close on poll thread
+      auto conn_arc = guard->as_ref().unwrap().clone();
+      auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
+        auto* mut_conn = const_cast<ClientConnection*>(conn_arc.get());
+        mut_conn->close();
+      }));
+      auto close_job_base = rusty::Arc<Job>(close_job);
+      poll_thread_worker_->add(std::move(close_job_base));
     }
     // Don't clear connection to None - we need it for reconnect()
   }
@@ -2172,85 +2080,27 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   return sp_cl;
 }
 
-// @unsafe - Apply TCP keepalive options to socket
+// @safe - 4g3c3: keepalive is now configured by the channel layer's
+// `TcpConnection` at construction time (see `tcp_channel.cpp`); the
+// RPC layer no longer owns the fd and cannot issue setsockopt.
+// `keepalive_config_` is still accepted via `set_keepalive` for API
+// stability, but its effect on the live channel proxy is currently
+// not propagated (the channel layer reads its own defaults at
+// connect time). Tests that assert keepalive configuration belong
+// at the channel layer.
 void ClientConnection::apply_keepalive_options() {
-  if (socket_ < 0) {
-    return;
-  }
-
-  auto config = keepalive_config_.get();
-  if (!config.enabled) {
-    // Disable keepalive
-    int no = 0;
-    // @unsafe { setsockopt system call }
-    setsockopt(socket_, SOL_SOCKET, SO_KEEPALIVE, &no, sizeof(no));
-    return;
-  }
-
-  // Enable keepalive
-  int yes = 1;
-  // @unsafe { setsockopt system calls }
-  if (setsockopt(socket_, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes)) != 0) {
-    Log_warn("Failed to enable SO_KEEPALIVE: %s", strerror(errno));
-    return;
-  }
-
-#ifdef __linux__
-  // Linux-specific TCP keepalive parameters
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPIDLE,
-                 &config.idle_sec, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPIDLE: %s", strerror(errno));
-  }
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPINTVL,
-                 &config.interval_sec, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPINTVL: %s", strerror(errno));
-  }
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPCNT,
-                 &config.count, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPCNT: %s", strerror(errno));
-  }
-#elif defined(__APPLE__)
-  // macOS uses TCP_KEEPALIVE for idle time (equivalent to TCP_KEEPIDLE)
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPALIVE,
-                 &config.idle_sec, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPALIVE: %s", strerror(errno));
-  }
-  // macOS doesn't have TCP_KEEPINTVL or TCP_KEEPCNT via setsockopt
-#endif
-
-  Log_debug("TCP keepalive configured: idle=%ds, interval=%ds, count=%d",
-            config.idle_sec, config.interval_sec,
-            config.count);
+  // No-op in channel mode.
 }
 
-// @unsafe - Validate connection is alive using getsockopt
+// @safe - Validate connection liveness via state machine alone.
+//
+// 4g3c3: the legacy `getsockopt(SO_ERROR)` health probe is gone — we
+// don't own an fd. The channel layer surfaces transport errors via
+// `on_error` / `on_closed`, which the connection's fan-out routes
+// into the state machine. So the state-machine check is the
+// authoritative liveness signal.
 bool ClientConnection::validate_connection() const {
-  // Check 1: State machine says CONNECTED
-  if (!state_machine_.is_connected()) {
-    return false;
-  }
-
-  // Check 2: Socket is valid
-  if (socket_ < 0) {
-    return false;
-  }
-
-  // Check 3: No pending socket error (getsockopt SO_ERROR)
-  int error = 0;
-  socklen_t len = sizeof(error);
-  // @unsafe { getsockopt system call }
-  if (getsockopt(socket_, SOL_SOCKET, SO_ERROR, &error, &len) != 0) {
-    // getsockopt itself failed
-    Log_warn("getsockopt(SO_ERROR) failed: %s", strerror(errno));
-    return false;
-  }
-
-  if (error != 0) {
-    Log_warn("Socket has pending error: %s", strerror(error));
-    return false;
-  }
-
-  return true;
+  return state_machine_.is_connected();
 }
 
 } // namespace rrr

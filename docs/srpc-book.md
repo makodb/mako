@@ -562,11 +562,26 @@ Client                           Network                          Server
   |                                  Handler processes request      |
   |                                                                 |
   |                              <-- [size|xid|error|rets] --------|
-  |-- ClientConnection.handle_read()                                |
+  |-- TcpConnection on_frame -> ClientConnection                    |
+  |   .decode_response_and_notify(bytes, size)                      |
   |-- Match xid to Future                                           |
   |-- Set reply data, signal fiber                                  |
   |-- Fiber resumes with result                                     |
 ```
+
+Workstream K, sub-leaf 4g3c3 — `ClientConnection` no longer owns
+the socket fd or the `Pollable` I/O methods. The channel layer's
+`TcpConnection` registers with the poll thread, drives
+`handle_read` / `handle_write`, and forwards decoded frames to
+`ClientConnection::decode_response_and_notify` via the
+`bind_channel_direct(...)` `on_frame` callback. The legacy
+`ClientConnection::handle_read` body, the `socket_` / `in_` / `out_`
+fields, the `pending_write_update_` flag, and the
+`apply_keepalive_options` / `validate_connection` socket probes
+have all been removed; the `Pollable` overrides remain as no-op
+stubs only because deptran's host-scoped retention map
+(`Reactor::clients_`) still wraps `ClientConnection` in
+`PollableProxy`.
 
 ### Error Codes
 

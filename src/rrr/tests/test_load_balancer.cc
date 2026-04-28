@@ -507,7 +507,11 @@ TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFligh
     ASSERT_TRUE(selected_opt.is_some());
     auto selected = selected_opt.unwrap();
 
-    EXPECT_NE(selected->fd(), busy_client->fd());
+    // 4g3c3: ClientConnection no longer owns an fd (channel layer's
+    // TcpConnection does), so `fd()` returns -1 for every connection.
+    // Compare Arc identity instead, which is what the original
+    // distinct-connection check actually wanted.
+    EXPECT_NE(selected.get(), busy_client.get());
     EXPECT_EQ(selected->metrics().in_flight_requests(), 0u);
 
     sleep_future->wait();
