@@ -888,7 +888,7 @@ void PollThreadWorker::process_commands() {
   }
 }
 
-// @unsafe - uses std::set operations
+// @unsafe - uses rusty::BTreeSet operations
 void PollThreadWorker::trigger_job() {
   // Copy jobs to process (in case jobs modify the set)
   rusty::BTreeSet<rusty::Arc<Job>> jobs_exec = jobs_.clone();
@@ -985,17 +985,17 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode) {
   }
 }
 
-// @unsafe - uses std::set::insert
+// @unsafe - uses rusty::BTreeSet::insert
 void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
   jobs_.insert(job);
 }
 
-// @unsafe - uses std::set::erase
+// @unsafe - uses rusty::BTreeSet::remove
 void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
   jobs_.remove(job);
 }
 
-// @unsafe - uses std::unordered_set::swap
+// @unsafe - uses rusty::HashSet::clone (via clear/swap)
 void PollThreadWorker::process_pending_removals() {
   rusty::HashSet<int> remove_fds = pending_remove_.clone();
   pending_remove_.clear();
