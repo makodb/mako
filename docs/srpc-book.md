@@ -594,6 +594,18 @@ unit also dropped its socket-path system headers
 `<netinet/tcp.h>`, `<sys/types.h>`, `<string.h>`) — none of
 their symbols are reachable from the RPC layer post-4g3c3.
 
+Workstream K, sub-leaf 4g4 — the `SRPC_USE_CHANNEL` /
+`SRPC_DISABLE_CHANNEL` migration env vars and the
+`srpc_use_channel()` / `srpc_set_use_channel_for_testing(...)` /
+`srpc_reset_use_channel_for_testing()` helpers are deleted.
+Channel mode is unconditional; `Client::connect(addr, ...)`
+auto-installs a default TCP `ChannelFactoryProxy` whenever the
+caller hasn't already bound one via
+`set_channel_factory(...)`. The standalone migration-switch test
+(`test_rpc_client_channel_switch`) is removed. External callers
+that set the env vars or invoked the helpers should remove
+those references.
+
 ### Error Codes
 
 | Code | Meaning |

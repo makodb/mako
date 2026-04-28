@@ -122,35 +122,13 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 
 namespace rrr {
 
-// ============================================================================
-// Workstream K, sub-leaf 4f — migration switch.
-// ============================================================================
-
-/**
- * Returns true when the `SRPC_USE_CHANNEL` env var is set to a
- * truthy value ("1", "true", "yes", "on" — case-insensitive). When
- * true, every `Client::connect(addr)` call that hasn't already
- * installed a factory via `set_channel_factory(...)` auto-installs
- * a default TCP-backed `ChannelFactoryProxy`, putting the
- * connection in channel mode end-to-end.
- *
- * The env var is read once on first call and cached; subsequent
- * runtime changes are ignored so the per-connection decision stays
- * consistent.
- */
-// @safe - Reads cached choice; lazy-initializes from env on first call.
-bool srpc_use_channel();
-
-/**
- * Test-only override: flip the cached choice without spawning a
- * child process. Subsequent `srpc_use_channel()` calls return the
- * forced value. Use `srpc_reset_use_channel_for_testing()` to clear
- * and re-read the env var on the next query.
- */
-// @safe - Test-only override.
-void srpc_set_use_channel_for_testing(bool on);
-// @safe - Test-only reset.
-void srpc_reset_use_channel_for_testing();
+// 4g4: the migration switch (`srpc_use_channel()`,
+// `srpc_set_use_channel_for_testing(...)`,
+// `srpc_reset_use_channel_for_testing()`) and its env-var triggers
+// (`SRPC_USE_CHANNEL`, `SRPC_DISABLE_CHANNEL`) are gone. Channel
+// mode is unconditional; `Client::connect` auto-installs a default
+// TCP `ChannelFactoryProxy` when none has been bound via
+// `set_channel_factory(...)`.
 
 /**
  * Behavior when a request is made while disconnected.

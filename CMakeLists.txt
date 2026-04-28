@@ -1896,12 +1896,9 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_client_channel_factory ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_client_channel_factory COMMAND test_rpc_client_channel_factory)
 
-    # SRPC client SRPC_USE_CHANNEL migration switch (Workstream K, sub-leaf 4f)
-    add_executable(test_rpc_client_channel_switch src/rrr/tests/rpc_client_channel_switch_test.cc)
-    target_include_directories(test_rpc_client_channel_switch PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_rpc_client_channel_switch PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_client_channel_switch ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
-    add_test(NAME test_rpc_client_channel_switch COMMAND test_rpc_client_channel_switch)
+    # 4g4: test_rpc_client_channel_switch deleted along with the
+    # SRPC_USE_CHANNEL/SRPC_DISABLE_CHANNEL migration switch and its
+    # test-only override helpers. Channel mode is unconditional now.
 
     add_executable(test_raft_messages tests/raft_messages_test.cc)
     target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

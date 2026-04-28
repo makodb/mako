@@ -63,88 +63,12 @@ static uint64_t current_time_ms() {
             now.time_since_epoch()).count());
 }
 
-// ============================================================================
-// Workstream K, sub-leaf 4g3a — channel mode is non-negotiable.
-// ============================================================================
-//
-// Channel mode is the only SRPC client path. `srpc_use_channel()`
-// always returns true. `Client::connect` automatically installs a
-// default TCP-backed `ChannelFactoryProxy` if the caller hasn't
-// already installed one, and the new connection runs entirely in
-// channel mode (factory connect -> bind_channel_direct -> inline
-// on_frame callbacks).
-//
-// Deprecated env vars (with a one-time stderr warning when set):
-//   - `SRPC_DISABLE_CHANNEL` (4g2 kill-switch) — no-op.
-//   - `SRPC_USE_CHANNEL=0` (4f migration switch's "off" form) — no-op.
-//
-// External callers should remove their references; the env vars and
-// the test-only override helpers will be deleted in sub-leaf 4g4.
-//
-// The test-only override (`srpc_set_use_channel_for_testing`) is now
-// also a no-op — channel mode cannot be disabled.
-namespace {
-
-bool& srpc_warn_once_flag() {
-    static bool warned = false;
-    return warned;
-}
-
-// @unsafe - Reads getenv (not borrow-checked); strcasecmp.
-void warn_if_deprecated_env_set() {
-    if (srpc_warn_once_flag()) return;
-    auto eq_ci = [](const char* a, const char* b) {
-        return ::strcasecmp(a, b) == 0;
-    };
-    auto is_truthy = [&](const char* val) {
-        if (val == nullptr || val[0] == '\0') return false;
-        return eq_ci(val, "1") || eq_ci(val, "true") || eq_ci(val, "yes")
-               || eq_ci(val, "on");
-    };
-    // @unsafe { std::getenv }
-    const char* disable = std::getenv("SRPC_DISABLE_CHANNEL");
-    if (is_truthy(disable)) {
-        Log_warn("SRPC_DISABLE_CHANNEL=%s is set but ignored: channel mode "
-                 "is now the only SRPC code path. Remove this env var.",
-                 disable);
-        srpc_warn_once_flag() = true;
-        return;
-    }
-    // @unsafe { std::getenv }
-    const char* use = std::getenv("SRPC_USE_CHANNEL");
-    if (use != nullptr && use[0] != '\0' && !is_truthy(use)) {
-        Log_warn("SRPC_USE_CHANNEL=%s is set but ignored: channel mode "
-                 "is now the only SRPC code path. Remove this env var.",
-                 use);
-        srpc_warn_once_flag() = true;
-    }
-}
-
-}  // namespace
-
-// @safe - Channel mode is unconditional; emit one-time warning if a
-// deprecated env var was set.
-bool srpc_use_channel() {
-    warn_if_deprecated_env_set();
-    return true;
-}
-
-// @safe - Test-only override is now a no-op (channel mode cannot be
-// disabled). Kept for binary compatibility until 4g4 deletes the
-// helper. Calls with `false` emit a one-time warning.
-void srpc_set_use_channel_for_testing(bool on) {
-    if (!on && !srpc_warn_once_flag()) {
-        Log_warn("srpc_set_use_channel_for_testing(false) is a no-op: "
-                 "channel mode is now the only SRPC code path.");
-        srpc_warn_once_flag() = true;
-    }
-}
-
-// @safe - Test-only reset is a no-op (channel mode is non-negotiable).
-// Kept for binary compatibility until 4g4 deletes the helper.
-void srpc_reset_use_channel_for_testing() {
-    // No-op.
-}
+// 4g4: the migration switch (`srpc_use_channel()` and the test-only
+// `srpc_set_use_channel_for_testing` / `srpc_reset_use_channel_for_testing`
+// helpers) and its env-var triggers (`SRPC_USE_CHANNEL`,
+// `SRPC_DISABLE_CHANNEL`) are gone. Channel mode is unconditional;
+// `Client::connect` auto-installs a default TCP `ChannelFactoryProxy`
+// when none has been bound via `set_channel_factory(...)`.
 
 // ============================================================================
 // Future implementation
@@ -1515,18 +1439,12 @@ int Client::connect(const char* addr, bool client) const {
   // Apply pending reconnect policy before connecting
   mut_conn.set_reconnect_policy(pending_reconnect_policy_.get());
 
-  // Workstream K, sub-leaf 4f — migration switch.
-  //
-  // If `SRPC_USE_CHANNEL=1` is set in the environment AND no factory
-  // has been installed via `set_channel_factory(...)`, install a
-  // default TCP factory now. This routes the subsequent
-  // `connect(addr)` through `factory->connect(addr)` ->
-  // `bind_channel(...)`, exercising the channel-mode path
-  // end-to-end without forcing every existing call site to opt in.
-  // The flag default-off keeps the legacy fd path active for
-  // unsuspecting consumers; sub-leaf 4g flips the default and
-  // removes the legacy path.
-  if (srpc_use_channel() && !has_pending_channel_factory()) {
+  // 4g4: channel mode is unconditional — auto-install a default TCP
+  // `ChannelFactoryProxy` if the caller hasn't already bound one via
+  // `set_channel_factory(...)`. The connection's `connect(addr)` and
+  // reconnect spawn route through `factory->connect(addr)` ->
+  // `bind_channel_direct(...)`.
+  if (!has_pending_channel_factory()) {
     auto tcp_factory =
         rusty::Arc<TcpFactory>::make(poll_thread_worker_);
     set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
