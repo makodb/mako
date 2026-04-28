@@ -13,25 +13,24 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
-#include <rusty/function.hpp>
 #include <rusty/option.hpp>
-#include <rusty/unsafe_cell.hpp>
 #include <rusty/vec.hpp>
 #include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
-#include <pthread.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
 
-
-#include <sys/select.h>
-#include <sys/un.h>
+// 5g3: socket-path system headers (`<unistd.h>`, `<sys/socket.h>`,
+// `<netdb.h>`, `<sys/select.h>`, `<sys/un.h>`, `<sys/types.h>`,
+// `<netinet/tcp.h>`, `<string.h>`, `<pthread.h>`,
+// `<rusty/function.hpp>`, `<rusty/unsafe_cell.hpp>`,
+// `<proxy/proxy.h>`, `<proxy/proxy_macros.h>`) removed — no
+// `socket(2)` / `connect(2)` / `bind(2)` / `accept(2)` /
+// `setsockopt(2)` / `getaddrinfo(3)` / `::close(fd)` /
+// `pthread_*` calls remain in the RPC server; the channel layer's
+// `TcpListener` / `TcpConnection` own those syscalls. The proxy
+// macros come in transitively via `channel.hpp` for the channel-
+// layer types referenced from the inline `reply<F>` template.
+// `<errno.h>` is kept for the errno-shaped error-code constants
+// (`EINVAL`, `ENOENT`) that the RPC dispatch path still emits.
 #include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <netinet/tcp.h>
 
 
 

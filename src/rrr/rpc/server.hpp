@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-// @unsafe - RPC server module uses raw sockets and mutable spinlocks
+// @unsafe - RPC server module uses mutable spinlocks
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
@@ -20,11 +20,11 @@
 #include <rusty/vec.hpp>
 #include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
 
-#include <pthread.h>
-
-#include <sys/socket.h>
-#include <netdb.h>
-
+// 5g3: socket-path system headers (`<pthread.h>`, `<sys/socket.h>`,
+// `<netdb.h>`) removed — no `bind(2)` / `accept(2)` / `getaddrinfo`
+// / `pthread_*` references remain in the RPC server header. The
+// channel layer's `TcpListener` / `TcpConnection` own those
+// syscalls.
 
 #ifdef RR
 #pragma push_macro("RR")
@@ -38,22 +38,17 @@
 #undef RRR_RESTORE_RR_MACRO
 #endif
 
-// External safety annotations for system functions and STL operations
-// Note: Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
-// now have in-place annotations in their respective headers.
+// External safety annotations for system functions and STL operations.
+// Note: Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and
+// rusty-cpp types now have in-place annotations in their respective
+// headers.
 //
-// SAFETY AUDIT: STL container operations are marked [safe] because:
-// 1. All operations are used within SpinMutex lock guards (single-threaded access)
-// 2. Iterators are not held across lock boundaries
-// 3. No iterator invalidation occurs during iteration
-//
-// System functions (bind, listen, accept) remain [unsafe] as they involve I/O.
+// 5g3: the legacy `bind/listen/accept/usleep` system-call annotations
+// were retired along with the legacy `ServerListener` socket path
+// (5g1). The channel layer's `tcp_channel.{hpp,cpp}` carries its own
+// annotations for the relevant syscalls.
 //
 // @external: {
-//   bind: [unsafe, (int, const struct sockaddr*, socklen_t) -> int]
-//   listen: [unsafe, (int, int) -> int]
-//   accept: [unsafe, (int, struct sockaddr*, socklen_t*) -> int]
-//   usleep: [unsafe, (useconds_t) -> int]
 //   operator!=: [safe]
 //   operator==: [safe]
 //   std::unordered_map::find: [safe, (&'a, const K&) -> iterator where return: 'a]
@@ -94,10 +89,8 @@
 // NOTE: Marshal methods (set_bookmark, write_bookmark, get_and_reset_write_cnt, empty, content_size)
 // are now annotated @safe in-place in marshal.hpp
 
-// for getaddrinfo() used in Server::start()
-//struct addrinfo;
-
-// @unsafe - RPC module uses raw sockets, mutable spinlocks, and pthread primitives
+// @unsafe - RPC module uses mutable spinlocks; channel layer handles
+// raw sockets and pthread primitives transitively.
 
 
 

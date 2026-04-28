@@ -606,6 +606,50 @@ caller hasn't already bound one via
 that set the env vars or invoked the helpers should remove
 those references.
 
+Workstream K, server sub-leaves 5a–5g3 — RPC server migrated to
+the channel layer end-to-end. `Server` now exposes
+`set_channel_factory(ChannelFactoryProxy)` and
+`is_channel_factory_bound()` (5a). `ServerConnection` exposes
+`bind_channel(ChannelConnectionProxy)` and `is_channel_mode()`
+(5b–5d): `reply<F>(req, error_code, write_fn)` builds the
+response body in a scratch `Marshal` and dispatches via
+`proxy->send_frame(...)` (5b); the proxy's `on_frame` callback
+calls `decode_request_and_dispatch(bytes, size)` which mirrors
+the legacy per-packet dispatch path (5c); `on_closed` /
+`on_error` route to the existing `close()` path (5d).
+
+`Server::start(addr)` calls `factory->make_listener()`,
+installs an `on_accept(ChannelConnectionProxy)` callback that
+constructs a `ServerConnection` bound to the new proxy and parks
+it in `channel_sconns_`, then calls `listener->listen(addr)`
+(5e). When no factory is explicitly bound, `Server::start`
+auto-installs a default `TcpFactory(poll_thread_)` (5f), so
+channel mode is the only path. `~Server` actively closes each
+accepted channel-mode `ServerConnection` (driving the bound
+proxy's `close()`) before clearing `channel_sconns_`, then
+schedules the channel listener's close on the poll thread via a
+`OneTimeJob` to avoid the `CmdAddPollable` race (5f).
+
+The legacy `ServerListener` class is gone (5g1) along with
+`Server::server_listener_`, the `ServerListener` socket fallback
+in `start()`, and the legacy listener cleanup branches in
+`~Server` / `stop_accepting`. `Server::get_bound_port()` is
+re-implemented atop `ChannelListenerProxy::local_address()`.
+`ServerConnection`'s legacy fd-path Pollable methods
+(`handle_read` / `handle_write` / `handle_error` / `poll_mode` /
+`content_size` / `check_pending_write_update` / `fd`) are
+stubbed to no-ops (kept for `PollableProxy` facade ABI
+conformance) and the underlying fields (`Marshal in_`,
+`SpinMutex<Marshal> out_`, `int socket_`,
+`Cell<bool> pending_write_update_`) are deleted (5g2). Unused
+socket-path system headers (`<sys/socket.h>`, `<netdb.h>`,
+`<sys/un.h>`, `<sys/select.h>`, `<sys/types.h>`,
+`<netinet/tcp.h>`, `<unistd.h>`, `<pthread.h>`, `<string.h>`)
+are dropped from `server.{hpp,cpp}` (5g3); only `<errno.h>`
+remains (for `EINVAL` / `ENOENT` constants in the dispatch
+path). `Server` is now reduced to its dispatch + lifecycle
+state plus the channel binding.
+
 ### Error Codes
 
 | Code | Meaning |
