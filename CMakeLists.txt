@@ -1896,6 +1896,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_server_channel_factory ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_server_channel_factory COMMAND test_rpc_server_channel_factory)
 
+    # SRPC in-memory channel backend (Workstream K, leaf 6a)
+    add_executable(test_rpc_inmemory_channel src/rrr/tests/rpc_inmemory_channel_test.cc)
+    target_include_directories(test_rpc_inmemory_channel PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_inmemory_channel PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_inmemory_channel ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_inmemory_channel COMMAND test_rpc_inmemory_channel)
+
     # SRPC client channel-mode outbound-send (Workstream K, sub-leaf 4b)
     add_executable(test_rpc_client_channel_send src/rrr/tests/rpc_client_channel_send_test.cc)
     target_include_directories(test_rpc_client_channel_send PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
