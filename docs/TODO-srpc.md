@@ -772,7 +772,7 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
         - Tests: added `ClientChannelSendTest.ConcurrentDispatchIsThreadSafe` in `src/rrr/tests/rpc_client_channel_send_test.cc` — drives 100 threads × 10 requests = 1,000 concurrent `request(...)` calls through a fake channel and asserts every dispatch succeeds and every frame reaches the stub. Passes; pre-fix, the same test would have either thrown from RefCell or silently lost frames.
         - Verification: 17/17 `test_rpc` + 15/15 `test_rpc_extended` legacy-path regression suite green; all 12 channel-layer tests green; new concurrent dispatch test passes 100/100 thread × request combinations in 8 ms.
         - Out of scope: the channel-mode `MultiThreadedStressTest` wedge documented in 4f. Investigation under this leaf confirmed the wedge is *not* caused by the RefCell race — legacy mode passes 200 threads / 2,000 requests in 231 ms but channel mode still wedges at 100 threads even after the SpinMutex fix. The wedge symptom is the reactor's event loop spinning in `Event::test()` on already-`READY` events (logging "event status ready, triggered?" 700+ times in <50 ms) and then going completely idle. Tracked separately as 4g1b.
-      - [ ] Sub-leaf 4g1b — Fix the `MultiThreadedStressTest` 100-thread wedge in channel mode (poll-thread wake-up tried; was *not* the root cause).
+      - [ ] Sub-leaf 4g1b — Fix the `MultiThreadedStressTest` 100-thread wedge in channel mode. **STATUS (2026-04-28): parked, blocked on deeper reactor/fiber investigation. Recommendation: pursue 4g1c (workaround) in parallel.**
         - **Status (2026-04-28):** poll-thread-wake-up fix landed (TcpConnection now posts `update_mode(fd, READ|WRITE)` actively from non-poll-thread `send_frame` callers, mirroring the legacy fd path's idiom). The change is defensive and channel-layer regression-safe — full channel-layer suite (12 tests), `test_rpc` (17/17), `test_rpc_extended` (15/15), and `test_rpc_state_integration` (21/21) all pass. **But it does NOT unblock the 100-thread wedge.** Even with `epoll_wait` timeout dropped to `0` (busy-loop, eliminating any poll-thread wake-up latency), the wedge still hits at exactly the same `dispatch_frame=400` (40-of-100 threads complete) cliff. So the lost wake-up was NOT the root cause; the channel-layer wake-up posting is now correct, but the wedge has a different origin.
         - The new active wake-up is the right thing to do regardless (mirrors `ClientConnection::replay_pending_requests` and removes the `pending_write_update_` flag's non-atomic `Cell<bool>` race surface for cross-thread callers), so it stays.
         - **Three more hypotheses ruled out (2026-04-28):**
@@ -802,6 +802,23 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
             * **The fibers' yield_() is broken** — fibers go from "calling wait()" straight to "running" without yielding. Then `wait()` would never return after `yield_()`. But they wouldn't be parked either. Where are they?
             * **The poll thread is stuck inside `continue_fiber` for one specific fiber** — that fiber yields, control returns to continue_fiber, but instead of returning to Reactor::loop, control jumps back into the fiber. Inifinite recursion or longjmp anomaly.
           - **Next iteration plan**: write a unit test that drives `Vec::push_back` under simulated extract_if/retain churn to rule out (a). Also instrument `continue_fiber`'s entry/exit and `Fiber::yield_()`'s entry/exit with fiber id, to determine if some fibers are stuck inside `continue_fiber`.
+      - [ ] Sub-leaf 4g1c — **Workaround: bypass FiberChannel + recv-loop fiber via direct on_frame callback path.** ~150 LOC.
+        - Rationale: 4g1b investigation has been multi-iteration and the root cause is deep in the reactor/fiber/event interaction, requiring more focused effort. Meanwhile 4g2/4g3/4g4 are all blocked. A workaround that bypasses the fiber-based recv path entirely would unblock the migration without fixing the underlying reactor bug.
+        - Design:
+          - Add an alternate ClientConnection binding method `bind_channel_direct(ChannelConnectionProxy)` that:
+            1. Stores the proxy in a new SpinMutex-protected member `direct_channel_proxy_`.
+            2. Installs `on_frame` callback directly on the proxy via `proxy->set_on_frame(...)` — the callback calls `decode_response_and_notify` inline (no queue, no IntEvent, no fiber yield).
+            3. Installs `on_closed` callback that calls `on_channel_closed_fan_out` directly.
+            4. Sets `channel_mode_=true`. Does NOT spawn the OneTimeJob recv-loop fiber.
+          - `dispatch_frame_via_channel` checks both `direct_channel_proxy_` and `fiber_channel_`; sends through whichever is bound.
+          - `connect_via_factory` uses `bind_channel_direct(...)`. Existing `bind_channel(...)` (FiberChannel-based, used by tests) stays for unit-test compatibility.
+        - Tradeoffs vs the FiberChannel path:
+          - Pro: eliminates the `recv-loop fiber + IntEvent + Reactor::loop event-list` interaction that's wedging under shared poll thread.
+          - Pro: closer to the legacy fd path's "inline handle_read → notify_ready" flow that's known to scale to 200+ threads.
+          - Pro: lower per-frame latency (no fiber wakeup hop).
+          - Con: loses the fiber-style "blocking recv" abstraction (we're not using it anyway — the recv-loop fiber is the only consumer).
+        - Tests: re-run `test_rpc::MultiThreadedStressTest` under `SRPC_USE_CHANNEL=1`. If passing at 100 threads × 10 cycles, the workaround is good — flip channel default in 4g2.
+        - Goal: unblock 4g2 / 4g3 without waiting on a deeper reactor/fiber fix. The reactor/fiber bug from 4g1b is independently worth fixing but no longer blocks the migration path.
         - **Diagnostic findings refined (2026-04-28):**
           - Client-side `TcpConnection::handle_write` is invoked exactly 400 times under the wedge (matching the 40 successful threads × 10 cycles).
           - `do_update_mode` runs many times (1600+ across the test) with no `skip-no-pollable` events — every command finds its registered fd.
