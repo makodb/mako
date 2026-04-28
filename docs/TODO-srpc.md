@@ -1052,3 +1052,123 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
 - [x] Existing SRPC public API remains source-compatible for current callsites. ✅ **DONE** — `Client::create / connect / request / close` and `Server::start / reg_service / reply` signatures unchanged across the migration.
 - [x] Full RPC-focused test suite passes in channel mode. ✅ **DONE** — only 3 pre-existing flaky failures remain (`QueueRejectSetsRequestTimeoutType`, `CircuitCountersTrackTransitionsAndRejections`, `ActivityUpdatesOnRequest`); none are new in channel mode.
 - [x] Legacy direct-socket RPC path and migration switch are removed after parity sign-off. ✅ **DONE** (4g3 + 4g4 + 5g1–5g3).
+
+---
+
+## Workstream L: Migrate `src/rrr/` STL containers/primitives to rusty equivalents (P2)
+
+### Goal
+Per CLAUDE.md's "RustyCpp Safety Requirements (MANDATORY)" policy, all new code must use rusty types. The rrr/ tree is partially migrated (1000+ rusty type usages including `Arc` 407, `Vec` 107, `Cell` 99, `Option` 94, `Box` 87, `SpinMutex` 79, `Rc` 57, `RefCell` 31). This workstream is the deliberate cleanup of remaining STL surface area in rrr/, decomposed by type so each leaf has a bounded blast radius and stays under the 2,000-LOC budget.
+
+### Survey baseline (2026-04-28)
+Counts via `grep -rE '\b<pat>\b' src/rrr/` (60,437 LOC: 27,370 prod + 33,067 tests):
+
+| STL type | prod sites | test sites | total |
+|----------|-----------:|-----------:|------:|
+| `std::string` | 145 | 336 | 481 |
+| `std::atomic` | — | — | 360 |
+| `std::vector` | 35 | 234 | 269 |
+| `std::mutex` | 129 | 78 | 207 |
+| `std::function` | 143 | 24 | 167 |
+| `std::shared_ptr` | 87 | 76 | 163 |
+| `std::lock_guard` | — | — | 127 |
+| `std::list` | 76 | 8 | 84 |
+| `std::pair` | — | — | 52 |
+| `std::thread` | — | — | 47 |
+| `std::map` | — | — | 39 |
+| `std::unordered_map` | — | — | 36 |
+| `std::optional` | 1 | 33 | 34 |
+| `std::set` | — | — | 21 |
+| `std::unordered_set` | — | — | 16 |
+| `std::unique_ptr` | — | — | 11 |
+| `std::array` | — | — | 9 |
+| `std::condition_variable` | — | — | 6 |
+| `std::deque` | — | — | 1 |
+| `std::weak_ptr` | — | — | 2 |
+
+### Out-of-scope carve-outs (stay std)
+Per CLAUDE.md exceptions:
+- **`std::string`**: `rrr/rcc_rpc.h` and the generated SRPC stubs use `std::string` on the wire; converting to `rusty::String` would break the RPC framework boundary. Status: stays std at the rrr framework boundary; conversion at user-code boundaries handled per-call site (see Workstream K's pattern of building `Marshal` payloads from `std::string` views). No migration leaf needed.
+- **`std::atomic<T>`**: rusty does not provide an atomic wrapper; `std::atomic` is the standard primitive for lock-free state and stays.
+- **`std::condition_variable`**: rusty does not provide a condvar primitive; the 6 prod sites depend on standard `wait` / `notify` semantics and stay std.
+- **`std::pair` / `std::tuple` / `std::array`**: rusty does not provide direct equivalents; these are POD aggregates with no ownership semantics worth tracking and stay std.
+
+### Code TODO
+
+#### Quick wins (~1 leaf each, bounded scope)
+
+- [ ] *high* Sub-leaf L1a — `std::weak_ptr` → custom `Weak<T>` (2 prod sites). ~30 LOC.
+  - The custom `Weak<T>` wrapper used elsewhere in rrr (e.g. `Weak<Coroutine>`, `Weak<ClientConnection>`) is the standard replacement.
+  - Sites: identify both prod uses (1 in `src/rrr/reactor/coroutine.h` already migrated; the remaining 2 likely sit in legacy reactor or pollthread bookkeeping).
+  - Tests: existing reactor tests cover the weak-ref invalidation contract; add a focused unit test if the migrated sites' lifetime semantics differ from `std::weak_ptr::lock()`.
+  - Goal: zero `std::weak_ptr` in rrr after this leaf lands.
+- [ ] *high* Sub-leaf L1b — `std::unique_ptr<T>` → `rusty::Box<T>` (11 prod sites). ~80 LOC.
+  - 1:1 conversion: `std::unique_ptr<T>` → `rusty::Box<T>`; `std::make_unique<T>(args...)` → `rusty::make_box<T>(args...)`. Borrow-check requires the wrapped type be at least move-constructible.
+  - Sites: enumerate via `grep -rEn 'std::unique_ptr|std::make_unique' src/rrr --include='*.cpp' --include='*.cc' --include='*.hpp' --include='*.h'`.
+  - Tests: existing tests cover the wrapped types' lifecycle; verify by running the rrr-focused test suite.
+  - Goal: zero `std::unique_ptr` in rrr after this leaf lands.
+- [ ] *high* Sub-leaf L1c — `std::optional<T>` → `rusty::Option<T>` in rrr production code (1 prod site, 33 test sites). ~40 LOC for prod; tests can be a follow-up.
+  - 1:1 conversion: `std::optional<T>` → `rusty::Option<T>`; `std::nullopt` → `rusty::None`; `opt.has_value()` → `opt.is_some()`; `*opt` → `*opt.as_ref()` or `opt.unwrap()`.
+  - Note: API drift between optional types — `std::optional`'s implicit `bool` conversion and `*` dereference don't have direct equivalents in `rusty::Option`; touch sites need review for ownership intent (some `std::optional<T>` sites may want `Option<Box<T>>` or `Option<Arc<T>>` instead, depending on whether the contained type is move-only).
+  - Tests: most call sites are in test-only code where the conversion is purely mechanical.
+  - Goal: zero `std::optional` in rrr prod code; tests remain a separate sweep.
+
+#### Targeted single-type migrations (decomposed by file)
+
+- [ ] *high* Sub-leaf L2 — `std::list<T>` → `rusty::Vec<T>` (76 prod sites + 8 test sites). ~200 LOC across ~15 files.
+  - **Easiest big-leaf win**: per CLAUDE.md, `Vec` is already aliased to `std::vector`, so the change is a sed-ish rename plus an `<rusty/vec.hpp>` include swap, then verify no API drift (e.g. `splice`, `merge`, `front`/`back` reference invalidation, O(1) splice — none of which are documented use cases in rrr).
+  - Decompose by directory (each can land independently):
+    - L2a — `src/rrr/base/` (TBD count from file-level grep)
+    - L2b — `src/rrr/reactor/` 
+    - L2c — `src/rrr/rpc/` (excluding generated `rcc_rpc.h`)
+    - L2d — `src/rrr/coroutine/`, `src/rrr/misc/`, `src/rrr/utils/`
+  - Per-leaf verification: full RPC-focused suite green.
+  - Goal: zero `std::list` in rrr after L2d lands.
+- [ ] *medium* Sub-leaf L3 — `std::set` / `std::unordered_set` → `rusty::HashSet<T>` / `rusty::BTreeSet<T>` (37 sites combined). ~150 LOC.
+  - Choose `HashSet` for unordered uses, `BTreeSet` for ordered uses.
+  - API drift: `set.find(x) != set.end()` → `set.contains(&x)`; iteration order is non-deterministic for HashSet (verify no tests rely on insertion order).
+  - Decompose by type if needed (set vs unordered_set).
+  - Goal: zero `std::set` / `std::unordered_set` in rrr after this leaf lands.
+
+#### Bigger migrations (require decomposition into multiple leaves each)
+
+- [ ] *medium* Sub-leaf L4 — `std::map` / `std::unordered_map` → `rusty::HashMap<K,V>` / `rusty::BTreeMap<K,V>` (75 sites combined). ~400 LOC.
+  - API drift: `map[key]` (which inserts a default-constructed value if absent) has no direct equivalent — must use `map.entry(key).or_insert(...)` or similar; `map.find(key)` semantics also differ.
+  - Decompose along the same boundaries as L2 (per-directory).
+  - Each sub-leaf must keep the RPC-focused suite green.
+  - Goal: zero `std::map` / `std::unordered_map` in rrr after this workstream lands.
+- [ ] *medium* Sub-leaf L5 — `std::function<F>` → `rusty::Function<F>` (143 prod sites, 24 test sites). ~600 LOC across ~30 files.
+  - **Semantic concern**: `rusty::Function` is move-only by default; `std::function` is copyable. Sites that store callbacks in containers requiring copyability (e.g. `std::vector<std::function<...>>`) need either container migration first (L2) or explicit `Arc<Function<F>>` wrapping. Audit for copy-in-storage sites before starting.
+  - Decompose by file/directory; the rrr/rpc/ subset alone has 30+ sites in `client.{hpp,cpp}` + `server.{hpp,cpp}` that all need ownership review (which fields are moved-from once invoked, which are stored for repeated invocation).
+  - Goal: zero `std::function` in rrr prod code after this workstream lands.
+- [ ] *medium* Sub-leaf L6 — `std::shared_ptr<T>` → `rusty::Arc<T>` (multi-thread) or `rusty::Rc<T>` (single-thread) (87 prod sites). ~500 LOC.
+  - **Per-site ownership analysis required**: each site needs review to determine whether the sharing is across threads (→ `Arc`) or within a single thread (→ `Rc`). The rrr/reactor uses `Rc` already for fiber-local sharing; the rrr/rpc client/server fields are mostly `Arc`.
+  - API drift: `std::make_shared<T>(args...)` → `rusty::Arc<T>::make(args...)` or `rusty::Rc<T>::make(args...)`; `weak_from_this` patterns need conversion to the codebase's `Weak<T>` adapter.
+  - Decompose by directory (rrr/rpc/, rrr/reactor/, rrr/base/, rrr/misc/).
+  - Goal: zero `std::shared_ptr` in rrr prod code after this workstream lands.
+- [ ] *medium* Sub-leaf L7 — `std::mutex` + `std::lock_guard` → `rusty::Mutex<T>` or `rusty::SpinMutex<T>` (129 prod sites for mutex, ~127 lock_guard sites). ~700 LOC.
+  - **Semantic concern**: `rusty::Mutex<T>` and `SpinMutex<T>` *own* the protected data (Rust-style "data inside the mutex"), unlike `std::mutex` which is a separate primitive. Most sites need refactoring of the surrounding fields, not just a rename. Pick `Mutex<T>` for blocking/long-held locks; `SpinMutex<T>` for short critical sections (the rrr/rpc layer uses SpinMutex extensively).
+  - Decompose by file: each `.cpp` file's mutex pattern is local enough to migrate independently. Largest concentrations: `src/rrr/rpc/client.cpp`, `src/rrr/rpc/server.cpp`, `src/rrr/reactor/poll_thread.cc`, `src/rrr/base/threading.cc`.
+  - Per-file verification: full RPC-focused suite green.
+  - Goal: zero `std::mutex` in rrr prod code after this workstream lands.
+- [ ] *low* Sub-leaf L8 — `std::thread` → `rusty::thread::spawn` (47 sites). ~150 LOC.
+  - 1:1 conversion: `std::thread t(fn, args...)` → `rusty::thread::spawn([&] { fn(args...); })`; the rusty wrapper owns the join handle and provides RAII semantics.
+  - Sites: rrr/base/threading.{cc,hpp}, rrr/misc/, rrr/reactor/poll_thread.cc.
+  - Goal: zero `std::thread` in rrr prod code after this workstream lands.
+
+### Migration-as-you-go reminder
+Per CLAUDE.md: when touching any rrr file outside this workstream, *also* migrate STL constructs in the immediate blast radius of the change in the same commit (mention each migration in the commit message). This workstream is the *backstop* for sites that haven't been touched recently — it shouldn't be the only path for migration. The opportunistic-migration channel keeps the survey baseline shrinking between dedicated workstream commits.
+
+### Tests TODO
+- [ ] Per-leaf: full rrr-focused CTest suite (test_rpc + test_rpc_extended + test_rpc_state_integration + test_rpc_combined_reliability + test_rpc_request_buffering + test_rpc_reconnect_integration + channel-layer tests + test_load_balancer + test_rpc_validation + test_rpc_timeout_retry + test_rpc_client_pool) must remain green at each leaf landing.
+- [ ] Per-leaf: borrow-check pass (where applicable) — the rusty types' borrow-check enforcement is part of the win; verify no new violations appear via `make borrow_check_*`.
+- [ ] After L2 + L3 + L4 land: re-run the survey baseline grep above and update the table to reflect the new counts.
+- [ ] After all leaves land: confirm the rrr/ tree has zero non-carve-out STL container/primitive references in prod code.
+
+### DoD
+- [ ] All quick-win leaves (L1a + L1b + L1c) landed; rrr has zero `std::weak_ptr` / `std::unique_ptr` / `std::optional` in prod code.
+- [ ] All targeted-migration leaves (L2 + L3) landed; rrr has zero `std::list` / `std::set` / `std::unordered_set` in prod code.
+- [ ] All bigger-migration workstreams (L4 + L5 + L6 + L7 + L8) landed; rrr has zero `std::map` / `std::unordered_map` / `std::function` / `std::shared_ptr` / `std::mutex` / `std::thread` in prod code.
+- [ ] Carve-out documentation in CLAUDE.md remains accurate: `std::string`, `std::atomic`, `std::condition_variable`, `std::pair`, `std::tuple`, `std::array` stay std with documented rationale.
+- [ ] Borrow-check coverage extended over the migrated files (where the corresponding `make borrow_check_*` target exists).
+- [ ] Survey baseline counts updated in this doc to reflect the post-migration state.
