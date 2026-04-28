@@ -1016,7 +1016,17 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
         - `CloseWithoutPeerCallbackIsSafe` — close() works even if on_closed isn't installed.
         - `BothSidesCloseFiresOnClosedOnce` — second close() doesn't re-fire (peer-already-closed branch).
       - Verification: full RPC-focused suite green; test_rpc_inmemory_channel 17/17 (9 from 6a + 8 new).
-    - [ ] **6c — Fault injection hooks.** ~150 LOC. `set_drop_next_send_count(n)`, `set_drop_until_token(token)`, `partition(addrA, addrB, drop)`. Deterministic; no timing-dependent fault injection.
+    - [x] **6c — Fault injection hooks.** ✅ **LANDED 2026-04-28.** ~330 LOC.
+      - Added per-side fault-injection state to `InMemoryConnectionState`: `drop_next_sends_a/b` counters (silent drop) and `send_error_count_a/b` + `send_error_a/b` (error injection).
+      - Added three test-only methods on `InMemoryChannel`:
+        - `inject_drop_next_sends(int count)` — drop the next N sends silently (return None, peer gets nothing). Setting count to 0 clears.
+        - `inject_send_error(ChannelError err, int count)` — next N sends return the specified error.
+        - `clear_fault_injection()` — reset all knobs.
+      - Counters tick down on each `send_frame` call from the corresponding side. Drop takes precedence over error: when both are set, drops fire first while the drop counter is positive, then the error injection takes over. Closed state (`a_closed || b_closed`) takes absolute precedence — `send_frame` returns `ConnectionReset` regardless of injection state.
+      - Added a test helper `make_channel_pair_for_testing(a_addr, b_addr)` that constructs a connected pair directly (bypassing factory/listener) so tests can hold the underlying `Arc<InMemoryChannel>` Arcs to call `inject_*` methods.
+      - Punted on switchboard-level fault injection (`partition(addrA, addrB, drop)`) — per-channel knobs are sufficient for the immediate use case of testing RPC-layer reconnect / retry logic. A future leaf can add cross-connection partition primitives if needed.
+      - Tests: 7 new fault-injection tests added to `rpc_inmemory_channel_test.cc` (24 total in this suite). Coverage: drop-then-resume, drop-is-per-side, error-then-resume, drop-precedes-error, clear-resets-both, fault-respects-close, drop-zero-clears.
+      - Verification: full RPC-focused suite green; test_rpc_inmemory_channel 24/24.
     - [ ] **6d — End-to-end RPC test using `InMemoryFactory`.** ~150 LOC. Drives a real `Client` + `Server` through the in-memory channel, verifies request/response round-trip and close-fan-out without any sockets.
 - [x] *medium* Add migration switch and dual-path verification. ✅ **LANDED 2026-04-27 / 04-28** as Workstream K leaves 4f (`srpc_use_channel()` + `SRPC_USE_CHANNEL` env var) and 4g2 (default flipped on, `SRPC_DISABLE_CHANNEL` opt-out added). Switch then retired in 4g4 once the legacy path was deleted.
 - [x] *medium* Remove legacy direct socket path from SRPC after parity. ✅ **LANDED 2026-04-28** across Workstream K leaves 4g3 (client) and 5g1–5g3 (server). Legacy `socket(2)`/`connect(2)`/`bind(2)`/`listen(2)`/`accept(2)`/`setsockopt`/`getaddrinfo` syscalls and the `Marshal in_`/`out_` buffers no longer exist in `client.{hpp,cpp}` or `server.{hpp,cpp}`; the channel layer's `tcp_channel.{hpp,cpp}` is now the sole owner of those calls.

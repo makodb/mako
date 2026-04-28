@@ -65,21 +65,46 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
     OnFrameCallback peer_on_frame;
     bool peer_already_closed = false;
     bool self_already_closed = false;
+    bool drop_this_send      = false;
+    bool inject_error        = false;
+    ChannelError injected_err = ChannelError::None;
 
     // Snapshot the peer's on_frame and the closed flags under the
     // lock; release the lock before invoking the callback so the
     // callback can call back into this channel without deadlocking
     // (typical pattern: receiver fires send_frame in response).
+    //
+    // 6c: also consume one tick of the per-side fault injection
+    // counters here. Drop counter takes precedence over error
+    // counter — if both are set, drops fire first while the drop
+    // counter is positive.
     {
         std::lock_guard<std::mutex> lk(mut_state().mu);
+        auto& st = mut_state();
         if (is_a_side_) {
-            self_already_closed = mut_state().a_closed;
-            peer_already_closed = mut_state().b_closed;
-            peer_on_frame       = mut_state().b_on_frame;
+            self_already_closed = st.a_closed;
+            peer_already_closed = st.b_closed;
+            peer_on_frame       = st.b_on_frame;
+            if (st.drop_next_sends_a > 0) {
+                drop_this_send = true;
+                --st.drop_next_sends_a;
+            } else if (st.send_error_count_a > 0) {
+                inject_error  = true;
+                injected_err  = st.send_error_a;
+                --st.send_error_count_a;
+            }
         } else {
-            self_already_closed = mut_state().b_closed;
-            peer_already_closed = mut_state().a_closed;
-            peer_on_frame       = mut_state().a_on_frame;
+            self_already_closed = st.b_closed;
+            peer_already_closed = st.a_closed;
+            peer_on_frame       = st.a_on_frame;
+            if (st.drop_next_sends_b > 0) {
+                drop_this_send = true;
+                --st.drop_next_sends_b;
+            } else if (st.send_error_count_b > 0) {
+                inject_error  = true;
+                injected_err  = st.send_error_b;
+                --st.send_error_count_b;
+            }
         }
     }
 
@@ -88,6 +113,13 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
     }
     if (peer_already_closed) {
         return ChannelError::ConnectionReset;
+    }
+    // 6c: fault injection. Drop happens first; then error.
+    if (drop_this_send) {
+        return ChannelError::None;  // silent drop; sender unaware
+    }
+    if (inject_error) {
+        return injected_err;
     }
 
     // Copy bytes into a temporary buffer so the peer's callback can
@@ -103,6 +135,43 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
         peer_on_frame(delivered);
     }
     return ChannelError::None;
+}
+
+// ---------------------------------------------------------------------------
+// 6c: fault injection methods (test-only).
+// ---------------------------------------------------------------------------
+
+void InMemoryChannel::inject_drop_next_sends(int count) {
+    std::lock_guard<std::mutex> lk(mut_state().mu);
+    if (is_a_side_) {
+        mut_state().drop_next_sends_a = count;
+    } else {
+        mut_state().drop_next_sends_b = count;
+    }
+}
+
+void InMemoryChannel::inject_send_error(ChannelError err, int count) {
+    std::lock_guard<std::mutex> lk(mut_state().mu);
+    if (is_a_side_) {
+        mut_state().send_error_a       = err;
+        mut_state().send_error_count_a = count;
+    } else {
+        mut_state().send_error_b       = err;
+        mut_state().send_error_count_b = count;
+    }
+}
+
+void InMemoryChannel::clear_fault_injection() {
+    std::lock_guard<std::mutex> lk(mut_state().mu);
+    if (is_a_side_) {
+        mut_state().drop_next_sends_a  = 0;
+        mut_state().send_error_count_a = 0;
+        mut_state().send_error_a       = ChannelError::None;
+    } else {
+        mut_state().drop_next_sends_b  = 0;
+        mut_state().send_error_count_b = 0;
+        mut_state().send_error_b       = ChannelError::None;
+    }
 }
 
 // 6b: close semantics — peer-only on_closed fire.
@@ -344,6 +413,23 @@ ConnectResult InMemoryFactory::connect(std::string_view addr) {
         make_inmemory_channel_proxy(std::move(client_side)),
         ChannelError::None,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+std::pair<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>>
+make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
+    auto state = rusty::Arc<InMemoryConnectionState>::make();
+    {
+        auto* mut_state = const_cast<InMemoryConnectionState*>(state.get());
+        mut_state->a_peer_address = std::move(a_addr);
+        mut_state->b_peer_address = std::move(b_addr);
+    }
+    auto a_side = rusty::Arc<InMemoryChannel>::make(state.clone(), /*is_a_side=*/true);
+    auto b_side = rusty::Arc<InMemoryChannel>::make(state.clone(), /*is_a_side=*/false);
+    return {std::move(a_side), std::move(b_side)};
 }
 
 ChannelListenerProxy InMemoryFactory::make_listener() {

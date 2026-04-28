@@ -186,6 +186,25 @@ struct InMemoryConnectionState {
     OnErrorCallback   b_on_error;
     bool              b_closed = false;
 
+    // 6c — Fault injection state. Per-side knobs decide whether
+    // each upcoming `send_frame` should:
+    //   * be silently dropped (returns `ChannelError::None`, peer
+    //     gets nothing), OR
+    //   * return a specific `ChannelError`, OR
+    //   * proceed normally.
+    //
+    // Counters tick down on each `send_frame` call from the
+    // corresponding side; when zero, the channel returns to normal
+    // delivery. Drop counters take precedence — when both are set
+    // the drop fires first while its counter is positive, then the
+    // error injection takes over.
+    int               drop_next_sends_a  = 0;
+    int               drop_next_sends_b  = 0;
+    int               send_error_count_a = 0;
+    int               send_error_count_b = 0;
+    ChannelError      send_error_a       = ChannelError::None;
+    ChannelError      send_error_b       = ChannelError::None;
+
     std::mutex        mu;
 };
 
@@ -225,6 +244,40 @@ class InMemoryChannel {
     void set_on_frame (OnFrameCallback  cb);
     void set_on_closed(OnClosedCallback cb);
     void set_on_error (OnErrorCallback  cb);
+
+    // ---- 6c: fault injection (test-only). ------------------------
+    /**
+     * Drop the next `count` calls to `send_frame` on this side.
+     * Each dropped call returns `ChannelError::None` (so the sender
+     * doesn't notice the drop) but the bytes never reach the peer's
+     * `on_frame`. After the counter hits zero, `send_frame`
+     * resumes normal delivery.
+     *
+     * Setting `count` to 0 explicitly clears the drop counter.
+     * Calling this multiple times overwrites the previous value
+     * (it does NOT add).
+     *
+     * Drop counters take precedence over error counters: if both
+     * are set, drops fire first while the drop counter is positive.
+     */
+    void inject_drop_next_sends(int count);
+
+    /**
+     * Make the next `count` calls to `send_frame` on this side
+     * return `err` instead of delivering. After the counter hits
+     * zero, `send_frame` resumes normal delivery.
+     *
+     * Use `count == 0` to clear (the value of `err` is ignored).
+     * Calling this multiple times overwrites the previous value
+     * (it does NOT add).
+     */
+    void inject_send_error(ChannelError err, int count);
+
+    /**
+     * Reset all fault-injection state on this side (drop counter,
+     * error counter, error code).
+     */
+    void clear_fault_injection();
 
  private:
     // The state is held by Arc; both halves of the pair share it.
@@ -415,5 +468,28 @@ inline ChannelFactoryProxy make_inmemory_factory_proxy(
     return pro::make_proxy<ChannelFactoryFacade,
                            InMemoryFactoryAdapter>(std::move(factory));
 }
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Construct a connected `(a_side, b_side)` `InMemoryChannel` pair
+ * directly, without going through the factory/listener path.
+ * Useful for tests that want raw access to the channel halves —
+ * for example, to call fault-injection methods (`inject_*`) on a
+ * specific side. The two returned Arcs share an underlying
+ * `InMemoryConnectionState`, so frames sent via either side fire
+ * the other side's `on_frame` synchronously.
+ *
+ * `a_addr` is what the B-side observes via `peer_address()`;
+ * `b_addr` is what the A-side observes via `peer_address()`.
+ *
+ * Production code uses `InMemoryFactory::connect(addr)` instead
+ * (which internally builds a pair via this same path); this
+ * helper is a test-only shortcut.
+ */
+std::pair<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>>
+make_channel_pair_for_testing(std::string a_addr, std::string b_addr);
 
 }  // namespace rrr

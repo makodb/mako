@@ -441,5 +441,195 @@ TEST_F(InMemoryChannelTest, BothSidesCloseFiresOnClosedOnce) {
     EXPECT_EQ(server_on_closed_calls, 1);
 }
 
+// ---------------------------------------------------------------------------
+// 6c — Fault injection
+// ---------------------------------------------------------------------------
+
+namespace fault_test_helpers {
+struct PairAndProxies {
+    std::optional<rusty::Arc<InMemoryChannel>> a;
+    std::optional<rusty::Arc<InMemoryChannel>> b;
+    ChannelConnectionProxy a_proxy;
+    ChannelConnectionProxy b_proxy;
+    std::vector<std::vector<std::uint8_t>> a_received;
+    std::vector<std::vector<std::uint8_t>> b_received;
+
+    InMemoryChannel& mut_a() {
+        return const_cast<InMemoryChannel&>(*(*a).get());
+    }
+    InMemoryChannel& mut_b() {
+        return const_cast<InMemoryChannel&>(*(*b).get());
+    }
+};
+
+inline std::unique_ptr<PairAndProxies> make_pair_with_capture(
+        std::string a_addr, std::string b_addr) {
+    auto out = std::make_unique<PairAndProxies>();
+    auto pair = make_channel_pair_for_testing(std::move(a_addr),
+                                              std::move(b_addr));
+    out->a.emplace(std::move(pair.first));
+    out->b.emplace(std::move(pair.second));
+    out->a_proxy = make_inmemory_channel_proxy((*out->a).clone());
+    out->b_proxy = make_inmemory_channel_proxy((*out->b).clone());
+
+    auto* a_received_ptr = &out->a_received;
+    auto* b_received_ptr = &out->b_received;
+    out->a_proxy->set_on_frame([a_received_ptr](const ChannelFrame& f) {
+        a_received_ptr->emplace_back(f.payload, f.payload + f.size);
+    });
+    out->b_proxy->set_on_frame([b_received_ptr](const ChannelFrame& f) {
+        b_received_ptr->emplace_back(f.payload, f.payload + f.size);
+    });
+    return out;
+}
+
+inline void send_byte(ChannelConnectionProxy& proxy, std::uint8_t b) {
+    ChannelFrame f{&b, 1};
+    proxy->send_frame(f);
+}
+}  // namespace fault_test_helpers
+
+// ---------------------------------------------------------------------------
+// inject_drop_next_sends(N): N silent drops from this side, then
+// normal delivery resumes.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, InjectDropNextSendsDropsThenResumes) {
+    auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
+
+    p->mut_a().inject_drop_next_sends(3);
+
+    // First 3 sends from A → silently dropped.
+    fault_test_helpers::send_byte(p->a_proxy, 1);
+    fault_test_helpers::send_byte(p->a_proxy, 2);
+    fault_test_helpers::send_byte(p->a_proxy, 3);
+    EXPECT_EQ(p->b_received.size(), 0u);
+
+    // 4th send → delivered.
+    fault_test_helpers::send_byte(p->a_proxy, 4);
+    ASSERT_EQ(p->b_received.size(), 1u);
+    EXPECT_EQ(p->b_received.front().front(), static_cast<std::uint8_t>(4));
+
+    // 5th send → also delivered (counter is back at zero).
+    fault_test_helpers::send_byte(p->a_proxy, 5);
+    EXPECT_EQ(p->b_received.size(), 2u);
+}
+
+// ---------------------------------------------------------------------------
+// inject_drop_next_sends affects only the side it was invoked on.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, InjectDropNextSendsIsPerSide) {
+    auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
+
+    p->mut_a().inject_drop_next_sends(2);
+
+    fault_test_helpers::send_byte(p->a_proxy, 1);  // dropped
+    fault_test_helpers::send_byte(p->b_proxy, 2);  // delivered (B-side has no drop)
+    fault_test_helpers::send_byte(p->a_proxy, 3);  // dropped
+    fault_test_helpers::send_byte(p->b_proxy, 4);  // delivered
+
+    ASSERT_EQ(p->b_received.size(), 0u);
+    ASSERT_EQ(p->a_received.size(), 2u);
+    EXPECT_EQ(p->a_received[0].front(), static_cast<std::uint8_t>(2));
+    EXPECT_EQ(p->a_received[1].front(), static_cast<std::uint8_t>(4));
+}
+
+// ---------------------------------------------------------------------------
+// inject_send_error(err, N): N sends return the given error, then
+// normal delivery resumes.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, InjectSendErrorReturnsErrThenResumes) {
+    auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
+
+    p->mut_a().inject_send_error(ChannelError::WouldBlock, 2);
+
+    std::uint8_t b = 0;
+    ChannelFrame f{&b, 1};
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::WouldBlock);
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::WouldBlock);
+    // 3rd send → success.
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
+
+    // First two were rejected (returned error, not delivered).
+    // Only the third one reaches B.
+    ASSERT_EQ(p->b_received.size(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// Drop counter takes precedence over error counter.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, DropTakesPrecedenceOverError) {
+    auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
+
+    p->mut_a().inject_drop_next_sends(2);
+    p->mut_a().inject_send_error(ChannelError::ConnectionReset, 2);
+
+    std::uint8_t b = 0;
+    ChannelFrame f{&b, 1};
+    // First two: drop (return None, no delivery).
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
+    // Drop counter exhausted; next two pick up the error.
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::ConnectionReset);
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::ConnectionReset);
+    // Both counters exhausted; next is normal.
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
+
+    // Only the last one reached B.
+    ASSERT_EQ(p->b_received.size(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// clear_fault_injection resets all knobs.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, ClearFaultInjectionResets) {
+    auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
+
+    p->mut_a().inject_drop_next_sends(5);
+    p->mut_a().inject_send_error(ChannelError::WouldBlock, 5);
+    p->mut_a().clear_fault_injection();
+
+    fault_test_helpers::send_byte(p->a_proxy, 7);
+    ASSERT_EQ(p->b_received.size(), 1u);
+    EXPECT_EQ(p->b_received.front().front(), static_cast<std::uint8_t>(7));
+}
+
+// ---------------------------------------------------------------------------
+// Fault injection respects close: send_frame after close still
+// returns ConnectionReset regardless of injection state.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, FaultInjectionRespectsClose) {
+    auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
+
+    p->mut_a().inject_drop_next_sends(10);
+    p->mut_a().close();
+
+    std::uint8_t b = 0;
+    ChannelFrame f{&b, 1};
+    // Closed state takes precedence: ConnectionReset, not None.
+    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::ConnectionReset);
+}
+
+// ---------------------------------------------------------------------------
+// Calling inject_drop_next_sends with 0 effectively clears the
+// drop counter (does not add).
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryChannelTest, InjectDropZeroClears) {
+    auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
+
+    p->mut_a().inject_drop_next_sends(3);
+    p->mut_a().inject_drop_next_sends(0);  // clears the counter
+
+    fault_test_helpers::send_byte(p->a_proxy, 9);
+    ASSERT_EQ(p->b_received.size(), 1u);
+    EXPECT_EQ(p->b_received.front().front(), static_cast<std::uint8_t>(9));
+}
+
 }  // namespace
 }  // namespace rrr
