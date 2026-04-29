@@ -114,53 +114,18 @@ class Marshallable {
   // }
 };
 
-PRO_DEF_MEM_DISPATCH(MarshallableMemToMarshal, to_marshal);
-PRO_DEF_MEM_DISPATCH(MarshallableMemFromMarshal, from_marshal);
-PRO_DEF_MEM_DISPATCH(MarshallableMemEntitySize, entity_size);
-PRO_DEF_MEM_DISPATCH(MarshallableMemWriteToFd, write_to_fd);
-PRO_DEF_MEM_DISPATCH(MarshallableMemKind, kind);
-PRO_DEF_MEM_DISPATCH(MarshallableMemInner, inner);
-
-struct MarshallableFacade : pro::facade_builder
-    ::add_convention<MarshallableMemToMarshal, Marshal&(Marshal&) const>
-    ::add_convention<MarshallableMemFromMarshal, Marshal&(Marshal&)>
-    ::add_convention<MarshallableMemEntitySize, size_t() const>
-    ::add_convention<MarshallableMemWriteToFd, size_t(int, size_t) const>
-    ::add_convention<MarshallableMemKind, int32_t() const>
-    ::add_convention<MarshallableMemInner, std::shared_ptr<Marshallable>() const>
-    ::build {};
-
-using MarshallableProxy = pro::proxy<MarshallableFacade>;
-
-class MarshallableSharedPtrAdapter {
- public:
-  explicit MarshallableSharedPtrAdapter(std::shared_ptr<Marshallable> m)
-      : m_(std::move(m)) {}
-
-  Marshal& to_marshal(Marshal& out) const { return m_->to_marshal(out); }
-  Marshal& from_marshal(Marshal& in) { return m_->from_marshal(in); }
-  size_t entity_size() const { return m_->entity_size(); }
-  size_t write_to_fd(int fd, size_t written) const {
-    return m_->write_to_fd(fd, written);
-  }
-  int32_t kind() const { return m_->kind(); }
-
-  std::shared_ptr<Marshallable> inner() const { return m_; }
-
- private:
-  std::shared_ptr<Marshallable> m_;
-};
-
-inline MarshallableProxy make_marshallable_proxy(
-    std::shared_ptr<Marshallable> m) {
-  return pro::make_proxy<MarshallableFacade>(
-      MarshallableSharedPtrAdapter(std::move(m)));
-}
-
-inline std::shared_ptr<Marshallable> marshallable_proxy_inner(
-    const MarshallableProxy& proxy) {
-  return proxy->inner();
-}
+// Workstream N Phase 5b-4: removed `MarshallableFacade`,
+// `MarshallableProxy` typedef, `MarshallableSharedPtrAdapter`,
+// `make_marshallable_proxy`, `marshallable_proxy_inner`, and the
+// supporting `PRO_DEF_MEM_DISPATCH(MarshallableMem*, ...)` macros.
+// After Phase 5b-3 removed `MarshallDeputy::data_proxy()` and the
+// bypass-to-socket fast path, the only remaining users were six
+// tests in `rpc_marshallable_proxy_test.cc` (`AdapterForwards*`,
+// `ProxyIsMoveOnly`, `RoundTripThroughProxy`) that exercised the
+// proxy facade machinery itself; those tests went away with the
+// proxy. Production now serializes Marshallable values via direct
+// virtual dispatch (`md.inner()->to_marshal(m)`) plus the
+// SerializableMarshallableAdapter for migrated types.
 
 template <typename T>
 struct TypedMarshallableAdapterTraits {

@@ -159,75 +159,16 @@ std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
 
 }  // namespace
 
-TEST(MarshallableProxyFacadeTest, AdapterForwardsToMarshal) {
-  auto sp = std::make_shared<TestMarshallable>(99);
-  auto proxy = make_marshallable_proxy(sp);
-
-  Marshal m;
-  proxy->to_marshal(m);
-
-  int32_t out_kind = 0, out_val = 0;
-  m >> out_kind >> out_val;
-  EXPECT_EQ(out_kind, kTestMarshallableKind);
-  EXPECT_EQ(out_val, 99);
-}
-
-TEST(MarshallableProxyFacadeTest, AdapterForwardsFromMarshal) {
-  auto sp = std::make_shared<TestMarshallable>();
-  auto proxy = make_marshallable_proxy(sp);
-
-  Marshal m;
-  int32_t kind = 42, val = 77;
-  kind = kTestMarshallableKind;
-  m << kind << val;
-
-  proxy->from_marshal(m);
-  EXPECT_EQ(sp->kind_, kTestMarshallableKind);
-  EXPECT_EQ(sp->value, 77);
-}
-
-TEST(MarshallableProxyFacadeTest, AdapterForwardsKind) {
-  auto sp = std::make_shared<TestMarshallable>(0);
-  auto proxy = make_marshallable_proxy(sp);
-
-  EXPECT_EQ(proxy->kind(), kTestMarshallableKind);
-}
-
-TEST(MarshallableProxyFacadeTest, AdapterForwardsEntitySize) {
-  auto sp = std::make_shared<TestMarshallable>(0);
-  auto proxy = make_marshallable_proxy(sp);
-
-  EXPECT_EQ(proxy->entity_size(), sizeof(int32_t) * 2);
-}
-
-TEST(MarshallableProxyFacadeTest, ProxyIsMoveOnly) {
-  auto sp = std::make_shared<TestMarshallable>(5);
-  auto proxy = make_marshallable_proxy(sp);
-
-  auto moved = std::move(proxy);
-  EXPECT_EQ(moved->kind(), kTestMarshallableKind);
-
-  Marshal m;
-  moved->to_marshal(m);
-  int32_t k = 0, v = 0;
-  m >> k >> v;
-  EXPECT_EQ(v, 5);
-}
-
-TEST(MarshallableProxyFacadeTest, RoundTripThroughProxy) {
-  auto src = std::make_shared<TestMarshallable>(123);
-  auto src_proxy = make_marshallable_proxy(src);
-
-  Marshal m;
-  src_proxy->to_marshal(m);
-
-  auto dst = std::make_shared<TestMarshallable>();
-  auto dst_proxy = make_marshallable_proxy(dst);
-  dst_proxy->from_marshal(m);
-
-  EXPECT_EQ(dst->kind_, kTestMarshallableKind);
-  EXPECT_EQ(dst->value, 123);
-}
+// Workstream N Phase 5b-4: removed six tests
+// (`AdapterForwardsToMarshal`, `AdapterForwardsFromMarshal`,
+// `AdapterForwardsKind`, `AdapterForwardsEntitySize`,
+// `ProxyIsMoveOnly`, `RoundTripThroughProxy`) that exercised the
+// `MarshallableProxy` / `MarshallableSharedPtrAdapter` /
+// `make_marshallable_proxy` infrastructure. That infrastructure was
+// the last remaining user-visible surface of the proxy facade after
+// Phase 5b-3 removed `MarshallDeputy::data_proxy()` and the
+// bypass-to-socket fast path; the proxy + adapter + helper went
+// away in the same Phase 5b-4 commit.
 
 TEST(MarshallableProxyFacadeTest, DeputyDefaultsToNoMarshallable) {
   MarshallDeputy deputy;
