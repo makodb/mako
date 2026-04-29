@@ -1276,10 +1276,17 @@ landed. Every in-tree deptran payload uses the Serializable path,
 generated headers carry archive ops by default, and ~1410 LOC of
 dead infrastructure has been removed. Phase 3d (reactor TX/RX path
 on Sink/Source, + matching Phase 3e-2 to drop the legacy Marshal&
-emission), Phase 3f-2/3 (`MarshallDeputy` SerializableProxy
-storage), and the remaining Phase 5 deletions
-(`Marshallable::to_marshal`/`from_marshal` virtuals, now gated only
-on test-fixture migration since `CmdData` is done) are upcoming. See
+emission) is partially landed — Phase 3d-1 migrated the channel-mode
+response demux (`ClientConnection::decode_response_and_notify`) off
+its temporary `Marshal body` onto a `BufferSource` +
+`BinaryReadArchive`, eliminating one Marshal allocation per inbound
+reply; sub-leaves 3d-2..3d-6 (request-side archive plumbing,
+`rpcgen` proxy lambda flip, generated-header regeneration, sweep,
+and final `Marshal&` overload deletion) are queued. Phase 3f-2/3
+(`MarshallDeputy` SerializableProxy storage), and the remaining
+Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
+virtuals, now gated only on test-fixture migration since `CmdData`
+is done) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 
