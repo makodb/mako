@@ -64,8 +64,11 @@ inline T safe_min(const T& a, const T& b) {
 }
 
 #ifdef RPC_STATISTICS
+// Workstream N Phase 5b-8: removed `stat_marshal_out` declaration —
+// its only caller was `chunk::write_to_fd`, deleted in Phase 5b-7.
+// `stat_marshal_in` is still wired to `chunk::read_from_fd` on the
+// receive path.
 void stat_marshal_in(int fd, const void* buf, size_t nbytes, ssize_t ret);
-void stat_marshal_out(int fd, const void* buf, size_t nbytes, ssize_t ret);
 #endif // RPC_STATISTICS
 
 // not thread safe, for better performance
