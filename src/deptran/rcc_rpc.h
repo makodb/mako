@@ -1405,7 +1405,7 @@ public:
         }
     };
     rusty::Result<ForwardTypedFuture, rrr::i32> async_Forward(const RpcForwardRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::FORWARD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::FORWARD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
             __m__ << req.dep_id;
         });
@@ -1456,7 +1456,7 @@ public:
         }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::PREPARE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
         });
@@ -1507,7 +1507,7 @@ public:
         }
     };
     rusty::Result<AcceptTypedFuture, rrr::i32> async_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::ACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::ACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.time;
             __m__ << req.ballot;
@@ -1558,7 +1558,7 @@ public:
         }
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::DECIDE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
             __m__ << req.cmd;
@@ -1610,7 +1610,7 @@ public:
         }
     };
     rusty::Result<HeartbeatTypedFuture, rrr::i32> async_Heartbeat(const RpcHeartbeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::HEARTBEAT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::HEARTBEAT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -1660,7 +1660,7 @@ public:
         }
     };
     rusty::Result<ForwardToLearnerServerTypedFuture, rrr::i32> async_ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::FORWARDTOLEARNERSERVER, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::FORWARDTOLEARNERSERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.par_id;
             __m__ << req.slot;
             __m__ << req.ballot;
@@ -1713,7 +1713,7 @@ public:
         }
     };
     rusty::Result<BulkPrepareTypedFuture, rrr::i32> async_BulkPrepare(const RpcBulkPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKPREPARE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKPREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -1763,7 +1763,7 @@ public:
         }
     };
     rusty::Result<BulkAcceptTypedFuture, rrr::i32> async_BulkAccept(const RpcBulkAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -1814,7 +1814,7 @@ public:
         }
     };
     rusty::Result<BulkPrepare2TypedFuture, rrr::i32> async_BulkPrepare2(const RpcBulkPrepare2Request& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKPREPARE2, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKPREPARE2, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -1865,7 +1865,7 @@ public:
         }
     };
     rusty::Result<SyncLogTypedFuture, rrr::i32> async_SyncLog(const RpcSyncLogRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCLOG, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCLOG, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -1915,7 +1915,7 @@ public:
         }
     };
     rusty::Result<SyncCommitTypedFuture, rrr::i32> async_SyncCommit(const RpcSyncCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCCOMMIT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -1965,7 +1965,7 @@ public:
         }
     };
     rusty::Result<SyncNoOpsTypedFuture, rrr::i32> async_SyncNoOps(const RpcSyncNoOpsRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCNOOPS, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCNOOPS, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -2015,7 +2015,7 @@ public:
         }
     };
     rusty::Result<BulkDecideTypedFuture, rrr::i32> async_BulkDecide(const RpcBulkDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKDECIDE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKDECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -2157,7 +2157,7 @@ public:
         }
     };
     rusty::Result<CommitTypedFuture, rrr::i32> async_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MongodbService::COMMIT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MongodbService::COMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -2501,7 +2501,7 @@ public:
         }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MenciusService::PREPARE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MenciusService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
         });
@@ -2552,7 +2552,7 @@ public:
         }
     };
     rusty::Result<SuggestTypedFuture, rrr::i32> async_Suggest(const RpcSuggestRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MenciusService::SUGGEST, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MenciusService::SUGGEST, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.time;
             __m__ << req.ballot;
@@ -2606,7 +2606,7 @@ public:
         }
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MenciusService::DECIDE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(MenciusService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
             __m__ << req.cmd;
@@ -3333,7 +3333,7 @@ public:
         }
     };
     rusty::Result<HeartbeatTypedFuture, rrr::i32> async_Heartbeat(const RpcHeartbeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(FpgaRaftService::HEARTBEAT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(FpgaRaftService::HEARTBEAT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.leaderPrevLogIndex;
             __m__ << req.dep_id;
         });
@@ -3383,7 +3383,7 @@ public:
         }
     };
     rusty::Result<ForwardTypedFuture, rrr::i32> async_Forward(const RpcForwardRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(FpgaRaftService::FORWARD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(FpgaRaftService::FORWARD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -3433,7 +3433,7 @@ public:
         }
     };
     rusty::Result<VoteTypedFuture, rrr::i32> async_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.lst_log_idx;
             __m__ << req.lst_log_term;
             __m__ << req.par_id;
@@ -3486,7 +3486,7 @@ public:
         }
     };
     rusty::Result<Vote2FPGATypedFuture, rrr::i32> async_Vote2FPGA(const RpcVote2FPGARequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE2FPGA, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE2FPGA, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.lst_log_idx;
             __m__ << req.lst_log_term;
             __m__ << req.par_id;
@@ -3540,7 +3540,7 @@ public:
         }
     };
     rusty::Result<AppendEntriesTypedFuture, rrr::i32> async_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
             __m__ << req.leaderCurrentTerm;
@@ -3598,7 +3598,7 @@ public:
         }
     };
     rusty::Result<AppendEntries2TypedFuture, rrr::i32> async_AppendEntries2(const RpcAppendEntries2Request& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES2, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES2, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
             __m__ << req.leaderCurrentTerm;
@@ -3653,7 +3653,7 @@ public:
         }
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(FpgaRaftService::DECIDE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(FpgaRaftService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
             __m__ << req.dep_id;
@@ -4404,7 +4404,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.max_ballot;
                             m << __typed_resp__.vote_granted;
                         });
@@ -4432,7 +4432,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.acknowledged;
                         });
                     }
@@ -4466,7 +4466,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.followerAppendOK;
                             m << __typed_resp__.followerCurrentTerm;
                             m << __typed_resp__.followerLastLogIndex;
@@ -4502,7 +4502,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.followerAppendOK;
                             m << __typed_resp__.followerCurrentTerm;
                             m << __typed_resp__.followerLastLogIndex;
@@ -4533,7 +4533,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.acknowledged;
                         });
                     }
@@ -4560,7 +4560,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.followerTerm;
                             m << __typed_resp__.success;
                         });
@@ -4587,7 +4587,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.acknowledged;
                         });
                     }
@@ -4617,7 +4617,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.term_out;
                         });
                     }
@@ -4645,7 +4645,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.success;
                             m << __typed_resp__.error_msg;
                             m << __typed_resp__.leader_hint;
@@ -4674,7 +4674,7 @@ private:
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
                             m << __typed_resp__.success;
                             m << __typed_resp__.error_msg;
                             m << __typed_resp__.leader_hint;
@@ -4745,7 +4745,7 @@ public:
         }
     };
     rusty::Result<VoteTypedFuture, rrr::i32> async_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::VOTE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::VOTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.lst_log_idx;
             __m__ << req.lst_log_term;
             __m__ << req.site_id;
@@ -4797,7 +4797,7 @@ public:
         }
     };
     rusty::Result<VoteDurableTypedFuture, rrr::i32> async_VoteDurable(const RpcVoteDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::VOTEDURABLE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::VOTEDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.term;
             __m__ << req.voter_id;
         });
@@ -4850,7 +4850,7 @@ public:
         }
     };
     rusty::Result<AppendEntriesTypedFuture, rrr::i32> async_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIES, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
             __m__ << req.leaderCurrentTerm;
@@ -4910,7 +4910,7 @@ public:
         }
     };
     rusty::Result<EmptyAppendEntriesTypedFuture, rrr::i32> async_EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::EMPTYAPPENDENTRIES, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::EMPTYAPPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.slot;
             __m__ << req.ballot;
             __m__ << req.leaderCurrentTerm;
@@ -4966,7 +4966,7 @@ public:
         }
     };
     rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32> async_AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIESDURABLE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIESDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.term;
             __m__ << req.follower_id;
             __m__ << req.lastLogIndex;
@@ -5018,7 +5018,7 @@ public:
         }
     };
     rusty::Result<TimeoutNowTypedFuture, rrr::i32> async_TimeoutNow(const RpcTimeoutNowRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::TIMEOUTNOW, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::TIMEOUTNOW, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.leaderTerm;
             __m__ << req.leaderSiteId;
         });
@@ -5068,7 +5068,7 @@ public:
         }
     };
     rusty::Result<NotifyRestartTypedFuture, rrr::i32> async_NotifyRestart(const RpcNotifyRestartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::NOTIFYRESTART, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::NOTIFYRESTART, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.restartedSiteId;
         });
         if (__fu_result__.is_err()) {
@@ -5117,7 +5117,7 @@ public:
         }
     };
     rusty::Result<InstallSnapshotTypedFuture, rrr::i32> async_InstallSnapshot(const RpcInstallSnapshotRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::INSTALLSNAPSHOT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::INSTALLSNAPSHOT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.term;
             __m__ << req.leader_id;
             __m__ << req.last_included_index;
@@ -5172,7 +5172,7 @@ public:
         }
     };
     rusty::Result<AddServerTypedFuture, rrr::i32> async_AddServer(const RpcAddServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::ADDSERVER, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::ADDSERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.term;
             __m__ << req.new_server_id;
             __m__ << req.new_server_addr;
@@ -5225,7 +5225,7 @@ public:
         }
     };
     rusty::Result<RemoveServerTypedFuture, rrr::i32> async_RemoveServer(const RpcRemoveServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(RaftService::REMOVESERVER, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(RaftService::REMOVESERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.term;
             __m__ << req.server_id;
         });
@@ -5750,7 +5750,7 @@ public:
         }
     };
     rusty::Result<ForwardTypedFuture, rrr::i32> async_Forward(const RpcForwardRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(CopilotService::FORWARD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(CopilotService::FORWARD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -5802,7 +5802,7 @@ public:
         }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(CopilotService::PREPARE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(CopilotService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.is_pilot;
             __m__ << req.slot;
             __m__ << req.ballot;
@@ -5855,7 +5855,7 @@ public:
         }
     };
     rusty::Result<FastAcceptTypedFuture, rrr::i32> async_FastAccept(const RpcFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(CopilotService::FASTACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(CopilotService::FASTACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.is_pilot;
             __m__ << req.slot;
             __m__ << req.ballot;
@@ -5909,7 +5909,7 @@ public:
         }
     };
     rusty::Result<AcceptTypedFuture, rrr::i32> async_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(CopilotService::ACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(CopilotService::ACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.is_pilot;
             __m__ << req.slot;
             __m__ << req.ballot;
@@ -5962,7 +5962,7 @@ public:
         }
     };
     rusty::Result<CommitTypedFuture, rrr::i32> async_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(CopilotService::COMMIT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(CopilotService::COMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.is_pilot;
             __m__ << req.slot;
             __m__ << req.dep;
@@ -9650,7 +9650,7 @@ public:
         }
     };
     rusty::Result<MsgStringTypedFuture, rrr::i32> async_MsgString(const RpcMsgStringRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::MSGSTRING, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::MSGSTRING, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.arg;
         });
         if (__fu_result__.is_err()) {
@@ -9699,7 +9699,7 @@ public:
         }
     };
     rusty::Result<MsgMarshallTypedFuture, rrr::i32> async_MsgMarshall(const RpcMsgMarshallRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::MSGMARSHALL, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::MSGMARSHALL, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.arg;
         });
         if (__fu_result__.is_err()) {
@@ -9798,7 +9798,7 @@ public:
         }
     };
     rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32> async_RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RULESPECULATIVEEXECUTE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RULESPECULATIVEEXECUTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.md;
         });
         if (__fu_result__.is_err()) {
@@ -9850,7 +9850,7 @@ public:
         }
     };
     rusty::Result<DispatchTypedFuture, rrr::i32> async_Dispatch(const RpcDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::DISPATCH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::DISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.tid;
             __m__ << req.dep_id;
             __m__ << req.cmd;
@@ -9903,7 +9903,7 @@ public:
         }
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::PREPARE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.tid;
             __m__ << req.sids;
             __m__ << req.dep_id;
@@ -9958,7 +9958,7 @@ public:
         }
     };
     rusty::Result<CommitTypedFuture, rrr::i32> async_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::COMMIT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::COMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.tid;
             __m__ << req.dep_id;
         });
@@ -10012,7 +10012,7 @@ public:
         }
     };
     rusty::Result<AbortTypedFuture, rrr::i32> async_Abort(const RpcAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::ABORT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::ABORT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.tid;
             __m__ << req.dep_id;
         });
@@ -10062,7 +10062,7 @@ public:
         }
     };
     rusty::Result<EarlyAbortTypedFuture, rrr::i32> async_EarlyAbort(const RpcEarlyAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::EARLYABORT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::EARLYABORT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.tid;
         });
         if (__fu_result__.is_err()) {
@@ -10111,7 +10111,7 @@ public:
         }
     };
     rusty::Result<UpgradeEpochTypedFuture, rrr::i32> async_UpgradeEpoch(const RpcUpgradeEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::UPGRADEEPOCH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::UPGRADEEPOCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.curr_epoch;
         });
         if (__fu_result__.is_err()) {
@@ -10159,7 +10159,7 @@ public:
         }
     };
     rusty::Result<TruncateEpochTypedFuture, rrr::i32> async_TruncateEpoch(const RpcTruncateEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::TRUNCATEEPOCH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::TRUNCATEEPOCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.old_epoch;
         });
         if (__fu_result__.is_err()) {
@@ -10208,7 +10208,7 @@ public:
         }
     };
     rusty::Result<IsLeaderTypedFuture, rrr::i32> async_IsLeader(const RpcIsLeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::ISLEADER, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::ISLEADER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cur_pause;
         });
         if (__fu_result__.is_err()) {
@@ -10257,7 +10257,7 @@ public:
         }
     };
     rusty::Result<IsFPGALeaderTypedFuture, rrr::i32> async_IsFPGALeader(const RpcIsFPGALeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::ISFPGALEADER, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::ISFPGALEADER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cur_pause;
         });
         if (__fu_result__.is_err()) {
@@ -10306,7 +10306,7 @@ public:
         }
     };
     rusty::Result<SimpleCmdTypedFuture, rrr::i32> async_SimpleCmd(const RpcSimpleCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::SIMPLECMD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::SIMPLECMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -10497,7 +10497,7 @@ public:
         }
     };
     rusty::Result<TapirAcceptTypedFuture, rrr::i32> async_TapirAccept(const RpcTapirAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::TAPIRACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::TAPIRACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd_id;
             __m__ << req.ballot;
             __m__ << req.decision;
@@ -10548,7 +10548,7 @@ public:
         }
     };
     rusty::Result<TapirFastAcceptTypedFuture, rrr::i32> async_TapirFastAccept(const RpcTapirFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::TAPIRFASTACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::TAPIRFASTACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd_id;
             __m__ << req.txn_cmds;
         });
@@ -10597,7 +10597,7 @@ public:
         }
     };
     rusty::Result<TapirDecideTypedFuture, rrr::i32> async_TapirDecide(const RpcTapirDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::TAPIRDECIDE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::TAPIRDECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd_id;
             __m__ << req.commit;
         });
@@ -10649,7 +10649,7 @@ public:
         }
     };
     rusty::Result<RccDispatchTypedFuture, rrr::i32> async_RccDispatch(const RpcRccDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -10698,7 +10698,7 @@ public:
         }
     };
     rusty::Result<RccFinishTypedFuture, rrr::i32> async_RccFinish(const RpcRccFinishRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCFINISH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCFINISH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.id;
             __m__ << req.md_graph;
         });
@@ -10748,7 +10748,7 @@ public:
         }
     };
     rusty::Result<RccInquireTypedFuture, rrr::i32> async_RccInquire(const RpcRccInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIRE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIRE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.txn_id;
             __m__ << req.rank;
         });
@@ -10798,7 +10798,7 @@ public:
         }
     };
     rusty::Result<RccDispatchRoTypedFuture, rrr::i32> async_RccDispatchRo(const RpcRccDispatchRoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCHRO, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCHRO, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -10847,7 +10847,7 @@ public:
         }
     };
     rusty::Result<RccInquireValidationTypedFuture, rrr::i32> async_RccInquireValidation(const RpcRccInquireValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIREVALIDATION, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIREVALIDATION, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.tx_id;
             __m__ << req.rank;
         });
@@ -10896,7 +10896,7 @@ public:
         }
     };
     rusty::Result<RccNotifyGlobalValidationTypedFuture, rrr::i32> async_RccNotifyGlobalValidation(const RpcRccNotifyGlobalValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCNOTIFYGLOBALVALIDATION, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCNOTIFYGLOBALVALIDATION, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.tx_id;
             __m__ << req.rank;
             __m__ << req.res;
@@ -10949,7 +10949,7 @@ public:
         }
     };
     rusty::Result<JanusDispatchTypedFuture, rrr::i32> async_JanusDispatch(const RpcJanusDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JANUSDISPATCH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JANUSDISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.cmd;
         });
         if (__fu_result__.is_err()) {
@@ -10999,7 +10999,7 @@ public:
         }
     };
     rusty::Result<RccCommitTypedFuture, rrr::i32> async_RccCommit(const RpcRccCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCCOMMIT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.id;
             __m__ << req.rank;
             __m__ << req.need_validation;
@@ -11052,7 +11052,7 @@ public:
         }
     };
     rusty::Result<JanusCommitTypedFuture, rrr::i32> async_JanusCommit(const RpcJanusCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMIT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.id;
             __m__ << req.rank;
             __m__ << req.need_validation;
@@ -11105,7 +11105,7 @@ public:
         }
     };
     rusty::Result<JanusCommitWoGraphTypedFuture, rrr::i32> async_JanusCommitWoGraph(const RpcJanusCommitWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMITWOGRAPH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMITWOGRAPH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.id;
             __m__ << req.rank;
             __m__ << req.need_validation;
@@ -11156,7 +11156,7 @@ public:
         }
     };
     rusty::Result<JanusInquireTypedFuture, rrr::i32> async_JanusInquire(const RpcJanusInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JANUSINQUIRE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JANUSINQUIRE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.epoch;
             __m__ << req.txn_id;
         });
@@ -11207,7 +11207,7 @@ public:
         }
     };
     rusty::Result<RccPreAcceptTypedFuture, rrr::i32> async_RccPreAccept(const RpcRccPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCPREACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCPREACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.txn_id;
             __m__ << req.rank;
             __m__ << req.cmd;
@@ -11259,7 +11259,7 @@ public:
         }
     };
     rusty::Result<JanusPreAcceptTypedFuture, rrr::i32> async_JanusPreAccept(const RpcJanusPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.txn_id;
             __m__ << req.rank;
             __m__ << req.cmd;
@@ -11312,7 +11312,7 @@ public:
         }
     };
     rusty::Result<JanusPreAcceptWoGraphTypedFuture, rrr::i32> async_JanusPreAcceptWoGraph(const RpcJanusPreAcceptWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPTWOGRAPH, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPTWOGRAPH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.txn_id;
             __m__ << req.rank;
             __m__ << req.cmd;
@@ -11363,7 +11363,7 @@ public:
         }
     };
     rusty::Result<RccAcceptTypedFuture, rrr::i32> async_RccAccept(const RpcRccAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RCCACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::RCCACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.txn_id;
             __m__ << req.rank;
             __m__ << req.ballot;
@@ -11415,7 +11415,7 @@ public:
         }
     };
     rusty::Result<JanusAcceptTypedFuture, rrr::i32> async_JanusAccept(const RpcJanusAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JANUSACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JANUSACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.txn_id;
             __m__ << req.rank;
             __m__ << req.ballot;
@@ -11466,7 +11466,7 @@ public:
         }
     };
     rusty::Result<JetpackBeginRecoveryTypedFuture, rrr::i32> async_JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKBEGINRECOVERY, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKBEGINRECOVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.old_view;
             __m__ << req.new_view;
             __m__ << req.new_view_id;
@@ -11522,7 +11522,7 @@ public:
         }
     };
     rusty::Result<JetpackPullIdSetTypedFuture, rrr::i32> async_JetpackPullIdSet(const RpcJetpackPullIdSetRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLIDSET, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLIDSET, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.jepoch;
             __m__ << req.oepoch;
         });
@@ -11577,7 +11577,7 @@ public:
         }
     };
     rusty::Result<JetpackPullCmdTypedFuture, rrr::i32> async_JetpackPullCmd(const RpcJetpackPullCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLCMD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLCMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.jepoch;
             __m__ << req.oepoch;
             __m__ << req.key_batch;
@@ -11627,7 +11627,7 @@ public:
         }
     };
     rusty::Result<JetpackRecordCmdTypedFuture, rrr::i32> async_JetpackRecordCmd(const RpcJetpackRecordCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKRECORDCMD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKRECORDCMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.jepoch;
             __m__ << req.oepoch;
             __m__ << req.sid;
@@ -11688,7 +11688,7 @@ public:
         }
     };
     rusty::Result<JetpackPrepareTypedFuture, rrr::i32> async_JetpackPrepare(const RpcJetpackPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPREPARE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.jepoch;
             __m__ << req.oepoch;
             __m__ << req.max_seen_ballot;
@@ -11744,7 +11744,7 @@ public:
         }
     };
     rusty::Result<JetpackAcceptTypedFuture, rrr::i32> async_JetpackAccept(const RpcJetpackAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKACCEPT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.jepoch;
             __m__ << req.oepoch;
             __m__ << req.max_seen_ballot;
@@ -11796,7 +11796,7 @@ public:
         }
     };
     rusty::Result<JetpackCommitTypedFuture, rrr::i32> async_JetpackCommit(const RpcJetpackCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKCOMMIT, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.jepoch;
             __m__ << req.oepoch;
             __m__ << req.sid;
@@ -11853,7 +11853,7 @@ public:
         }
     };
     rusty::Result<JetpackPullRecSetInsTypedFuture, rrr::i32> async_JetpackPullRecSetIns(const RpcJetpackPullRecSetInsRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLRECSETINS, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLRECSETINS, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.jepoch;
             __m__ << req.oepoch;
             __m__ << req.sid;
@@ -11904,7 +11904,7 @@ public:
         }
     };
     rusty::Result<JetpackFinishRecoveryTypedFuture, rrr::i32> async_JetpackFinishRecovery(const RpcJetpackFinishRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::JETPACKFINISHRECOVERY, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClassicService::JETPACKFINISHRECOVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.oepoch;
         });
         if (__fu_result__.is_err()) {
@@ -13065,7 +13065,7 @@ public:
         }
     };
     rusty::Result<client_responseTypedFuture, rrr::i32> async_client_response(const RpcClientResponseRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_RESPONSE, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_RESPONSE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.dep_id;
         });
         if (__fu_result__.is_err()) {
@@ -13257,7 +13257,7 @@ public:
         }
     };
     rusty::Result<DispatchTxnTypedFuture, rrr::i32> async_DispatchTxn(const RpcDispatchTxnRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::DISPATCHTXN, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ClientControlService::DISPATCHTXN, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.req;
         });
         if (__fu_result__.is_err()) {
@@ -13810,7 +13810,7 @@ public:
         }
     };
     rusty::Result<GetConfigTypedFuture, rrr::i32> async_GetConfig(const RpcGetConfigRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETCONFIG, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ConfigServiceService::GETCONFIG, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.client_version;
         });
         if (__fu_result__.is_err()) {
@@ -13955,7 +13955,7 @@ public:
         }
     };
     rusty::Result<SetShardingPolicyTypedFuture, rrr::i32> async_SetShardingPolicy(const RpcSetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::SETSHARDINGPOLICY, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ConfigServiceService::SETSHARDINGPOLICY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.policy_data;
         });
         if (__fu_result__.is_err()) {
@@ -14006,7 +14006,7 @@ public:
         }
     };
     rusty::Result<GetShardingPolicyTypedFuture, rrr::i32> async_GetShardingPolicy(const RpcGetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETSHARDINGPOLICY, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(ConfigServiceService::GETSHARDINGPOLICY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.client_version;
         });
         if (__fu_result__.is_err()) {

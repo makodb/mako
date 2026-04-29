@@ -141,7 +141,7 @@ public:
         }
     };
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req._req;
         });
         if (__fu_result__.is_err()) {
