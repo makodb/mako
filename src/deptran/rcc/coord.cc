@@ -81,10 +81,12 @@ void RccCoord::DispatchAck(phase_t phase,
 //  RccTx& info = *(graph.vertex_index().at(tx_data().root_id_));
 //  verify(cmd[0].root_id_ == info.id());
 //  verify(info.partition_.find(cmd.partition_id_) != info.partition_.end());
-  if (res) {
-    // need validation
-    tx_data().need_validation_ = true;
-  }
+  // Workstream N Phase 4e-5: removed
+  //   if (res) { tx_data().need_validation_ = true; }
+  // — the `need_validation_` field on TxData has no readers anywhere
+  // in the codebase (the only would-be reader was a commented-out
+  // line in rcc/server.cc; that path is on a different `sp_tx`
+  // type).  Field deleted alongside this write.
 
   for (auto& pair : output) {
     n_dispatch_ack_++;

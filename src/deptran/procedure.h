@@ -384,12 +384,10 @@ class TxData: public CmdData {
   // commented-out code in procedure.cc.
   double pre_time_ = 0.0;
   bool early_return_ = false;
- protected:
-  template<class T>
-  T ChooseRandom(const std::vector<T>& v) {
-    return v[rrr::RandomGenerator::rand(0,v.size()-1)];
-  }
  public:
+  // Workstream N Phase 4e-5: removed protected `ChooseRandom<T>`
+  // template — defined here but never instantiated anywhere in the
+  // codebase (`grep ChooseRandom` returned only the definition).
   txnid_t txn_id_; // TODO obsolete
   uint64_t timestamp_ = 0;
   TxWorkspace ws_ = {}; // workspace.
@@ -410,14 +408,19 @@ class TxData: public CmdData {
   int n_pieces_dispatchable_ = 0;
   int n_pieces_dispatch_acked_ = 0;
   int n_pieces_dispatched_ = 0;
-  /** finished pieces counting */
-  int n_finished_ = 0;
+  // Workstream N Phase 4e-5: removed `int n_finished_ = 0;` — the
+  // field was previously serialized in the legacy
+  // TxData::to_marshal/from_marshal pair (deleted in Phase 5b-1) but
+  // never written or read by any other code.
 
   int max_try_ = 0;
   int n_try_ = 0;
 
-  bool validation_ok_{true};
-  bool need_validation_{false};
+  // Workstream N Phase 4e-5: removed `bool validation_ok_{true};`
+  // (no writer or reader anywhere) and `bool need_validation_{false};`
+  // (the only writer was `tx_data().need_validation_ = true;` at
+  // `rcc/coord.cc:86`, no readers; that write was removed in this
+  // commit).
 
   weak_ptr<TxnRegistry> txn_reg_{};
   Sharding *sss_ = nullptr;
@@ -477,16 +480,13 @@ class TxData: public CmdData {
   // `verify(0)` defaults remain for any unintentionally surviving
   // virtual-dispatch path.
 
-  inline bool can_retry() {
-    return (max_try_ == 0 || n_try_ < max_try_);
-  }
+  // Workstream N Phase 4e-5: removed `inline bool can_retry()` —
+  // defined but never called.  Removed `inline void
+  // disable_early_return()` — only call sites were commented-out
+  // code in `snow/ro6_coord.cc:57` and `rcc/coord.cc:105`.
 
   inline bool do_early_return() {
     return early_return_;
-  }
-
-  inline void disable_early_return() {
-    early_return_ = false;
   }
 
   double last_attempt_latency();
