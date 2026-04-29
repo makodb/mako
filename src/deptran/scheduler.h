@@ -320,19 +320,13 @@ class RecoverySet {
 
 
 
-struct CommitNotification {
-  // client side
-  bool client_stored_ = false;
-  bool_t* committed_;
-  value_t* commit_result_;
-  function<void()> commit_callback_;
-  // coordinator side
-  bool coordinator_stored_ = false;
-  value_t coordinator_commit_result_;
-  bool coordinator_replied_ = false;
-  // timestamp (ms)
-  double receive_time_ = -1;
-};
+// Workstream N Phase 4e-9: removed `struct CommitNotification` —
+// declared with 7 fields (client_stored_, committed_, commit_result_,
+// commit_callback_, coordinator_stored_, coordinator_commit_result_,
+// coordinator_replied_, receive_time_) but never instantiated
+// anywhere.  `grep "CommitNotification\s+"` returned only the
+// definition itself; the matches on `testSpeculativeCommitNotification`
+// / `testDurableCommitNotification` are unrelated test method names.
 
 class TxnRegistry;
 class Executor;
@@ -349,7 +343,8 @@ class TxLogServer {
   View old_view_, new_view_;
   int sid, rid, sid_cnt_ = 0;
   RecoverySet rec_set_;
-  bool simulated_fail_ = false;
+  // Workstream N Phase 4e-9: removed `bool simulated_fail_ = false;`
+  // — declared but never written or read anywhere.
   std::chrono::steady_clock::time_point jetpack_recovery_start_time_{};
   /* Some Jetpack elements end */
 
@@ -362,7 +357,9 @@ class TxLogServer {
   unordered_map<txid_t, Executor *> executors_{};
 
   function<int(int,shared_ptr<Marshallable>)> app_next_{};
-  function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};
+  // Workstream N Phase 4e-9: removed
+  //   `function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};`
+  // — declared but never written or invoked anywhere.
 
   shared_ptr<mdb::TxnMgr> mdb_txn_mgr_{};
   int mode_;
@@ -384,7 +381,13 @@ class TxLogServer {
   bool in_upgrade_epoch_{false};
   const int EPOCH_DURATION = 5;
 
-  bool paused_ = false; // [Jetpack] For failure recovery additional helper
+  // Workstream N Phase 4e-9: removed `bool paused_ = false;` — set
+  // in `TxLogServer::Pause()` / `Resume()` (scheduler.cc:333, 338)
+  // alongside `commo_->Pause()` / `commo_->Resume()` calls but
+  // never read.  The Pause/Resume methods themselves are kept
+  // (called from `server_worker.cc:329, 335` and `service.cc:371,
+  // 396`) since the `commo_->Pause()` side effect is real; only the
+  // dead `paused_` writes were removed.
 
   // Phase 2.4: State machine recovery tracking
   bool in_state_machine_recovery_{false};

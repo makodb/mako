@@ -330,12 +330,15 @@ void TxLogServer::DestroyExecutor(txnid_t txn_id) {
 void TxLogServer::Pause() {
   Log_info("!!!!!!!! TxLogServer::Pause()");
   commo_->Pause();
-  paused_ = true;
+  // Workstream N Phase 4e-9: removed `paused_ = true;` — the
+  // `paused_` field on TxLogServer had no readers anywhere; the
+  // field went away in the same commit.
 };
 
 void TxLogServer::Resume() {
   commo_->Resume();
-  paused_ = false;
+  // Workstream N Phase 4e-9: removed `paused_ = false;` — see the
+  // companion comment on Pause() above.
 };
 
 void TxLogServer::TriggerUpgradeEpoch() {
