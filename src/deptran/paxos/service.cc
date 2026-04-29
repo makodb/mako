@@ -170,7 +170,6 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
   verify(sched_ != nullptr);
   ret->set_marshallable(std::make_shared<BulkPaxosCmd>());
   auto p = marshallable_cast<BulkPaxosCmd>(ret);
-  //Log_info("The marshallable flag is %d", p->bypass_to_socket_);
   Fiber::create_run([&] () {
     sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).inner(),
                           ballot,
