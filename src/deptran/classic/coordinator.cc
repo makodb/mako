@@ -466,35 +466,12 @@ void CoordinatorClassic::Prepare() {
 		Log_info("prep_slow");
 		prep_slow = true;
 	}
-	//if(commo()->slow  && commo()->total > 100 && !commo()->paused){
-		//double cpu_thres = 0.90/(1 + exp(-0.00107340141*(commo()->window_avg - 721.918226)));
-		//double cpu_thres = 0.29712171*log(commo()->window_avg) - 2.8758182;
-		/*double cpu_thres = 0.0000137325*commo()->window_avg - 0.23825;
-		if(cpu_thres >= 0.85) cpu_thres = 0.85;
-		//Log_info("cpu vs lat_util_: %f vs %f", commo()->cpu, cpu_thres);
-		if(commo()->cpu <= (cpu_thres*0.0) && !commo()->paused && commo()->cpu != commo()->last_cpu){
-			commo()->last_cpu = commo()->cpu;
-			commo()->low_util++;
-		} else if(commo()->cpu > (cpu_thres*0.0)) commo()->low_util = 0;*/
-		/*if(commo()->slow){
-			commo()->low_util = 0;
-			Log_info("Reelection started");
-			commo()->paused = true;
-
-			commo()->qe = Reactor::create_sp_event<QuorumEvent>(concurrent-1, concurrent-1);
-			commo()->qe->n_voted_yes_ = commo()->total_;
-			commo()->qe->wait();
-			commo()->qe = NULL;
-
-			sp_quorum_event = commo()->SendReelect();
-			sp_quorum_event->wait();
-			commo()->paused = false;
-			commo()->slow = false;
-			Log_info("Reelection finished");
-			commo()->ResetProfiles();
-			commo()->total_ = 0;
-		}
-	}*/
+	// Workstream N Phase 4e-17: removed the dead re-elect branch that
+	// referenced the now-deleted `commo()->total / window_avg / cpu /
+	// last_cpu / low_util / ResetProfiles()` profiling state.  The
+	// branch was already commented out (`//if(...)` then nested
+	// `/* ... */` blocks); the live `commo()->slow` / `Log_info` /
+	// `prep_slow` write above is unaffected.
 }
 
 void CoordinatorClassic::PrepareAck(phase_t phase, int res) {
@@ -641,41 +618,13 @@ void CoordinatorClassic::Commit() {
   } else {
     verify(0);
   }
-	//Log_info("slow inside Commit is: %d", commo()->slow);
-	//Log_info("commo window avg: %d", commo()->window_avg);
-	if(false && (prep_slow || commo()->slow)  && commo()->total > 10000 && !commo()->paused){
-		//double cpu_thres = 0.90/(1 + exp(-0.00107340141*(commo()->window_avg - 721.918226)));
-		//double cpu_thres = 0.29712171*log(commo()->window_avg) - 2.8758182;
-		/*double cpu_thres = 0.0000137325*commo()->window_avg - 0.23825;
-		if(cpu_thres >= 0.85) cpu_thres = 0.85;
-		//Log_info("cpu vs lat_util_: %f vs %f", commo()->cpu, cpu_thres);
-		if(commo()->cpu <= (cpu_thres*0.0) && !commo()->paused && commo()->cpu != commo()->last_cpu){
-			commo()->last_cpu = commo()->cpu;
-			commo()->low_util++;
-		} else if(commo()->cpu > (cpu_thres*0.0)) commo()->low_util = 0;*/
-		if(commo()->slow || prep_slow){
-			commo()->low_util = 0;
-			Log_info("Reelection started: %d/%d", commo()->total_, concurrent-1);
-			commo()->qe = Reactor::create_sp_event<QuorumEvent>(concurrent-1, concurrent-1);
-
-			commo()->count_lock_.lock();
-			commo()->paused = true;
-			commo()->qe->n_voted_yes_ = commo()->total_;
-			commo()->count_lock_.unlock();
-			
-			commo()->qe->wait();
-			commo()->qe = NULL;
-
-			for (int i = 0; i < 100; i++) Log_info("Reelection: done waiting for commits");
-			sp_quorum_event = commo()->SendReelect();
-			sp_quorum_event->wait();
-			commo()->paused = false;
-			commo()->slow = false;
-			Log_info("Reelection finished");
-			commo()->ResetProfiles();
-			commo()->total_ = 0;
-		}
-	}
+	// Workstream N Phase 4e-17: removed the `if(false && ...)`
+	// short-circuited re-elect branch that referenced the now-deleted
+	// `commo()->total` / `window_avg` / `cpu` / `last_cpu` /
+	// `low_util` / `ResetProfiles()` profiling state.  The branch
+	// was unreachable (`false &&` short-circuits before any of the
+	// fields are touched).  The live `prep_slow = false;` at the
+	// bottom of the function is unaffected.
 	prep_slow = false;
 }
 
