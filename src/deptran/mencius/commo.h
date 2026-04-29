@@ -52,20 +52,19 @@ class MenciusCommo : public Communicator {
   BroadcastPrepare(parid_t par_id,
                    slotid_t slot_id,
                    ballot_t ballot);
-  void BroadcastPrepare(parid_t par_id,
-                        slotid_t slot_id,
-                        ballot_t ballot,
-                        const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // `void BroadcastPrepare(parid_t, slotid_t, ballot_t, callback)`.
+  // Body started with `verify(0); // deprecated function`, and the
+  // only call site was a commented-out line in
+  // `coordinator.cc:80`.
   shared_ptr<MenciusSuggestQuorumEvent>
   BroadcastSuggest(parid_t par_id,
                   slotid_t slot_id,
                   ballot_t ballot,
                   shared_ptr<Marshallable> cmd);
-  void BroadcastSuggest(parid_t par_id,
-                       slotid_t slot_id,
-                       ballot_t ballot,
-                       shared_ptr<Marshallable> cmd,
-                       const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // `void BroadcastSuggest(parid_t, slotid_t, ballot_t, cmd, callback)`.
+  // Same shape as above — body had `verify(0);` and no live callers.
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
                        const ballot_t ballot,

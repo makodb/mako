@@ -16,28 +16,9 @@ MenciusCommo::MenciusCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communi
 //  verify(poll != nullptr);
 }
 
-void MenciusCommo::BroadcastPrepare(parid_t par_id,
-                                       slotid_t slot_id,
-                                       ballot_t ballot,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  auto leader_id = LeaderProxyForPartition(par_id).first;
-
-  WAN_WAIT
-  for (auto& p : proxies) {
-    auto proxy = (MenciusProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    MenciusProxy::RpcPrepareRequest req{};
-    req.slot = slot_id;
-    req.ballot = ballot;
-    auto f = proxy->async_Prepare(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-}
+// Workstream N Phase 4e-11: removed deprecated callback-style
+// `void MenciusCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,
+// callback)`.  See companion comment in commo.h.
 
 shared_ptr<MenciusPrepareQuorumEvent>
 MenciusCommo::BroadcastPrepare(parid_t par_id,
@@ -217,29 +198,10 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
   return e;
 }
 
-void MenciusCommo::BroadcastSuggest(parid_t par_id,
-                                      slotid_t slot_id,
-                                      ballot_t ballot,
-                                      shared_ptr<Marshallable> cmd,
-                                      const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  // auto proxies = rpc_par_proxies_[par_id];
-  // auto leader_id = LeaderProxyForPartition(par_id).first;
-  // vector<Future*> fus;
-  // for (auto& p : proxies) {
-  //   auto proxy = (MenciusProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = cb;
-  //   MarshallDeputy md(cmd);
-  //   uint64_t time = 0; // compiles the code
-  //   std::vector<uint64_t> skip_commits(1);
-  //   skip_commits.push_back(100);
-  //   std::vector<uint64_t> skip_potentials(1);
-  //   skip_potentials.push_back(200);
-  //   auto f = proxy->async_Suggest(slot_id, time,ballot, skip_commits, skip_potentials, md, fuattr);
-  //   Future::safe_release(f);
-  // }
-}
+// Workstream N Phase 4e-11: removed deprecated callback-style
+// `void MenciusCommo::BroadcastSuggest(parid_t, slotid_t, ballot_t,
+// cmd, callback)`.  Body had `verify(0);` and was mostly already
+// commented out.  See companion comment in commo.h.
 
 void MenciusCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,

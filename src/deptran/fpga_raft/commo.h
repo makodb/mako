@@ -148,48 +148,31 @@ friend class FpgaRaftProxy;
 															uint64_t prevLogTerm,
 															uint64_t commitIndex,
 															shared_ptr<Marshallable> cmd);
-  shared_ptr<FpgaRaftPrepareQuorumEvent>
-  BroadcastPrepare(parid_t par_id,
-                   slotid_t slot_id,
-                   ballot_t ballot);
-  void BroadcastPrepare(parid_t par_id,
-                        slotid_t slot_id,
-                        ballot_t ballot,
-                        const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-11: removed dead `BroadcastPrepare` and
+  // `BroadcastAccept` declarations (both shared_ptr-returning and
+  // callback-style overloads).  Neither had any implementation in
+  // `commo.cc` — they were declared but never defined, and no caller
+  // anywhere invoked them (calls would have been link errors).  The
+  // FpgaRaft path has its own `BroadcastAppendEntries` /
+  // `BroadcastVote` / `BroadcastVote2FPGA` machinery instead.
   shared_ptr<FpgaRaftVoteQuorumEvent>
   BroadcastVote(parid_t par_id,
                         slotid_t lst_log_idx,
                         ballot_t lst_log_term,
                         parid_t self_id,
                         ballot_t cur_term );
-  void BroadcastVote(parid_t par_id,
-                        slotid_t lst_log_idx,
-                        ballot_t lst_log_term,
-                        parid_t self_id,
-                        ballot_t cur_term,
-                        const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // `void BroadcastVote(... callback)` — body had `verify(0);` and
+  // no callers.
   shared_ptr<FpgaRaftVote2FPGAQuorumEvent>
   BroadcastVote2FPGA(parid_t par_id,
                         slotid_t lst_log_idx,
                         ballot_t lst_log_term,
                         parid_t self_id,
                         ballot_t cur_term );
-  void BroadcastVote2FPGA(parid_t par_id,
-                        slotid_t lst_log_idx,
-                        ballot_t lst_log_term,
-                        parid_t self_id,
-                        ballot_t cur_term,
-                        const function<void(rusty::Arc<Future>)> &callback);  
-  shared_ptr<FpgaRaftAcceptQuorumEvent>
-  BroadcastAccept(parid_t par_id,
-                  slotid_t slot_id,
-                  ballot_t ballot,
-                  shared_ptr<Marshallable> cmd);
-  void BroadcastAccept(parid_t par_id,
-                       slotid_t slot_id,
-                       ballot_t ballot,
-                       shared_ptr<Marshallable> cmd,
-                       const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // `void BroadcastVote2FPGA(... callback)` — body had `verify(0);`
+  // and no callers.
   shared_ptr<FpgaRaftAppendQuorumEvent>
   BroadcastAppendEntries(parid_t par_id,
                          siteid_t leader_site_id,
@@ -202,16 +185,9 @@ friend class FpgaRaftProxy;
                          uint64_t prevLogTerm,
                          uint64_t commitIndex,
                          shared_ptr<Marshallable> cmd);
-  void BroadcastAppendEntries(parid_t par_id,
-                              slotid_t slot_id,
-															i64 dep_id,
-                              ballot_t ballot,
-                              uint64_t currentTerm,
-                              uint64_t prevLogIndex,
-                              uint64_t prevLogTerm,
-                              uint64_t commitIndex,
-                              shared_ptr<Marshallable> cmd,
-                              const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // `void BroadcastAppendEntries(... callback)` — body had
+  // `verify(0);` and no callers.
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
 											 const i64 dep_id,

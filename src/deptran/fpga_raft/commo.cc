@@ -264,43 +264,9 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
   return e;
 }
 
-void FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
-                                           slotid_t slot_id,
-																					 i64 dep_id,
-                                           ballot_t ballot,
-                                           uint64_t currentTerm,
-                                           uint64_t prevLogIndex,
-                                           uint64_t prevLogTerm,
-                                           uint64_t commitIndex,
-                                           shared_ptr<Marshallable> cmd,
-                                           const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  vector<rusty::Arc<Future>> fus;
-  for (auto& p : proxies) {
-    auto proxy = (FpgaRaftProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    MarshallDeputy md(cmd);
-		DepId di;
-		di.str = "dep";
-		di.id = dep_id;
-    FpgaRaftProxy::RpcAppendEntriesRequest req{};
-    req.slot = slot_id;
-    req.ballot = ballot;
-    req.leaderCurrentTerm = currentTerm;
-    req.leaderPrevLogIndex = prevLogIndex;
-    req.leaderPrevLogTerm = prevLogTerm;
-    req.leaderCommitIndex = commitIndex;
-    req.dep_id = di;
-    req.cmd = md;
-    auto f = proxy->async_AppendEntries(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-//  verify(0);
-}
+// Workstream N Phase 4e-11: removed deprecated callback-style
+// `void FpgaRaftCommo::BroadcastAppendEntries(... callback)` — body
+// had `verify(0); // deprecated function` and no callers.
 
 void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,
@@ -329,29 +295,9 @@ void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
   }
 }
 
-void FpgaRaftCommo::BroadcastVote(parid_t par_id,
-                                        slotid_t lst_log_idx,
-                                        ballot_t lst_log_term,
-                                        parid_t self_id,
-                                        ballot_t cur_term,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  for (auto& p : proxies) {
-    auto proxy = (FpgaRaftProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    FpgaRaftProxy::RpcVoteRequest req{};
-    req.lst_log_idx = lst_log_idx;
-    req.lst_log_term = lst_log_term;
-    req.par_id = self_id;
-    req.cur_term = cur_term;
-    auto f = proxy->async_Vote(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-}
+// Workstream N Phase 4e-11: removed deprecated callback-style
+// `void FpgaRaftCommo::BroadcastVote(... callback)` — body had
+// `verify(0); // deprecated function` and no callers.
 
 shared_ptr<FpgaRaftVoteQuorumEvent>
 FpgaRaftCommo::BroadcastVote(parid_t par_id,
@@ -393,29 +339,9 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
   return e;
 }
 
-void FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
-                                        slotid_t lst_log_idx,
-                                        ballot_t lst_log_term,
-                                        parid_t self_id,
-                                        ballot_t cur_term,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  for (auto& p : proxies) {
-    auto proxy = (FpgaRaftProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    FpgaRaftProxy::RpcVoteRequest req{};
-    req.lst_log_idx = lst_log_idx;
-    req.lst_log_term = lst_log_term;
-    req.par_id = self_id;
-    req.cur_term = cur_term;
-    auto f = proxy->async_Vote(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-}
+// Workstream N Phase 4e-11: removed deprecated callback-style
+// `void FpgaRaftCommo::BroadcastVote2FPGA(... callback)` — body had
+// `verify(0); // deprecated function` and no callers.
 
 shared_ptr<FpgaRaftVote2FPGAQuorumEvent>
 FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
