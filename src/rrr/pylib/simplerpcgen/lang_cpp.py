@@ -172,8 +172,16 @@ def emit_typed_proxy_sync_signature(func, f):
     f.writeln("}")
 
 def emit_proxy_request_call(service, func, marshal_args, f):
+    # Workstream N Phase 3d-3: emit a `BinaryWriteArchive&` lambda
+    # for the proxy request.  Phase 3d-2's dual-signature
+    # `request_via_channel<F>` accepts either signature; archive is
+    # the path forward (decouples user code from the legacy `Marshal`
+    # buffer).  User-struct `operator<<` overloads have been emitted
+    # for both `Marshal&` and `BinaryWriteArchive&` since Phase 3c, so
+    # `__m__ << field` keeps compiling regardless of which signature
+    # the lambda uses.
     if len(marshal_args) > 0:
-        f.writeln("return __cl__->request(%sService::%s, __fu_attr__, [&](rrr::Marshal& __m__) {" % (service.name, func.name.upper()))
+        f.writeln("return __cl__->request(%sService::%s, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {" % (service.name, func.name.upper()))
         with f.indent():
             for arg in marshal_args:
                 f.writeln("__m__ << %s;" % arg)
@@ -236,7 +244,8 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
     f.writeln("%s async_%s(const %s& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (result_type, func.name, request_struct_name))
     with f.indent():
         if len(typed_async_call_params) > 0:
-            f.writeln("auto __fu_result__ = __cl__->request(%sService::%s, __fu_attr__, [&](rrr::Marshal& __m__) {" % (service.name, func.name.upper()))
+            # Workstream N Phase 3d-3: see `emit_proxy_request_call`.
+            f.writeln("auto __fu_result__ = __cl__->request(%sService::%s, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {" % (service.name, func.name.upper()))
             with f.indent():
                 for param in typed_async_call_params:
                     f.writeln("__m__ << %s;" % param)
@@ -380,7 +389,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                                         f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__);")
                                     else:
                                         f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {")
                                         with f.indent():
                                             for _, field_name in output_fields:
                                                 f.writeln("m << __typed_resp__.%s;" % field_name)
@@ -416,7 +425,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                                         f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__);")
                                     else:
                                         f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, 0, [&](rrr::Marshal& m) {")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, 0, [&](rrr::BinaryWriteArchive& m) {")
                                         with f.indent():
                                             for _, field_name in output_fields:
                                                 f.writeln("m << __typed_resp__.%s;" % field_name)
@@ -447,7 +456,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                                     f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
                                 else:
                                     f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {")
                                     with f.indent():
                                         for _, field_name in output_fields:
                                             f.writeln("m << __typed_resp__.%s;" % field_name)

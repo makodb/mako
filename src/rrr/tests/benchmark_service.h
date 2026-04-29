@@ -661,7 +661,7 @@ private:
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
                         m << __typed_resp__.flag;
                     });
                 }
@@ -684,7 +684,7 @@ private:
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
                         m << __typed_resp__.v;
                     });
                 }
@@ -707,7 +707,7 @@ private:
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
                         m << __typed_resp__.a_add_b;
                     });
                 }
@@ -750,7 +750,7 @@ private:
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
                         m << __typed_resp__.v;
                     });
                 }
@@ -772,7 +772,7 @@ private:
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
                         m << __typed_resp__.flag;
                     });
                 }
@@ -795,7 +795,7 @@ private:
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
                         m << __typed_resp__.v;
                     });
                 }
@@ -818,7 +818,7 @@ private:
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
                         m << __typed_resp__.a_add_b;
                     });
                 }
@@ -972,7 +972,7 @@ public:
         }
     };
     rusty::Result<fast_primeTypedFuture, rrr::i32> async_fast_prime(const RpcFastPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.n;
         });
         if (__fu_result__.is_err()) {
@@ -1021,7 +1021,7 @@ public:
         }
     };
     rusty::Result<fast_dot_prodTypedFuture, rrr::i32> async_fast_dot_prod(const RpcFastDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.p1;
             __m__ << req.p2;
         });
@@ -1071,7 +1071,7 @@ public:
         }
     };
     rusty::Result<fast_addTypedFuture, rrr::i32> async_fast_add(const RpcFastAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.a;
             __m__ << req.b;
         });
@@ -1120,7 +1120,7 @@ public:
         }
     };
     rusty::Result<fast_nopTypedFuture, rrr::i32> async_fast_nop(const RpcFastNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.in_0;
         });
         if (__fu_result__.is_err()) {
@@ -1169,7 +1169,7 @@ public:
         }
     };
     rusty::Result<fast_vecTypedFuture, rrr::i32> async_fast_vec(const RpcFastVecRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.n;
         });
         if (__fu_result__.is_err()) {
@@ -1218,7 +1218,7 @@ public:
         }
     };
     rusty::Result<primeTypedFuture, rrr::i32> async_prime(const RpcPrimeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.n;
         });
         if (__fu_result__.is_err()) {
@@ -1267,7 +1267,7 @@ public:
         }
     };
     rusty::Result<dot_prodTypedFuture, rrr::i32> async_dot_prod(const RpcDotProdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.p1;
             __m__ << req.p2;
         });
@@ -1317,7 +1317,7 @@ public:
         }
     };
     rusty::Result<addTypedFuture, rrr::i32> async_add(const RpcAddRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.a;
             __m__ << req.b;
         });
@@ -1366,7 +1366,7 @@ public:
         }
     };
     rusty::Result<nopTypedFuture, rrr::i32> async_nop(const RpcNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.in_0;
         });
         if (__fu_result__.is_err()) {
@@ -1414,7 +1414,7 @@ public:
         }
     };
     rusty::Result<async_nopTypedFuture, rrr::i32> async_async_nop(const RpcAsyncNopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::ASYNC_NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::ASYNC_NOP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.in_0;
         });
         if (__fu_result__.is_err()) {
@@ -1462,7 +1462,7 @@ public:
         }
     };
     rusty::Result<sleepTypedFuture, rrr::i32> async_sleep(const RpcSleepRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.sec;
         });
         if (__fu_result__.is_err()) {
@@ -1511,7 +1511,7 @@ public:
         }
     };
     rusty::Result<deferred_echoTypedFuture, rrr::i32> async_deferred_echo(const RpcDeferredEchoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(BenchmarkService::DEFERRED_ECHO, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(BenchmarkService::DEFERRED_ECHO, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req.val;
         });
         if (__fu_result__.is_err()) {
