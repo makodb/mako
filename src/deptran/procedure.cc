@@ -419,20 +419,11 @@ TxReply &TxData::get_reply() {
   return reply_;
 }
 
-void TxRequest::get_log(i64 tid, std::string &log) {
-  uint32_t len = 0;
-  len += sizeof(tid);
-  len += sizeof(tx_type_);
-  uint32_t input_size = input_.size();
-  len += sizeof(input_size);
-  log.resize(len);
-  memcpy((void *) log.data(), (void *) &tid, sizeof(tid));
-  memcpy((void *) log.data(), (void *) &tx_type_, sizeof(tx_type_));
-  memcpy((void *) (log.data() + sizeof(tx_type_)), (void *) &input_size, sizeof(input_size));
-  for (int i = 0; i < input_size; i++) {
-    log.append(mdb::to_string(input_[i]));
-  }
-}
+// Workstream N Phase 4e-6: removed `void TxRequest::get_log(i64,
+// std::string&)` — both call sites were already commented-out code
+// (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).  The method was a
+// 14-line bookkeeping helper for an old logging path that is no
+// longer invoked.
 
 // (Workstream N Phase 5b-1: TxData::to_marshal/from_marshal deleted.
 // They were inherited Marshallable virtual overrides but never

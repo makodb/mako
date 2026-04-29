@@ -36,7 +36,9 @@ class TxWorkspace {
  public:
   set<int32_t> keys_ = {};
   std::shared_ptr<map<int32_t, Value>> values_{};
-  std::shared_ptr<map<int32_t, shared_ptr<IntEvent>>> value_events_{};
+  // Workstream N Phase 4e-6: removed
+  // `std::shared_ptr<map<int32_t, shared_ptr<IntEvent>>> value_events_{};`
+  // — defined but never written or read anywhere in the codebase.
   TxWorkspace();
   ~TxWorkspace();
   TxWorkspace(const TxWorkspace& rhs);
@@ -102,11 +104,13 @@ class TxRequest {
   int cmd_id_in_client_ = -1;
   /******global unique id end********/
   rusty::Function<void(TxReply &)> callback_ = [] (TxReply&)->void {verify(0);};
-  rusty::Function<void()> fail_callback_ = [] () {
-    verify(0);
-  };
-  void get_log(i64 tid, std::string &log);
-  
+  // Workstream N Phase 4e-6: removed
+  //   `rusty::Function<void()> fail_callback_ = [] () { verify(0); };`
+  // and `void get_log(i64 tid, std::string &log);` — neither was
+  // referenced outside the definitions themselves.  `fail_callback_`
+  // was never set or invoked anywhere.  `get_log` had only two call
+  // sites and both were already commented-out
+  // (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).
 };
 
 Marshal& operator << (Marshal& m, const TxWorkspace &ws);
