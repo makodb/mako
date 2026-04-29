@@ -1,6 +1,21 @@
 from simplerpcgen.misc import SourceFile
 
-def emit_struct(struct, f):
+# Workstream N Phase 3c: optional archive overload emission.
+#
+# When `archive` is True (controlled by the `--archive` CLI flag on
+# rpcgen), `emit_struct` and `emit_marshaled_typed_struct` emit
+# additional `BinaryWriteArchive&` / `BinaryReadArchive&`
+# operator<</>> overloads alongside the existing `Marshal&` ones.
+# Both forms compile and produce byte-identical wire output (Phase 1
+# commitment); Phase 4 will migrate per-command-type call sites to
+# use the archive form.
+#
+# Default is off — generators run with the same behavior as before
+# the flag was introduced. This keeps `rcc_rpc.h` (which uses
+# arbitrary user-defined types like `MarshallDeputy` and `Value` that
+# don't yet have archive operators) compiling without changes.
+
+def emit_struct(struct, f, archive=False):
     f.writeln("struct %s {" % struct.name)
     with f.indent():
         for field in struct.fields:
@@ -21,6 +36,21 @@ def emit_struct(struct, f):
         f.writeln("return m;")
     f.writeln("}")
     f.writeln()
+    if archive:
+        f.writeln("inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) {" % struct.name)
+        with f.indent():
+            for field in struct.fields:
+                f.writeln("ar << o.%s;" % field.name)
+            f.writeln("return ar;")
+        f.writeln("}")
+        f.writeln()
+        f.writeln("inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, %s& o) {" % struct.name)
+        with f.indent():
+            for field in struct.fields:
+                f.writeln("ar >> o.%s;" % field.name)
+            f.writeln("return ar;")
+        f.writeln("}")
+        f.writeln()
 
 def typed_struct_name(func_name, suffix):
     # Use a distinct rpcgen prefix to avoid shadowing user/domain types
@@ -57,7 +87,7 @@ def typed_struct_fields(args, fallback_prefix):
         fields += (arg.type, field_name),
     return fields
 
-def emit_marshaled_typed_struct(struct_name, fields, f):
+def emit_marshaled_typed_struct(struct_name, fields, f, archive=False):
     f.writeln("struct %s {" % struct_name)
     with f.indent():
         for field_type, field_name in fields:
@@ -75,6 +105,19 @@ def emit_marshaled_typed_struct(struct_name, fields, f):
             f.writeln("m >> o.%s;" % field_name)
         f.writeln("return m;")
     f.writeln("}")
+    if archive:
+        f.writeln("friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) {" % struct_name)
+        with f.indent():
+            for _, field_name in fields:
+                f.writeln("ar << o.%s;" % field_name)
+            f.writeln("return ar;")
+        f.writeln("}")
+        f.writeln("friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, %s& o) {" % struct_name)
+        with f.indent():
+            for _, field_name in fields:
+                f.writeln("ar >> o.%s;" % field_name)
+            f.writeln("return ar;")
+        f.writeln("}")
     f.writeln()
 
 def emit_typed_service_signature(service, func, f):
@@ -218,7 +261,7 @@ def emit_typed_proxy_await_signature(func, f):
         f.writeln("return rrr::make_typed_future_result_awaitable(this->async_%s(req, __fu_attr__));" % func.name)
     f.writeln("}")
 
-def emit_service_and_proxy(service, f, rpc_table):
+def emit_service_and_proxy(service, f, rpc_table, archive=False):
     f.writeln("class %sService {" % service.name)
     f.writeln("public:")
     with f.indent():
@@ -226,8 +269,8 @@ def emit_service_and_proxy(service, f, rpc_table):
         for func in service.functions:
             request_struct_name = typed_request_struct_name(func)
             response_struct_name = typed_response_struct_name(func)
-            emit_marshaled_typed_struct(request_struct_name, typed_struct_fields(func.input, "in"), f)
-            emit_marshaled_typed_struct(response_struct_name, typed_struct_fields(func.output, "out"), f)
+            emit_marshaled_typed_struct(request_struct_name, typed_struct_fields(func.input, "in"), f, archive=archive)
+            emit_marshaled_typed_struct(response_struct_name, typed_struct_fields(func.output, "out"), f, archive=archive)
         f.writeln("enum {")
         with f.indent():
             for func in service.functions:
@@ -495,7 +538,7 @@ def emit_service_and_proxy(service, f, rpc_table):
     f.writeln()
 
 
-def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
+def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, archive=False):
     with open(fpath, "w") as f:
         f = SourceFile(f)
         f.writeln("#pragma once")
@@ -518,10 +561,10 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
             f.writeln()
 
         for struct in rpc_source.structs:
-            emit_struct(struct, f)
+            emit_struct(struct, f, archive=archive)
 
         for service in rpc_source.services:
-            emit_service_and_proxy(service, f, rpc_table)
+            emit_service_and_proxy(service, f, rpc_table, archive=archive)
 
         if rpc_source.namespace != None:
             f.writeln(" ".join(["}"] * len(rpc_source.namespace)) + " // namespace " + "::".join(rpc_source.namespace))

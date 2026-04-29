@@ -1200,14 +1200,30 @@ auto view = rrr::as_serializable(md);
 view->save(writer);  // bytes match md.inner()->to_marshal(...)
 ```
 
+#### `rpcgen --archive` emission flag (transitional)
+
+`bin/rpcgen` accepts a `--archive` flag that causes generated headers
+to emit BinaryWriteArchive / BinaryReadArchive operator<<>> overloads
+*in addition to* the existing Marshal& ones — both forms compile and
+produce identical wire bytes. Default off. The flag is opt-in
+because `rcc_rpc.rpc` references types like `MarshallDeputy` and
+`Value` that don't yet have archive operators (Phase 3f / Phase 4
+work); regenerating it with `--archive` would not compile.
+
+Small fixtures (`helloworld.rpc`, `network.rpc`,
+`benchmark_service.rpc`) only reference primitives, containers, and
+self-contained user structs — they regenerate cleanly under
+`--archive` and are exercised in both modes by
+`rpcgen_compile_test.py`.
+
 Status: Phase 1a (primitives + std::string), Phase 1b (containers),
 Phase 1c (`FdSink`/`FdSource`), Phase 2 (`SerializableProxy` +
-registry), Phase 3a (Marshal↔Archive bridges), and Phase 3b
-(Marshallable↔Serializable adapters) have landed. Phase 3c–3f
-(`rpcgen` archive emission, reactor TX/RX path, default emission
-switch, `MarshallDeputy` internals rewrite) and Phase 4+
-(per-command migrations from `Marshallable` to `Serializable`) are
-upcoming. See
+registry), Phase 3a (Marshal↔Archive bridges), Phase 3b
+(Marshallable↔Serializable adapters), and Phase 3c (`rpcgen
+--archive` flag) have landed. Phase 3d–3f (reactor TX/RX path,
+default emission switch, `MarshallDeputy` internals rewrite) and
+Phase 4+ (per-command migrations from `Marshallable` to
+`Serializable`) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 

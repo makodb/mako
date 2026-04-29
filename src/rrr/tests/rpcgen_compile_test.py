@@ -25,6 +25,20 @@ RPC_SOURCES = [
     "src/deptran/rcc_rpc.rpc",
 ]
 
+# Workstream N Phase 3c: a subset of RPC sources is also tested with
+# the `--archive` flag, which causes rpcgen to emit additional
+# BinaryWriteArchive / BinaryReadArchive operator<<>> overloads. Only
+# fixtures whose .rpc references types that already have archive
+# operators (primitives + std/rusty containers + user types defined
+# in the same .rpc) are listed here. `rcc_rpc.rpc` is excluded
+# because it uses `MarshallDeputy` and other types that don't have
+# archive operators yet (Phase 3f / Phase 4 work).
+RPC_SOURCES_ARCHIVE = [
+    "src/deptran/helloworld.rpc",
+    "src/deptran/network.rpc",
+    "src/rrr/tests/benchmark_service.rpc",
+]
+
 
 def load_cmake_module_compile_context(
     repo_root: Path, requested_build_dir: Path | None
@@ -98,8 +112,11 @@ def load_cmake_module_compile_context(
     return None
 
 
-def run_rpcgen(repo_root: Path, rpc_path: Path) -> Path:
-    cmd = [str(repo_root / "bin/rpcgen"), "--cpp", str(rpc_path)]
+def run_rpcgen(repo_root: Path, rpc_path: Path, archive: bool = False) -> Path:
+    cmd = [str(repo_root / "bin/rpcgen"), "--cpp"]
+    if archive:
+        cmd.append("--archive")
+    cmd.append(str(rpc_path))
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
     if proc.returncode != 0:
         raise RuntimeError(
@@ -197,12 +214,13 @@ def main() -> int:
     failures = []
     tested = 0
 
-    for rpc_rel in RPC_SOURCES:
+    def run_one(rpc_rel: str, archive: bool) -> None:
+        nonlocal tested
         rpc_src = repo_root / rpc_rel
 
         if not rpc_src.exists():
             failures.append(f"{rpc_rel}: source file not found")
-            continue
+            return
 
         extra_includes: list[Path] = []
         per_file_timeout = 120.0
@@ -214,22 +232,28 @@ def main() -> int:
             tmp_rpc = Path(tmpdir) / rpc_src.name
             tmp_rpc.write_text(rpc_src.read_text())
 
-            header = run_rpcgen(repo_root, tmp_rpc)
+            header = run_rpcgen(repo_root, tmp_rpc, archive=archive)
             if not header.exists():
                 failures.append(f"{rpc_rel}: header not generated")
-                continue
+                return
 
             ok, err = compile_header(
                 cxx, repo_root, header, extra_includes, compile_context,
                 timeout_sec=per_file_timeout,
             )
             tested += 1
-            label = rpc_rel
+            label = rpc_rel + ("  [--archive]" if archive else "")
             if ok:
                 print(f"  PASS: {label}")
             else:
                 failures.append(f"{label}:\n{err}")
                 print(f"  FAIL: {label}")
+
+    for rpc_rel in RPC_SOURCES:
+        run_one(rpc_rel, archive=False)
+
+    for rpc_rel in RPC_SOURCES_ARCHIVE:
+        run_one(rpc_rel, archive=True)
 
     if tested == 0:
         print("ERROR: no headers were tested")
