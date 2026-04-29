@@ -759,7 +759,10 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
               classic_coo->DispatchAsync(false);
             }
               //e->add_dep(coo->cli_id_, src_coroid, leader_id, coro_id);
-            coo->ids_.push_back(leader_id);
+            // Workstream N Phase 4e-8: removed
+            // `coo->ids_.push_back(leader_id);` — the
+            // `Coordinator::ids_` vector had no readers anywhere, so
+            // the field went away in the same commit.
             e->test();
 	  			}
       };

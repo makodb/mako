@@ -33,7 +33,10 @@ class Coordinator {
   static std::mutex _dbg_txid_lock_;
   static std::unordered_set<txid_t> _dbg_txid_set_;
   bool _inuse_{false};
-  uint32_t n_start_ = 0;
+  // Workstream N Phase 4e-8: removed `uint32_t n_start_ = 0;` —
+  // declared but never read.  The live counter is
+  // `client_status_->txn_start_one(...)` which lives on
+  // `ClientStatus`.
   locid_t loc_id_ = -1;
   uint32_t coo_id_;
   uint32_t offset_;
@@ -41,7 +44,9 @@ class Coordinator {
   uint32_t coro_id_;
 	i64 dep_id_ = -1;
 	int concurrent;
-  std::vector<int> ids_;
+  // Workstream N Phase 4e-8: removed `std::vector<int> ids_;` —
+  // declared and `push_back`ed once at `communicator.cc:762` but
+  // never read.  The push site was deleted alongside the field.
   parid_t par_id_ = -1;
   slotid_t slot_id_ = 0;
   ballot_t curr_ballot_ = 1;
@@ -70,7 +75,8 @@ class Coordinator {
   CmdData *cmd_{nullptr};
   phase_t phase_ = 0;
   map<innid_t, bool> dispatch_acks_ = {};
-  map<innid_t, bool> handout_outs_ = {};
+  // Workstream N Phase 4e-8: removed `map<innid_t, bool> handout_outs_ = {};`
+  // — declared but never written or read anywhere in the codebase.
   Sharding* sharding_ = nullptr;
   shared_ptr<TxnRegistry> txn_reg_{nullptr};
   Communicator* commo_ = nullptr;
@@ -97,9 +103,15 @@ class Coordinator {
   std::vector<int> site_prepare_;
   std::vector<int> site_commit_;
   std::vector<int> site_abort_;
-  std::vector<int> site_piece_;
+  // Workstream N Phase 4e-8: removed `std::vector<int> site_piece_;`
+  // — resized at coordinator.cc:53 alongside the other site_* vectors
+  // but never written or read otherwise (only commented-out debug
+  // logging at coordinator.cc:60-64 referenced it).  The resize call
+  // was removed alongside the field.
   rusty::Function<void()> commit_callback_ = [] () {verify(0);};
-  rusty::Function<void()> exe_callback_ = [] () {verify(0);};
+  // Workstream N Phase 4e-8: removed
+  //   `rusty::Function<void()> exe_callback_ = [] () {verify(0);};`
+  // — declared but never set or invoked anywhere.
   // above should be reset
 
   /******global unique id begin********/

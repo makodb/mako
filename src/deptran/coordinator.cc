@@ -50,7 +50,11 @@ Coordinator::Coordinator(uint32_t coo_id,
   // Log_info("What is the first value of site_prepare_ for %x: %d", this, site_prepare_[0]);
   site_commit_.resize(addrs.size(), 0);
   site_abort_.resize(addrs.size(), 0);
-  site_piece_.resize(addrs.size(), 0);
+  // Workstream N Phase 4e-8: removed `site_piece_.resize(addrs.size(), 0);`
+  // — the `Coordinator::site_piece_` vector had no readers (only the
+  // sibling `site_prepare_`/`site_commit_`/`site_abort_` are
+  // incremented and inspected); the field went away in the same
+  // commit.
 	
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
 	Log_info("time of 2nd part of CreateCoordinator: %d", end.tv_nsec-begin.tv_nsec);*/

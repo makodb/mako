@@ -227,7 +227,9 @@ Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
   coord->par_id_ = partition_id_;
   //Log_info("Partition id set: %d", partition_id_);
   coord->loc_id_ = this->loc_id_;
-  coord->dep_id_ = dep_id;
+  // Workstream N Phase 4e-8: removed a second
+  // `coord->dep_id_ = dep_id;` immediately below this line — it was
+  // a duplicate write of the same value already done above.
   return coord;
 }
 
