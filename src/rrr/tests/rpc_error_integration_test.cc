@@ -234,7 +234,7 @@ TEST_F(ErrorIntegrationTest, SuccessfulRequestHasNoError) {
     std::string input = "test";
     auto fu_result = client->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
+        [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();

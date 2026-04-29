@@ -139,7 +139,7 @@ class RecordingService {
         auto sconn_opt = sconn.upgrade();
         if (sconn_opt.is_some()) {
             sconn_opt.unwrap()->reply(*req, /*err=*/0,
-                [&](Marshal& out) { out << echo; });
+                [&](BinaryWriteArchive& out) { out << echo; });
         }
     }
 

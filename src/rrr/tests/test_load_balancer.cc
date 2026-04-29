@@ -467,7 +467,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
     std::string input = "test";
     auto fu_result = client->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
+        [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -492,7 +492,7 @@ TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFligh
     // Keep one request in-flight on the selected client.
     auto sleep_result = busy_client->request(
         benchmark::BenchmarkService::SLEEP,
-        [&](Marshal& m) { m << 0.30; }
+        [&](BinaryWriteArchive& m) { m << 0.30; }
     );
     ASSERT_TRUE(sleep_result.is_ok());
     auto sleep_future = sleep_result.unwrap();
@@ -534,7 +534,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
     std::string input = "test";
     auto fu_result = client->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
+        [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();

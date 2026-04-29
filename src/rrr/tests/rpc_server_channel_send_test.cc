@@ -146,7 +146,7 @@ TEST_F(ServerChannelSendTest, ReplyCapturesFrameWithExpectedBody) {
     req.xid = 42;
 
     const std::string user_payload = "hello";
-    sconn().reply(req, /*error_code=*/0, [&](Marshal& out) {
+    sconn().reply(req, /*error_code=*/0, [&](BinaryWriteArchive& out) {
         out << user_payload;
     });
 
@@ -179,7 +179,7 @@ TEST_F(ServerChannelSendTest, ReplyPropagatesErrorCode) {
 
     Request req;
     req.xid = 7;
-    sconn().reply(req, /*error_code=*/ENOENT, [](Marshal&) {});
+    sconn().reply(req, /*error_code=*/ENOENT, [](BinaryWriteArchive&) {});
 
     ASSERT_EQ(stub->count(), 1u);
     Marshal body;
@@ -205,7 +205,7 @@ TEST_F(ServerChannelSendTest, MultipleSequentialRepliesCaptureInOrder) {
     for (i64 xid = 1; xid <= 5; ++xid) {
         Request req;
         req.xid = xid;
-        sconn().reply(req, 0, [&](Marshal& out) {
+        sconn().reply(req, 0, [&](BinaryWriteArchive& out) {
             out << static_cast<i64>(xid * 10);
         });
     }

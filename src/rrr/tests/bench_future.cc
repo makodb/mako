@@ -47,7 +47,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
                 out << input;
             });
         }
@@ -115,7 +115,7 @@ TEST_F(FutureBenchmark, CreateReleaseThroughput) {
 
     for (int i = 0; i < iterations; i++) {
         i32 val = i;
-        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
             m << val;
         });
         ASSERT_TRUE(fu_result.is_ok());
@@ -136,7 +136,7 @@ TEST_F(FutureBenchmark, CreateWaitReleaseThroughput) {
 
     for (int i = 0; i < iterations; i++) {
         i32 val = i;
-        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
             m << val;
         });
         ASSERT_TRUE(fu_result.is_ok());
@@ -168,7 +168,7 @@ TEST_F(FutureBenchmark, BatchOperations) {
         // Create batch
         for (int i = 0; i < batch_size; i++) {
             i32 val = batch * batch_size + i;
-            auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+            auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
                 m << val;
             });
             ASSERT_TRUE(fu_result.is_ok());
@@ -198,7 +198,7 @@ TEST_F(FutureBenchmark, RefCopyOverhead) {
 
     for (int i = 0; i < iterations; i++) {
         i32 val = i;
-        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
             m << val;
         });
         ASSERT_TRUE(fu_result.is_ok());
@@ -233,7 +233,7 @@ TEST_F(FutureBenchmark, CallbackOverhead) {
         });
 
         i32 val = i;
-        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, attr, [&](Marshal& m) {
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, attr, [&](BinaryWriteArchive& m) {
             m << val;
         });
         ASSERT_TRUE(fu_result.is_ok());

@@ -118,7 +118,7 @@ TEST_F(RequestBufferingTest, DISABLED_RequestWhenDisconnectedQueues) {
     EXPECT_FALSE(conn->connected());
 
     // Make a request - should be queued since buffering is enabled by default
-    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+    auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
         m << val;
     });
@@ -140,7 +140,7 @@ TEST_F(RequestBufferingTest, RequestWhenDisconnectedFailsFast) {
     EXPECT_FALSE(conn->connected());
 
     // Make a request - should fail immediately
-    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+    auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
         m << val;
     });
@@ -158,7 +158,7 @@ TEST_F(RequestBufferingTest, DISABLED_MultipleRequestsQueued) {
 
     // Make multiple requests
     for (int i = 0; i < 5; i++) {
-        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+        auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
             m << i;
         });
         EXPECT_TRUE(result.is_ok());
@@ -172,7 +172,7 @@ TEST_F(RequestBufferingTest, DISABLED_ClearPendingRequests) {
 
     // Queue some requests
     for (int i = 0; i < 3; i++) {
-        conn->request(i, FutureAttr(), [](Marshal&) {});
+        conn->request(i, FutureAttr(), [](BinaryWriteArchive&) {});
     }
 
     EXPECT_EQ(conn->pending_request_count(), 3u);
@@ -194,7 +194,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsOldest) {
 
     // Queue 5 requests
     for (int i = 0; i < 5; i++) {
-        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+        auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
             m << i;
         });
         EXPECT_TRUE(result.is_ok());
@@ -217,7 +217,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsNewest) {
     // remaining will return EAGAIN when rejected
     int ok_count = 0;
     for (int i = 0; i < 5; i++) {
-        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+        auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
             m << i;
         });
         if (result.is_ok()) ok_count++;
@@ -239,7 +239,7 @@ TEST_F(RequestBufferingTest, DISABLED_DropNewestOverflowDoesNotLeakPendingFuture
     int ok_count = 0;
     int err_count = 0;
     for (int i = 0; i < 5; i++) {
-        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+        auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
             m << i;
         });
         if (result.is_ok()) {
@@ -270,7 +270,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayReenqueueRejectDoesNotLeaveFuturePen
     config.overflow = OverflowStrategy::DROP_NEWEST;
     conn->set_buffering_config(config);
 
-    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+    auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
         m << val;
     });
@@ -308,7 +308,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayExpiredRequestUsesTimeoutErrorCode) 
     config.overflow = OverflowStrategy::DROP_NEWEST;
     conn->set_buffering_config(config);
 
-    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+    auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 7;
         m << val;
     });
@@ -346,7 +346,7 @@ TEST_F(RequestBufferingTest, DISABLED_OverflowAndExpiryDoNotLeavePendingFutures)
     int rejected = 0;
     int unexpected_err = 0;
     for (int i = 0; i < 128; i++) {
-        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+        auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
             m << i;
         });
         if (result.is_ok()) {
@@ -414,7 +414,7 @@ TEST_F(RequestBufferingTest, ClientBufferingConfig) {
 TEST_F(RequestBufferingTest, DISABLED_QueuedRequestReturnsFuture) {
     auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
 
-    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+    auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
         m << val;
     });
@@ -448,7 +448,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueing) {
     for (int t = 0; t < num_threads; t++) {
         threads.emplace_back([&conn, &success_count, t, requests_per_thread]() {
             for (int i = 0; i < requests_per_thread; i++) {
-                auto result = conn->request(t * 1000 + i, FutureAttr(), [t, i](Marshal& m) {
+                auto result = conn->request(t * 1000 + i, FutureAttr(), [t, i](BinaryWriteArchive& m) {
                     m << t << i;
                 });
                 if (result.is_ok()) {
@@ -501,7 +501,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueAndClearHasNoStuckFutures) 
         producers.emplace_back([&conn, &ok_count, &expected_err_count, &unexpected_err_count,
                                 &futures_mu, &futures, t]() {
             for (int i = 0; i < kRequestsPerProducer; i++) {
-                auto result = conn->request(t * 10000 + i, FutureAttr(), [](Marshal&) {});
+                auto result = conn->request(t * 10000 + i, FutureAttr(), [](BinaryWriteArchive&) {});
                 if (result.is_ok()) {
                     ok_count++;
                     std::lock_guard<std::mutex> lock(futures_mu);
@@ -570,7 +570,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueuedRequestHasTTL) {
     conn->set_buffering_config(config);
 
     // Queue a request
-    conn->request(1, FutureAttr(), [](Marshal&) {});
+    conn->request(1, FutureAttr(), [](BinaryWriteArchive&) {});
     EXPECT_EQ(conn->pending_request_count(), 1u);
 
     // Wait for TTL to expire

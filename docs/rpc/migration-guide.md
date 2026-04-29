@@ -106,7 +106,7 @@ Existing code continues to work:
 // Before and after - no changes needed
 auto client = Client::create(poll_thread);
 client->connect("127.0.0.1:8080");
-auto future = client->request(RPC_ID, [](Marshal& m) { m << data; });
+auto future = client->request(RPC_ID, [](BinaryWriteArchive& m) { m << data; });
 future.unwrap()->wait();
 client->close();
 ```

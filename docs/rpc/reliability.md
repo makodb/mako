@@ -143,7 +143,7 @@ config.overflow = OverflowStrategy::DROP_OLDEST;
 client->set_buffering_config(config);
 
 // Requests made while disconnected are queued
-auto fu = client->request(rpc_id, [](Marshal& m) {
+auto fu = client->request(rpc_id, [](BinaryWriteArchive& m) {
     m << arg1 << arg2;
 });
 
@@ -179,7 +179,7 @@ opts.max_delay_ms = 2000;        // Maximum backoff delay
 opts.jitter_factor = 0.1;        // 10% jitter
 
 // Send request with options
-auto fu = client->request_with_options(rpc_id, opts, [](Marshal& m) {
+auto fu = client->request_with_options(rpc_id, opts, [](BinaryWriteArchive& m) {
     m << arg1 << arg2;
 });
 

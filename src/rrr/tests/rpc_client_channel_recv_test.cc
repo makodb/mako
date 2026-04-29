@@ -232,7 +232,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
     // Issue a request — captures the xid so we can synthesize a matching
     // response.
     constexpr i32 kRpcId = 0x55;
-    auto fr = mut_conn().request(kRpcId, FutureAttr{}, [](Marshal& m) {
+    auto fr = mut_conn().request(kRpcId, FutureAttr{}, [](BinaryWriteArchive& m) {
         m << static_cast<i32>(0xCAFEBABE);
     });
     ASSERT_TRUE(fr.is_ok());
@@ -271,7 +271,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
 }
 
 TEST_F(ClientChannelRecvTest, ResponseSurfacesNonZeroErrorCode) {
-    auto fr = mut_conn().request(0x66, FutureAttr{}, [](Marshal&) {});
+    auto fr = mut_conn().request(0x66, FutureAttr{}, [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fr.is_ok());
     auto fu = fr.unwrap();
 
@@ -295,7 +295,7 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
     std::vector<rusty::Arc<Future>> futures;
     futures.reserve(kCount);
     for (int i = 0; i < kCount; ++i) {
-        auto fr = mut_conn().request(0x80 + i, FutureAttr{}, [i](Marshal& m) {
+        auto fr = mut_conn().request(0x80 + i, FutureAttr{}, [i](BinaryWriteArchive& m) {
             m << i;
         });
         ASSERT_TRUE(fr.is_ok());
@@ -371,7 +371,7 @@ TEST_F(ClientChannelRecvTest, RecvLoopExitsCleanlyOnChannelClose) {
     EXPECT_TRUE(mut_conn().is_channel_mode());
     // A subsequent request fails with ENOTCONN because the
     // FiberChannel reports closed.
-    auto fr = mut_conn().request(0x99, FutureAttr{}, [](Marshal&) {});
+    auto fr = mut_conn().request(0x99, FutureAttr{}, [](BinaryWriteArchive&) {});
     EXPECT_TRUE(fr.is_err());
     EXPECT_EQ(fr.unwrap_err(), ENOTCONN);
 }

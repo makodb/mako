@@ -154,7 +154,7 @@ TEST_F(RPCTest, BasicNop) {
     std::string input = "Hello, RPC!";
     auto fu_result = client.as_ref().unwrap()->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
+        [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -173,7 +173,7 @@ TEST_F(RPCTest, MultipleRequests) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
             benchmark::BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -213,7 +213,7 @@ TEST_F(RPCTest, ConcurrentRequests) {
                 std::string input = "Thread_" + std::to_string(t) + "_Request_" + std::to_string(i);
                 auto fu_result = thread_client->request(
                     benchmark::BenchmarkService::FAST_NOP,
-                    [&](Marshal& m) { m << input; }
+                    [&](BinaryWriteArchive& m) { m << input; }
                 );
                 if (fu_result.is_err()) continue;
                 auto fu = fu_result.unwrap();
@@ -242,7 +242,7 @@ TEST_F(RPCTest, LargePayload) {
 
     auto fu_result = client.as_ref().unwrap()->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << large_input; }
+        [&](BinaryWriteArchive& m) { m << large_input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -258,7 +258,7 @@ TEST_F(RPCTest, DifferentMethods) {
         std::string dummy = "";
         auto fu_result = client.as_ref().unwrap()->request(
             benchmark::BenchmarkService::NOP,
-            [&](Marshal& m) { m << dummy; }
+            [&](BinaryWriteArchive& m) { m << dummy; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu_nop = fu_result.unwrap();
@@ -272,7 +272,7 @@ TEST_F(RPCTest, DifferentMethods) {
         i32 prime_input = 17;
         auto fu_result = client.as_ref().unwrap()->request(
             benchmark::BenchmarkService::PRIME,
-            [&](Marshal& m) { m << prime_input; }
+            [&](BinaryWriteArchive& m) { m << prime_input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu_prime = fu_result.unwrap();
@@ -290,7 +290,7 @@ TEST_F(RPCTest, DifferentMethods) {
         i32 composite_input = 24;
         auto fu_result = client.as_ref().unwrap()->request(
             benchmark::BenchmarkService::PRIME,
-            [&](Marshal& m) { m << composite_input; }
+            [&](BinaryWriteArchive& m) { m << composite_input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu_composite = fu_result.unwrap();
@@ -308,7 +308,7 @@ TEST_F(RPCTest, TimeoutHandling) {
     std::string input = "timeout_test";
     auto fu_result = client.as_ref().unwrap()->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
+        [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -336,7 +336,7 @@ TEST_F(RPCTest, CallbackMechanism) {
     auto fu_result = client.as_ref().unwrap()->request(
         benchmark::BenchmarkService::FAST_NOP,
         attr,
-        [&](Marshal& m) { m << input; }
+        [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -363,7 +363,7 @@ TEST_F(RPCTest, EmptyPayload) {
     std::string dummy = "";
     auto fu_result = client.as_ref().unwrap()->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << dummy; }
+        [&](BinaryWriteArchive& m) { m << dummy; }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -377,7 +377,7 @@ TEST_F(RPCTest, ConnectionResilience) {
     std::string input1 = "before_reconnect";
     auto fu1_result = client.as_ref().unwrap()->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input1; }
+        [&](BinaryWriteArchive& m) { m << input1; }
     );
     ASSERT_TRUE(fu1_result.is_ok());
     auto fu1 = fu1_result.unwrap();
@@ -400,7 +400,7 @@ TEST_F(RPCTest, ConnectionResilience) {
     std::string input2 = "after_reconnect";
     auto fu2_result = client.as_ref().unwrap()->request(
         benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input2; }
+        [&](BinaryWriteArchive& m) { m << input2; }
     );
     ASSERT_TRUE(fu2_result.is_ok());
     auto fu2 = fu2_result.unwrap();
@@ -418,7 +418,7 @@ TEST_F(RPCTest, PipelinedRequests) {
         std::string dummy = "";
         auto fu_result = client.as_ref().unwrap()->request(
             benchmark::BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << dummy; }
+            [&](BinaryWriteArchive& m) { m << dummy; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -442,7 +442,7 @@ TEST_F(RPCTest, SlowClientFastServer) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
             benchmark::BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -470,7 +470,7 @@ TEST_F(RPCTest, FastClientSlowServer) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
             benchmark::BenchmarkService::NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -583,7 +583,7 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
 
                     auto fu_result = thread_client->request(
                         benchmark::BenchmarkService::FAST_NOP,
-                        [&](Marshal& m) { m << input; }
+                        [&](BinaryWriteArchive& m) { m << input; }
                     );
 
                     if (fu_result.is_err()) {

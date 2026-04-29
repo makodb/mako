@@ -724,7 +724,7 @@ if (rc != 0) {
 }
 
 // Synchronous-style call using FutureResult
-auto fu_result = client->request(RPC_METHOD_ID, [&](Marshal& m) {
+auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
     m << arg1 << arg2;
 });
 
@@ -739,7 +739,7 @@ if (fu_result.is_ok()) {
 ### Async RPC
 
 ```cpp srpc-compile-client
-auto fu_result = client->request(RPC_METHOD_ID, [&](Marshal& m) {
+auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
     m << arg1;
 });
 // ... do other work ...
@@ -1295,10 +1295,23 @@ Marshal-write call sites in the generated layer.  Phase 3d-4 flipped
 `rusty::Function<void(BinaryWriteArchive&)>` and updated lang_cpp.py
 to emit the matching lambda for deferred-style RPCs — every
 write-side lambda the rpcgen output now generates lands as
-`BinaryWriteArchive&`.  Sub-leaves 3d-5..3d-6 (sweep of remaining
-hand-written `Marshal&` write_fn callers in tests/apps, and the
-final deletion of the legacy `Marshal&` write_fn overloads + Phase
-3e-2 user-struct operator drop) are queued. Phase 3f-2/3
+`BinaryWriteArchive&`.  Phase 3d-5 then swept the remaining
+hand-written `Marshal&` write_fn callers across the codebase: 27
+test files under `src/rrr/tests/`, three Mako application files,
+`client.hpp` / `server.hpp` empty-lambda convenience overloads,
+the timeout/retry closure in `request_with_options<F>`, the doc
+snippet in `srpc-book.md`, and the user-facing examples in
+`docs/rpc/{api,migration-guide,reliability}.md` — about 150 lambda
+rewrites total, plus ~15 `m.write(p, n)` → `m.write_bytes(p, n)`
+body rewrites where the underlying Marshal API call needed to
+adapt to the archive's surface.  Phase 3d-2's `if constexpr`
+dispatch in `request_via_channel<F>` / `reply<F>` now exclusively
+hits the `BinaryWriteArchive&` branch in production paths; the
+remaining Marshal-flavoured callers are only in `_pyrpc.cpp` (the
+Python C extension, kept until its own migration) and in the
+intentional byte-format parity tests in `rpc_marshal_archive_test.cc`.
+Sub-leaf 3d-6 (final deletion of the legacy `Marshal&` write_fn
+overloads + Phase 3e-2 user-struct operator drop) is queued. Phase 3f-2/3
 (`MarshallDeputy` SerializableProxy storage), and the remaining
 Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
 virtuals, now gated only on test-fixture migration since `CmdData`

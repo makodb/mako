@@ -59,7 +59,7 @@ class EchoService {
         auto sconn_opt = sconn.upgrade();
         if (sconn_opt.is_some()) {
             sconn_opt.unwrap()->reply(*req, /*err=*/0,
-                [&](Marshal& out) { out << echo; });
+                [&](BinaryWriteArchive& out) { out << echo; });
         }
     }
 
@@ -132,7 +132,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 
     const std::string input = "hello-inmemory";
     auto fu_result = client->request(EchoService::kEchoRpcId,
-        [&](Marshal& m) { m << input; });
+        [&](BinaryWriteArchive& m) { m << input; });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     fu->wait();
@@ -211,7 +211,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
     {
         const std::string input = "via-marshal";
         auto fu = client->request(EchoService::kEchoRpcId,
-            [&](Marshal& m) { m << input; }).unwrap();
+            [&](BinaryWriteArchive& m) { m << input; }).unwrap();
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
         std::string echoed;
@@ -253,7 +253,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
     for (int i = 0; i < kIterations; ++i) {
         std::string input = "req-" + std::to_string(i);
         auto fu_result = client->request(EchoService::kEchoRpcId,
-            [&](Marshal& m) { m << input; });
+            [&](BinaryWriteArchive& m) { m << input; });
         ASSERT_TRUE(fu_result.is_ok()) << "iter=" << i;
         auto fu = fu_result.unwrap();
         fu->wait();

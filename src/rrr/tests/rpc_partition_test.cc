@@ -208,7 +208,7 @@ protected:
         std::string input = "partition_test";
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_err()) return false;
         auto fu = fu_result.unwrap();
@@ -751,7 +751,7 @@ TEST_F(PartitionTest, PartitionWithPendingRequests) {
         std::string input = "req_" + std::to_string(i);
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_ok()) {
             futures.push_back(fu_result.unwrap());

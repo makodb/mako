@@ -108,7 +108,7 @@ rrr::i32 MakoClientProxy::Delete(rrr::i64 txn_id, rrr::i32 table_id,
 rrr::FutureResult MakoClientProxy::async_BeginTxn(rrr::i64 client_id,
                                                    const rrr::FutureAttr& attr) {
     return client_->request(MakoClientService::BEGIN_TXN, attr,
-                           [&](rrr::Marshal& m) {
+                           [&](rrr::BinaryWriteArchive& m) {
                                m << client_id;
                            });
 }
@@ -117,7 +117,7 @@ rrr::FutureResult MakoClientProxy::async_BeginTxn(rrr::i64 client_id,
 rrr::FutureResult MakoClientProxy::async_Commit(rrr::i64 txn_id,
                                                  const rrr::FutureAttr& attr) {
     return client_->request(MakoClientService::COMMIT, attr,
-                           [&](rrr::Marshal& m) {
+                           [&](rrr::BinaryWriteArchive& m) {
                                m << txn_id;
                            });
 }
@@ -126,7 +126,7 @@ rrr::FutureResult MakoClientProxy::async_Commit(rrr::i64 txn_id,
 rrr::FutureResult MakoClientProxy::async_Rollback(rrr::i64 txn_id,
                                                    const rrr::FutureAttr& attr) {
     return client_->request(MakoClientService::ROLLBACK, attr,
-                           [&](rrr::Marshal& m) {
+                           [&](rrr::BinaryWriteArchive& m) {
                                m << txn_id;
                            });
 }
@@ -136,7 +136,7 @@ rrr::FutureResult MakoClientProxy::async_Put(rrr::i64 txn_id, rrr::i32 table_id,
                                               const std::string& key, const std::string& value,
                                               const rrr::FutureAttr& attr) {
     return client_->request(MakoClientService::PUT, attr,
-                           [&](rrr::Marshal& m) {
+                           [&](rrr::BinaryWriteArchive& m) {
                                m << txn_id << table_id << key << value;
                            });
 }
@@ -146,7 +146,7 @@ rrr::FutureResult MakoClientProxy::async_Get(rrr::i64 txn_id, rrr::i32 table_id,
                                               const std::string& key,
                                               const rrr::FutureAttr& attr) {
     return client_->request(MakoClientService::GET, attr,
-                           [&](rrr::Marshal& m) {
+                           [&](rrr::BinaryWriteArchive& m) {
                                m << txn_id << table_id << key;
                            });
 }
@@ -156,7 +156,7 @@ rrr::FutureResult MakoClientProxy::async_Delete(rrr::i64 txn_id, rrr::i32 table_
                                                  const std::string& key,
                                                  const rrr::FutureAttr& attr) {
     return client_->request(MakoClientService::DELETE_KEY, attr,
-                           [&](rrr::Marshal& m) {
+                           [&](rrr::BinaryWriteArchive& m) {
                                m << txn_id << table_id << key;
                            });
 }

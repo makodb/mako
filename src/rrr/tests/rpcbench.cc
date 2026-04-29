@@ -228,7 +228,7 @@ static void* client_proc(void* arg_ptr) {
 
     auto do_work = [cl, &fu_attr, rpc_id, thread_idx] {
         if (!should_stop) {
-            auto fu_result = cl->request(rpc_id, fu_attr, [rpc_id](rrr::Marshal& m) {
+            auto fu_result = cl->request(rpc_id, fu_attr, [rpc_id](rrr::BinaryWriteArchive& m) {
                 if (rpc_id == BenchmarkService::FAST_NOP ||
                     rpc_id == BenchmarkService::NOP ||
                     rpc_id == BenchmarkService::ASYNC_NOP) {
