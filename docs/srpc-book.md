@@ -1001,16 +1001,20 @@ struct TypedMarshallableAdapterTraits<MyTypedData> {
 } // namespace rrr
 ```
 
-In-tree deptran payloads `VecPieceData`, `LogEntry`, and `BulkPaxosCmd`
-currently use this trait-backed typed-adapter path and no longer
-inherit `Marshallable` directly.
+In-tree deptran payloads `LogEntry` and `BulkPaxosCmd` currently use
+this trait-backed typed-adapter path and no longer inherit
+`Marshallable` directly. (Both types have `bypass_to_socket_` /
+`entity_size` / `write_to_fd` overrides exposed via
+`TypedPaxosLogEnvelopeAdapter`; migrating them to Serializable
+requires a forwarding adapter that's out of scope for the current
+phase.)
 
 The other in-tree types (`VecRecData`, `ViewData`, `KeyCmdBatchData`,
-`TpcPrepareCommand`, `TpcCommitCommand`, `TpcEmptyCommand`, `TpcNoopCommand`,
-`TpcBatchCommand`, `ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`,
-`BulkPrepareLog`, `PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`,
-`SyncLogResponse`, `SyncNoOpRequest`) have been migrated to the new
-`Serializable` path
+`VecPieceData`, `TpcPrepareCommand`, `TpcCommitCommand`,
+`TpcEmptyCommand`, `TpcNoopCommand`, `TpcBatchCommand`,
+`ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`, `BulkPrepareLog`,
+`PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`, `SyncLogResponse`,
+`SyncNoOpRequest`) have been migrated to the new `Serializable` path
 (see §10) — they expose `save`/`load`/`kind` methods directly on the
 type, register through `reg_serializable_in_deputy<T>(kind)`, and skip
 the `TypedMarshallableAdapter` machinery entirely. Wire format is
@@ -1252,14 +1256,16 @@ migrations), Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
 `TpcCommitCommand`, `TpcBatchCommand`), Phase 4d-prep (forward-declared
 bridge `wrap_typed_marshallable` in `marshal.hpp` so
 `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` accept
-Serializable T's transparently), Phase 4d-1/2/3/4/5 (`EmptyGraph`,
-five simple paxos types, three `procedure.h` types,
-`SyncLogResponse`, `RccGraph`), and Phase 4c-1
+Serializable T's transparently), Phase 4d-1/2/3/4/5/6
+(`EmptyGraph`, five simple paxos types, three `procedure.h` types,
+`SyncLogResponse`, `RccGraph`, `VecPieceData` plus archive operators
+for `SimpleCommand`/`TxWorkspace`/`mdb::Value`), and Phase 4c-1
 (`ReplicatedDBCommand`) have all landed. Phase 3d–3f (reactor TX/RX
 path on Sink/Source, default emission switch, `MarshallDeputy`
-internals rewrite) and remaining Phase 4 migrations
-(`VecPieceData`, `LogEntry`, `BulkPaxosCmd`, plus `deptran/janus/`)
-are upcoming. See
+internals rewrite) and remaining Phase 4 migrations (`LogEntry`,
+`BulkPaxosCmd` — both need a forwarding adapter for
+`bypass_to_socket_`/`entity_size`/`write_to_fd`, plus
+`deptran/janus/`) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 

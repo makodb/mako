@@ -113,6 +113,14 @@ Marshal& operator << (Marshal& m, const TxWorkspace &ws);
 
 Marshal& operator >> (Marshal& m, TxWorkspace& ws);
 
+// Workstream N Phase 4d-6: archive operators for TxWorkspace
+// (mirrors the Marshal-based pair byte-for-byte). Used by the
+// Phase 4d-6 SimpleCommand archive operators which feed VecPieceData's
+// Serializable save/load.
+BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws);
+
+BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace& ws);
+
 Marshal& operator << (Marshal& m, const TxReply& reply);
 
 Marshal& operator >> (Marshal& m, TxReply& reply);
@@ -153,40 +161,48 @@ typedef SimpleCommand TxPieceData;
 
 typedef map<parid_t, vector<shared_ptr<SimpleCommand>>> ReadyPiecesData;
 
+// Workstream N Phase 4d-6: migrated from Marshallable to Serializable.
+// Wire format preserved byte-for-byte:
+//   int32_t sp_vec_piece_data_->size()
+//   per SimpleCommand: SimpleCommand bytes (via Phase 4d-6 archive op)
+//   double time_sent_from_client_
+//   bool_t is_recovery_command_
+// The nested SimpleCommand serialization uses the Phase 4d-6
+// archive operators in `command_marshaler.cc`, which mirror the
+// existing Marshal-based ones byte-for-byte.
 class VecPieceData {
  public:
   // TODO move shared_ptr into the vector.
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_VEC_PIECE;
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece_data_{};
   double time_sent_from_client_ = -1e9; // <0 means null, unit is ms
   bool_t is_recovery_command_ = false; // Flag to indicate this is a recovery command
   VecPieceData() = default;
 
-  Marshal& to_marshal(Marshal& m) const {
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
     verify(sp_vec_piece_data_);
-    m << (int32_t) sp_vec_piece_data_->size();
-    for (auto sp : *sp_vec_piece_data_) {
-      m << *sp;
+    ar << static_cast<int32_t>(sp_vec_piece_data_->size());
+    for (const auto& sp : *sp_vec_piece_data_) {
+      ar << *sp;
     }
-    m << time_sent_from_client_;
-    m << is_recovery_command_;
-//    m << *sp_vec_piece_data_;
-    return m;
+    ar << time_sent_from_client_;
+    ar << is_recovery_command_;
   }
 
-  Marshal& from_marshal(Marshal& m) {
+  void load(BinaryReadArchive& ar) {
     verify(!sp_vec_piece_data_);
     sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<TxPieceData>>>();
     int32_t sz;
-    m >> sz;
+    ar >> sz;
     for (int i = 0; i < sz; i++) {
       auto x = std::make_shared<TxPieceData>();
-      m >> *x;
+      ar >> *x;
       sp_vec_piece_data_->push_back(x);
     }
-    m >> time_sent_from_client_;
-    m >> is_recovery_command_;
-//    m >> *sp_vec_piece_data_;
-    return m;
+    ar >> time_sent_from_client_;
+    ar >> is_recovery_command_;
   }
 };
 
@@ -467,17 +483,11 @@ class TxData: public CmdData {
 
 namespace rrr {
 
-template <>
-struct TypedMarshallableAdapterTraits<janus::VecPieceData> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::VecPieceData,
-                               MarshallDeputy::CMD_VEC_PIECE>;
-};
-
-// (Phase 4d-3: VecRecData, ViewData, KeyCmdBatchData are
-// Serializables now — no TypedMarshallableAdapter traits.
-// VecPieceData stays Marshallable for now — has nested SimpleCommand
-// serialization that needs SimpleCommand archive support first.)
+// (Phase 4d-3/4d-6: VecRecData, ViewData, KeyCmdBatchData,
+// VecPieceData are Serializables now — no TypedMarshallableAdapter
+// traits. VecPieceData's migration adds archive operators for
+// SimpleCommand, TxWorkspace, and mdb::Value as free functions in
+// command_marshaler.cc / procedure.cc / marshal-value.cc, mirroring
+// the legacy Marshal-based pairs byte-for-byte.)
 
 }  // namespace rrr
