@@ -8,10 +8,13 @@
 
 namespace janus {
 
-// VecPieceData stays Marshallable for now — nested SimpleCommand
-// fields need their own archive support first.
+// Workstream N Phase 4d-6: VecPieceData migrated to Serializable.
+// The nested vector<shared_ptr<SimpleCommand>> field uses Phase 4d-6
+// archive operators (free functions in command_marshaler.cc) which
+// mirror the existing Marshal-based pair byte-for-byte. Wire format
+// byte-for-byte identical to the previous Marshallable encoding.
 static int volatile x1 =
-    MarshallDeputy::reg_initializer<VecPieceData>(
+    rrr::reg_serializable_in_deputy<VecPieceData>(
         MarshallDeputy::CMD_VEC_PIECE);
 
 // Workstream N Phase 4d-3: VecRecData, ViewData, KeyCmdBatchData
@@ -102,6 +105,39 @@ Marshal& operator >> (Marshal& m, TxWorkspace &ws) {
     }
   }
   return m;
+}
+
+// Workstream N Phase 4d-6: archive operators for TxWorkspace.
+// Wire format byte-for-byte identical to the Marshal-based pair
+// above: keys_ (set<int32_t>), then per-present-key (k, value) pairs,
+// terminated by k=-1.
+BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws) {
+  ar << ws.keys_;
+  auto& input_vars = *ws.values_;
+  for (int32_t k : ws.keys_) {
+    auto it = input_vars.find(k);
+    if (it != input_vars.end()) {
+      ar << k << it->second;
+    }
+  }
+  ar << static_cast<int32_t>(-1);
+  return ar;
+}
+
+BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace &ws) {
+  ar >> ws.keys_;
+  while (true) {
+    int32_t k;
+    ar >> k;
+    if (k >= 0) {
+      Value v;
+      ar >> v;
+      (*ws.values_)[k] = v;
+    } else {
+      break;
+    }
+  }
+  return ar;
 }
 
 Marshal& operator << (Marshal& m, const TxReply& reply) {

@@ -357,13 +357,106 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataUsesTypedAdapterPath) {
   ASSERT_NE(wrapped, nullptr);
   EXPECT_EQ(wrapped->kind(), MarshallDeputy::CMD_VEC_PIECE);
 
-  MarshallDeputy deputy(payload);
+  // Phase 4d-6: VecPieceData migrated to Serializable via the
+  // value-semantic `wrap_serializable` path (no aliased adapter — the
+  // production sites in fpga_raft/server.cc, raft/server.h,
+  // mongodb_connection_thread_pool.h, etc. recover decoded state from
+  // round-tripped wire bytes, not in-memory shared_ptr identity).
+  // Use `wrap_serializable_aliased` here to keep the in-memory
+  // identity check that this regression test guards.
+  MarshallDeputy deputy(wrap_serializable_aliased(payload));
   EXPECT_EQ(deputy.kind_, MarshallDeputy::CMD_VEC_PIECE);
   auto decoded = marshallable_cast<janus::VecPieceData>(deputy);
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded, payload);
   EXPECT_DOUBLE_EQ(decoded->time_sent_from_client_, 42.5);
   EXPECT_EQ(decoded->is_recovery_command_, 1);
+}
+
+// Phase 4d-6: round-trip a populated VecPieceData (with a real
+// SimpleCommand carrying TxWorkspace input + map<int32_t,Value> output
+// fields) through Marshal serialization to exercise the new archive
+// operators end-to-end. This stresses the SimpleCommand,
+// TxWorkspace, and mdb::Value archive operators that were added
+// alongside the VecPieceData migration.
+TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataNonEmptyRoundTrip) {
+  auto payload = std::make_shared<janus::VecPieceData>();
+  payload->sp_vec_piece_data_ =
+      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
+  payload->time_sent_from_client_ = 17.5;
+  payload->is_recovery_command_ = 1;
+
+  // SimpleCommand 1: input has 2 keys mapped to Value, output is empty.
+  auto cmd1 = std::make_shared<janus::SimpleCommand>();
+  cmd1->id_ = 1001;
+  cmd1->type_ = 7;
+  cmd1->inn_id_ = 5;
+  cmd1->root_id_ = 999;
+  cmd1->root_type_ = 3;
+  cmd1->client_id_ = 42;
+  cmd1->cmd_id_in_client_ = 99;
+  cmd1->rule_mode_on_and_is_original_path_only_command_ = 1;
+  cmd1->input.keys_.insert(10);
+  cmd1->input.keys_.insert(20);
+  (*cmd1->input.values_)[10] = mdb::Value(static_cast<i32>(123));
+  (*cmd1->input.values_)[20] = mdb::Value(std::string("hello"));
+  cmd1->output[3] = mdb::Value(static_cast<i64>(456));
+  cmd1->output_size = 1;
+  cmd1->partition_id_ = 11;
+  cmd1->timestamp_ = 7777;
+  cmd1->rank_ = 2;
+  payload->sp_vec_piece_data_->push_back(cmd1);
+
+  // SimpleCommand 2: input/output both empty (edge case).
+  auto cmd2 = std::make_shared<janus::SimpleCommand>();
+  cmd2->id_ = 2002;
+  cmd2->type_ = 8;
+  cmd2->partition_id_ = 22;
+  payload->sp_vec_piece_data_->push_back(cmd2);
+
+  // Serialize via the new Serializable path (SerializableMarshallableAdapter::to_marshal
+  // delegates to VecPieceData::save through a MarshalSink + BinaryWriteArchive).
+  MarshallDeputy outgoing(wrap_typed_marshallable(payload));
+  Marshal m;
+  m << outgoing;
+
+  // Deserialize via the new path (SerializableMarshallableAdapter::from_marshal
+  // delegates to VecPieceData::load through a MarshalSource + BinaryReadArchive).
+  MarshallDeputy incoming;
+  m >> incoming;
+  auto decoded = marshallable_cast<janus::VecPieceData>(incoming);
+  ASSERT_NE(decoded, nullptr);
+
+  EXPECT_DOUBLE_EQ(decoded->time_sent_from_client_, 17.5);
+  EXPECT_EQ(decoded->is_recovery_command_, 1);
+  ASSERT_EQ(decoded->sp_vec_piece_data_->size(), 2u);
+
+  auto& d1 = *(*decoded->sp_vec_piece_data_)[0];
+  EXPECT_EQ(d1.id_, 1001);
+  EXPECT_EQ(d1.type_, 7);
+  EXPECT_EQ(d1.inn_id_, 5);
+  EXPECT_EQ(d1.root_id_, 999);
+  EXPECT_EQ(d1.root_type_, 3);
+  EXPECT_EQ(d1.client_id_, 42);
+  EXPECT_EQ(d1.cmd_id_in_client_, 99);
+  EXPECT_EQ(d1.rule_mode_on_and_is_original_path_only_command_, 1);
+  EXPECT_EQ(d1.partition_id_, 11u);
+  EXPECT_EQ(d1.timestamp_, 7777u);
+  EXPECT_EQ(d1.rank_, 2);
+  ASSERT_EQ(d1.input.keys_.count(10), 1u);
+  ASSERT_EQ(d1.input.keys_.count(20), 1u);
+  EXPECT_EQ(d1.input.at(10).get_i32(), 123);
+  EXPECT_EQ(d1.input.at(20).get_str(), "hello");
+  ASSERT_EQ(d1.output.count(3), 1u);
+  EXPECT_EQ(d1.output.at(3).get_i64(), 456);
+  EXPECT_EQ(d1.output_size, 1);
+
+  auto& d2 = *(*decoded->sp_vec_piece_data_)[1];
+  EXPECT_EQ(d2.id_, 2002);
+  EXPECT_EQ(d2.type_, 8);
+  EXPECT_EQ(d2.partition_id_, 22u);
+  EXPECT_TRUE(d2.input.keys_.empty());
+  EXPECT_TRUE(d2.output.empty());
 }
 
 TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
