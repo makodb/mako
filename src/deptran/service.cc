@@ -12,6 +12,7 @@
 #include "janus/scheduler.h"
 #include "procedure.h"
 #include "rcc/dep_graph.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"  // wrap_serializable_aliased
 #include "service.h"
 #include "rcc/server.h"
 #include "scheduler.h"
@@ -403,7 +404,9 @@ void ClassicServiceImpl::SimpleCmd(
   Fiber::create_run([res, defer = std::move(defer), this]() mutable {
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
     verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
-    auto sp_m = wrap_typed_marshallable(empty_cmd);
+    // Phase 4a-2: aliased wrap preserves event-member aliasing — the
+    // apply path's Done() must wake this empty_cmd's Wait() below.
+    auto sp_m = rrr::wrap_serializable_aliased(empty_cmd);
     auto sched = (SchedulerClassic*)dtxn_sched_;
     sched->CreateRepCoord(0)->Submit(sp_m);
     empty_cmd->Wait();

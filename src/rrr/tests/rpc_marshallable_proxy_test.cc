@@ -467,10 +467,18 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   EXPECT_EQ(decoded_batch->cmds_.at(0)->tx_id_, 101);
   EXPECT_EQ(decoded_batch->cmds_.at(1)->tx_id_, 202);
 
+  // Workstream N Phase 4a-2: TpcEmptyCommand migrated to Serializable.
+  // Construction goes through `wrap_serializable_aliased` (preserves
+  // event-member aliasing); recovery uses `serializable_cast<T>`.
   auto empty_cmd = std::make_shared<janus::TpcEmptyCommand>();
-  MarshallDeputy empty_deputy(empty_cmd);
+  MarshallDeputy empty_deputy(wrap_serializable_aliased(empty_cmd));
   EXPECT_EQ(empty_deputy.kind_, MarshallDeputy::CMD_TPC_EMPTY);
-  ASSERT_NE(marshallable_cast<janus::TpcEmptyCommand>(empty_deputy), nullptr);
+  ASSERT_NE(serializable_cast<janus::TpcEmptyCommand>(empty_deputy),
+            nullptr);
+  EXPECT_EQ(serializable_cast<janus::TpcEmptyCommand>(empty_deputy),
+            empty_cmd.get())
+      << "aliased wrap: serializable_cast should return the same "
+         "instance as the caller's shared_ptr";
 
   // Workstream N Phase 4a-1: TpcNoopCommand was migrated from
   // Marshallable to Serializable. Construction goes through

@@ -32,14 +32,22 @@ class TpcCommitCommand {
   Marshal& from_marshal(Marshal&);
 };
 
+// Workstream N Phase 4a-2: migrated from Marshallable to Serializable.
+// The wire payload is empty (no fields). The `event` member is local
+// state used for sender↔apply synchronization on the leader; it is
+// NOT serialized. Construction sites that need the leader-local
+// "wrap, replicate, wait" pattern use `wrap_serializable_aliased<T>`
+// to preserve `shared_ptr` aliasing — `serializable_cast<T>` on the
+// apply path returns the SAME instance the sender is waiting on.
 class TpcEmptyCommand {
  private:
   shared_ptr<BoxEvent<bool>> event{Reactor::create_sp_event<BoxEvent<bool>>()};
 
  public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_TPC_EMPTY;
-  Marshal& to_marshal(Marshal&) const;
-  Marshal& from_marshal(Marshal&);
+  int32_t kind() const { return kMarshallKind; }
+  void save(BinaryWriteArchive&) const {}
+  void load(BinaryReadArchive&) {}
   void Wait() { event->wait(); };
   void Done() { event->set(1); };
 };
@@ -93,17 +101,11 @@ struct TypedMarshallableAdapterTraits<janus::TpcCommitCommand> {
                                MarshallDeputy::CMD_TPC_COMMIT>;
 };
 
-template <>
-struct TypedMarshallableAdapterTraits<janus::TpcEmptyCommand> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::TpcEmptyCommand,
-                               MarshallDeputy::CMD_TPC_EMPTY>;
-};
-
-// (TpcNoopCommand is a Serializable now — no TypedMarshallableAdapter
-// trait. See tpc_command.cc for its `reg_serializable_in_deputy`
-// registration; construction sites use `wrap_serializable`.)
+// (TpcEmptyCommand and TpcNoopCommand are Serializables now — no
+// TypedMarshallableAdapter traits. See tpc_command.cc for their
+// `reg_serializable_in_deputy` registrations; construction sites use
+// `wrap_serializable_aliased` (TpcEmpty, preserves event-member
+// aliasing) and `wrap_serializable` (TpcNoop, stateless).)
 
 template <>
 struct TypedMarshallableAdapterTraits<janus::TpcBatchCommand> {
