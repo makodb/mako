@@ -249,18 +249,14 @@ inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
 // constructor lands in Phase 3f.
 template<typename T>
 inline int reg_serializable_in_deputy(int32_t kind) {
-  return MarshallDeputy::reg_initializer(kind, [kind]() {
+  // Workstream N Phase 5b-9: factory returns
+  // `shared_ptr<Marshallable>` directly — no MarInitializerState
+  // wrapper. `MarshallDeputy::set_marshallable` derives kind from
+  // the result.
+  return MarshallDeputy::reg_initializer(kind, [kind]() -> std::shared_ptr<Marshallable> {
     auto proxy = make_serializable_proxy<T>();
     verify(proxy->kind() == kind);
-    auto marsh = as_marshallable(std::move(proxy));
-    // Workstream N Phase 5b-2: no `state.proxy` here — the legacy
-    // field was dropped. `MarshallDeputy::data_proxy()` builds the
-    // MarshallableProxy on demand from `state.marshallable` for the
-    // few sites that still need the proxy view.
-    MarshallDeputy::MarInitializerState state;
-    state.kind = kind;
-    state.marshallable = marsh;
-    return state;
+    return as_marshallable(std::move(proxy));
   });
 }
 

@@ -156,15 +156,15 @@ std::shared_ptr<Marshallable> wrap_typed_marshallable(
 //   3. Shared ownership is still available through inner() for dynamic casts
 class MarshallDeputy {
   public:
-    // Workstream N Phase 5b-2: dropped legacy `proxy` field.
-    // Phase 3f-1 stopped consuming it inside `set_marshallable_state`,
-    // and no remaining caller / test relies on it. The MarshallableProxy
-    // is constructed on demand from `inner_sp_data_` via `data_proxy()`.
-    struct MarInitializerState {
-      std::shared_ptr<rrr::Marshallable> marshallable;
-      int32_t kind{0};
-    };
-    typedef std::function<MarInitializerState()> MarInitializerFn;
+    // Workstream N Phase 5b-9: simplified — `MarInitializerFn` now
+    // returns `std::shared_ptr<Marshallable>` directly. The previous
+    // `MarInitializerState` struct (post-5b-2: just `marshallable` +
+    // `kind`) was redundant since `kind` is derivable as
+    // `m->kind()`. The `make_initializer_state` private helper +
+    // `set_marshallable_state` private setter went away with it;
+    // `set_marshallable(shared_ptr<Marshallable>)` is the single
+    // entry point.
+    typedef std::function<std::shared_ptr<rrr::Marshallable>()> MarInitializerFn;
     typedef rusty::HashMap<int32_t, MarInitializerFn> MarContainer;
     // The factory registry is now a file-local
     // `SpinMutex<MarContainer>`-protected static inside marshal.cpp
@@ -184,8 +184,8 @@ class MarshallDeputy {
       requires (std::is_default_constructible_v<T> &&
                 std::is_base_of_v<rrr::Marshallable, T>)
     {
-      return reg_initializer(cmd_type, []() {
-        return make_initializer_state(std::make_shared<T>());
+      return reg_initializer(cmd_type, []() -> std::shared_ptr<rrr::Marshallable> {
+        return std::make_shared<T>();
       });
     }
     static MarInitializerFn get_initializer(int32_t);
@@ -271,9 +271,17 @@ class MarshallDeputy {
     // }
 
     rrr::Marshal& create_actual_object_from(rrr::Marshal& m);
-    // @unsafe - Setter accepts shared_ptr<Marshallable> and wraps it in proxy storage.
+
+    // @unsafe - Stores a shared_ptr<Marshallable> as the deputy's
+    // payload. Workstream N Phase 5b-9: inlined the previous
+    // make_initializer_state / set_marshallable_state two-step;
+    // there's no separate state struct anymore.
     void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
-      set_marshallable_state(make_initializer_state(std::move(m)));
+      verify(inner_sp_data_ == nullptr);
+      verify(m != nullptr);
+      kind_ = m->kind();
+      verify(kind_ != UNKNOWN);
+      inner_sp_data_ = std::move(m);
     }
 
     // @unsafe - Template delegates to non-borrow-checked set_marshallable.
@@ -308,29 +316,9 @@ class MarshallDeputy {
 
     ~MarshallDeputy() = default;
 
-  private:
-    // @unsafe - Constructs MarInitializerState from a shared_ptr<Marshallable>
-    // Workstream N Phase 5b-2: no longer populates a legacy `proxy`
-    // field — that field was removed alongside the dead consumer path.
-    static MarInitializerState make_initializer_state(
-        std::shared_ptr<rrr::Marshallable> m) {
-      verify(m != nullptr);
-      MarInitializerState state;
-      state.kind = m->kind();
-      state.marshallable = std::move(m);
-      return state;
-    }
-
-    // @unsafe - Moves shared_ptr state into MarshallDeputy internal field
-    void set_marshallable_state(MarInitializerState state) {
-      verify(inner_sp_data_ == nullptr);
-      verify(state.marshallable != nullptr);
-      verify(state.kind != UNKNOWN);
-      verify(state.kind == state.marshallable->kind());
-      inner_sp_data_ = std::move(state.marshallable);
-      kind_ = state.kind;
-      // Workstream N Phase 5b-3: removed the bypass_to_socket_ copy.
-    }
+    // Workstream N Phase 5b-9: removed private `make_initializer_state` /
+    // `set_marshallable_state` helpers. The work is now inlined in the
+    // public `set_marshallable(shared_ptr<Marshallable>)` setter.
 };
 
 // Centralized cast helpers for marshallable payload extraction.
