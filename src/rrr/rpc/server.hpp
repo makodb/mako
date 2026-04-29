@@ -462,19 +462,15 @@ public:
             body << v_error_code;
             body << v64(static_cast<i64>(ctx_->server_instance_id));
         }
-        // Workstream N Phase 3d-3: dual-signature dispatch — `F` may
-        // accept either `Marshal&` (legacy) or `BinaryWriteArchive&`
-        // (post-rpcgen-flip).  The archive variant wraps the same
-        // `body` through a `MarshalSink`, so wire bytes stay
-        // byte-for-byte identical (matches the pattern in
-        // `ClientConnection::request_via_channel` from Phase 3d-2).
-        if constexpr (std::is_invocable_v<F&, BinaryWriteArchive&>) {
-            MarshalSink sink(&body);
-            BinaryWriteArchive ar(&sink);
-            write_fn(ar);
-        } else {
-            write_fn(body);
-        }
+        // Workstream N Phase 3d-6: write_fn is exclusively
+        // BinaryWriteArchive&-shaped (Marshal& branch removed); the
+        // archive wraps the same `body` through a `MarshalSink`, so
+        // wire bytes stay byte-for-byte identical to the legacy path.
+        static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
+                      "reply write_fn must accept BinaryWriteArchive&");
+        MarshalSink sink(&body);
+        BinaryWriteArchive ar(&sink);
+        write_fn(ar);
         const std::size_t body_size = body.content_size();
         std::vector<std::uint8_t> body_bytes;
         if (body_size > 0) {
