@@ -328,33 +328,14 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
   return 0;
 }
 
-shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t svr, int cmd) {
-  verify(0); // this function has been replaced by Start()
-  auto cmt_idx_p = std::make_shared<CommitIndex>(0);
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
-    [this, cmd, svr, cmt_idx_p]() {
-      auto cmdptr = std::make_shared<TpcCommitCommand>();
-      auto vpd_p = std::make_shared<VecPieceData>();
-      vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
-      cmdptr->tx_id_ = cmd;
-      cmdptr->cmd_ = wrap_typed_marshallable(vpd_p);
-      Log_debug("Starting agreement for cmd id %d", cmdptr->tx_id_);
-      auto cmdptr_m = wrap_typed_marshallable(cmdptr);
-      auto it = replicas.find(svr);
-      if (it != replicas.end()) {
-        it->second->svr_->CreateRepCoord(0)->Submit(cmdptr_m, [svr, cmt_idx_p, it](){
-          cmt_idx_p->setval(it->second->svr_->commitIndex);
-        });
-      }
-    }
-  ));
-  auto it = replicas.find(svr);
-  if (it != replicas.end()) {
-    it->second->commo_->rpc_poll_.as_ref().unwrap()->add(rusty::Arc<Job>(arc_job));
-  }
-  Log_debug("Started agreement for cmd id %d", cmd);
-  return cmt_idx_p;
-}
+// Workstream N Phase 4e-15: removed
+//   `shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t,
+//    int)`
+// — body started with `verify(0); // this function has been replaced
+// by Start()`.  The function had been intentionally disabled and
+// replaced by `RaftTestConfig::Start` long ago; `grep StartAgreement`
+// returned only the declaration in `testconf.h:99` and the
+// definition.  Header declaration also went away in the same commit.
 
 void RaftTestConfig::Disconnect(siteid_t svr) {
   std::lock_guard<std::mutex> lk(disconnect_mtx_);

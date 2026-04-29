@@ -95,8 +95,10 @@ class RaftTestConfig {
   // Checks if the committed value for index is the same across servers.
   int NCommitted(uint64_t index);
 
-  // Submits a command with value cmd to server svr
-  shared_ptr<CommitIndex> StartAgreement(siteid_t svr, int cmd);
+  // Workstream N Phase 4e-15: removed `shared_ptr<CommitIndex>
+  // StartAgreement(siteid_t, int);` — replaced by `Start()` long ago;
+  // the impl in `testconf.cc` started with `verify(0); // this
+  // function has been replaced by Start()` and had no callers.
 
   // Calls Start() to specified server
   bool Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *term);
