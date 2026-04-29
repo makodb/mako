@@ -582,27 +582,9 @@ private:
       return n_discard;
     }
 
-    // @safe - Writes to file descriptor (I/O system call)
-    // SAFETY: Internal @unsafe block handles I/O system calls and raw pointer operations
-    // Workstream N Phase 5b-3: simplified — removed the `if
-    // (data->shared_data)` branch that called
-    // `marshallable_entity.write_to_fd(...)` for the dead
-    // bypass-to-socket fast path.
-    int write_to_fd(int fd) {
-      // @unsafe
-      {
-        assert(write_idx <= data->size);
-        int cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
-#ifdef RPC_STATISTICS
-        stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
-#endif // RPC_STATISTICS
-        if (cnt > 0) {
-          read_idx += cnt;
-        }
-        assert(write_idx <= data->size);
-        return cnt;
-      }
-    }
+    // Workstream N Phase 5b-7: removed `chunk::write_to_fd(int)` —
+    // its only caller was `Marshal::write_to_fd(int)` which went
+    // away in the same commit (no production callers).
 
     // @unsafe - Reads from file descriptor (I/O system call)
     int read_from_fd(int fd, size_t bytes = -1) {
@@ -781,9 +763,9 @@ private:
   // SAFETY: Internal @unsafe block wraps raw pointer operations (head_, tail_, chunk*)
   size_t read_from_marshal(Marshal &m, size_t n);
 
-  // @safe - Writes to file descriptor (I/O system call)
-  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
-  size_t write_to_fd(int fd);
+  // Workstream N Phase 5b-7: removed `write_to_fd(int)`. It had no
+  // callers; new code uses `FdSink` (marshal_archive.hpp) to write
+  // archive bytes directly to a file descriptor.
 
   void reset(){
     head_->reset();
