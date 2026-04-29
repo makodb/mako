@@ -549,7 +549,9 @@ private:
         // @unsafe
         {
             RpcFastPrimeRequest __typed_req__;
-            req->m >> __typed_req__.n;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.n;
             auto __typed_result__ = this->fast_prime(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -571,8 +573,10 @@ private:
         // @unsafe
         {
             RpcFastDotProdRequest __typed_req__;
-            req->m >> __typed_req__.p1;
-            req->m >> __typed_req__.p2;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.p1;
+            __req_ar__ >> __typed_req__.p2;
             auto __typed_result__ = this->fast_dot_prod(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -594,8 +598,10 @@ private:
         // @unsafe
         {
             RpcFastAddRequest __typed_req__;
-            req->m >> __typed_req__.a;
-            req->m >> __typed_req__.b;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.a;
+            __req_ar__ >> __typed_req__.b;
             auto __typed_result__ = this->fast_add(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -617,7 +623,9 @@ private:
         // @unsafe
         {
             RpcFastNopRequest __typed_req__;
-            req->m >> __typed_req__.in_0;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.in_0;
             auto __typed_result__ = this->fast_nop(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -638,7 +646,9 @@ private:
         // @unsafe
         {
             RpcFastVecRequest __typed_req__;
-            req->m >> __typed_req__.n;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.n;
             auto __typed_result__ = this->fast_vec(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -660,7 +670,9 @@ private:
         // @unsafe
         {
             RpcPrimeRequest __typed_req__;
-            req->m >> __typed_req__.n;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.n;
             auto __typed_result__ = this->prime(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -682,8 +694,10 @@ private:
         // @unsafe
         {
             RpcDotProdRequest __typed_req__;
-            req->m >> __typed_req__.p1;
-            req->m >> __typed_req__.p2;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.p1;
+            __req_ar__ >> __typed_req__.p2;
             auto __typed_result__ = this->dot_prod(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -705,8 +719,10 @@ private:
         // @unsafe
         {
             RpcAddRequest __typed_req__;
-            req->m >> __typed_req__.a;
-            req->m >> __typed_req__.b;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.a;
+            __req_ar__ >> __typed_req__.b;
             auto __typed_result__ = this->add(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -728,7 +744,9 @@ private:
         // @unsafe
         {
             RpcNopRequest __typed_req__;
-            req->m >> __typed_req__.in_0;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.in_0;
             auto __typed_result__ = this->nop(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -749,7 +767,9 @@ private:
         // @unsafe
         {
             RpcAsyncNopRequest __typed_req__;
-            req->m >> __typed_req__.in_0;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.in_0;
             auto __async_req__ = std::move(req);
             auto __async_weak_sconn__ = weak_sconn;
             auto __async_task__ = this->async_nop(__typed_req__);
@@ -773,7 +793,9 @@ private:
         // @unsafe
         {
             RpcSleepRequest __typed_req__;
-            req->m >> __typed_req__.sec;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.sec;
             auto __typed_result__ = this->sleep(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -794,7 +816,9 @@ private:
         // @unsafe
         {
             RpcDeferredEchoRequest __typed_req__;
-            req->m >> __typed_req__.val;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__.val;
             auto __typed_resp__ = std::make_shared<RpcDeferredEchoResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -861,7 +885,10 @@ public:
                 return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Err(__ret__);
             }
             RpcFastPrimeResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.flag;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.flag;
             return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -910,7 +937,10 @@ public:
                 return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Err(__ret__);
             }
             RpcFastDotProdResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.v;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.v;
             return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -960,7 +990,10 @@ public:
                 return rusty::Result<RpcFastAddResponse, rrr::i32>::Err(__ret__);
             }
             RpcFastAddResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.a_add_b;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.a_add_b;
             return rusty::Result<RpcFastAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1058,7 +1091,10 @@ public:
                 return rusty::Result<RpcFastVecResponse, rrr::i32>::Err(__ret__);
             }
             RpcFastVecResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.v;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.v;
             return rusty::Result<RpcFastVecResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1107,7 +1143,10 @@ public:
                 return rusty::Result<RpcPrimeResponse, rrr::i32>::Err(__ret__);
             }
             RpcPrimeResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.flag;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.flag;
             return rusty::Result<RpcPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1156,7 +1195,10 @@ public:
                 return rusty::Result<RpcDotProdResponse, rrr::i32>::Err(__ret__);
             }
             RpcDotProdResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.v;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.v;
             return rusty::Result<RpcDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1206,7 +1248,10 @@ public:
                 return rusty::Result<RpcAddResponse, rrr::i32>::Err(__ret__);
             }
             RpcAddResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.a_add_b;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.a_add_b;
             return rusty::Result<RpcAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1400,7 +1445,10 @@ public:
                 return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Err(__ret__);
             }
             RpcDeferredEchoResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.result;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.result;
             return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {

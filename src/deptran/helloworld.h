@@ -80,7 +80,9 @@ private:
         // @unsafe
         {
             RpcTxnReadRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -125,7 +127,10 @@ public:
                 return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(__ret__);
             }
             RpcTxnReadResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.val;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.val;
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
