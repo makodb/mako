@@ -40,6 +40,7 @@
 #include "base/all.hpp"
 #include "misc/cpuinfo.hpp"
 #include "misc/marshal.hpp"
+#include "misc/marshal_archive.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/event.h"
 #include "misc/marshallable_proxy.h"

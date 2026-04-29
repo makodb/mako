@@ -12,6 +12,16 @@ def main():
     argparser.add_argument("--python", action="store_true", help="generate Python stub files")
     # Backward-compatible no-op: typed mode is now the default/only C++ mode.
     argparser.add_argument("--cpp-mode", default="typed", help=argparse.SUPPRESS)
+    # Workstream N Phase 3c: emit additional BinaryWriteArchive /
+    # BinaryReadArchive operator<<>> overloads alongside the Marshal&
+    # ones. Default off — keeps existing .rpc files that reference
+    # user types like MarshallDeputy / Value (no archive overloads
+    # yet) compiling unchanged. Phase 3f / Phase 4 add those.
+    argparser.add_argument(
+        "--archive",
+        action="store_true",
+        help="also emit BinaryWriteArchive / BinaryReadArchive operator<<>> overloads",
+    )
     argparser.add_argument("rpc_file")
     opt = argparser.parse_args()
     languages = set()
@@ -21,7 +31,7 @@ def main():
         languages.add("python")
     if len(languages) == 0:
         languages.add("cpp")
-    rpcgen(opt.rpc_file, languages)
+    rpcgen(opt.rpc_file, languages, archive=opt.archive)
 
 if __name__ == "__main__":
     main()
