@@ -186,21 +186,23 @@ class TypedMarshallableAdapter : public Marshallable {
   std::shared_ptr<T> typed_;
 };
 
+// Workstream N Phase 4a-prep: constrained to types with a
+// TypedMarshallableAdapter trait. Types migrated to Serializable
+// (no trait) hit the matching overload defined in
+// `marshal_serializable_bridge.hpp`, which routes through
+// `wrap_serializable`. This lets call sites continue to use
+// `wrap_typed_marshallable(make_shared<T>())` regardless of T's
+// migration state.
 template <typename T>
+  requires kHasTypedMarshallableAdapter<T>
 inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
     std::shared_ptr<T> typed) {
   verify(typed != nullptr);
-  if constexpr (kHasTypedMarshallableAdapter<T>) {
-    using Adapter = typename TypedMarshallableAdapterTraits<T>::Adapter;
-    static_assert(std::is_base_of_v<Marshallable, Adapter>,
-                  "Typed adapter must inherit rrr::Marshallable");
-    return std::static_pointer_cast<Marshallable>(
-        std::make_shared<Adapter>(std::move(typed)));
-  } else {
-    static_assert(kAlwaysFalse<T>,
-                  "No typed marshallable adapter registered for this payload");
-    return nullptr;
-  }
+  using Adapter = typename TypedMarshallableAdapterTraits<T>::Adapter;
+  static_assert(std::is_base_of_v<Marshallable, Adapter>,
+                "Typed adapter must inherit rrr::Marshallable");
+  return std::static_pointer_cast<Marshallable>(
+      std::make_shared<Adapter>(std::move(typed)));
 }
 
 // @safe - Type-erasing wrapper for polymorphic Marshallable objects
@@ -440,24 +442,33 @@ class MarshallDeputy {
     }
 };
 
-// Centralized cast helpers for marshallable payload extraction. These isolate
-// call sites from direct dynamic_pointer_cast usage on MarshallDeputy::inner().
+// Centralized cast helpers for marshallable payload extraction.
+// These isolate call sites from direct dynamic_pointer_cast usage on
+// MarshallDeputy::inner().
+//
+// Workstream N Phase 4a-prep: constrained to types reachable through
+// the legacy Marshallable / TypedMarshallableAdapter machinery.
+// Types migrated to Serializable (no Marshallable inheritance, no
+// TypedMarshallableAdapter trait) hit the matching overload in
+// `marshal_serializable_bridge.hpp`, which routes through
+// `serializable_cast<T>` and synthesizes a `shared_ptr<T>` aliasing
+// the underlying SerializableMarshallableAdapter. This lets call
+// sites continue to use `marshallable_cast<T>(...)` regardless of T's
+// migration state.
 template <typename T>
+  requires (std::is_base_of_v<Marshallable, T> ||
+            kHasTypedMarshallableAdapter<T>)
 inline std::shared_ptr<T> marshallable_cast(
     const std::shared_ptr<Marshallable>& value) {
   if constexpr (std::is_base_of_v<Marshallable, T>) {
     return std::dynamic_pointer_cast<T>(value);
-  } else if constexpr (kHasTypedMarshallableAdapter<T>) {
+  } else {  // kHasTypedMarshallableAdapter<T>
     using Adapter = typename TypedMarshallableAdapterTraits<T>::Adapter;
     auto adapter = std::dynamic_pointer_cast<Adapter>(value);
     if (adapter == nullptr) {
       return nullptr;
     }
     return adapter->typed();
-  } else {
-    static_assert(kAlwaysFalse<T>,
-                  "marshallable_cast<T>() requires T to be Marshallable or trait-enabled");
-    return nullptr;
   }
 }
 

@@ -1794,5 +1794,98 @@ TEST(MarshallDeputyArchiveOps, NestedInsideUserStructSaveLoad) {
   EXPECT_EQ(nested->values, (std::vector<int32_t>{100, 200}));
 }
 
+// ---- Phase 4a-prep: marshallable_cast / wrap_typed_marshallable
+//      overloads for Serializable types -------------------------------
+
+TEST(MarshallableCastSerializable, ReturnsSharedPtrAliasingProxyOwnedT) {
+  // For a Serializable type T, `marshallable_cast<T>(value)` (via the
+  // bridge overload) returns a `shared_ptr<T>` aliasing the
+  // SerializableMarshallableAdapter that owns T. This preserves the
+  // legacy call shape after a Marshallable→Serializable migration.
+  CanaryDeputyCommand orig;
+  orig.header = 7;
+  orig.name = "marshallable_cast bridge";
+  orig.values = {10, 20, 30};
+
+  // Wrap the Serializable T as a shared_ptr<Marshallable>.
+  auto marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+
+  // Legacy-style call shape.
+  std::shared_ptr<CanaryDeputyCommand> sp =
+      marshallable_cast<CanaryDeputyCommand>(marsh);
+  ASSERT_NE(sp, nullptr);
+  EXPECT_EQ(sp->header, 7);
+  EXPECT_EQ(sp->name, "marshallable_cast bridge");
+  EXPECT_EQ(sp->values, (std::vector<int32_t>{10, 20, 30}));
+
+  // The returned shared_ptr aliases the proxy's owned T — same
+  // underlying pointer as serializable_cast<T> would return.
+  EXPECT_EQ(sp.get(), serializable_cast<CanaryDeputyCommand>(marsh));
+}
+
+TEST(MarshallableCastSerializable, AliasingExtendsLifetime) {
+  // The aliasing shared_ptr from marshallable_cast keeps the
+  // underlying SerializableMarshallableAdapter alive even if the
+  // original `marsh` shared_ptr is dropped. Verifies the aliasing
+  // ctor's reference counting works correctly.
+  std::shared_ptr<CanaryDeputyCommand> sp;
+  {
+    CanaryDeputyCommand orig;
+    orig.header = 99;
+    auto marsh = as_marshallable(
+        make_serializable_proxy<CanaryDeputyCommand>(orig));
+    sp = marshallable_cast<CanaryDeputyCommand>(marsh);
+    // `marsh` goes out of scope here; sp's aliasing keeps the
+    // SerializableMarshallableAdapter (and its proxy-owned T) alive.
+  }
+  ASSERT_NE(sp, nullptr);
+  EXPECT_EQ(sp->header, 99);
+}
+
+struct OtherCmdMarshallableCastTest {
+  static constexpr int32_t kKind = 0x40004;
+  int32_t kind() const { return kKind; }
+  void save(BinaryWriteArchive&) const {}
+  void load(BinaryReadArchive&) {}
+};
+
+TEST(MarshallableCastSerializable, ReturnsNullForWrongType) {
+  // marshallable_cast on a Serializable type should fail safely when
+  // T doesn't match the wrapped type.
+  auto marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>());
+  EXPECT_EQ(marshallable_cast<OtherCmdMarshallableCastTest>(marsh),
+            nullptr);
+  EXPECT_NE(marshallable_cast<CanaryDeputyCommand>(marsh), nullptr);
+}
+
+TEST(WrapTypedMarshallableSerializable, RoutesToWrapSerializable) {
+  // For a Serializable T, `wrap_typed_marshallable(make_shared<T>())`
+  // (via the bridge overload) routes to `wrap_serializable`. Wire
+  // bytes are byte-for-byte identical to a fresh proxy save.
+  auto sp = std::make_shared<CanaryDeputyCommand>();
+  sp->header = 11;
+  sp->name = "wrap_typed bridge";
+
+  // Bridge overload via `wrap_typed_marshallable` (the legacy call
+  // shape — no need to update existing call sites that wrap a
+  // migrated type).
+  auto marsh_via_typed = wrap_typed_marshallable<CanaryDeputyCommand>(sp);
+  ASSERT_NE(marsh_via_typed, nullptr);
+
+  Marshal m_typed;
+  marsh_via_typed->to_marshal(m_typed);
+  auto bytes_typed = drain_marshal(m_typed);
+
+  // Reference: direct `wrap_serializable`.
+  auto marsh_direct = wrap_serializable(sp);
+  Marshal m_direct;
+  marsh_direct->to_marshal(m_direct);
+  auto bytes_direct = drain_marshal(m_direct);
+
+  EXPECT_EQ(bytes_typed, bytes_direct);
+}
+
 }  // namespace
 }  // namespace rrr
