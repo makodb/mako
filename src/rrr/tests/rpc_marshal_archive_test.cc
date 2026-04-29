@@ -1655,5 +1655,144 @@ TEST(WrapSerializableAliased, RoundTripsThroughMarshallDeputy) {
   EXPECT_EQ(recovered->values, (std::vector<int32_t>{1, 2, 3}));
 }
 
+// ---- MarshallDeputy archive operators (Phase 4 enabler) ------------
+
+TEST(MarshallDeputyArchiveOps, WriteByteEquivalentToMarshal) {
+  // Encode a MarshallDeputy via:
+  //   (a) the legacy `Marshal m; m << md;` path
+  //   (b) `BinaryWriteArchive(BufferSink) << md`
+  // Bytes must match exactly.
+  CanaryDeputyCommand orig;
+  orig.header = 42;
+  orig.name = "deputy archive test";
+  orig.values = {1, 2, 3};
+
+  auto orig_marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+  MarshallDeputy md{orig_marsh};
+
+  // (a) legacy.
+  Marshal m;
+  m << md;
+  auto legacy_bytes = drain_marshal(m);
+
+  // (b) archive.
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  writer << md;
+  auto archive_bytes = sink_to_vector(sink);
+
+  ASSERT_EQ(legacy_bytes.size(), archive_bytes.size());
+  EXPECT_EQ(legacy_bytes, archive_bytes);
+}
+
+TEST(MarshallDeputyArchiveOps, ReadFromMarshalSourceRoundTrip) {
+  // Encode via legacy `Marshal m; m << md;`, then decode via
+  // `BinaryReadArchive(MarshalSource) >> md_decoded`. Bytes match
+  // (re-encode after decode produces the same legacy bytes).
+  CanaryDeputyCommand orig;
+  orig.header = 99;
+  orig.name = "marshal source round trip";
+  orig.values = {7, 8, 9};
+
+  auto orig_marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+  MarshallDeputy md_orig{orig_marsh};
+
+  Marshal m_wire;
+  m_wire << md_orig;
+
+  // Read through BinaryReadArchive over MarshalSource.
+  MarshalSource src(&m_wire);
+  BinaryReadArchive reader(&src);
+  MarshallDeputy md_decoded;
+  reader >> md_decoded;
+  EXPECT_EQ(md_decoded.kind_, CanaryDeputyCommand::kKind);
+  ASSERT_NE(md_decoded.inner(), nullptr);
+
+  // Re-encode the decoded deputy via the legacy path; bytes match the
+  // original wire encoding (proves the load reconstructed state
+  // byte-for-byte).
+  Marshal m_check;
+  m_check << md_orig;
+  auto orig_bytes = drain_marshal(m_check);
+  Marshal m_redecoded;
+  m_redecoded << md_decoded;
+  auto redecoded_bytes = drain_marshal(m_redecoded);
+  EXPECT_EQ(orig_bytes, redecoded_bytes);
+}
+
+// Local struct with static constexpr requires file/namespace scope —
+// can't be defined inside a TEST body.
+struct OuterCommandWithDeputy {
+  int32_t outer_id{0};
+  MarshallDeputy nested_deputy;
+  std::string outer_label;
+
+  static constexpr int32_t kKind = 0x10003;
+  int32_t kind() const { return kKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << outer_id;
+    ar << nested_deputy;
+    ar << outer_label;
+  }
+  void load(BinaryReadArchive& ar) {
+    ar >> outer_id;
+    ar >> nested_deputy;
+    ar >> outer_label;
+  }
+};
+
+TEST(MarshallDeputyArchiveOps, NestedInsideUserStructSaveLoad) {
+  // Demonstrate the Phase 4 use case: a user struct with a
+  // MarshallDeputy field whose save/load uses the new archive
+  // operators. After write→read, the nested deputy reconstructs
+  // correctly.
+  using OuterCommand = OuterCommandWithDeputy;
+
+  // Build outer command with a nested CanaryDeputyCommand.
+  CanaryDeputyCommand inner;
+  inner.header = 555;
+  inner.name = "nested";
+  inner.values = {100, 200};
+
+  OuterCommand outer;
+  outer.outer_id = 7;
+  outer.nested_deputy = MarshallDeputy{
+      as_marshallable(
+          make_serializable_proxy<CanaryDeputyCommand>(inner))};
+  outer.outer_label = "wrapped";
+
+  // Encode outer via Marshal wrapper (so the read side has a
+  // MarshalSource).
+  Marshal m;
+  MarshalSink sink(&m);
+  BinaryWriteArchive writer(&sink);
+  writer << outer.outer_id;
+  writer << outer.nested_deputy;
+  writer << outer.outer_label;
+
+  // Decode.
+  MarshalSource src(&m);
+  BinaryReadArchive reader(&src);
+  int32_t decoded_id;
+  MarshallDeputy decoded_deputy;
+  std::string decoded_label;
+  reader >> decoded_id >> decoded_deputy >> decoded_label;
+
+  EXPECT_EQ(decoded_id, 7);
+  EXPECT_EQ(decoded_label, "wrapped");
+  EXPECT_EQ(decoded_deputy.kind_, CanaryDeputyCommand::kKind);
+
+  // Verify the nested CanaryDeputyCommand contents.
+  CanaryDeputyCommand* nested =
+      serializable_cast<CanaryDeputyCommand>(decoded_deputy);
+  ASSERT_NE(nested, nullptr);
+  EXPECT_EQ(nested->header, 555);
+  EXPECT_EQ(nested->name, "nested");
+  EXPECT_EQ(nested->values, (std::vector<int32_t>{100, 200}));
+}
+
 }  // namespace
 }  // namespace rrr

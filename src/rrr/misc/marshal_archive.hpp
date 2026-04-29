@@ -84,8 +84,15 @@ PRO_DEF_MEM_DISPATCH(SourceMemRead, read);
 // Convention is fire-and-forget. Concrete sinks may flush lazily;
 // callers that need durability must call sink-specific flush methods
 // before observing (FdSink will drain on destruction).
+//
+// `pro::skills::indirect_rtti` enables `proxy_cast<Adapter>(*proxy)`
+// so callers can recover the concrete adapter type (used by the
+// MarshallDeputy archive operators in marshal_serializable_bridge.hpp
+// to detect a Marshal-backed sink/source and short-circuit through
+// the existing legacy operator<<>>).
 struct SinkFacade : pro::facade_builder
     ::add_convention<SinkMemWrite, void(const void*, size_t)>
+    ::add_skill<pro::skills::indirect_rtti>
     ::build {};
 using SinkProxy = pro::proxy<SinkFacade>;
 
@@ -95,6 +102,7 @@ using SinkProxy = pro::proxy<SinkFacade>;
 // Concrete sources control their own buffering / blocking semantics.
 struct SourceFacade : pro::facade_builder
     ::add_convention<SourceMemRead, size_t(void*, size_t)>
+    ::add_skill<pro::skills::indirect_rtti>
     ::build {};
 using SourceProxy = pro::proxy<SourceFacade>;
 
@@ -330,6 +338,12 @@ class MarshalSinkAdapter {
  public:
   explicit MarshalSinkAdapter(MarshalSink* s) noexcept : sink_(s) {}
   void write(const void* p, size_t n) { sink_->write(p, n); }
+
+  // Symmetric with MarshalSourceAdapter::source(); exposed for the
+  // MarshallDeputy archive operator<< (currently it doesn't need
+  // this — save flows through the M→S adapter chain — but keeping
+  // the API parallel for future use).
+  MarshalSink* sink() const noexcept { return sink_; }
 };
 
 class MarshalSourceAdapter {
@@ -337,6 +351,12 @@ class MarshalSourceAdapter {
  public:
   explicit MarshalSourceAdapter(MarshalSource* s) noexcept : source_(s) {}
   size_t read(void* p, size_t n) { return source_->read(p, n); }
+
+  // Used by the MarshallDeputy archive operator>> to recover the
+  // underlying Marshal — the operator detours through legacy
+  // operator>>(Marshal&, MarshallDeputy&) since the MarshallDeputy
+  // wire format lacks a length prefix at the payload-bytes layer.
+  MarshalSource* source() const noexcept { return source_; }
 };
 
 inline SinkProxy make_sink_proxy(MarshalSink* sink) {
@@ -383,6 +403,14 @@ class BinaryWriteArchive {
   // Convenience: build directly atop a concrete MarshalSink (Phase 3a).
   explicit BinaryWriteArchive(MarshalSink* sink)
       : sink_(make_sink_proxy(sink)) {}
+
+  // Expose the inner SinkProxy so callers can use proxy_cast to
+  // recover the concrete adapter type (e.g.
+  // `proxy_cast<MarshalSinkAdapter>(*archive.sink())` to detect a
+  // Marshal-backed sink). Used by the MarshallDeputy archive
+  // operators in marshal_serializable_bridge.hpp.
+  SinkProxy& sink() noexcept { return sink_; }
+  const SinkProxy& sink() const noexcept { return sink_; }
 
   // Emit raw bytes (used for unstructured payloads).
   void write_bytes(const void* p, size_t n) { sink_->write(p, n); }
@@ -563,6 +591,12 @@ class BinaryReadArchive {
   // Convenience: build directly atop a concrete MarshalSource (Phase 3a).
   explicit BinaryReadArchive(MarshalSource* source)
       : source_(make_source_proxy(source)) {}
+
+  // Expose the inner SourceProxy so callers can use proxy_cast to
+  // recover the concrete adapter type. Used by the MarshallDeputy
+  // archive operators in marshal_serializable_bridge.hpp.
+  SourceProxy& source() noexcept { return source_; }
+  const SourceProxy& source() const noexcept { return source_; }
 
   // Read into raw bytes; verifies n bytes were actually read.
   // Returns false if the source ran out (caller can decide whether to
