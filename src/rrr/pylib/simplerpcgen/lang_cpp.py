@@ -22,23 +22,17 @@ def emit_struct(struct, f, archive=False):
             f.writeln("%s %s;" % (field.type, field.name))
     f.writeln("};")
     f.writeln()
-    # Workstream N Phase 3e-2: the legacy
-    # `rrr::Marshal& operator<<(rrr::Marshal&, const T&)` emission is
-    # gone.  Every write-side caller in production code uses a
-    # `BinaryWriteArchive` (Phase 3d-6 collapsed `request_via_channel`
-    # / `reply` to archive-only).  The matching `operator>>` stays
-    # because server-side request decode still reads field-by-field
-    # from `req->m` (a Marshal) and the user-facing receive path
-    # exposes a `Marshal&` via `fu->get_reply()`.  Both readers will
-    # switch to `BinaryReadArchive` in a follow-up leaf, at which
-    # point this `operator>>` can drop too.
-    f.writeln("inline rrr::Marshal& operator >>(rrr::Marshal& m, %s& o) {" % struct.name)
-    with f.indent():
-        for field in struct.fields:
-            f.writeln("m >> o.%s;" % field.name)
-        f.writeln("return m;")
-    f.writeln("}")
-    f.writeln()
+    # Workstream N Phase 3g-2: dropped the legacy
+    # `rrr::Marshal& operator>>(rrr::Marshal&, T&)` emission too.
+    # Phase 3g-1 flipped all rpcgen dispatcher reads to
+    # `BinaryReadArchive`; the routed
+    # `operator>>(rusty::RefMut<Marshal>&, U&)` in `client.hpp` also
+    # dispatches through the archive layer, so hand-written
+    # `fu->get_reply() >> userStruct` calls route to
+    # `operator>>(BinaryReadArchive&, T&)` (the archive emission
+    # below).  No code path remains that would call the Marshal&
+    # version on a user/typed struct.  Pairs with Phase 3e-2's
+    # earlier removal of the `Marshal& operator<<` emission.
     if archive:
         f.writeln("inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) {" % struct.name)
         with f.indent():
@@ -96,21 +90,14 @@ def emit_marshaled_typed_struct(struct_name, fields, f, archive=False):
         for field_type, field_name in fields:
             f.writeln("%s %s;" % (field_type, field_name))
     f.writeln("};")
-    # Workstream N Phase 3e-2: dropped the legacy `friend inline
-    # rrr::Marshal& operator<<(rrr::Marshal&, const Foo&)` for
-    # auto-generated typed Rpc*Request/Response wrappers — these
-    # structs are serialized field-by-field at every dispatch site,
-    # so the whole-struct `<<` overload was emitted but never called.
-    # The matching `>>` stays for the same reason as `emit_struct`:
-    # `req->m >> __typed_req__.field` and
-    # `fu->get_reply() >> __typed_resp__.field` still read from a
-    # Marshal source and dispatch through these per-field operators.
-    f.writeln("friend inline rrr::Marshal& operator >>(rrr::Marshal& m, %s& o) {" % struct_name)
-    with f.indent():
-        for _, field_name in fields:
-            f.writeln("m >> o.%s;" % field_name)
-        f.writeln("return m;")
-    f.writeln("}")
+    # Workstream N Phase 3g-2: dropped the legacy `Marshal&` `>>`
+    # emission too.  Phase 3g-1 flipped dispatcher reads to
+    # `BinaryReadArchive`, and the routed
+    # `operator>>(rusty::RefMut<Marshal>&, U&)` overload now also
+    # dispatches via the archive layer — so the auto-generated
+    # whole-struct `Marshal&` `>>` overload has no remaining
+    # callers.  The archive `>>` emission below is the only one
+    # rpcgen needs to provide.
     if archive:
         f.writeln("friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) {" % struct_name)
         with f.indent():
