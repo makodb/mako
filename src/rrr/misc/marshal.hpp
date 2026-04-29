@@ -63,13 +63,13 @@ inline T safe_min(const T& a, const T& b) {
   { return std::min(a, b); }
 }
 
-#ifdef RPC_STATISTICS
-// Workstream N Phase 5b-8: removed `stat_marshal_out` declaration —
-// its only caller was `chunk::write_to_fd`, deleted in Phase 5b-7.
-// `stat_marshal_in` is still wired to `chunk::read_from_fd` on the
-// receive path.
-void stat_marshal_in(int fd, const void* buf, size_t nbytes, ssize_t ret);
-#endif // RPC_STATISTICS
+// Workstream N Phase 5b-11: removed the entire `RPC_STATISTICS` block
+// and `stat_marshal_in` declaration. After Phase 5b-7/5b-8 deleted
+// the marshal-out side, the marshal-in side became dead too once
+// Phase 5b-11 confirmed `Marshal::read_from_fd` /
+// `Marshal::chnk_read_from_fd` / `chunk::read_from_fd` had no
+// production callers anywhere in the codebase. The receive path
+// uses `FdSource` (`marshal_archive.hpp`) instead.
 
 // not thread safe, for better performance
 class Marshal;
@@ -577,31 +577,12 @@ private:
     // its only caller was `Marshal::write_to_fd(int)` which went
     // away in the same commit (no production callers).
 
-    // @unsafe - Reads from file descriptor (I/O system call)
-    int read_from_fd(int fd, size_t bytes = -1) {
-      if(bytes == -1)bytes = data->size - write_idx;
-      assert(write_idx <= data->size);
-      assert(read_idx <= write_idx);
-
-      int cnt = 0;
-      if (write_idx < data->size) {
-        cnt = ::read(fd, data->ptr + write_idx, bytes);
-        if (cnt<=0){
-          return cnt;
-        }
-#ifdef RPC_STATISTICS
-        stat_marshal_in(fd, data->ptr + write_idx, bytes, cnt);
-#endif // RPC_STATISTICS
-
-        if (cnt > 0) {
-          write_idx += cnt;
-        }
-      }
-
-      assert(write_idx <= data->size);
-      assert(read_idx <= write_idx);
-      return cnt;
-    }
+    // Workstream N Phase 5b-11: removed `chunk::read_from_fd(int,
+    // size_t)`. Its only callers were `Marshal::read_from_fd` and
+    // `Marshal::chnk_read_from_fd` — both of which were unreferenced
+    // by any production caller and went away in the same commit.
+    // The receive path uses `FdSource` (`marshal_archive.hpp`) for
+    // direct fd reads.
 
     // check if it is not possible to write to the chunk anymore.
     bool fully_written() const {
@@ -733,12 +714,10 @@ private:
     }
   }
 
-  // @safe - Reads from file descriptor (I/O system call)
-  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
-  size_t read_from_fd(int fd);
-
-  // @unsafe - Reads from file descriptor into chunk (I/O system call)
-  size_t chnk_read_from_fd(int fd, size_t bytes);
+  // Workstream N Phase 5b-11: removed `read_from_fd(int)` and
+  // `chnk_read_from_fd(int, size_t)`. Neither had any production
+  // callers; the receive path uses `FdSource`
+  // (`marshal_archive.hpp`) instead.
 
   // @unsafe - Reuses chunks from another marshal (uses raw pointer members)
   size_t read_reuse_chnk(Marshal& m, size_t nbytes);

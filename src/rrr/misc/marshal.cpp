@@ -45,76 +45,15 @@ using namespace std;
 
 namespace rrr {
 
-#ifdef RPC_STATISTICS
-
-// -1, 0~15, 16~31, 32~63, 64~127, 128~255, 256~511, 512~1023, 1024~2047, 2048~4095, 4096~8191, 8192~
-//
-// Workstream N Phase 5b-8: removed `g_marshal_out_stat` /
-// `g_marshal_out_stat_cumulative` arrays + `stat_marshal_out`
-// function + the marshal-out report blocks. The chunk::write_to_fd
-// that fed them was deleted in Phase 5b-7. The marshal-in side
-// remains wired to `chunk::read_from_fd` on the receive path.
-static Counter g_marshal_in_stat[12];
-static Counter g_marshal_in_stat_cumulative[12];
-static uint64_t g_marshal_stat_report_time = 0;
-static const uint64_t g_marshal_stat_report_interval = 1000 * 1000 * 1000;
-
-static void stat_marshal_report() {
-    Log::info("* MARSHAL:     -1 0~15 16~31 32~63 64~127 128~255 256~511 512~1023 1024~2047 2048~4095 4096~8191 8192~");
-    {
-        ostringstream ostr;
-        for (size_t i = 0; i < arraysize(g_marshal_in_stat); i++) {
-            i64 v = g_marshal_in_stat[i].peek_next();
-            g_marshal_in_stat_cumulative[i].next(v);
-            ostr << " " << v;
-            g_marshal_in_stat[i].reset();
-        }
-        Log::info("* MARSHAL IN: %s", ostr.str().c_str());
-    }
-    {
-        ostringstream ostr;
-        for (size_t i = 0; i < arraysize(g_marshal_in_stat); i++) {
-            ostr << " " << g_marshal_in_stat_cumulative[i].peek_next();
-        }
-        Log::info("* MARSHAL IN (cumulative): %s", ostr.str().c_str());
-    }
-}
-
-void stat_marshal_in(int fd, const void* buf, size_t nbytes, ssize_t ret) {
-    if (ret == -1) {
-        g_marshal_in_stat[0].next();
-    } else if (ret < 16) {
-        g_marshal_in_stat[1].next();
-    } else if (ret < 32) {
-        g_marshal_in_stat[2].next();
-    } else if (ret < 64) {
-        g_marshal_in_stat[3].next();
-    } else if (ret < 128) {
-        g_marshal_in_stat[4].next();
-    } else if (ret < 256) {
-        g_marshal_in_stat[5].next();
-    } else if (ret < 512) {
-        g_marshal_in_stat[6].next();
-    } else if (ret < 1024) {
-        g_marshal_in_stat[7].next();
-    } else if (ret < 2048) {
-        g_marshal_in_stat[8].next();
-    } else if (ret < 4096) {
-        g_marshal_in_stat[9].next();
-    } else if (ret < 8192) {
-        g_marshal_in_stat[10].next();
-    } else {
-        g_marshal_in_stat[11].next();
-    }
-
-    uint64_t now = base::rdtsc();
-    if (now - g_marshal_stat_report_time > g_marshal_stat_report_interval) {
-        stat_marshal_report();
-        g_marshal_stat_report_time = now;
-    }
-}
-
-#endif // RPC_STATISTICS
+// Workstream N Phase 5b-11: retired the entire `#ifdef RPC_STATISTICS`
+// block.  Phase 5b-8 deleted the marshal-out side; Phase 5b-11 deleted
+// the only remaining caller of `stat_marshal_in` (`chunk::read_from_fd`)
+// along with `Marshal::read_from_fd` / `Marshal::chnk_read_from_fd`.
+// The receive path uses `FdSource` (`marshal_archive.hpp`) instead, so
+// the histogram-bucket I/O accounting (`g_marshal_in_stat[12]`,
+// `g_marshal_in_stat_cumulative[12]`, `stat_marshal_report`,
+// `g_marshal_stat_report_time` / `g_marshal_stat_report_interval`,
+// `stat_marshal_in`) had no live producers.
 
 /**
  * 8kb minimum chunk size.
@@ -239,46 +178,12 @@ size_t Marshal::read(void* p, size_t n) {
     }
 }
 
-// @safe - Reads from file descriptor (I/O system call)
-// SAFETY: Internal @unsafe block handles I/O and raw pointer operations
-size_t Marshal::read_from_fd(int fd) {
-    // @unsafe - I/O system calls and raw pointer operations
-    {
-        assert(empty() || (head_ != nullptr && !head_->fully_read()));
-
-        size_t n_bytes = 0;
-        for (;;) {
-            if (head_ == nullptr) {
-                head_ = new chunk;
-                tail_ = head_;
-            } else if (tail_->fully_written()) {
-                tail_->next = new chunk;
-                tail_ = tail_->next;
-            }
-            int r = tail_->read_from_fd(fd);
-            if (r <= 0) {
-                break;
-            }
-            n_bytes += r;
-        }
-        write_cnt_ += n_bytes;
-        content_size_ += n_bytes;
-        assert(content_size_ == content_size_slow());
-
-        assert(empty() || (head_ != nullptr && !head_->fully_read()));
-        return n_bytes;
-    }
-}
-
-// the marshal object should have a chunk allocated with necessary size
-size_t Marshal::chnk_read_from_fd(int fd, size_t bytes){
-    size_t read_bytes = 0;
-    read_bytes += head_->read_from_fd(fd, bytes);
-    content_size_ += read_bytes;
-    write_cnt_ += read_bytes;
-    if(read_bytes <= 0)return 0;
-    return read_bytes;
-}
+// Workstream N Phase 5b-11: removed `Marshal::read_from_fd(int)` and
+// `Marshal::chnk_read_from_fd(int, size_t)`. Neither had any
+// production callers in the codebase; the receive path uses
+// `FdSource` (`marshal_archive.hpp`) for direct fd reads. The
+// inner `chunk::read_from_fd` they used was deleted in the same
+// commit.
 
 size_t Marshal::read_reuse_chnk(Marshal& m, size_t n){
     assert(m.content_size() >= n);   // require m.content_size() >= n > 0

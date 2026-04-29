@@ -1254,7 +1254,7 @@ for `SimpleCommand`/`TxWorkspace`/`mdb::Value`, `LogEntry` +
 `BulkPaxosCmd`, `SimpleRWCommand`), Phase 4c-1
 (`ReplicatedDBCommand`), Phase 5a-1 (prune dead bypass-to-socket
 machinery on LogEntry / BulkPaxosCmd + delete unused
-`TypedPaxosLogEnvelopeAdapter`), and Phase 5b-1..5b-9 (Phase 5
+`TypedPaxosLogEnvelopeAdapter`), and Phase 5b-1..5b-11 (Phase 5
 cleanup sweep: dead `TxData::to_marshal`/`from_marshal`; dead
 `MarInitializerState::proxy`; the broader bypass-to-socket
 infrastructure including `Marshal::bypass_copying` and chunk
@@ -1262,11 +1262,14 @@ infrastructure including `Marshal::bypass_copying` and chunk
 `make_marshallable_proxy`; `TypedMarshallableAdapter` machinery;
 `Marshallable::entity_size`/`write_to_fd` virtuals + dead
 `CustomMarshallable` test class; `Marshal::write_to_fd` +
-`chunk::write_to_fd`; dead `RPC_STATISTICS` marshal-out
-infrastructure; and `MarInitializerState` struct itself —
+`chunk::write_to_fd` + `Marshal::read_from_fd` /
+`Marshal::chnk_read_from_fd` / `chunk::read_from_fd`; dead
+`RPC_STATISTICS` marshal-out + marshal-in infrastructure
+(`stat_marshal_out`/`stat_marshal_in`/`stat_marshal_report` +
+`g_marshal_*_stat[12]` arrays); and `MarInitializerState` struct itself —
 factory now returns `shared_ptr<Marshallable>` directly) have all
 landed. Every in-tree deptran payload uses the Serializable path,
-generated headers carry archive ops by default, and ~1260 LOC of
+generated headers carry archive ops by default, and ~1380 LOC of
 dead infrastructure has been removed. Phase 3d (reactor TX/RX path
 on Sink/Source, + matching Phase 3e-2 to drop the legacy Marshal&
 emission), Phase 3f-2/3 (`MarshallDeputy` SerializableProxy
