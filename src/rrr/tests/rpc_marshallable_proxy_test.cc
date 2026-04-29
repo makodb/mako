@@ -10,39 +10,15 @@
 
 using namespace rrr;
 
-namespace marshallable_proxy_test_types {
-
-constexpr int32_t kTypedOnlyPayloadKind = 420043;
-
-struct TypedOnlyPayload {
-  int32_t value = 0;
-
-  Marshal& to_marshal(Marshal& m) const {
-    m << value;
-    return m;
-  }
-
-  Marshal& from_marshal(Marshal& m) {
-    m >> value;
-    return m;
-  }
-};
-
-using TypedOnlyPayloadAdapter =
-    rrr::TypedMarshallableAdapter<TypedOnlyPayload, kTypedOnlyPayloadKind>;
-
-}  // namespace marshallable_proxy_test_types
-
-namespace rrr {
-
-template <>
-struct TypedMarshallableAdapterTraits<
-    marshallable_proxy_test_types::TypedOnlyPayload> {
-  static constexpr bool kEnabled = true;
-  using Adapter = marshallable_proxy_test_types::TypedOnlyPayloadAdapter;
-};
-
-}  // namespace rrr
+// Workstream N Phase 5b-5: removed the `TypedOnlyPayload` test
+// fixture (struct + namespace + adapter typedef +
+// `TypedMarshallableAdapterTraits` specialization +
+// `EnsureTypedOnlyPayloadInitializer` helper +
+// `TypedPayloadRoundTripsViaDeputyAdapter` /
+// `TypedPayloadInitializerStateContainsAdapter` tests). Its sole
+// purpose was to validate the `TypedMarshallableAdapter` trait
+// path; that path went away with Phase 4 (every production type
+// migrated to Serializable) and is now deleted.
 
 namespace {
 
@@ -98,16 +74,6 @@ class TestMarshallable : public Marshallable {
 void EnsureTestMarshallableInitializer() {
   static bool initialized = []() {
     MarshallDeputy::reg_initializer<TestMarshallable>(kTestMarshallableKind);
-    return true;
-  }();
-  (void)initialized;
-}
-
-void EnsureTypedOnlyPayloadInitializer() {
-  static bool initialized = []() {
-    MarshallDeputy::reg_initializer<
-        marshallable_proxy_test_types::TypedOnlyPayload>(
-        marshallable_proxy_test_types::kTypedOnlyPayloadKind);
     return true;
   }();
   (void)initialized;
@@ -252,43 +218,11 @@ TEST(MarshallableProxyFacadeTest, MarshallableCastFromNullDeputyPointerIsNull) {
   EXPECT_EQ(marshallable_cast<TestMarshallable>(deputy), nullptr);
 }
 
-TEST(MarshallableProxyFacadeTest, TypedPayloadRoundTripsViaDeputyAdapter) {
-  EnsureTypedOnlyPayloadInitializer();
-  auto payload = std::make_shared<marshallable_proxy_test_types::TypedOnlyPayload>();
-  payload->value = 913;
-
-  MarshallDeputy outgoing(payload);
-  Marshal m;
-  m << outgoing;
-
-  MarshallDeputy incoming;
-  m >> incoming;
-
-  auto decoded =
-      marshallable_cast<marshallable_proxy_test_types::TypedOnlyPayload>(
-          incoming);
-  ASSERT_NE(decoded, nullptr);
-  EXPECT_EQ(decoded->value, 913);
-}
-
-// Phase 5b-2: dropped MarInitializerState::proxy assertions (see
-// InitializerReturnsProxyBackedMetadata). This test still verifies
-// that the typed-adapter trait path produces a marshallable wrapping
-// the right payload kind.
-TEST(MarshallableProxyFacadeTest, TypedPayloadInitializerStateContainsAdapter) {
-  EnsureTypedOnlyPayloadInitializer();
-  auto initializer = MarshallDeputy::get_initializer(
-      marshallable_proxy_test_types::kTypedOnlyPayloadKind);
-  auto state = initializer();
-
-  EXPECT_EQ(state.kind, marshallable_proxy_test_types::kTypedOnlyPayloadKind);
-  ASSERT_NE(state.marshallable, nullptr);
-
-  auto decoded =
-      marshallable_cast<marshallable_proxy_test_types::TypedOnlyPayload>(
-          state.marshallable);
-  ASSERT_NE(decoded, nullptr);
-}
+// Workstream N Phase 5b-5: removed
+// `TypedPayloadRoundTripsViaDeputyAdapter` and
+// `TypedPayloadInitializerStateContainsAdapter` tests — they
+// exercised the `TypedMarshallableAdapter` trait path, which is
+// gone now (every production payload uses Serializable).
 
 TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataUsesTypedAdapterPath) {
   auto payload = std::make_shared<janus::VecPieceData>();
