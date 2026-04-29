@@ -383,9 +383,11 @@ class Communicator {
   map<parid_t, vector<SiteProxyPair>> rpc_par_proxies_{};
   map<parid_t, SiteProxyPair> leader_cache_ = {};
   unordered_map<uint64_t, pair<rrr::i64, rrr::i64>> outbound_{};
-	map<uint64_t, double> lat_util_{};
-  locid_t leader_ = 0;
-  
+  // Workstream N Phase 4e-10: removed `lat_util_` and `leader_`
+  // fields — `lat_util_` was referenced only in commented-out
+  // `Log_info` lines at `classic/coordinator.cc:474, 651`; `leader_`
+  // had no readers or writers anywhere in the codebase.
+
   // Global view tracking for all partitions (shared across all communicators)
   static std::map<parid_t, View> partition_views_;
   static std::mutex partition_views_mutex_;
@@ -396,7 +398,9 @@ class Communicator {
 	bool paused = false;
 	bool slow = false;
 	int index;
-	int cpu_index;
+	// Workstream N Phase 4e-10: removed `int cpu_index;`,
+	// `double cpu_stor[10];`, and `double cpu_total;` — none had
+	// any reader or writer anywhere in the codebase.
 	int low_util;
   int total;
 	int total_;
@@ -406,8 +410,6 @@ class Communicator {
   rrr::i64 total_time;
 	rrr::i64 window_avg;
 	rrr::i64 total_avg;
-	double cpu_stor[10];
-	double cpu_total;
 	double cpu = 1.0;
 	double last_cpu = 1.0;
 	double tx;
