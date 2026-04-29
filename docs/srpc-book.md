@@ -969,36 +969,31 @@ struct MyData : public Marshallable {
 };
 ```
 
-Or keep the payload type free of inheritance and bind it through a typed
-adapter trait:
+Or — preferred for new code — keep the payload type free of inheritance
+and define `save` / `load` / `kind` directly on it (the
+`Serializable` path; see §10):
 
 ```cpp srpc-no-compile
 struct MyTypedData {
+    static constexpr int32_t kMarshallKind = 420999;
     i32 id;
     std::string name;
 
-    Marshal& to_marshal(Marshal& m) const {
-        m << id << name;
-        return m;
+    int32_t kind() const { return kMarshallKind; }
+
+    void save(rrr::BinaryWriteArchive& ar) const {
+        ar << id << name;
     }
 
-    Marshal& from_marshal(Marshal& m) {
-        m >> id >> name;
-        return m;
+    void load(rrr::BinaryReadArchive& ar) {
+        ar >> id >> name;
     }
 };
 
-constexpr int32_t kMyTypedDataKind = 420999;
-using MyTypedDataAdapter =
-    rrr::TypedMarshallableAdapter<MyTypedData, kMyTypedDataKind>;
-
-namespace rrr {
-template <>
-struct TypedMarshallableAdapterTraits<MyTypedData> {
-    static constexpr bool kEnabled = true;
-    using Adapter = MyTypedDataAdapter;
-};
-} // namespace rrr
+// Register so MarshallDeputy can recover the type by kind on the
+// receive side. Lives in any .cc file:
+static int volatile reg_my_typed_data =
+    rrr::reg_serializable_in_deputy<MyTypedData>(MyTypedData::kMarshallKind);
 ```
 
 All in-tree deptran payload types (`VecRecData`, `ViewData`,
@@ -1006,17 +1001,17 @@ All in-tree deptran payload types (`VecRecData`, `ViewData`,
 `TpcCommitCommand`, `TpcEmptyCommand`, `TpcNoopCommand`,
 `TpcBatchCommand`, `ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`,
 `BulkPrepareLog`, `PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`,
-`SyncLogResponse`, `SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`)
-have been migrated to the new `Serializable` path
-(see §10) — they expose `save`/`load`/`kind` methods directly on the
-type, register through `reg_serializable_in_deputy<T>(kind)`, and skip
-the `TypedMarshallableAdapter` machinery entirely. Wire format is
-byte-for-byte identical between the two paths; the bridges in
-`marshal_serializable_bridge.hpp` route call sites that use
-`wrap_typed_marshallable<T>` / `marshallable_cast<T>` /
-`MarshallDeputy(shared_ptr<T>)` / `set_marshallable(shared_ptr<T>)` to
-the correct backing implementation, so the migration is transparent to
-callers.
+`SyncLogResponse`, `SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`,
+`SimpleRWCommand`) use the `Serializable` path. Wire format is
+byte-for-byte identical to the legacy Marshallable encoding; the
+bridges in `marshal_serializable_bridge.hpp` route call sites that
+use `wrap_typed_marshallable<T>` / `marshallable_cast<T>` /
+`MarshallDeputy(shared_ptr<T>)` / `set_marshallable(shared_ptr<T>)`
+to a `SerializableMarshallableAdapter` that satisfies the legacy
+Marshallable interface. The legacy `TypedMarshallableAdapter` /
+`TypedMarshallableAdapterTraits` opt-in trait was removed in
+Phase 5b-5 — only direct Marshallable subclasses (e.g. `CmdData`)
+and Serializable types remain.
 
 For `MarshallDeputy` round-trip support, register a typed initializer (no raw
 pointer factory needed). This works for both direct `Marshallable` classes and
@@ -1257,16 +1252,27 @@ Serializable T's transparently), Phase 4d-1/2/3/4/5/6/7/8
 `SyncLogResponse`, `RccGraph`, `VecPieceData` plus archive operators
 for `SimpleCommand`/`TxWorkspace`/`mdb::Value`, `LogEntry` +
 `BulkPaxosCmd`, `SimpleRWCommand`), Phase 4c-1
-(`ReplicatedDBCommand`), and Phase 5a-1 (prune dead bypass-to-socket
+(`ReplicatedDBCommand`), Phase 5a-1 (prune dead bypass-to-socket
 machinery on LogEntry / BulkPaxosCmd + delete unused
-`TypedPaxosLogEnvelopeAdapter`) have all landed — every in-tree
-deptran payload now uses the Serializable path, generated headers
-carry archive ops by default, and the dead fast-path code is gone. Phase 3d (reactor TX/RX path on Sink/Source,
-+ matching Phase 3e-2 to drop the legacy Marshal& emission), Phase
-3f-2/3 (`MarshallDeputy` SerializableProxy storage), and the
-remaining Phase 5 deletions (`MarshallableProxy`,
-`TypedMarshallableAdapter`, `Marshallable::to_marshal`/`from_marshal`)
-are upcoming. See
+`TypedPaxosLogEnvelopeAdapter`), and Phase 5b-1..5b-9 (Phase 5
+cleanup sweep: dead `TxData::to_marshal`/`from_marshal`; dead
+`MarInitializerState::proxy`; the broader bypass-to-socket
+infrastructure including `Marshal::bypass_copying` and chunk
+`shared_data`; `MarshallableProxy` facade + `MarshallableSharedPtrAdapter` +
+`make_marshallable_proxy`; `TypedMarshallableAdapter` machinery;
+`Marshallable::entity_size`/`write_to_fd` virtuals + dead
+`CustomMarshallable` test class; `Marshal::write_to_fd` +
+`chunk::write_to_fd`; dead `RPC_STATISTICS` marshal-out
+infrastructure; and `MarInitializerState` struct itself —
+factory now returns `shared_ptr<Marshallable>` directly) have all
+landed. Every in-tree deptran payload uses the Serializable path,
+generated headers carry archive ops by default, and ~1260 LOC of
+dead infrastructure has been removed. Phase 3d (reactor TX/RX path
+on Sink/Source, + matching Phase 3e-2 to drop the legacy Marshal&
+emission), Phase 3f-2/3 (`MarshallDeputy` SerializableProxy
+storage), and the remaining Phase 5 deletions
+(`Marshallable::to_marshal`/`from_marshal` virtuals, gated on
+`CmdData` migration) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 
