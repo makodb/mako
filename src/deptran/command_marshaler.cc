@@ -7,29 +7,20 @@
 
 namespace janus {
 
-Marshal& CmdData::to_marshal(Marshal& m) const {
-  m << id_;
-  m << type_;
-  m << inn_id_;
-  m << root_id_;
-  m << root_type_;
-  m << client_id_;
-  m << cmd_id_in_client_;
-  m << rule_mode_on_and_is_original_path_only_command_;
-  return m;
-};
-
-Marshal& CmdData::from_marshal(Marshal& m) {
-  m >> id_;
-  m >> type_;
-  m >> inn_id_;
-  m >> root_id_;
-  m >> root_type_;
-  m >> client_id_;
-  m >> cmd_id_in_client_;
-  m >> rule_mode_on_and_is_original_path_only_command_;
-  return m;
-};
+// Workstream N Phase 5b-12: removed `CmdData::to_marshal` /
+// `CmdData::from_marshal` definitions. Both were declared as virtual
+// overrides of `Marshallable::to_marshal` / `from_marshal` but had no
+// production callers — `CmdData` is never registered with
+// `MarshallDeputy::reg_initializer` and never instantiated directly,
+// so the only way they could fire was via virtual dispatch on a
+// subclass instance.  `TxData` removed its own override pair in
+// Phase 5b-1; `SimpleCommand` uses the free `operator<<(Marshal&,
+// const SimpleCommand&)` / `operator<<(BinaryWriteArchive&, ...)`
+// overloads below, never the inherited virtuals.  Removing the
+// overrides means accidental virtual-dispatch calls hit the base
+// `verify(0)` defaults and abort, which surfaces silent partial-write
+// bugs (the legacy `CmdData::to_marshal` only emitted the 8 base
+// fields, dropping any subclass-specific tail) as hard failures.
 
 rrr::Marshal &operator<<(rrr::Marshal &m, const SimpleCommand &cmd) {
   verify(cmd.input.size() < 10000);

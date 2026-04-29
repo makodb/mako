@@ -48,7 +48,15 @@ class CmdData : public rrr::Marshallable {
 
   CmdData() : rrr::Marshallable(rrr::MarshallDeputy::CONTAINER_CMD) {}
   virtual ~CmdData() {};
-  virtual rrr::Marshal& to_marshal(rrr::Marshal&) const override;
-  virtual rrr::Marshal& from_marshal(rrr::Marshal&) override;
+  // Workstream N Phase 5b-12: removed `to_marshal` / `from_marshal`
+  // overrides. CmdData is never registered with
+  // `MarshallDeputy::reg_initializer` and never instantiated directly
+  // (no `make_shared<CmdData>` / `new CmdData` callers); its only
+  // subclasses are `SimpleCommand` (serialized via free `operator<<`
+  // overloads on `Marshal&` / `BinaryWriteArchive&` in
+  // `command_marshaler.cc`, never via virtual dispatch) and `TxData`
+  // (Phase 5b-1 deleted its own override pair). The base
+  // `Marshallable::to_marshal` / `from_marshal` `verify(0)` defaults
+  // remain in place.
 };
 } // namespace janus
