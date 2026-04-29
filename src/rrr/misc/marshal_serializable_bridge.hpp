@@ -325,4 +325,56 @@ inline T* serializable_cast(const MarshallDeputy& md) {
   return serializable_cast<T>(md.inner());
 }
 
+// ---- MarshallDeputy ↔ BinaryWriteArchive / BinaryReadArchive --------
+//
+// Phase 4 enabler: lets command types containing a `MarshallDeputy`
+// field write `ar << md` / `ar >> md` in their `save` / `load`
+// methods, byte-for-byte equivalent to the legacy `Marshal` operator
+// pair.
+//
+// Wire format: `[kind: int32_t] [payload: <bytes from inner's save>]`.
+// Same as the existing `operator<<(Marshal&, const MarshallDeputy&)`.
+//
+// READ side restriction: the BinaryReadArchive's source must be a
+// MarshalSource (i.e., the wrapper around an `rrr::Marshal`). This
+// is the common case in the RPC framework — incoming bytes are
+// buffered into a `Marshal` (Request::m) and read out via a
+// MarshalSource. Other source types abort because the
+// MarshallDeputy wire format has no length prefix at the
+// payload-bytes level, so streaming-from-arbitrary-source can't
+// know when from_marshal has finished consuming.
+
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
+                                      const MarshallDeputy& md) {
+  verify(md.kind_ != MarshallDeputy::UNKNOWN);
+  verify(md.has_marshallable());
+  ar << md.kind_;
+  // Drive save through the M→S adapter chain. Bytes are byte-for-byte
+  // identical to `inner()->to_marshal(...)` (which is what the legacy
+  // `operator<<(Marshal&, MarshallDeputy)` does after writing the
+  // kind prefix).
+  auto serial = as_serializable(md);
+  serial->save(ar);
+  return ar;
+}
+
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
+                                     MarshallDeputy& md) {
+  // Recover the underlying Marshal from the source via proxy_cast.
+  // (proxy_cast is found via ADL on the proxy_indirect_accessor.)
+  auto* mark_adapter =
+      proxy_cast<MarshalSourceAdapter>(&*ar.source());
+  verify(mark_adapter != nullptr &&
+         "operator>>(BinaryReadArchive, MarshallDeputy) requires the "
+         "archive's source to be a MarshalSource. Wrap the wire bytes "
+         "in a Marshal first; the streaming-from-arbitrary-source case "
+         "needs a length-prefixed wire format which we don't have.");
+  Marshal* m = mark_adapter->source()->marshal();
+  verify(m != nullptr);
+  // Delegate to the existing legacy operator>> which reads kind and
+  // dispatches to the registered factory + from_marshal.
+  *m >> md;
+  return ar;
+}
+
 }  // namespace rrr
