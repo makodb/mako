@@ -41,10 +41,16 @@ class CmdData : public rrr::Marshallable {
   virtual void Reset() {
     verify(0);
   }
-  virtual CmdData* Clone() const  {
-    // deprecated.
-    verify(0);
-  };
+  // Workstream N Phase 4e-3: removed `virtual CmdData* Clone() const`
+  // (and the matching `SimpleCommand::Clone` override).  The method
+  // was annotated `// deprecated.` and `verify(0)`-stubbed; no caller
+  // anywhere in the codebase invoked it (`grep "->Clone()"` /
+  // `".Clone()"` across src/ returns zero production hits — only the
+  // two definitions themselves).  Same Phase 4e-3 removal covered
+  // `SimpleCommand::RootCmd()` and the `SimpleCommand::root_`
+  // back-pointer it returned: both were unused (`root_` was written
+  // by `TxData::GetReadyPiecesData` / `TxData::GetNextReadySubCmd`
+  // but never read by anything).
 
   CmdData() : rrr::Marshallable(rrr::MarshallDeputy::CONTAINER_CMD) {}
   virtual ~CmdData() {};

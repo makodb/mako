@@ -143,7 +143,13 @@ enum CommandStatus {
 // TODO rename to TxPieceData? Seems a bad name. Should figure out a better name.
 class SimpleCommand: public CmdData {
  public:
-  CmdData* root_ = nullptr;
+  // Workstream N Phase 4e-3: removed the dead `CmdData* root_`
+  // back-pointer.  It was written by `TxData::GetReadyPiecesData`
+  // and `TxData::GetNextReadySubCmd` (procedure.cc:288, 329) but
+  // never read by anything; the matching `RootCmd()` accessor and
+  // the `Clone()` override that copy-constructed it were equally
+  // unused.  See the companion comment on `CmdData::Clone` in
+  // `command.h` for the full audit.
   uint64_t timestamp_{0};
   int32_t rank_{RANK_UNDEFINED};
   TxWorkspace input{};
@@ -154,12 +160,6 @@ class SimpleCommand: public CmdData {
   virtual parid_t PartitionId() const {
     verify(partition_id_ != 0xFFFFFFFF);
     return partition_id_;
-  }
-  virtual CmdData* RootCmd() const {return root_;}
-  virtual CmdData* Clone() const override {
-    SimpleCommand* cmd = new SimpleCommand();
-    *cmd = *this;
-    return cmd;
   }
   virtual ~SimpleCommand() {};
 };

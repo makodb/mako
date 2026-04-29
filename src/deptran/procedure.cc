@@ -285,7 +285,8 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
       piece_data->cmd_id_in_client_ = cmd_id_in_client_;
       piece_data->input = inputs_[pi];
       piece_data->output_size = output_size_[pi];
-      piece_data->root_ = this;
+      // Workstream N Phase 4e-3: removed `piece_data->root_ = this;`
+      // — the `root_` back-pointer field on SimpleCommand was unread.
       piece_data->timestamp_ = timestamp_;
       piece_data->rank_ = ranks_[pi]; // TODO fix bug here
       map_piece_data_[pi] = piece_data;
@@ -326,7 +327,8 @@ shared_ptr<TxPieceData> TxData::GetNextReadySubCmd() {
       piece_data->root_type_ = type_;
       piece_data->input = inputs_[pi];
       piece_data->output_size = output_size_[pi];
-      piece_data->root_ = this;
+      // Workstream N Phase 4e-3: removed `piece_data->root_ = this;`
+      // — the `root_` back-pointer field on SimpleCommand was unread.
       piece_data->timestamp_ = timestamp_;
       map_piece_data_[pi] = piece_data;
       partition_ids_.insert(piece_data->partition_id_);
