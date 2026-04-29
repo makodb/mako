@@ -127,77 +127,33 @@ class Marshallable {
 // virtual dispatch (`md.inner()->to_marshal(m)`) plus the
 // SerializableMarshallableAdapter for migrated types.
 
-template <typename T>
-struct TypedMarshallableAdapterTraits {
-  static constexpr bool kEnabled = false;
-};
-
-template <typename T>
-inline constexpr bool kHasTypedMarshallableAdapter =
-    TypedMarshallableAdapterTraits<T>::kEnabled;
+// Workstream N Phase 5b-5: removed `TypedMarshallableAdapterTraits`,
+// `kHasTypedMarshallableAdapter`, the `TypedMarshallableAdapter`
+// class template, and the legacy `wrap_typed_marshallable<T>` /
+// `marshallable_cast<T>` overloads gated on the trait. After
+// Phase 4 fully migrated all production payload types to
+// Serializable, the typed-adapter trait path was exercised only by
+// the `TypedOnlyPayload` test fixture in
+// `rpc_marshallable_proxy_test.cc`; that fixture went away in this
+// commit too. Two paths remain for `wrap_typed_marshallable` /
+// `marshallable_cast`: direct Marshallable subclasses (the C-style
+// path) and SerializableConcept types (the bridge path).
 
 template <typename T>
 inline constexpr bool kAlwaysFalse = false;
 
-// Adapter that makes a non-Marshallable payload type marshallable.
-template <typename T, int32_t KindV>
-class TypedMarshallableAdapter : public Marshallable {
- public:
-  TypedMarshallableAdapter()
-      : Marshallable(KindV), typed_(std::make_shared<T>()) {}
-
-  explicit TypedMarshallableAdapter(std::shared_ptr<T> typed)
-      : Marshallable(KindV), typed_(std::move(typed)) {
-    verify(typed_ != nullptr);
-  }
-
-  std::shared_ptr<T> typed() const { return typed_; }
-
-  Marshal& to_marshal(Marshal& out) const override {
-    return typed_->to_marshal(out);
-  }
-
-  Marshal& from_marshal(Marshal& in) override {
-    return typed_->from_marshal(in);
-  }
-
- private:
-  std::shared_ptr<T> typed_;
-};
-
-// Workstream N Phase 4a-prep: constrained to types with a
-// TypedMarshallableAdapter trait. Types migrated to Serializable
-// (no trait) hit the matching overload defined in
-// `marshal_serializable_bridge.hpp`, which routes through
-// `wrap_serializable`. This lets call sites continue to use
-// `wrap_typed_marshallable(make_shared<T>())` regardless of T's
-// migration state.
-template <typename T>
-  requires kHasTypedMarshallableAdapter<T>
-inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
-    std::shared_ptr<T> typed) {
-  verify(typed != nullptr);
-  using Adapter = typename TypedMarshallableAdapterTraits<T>::Adapter;
-  static_assert(std::is_base_of_v<Marshallable, Adapter>,
-                "Typed adapter must inherit rrr::Marshallable");
-  return std::static_pointer_cast<Marshallable>(
-      std::make_shared<Adapter>(std::move(typed)));
-}
-
-// Workstream N Phase 4d-prep: forward declaration of the bridge
-// overload of `wrap_typed_marshallable<T>` for SerializableConcept T.
-// The actual definition lives in `marshal_serializable_bridge.hpp`
-// (which is included via the rrr.hpp umbrella in production code).
+// Forward declaration of the bridge `wrap_typed_marshallable<T>` for
+// SerializableConcept T. The actual definition lives in
+// `marshal_serializable_bridge.hpp` (included via the rrr.hpp
+// umbrella in production code).
 //
 // The forward decl is needed here so that two-phase template lookup
 // inside `MarshallDeputy::set_marshallable<T>` (and the matching
 // constructor) finds this overload during Phase 1 unqualified lookup
-// at template definition. Without it, only the legacy
-// (TypedMarshallableAdapter) overload would be visible, since ADL
-// on `shared_ptr<T>` only adds `std` and T's namespace — not `rrr`.
+// at template definition. ADL on `shared_ptr<T>` only adds `std`
+// and T's namespace — not `rrr`.
 template <typename T>
   requires (!std::is_base_of_v<Marshallable, T> &&
-            !kHasTypedMarshallableAdapter<T> &&
             SerializableConcept<T>)
 std::shared_ptr<Marshallable> wrap_typed_marshallable(
     std::shared_ptr<T> typed);
@@ -226,29 +182,20 @@ class MarshallDeputy {
     // accessor; removed to keep the SpinMutex contained.
     // @unsafe - Registers proxy-backed initializer metadata factory.
     static int reg_initializer(int32_t, MarInitializerFn);
-    // @unsafe - Registers typed default-constructible marshallable.
+    // @unsafe - Registers typed default-constructible Marshallable
+    // subclass. Workstream N Phase 5b-5: dropped the
+    // `kHasTypedMarshallableAdapter<T>` branch — only Marshallable
+    // subclasses use this path now (Serializable types register via
+    // `rrr::reg_serializable_in_deputy<T>` in
+    // `marshal_serializable_bridge.hpp`).
     template <typename T>
     static int reg_initializer(int32_t cmd_type)
-      requires std::is_default_constructible_v<T>
+      requires (std::is_default_constructible_v<T> &&
+                std::is_base_of_v<rrr::Marshallable, T>)
     {
-      if constexpr (std::is_base_of_v<rrr::Marshallable, T>) {
-        return reg_initializer(cmd_type, []() {
-          return make_initializer_state(std::make_shared<T>());
-        });
-      } else if constexpr (kHasTypedMarshallableAdapter<T>) {
-        return reg_initializer(cmd_type, [cmd_type]() {
-          auto typed = std::make_shared<T>();
-          auto wrapped = wrap_typed_marshallable(std::move(typed));
-          auto state = make_initializer_state(std::move(wrapped));
-          verify(state.kind == cmd_type);
-          return state;
-        });
-      } else {
-        static_assert(
-            kAlwaysFalse<T>,
-            "reg_initializer<T>() requires T to be Marshallable or trait-enabled");
-        return 0;
-      }
+      return reg_initializer(cmd_type, []() {
+        return make_initializer_state(std::make_shared<T>());
+      });
     }
     static MarInitializerFn get_initializer(int32_t);
 
@@ -315,18 +262,14 @@ class MarshallDeputy {
           std::static_pointer_cast<rrr::Marshallable>(std::move(sp_m)));
     }
 
-    // Workstream N Phase 4d-prep: requires clause now also matches
-    // `SerializableConcept<T>`. The forward decl above of the bridge
-    // `wrap_typed_marshallable<T>` for Serializable T means this
-    // template's body finds the right overload at instantiation
-    // time, regardless of T's migration state. Call sites that do
-    // `MarshallDeputy md(make_shared<T>())` keep working as T is
-    // migrated.
+    // Workstream N Phase 5b-5: simplified — only SerializableConcept T
+    // remains. The bridge `wrap_typed_marshallable<T>` forward-decl
+    // above lets Phase 1 unqualified lookup find it during template
+    // instantiation.
     template<typename T>
     explicit MarshallDeputy(std::shared_ptr<T> sp_t)
       requires (!std::is_base_of_v<rrr::Marshallable, T> &&
-                (kHasTypedMarshallableAdapter<T> ||
-                 SerializableConcept<T>))
+                SerializableConcept<T>)
     {
       set_marshallable(std::move(sp_t));
     }
@@ -343,15 +286,14 @@ class MarshallDeputy {
     }
 
     // @unsafe - Template delegates to non-borrow-checked set_marshallable.
-    // Workstream N Phase 4d-prep: requires clause also matches
-    // `SerializableConcept<T>`. `wrap_typed_marshallable` is
-    // forward-declared above for both legacy and Serializable T's;
-    // the right overload is picked at instantiation time.
+    // Workstream N Phase 5b-5: simplified — only SerializableConcept T
+    // remains. The bridge `wrap_typed_marshallable<T>` forward-decl
+    // above lets Phase 1 unqualified lookup find it during template
+    // instantiation.
     template <typename T>
     void set_marshallable(std::shared_ptr<T> typed)
       requires (!std::is_base_of_v<rrr::Marshallable, T> &&
-                (kHasTypedMarshallableAdapter<T> ||
-                 SerializableConcept<T>))
+                SerializableConcept<T>)
     {
       set_marshallable(wrap_typed_marshallable(std::move(typed)));
     }
@@ -404,30 +346,18 @@ class MarshallDeputy {
 // These isolate call sites from direct dynamic_pointer_cast usage on
 // MarshallDeputy::inner().
 //
-// Workstream N Phase 4a-prep: constrained to types reachable through
-// the legacy Marshallable / TypedMarshallableAdapter machinery.
-// Types migrated to Serializable (no Marshallable inheritance, no
-// TypedMarshallableAdapter trait) hit the matching overload in
-// `marshal_serializable_bridge.hpp`, which routes through
-// `serializable_cast<T>` and synthesizes a `shared_ptr<T>` aliasing
-// the underlying SerializableMarshallableAdapter. This lets call
-// sites continue to use `marshallable_cast<T>(...)` regardless of T's
-// migration state.
+// Workstream N Phase 5b-5: simplified — only Marshallable subclasses
+// hit this overload. SerializableConcept T's are handled by the
+// matching overload in `marshal_serializable_bridge.hpp`, which
+// routes through `serializable_cast<T>` and synthesizes a
+// `shared_ptr<T>` aliasing the underlying
+// SerializableMarshallableAdapter. Call sites continue to use
+// `marshallable_cast<T>(...)` regardless of T's migration state.
 template <typename T>
-  requires (std::is_base_of_v<Marshallable, T> ||
-            kHasTypedMarshallableAdapter<T>)
+  requires std::is_base_of_v<Marshallable, T>
 inline std::shared_ptr<T> marshallable_cast(
     const std::shared_ptr<Marshallable>& value) {
-  if constexpr (std::is_base_of_v<Marshallable, T>) {
-    return std::dynamic_pointer_cast<T>(value);
-  } else {  // kHasTypedMarshallableAdapter<T>
-    using Adapter = typename TypedMarshallableAdapterTraits<T>::Adapter;
-    auto adapter = std::dynamic_pointer_cast<Adapter>(value);
-    if (adapter == nullptr) {
-      return nullptr;
-    }
-    return adapter->typed();
-  }
+  return std::dynamic_pointer_cast<T>(value);
 }
 
 inline std::shared_ptr<Marshallable> marshallable_ref_as_shared(

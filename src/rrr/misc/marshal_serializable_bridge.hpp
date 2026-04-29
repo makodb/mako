@@ -397,7 +397,6 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
 // is migrated to Serializable.
 template<typename T>
   requires (!std::is_base_of_v<Marshallable, T> &&
-            !kHasTypedMarshallableAdapter<T> &&
             SerializableConcept<T>)
 inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
     std::shared_ptr<T> typed) {
@@ -413,7 +412,6 @@ inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
 // (the SerializableMarshallableAdapter).
 template<typename T>
   requires (!std::is_base_of_v<Marshallable, T> &&
-            !kHasTypedMarshallableAdapter<T> &&
             SerializableConcept<T>)
 inline std::shared_ptr<T> marshallable_cast(
     const std::shared_ptr<Marshallable>& value) {
