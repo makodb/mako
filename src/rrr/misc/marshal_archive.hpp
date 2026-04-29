@@ -873,6 +873,20 @@ struct SerializableFacade : pro::facade_builder
 
 using SerializableProxy = pro::proxy<SerializableFacade>;
 
+// Concept: T satisfies the Serializable interface
+// (`save(BinaryWriteArchive&) const`, `load(BinaryReadArchive&)`,
+// `kind() const -> int32_t`). Used to drive overload resolution in
+// `marshallable_cast<T>` and `wrap_typed_marshallable<T>` so that
+// types migrated from Marshallable to Serializable continue to work
+// at existing call sites without churn.
+template<typename T>
+concept SerializableConcept = requires(
+    T t, const T& ct, BinaryWriteArchive& w, BinaryReadArchive& r) {
+  ct.save(w);
+  t.load(r);
+  ct.kind();
+};
+
 // Construct a SerializableProxy that owns a T constructed from the
 // forwarded arguments (default-constructed if no args). T must
 // satisfy:

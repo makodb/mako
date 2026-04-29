@@ -377,4 +377,49 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
   return ar;
 }
 
+// ---- Phase 4a-prep: Serializable overloads of marshallable_cast and
+//      wrap_typed_marshallable. -----------------------------------
+//
+// These complement the legacy overloads in `marshal.hpp`. Types
+// migrated from Marshallable to Serializable (no Marshallable
+// inheritance, no TypedMarshallableAdapter trait) hit the bridge
+// overload via overload resolution on the `requires` clauses in both
+// places. Call sites continue to use `marshallable_cast<T>(...)` and
+// `wrap_typed_marshallable(make_shared<T>())` regardless of T's
+// migration state.
+
+// `wrap_typed_marshallable<T>` for Serializable types — routes
+// through `wrap_serializable<T>`. Call sites that did
+// `wrap_typed_marshallable(make_shared<TpcCommitCommand>())` continue
+// to compile and produce identical wire bytes after TpcCommitCommand
+// is migrated to Serializable.
+template<typename T>
+  requires (!std::is_base_of_v<Marshallable, T> &&
+            !kHasTypedMarshallableAdapter<T> &&
+            SerializableConcept<T>)
+inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
+    std::shared_ptr<T> typed) {
+  return wrap_serializable(std::move(typed));
+}
+
+// `marshallable_cast<T>` for Serializable types — routes through
+// `serializable_cast<T>`, then synthesizes a `shared_ptr<T>` aliasing
+// the underlying SerializableMarshallableAdapter via the shared_ptr
+// aliasing constructor. This preserves the legacy
+// `shared_ptr<T> = marshallable_cast<T>(value)` call shape; the
+// returned shared_ptr extends the lifetime of `value`'s control block
+// (the SerializableMarshallableAdapter).
+template<typename T>
+  requires (!std::is_base_of_v<Marshallable, T> &&
+            !kHasTypedMarshallableAdapter<T> &&
+            SerializableConcept<T>)
+inline std::shared_ptr<T> marshallable_cast(
+    const std::shared_ptr<Marshallable>& value) {
+  T* p = serializable_cast<T>(value);
+  if (p == nullptr) return nullptr;
+  // Aliasing ctor: keeps `value` (the SerializableMarshallableAdapter)
+  // alive while pointing to T inside its proxy.
+  return std::shared_ptr<T>(value, p);
+}
+
 }  // namespace rrr
