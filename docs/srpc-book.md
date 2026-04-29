@@ -1280,9 +1280,13 @@ emission) is partially landed — Phase 3d-1 migrated the channel-mode
 response demux (`ClientConnection::decode_response_and_notify`) off
 its temporary `Marshal body` onto a `BufferSource` +
 `BinaryReadArchive`, eliminating one Marshal allocation per inbound
-reply; sub-leaves 3d-2..3d-6 (request-side archive plumbing,
-`rpcgen` proxy lambda flip, generated-header regeneration, sweep,
-and final `Marshal&` overload deletion) are queued. Phase 3f-2/3
+reply; Phase 3d-2 made `ClientConnection::request_via_channel<F>` and
+`request_with_options<F>` dual-signature, so write_fn lambdas can
+take either `Marshal&` (legacy) or `BinaryWriteArchive&` (new path)
+selected at compile time via `if constexpr` over
+`std::is_invocable_v`.  Sub-leaves 3d-3..3d-6 (`rpcgen` proxy lambda
+flip, generated-header regeneration, sweep, and final `Marshal&`
+overload deletion) are queued. Phase 3f-2/3
 (`MarshallDeputy` SerializableProxy storage), and the remaining
 Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
 virtuals, now gated only on test-fixture migration since `CmdData`
