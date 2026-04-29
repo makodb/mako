@@ -292,7 +292,9 @@ private:
         // @unsafe
         {
             RpcTxnRmwRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnRmwResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -308,7 +310,9 @@ private:
         // @unsafe
         {
             RpcTxnReadRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -324,7 +328,9 @@ private:
         // @unsafe
         {
             RpcTxnNewOrderRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnNewOrderResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -340,7 +346,9 @@ private:
         // @unsafe
         {
             RpcTxnPaymentRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnPaymentResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -356,7 +364,9 @@ private:
         // @unsafe
         {
             RpcTxnDeliveryRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnDeliveryResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -372,7 +382,9 @@ private:
         // @unsafe
         {
             RpcTxnOrderStatusRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnOrderStatusResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -388,7 +400,9 @@ private:
         // @unsafe
         {
             RpcTxnStockLevelRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnStockLevelResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
