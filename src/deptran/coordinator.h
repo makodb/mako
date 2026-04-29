@@ -61,7 +61,10 @@ class Coordinator {
   // Transaction timeout in microseconds (from config, default 30 seconds)
   uint64_t txn_timeout_{30000000};
   uint32_t thread_id_;
-  bool batch_optimal_ = false;
+  // Workstream N Phase 4e-18: removed `bool batch_optimal_ = false;`
+  // — declared but the only reference was a commented-out
+  // `verify(!batch_optimal_)` in `snow/ro6_coord.cc:243`; never
+  // written or read in production paths.
 	bool slow_ = false;
   bool retry_wait_;
   shared_ptr<IntEvent> sp_ev_commit_{};
@@ -93,7 +96,11 @@ class Coordinator {
   bool commit_reported_ = false;
   bool validation_result_{true};
   bool aborted_ = false;
-	bool repeat_ = false;
+  // Workstream N Phase 4e-18: removed `bool repeat_ = false;` —
+  // default-initialised false, written only to false at
+  // `classic/coordinator.cc:187`, read only at
+  // `classic/coordinator.cc:462` inside an empty-body
+  // `if(repeat_) {}` (which was therefore unreachable code).
   uint32_t n_dispatch_ = 0;
   uint32_t n_dispatch_ack_ = 0;
   uint32_t n_prepare_req_ = 0;

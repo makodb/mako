@@ -426,11 +426,15 @@ class Communicator {
   std::vector<std::thread> threads;
   bool broadcasting_to_leaders_only_{true};
   bool follower_forwarding{false};
-	std::mutex lock_;
+  // Workstream N Phase 4e-18: removed `std::mutex lock_;`,
+  // `std::condition_variable cv_;`, and `bool waiting = false;`
+  // — neither field was accessed via `commo()->`/`commo_->` from
+  // any caller, nor by any internal `Communicator` member function.
+  // The companion `count_lock_` IS live (used in
+  // `classic/coordinator.cc:118-121` and `client_worker.cc:306-309`)
+  // and stays.
 	std::mutex count_lock_;
-	std::condition_variable cv_;
-	bool waiting = false;
-  
+
   // Callback function type for getting dynamic leader
   using LeaderCallback = std::function<locid_t(parid_t)>;
   LeaderCallback leader_callback_ = nullptr;

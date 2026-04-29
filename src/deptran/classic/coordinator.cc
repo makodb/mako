@@ -184,7 +184,8 @@ void CoordinatorClassic::Reset() {
   dispatch_acks_.clear();
   committed_ = false;
   aborted_ = false;
-	repeat_ = false;
+  // Workstream N Phase 4e-18: removed `repeat_ = false;` — the
+  // `repeat_` field was deleted alongside (always-false dead state).
 }
 
 void CoordinatorClassic::Restart() {
@@ -459,9 +460,9 @@ void CoordinatorClassic::Prepare() {
     cmd->commit_.store(true);
     committed_ = true;
   }
-	if(repeat_) {
-		
-	}
+  // Workstream N Phase 4e-18: removed empty-body `if(repeat_) {}`
+  // — `repeat_` was always false (default-init, never set true);
+  // the field and this empty branch went away together.
 	if (commo()->slow) {
 		Log_info("prep_slow");
 		prep_slow = true;
