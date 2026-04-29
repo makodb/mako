@@ -22,13 +22,16 @@ def emit_struct(struct, f, archive=False):
             f.writeln("%s %s;" % (field.type, field.name))
     f.writeln("};")
     f.writeln()
-    f.writeln("inline rrr::Marshal& operator <<(rrr::Marshal& m, const %s& o) {" % struct.name)
-    with f.indent():
-        for field in struct.fields:
-            f.writeln("m << o.%s;" % field.name)
-        f.writeln("return m;")
-    f.writeln("}")
-    f.writeln()
+    # Workstream N Phase 3e-2: the legacy
+    # `rrr::Marshal& operator<<(rrr::Marshal&, const T&)` emission is
+    # gone.  Every write-side caller in production code uses a
+    # `BinaryWriteArchive` (Phase 3d-6 collapsed `request_via_channel`
+    # / `reply` to archive-only).  The matching `operator>>` stays
+    # because server-side request decode still reads field-by-field
+    # from `req->m` (a Marshal) and the user-facing receive path
+    # exposes a `Marshal&` via `fu->get_reply()`.  Both readers will
+    # switch to `BinaryReadArchive` in a follow-up leaf, at which
+    # point this `operator>>` can drop too.
     f.writeln("inline rrr::Marshal& operator >>(rrr::Marshal& m, %s& o) {" % struct.name)
     with f.indent():
         for field in struct.fields:
@@ -93,12 +96,15 @@ def emit_marshaled_typed_struct(struct_name, fields, f, archive=False):
         for field_type, field_name in fields:
             f.writeln("%s %s;" % (field_type, field_name))
     f.writeln("};")
-    f.writeln("friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const %s& o) {" % struct_name)
-    with f.indent():
-        for _, field_name in fields:
-            f.writeln("m << o.%s;" % field_name)
-        f.writeln("return m;")
-    f.writeln("}")
+    # Workstream N Phase 3e-2: dropped the legacy `friend inline
+    # rrr::Marshal& operator<<(rrr::Marshal&, const Foo&)` for
+    # auto-generated typed Rpc*Request/Response wrappers — these
+    # structs are serialized field-by-field at every dispatch site,
+    # so the whole-struct `<<` overload was emitted but never called.
+    # The matching `>>` stays for the same reason as `emit_struct`:
+    # `req->m >> __typed_req__.field` and
+    # `fu->get_reply() >> __typed_resp__.field` still read from a
+    # Marshal source and dispatch through these per-field operators.
     f.writeln("friend inline rrr::Marshal& operator >>(rrr::Marshal& m, %s& o) {" % struct_name)
     with f.indent():
         for _, field_name in fields:
