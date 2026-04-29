@@ -252,7 +252,7 @@ TEST_F(ClientChannelFactoryTest, ConnectViaFactoryEnablesRequestDispatch) {
 
     // Issue a request — it should land on the stub the factory
     // produced (channel-mode dispatch).
-    auto fr = mut_conn().request(0x42, FutureAttr{}, [](Marshal& m) {
+    auto fr = mut_conn().request(0x42, FutureAttr{}, [](BinaryWriteArchive& m) {
         m << static_cast<i32>(0xABCD);
     });
     ASSERT_TRUE(fr.is_ok());

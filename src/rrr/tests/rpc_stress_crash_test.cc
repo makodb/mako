@@ -196,7 +196,7 @@ protected:
         std::string input = "stress";
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_err()) {
             stats.requests_failed++;
@@ -303,7 +303,7 @@ TEST_F(StressCrashTest, ServerCrashWith100PendingRequests) {
         std::string input = "req_" + std::to_string(i);
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_ok()) {
             futures.push_back(fu_result.unwrap());

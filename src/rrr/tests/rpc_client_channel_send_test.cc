@@ -160,7 +160,7 @@ TEST_F(ClientChannelSendTest, RequestRoutesFrameThroughChannel) {
     EXPECT_TRUE(conn().is_channel_mode());
 
     constexpr i32 kRpcId = 0x42;
-    auto fr = mut_conn().request(kRpcId, FutureAttr{}, [](Marshal& m) {
+    auto fr = mut_conn().request(kRpcId, FutureAttr{}, [](BinaryWriteArchive& m) {
         m << static_cast<i32>(0xDEADBEEF);
     });
     ASSERT_TRUE(fr.is_ok());
@@ -186,7 +186,7 @@ TEST_F(ClientChannelSendTest, RequestRoutesFrameThroughChannel) {
 
 TEST_F(ClientChannelSendTest, RequestSurfacesChannelErrorAsEIO) {
     stub_->set_send_result(ChannelError::ConnectionReset);
-    auto fr = mut_conn().request(0x11, FutureAttr{}, [](Marshal&) {});
+    auto fr = mut_conn().request(0x11, FutureAttr{}, [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fr.is_err());
     EXPECT_EQ(fr.unwrap_err(), EIO);
     // The frame still went through the stub (send_frame ran before
@@ -196,7 +196,7 @@ TEST_F(ClientChannelSendTest, RequestSurfacesChannelErrorAsEIO) {
 
 TEST_F(ClientChannelSendTest, RequestFailsWithENOTCONNWhenChannelClosed) {
     stub_->mark_closed_for_test();
-    auto fr = mut_conn().request(0x22, FutureAttr{}, [](Marshal&) {});
+    auto fr = mut_conn().request(0x22, FutureAttr{}, [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fr.is_err());
     EXPECT_EQ(fr.unwrap_err(), ENOTCONN);
     // No frame should have been sent — early-exit on closed channel.
@@ -210,7 +210,7 @@ TEST_F(ClientChannelSendTest, RequestFailsWithENOTCONNWhenChannelClosed) {
 TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
     constexpr int kCount = 5;
     for (int i = 0; i < kCount; ++i) {
-        auto fr = mut_conn().request(0x100 + i, FutureAttr{}, [i](Marshal& m) {
+        auto fr = mut_conn().request(0x100 + i, FutureAttr{}, [i](BinaryWriteArchive& m) {
             m << i;
         });
         ASSERT_TRUE(fr.is_ok()) << "iteration " << i;
@@ -258,7 +258,7 @@ TEST_F(ClientChannelSendTest, ConcurrentDispatchIsThreadSafe) {
             for (int i = 0; i < kRequestsPerThread; ++i) {
                 const i32 rpc_id = (t << 8) | i;
                 auto fr = mut_conn().request(rpc_id, FutureAttr{},
-                                             [t, i](Marshal& m) {
+                                             [t, i](BinaryWriteArchive& m) {
                                                  m << static_cast<i32>(t);
                                                  m << static_cast<i32>(i);
                                              });

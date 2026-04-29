@@ -54,7 +54,7 @@ public:
         }
 
         auto sconn = sconn_opt.unwrap();
-        const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](Marshal& m) {
+        const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](BinaryWriteArchive& m) {
             m << payload;
         });
     }
@@ -447,7 +447,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     auto start = steady_clock::now();
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [&](Marshal& m) {
+        [&](BinaryWriteArchive& m) {
             marshal_calls.fetch_add(1);
             m << v32(123);
         });
@@ -493,7 +493,7 @@ TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](Marshal& m) { m << v32(456); });
+        [](BinaryWriteArchive& m) { m << v32(456); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -530,7 +530,7 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     auto start = steady_clock::now();
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](Marshal& m) { m << v32(9); });
+        [](BinaryWriteArchive& m) { m << v32(9); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -571,7 +571,7 @@ TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) 
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](Marshal& m) { m << v32(3); });
+        [](BinaryWriteArchive& m) { m << v32(3); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -611,7 +611,7 @@ TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](Marshal& m) { m << v32(5); });
+        [](BinaryWriteArchive& m) { m << v32(5); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -648,7 +648,7 @@ TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAt
     auto start = steady_clock::now();
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](Marshal& m) { m << v32(77); });
+        [](BinaryWriteArchive& m) { m << v32(77); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 

@@ -137,7 +137,7 @@ protected:
         std::string input = "chaos_test";
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_err()) return false;
         auto fu = fu_result.unwrap();

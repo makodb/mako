@@ -69,7 +69,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
                 out << input;
             });
         }
@@ -87,7 +87,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
                 out << input;
             });
         }
@@ -103,7 +103,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
                 out << result;
             });
         }
@@ -170,7 +170,7 @@ int FutureTest::test_counter = 0;
 TEST_F(FutureTest, BasicFutureCreation) {
     // Create a future through an RPC call
     std::string input = "test";
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -194,7 +194,7 @@ TEST_F(FutureTest, FutureReadyCheck) {
     service_->delay_ms = 100;
 
     std::string input = "test";
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -214,7 +214,7 @@ TEST_F(FutureTest, FutureReadyCheck) {
 
 TEST_F(FutureTest, FutureWait) {
     std::string input = "test";
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -264,7 +264,7 @@ TEST_F(FutureTest, FutureCallback) {
     });
 
     std::string input = "test";
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, attr, [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, attr, [&](BinaryWriteArchive& m) {
         m << input;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -283,7 +283,7 @@ TEST_F(FutureTest, FutureCallback) {
 
 TEST_F(FutureTest, FutureGetReply) {
     i32 n = 17;
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << n;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -302,7 +302,7 @@ TEST_F(FutureTest, FutureGetReply) {
 
 TEST_F(FutureTest, FutureErrorCode) {
     // Test with invalid RPC ID - use no-op lambda to avoid template overload issues
-    auto fu_result = client.as_ref().unwrap()->request(99999, FutureAttr(), [](Marshal&) {});
+    auto fu_result = client.as_ref().unwrap()->request(99999, FutureAttr(), [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -321,7 +321,7 @@ TEST_F(FutureTest, MultipleFuturesConcurrent) {
     // Create multiple futures
     for (int i = 0; i < num_futures; i++) {
         std::string input = "test_" + std::to_string(i);
-        auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](Marshal& m) {
+        auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
             m << input;
         });
         ASSERT_TRUE(fu_result.is_ok());
@@ -345,7 +345,7 @@ TEST_F(FutureTest, MultipleFuturesConcurrent) {
 TEST_F(FutureTest, FutureReleaseWithoutWait) {
     // Create a future but don't wait for it
     std::string input = "test";
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -365,7 +365,7 @@ TEST_F(FutureTest, StressTestManyFutures) {
     // Create many futures rapidly
     for (int i = 0; i < num_futures; i++) {
         i32 n = i;
-        auto fu_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](Marshal& m) {
+        auto fu_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](BinaryWriteArchive& m) {
             m << n;
         });
         ASSERT_TRUE(fu_result.is_ok());
@@ -391,7 +391,7 @@ TEST_F(FutureTest, ConcurrentWaitersOnSameFuture) {
     service_->delay_ms = 200;
 
     std::string input = "test";
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -425,7 +425,7 @@ TEST_F(FutureTest, ConcurrentWaitersOnSameFuture) {
 TEST_F(FutureTest, TimedWaitWithQuickResponse) {
     // Test timed_wait when response comes quickly
     std::string input = "test";
-    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input;
     });
     ASSERT_TRUE(fu_result.is_ok());
@@ -443,21 +443,21 @@ TEST_F(FutureTest, TimedWaitWithQuickResponse) {
 TEST_F(FutureTest, MixedSyncAsync) {
     // Create some futures
     std::string input1 = "first";
-    auto fu1_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu1_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input1;
     });
     ASSERT_TRUE(fu1_result.is_ok());
     auto fu1 = fu1_result.unwrap();
 
     i32 val = 50;
-    auto fu2_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](Marshal& m) {
+    auto fu2_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << val;
     });
     ASSERT_TRUE(fu2_result.is_ok());
     auto fu2 = fu2_result.unwrap();
 
     std::string input3 = "third";
-    auto fu3_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](Marshal& m) {
+    auto fu3_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
         m << input3;
     });
     ASSERT_TRUE(fu3_result.is_ok());

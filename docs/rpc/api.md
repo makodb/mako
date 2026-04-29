@@ -749,7 +749,7 @@ client->connect("127.0.0.1:8080");
 auto opts = RequestOptions::defaults();
 opts.timeout_ms = 500;
 
-auto fu = client->request_with_options(RPC_METHOD, opts, [](Marshal& m) {
+auto fu = client->request_with_options(RPC_METHOD, opts, [](BinaryWriteArchive& m) {
     m << arg1 << arg2;
 });
 
@@ -766,7 +766,7 @@ if (fu.is_ok()) {
 ```cpp
 auto opts = RequestOptions::idempotent_retry(3);  // 3 retries
 
-auto fu = client->request_with_options(RPC_IDEMPOTENT_METHOD, opts, [](Marshal& m) {
+auto fu = client->request_with_options(RPC_IDEMPOTENT_METHOD, opts, [](BinaryWriteArchive& m) {
     m << request_data;
 });
 ```

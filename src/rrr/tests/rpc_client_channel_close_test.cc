@@ -192,8 +192,8 @@ class ClientChannelCloseTest : public ::testing::Test {
 TEST_F(ClientChannelCloseTest, OnClosedCancelsPendingFuturesWithENOTCONN) {
     // Issue a couple of pending requests — they should all flip to
     // ENOTCONN once the channel reports closed.
-    auto fr1 = mut_conn().request(0x10, FutureAttr{}, [](Marshal&) {});
-    auto fr2 = mut_conn().request(0x11, FutureAttr{}, [](Marshal&) {});
+    auto fr1 = mut_conn().request(0x10, FutureAttr{}, [](BinaryWriteArchive&) {});
+    auto fr2 = mut_conn().request(0x11, FutureAttr{}, [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fr1.is_ok());
     ASSERT_TRUE(fr2.is_ok());
     auto fu1 = fr1.unwrap();
@@ -278,7 +278,7 @@ TEST_F(ClientChannelCloseTest, RequestAfterCloseFailsFastWithENOTCONN) {
         return mut_conn().connection_state() == ConnectionState::FAILED;
     });
 
-    auto fr = mut_conn().request(0x55, FutureAttr{}, [](Marshal&) {});
+    auto fr = mut_conn().request(0x55, FutureAttr{}, [](BinaryWriteArchive&) {});
     EXPECT_TRUE(fr.is_err());
     EXPECT_EQ(fr.unwrap_err(), ENOTCONN);
 }

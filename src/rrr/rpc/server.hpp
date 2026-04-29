@@ -486,7 +486,7 @@ public:
 
     // @safe - Sends empty reply
     void reply(const Request& req, i32 error_code = 0) const {
-        reply(req, error_code, [](Marshal&) {});
+        reply(req, error_code, [](BinaryWriteArchive&) {});
     }
 
     // @safe - Delegates to thread pool (currently a no-op stub)
@@ -808,7 +808,7 @@ public:
      *     ..
      *
      *     // send reply using callback-based API
-     *     server_connection->reply(*req, 0, [&](Marshal& out) {
+     *     server_connection->reply(*req, 0, [&](BinaryWriteArchive& out) {
      *         out << reply_content;
      *     });
      *

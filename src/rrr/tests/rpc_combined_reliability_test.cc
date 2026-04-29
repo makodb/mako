@@ -126,7 +126,7 @@ TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
         std::string input = "test";
         auto fu_result = client->request(
             benchmark::BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -304,7 +304,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
             std::string input = "test_" + std::to_string(i);
             auto fu_result = client->request(
                 benchmark::BenchmarkService::FAST_NOP,
-                [&](Marshal& m) { m << input; }
+                [&](BinaryWriteArchive& m) { m << input; }
             );
             ASSERT_TRUE(fu_result.is_ok());
             auto fu = fu_result.unwrap();
@@ -377,7 +377,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
         std::string input = "recovery_test";
         auto fu_result = new_client->request(
             benchmark::BenchmarkService::FAST_NOP,
-            [&](Marshal& m) { m << input; }
+            [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -491,7 +491,7 @@ TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
             std::string input = "cycle_" + std::to_string(cycle) + "_" + std::to_string(i);
             auto fu_result = client->request(
                 benchmark::BenchmarkService::FAST_NOP,
-                [&](Marshal& m) { m << input; }
+                [&](BinaryWriteArchive& m) { m << input; }
             );
             if (fu_result.is_ok()) {
                 auto fu = fu_result.unwrap();

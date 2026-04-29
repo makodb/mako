@@ -1487,7 +1487,7 @@ public:
 
     // @unsafe - Convenience overload for requests with no arguments (calls @unsafe request)
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        return request(rpc_id, attr, [](Marshal&) {});
+        return request(rpc_id, attr, [](BinaryWriteArchive&) {});
     }
 
     // =========================================================================
@@ -1604,9 +1604,9 @@ public:
                 }
 
                 auto conn = conn_opt.unwrap();
-                auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](Marshal& m) {
+                auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](BinaryWriteArchive& m) {
                     if (!args_bytes.empty()) {
-                        verify(m.write(args_bytes.data(), args_bytes.size()) == args_bytes.size());
+                        m.write_bytes(args_bytes.data(), args_bytes.size());
                     }
                 });
                 if (attempt_result.is_err()) {
@@ -1884,7 +1884,7 @@ public:
     // @safe - Convenience overload for requests with no arguments
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
         // @unsafe
-        { return request(rpc_id, attr, [](Marshal&) {}); }
+        { return request(rpc_id, attr, [](BinaryWriteArchive&) {}); }
     }
 
     // =========================================================================

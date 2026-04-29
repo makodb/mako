@@ -276,7 +276,7 @@ public:
 
     FutureResult async_get_user(i32 id) {{
         (void)id;
-        return client_->request(0x1001, [](Marshal&) {{}});
+        return client_->request(0x1001, [](BinaryWriteArchive&) {{}});
     }}
 
 private:
