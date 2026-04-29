@@ -523,7 +523,12 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesTypedAdapter) {
   auto payload = std::make_shared<janus::EmptyGraph>();
   ASSERT_NE(payload, nullptr);
 
-  MarshallDeputy outgoing(payload);
+  // Phase 4d-1: EmptyGraph migrated to Serializable. The
+  // `MarshallDeputy(shared_ptr<T>)` ctor's requires clause checks
+  // `kHasTypedMarshallableAdapter<T>` which migrated types no
+  // longer satisfy; route through wrap_typed_marshallable's bridge
+  // overload (Phase 4a-prep) instead.
+  MarshallDeputy outgoing(wrap_typed_marshallable(payload));
   EXPECT_EQ(outgoing.kind_, MarshallDeputy::EMPTY_GRAPH);
 
   Marshal m;

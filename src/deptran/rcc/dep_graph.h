@@ -15,13 +15,21 @@ namespace janus {
 //typedef RccDTxn RccDTxn;
 typedef vector<RccTx*> RccScc;
 
+// Workstream N Phase 4d-1: migrated from Marshallable to Serializable.
+// Stateless tag — no fields, save/load are no-ops. Construction
+// continues to use the existing MarshallDeputy(shared_ptr<T>) ctor
+// and set_marshallable<T> templates (Phase 4d-prep relaxed their
+// requires clauses to dispatch via wrap_typed_marshallable's bridge
+// overload for SerializableConcept T).
 class EmptyGraph {
  public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::EMPTY_GRAPH;
 
   EmptyGraph() = default;
-  Marshal& to_marshal(Marshal& m) const { return m; }
-  Marshal& from_marshal(Marshal& m) { return m; }
+
+  int32_t kind() const { return kMarshallKind; }
+  void save(BinaryWriteArchive&) const {}
+  void load(BinaryReadArchive&) {}
 };
 
 class RccServer;
@@ -80,12 +88,9 @@ class RccGraph : public Graph<RccTx> {
 
 namespace rrr {
 
-template <>
-struct TypedMarshallableAdapterTraits<janus::EmptyGraph> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::EmptyGraph, MarshallDeputy::EMPTY_GRAPH>;
-};
+// (EmptyGraph is a Serializable now — no TypedMarshallableAdapter
+// trait. RccGraph stays Marshallable-flavored for now, pending its
+// own migration.)
 
 template <>
 struct TypedMarshallableAdapterTraits<janus::RccGraph> {
