@@ -1429,24 +1429,23 @@ private:
         }
 
         // Build frame body — no size prefix; the channel adds it.
+        // Workstream N Phase 3d-6: the user write_fn is invoked
+        // exclusively through a `BinaryWriteArchive` over
+        // `MarshalSink(&body)`.  The legacy `void(Marshal&)` write_fn
+        // signature was removed once every caller migrated (Phase
+        // 3d-5).  `Marshal body` is now an internal byte accumulator
+        // for the header (xid + rpc_id) plus the archive-emitted
+        // payload — a future leaf can flip it to `BufferSink` to drop
+        // `Marshal` from this path entirely.
         Marshal body;
         // @unsafe { Marshal operators }
         body << v64(fu->xid_);
         body << rpc_id;
-        // Workstream N Phase 3d-2: dispatch the user write_fn against
-        // either a `Marshal&` (legacy) or a `BinaryWriteArchive&`
-        // (Phase 3d-3 onward, once `rpcgen` flips the proxy lambda
-        // signature).  The archive variant wraps the same `body`
-        // through a `MarshalSink`, so the wire bytes are byte-for-byte
-        // identical to the Marshal path — no separate buffer, no extra
-        // allocation.
-        if constexpr (std::is_invocable_v<F&, BinaryWriteArchive&>) {
-            MarshalSink sink(&body);
-            BinaryWriteArchive ar(&sink);
-            write_fn(ar);
-        } else {
-            write_fn(body);
-        }
+        static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
+                      "request write_fn must accept BinaryWriteArchive&");
+        MarshalSink sink(&body);
+        BinaryWriteArchive ar(&sink);
+        write_fn(ar);
 
         const std::size_t body_size = body.content_size();
         std::vector<std::uint8_t> body_bytes;
@@ -1509,19 +1508,14 @@ public:
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
         // Serialize args once so retries can replay identical payload safely.
+        // Workstream N Phase 3d-6: write_fn is exclusively
+        // BinaryWriteArchive&-shaped now (Marshal& branch removed).
         Marshal serialized_args;
-        // Workstream N Phase 3d-2: dual-signature dispatch — `F` may
-        // accept either `Marshal&` (legacy) or `BinaryWriteArchive&`
-        // (post-3d-3).  Either way the bytes accumulate in
-        // `serialized_args` and the retry loop's per-attempt write
-        // path stays Marshal-based via `args_bytes`.
-        if constexpr (std::is_invocable_v<F&, BinaryWriteArchive&>) {
-            MarshalSink sink(&serialized_args);
-            BinaryWriteArchive ar(&sink);
-            write_fn(ar);
-        } else {
-            write_fn(serialized_args);
-        }
+        static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
+                      "request_with_options write_fn must accept BinaryWriteArchive&");
+        MarshalSink sink(&serialized_args);
+        BinaryWriteArchive ar(&sink);
+        write_fn(ar);
         std::string args_bytes;
         size_t args_size = serialized_args.content_size();
         if (args_size > 0) {

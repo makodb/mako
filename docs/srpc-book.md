@@ -827,7 +827,7 @@ public:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
                 out << result;
             });
         }
@@ -1304,14 +1304,21 @@ snippet in `srpc-book.md`, and the user-facing examples in
 `docs/rpc/{api,migration-guide,reliability}.md` — about 150 lambda
 rewrites total, plus ~15 `m.write(p, n)` → `m.write_bytes(p, n)`
 body rewrites where the underlying Marshal API call needed to
-adapt to the archive's surface.  Phase 3d-2's `if constexpr`
-dispatch in `request_via_channel<F>` / `reply<F>` now exclusively
-hits the `BinaryWriteArchive&` branch in production paths; the
-remaining Marshal-flavoured callers are only in `_pyrpc.cpp` (the
-Python C extension, kept until its own migration) and in the
-intentional byte-format parity tests in `rpc_marshal_archive_test.cc`.
-Sub-leaf 3d-6 (final deletion of the legacy `Marshal&` write_fn
-overloads + Phase 3e-2 user-struct operator drop) is queued. Phase 3f-2/3
+adapt to the archive's surface.  Phase 3d-6 finally migrated the
+Python C extension `_pyrpc.cpp` (drain Python-side Marshal into a
+contiguous `vector<uint8_t>`, then write through the archive's
+`out.write_bytes`) and collapsed the `if constexpr` dual-signature
+dispatches in `request_via_channel<F>`, `request_with_options<F>`,
+and `reply<F>` into a single archive-only path with a
+`static_assert` for clearer call-site error messages.  After Phase
+3d-6, every write-side caller in the production path uses
+`BinaryWriteArchive&`; the only remaining `Marshal&` references
+sit in (a) the additive Phase 3c user-struct `operator<<>>`
+overloads (Phase 3e-2 drops those), (b) the legacy
+`Marshallable::to_marshal` virtual override pattern in
+non-Serializable types (Phase 4 + Phase 5 territory), and (c) the
+intentional byte-format-parity tests in
+`rpc_marshal_archive_test.cc`.  Phase 3d is complete. Phase 3f-2/3
 (`MarshallDeputy` SerializableProxy storage), and the remaining
 Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
 virtuals, now gated only on test-fixture migration since `CmdData`

@@ -126,8 +126,21 @@ void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakSer
     if (sconn_opt.is_some()) {
         auto sconn = sconn_opt.unwrap();
         if (output_m != NULL) {
-            const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](Marshal& out) {
-                out.read_from_marshal(*output_m, output_m->content_size());
+            // Workstream N Phase 3d-6: drain the Python-side Marshal
+            // into a contiguous buffer and write through the archive's
+            // raw-byte API.  The legacy `out.read_from_marshal(*output_m, n)`
+            // chunk-share fast path is gone; the extra memcpy is
+            // negligible compared to the Python interpreter overhead
+            // around this call site.
+            std::size_t n = output_m->content_size();
+            std::vector<std::uint8_t> tmp(n);
+            if (n > 0) {
+                verify(output_m->read(tmp.data(), n) == n);
+            }
+            const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](BinaryWriteArchive& out) {
+                if (n > 0) {
+                    out.write_bytes(tmp.data(), n);
+                }
             });
             delete output_m;
         } else {
@@ -288,11 +301,19 @@ static PyObject* _pyrpc_client_async_call(PyObject* self, PyObject* args) {
     Marshal* m = (Marshal*) m_id;
 
     bool valid_id = m->valid_id;
-    auto fu_result = clnt->request(rpc_id, [&](Marshal& out) {
-        // NOTE: We use Marshal as a buffer to packup an RPC message, then push it into
-        //       client side buffer. Here is the only place that we are using Marshal's
-        //       read_from_marshal function with non-empty Marshal object.
-        out.read_from_marshal(*m, m->content_size());
+    // Workstream N Phase 3d-6: drain the Python-side Marshal into
+    // a contiguous buffer and push it through the archive's
+    // raw-byte API.  See the matching comment in
+    // `_pyrpc_python_func_executor`'s reply path.
+    std::size_t n = m->content_size();
+    std::vector<std::uint8_t> tmp(n);
+    if (n > 0) {
+        verify(m->read(tmp.data(), n) == n);
+    }
+    auto fu_result = clnt->request(rpc_id, [&](BinaryWriteArchive& out) {
+        if (n > 0) {
+            out.write_bytes(tmp.data(), n);
+        }
     });
     if (fu_result.is_ok()) {
         clnt->set_valid(valid_id);
@@ -324,11 +345,19 @@ static PyObject* _pyrpc_client_sync_call(PyObject* self, PyObject* args) {
     Client* clnt = (Client*) u;
     Marshal* m = (Marshal*) m_id;
 
-    auto fu_result = clnt->request(rpc_id, [&](Marshal& out) {
-        // NOTE: We use Marshal as a buffer to packup an RPC message, then push it into
-        //       client side buffer. Here is the only place that we are using Marshal's
-        //       read_from_marshal function with non-empty Marshal object.
-        out.read_from_marshal(*m, m->content_size());
+    // Workstream N Phase 3d-6: drain the Python-side Marshal into
+    // a contiguous buffer and push it through the archive's
+    // raw-byte API.  See the matching comment in
+    // `_pyrpc_python_func_executor`'s reply path.
+    std::size_t n = m->content_size();
+    std::vector<std::uint8_t> tmp(n);
+    if (n > 0) {
+        verify(m->read(tmp.data(), n) == n);
+    }
+    auto fu_result = clnt->request(rpc_id, [&](BinaryWriteArchive& out) {
+        if (n > 0) {
+            out.write_bytes(tmp.data(), n);
+        }
     });
 
     Marshal* m_rep = new Marshal;
