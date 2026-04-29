@@ -146,6 +146,7 @@ namespace janus {
   }
 };
 
+// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
 class BulkPrepareLog {
   public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_BLK_PREP_PXS;
@@ -155,31 +156,29 @@ class BulkPrepareLog {
 
   BulkPrepareLog() = default;
 
-  Marshal& to_marshal(Marshal& m) const {
-      m << (int32_t) min_prepared_slots.size();
-      for(auto i : min_prepared_slots){
-          m << i;
-      }
-      m << leader_id;
-      m << epoch;
-      return m;
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << static_cast<int32_t>(min_prepared_slots.size());
+    for (auto i : min_prepared_slots) ar << i;
+    ar << leader_id;
+    ar << epoch;
   }
 
-  Marshal& from_marshal(Marshal& m) {
+  void load(BinaryReadArchive& ar) {
     int32_t sz;
-    m >> sz;
-    for(int i = 0; i < sz; i++){
-      pair<uint32_t,slotid_t> pr;
-      m >> pr;
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
+      pair<uint32_t, slotid_t> pr;
+      ar >> pr;
       min_prepared_slots.push_back(pr);
     }
-    m >> leader_id;
-    m >> epoch;
-    return m;
+    ar >> leader_id;
+    ar >> epoch;
   }
-
 };
 
+// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
 class PaxosPrepCmd {
   public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_PREP_PXS;
@@ -189,39 +188,38 @@ class PaxosPrepCmd {
 
   PaxosPrepCmd() = default;
 
-  Marshal& to_marshal(Marshal& m) const {
-      m << (int32_t) slots.size();
-      for(auto i : slots){
-          m << i;
-      }
-      m << (int32_t) slots.size();
-      for(auto i : ballots){
-          m << i;
-      }
-      m << leader_id;
-      return m;
+  int32_t kind() const { return kMarshallKind; }
+
+  // NOTE: preserves the legacy bug-or-feature where the second size
+  // prefix is `slots.size()` instead of `ballots.size()` — wire
+  // format byte-for-byte identical.
+  void save(BinaryWriteArchive& ar) const {
+    ar << static_cast<int32_t>(slots.size());
+    for (auto i : slots) ar << i;
+    ar << static_cast<int32_t>(slots.size());
+    for (auto i : ballots) ar << i;
+    ar << leader_id;
   }
 
-  Marshal& from_marshal(Marshal& m) {
+  void load(BinaryReadArchive& ar) {
     int32_t sz;
-    m >> sz;
-    for(int i = 0; i < sz; i++){
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
       slotid_t x;
-      m >> x;
+      ar >> x;
       slots.push_back(x);
     }
-    m >> sz;
-    for(int i = 0; i < sz; i++){
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
       ballot_t x;
-      m >> x;
+      ar >> x;
       ballots.push_back(x);
     }
-    m >> leader_id;
-    return m;
+    ar >> leader_id;
   }
-
 };
 
+// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
 class HeartBeatLog {
   public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_HRTBT_PXS;
@@ -230,20 +228,20 @@ class HeartBeatLog {
 
   HeartBeatLog() = default;
 
-  Marshal& to_marshal(Marshal& m) const {
-      m << leader_id;
-      m << epoch;
-      return m;
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << leader_id;
+    ar << epoch;
   }
 
-  Marshal& from_marshal(Marshal& m) {
-    m >> leader_id;
-    m >> epoch;
-    return m;
+  void load(BinaryReadArchive& ar) {
+    ar >> leader_id;
+    ar >> epoch;
   }
-
 };
 
+// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
 class SyncLogRequest {
   public:
     static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCREQ_PXS;
@@ -252,27 +250,27 @@ class SyncLogRequest {
     vector<slotid_t> sync_commit_slot;
     SyncLogRequest() = default;
 
-    Marshal& to_marshal(Marshal& m) const {
-      m << leader_id;
-      m << epoch;
-      m << (int32_t)sync_commit_slot.size();
-      for(int i = 0; i < sync_commit_slot.size(); i++){
-        m << sync_commit_slot[i];
+    int32_t kind() const { return kMarshallKind; }
+
+    void save(BinaryWriteArchive& ar) const {
+      ar << leader_id;
+      ar << epoch;
+      ar << static_cast<int32_t>(sync_commit_slot.size());
+      for (size_t i = 0; i < sync_commit_slot.size(); i++) {
+        ar << sync_commit_slot[i];
       }
-      return m;
     }
 
-    Marshal& from_marshal(Marshal& m) {
-      m >> leader_id;
-      m >> epoch;
+    void load(BinaryReadArchive& ar) {
+      ar >> leader_id;
+      ar >> epoch;
       int32_t sz;
-      m >> sz;
-      for(int i = 0; i < sz; i++){
+      ar >> sz;
+      for (int i = 0; i < sz; i++) {
         slotid_t x;
-        m >> x;
+        ar >> x;
         sync_commit_slot.push_back(x);
       }
-      return m;
     }
 };
 
@@ -323,6 +321,7 @@ class SyncLogResponse {
     }
 };
 
+// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
 class SyncNoOpRequest {
   public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCNOOP_PXS;
@@ -331,27 +330,27 @@ class SyncNoOpRequest {
   vector<slotid_t> sync_slots;
   SyncNoOpRequest() = default;
 
-  Marshal& to_marshal(Marshal& m) const {
-    m << leader_id;
-    m << epoch;
-    m << (int32_t)sync_slots.size();
-    for(int i = 0; i < sync_slots.size(); i++){
-      m << sync_slots[i];
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << leader_id;
+    ar << epoch;
+    ar << static_cast<int32_t>(sync_slots.size());
+    for (size_t i = 0; i < sync_slots.size(); i++) {
+      ar << sync_slots[i];
     }
-    return m;
   }
 
-  Marshal& from_marshal(Marshal& m) {
-    m >> leader_id;
-    m >> epoch;
+  void load(BinaryReadArchive& ar) {
+    ar >> leader_id;
+    ar >> epoch;
     int32_t sz;
-    m >> sz;
-    for(int i = 0; i < sz; i++){
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
       slotid_t x;
-      m >> x;
+      ar >> x;
       sync_slots.push_back(x);
     }
-    return m;
   }
 };
 
@@ -869,52 +868,22 @@ class TypedPaxosLogEnvelopeAdapter : public Marshallable {
   std::shared_ptr<T> typed_;
 };
 
-template <>
-struct TypedMarshallableAdapterTraits<janus::BulkPrepareLog> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::BulkPrepareLog,
-                               MarshallDeputy::CMD_BLK_PREP_PXS>;
-};
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::PaxosPrepCmd> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::PaxosPrepCmd,
-                               MarshallDeputy::CMD_PREP_PXS>;
-};
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::HeartBeatLog> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::HeartBeatLog,
-                               MarshallDeputy::CMD_HRTBT_PXS>;
-};
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::SyncLogRequest> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::SyncLogRequest,
-                               MarshallDeputy::CMD_SYNCREQ_PXS>;
-};
-
+// (Phase 4d-2: BulkPrepareLog, PaxosPrepCmd, HeartBeatLog,
+// SyncLogRequest, SyncNoOpRequest are Serializables now —
+// no TypedMarshallableAdapter traits. Construction sites continue to
+// use `wrap_typed_marshallable(make_shared<T>())`; the bridge
+// overload in marshal_serializable_bridge.hpp routes Serializable T
+// through `wrap_serializable`. Cast sites continue to use
+// `marshallable_cast<T>` transparently via the bridge.)
+//
+// SyncLogResponse stays Marshallable for now — has nested
+// `vector<shared_ptr<MarshallDeputy>>` requiring more careful save/load.
 template <>
 struct TypedMarshallableAdapterTraits<janus::SyncLogResponse> {
   static constexpr bool kEnabled = true;
   using Adapter =
       TypedMarshallableAdapter<janus::SyncLogResponse,
                                MarshallDeputy::CMD_SYNCRESP_PXS>;
-};
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::SyncNoOpRequest> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::SyncNoOpRequest,
-                               MarshallDeputy::CMD_SYNCNOOP_PXS>;
 };
 
 template <>

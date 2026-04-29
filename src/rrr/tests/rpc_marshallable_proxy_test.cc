@@ -115,7 +115,12 @@ void EnsureTypedOnlyPayloadInitializer() {
 
 template <typename T>
 std::shared_ptr<T> RoundTripTypedDeputyPayload(const std::shared_ptr<T>& src) {
-  MarshallDeputy outgoing(src);
+  // Phase 4d-2: types migrated to Serializable lose their
+  // TypedMarshallableAdapter trait, so the
+  // `MarshallDeputy(shared_ptr<T>)` ctor's requires clause no longer
+  // matches. Route through `wrap_typed_marshallable` — its bridge
+  // overload (Phase 4a-prep) handles both legacy and Serializable T.
+  MarshallDeputy outgoing(wrap_typed_marshallable(src));
   Marshal m;
   m << outgoing;
 
