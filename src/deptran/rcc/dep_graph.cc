@@ -1,6 +1,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "dep_graph.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"
 #include "server.h"
 
 namespace janus {
@@ -8,8 +9,9 @@ namespace janus {
 static int volatile gx =
   MarshallDeputy::reg_initializer<RccGraph>(
       MarshallDeputy::RCC_GRAPH);
+// Workstream N Phase 4d-1: EmptyGraph migrated to Serializable.
 static int volatile gxx =
-  MarshallDeputy::reg_initializer<EmptyGraph>(
+  rrr::reg_serializable_in_deputy<EmptyGraph>(
       MarshallDeputy::EMPTY_GRAPH);
 
 shared_ptr<RccTx> RccGraph::FindOrCreateRccVertex(txnid_t txn_id,

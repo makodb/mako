@@ -684,7 +684,13 @@ void ClassicServiceImpl::JanusDispatch(const vector<SimpleCommand>& cmd,
     auto* sched = (SchedulerJanus*) dtxn_sched_;
     *p_res = sched->OnDispatch(cmd, p_output, sp_graph);
     if (sp_graph->size() <= 1) {
-      p_md_res_graph->set_marshallable(std::make_shared<EmptyGraph>());
+      // Phase 4d-1: EmptyGraph migrated to Serializable. Route
+      // through wrap_typed_marshallable's bridge overload (Phase
+      // 4a-prep) — the legacy `set_marshallable<T>` template path
+      // requires `kHasTypedMarshallableAdapter<T>` which migrated
+      // types no longer have.
+      p_md_res_graph->set_marshallable(
+          rrr::wrap_typed_marshallable(std::make_shared<EmptyGraph>()));
     } else {
       p_md_res_graph->set_marshallable(sp_graph);
     }
