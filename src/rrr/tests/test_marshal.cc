@@ -465,68 +465,11 @@ TEST_F(MarshalTest, RandomizedStressTest) {
     }
 }
 
-class CustomMarshallable : public Marshallable {
-public:
-    i32 id;
-    std::string name;
-    std::vector<double> data;
-    
-    CustomMarshallable() : Marshallable(100), id(0) {}
-    CustomMarshallable(i32 _id, const std::string& _name, const std::vector<double>& _data)
-        : Marshallable(100), id(_id), name(_name), data(_data) {}
-
-    // @safe
-    // @lifetime: (&'a, &'b mut) -> &'b mut
-    Marshal& to_marshal(Marshal& m) const override {
-        // @unsafe - operator<<
-        { m << id << name << data; }
-        return m;
-    }
-
-    // @safe
-    // @lifetime: (&'a mut, &'b mut) -> &'b mut
-    Marshal& from_marshal(Marshal& m) override {
-        // @unsafe - operator>>
-        { m >> id >> name >> data; }
-        return m;
-    }
-
-    size_t entity_size() const override {
-        return sizeof(id) + sizeof(v64) + name.size() +
-               sizeof(v64) + data.size() * sizeof(double);
-    }
-};
-
-// Commented out - MarshallDeputy requires registered Marshallable types
-// TEST_F(MarshalTest, MarshallableObjects) {
-//     CustomMarshallable obj1(1, "Object1", {1.1, 2.2, 3.3});
-//     CustomMarshallable obj2(2, "Object2", {4.4, 5.5});
-//     
-//     auto sp1 = std::make_shared<CustomMarshallable>(obj1);
-//     auto sp2 = std::make_shared<CustomMarshallable>(obj2);
-//     
-//     MarshallDeputy deputy1(sp1);
-//     MarshallDeputy deputy2(sp2);
-//     
-//     **m << deputy1 << deputy2;
-//     
-//     MarshallDeputy deputy_out1, deputy_out2;
-//     **m >> deputy_out1 >> deputy_out2;
-//     
-//     auto out1 = std::dynamic_pointer_cast<CustomMarshallable>(deputy_out1.sp_data_);
-//     auto out2 = std::dynamic_pointer_cast<CustomMarshallable>(deputy_out2.sp_data_);
-//     
-//     ASSERT_NE(out1, nullptr);
-//     ASSERT_NE(out2, nullptr);
-//     
-//     EXPECT_EQ(out1->id, obj1.id);
-//     EXPECT_EQ(out1->name, obj1.name);
-//     EXPECT_EQ(out1->data, obj1.data);
-//     
-//     EXPECT_EQ(out2->id, obj2.id);
-//     EXPECT_EQ(out2->name, obj2.name);
-//     EXPECT_EQ(out2->data, obj2.data);
-// }
+// Workstream N Phase 5b-6: removed `CustomMarshallable` class
+// definition and the long-commented-out `MarshallableObjects` test
+// (referenced a `deputy.sp_data_` field that was removed in
+// Phase 3f-1). The class was defined but never exercised; its
+// `entity_size` override targeted a virtual that's also gone now.
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

@@ -61,14 +61,9 @@ class TestMarshallable : public Marshallable {
     m >> kind_ >> value;
     return m;
   }
-
-  size_t entity_size() const override {
-    return sizeof(kind_) + sizeof(value);
-  }
-
-  size_t write_to_fd(int fd, size_t written) const override {
-    return 0;
-  }
+  // Workstream N Phase 5b-6: removed unused `entity_size` /
+  // `write_to_fd` overrides. The virtual base methods on
+  // Marshallable went away in the same commit.
 };
 
 void EnsureTestMarshallableInitializer() {
