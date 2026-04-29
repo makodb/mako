@@ -1,5 +1,6 @@
 #include "paxos/server.h"
 #include "paxos/commo.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"
 #include "service.h"
 #include <chrono>
 #include <thread>
@@ -23,25 +24,30 @@ static int volatile xx =
 static int volatile xxx =
       MarshallDeputy::reg_initializer<BulkPaxosCmd>(
           MarshallDeputy::CMD_BLK_PXS);
+// Workstream N Phase 4d-2: 5 simple paxos types migrated to
+// Serializable. Wire format byte-for-byte identical to the previous
+// Marshallable encoding.
 static int volatile x4 =
-      MarshallDeputy::reg_initializer<BulkPrepareLog>(
+      rrr::reg_serializable_in_deputy<BulkPrepareLog>(
           MarshallDeputy::CMD_BLK_PREP_PXS);
 static int volatile x5 =
-      MarshallDeputy::reg_initializer<HeartBeatLog>(
+      rrr::reg_serializable_in_deputy<HeartBeatLog>(
           MarshallDeputy::CMD_HRTBT_PXS);
 
 static int volatile x6 =
-      MarshallDeputy::reg_initializer<SyncLogRequest>(
+      rrr::reg_serializable_in_deputy<SyncLogRequest>(
           MarshallDeputy::CMD_SYNCREQ_PXS);
 
+// SyncLogResponse stays Marshallable (has nested
+// vector<shared_ptr<MarshallDeputy>>).
 static int volatile x7 =
       MarshallDeputy::reg_initializer<SyncLogResponse>(
           MarshallDeputy::CMD_SYNCRESP_PXS);
 static int volatile x8 =
-      MarshallDeputy::reg_initializer<SyncNoOpRequest>(
+      rrr::reg_serializable_in_deputy<SyncNoOpRequest>(
           MarshallDeputy::CMD_SYNCNOOP_PXS);
 static int volatile x9 =
-      MarshallDeputy::reg_initializer<PaxosPrepCmd>(
+      rrr::reg_serializable_in_deputy<PaxosPrepCmd>(
           MarshallDeputy::CMD_PREP_PXS);
 
 static int shared_ptr_apprch = 1;
