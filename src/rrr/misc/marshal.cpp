@@ -234,31 +234,11 @@ size_t Marshal::write(const void* p, size_t n) {
     return n;
 }
 
-// @unsafe - Uses new for raw heap allocation
-size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
-  //Log_info("bypassing copying %d", sz);
-  assert(data.entity_size() == sz);
-  assert(tail_ == nullptr || tail_->next == nullptr);
-
-  if(head_ == nullptr){
-    head_ = new chunk(data, sz);
-    tail_ = head_;
-  } else if (tail_->fully_written()){
-    tail_->next = new chunk(data, sz);
-    tail_ = tail_->next;
-  } else{
-    //Log_info("resizing current chunk %d", tail_->write_idx);
-    tail_->resize_to_current();
-    //verify(tail_->fully_written());
-    tail_->next = new chunk(data, sz);
-    tail_ = tail_->next;
-  }
-  write_cnt_ += sz;
-  content_size_ += sz;
-  assert(content_size_ == content_size_slow());
-  //Log_info("final size is %d", write_cnt_);
-  return sz;
-}
+// Workstream N Phase 5b-3: removed `Marshal::bypass_copying`. It
+// was the implementation of the dead bypass-to-socket fast path —
+// no production type ever set `bypass_to_socket_=true`, so the
+// `if (rhs.bypass_to_socket_)` branch in `operator<<(MarshallDeputy)`
+// (now also gone) never invoked it.
 
 size_t Marshal::read_chnk(void* p, size_t n){
     char* pc = (char *) p;
@@ -498,7 +478,11 @@ Marshal::bookmark Marshal::set_bookmark(size_t n) {
             if (head_ == nullptr) {
                 head_ = new chunk;
                 tail_ = head_;
-            } else if (tail_->fully_written() || tail_->is_shared_data_chunk()) {
+            } else if (tail_->fully_written()) {
+                // Workstream N Phase 5b-3: dropped
+                // `|| tail_->is_shared_data_chunk()` — `shared_data`
+                // chunks no longer exist (dead bypass-to-socket
+                // fast path removed).
                 tail_->next = new chunk;
                 tail_ = tail_->next;
             }

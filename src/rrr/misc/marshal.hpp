@@ -74,9 +74,11 @@ class Marshal;
 class Marshallable {
  public:
   int32_t kind_{0};
-  bool bypass_to_socket_ = false;
-  size_t written_to_socket = 0;
-//  int32_t __debug_{10};
+  // Workstream N Phase 5b-3: removed `bypass_to_socket_` and
+  // `written_to_socket` — they were a zero-copy fast path that no
+  // production code ever enabled. The matching `Marshal::bypass_copying`,
+  // `MarshallDeputy::entity_size` / `write_to_fd`, and chunk's
+  // `shared_data` infrastructure went away in the same commit.
   Marshallable() = delete;
   explicit Marshallable(int32_t k): kind_(k) {};
   int32_t kind() const { return kind_; }
@@ -286,8 +288,11 @@ class MarshallDeputy {
     static MarInitializerFn get_initializer(int32_t);
 
   public:
-    bool bypass_to_socket_ = false;
-    // size_t written_to_socket = 0;
+    // Workstream N Phase 5b-3: removed `bypass_to_socket_` (and the
+    // commented-out `written_to_socket`) — the zero-copy fast path
+    // that read this field is gone (`Marshal::bypass_copying` and
+    // chunk's `shared_data` infrastructure deleted in the same
+    // commit).
     // Workstream N Phase 3f-1: collapsed `sp_data_` (was
     // `shared_ptr<MarshallableProxy>`) and `inner_sp_data_` into a
     // single `shared_ptr<Marshallable>` storage. The MarshallableProxy
@@ -397,63 +402,18 @@ class MarshallDeputy {
       return inner_sp_data_;
     }
 
-    virtual size_t entity_size() const {
-      verify(has_marshallable());
-      return sizeof(int32_t) + data_proxy()->entity_size();
-    }
-
-    // @unsafe
-    size_t track_write_2(int fd, const void* p, size_t len, size_t offset){
-      const char* x = (const char*)p;
-      // @unsafe {
-      size_t sz = ::write(fd, x + offset, len - offset);
-      // }
-      if(sz > len - offset || sz <= 0){
-         return 0;
-      }
-      return sz;
-    }
-
-    // virtual size_t need_to_write(){
-    //   // for marshalldeputy we only write headers. The rest is handled by Marshallable
-    //   return entity_size() - written_to_socket;
-    // }
-
-    // @unsafe
-    virtual size_t write_to_fd(int fd, int written_to_socket) {
-        size_t sz = 0, prev = written_to_socket;
-        if(written_to_socket < sizeof(kind_)){
-          sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
-          //Log_info("Writing the kind of MarshallDeputy %d %d", sz, written_to_socket);
-          written_to_socket += sz;
-          if(written_to_socket < sizeof(kind_))return sz;
-        }
-        //Log_info("Written bytes of ghost chunk 1 %d %d %d", sz, kind_, written_to_socket);
-        // @unsafe {
-        // Safety check: inner_sp_data_ must not be null when writing.
-        if (!has_marshallable()) {
-          Log_error("MarshallDeputy::write_to_fd called with null inner_sp_data_ (kind=%d)", kind_);
-          return 0;
-        }
-        sz = data_proxy()->write_to_fd(fd, written_to_socket - sizeof(kind_));
-        // }
-	      //std::cout << sz << std::endl;
-        //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
-        written_to_socket += sz;
-        //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, entity_size());
-        //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
-        return written_to_socket - prev;
-    }
+    // Workstream N Phase 5b-3: removed `entity_size`, `write_to_fd`,
+    // `track_write_2`, and the private `data_proxy()` helper. They
+    // were the deputy-side end of the dead bypass-to-socket fast
+    // path (`Marshal::bypass_copying` and chunk's `shared_data`
+    // infrastructure deleted in the same commit).
 
     ~MarshallDeputy() = default;
 
   private:
     // @unsafe - Constructs MarInitializerState from a shared_ptr<Marshallable>
     // Workstream N Phase 5b-2: no longer populates a legacy `proxy`
-    // field — that field was removed alongside the dead consumer
-    // path. `data_proxy()` constructs a fresh `MarshallableProxy` on
-    // demand from `inner_sp_data_` for the few sites that still need
-    // the proxy view.
+    // field — that field was removed alongside the dead consumer path.
     static MarInitializerState make_initializer_state(
         std::shared_ptr<rrr::Marshallable> m) {
       verify(m != nullptr);
@@ -471,17 +431,7 @@ class MarshallDeputy {
       verify(state.kind == state.marshallable->kind());
       inner_sp_data_ = std::move(state.marshallable);
       kind_ = state.kind;
-      bypass_to_socket_ = inner_sp_data_->bypass_to_socket_;
-    }
-
-    // @unsafe - Returns a fresh `MarshallableProxy` constructed from
-    // `inner_sp_data_`. Callers use the result transiently, e.g.
-    // `data_proxy()->entity_size()` — the temporary lives until the
-    // end of the full-expression. Phase 3f-1 collapsed the previously
-    // cached `sp_data_` field into this on-demand construction.
-    rrr::MarshallableProxy data_proxy() const {
-      verify(inner_sp_data_ != nullptr);
-      return make_marshallable_proxy(inner_sp_data_);
+      // Workstream N Phase 5b-3: removed the bypass_to_socket_ copy.
     }
 };
 
@@ -579,13 +529,14 @@ inline std::shared_ptr<T> marshallable_cast(MarshallDeputy* deputy) {
 class Marshal: public NoCopy {
 private:
   // Migrated from RefCounted to std::shared_ptr for automatic reference counting
+  // Workstream N Phase 5b-3: removed `marshallable_entity`,
+  // `shared_data`, `written_to_socket` fields and the
+  // `raw_bytes(MarshallDeputy, sz)` ctor — they backed the dead
+  // bypass-to-socket fast path.
   struct raw_bytes {
     char *ptr = nullptr;
     size_t size = 0;
     static const size_t min_size;
-    MarshallDeputy marshallable_entity;
-    bool shared_data = false;
-    size_t written_to_socket = 0;
 
     raw_bytes(size_t sz = min_size) {
       size = std::max(sz, min_size);
@@ -595,13 +546,6 @@ private:
       size = std::max(n, min_size);
       ptr = new char[size];
       memcpy(ptr, p, n);
-    }
-
-    raw_bytes(MarshallDeputy md, size_t sz){
-      marshallable_entity = md;
-      size = sz;
-      shared_data = true;
-      //Log_info("Creating a ghost chunk here of size %d of kind %d", sz, md.kind_);
     }
 
     size_t resize_to(size_t new_sz){
@@ -637,13 +581,11 @@ private:
     size_t write_idx;
     chunk *next;
 
-    // Updated constructors to use std::make_shared instead of new
+    // Updated constructors to use std::make_shared instead of new.
+    // Workstream N Phase 5b-3: removed `chunk(MarshallDeputy, sz)`
+    // ctor (backed dead bypass-to-socket fast path).
     chunk() : data(std::make_shared<raw_bytes>()),
               read_idx(0), write_idx(0), next(nullptr) { }
-
-    chunk(MarshallDeputy md, size_t sz)
-        : data(std::make_shared<raw_bytes>(md, sz)),
-          read_idx(0), write_idx(sz), next(nullptr) {}
 
     chunk(size_t sz)
         : data(std::make_shared<raw_bytes>(sz)),
@@ -663,7 +605,9 @@ private:
     }
 
     size_t resize_to_current() {
-      verify(data->shared_data == false);
+      // Workstream N Phase 5b-3: removed
+      // `verify(data->shared_data == false)` — `shared_data` no
+      // longer exists on raw_bytes.
       size_t sz = data->resize_to(write_idx);
       verify(data->size == write_idx);
       return sz;
@@ -724,9 +668,8 @@ private:
       return n_read;
     }
 
-    bool is_shared_data_chunk(){
-      return data->shared_data;
-    }
+    // Workstream N Phase 5b-3: removed `is_shared_data_chunk()` —
+    // `data->shared_data` no longer exists.
 
     // @safe - Peeks at data in chunk buffer
     // SAFETY: Internal @unsafe block handles raw pointer arithmetic and memcpy
@@ -758,45 +701,21 @@ private:
 
     // @safe - Writes to file descriptor (I/O system call)
     // SAFETY: Internal @unsafe block handles I/O system calls and raw pointer operations
+    // Workstream N Phase 5b-3: simplified — removed the `if
+    // (data->shared_data)` branch that called
+    // `marshallable_entity.write_to_fd(...)` for the dead
+    // bypass-to-socket fast path.
     int write_to_fd(int fd) {
       // @unsafe
       {
         assert(write_idx <= data->size);
-        struct timespec begin2, begin2_cpu, end2, end2_cpu;
-        /*clock_gettime(CLOCK_MONOTONIC, &begin2);
-        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin2_cpu);*/
-        int cnt;
-        if(data->shared_data){
-          // Safety check: marshallable_entity must have valid sp_data_
-          if (!data->marshallable_entity.has_marshallable()) {
-            Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity has no Marshallable");
-            return -1;
-          }
-          cnt = data->marshallable_entity.write_to_fd(fd, data->written_to_socket);
-          data->written_to_socket += cnt;
-          //Log_info("wrote %d bytes of ghost %d", cnt, fd);
-        }
-        else{
-          cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
-          //Log_info("wrote %d bytes of normal %d", cnt, fd);
-        }
+        int cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
 #ifdef RPC_STATISTICS
-        if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
-        else{
-          Log_debug("Missed RPC stats, shared data used in raw_bytes");
-        }
+        stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
 #endif // RPC_STATISTICS
-        //if(cnt == -1)verify(0);
         if (cnt > 0) {
-          /*clock_gettime(CLOCK_MONOTONIC, &end2);
-          clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end2_cpu);
-          long total_cpu2 = (end2_cpu.tv_sec - begin2_cpu.tv_sec)*1000000000 + (end2_cpu.tv_nsec - begin2_cpu.tv_nsec);
-          long total_time2 = (end2.tv_sec - begin2.tv_sec)*1000000000 + (end2.tv_nsec - begin2.tv_nsec);
-          double util2 = (double) total_cpu2/total_time2;
-          Log_info("elapsed CPU time (fd write of %d): %f", write_idx - read_idx, util2);*/
           read_idx += cnt;
         }
-
         assert(write_idx <= data->size);
         return cnt;
       }
@@ -1015,8 +934,9 @@ private:
     return cnt;
   }
 
-  // @safe - Bypasses copying by sharing chunk pointers
-  size_t bypass_copying(rrr::MarshallDeputy, size_t);
+  // Workstream N Phase 5b-3: removed `bypass_copying` — the dead
+  // bypass-to-socket fast path that no production type ever
+  // enabled (no caller set `bypass_to_socket_=true`).
 };
 
 // @unsafe
@@ -1634,14 +1554,11 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
 inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) {
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
   verify(rhs.has_marshallable());
-  if(rhs.bypass_to_socket_){
-    m.bypass_copying(rhs, rhs.entity_size());
-  }else{
-    //Log_info("size is %d", rhs.entity_size());
-    m << rhs.kind_;
-    verify(rhs.has_marshallable()); // must be non-empty
-    rhs.inner()->to_marshal(m);
-  }
+  // Workstream N Phase 5b-3: removed the dead `bypass_to_socket_`
+  // fast path that called `m.bypass_copying(rhs, rhs.entity_size())`.
+  // No production type ever set bypass_to_socket_=true.
+  m << rhs.kind_;
+  rhs.inner()->to_marshal(m);
   return m;
 }
 
