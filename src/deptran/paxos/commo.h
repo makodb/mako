@@ -36,20 +36,18 @@ class MultiPaxosCommo : public Communicator {
   BroadcastPrepare(parid_t par_id,
                    slotid_t slot_id,
                    ballot_t ballot);
-  void BroadcastPrepare(parid_t par_id,
-                        slotid_t slot_id,
-                        ballot_t ballot,
-                        const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-12: removed deprecated callback-style
+  // `void BroadcastPrepare(parid_t, slotid_t, ballot_t, callback)` —
+  // body had `verify(0);` and was mostly commented out; no live
+  // callers anywhere.
   shared_ptr<PaxosAcceptQuorumEvent>
   BroadcastAccept(parid_t par_id,
                   slotid_t slot_id,
                   ballot_t ballot,
                   shared_ptr<Marshallable> cmd);
-  void BroadcastAccept(parid_t par_id,
-                       slotid_t slot_id,
-                       ballot_t ballot,
-                       shared_ptr<Marshallable> cmd,
-                       const function<void(rusty::Arc<Future>)> &callback);
+  // Workstream N Phase 4e-12: removed deprecated callback-style
+  // `void BroadcastAccept(parid_t, slotid_t, ballot_t, cmd,
+  // callback)` — same shape as the deprecated BroadcastPrepare.
   void ForwardToLearner(parid_t par_id,
                         uint64_t slot,
                         ballot_t ballot,

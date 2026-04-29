@@ -49,20 +49,10 @@ MultiPaxosCommo::SendForward(parid_t par_id,
   return e;
 }
 
-void MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
-                                       slotid_t slot_id,
-                                       ballot_t ballot,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0);
-  // auto proxies = rpc_par_proxies_[par_id];
-  // for (auto& p : proxies) {
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = cb;
-  //   Future::safe_release(proxy->async_Prepare(slot_id, ballot, fuattr));
-  // }
-}
+// Workstream N Phase 4e-12: removed deprecated callback-style
+// `void MultiPaxosCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,
+// callback)` — body had `verify(0);` and was mostly commented out;
+// no live callers anywhere.
 
 shared_ptr<PaxosPrepareQuorumEvent>
 MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
@@ -120,31 +110,13 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   return e;
 }
 
-void MultiPaxosCommo::BroadcastAccept(parid_t par_id,
-                                      slotid_t slot_id,
-                                      ballot_t ballot,
-                                      shared_ptr<Marshallable> cmd,
-                                      const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0);
-  // int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  // auto proxies = rpc_par_proxies_[par_id];
-  // vector<Future*> fus;
-  // int cur_batch_idx = current_proxy_batch_idx;
-  // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  // for (int i=0;i<n+1;i++) {
-  //   auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = cb;
-  //   MarshallDeputy md(cmd);
-  //   auto f = proxy->async_Accept(slot_id, ballot, md, fuattr);
-  //   Future::safe_release(f);
-  // }
-}
+// Workstream N Phase 4e-12: removed deprecated callback-style
+// `void MultiPaxosCommo::BroadcastAccept(parid_t, slotid_t, ballot_t,
+// cmd, callback)` — body had `verify(0);` and was mostly commented
+// out; no live callers anywhere.
 
 /**
- * @brief forward the committed log the learner 
+ * @brief forward the committed log the learner
  * Within the same data center
  */
 void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
