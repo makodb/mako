@@ -24,17 +24,6 @@ namespace janus {
 		Log_info("commit id %ld and length %d from %s", cid, length, custom);
 	}
 
-	inline size_t track_write(int fd, const void* p, size_t len, int offset){
-		const char* x = (const char*)p;
-		ssize_t sz = ::write(fd, x + offset, len - offset);
-		if(sz > len - offset || sz <= 0){
-			//std::cout << "gahdamn " <<  sz << std::endl;
-			//Log_info("Gahdamn, speed it %lld", sz);
-			return 0;
-		}
-		return sz;
-	}
-
 	class SubmitPool {
 		private:
 			struct start_submit_pool_args {
@@ -370,29 +359,19 @@ class SyncNoOpRequest {
 // (the shared_ptr_apprch=1 fast path that copies operation_test bytes
 // into a temporary std::string is reproduced inside save()).
 //
-// The `bypass_to_socket_` / `entity_size` / `write_to_fd` machinery
-// is dead code in production: no code path sets `bypass_to_socket_`
-// to true, so MarshallDeputy::operator<< always takes the slow path
-// (m << kind_; inner->to_marshal(m) — which under Serializable
-// becomes inner->save(BinaryWriteArchive)). The methods are kept as
-// inert members for now; Phase 5 cleanup can prune them.
+// Phase 5a-1 cleanup: deleted the unused `bypass_to_socket_` /
+// `entity_size` / `write_to_fd` / `length_as_v64` / `operation_` /
+// `len_v64` members. They were a zero-copy fast path that no caller
+// ever enabled; only `length`, `log_entry`, and `operation_test` are
+// actually used by save/load.
 class LogEntry {
 public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CONTAINER_CMD;
-  bool bypass_to_socket_ = false;
-  char* operation_ = nullptr;
   int length = 0;
   std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
   shared_ptr<char> operation_test;
-  mutable char len_v64[9];
 
   LogEntry() = default;
-
-  ~LogEntry() {
-    if (operation_ != nullptr) delete operation_;
-    operation_ = nullptr;
-    //free(operation_test.get());
-  }
 
   // Serializable interface (Phase 4d-7). Implementations live in
   // paxos_worker.cc — they reference the file-static `shared_ptr_apprch`
@@ -400,71 +379,7 @@ public:
   int32_t kind() const { return kMarshallKind; }
   void save(BinaryWriteArchive& ar) const;
   void load(BinaryReadArchive& ar);
-  size_t entity_size() const {
-    return sizeof(int) + length_as_v64() + length;
-  }
-
-  size_t length_as_v64() const {
-    v64 v_len = length;
-    size_t bsize = rrr::SparseInt::dump(v_len.get(), len_v64);
-    //Log_info("size of v64 obj is %d", bsize);
-    return bsize;
-  }
-
-  size_t write_to_fd(int fd, size_t written_to_socket) const {
-    size_t sz = 0, prev = written_to_socket;
-    //Log_info("stepping here, writing length");
-    if(written_to_socket < sizeof(int)){
-      sz = track_write(fd, &length, sizeof(int), written_to_socket);
-      if(sz > 0)written_to_socket += sz;
-      assert(sz >= 0);
-      if(written_to_socket < sizeof(int))return written_to_socket - prev;
-    }
-    //Log_info("stepping here, writing length_as_v64");
-    size_t to_write = length_as_v64();
-    if(written_to_socket < sizeof(int) + to_write){
-      sz = track_write(fd, len_v64, to_write, written_to_socket - sizeof(int));
-      if(sz > 0)written_to_socket += sz;
-      assert(sz >= 0);
-      if(written_to_socket < sizeof(int) + to_write)return written_to_socket - prev;
-    }
-    //Log_info("stepping here, writing data");
-    if(written_to_socket < sizeof(int) + to_write + length) {
-      if (true) {
-        sz = track_write(fd, operation_test.get(), length, written_to_socket - sizeof(int) - to_write);
-      } else {
-        sz = track_write(fd, log_entry.c_str(), length, written_to_socket - sizeof(int) - to_write);
-        //sz += blocking_write(fd, log_entry.c_str(), length);
-      }
-      if(sz > 0)written_to_socket += sz;
-      assert(sz >= 0);
-      if(written_to_socket < sizeof(int) + to_write + length)return written_to_socket - prev;
-    }
-    //Log_info("stepping here, written data entirely %lld, %lld", written_to_socket, entity_size());
-    assert(written_to_socket == entity_size());
-    assert(written_to_socket - prev >= 0);
-    return written_to_socket - prev;
-  }
-
-  // void reset_write_offsets() override {
-  //         written_to_socket = 0;
-          
-  // }
 };
-
-/*
-inline rrr::Marshal& operator<<(rrr::Marshal &m, const LogEntry &cmd) {
-  m << cmd.length;
-  m << cmd.log_entry;
-  return m;
-}
-
-inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
-  m >> cmd.length;
-  m >> cmd.log_entry;
-  return m;
-}
-*/
 // Workstream N Phase 4d-7: migrated from TypedPaxosLogEnvelopeAdapter
 // to Serializable. Wire format byte-for-byte preserved:
 //   int32_t leader_id
@@ -475,19 +390,17 @@ inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
 // `operator>>` overloads on BinaryWriteArchive / BinaryReadArchive —
 // same byte layout as legacy `m << *cmds[i]` / `m >> *cmds[i]`.
 //
-// The `bypass_to_socket_` / `entity_size` / `serialize_slots_ballots`
-// / `write_to_fd` machinery is dead code in production: no code path
-// sets `bypass_to_socket_` to true. Kept as inert members for now;
-// Phase 5 cleanup can prune them.
+// Phase 5a-1 cleanup: deleted the unused `bypass_to_socket_` /
+// `entity_size` / `serialize_slots_ballots` / `write_to_fd` /
+// `serialized_slots` members. They were a zero-copy fast path that
+// no caller ever enabled.
 class BulkPaxosCmd {
 public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_BLK_PXS;
-  bool bypass_to_socket_ = false;
   int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   vector<shared_ptr<MarshallDeputy>> cmds{};
-  mutable char *serialized_slots = nullptr;
 
   BulkPaxosCmd() = default;
   ~BulkPaxosCmd() {
@@ -537,82 +450,6 @@ public:
           cmds.push_back(std::move(sp_md));
       }
   }
-
-  size_t entity_size() const {
-    size_t sz = 0;
-    sz += 4*sizeof(int32_t);
-    for(int i = 0; i < slots.size(); i++){
-      sz += sizeof(slotid_t);
-      sz += sizeof(ballot_t);
-      sz += cmds[i].get()->entity_size();
-    }
-    return sz;
-  }
-
-  size_t serialize_slots_ballots() const {
-    int32_t batch = slots.size();
-    size_t total_sz = 4*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
-    if(serialized_slots != nullptr){
-      return total_sz;
-    }
-    serialized_slots = (char*)malloc(total_sz*sizeof(char));
-    int wrt = 0;
-    memcpy(serialized_slots + wrt, &leader_id, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    for(auto i : slots){
-      memcpy(serialized_slots + wrt, &i, sizeof(slotid_t));
-      wrt += sizeof(slotid_t);
-    }
-    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    for(auto i : ballots){
-      memcpy(serialized_slots + wrt, &i, sizeof(ballot_t));
-      wrt += sizeof(ballot_t);
-    }
-    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    return total_sz;
-  }
-
-  size_t write_to_fd(int fd, size_t written_to_socket) const {
-    size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
-    //Log_info("written here %d %d", to_write, written_to_socket);
-    if(written_to_socket < to_write){
-      sz = track_write(fd, serialized_slots, to_write, written_to_socket);
-      if(sz > 0){
-        written_to_socket += sz;
-      }
-      verify(sz >= 0);
-      if(written_to_socket < to_write)return written_to_socket - prev;
-    }
-    //Log_info("written here %d", written_to_socket);
-    for (auto cmdsp : cmds) {
-      to_write += cmdsp.get()->entity_size();
-      if(written_to_socket >= to_write)continue;
-      sz = cmdsp.get()->write_to_fd(fd, written_to_socket - (to_write - cmdsp.get()->entity_size()));
-      //std::cout << "should have written bytes "<< sz << std::endl;
-      if(sz > 0){
-        written_to_socket += sz;
-      }
-      verify(sz >= 0);
-      //Log_info("written here %d %d", written_to_socket, entity_size());
-      verify(written_to_socket - prev >= 0);
-      if(written_to_socket < to_write)return written_to_socket - prev;
-    }
-    //free(serialized_slots);
-    //Log_info("written to socket %d  and size is %d", written_to_socket, entity_size());
-    verify(written_to_socket == entity_size());
-    return written_to_socket - prev;
-  }
-
-  // void reset_write_offsets() override {
-	 //  written_to_socket = 0;
-	 //  for(auto cmdsp : cmds){
-	 //     cmdsp.get()->reset_write_offsets();
-	 //  }
-  // }
 };
 
 class PaxosWorker {
@@ -867,61 +704,15 @@ public:
 
 } // namespace janus
 
-namespace rrr {
-
-template <typename T, int32_t KindV>
-class TypedPaxosLogEnvelopeAdapter : public Marshallable {
- public:
-  TypedPaxosLogEnvelopeAdapter()
-      : Marshallable(KindV), typed_(std::make_shared<T>()) {
-    verify(typed_ != nullptr);
-    bypass_to_socket_ = typed_->bypass_to_socket_;
-  }
-
-  explicit TypedPaxosLogEnvelopeAdapter(std::shared_ptr<T> typed)
-      : Marshallable(KindV), typed_(std::move(typed)) {
-    verify(typed_ != nullptr);
-    bypass_to_socket_ = typed_->bypass_to_socket_;
-  }
-
-  std::shared_ptr<T> typed() const { return typed_; }
-
-  Marshal& to_marshal(Marshal& out) const override {
-    return typed_->to_marshal(out);
-  }
-
-  Marshal& from_marshal(Marshal& in) override {
-    return typed_->from_marshal(in);
-  }
-
-  size_t entity_size() const override { return typed_->entity_size(); }
-
-  size_t write_to_fd(int fd, size_t written) const override {
-    return typed_->write_to_fd(fd, written);
-  }
-
- private:
-  std::shared_ptr<T> typed_;
-};
-
-// (Phase 4d-2: BulkPrepareLog, PaxosPrepCmd, HeartBeatLog,
-// SyncLogRequest, SyncNoOpRequest are Serializables now —
-// no TypedMarshallableAdapter traits. Construction sites continue to
-// use `wrap_typed_marshallable(make_shared<T>())`; the bridge
-// overload in marshal_serializable_bridge.hpp routes Serializable T
-// through `wrap_serializable`. Cast sites continue to use
-// `marshallable_cast<T>` transparently via the bridge.)
-//
-// (Phase 4d-4: SyncLogResponse migrated to Serializable; the nested
-// `vector<shared_ptr<MarshallDeputy>>` field uses the Phase 3f-prep
-// MarshallDeputy archive operators on BinaryWriteArchive /
-// BinaryReadArchive.)
-//
-// (Phase 4d-7: LogEntry and BulkPaxosCmd migrated to Serializable.
-// `TypedPaxosLogEnvelopeAdapter` is now unused — left in place for a
-// brief deprecation window and a follow-up cleanup commit can remove
-// it. `bypass_to_socket_`, `entity_size`, `write_to_fd` on the inner
-// types are dead code (no production path enables `bypass_to_socket_`)
-// — Phase 5 will prune those alongside the wider Marshallable cleanup.)
-
-}  // namespace rrr
+// (Phase 4d-2/4/7: BulkPrepareLog, PaxosPrepCmd, HeartBeatLog,
+// SyncLogRequest, SyncLogResponse, SyncNoOpRequest, LogEntry,
+// BulkPaxosCmd are all Serializables now — no TypedMarshallableAdapter
+// or TypedPaxosLogEnvelopeAdapter traits. Construction sites use
+// `wrap_typed_marshallable(make_shared<T>())` (the bridge overload in
+// marshal_serializable_bridge.hpp routes Serializable T through
+// `wrap_serializable`); cast sites use `marshallable_cast<T>` (also
+// bridged). Phase 5a-1 cleanup deleted the unused
+// TypedPaxosLogEnvelopeAdapter template and the dead
+// `bypass_to_socket_` / `entity_size` / `write_to_fd` /
+// `length_as_v64` / `serialize_slots_ballots` fast-path machinery on
+// LogEntry and BulkPaxosCmd.)
