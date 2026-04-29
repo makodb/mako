@@ -18,12 +18,6 @@ struct ValueTimesPair {
     rrr::i64 times;
 };
 
-inline rrr::Marshal& operator >>(rrr::Marshal& m, ValueTimesPair& o) {
-    m >> o.value;
-    m >> o.times;
-    return m;
-}
-
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ValueTimesPair& o) {
     ar << o.value;
     ar << o.times;
@@ -40,12 +34,6 @@ struct DepId {
     std::string str;
     rrr::i64 id;
 };
-
-inline rrr::Marshal& operator >>(rrr::Marshal& m, DepId& o) {
-    m >> o.str;
-    m >> o.id;
-    return m;
-}
 
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const DepId& o) {
     ar << o.str;
@@ -72,21 +60,6 @@ struct TxnInfoRes {
     std::vector<double> all_interval_latency;
     std::vector<rrr::i32> num_try;
 };
-
-inline rrr::Marshal& operator >>(rrr::Marshal& m, TxnInfoRes& o) {
-    m >> o.start_txn;
-    m >> o.total_txn;
-    m >> o.total_try;
-    m >> o.commit_txn;
-    m >> o.num_exhausted;
-    m >> o.this_latency;
-    m >> o.last_latency;
-    m >> o.attempt_latency;
-    m >> o.interval_latency;
-    m >> o.all_interval_latency;
-    m >> o.num_try;
-    return m;
-}
 
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxnInfoRes& o) {
     ar << o.start_txn;
@@ -127,16 +100,6 @@ struct ServerResponse {
     rrr::i64 r_sz_num;
 };
 
-inline rrr::Marshal& operator >>(rrr::Marshal& m, ServerResponse& o) {
-    m >> o.statistics;
-    m >> o.cpu_util;
-    m >> o.r_cnt_sum;
-    m >> o.r_cnt_num;
-    m >> o.r_sz_sum;
-    m >> o.r_sz_num;
-    return m;
-}
-
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ServerResponse& o) {
     ar << o.statistics;
     ar << o.cpu_util;
@@ -167,17 +130,6 @@ struct ClientResponse {
     rrr::i64 n_asking;
 };
 
-inline rrr::Marshal& operator >>(rrr::Marshal& m, ClientResponse& o) {
-    m >> o.txn_info;
-    m >> o.run_sec;
-    m >> o.run_nsec;
-    m >> o.period_sec;
-    m >> o.period_nsec;
-    m >> o.is_finish;
-    m >> o.n_asking;
-    return m;
-}
-
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ClientResponse& o) {
     ar << o.txn_info;
     ar << o.run_sec;
@@ -207,14 +159,6 @@ struct Profiling {
     double mem_util;
 };
 
-inline rrr::Marshal& operator >>(rrr::Marshal& m, Profiling& o) {
-    m >> o.cpu_util;
-    m >> o.tx_util;
-    m >> o.rx_util;
-    m >> o.mem_util;
-    return m;
-}
-
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const Profiling& o) {
     ar << o.cpu_util;
     ar << o.tx_util;
@@ -237,13 +181,6 @@ struct TxDispatchRequest {
     std::vector<Value> input;
 };
 
-inline rrr::Marshal& operator >>(rrr::Marshal& m, TxDispatchRequest& o) {
-    m >> o.id;
-    m >> o.tx_type;
-    m >> o.input;
-    return m;
-}
-
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxDispatchRequest& o) {
     ar << o.id;
     ar << o.tx_type;
@@ -261,10 +198,6 @@ inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxDispatc
 struct TxnDispatchResponse {
 };
 
-inline rrr::Marshal& operator >>(rrr::Marshal& m, TxnDispatchResponse& o) {
-    return m;
-}
-
 inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxnDispatchResponse& o) {
     return ar;
 }
@@ -280,11 +213,6 @@ public:
         MarshallDeputy cmd;
         uint64_t dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardRequest& o) {
-        m >> o.cmd;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardRequest& o) {
         ar << o.cmd;
         ar << o.dep_id;
@@ -299,10 +227,6 @@ public:
     struct RpcForwardResponse {
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardResponse& o) {
-        m >> o.coro_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardResponse& o) {
         ar << o.coro_id;
         return ar;
@@ -316,11 +240,6 @@ public:
         uint64_t slot;
         ballot_t ballot;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -336,11 +255,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
-        m >> o.max_ballot;
-        m >> o.coro_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareResponse& o) {
         ar << o.max_ballot;
         ar << o.coro_id;
@@ -358,13 +272,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptRequest& o) {
-        m >> o.slot;
-        m >> o.time;
-        m >> o.ballot;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAcceptRequest& o) {
         ar << o.slot;
         ar << o.time;
@@ -384,11 +291,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptResponse& o) {
-        m >> o.max_ballot;
-        m >> o.coro_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAcceptResponse& o) {
         ar << o.max_ballot;
         ar << o.coro_id;
@@ -405,12 +307,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDecideRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -426,9 +322,6 @@ public:
 
     struct RpcDecideResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDecideResponse& o) {
         return ar;
     }
@@ -439,10 +332,6 @@ public:
     struct RpcHeartbeatRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHeartbeatRequest& o) {
         ar << o.cmd;
         return ar;
@@ -456,11 +345,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatResponse& o) {
-        m >> o.ballot;
-        m >> o.val;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHeartbeatResponse& o) {
         ar << o.ballot;
         ar << o.val;
@@ -478,13 +362,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardToLearnerServerRequest& o) {
-        m >> o.par_id;
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardToLearnerServerRequest& o) {
         ar << o.par_id;
         ar << o.slot;
@@ -504,11 +381,6 @@ public:
         uint64_t ret_slot;
         ballot_t ret_ballot;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardToLearnerServerResponse& o) {
-        m >> o.ret_slot;
-        m >> o.ret_ballot;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardToLearnerServerResponse& o) {
         ar << o.ret_slot;
         ar << o.ret_ballot;
@@ -523,10 +395,6 @@ public:
     struct RpcBulkPrepareRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepareRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkPrepareRequest& o) {
         ar << o.cmd;
         return ar;
@@ -540,11 +408,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepareResponse& o) {
-        m >> o.ballot;
-        m >> o.val;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkPrepareResponse& o) {
         ar << o.ballot;
         ar << o.val;
@@ -559,10 +422,6 @@ public:
     struct RpcBulkAcceptRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkAcceptRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkAcceptRequest& o) {
         ar << o.cmd;
         return ar;
@@ -576,11 +435,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkAcceptResponse& o) {
-        m >> o.ballot;
-        m >> o.val;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkAcceptResponse& o) {
         ar << o.ballot;
         ar << o.val;
@@ -595,10 +449,6 @@ public:
     struct RpcBulkPrepare2Request {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepare2Request& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkPrepare2Request& o) {
         ar << o.cmd;
         return ar;
@@ -613,12 +463,6 @@ public:
         rrr::i32 val;
         MarshallDeputy ret;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepare2Response& o) {
-        m >> o.ballot;
-        m >> o.val;
-        m >> o.ret;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkPrepare2Response& o) {
         ar << o.ballot;
         ar << o.val;
@@ -635,10 +479,6 @@ public:
     struct RpcSyncLogRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncLogRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncLogRequest& o) {
         ar << o.cmd;
         return ar;
@@ -653,12 +493,6 @@ public:
         rrr::i32 val;
         MarshallDeputy ret;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncLogResponse& o) {
-        m >> o.ballot;
-        m >> o.val;
-        m >> o.ret;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncLogResponse& o) {
         ar << o.ballot;
         ar << o.val;
@@ -675,10 +509,6 @@ public:
     struct RpcSyncCommitRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncCommitRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncCommitRequest& o) {
         ar << o.cmd;
         return ar;
@@ -692,11 +522,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncCommitResponse& o) {
-        m >> o.ballot;
-        m >> o.val;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncCommitResponse& o) {
         ar << o.ballot;
         ar << o.val;
@@ -711,10 +536,6 @@ public:
     struct RpcSyncNoOpsRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncNoOpsRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncNoOpsRequest& o) {
         ar << o.cmd;
         return ar;
@@ -728,11 +549,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncNoOpsResponse& o) {
-        m >> o.ballot;
-        m >> o.val;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncNoOpsResponse& o) {
         ar << o.ballot;
         ar << o.val;
@@ -747,10 +563,6 @@ public:
     struct RpcBulkDecideRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkDecideRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkDecideRequest& o) {
         ar << o.cmd;
         return ar;
@@ -764,11 +576,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkDecideResponse& o) {
-        m >> o.ballot;
-        m >> o.val;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkDecideResponse& o) {
         ar << o.ballot;
         ar << o.val;
@@ -1910,10 +1717,6 @@ public:
     struct RpcCommitRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcCommitRequest& o) {
         ar << o.cmd;
         return ar;
@@ -1925,9 +1728,6 @@ public:
 
     struct RpcCommitResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcCommitResponse& o) {
         return ar;
     }
@@ -2048,11 +1848,6 @@ public:
         uint64_t slot;
         ballot_t ballot;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -2068,11 +1863,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
-        m >> o.max_ballot;
-        m >> o.coro_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareResponse& o) {
         ar << o.max_ballot;
         ar << o.coro_id;
@@ -2093,16 +1883,6 @@ public:
         std::vector<uint64_t> skip_potentials;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSuggestRequest& o) {
-        m >> o.slot;
-        m >> o.time;
-        m >> o.ballot;
-        m >> o.sender;
-        m >> o.skip_commits;
-        m >> o.skip_potentials;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSuggestRequest& o) {
         ar << o.slot;
         ar << o.time;
@@ -2128,11 +1908,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSuggestResponse& o) {
-        m >> o.max_ballot;
-        m >> o.coro_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSuggestResponse& o) {
         ar << o.max_ballot;
         ar << o.coro_id;
@@ -2149,12 +1924,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDecideRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -2170,9 +1939,6 @@ public:
 
     struct RpcDecideResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDecideResponse& o) {
         return ar;
     }
@@ -2477,11 +2243,6 @@ public:
         uint64_t leaderPrevLogIndex;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatRequest& o) {
-        m >> o.leaderPrevLogIndex;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHeartbeatRequest& o) {
         ar << o.leaderPrevLogIndex;
         ar << o.dep_id;
@@ -2496,10 +2257,6 @@ public:
     struct RpcHeartbeatResponse {
         uint64_t followerPrevLogIndex;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatResponse& o) {
-        m >> o.followerPrevLogIndex;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHeartbeatResponse& o) {
         ar << o.followerPrevLogIndex;
         return ar;
@@ -2512,10 +2269,6 @@ public:
     struct RpcForwardRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardRequest& o) {
         ar << o.cmd;
         return ar;
@@ -2528,10 +2281,6 @@ public:
     struct RpcForwardResponse {
         uint64_t cmt_idx;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardResponse& o) {
-        m >> o.cmt_idx;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardResponse& o) {
         ar << o.cmt_idx;
         return ar;
@@ -2547,13 +2296,6 @@ public:
         parid_t par_id;
         ballot_t cur_term;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteRequest& o) {
-        m >> o.lst_log_idx;
-        m >> o.lst_log_term;
-        m >> o.par_id;
-        m >> o.cur_term;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteRequest& o) {
         ar << o.lst_log_idx;
         ar << o.lst_log_term;
@@ -2573,11 +2315,6 @@ public:
         ballot_t max_ballot;
         bool_t vote_granted;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteResponse& o) {
-        m >> o.max_ballot;
-        m >> o.vote_granted;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteResponse& o) {
         ar << o.max_ballot;
         ar << o.vote_granted;
@@ -2595,13 +2332,6 @@ public:
         parid_t par_id;
         ballot_t cur_term;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVote2FPGARequest& o) {
-        m >> o.lst_log_idx;
-        m >> o.lst_log_term;
-        m >> o.par_id;
-        m >> o.cur_term;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVote2FPGARequest& o) {
         ar << o.lst_log_idx;
         ar << o.lst_log_term;
@@ -2621,11 +2351,6 @@ public:
         ballot_t max_ballot;
         bool_t vote_granted;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVote2FPGAResponse& o) {
-        m >> o.max_ballot;
-        m >> o.vote_granted;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVote2FPGAResponse& o) {
         ar << o.max_ballot;
         ar << o.vote_granted;
@@ -2647,17 +2372,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.leaderCurrentTerm;
-        m >> o.leaderPrevLogIndex;
-        m >> o.leaderPrevLogTerm;
-        m >> o.leaderCommitIndex;
-        m >> o.dep_id;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -2686,12 +2400,6 @@ public:
         uint64_t followerCurrentTerm;
         uint64_t followerLastLogIndex;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesResponse& o) {
-        m >> o.followerAppendOK;
-        m >> o.followerCurrentTerm;
-        m >> o.followerLastLogIndex;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesResponse& o) {
         ar << o.followerAppendOK;
         ar << o.followerCurrentTerm;
@@ -2715,17 +2423,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntries2Request& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.leaderCurrentTerm;
-        m >> o.leaderPrevLogIndex;
-        m >> o.leaderPrevLogTerm;
-        m >> o.leaderCommitIndex;
-        m >> o.dep_id;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntries2Request& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -2754,12 +2451,6 @@ public:
         uint64_t followerCurrentTerm;
         uint64_t followerLastLogIndex;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntries2Response& o) {
-        m >> o.followerAppendOK;
-        m >> o.followerCurrentTerm;
-        m >> o.followerLastLogIndex;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntries2Response& o) {
         ar << o.followerAppendOK;
         ar << o.followerCurrentTerm;
@@ -2779,13 +2470,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.dep_id;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDecideRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -2803,9 +2487,6 @@ public:
 
     struct RpcDecideResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDecideResponse& o) {
         return ar;
     }
@@ -3474,13 +3155,6 @@ public:
         siteid_t site_id;
         ballot_t cur_term;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteRequest& o) {
-        m >> o.lst_log_idx;
-        m >> o.lst_log_term;
-        m >> o.site_id;
-        m >> o.cur_term;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteRequest& o) {
         ar << o.lst_log_idx;
         ar << o.lst_log_term;
@@ -3500,11 +3174,6 @@ public:
         ballot_t max_ballot;
         bool_t vote_granted;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteResponse& o) {
-        m >> o.max_ballot;
-        m >> o.vote_granted;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteResponse& o) {
         ar << o.max_ballot;
         ar << o.vote_granted;
@@ -3520,11 +3189,6 @@ public:
         ballot_t term;
         siteid_t voter_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteDurableRequest& o) {
-        m >> o.term;
-        m >> o.voter_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteDurableRequest& o) {
         ar << o.term;
         ar << o.voter_id;
@@ -3539,10 +3203,6 @@ public:
     struct RpcVoteDurableResponse {
         bool_t acknowledged;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteDurableResponse& o) {
-        m >> o.acknowledged;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVoteDurableResponse& o) {
         ar << o.acknowledged;
         return ar;
@@ -3563,18 +3223,6 @@ public:
         MarshallDeputy cmd;
         uint64_t leaderNextLogTerm;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.leaderCurrentTerm;
-        m >> o.leaderSiteId;
-        m >> o.leaderPrevLogIndex;
-        m >> o.leaderPrevLogTerm;
-        m >> o.leaderCommitIndex;
-        m >> o.cmd;
-        m >> o.leaderNextLogTerm;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -3606,13 +3254,6 @@ public:
         uint64_t followerLastLogIndex;
         uint64_t followerAckType;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesResponse& o) {
-        m >> o.followerAppendOK;
-        m >> o.followerCurrentTerm;
-        m >> o.followerLastLogIndex;
-        m >> o.followerAckType;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesResponse& o) {
         ar << o.followerAppendOK;
         ar << o.followerCurrentTerm;
@@ -3638,17 +3279,6 @@ public:
         uint64_t leaderCommitIndex;
         bool_t trigger_election_now;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEmptyAppendEntriesRequest& o) {
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.leaderCurrentTerm;
-        m >> o.leaderSiteId;
-        m >> o.leaderPrevLogIndex;
-        m >> o.leaderPrevLogTerm;
-        m >> o.leaderCommitIndex;
-        m >> o.trigger_election_now;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcEmptyAppendEntriesRequest& o) {
         ar << o.slot;
         ar << o.ballot;
@@ -3678,13 +3308,6 @@ public:
         uint64_t followerLastLogIndex;
         uint64_t followerAckType;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEmptyAppendEntriesResponse& o) {
-        m >> o.followerAppendOK;
-        m >> o.followerCurrentTerm;
-        m >> o.followerLastLogIndex;
-        m >> o.followerAckType;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcEmptyAppendEntriesResponse& o) {
         ar << o.followerAppendOK;
         ar << o.followerCurrentTerm;
@@ -3705,12 +3328,6 @@ public:
         siteid_t follower_id;
         uint64_t lastLogIndex;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesDurableRequest& o) {
-        m >> o.term;
-        m >> o.follower_id;
-        m >> o.lastLogIndex;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesDurableRequest& o) {
         ar << o.term;
         ar << o.follower_id;
@@ -3727,10 +3344,6 @@ public:
     struct RpcAppendEntriesDurableResponse {
         bool_t acknowledged;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesDurableResponse& o) {
-        m >> o.acknowledged;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAppendEntriesDurableResponse& o) {
         ar << o.acknowledged;
         return ar;
@@ -3744,11 +3357,6 @@ public:
         uint64_t leaderTerm;
         siteid_t leaderSiteId;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTimeoutNowRequest& o) {
-        m >> o.leaderTerm;
-        m >> o.leaderSiteId;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTimeoutNowRequest& o) {
         ar << o.leaderTerm;
         ar << o.leaderSiteId;
@@ -3764,11 +3372,6 @@ public:
         uint64_t followerTerm;
         bool_t success;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTimeoutNowResponse& o) {
-        m >> o.followerTerm;
-        m >> o.success;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTimeoutNowResponse& o) {
         ar << o.followerTerm;
         ar << o.success;
@@ -3783,10 +3386,6 @@ public:
     struct RpcNotifyRestartRequest {
         siteid_t restartedSiteId;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNotifyRestartRequest& o) {
-        m >> o.restartedSiteId;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNotifyRestartRequest& o) {
         ar << o.restartedSiteId;
         return ar;
@@ -3799,10 +3398,6 @@ public:
     struct RpcNotifyRestartResponse {
         bool_t acknowledged;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNotifyRestartResponse& o) {
-        m >> o.acknowledged;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcNotifyRestartResponse& o) {
         ar << o.acknowledged;
         return ar;
@@ -3819,14 +3414,6 @@ public:
         uint64_t last_included_term;
         std::string data;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcInstallSnapshotRequest& o) {
-        m >> o.term;
-        m >> o.leader_id;
-        m >> o.last_included_index;
-        m >> o.last_included_term;
-        m >> o.data;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcInstallSnapshotRequest& o) {
         ar << o.term;
         ar << o.leader_id;
@@ -3847,10 +3434,6 @@ public:
     struct RpcInstallSnapshotResponse {
         uint64_t term_out;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcInstallSnapshotResponse& o) {
-        m >> o.term_out;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcInstallSnapshotResponse& o) {
         ar << o.term_out;
         return ar;
@@ -3865,12 +3448,6 @@ public:
         uint64_t new_server_id;
         std::string new_server_addr;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddServerRequest& o) {
-        m >> o.term;
-        m >> o.new_server_id;
-        m >> o.new_server_addr;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddServerRequest& o) {
         ar << o.term;
         ar << o.new_server_id;
@@ -3889,12 +3466,6 @@ public:
         std::string error_msg;
         uint64_t leader_hint;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddServerResponse& o) {
-        m >> o.success;
-        m >> o.error_msg;
-        m >> o.leader_hint;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAddServerResponse& o) {
         ar << o.success;
         ar << o.error_msg;
@@ -3912,11 +3483,6 @@ public:
         uint64_t term;
         uint64_t server_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRemoveServerRequest& o) {
-        m >> o.term;
-        m >> o.server_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRemoveServerRequest& o) {
         ar << o.term;
         ar << o.server_id;
@@ -3933,12 +3499,6 @@ public:
         std::string error_msg;
         uint64_t leader_hint;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRemoveServerResponse& o) {
-        m >> o.success;
-        m >> o.error_msg;
-        m >> o.leader_hint;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRemoveServerResponse& o) {
         ar << o.success;
         ar << o.error_msg;
@@ -4970,10 +4530,6 @@ public:
     struct RpcForwardRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardRequest& o) {
         ar << o.cmd;
         return ar;
@@ -4985,9 +4541,6 @@ public:
 
     struct RpcForwardResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardResponse& o) {
         return ar;
     }
@@ -5001,13 +4554,6 @@ public:
         ballot_t ballot;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
-        m >> o.is_pilot;
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareRequest& o) {
         ar << o.is_pilot;
         ar << o.slot;
@@ -5029,13 +4575,6 @@ public:
         uint64_t dep;
         status_t status;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
-        m >> o.ret_cmd;
-        m >> o.max_ballot;
-        m >> o.dep;
-        m >> o.status;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareResponse& o) {
         ar << o.ret_cmd;
         ar << o.max_ballot;
@@ -5059,15 +4598,6 @@ public:
         MarshallDeputy cmd;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAcceptRequest& o) {
-        m >> o.is_pilot;
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.dep;
-        m >> o.cmd;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastAcceptRequest& o) {
         ar << o.is_pilot;
         ar << o.slot;
@@ -5091,11 +4621,6 @@ public:
         ballot_t max_ballot;
         uint64_t ret_dep;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAcceptResponse& o) {
-        m >> o.max_ballot;
-        m >> o.ret_dep;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFastAcceptResponse& o) {
         ar << o.max_ballot;
         ar << o.ret_dep;
@@ -5115,15 +4640,6 @@ public:
         MarshallDeputy cmd;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptRequest& o) {
-        m >> o.is_pilot;
-        m >> o.slot;
-        m >> o.ballot;
-        m >> o.dep;
-        m >> o.cmd;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAcceptRequest& o) {
         ar << o.is_pilot;
         ar << o.slot;
@@ -5146,10 +4662,6 @@ public:
     struct RpcAcceptResponse {
         ballot_t max_ballot;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptResponse& o) {
-        m >> o.max_ballot;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAcceptResponse& o) {
         ar << o.max_ballot;
         return ar;
@@ -5165,13 +4677,6 @@ public:
         uint64_t dep;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitRequest& o) {
-        m >> o.is_pilot;
-        m >> o.slot;
-        m >> o.dep;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcCommitRequest& o) {
         ar << o.is_pilot;
         ar << o.slot;
@@ -5189,9 +4694,6 @@ public:
 
     struct RpcCommitResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcCommitResponse& o) {
         return ar;
     }
@@ -5670,10 +5172,6 @@ public:
     struct RpcMsgStringRequest {
         std::string arg;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgStringRequest& o) {
-        m >> o.arg;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcMsgStringRequest& o) {
         ar << o.arg;
         return ar;
@@ -5686,10 +5184,6 @@ public:
     struct RpcMsgStringResponse {
         std::string ret;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgStringResponse& o) {
-        m >> o.ret;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcMsgStringResponse& o) {
         ar << o.ret;
         return ar;
@@ -5702,10 +5196,6 @@ public:
     struct RpcMsgMarshallRequest {
         MarshallDeputy arg;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgMarshallRequest& o) {
-        m >> o.arg;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcMsgMarshallRequest& o) {
         ar << o.arg;
         return ar;
@@ -5718,10 +5208,6 @@ public:
     struct RpcMsgMarshallResponse {
         MarshallDeputy ret;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgMarshallResponse& o) {
-        m >> o.ret;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcMsgMarshallResponse& o) {
         ar << o.ret;
         return ar;
@@ -5733,9 +5219,6 @@ public:
 
     struct RpcReElectRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcReElectRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcReElectRequest& o) {
         return ar;
     }
@@ -5746,10 +5229,6 @@ public:
     struct RpcReElectResponse {
         bool_t success;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcReElectResponse& o) {
-        m >> o.success;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcReElectResponse& o) {
         ar << o.success;
         return ar;
@@ -5762,10 +5241,6 @@ public:
     struct RpcRuleSpeculativeExecuteRequest {
         MarshallDeputy md;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRuleSpeculativeExecuteRequest& o) {
-        m >> o.md;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRuleSpeculativeExecuteRequest& o) {
         ar << o.md;
         return ar;
@@ -5780,12 +5255,6 @@ public:
         int32_t result;
         bool_t is_leader;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRuleSpeculativeExecuteResponse& o) {
-        m >> o.accepted;
-        m >> o.result;
-        m >> o.is_leader;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRuleSpeculativeExecuteResponse& o) {
         ar << o.accepted;
         ar << o.result;
@@ -5804,12 +5273,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchRequest& o) {
-        m >> o.tid;
-        m >> o.dep_id;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDispatchRequest& o) {
         ar << o.tid;
         ar << o.dep_id;
@@ -5829,13 +5292,6 @@ public:
         uint64_t coro_id;
         MarshallDeputy view_data;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchResponse& o) {
-        m >> o.res;
-        m >> o.output;
-        m >> o.coro_id;
-        m >> o.view_data;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDispatchResponse& o) {
         ar << o.res;
         ar << o.output;
@@ -5856,12 +5312,6 @@ public:
         std::vector<rrr::i32> sids;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
-        m >> o.tid;
-        m >> o.sids;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareRequest& o) {
         ar << o.tid;
         ar << o.sids;
@@ -5880,12 +5330,6 @@ public:
         bool_t slow;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
-        m >> o.res;
-        m >> o.slow;
-        m >> o.coro_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPrepareResponse& o) {
         ar << o.res;
         ar << o.slow;
@@ -5903,11 +5347,6 @@ public:
         rrr::i64 tid;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitRequest& o) {
-        m >> o.tid;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcCommitRequest& o) {
         ar << o.tid;
         ar << o.dep_id;
@@ -5926,14 +5365,6 @@ public:
         Profiling profile;
         MarshallDeputy view_data;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitResponse& o) {
-        m >> o.res;
-        m >> o.slow;
-        m >> o.coro_id;
-        m >> o.profile;
-        m >> o.view_data;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcCommitResponse& o) {
         ar << o.res;
         ar << o.slow;
@@ -5955,11 +5386,6 @@ public:
         rrr::i64 tid;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAbortRequest& o) {
-        m >> o.tid;
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAbortRequest& o) {
         ar << o.tid;
         ar << o.dep_id;
@@ -5978,14 +5404,6 @@ public:
         Profiling profile;
         MarshallDeputy view_data;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAbortResponse& o) {
-        m >> o.res;
-        m >> o.slow;
-        m >> o.coro_id;
-        m >> o.profile;
-        m >> o.view_data;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcAbortResponse& o) {
         ar << o.res;
         ar << o.slow;
@@ -6006,10 +5424,6 @@ public:
     struct RpcEarlyAbortRequest {
         rrr::i64 tid;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEarlyAbortRequest& o) {
-        m >> o.tid;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcEarlyAbortRequest& o) {
         ar << o.tid;
         return ar;
@@ -6022,10 +5436,6 @@ public:
     struct RpcEarlyAbortResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEarlyAbortResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcEarlyAbortResponse& o) {
         ar << o.res;
         return ar;
@@ -6038,10 +5448,6 @@ public:
     struct RpcUpgradeEpochRequest {
         uint32_t curr_epoch;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcUpgradeEpochRequest& o) {
-        m >> o.curr_epoch;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcUpgradeEpochRequest& o) {
         ar << o.curr_epoch;
         return ar;
@@ -6054,10 +5460,6 @@ public:
     struct RpcUpgradeEpochResponse {
         int32_t res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcUpgradeEpochResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcUpgradeEpochResponse& o) {
         ar << o.res;
         return ar;
@@ -6070,10 +5472,6 @@ public:
     struct RpcTruncateEpochRequest {
         uint32_t old_epoch;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTruncateEpochRequest& o) {
-        m >> o.old_epoch;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTruncateEpochRequest& o) {
         ar << o.old_epoch;
         return ar;
@@ -6085,9 +5483,6 @@ public:
 
     struct RpcTruncateEpochResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTruncateEpochResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTruncateEpochResponse& o) {
         return ar;
     }
@@ -6098,10 +5493,6 @@ public:
     struct RpcIsLeaderRequest {
         locid_t cur_pause;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsLeaderRequest& o) {
-        m >> o.cur_pause;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcIsLeaderRequest& o) {
         ar << o.cur_pause;
         return ar;
@@ -6114,10 +5505,6 @@ public:
     struct RpcIsLeaderResponse {
         bool_t is_leader;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsLeaderResponse& o) {
-        m >> o.is_leader;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcIsLeaderResponse& o) {
         ar << o.is_leader;
         return ar;
@@ -6130,10 +5517,6 @@ public:
     struct RpcIsFPGALeaderRequest {
         locid_t cur_pause;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsFPGALeaderRequest& o) {
-        m >> o.cur_pause;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcIsFPGALeaderRequest& o) {
         ar << o.cur_pause;
         return ar;
@@ -6146,10 +5529,6 @@ public:
     struct RpcIsFPGALeaderResponse {
         bool_t is_leader;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsFPGALeaderResponse& o) {
-        m >> o.is_leader;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcIsFPGALeaderResponse& o) {
         ar << o.is_leader;
         return ar;
@@ -6162,10 +5541,6 @@ public:
     struct RpcSimpleCmdRequest {
         SimpleCommand cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSimpleCmdRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSimpleCmdRequest& o) {
         ar << o.cmd;
         return ar;
@@ -6178,10 +5553,6 @@ public:
     struct RpcSimpleCmdResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSimpleCmdResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSimpleCmdResponse& o) {
         ar << o.res;
         return ar;
@@ -6193,9 +5564,6 @@ public:
 
     struct RpcFailoverPauseSocketOutRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverPauseSocketOutRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFailoverPauseSocketOutRequest& o) {
         return ar;
     }
@@ -6206,10 +5574,6 @@ public:
     struct RpcFailoverPauseSocketOutResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverPauseSocketOutResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFailoverPauseSocketOutResponse& o) {
         ar << o.res;
         return ar;
@@ -6221,9 +5585,6 @@ public:
 
     struct RpcFailoverResumeSocketOutRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverResumeSocketOutRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFailoverResumeSocketOutRequest& o) {
         return ar;
     }
@@ -6234,10 +5595,6 @@ public:
     struct RpcFailoverResumeSocketOutResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverResumeSocketOutResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFailoverResumeSocketOutResponse& o) {
         ar << o.res;
         return ar;
@@ -6249,9 +5606,6 @@ public:
 
     struct RpcRpcNullRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRpcNullRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRpcNullRequest& o) {
         return ar;
     }
@@ -6261,9 +5615,6 @@ public:
 
     struct RpcRpcNullResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRpcNullResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRpcNullResponse& o) {
         return ar;
     }
@@ -6276,12 +5627,6 @@ public:
         int64_t ballot;
         int32_t decision;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirAcceptRequest& o) {
-        m >> o.cmd_id;
-        m >> o.ballot;
-        m >> o.decision;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirAcceptRequest& o) {
         ar << o.cmd_id;
         ar << o.ballot;
@@ -6297,9 +5642,6 @@ public:
 
     struct RpcTapirAcceptResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirAcceptResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirAcceptResponse& o) {
         return ar;
     }
@@ -6311,11 +5653,6 @@ public:
         uint64_t cmd_id;
         std::vector<SimpleCommand> txn_cmds;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirFastAcceptRequest& o) {
-        m >> o.cmd_id;
-        m >> o.txn_cmds;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirFastAcceptRequest& o) {
         ar << o.cmd_id;
         ar << o.txn_cmds;
@@ -6330,10 +5667,6 @@ public:
     struct RpcTapirFastAcceptResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirFastAcceptResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirFastAcceptResponse& o) {
         ar << o.res;
         return ar;
@@ -6347,11 +5680,6 @@ public:
         uint64_t cmd_id;
         rrr::i32 commit;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirDecideRequest& o) {
-        m >> o.cmd_id;
-        m >> o.commit;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirDecideRequest& o) {
         ar << o.cmd_id;
         ar << o.commit;
@@ -6365,9 +5693,6 @@ public:
 
     struct RpcTapirDecideResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTapirDecideResponse& o) {
         return ar;
     }
@@ -6378,10 +5703,6 @@ public:
     struct RpcRccDispatchRequest {
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccDispatchRequest& o) {
         ar << o.cmd;
         return ar;
@@ -6396,12 +5717,6 @@ public:
         TxnOutput output;
         MarshallDeputy md_graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchResponse& o) {
-        m >> o.res;
-        m >> o.output;
-        m >> o.md_graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccDispatchResponse& o) {
         ar << o.res;
         ar << o.output;
@@ -6419,11 +5734,6 @@ public:
         cmdid_t id;
         MarshallDeputy md_graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccFinishRequest& o) {
-        m >> o.id;
-        m >> o.md_graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccFinishRequest& o) {
         ar << o.id;
         ar << o.md_graph;
@@ -6438,10 +5748,6 @@ public:
     struct RpcRccFinishResponse {
         std::map<uint32_t, std::map<int32_t, Value>> outputs;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccFinishResponse& o) {
-        m >> o.outputs;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccFinishResponse& o) {
         ar << o.outputs;
         return ar;
@@ -6455,11 +5761,6 @@ public:
         txnid_t txn_id;
         int32_t rank;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireRequest& o) {
-        m >> o.txn_id;
-        m >> o.rank;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccInquireRequest& o) {
         ar << o.txn_id;
         ar << o.rank;
@@ -6474,10 +5775,6 @@ public:
     struct RpcRccInquireResponse {
         std::map<uint64_t, parent_set_t> out_0;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireResponse& o) {
-        m >> o.out_0;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccInquireResponse& o) {
         ar << o.out_0;
         return ar;
@@ -6490,10 +5787,6 @@ public:
     struct RpcRccDispatchRoRequest {
         SimpleCommand cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchRoRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccDispatchRoRequest& o) {
         ar << o.cmd;
         return ar;
@@ -6506,10 +5799,6 @@ public:
     struct RpcRccDispatchRoResponse {
         std::map<rrr::i32, Value> output;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchRoResponse& o) {
-        m >> o.output;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccDispatchRoResponse& o) {
         ar << o.output;
         return ar;
@@ -6523,11 +5812,6 @@ public:
         txid_t tx_id;
         int32_t rank;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireValidationRequest& o) {
-        m >> o.tx_id;
-        m >> o.rank;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccInquireValidationRequest& o) {
         ar << o.tx_id;
         ar << o.rank;
@@ -6542,10 +5826,6 @@ public:
     struct RpcRccInquireValidationResponse {
         int32_t res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireValidationResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccInquireValidationResponse& o) {
         ar << o.res;
         return ar;
@@ -6560,12 +5840,6 @@ public:
         int32_t rank;
         int32_t res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccNotifyGlobalValidationRequest& o) {
-        m >> o.tx_id;
-        m >> o.rank;
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccNotifyGlobalValidationRequest& o) {
         ar << o.tx_id;
         ar << o.rank;
@@ -6581,9 +5855,6 @@ public:
 
     struct RpcRccNotifyGlobalValidationResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccNotifyGlobalValidationResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccNotifyGlobalValidationResponse& o) {
         return ar;
     }
@@ -6594,10 +5865,6 @@ public:
     struct RpcJanusDispatchRequest {
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusDispatchRequest& o) {
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusDispatchRequest& o) {
         ar << o.cmd;
         return ar;
@@ -6612,12 +5879,6 @@ public:
         TxnOutput output;
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusDispatchResponse& o) {
-        m >> o.res;
-        m >> o.output;
-        m >> o.ret_graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusDispatchResponse& o) {
         ar << o.res;
         ar << o.output;
@@ -6637,13 +5898,6 @@ public:
         int32_t need_validation;
         parent_set_t parents;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccCommitRequest& o) {
-        m >> o.id;
-        m >> o.rank;
-        m >> o.need_validation;
-        m >> o.parents;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccCommitRequest& o) {
         ar << o.id;
         ar << o.rank;
@@ -6663,11 +5917,6 @@ public:
         int32_t res;
         TxnOutput output;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccCommitResponse& o) {
-        m >> o.res;
-        m >> o.output;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccCommitResponse& o) {
         ar << o.res;
         ar << o.output;
@@ -6685,13 +5934,6 @@ public:
         int32_t need_validation;
         MarshallDeputy graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitRequest& o) {
-        m >> o.id;
-        m >> o.rank;
-        m >> o.need_validation;
-        m >> o.graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusCommitRequest& o) {
         ar << o.id;
         ar << o.rank;
@@ -6711,11 +5953,6 @@ public:
         int32_t res;
         TxnOutput output;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitResponse& o) {
-        m >> o.res;
-        m >> o.output;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusCommitResponse& o) {
         ar << o.res;
         ar << o.output;
@@ -6732,12 +5969,6 @@ public:
         rank_t rank;
         int32_t need_validation;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitWoGraphRequest& o) {
-        m >> o.id;
-        m >> o.rank;
-        m >> o.need_validation;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusCommitWoGraphRequest& o) {
         ar << o.id;
         ar << o.rank;
@@ -6755,11 +5986,6 @@ public:
         int32_t res;
         TxnOutput output;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitWoGraphResponse& o) {
-        m >> o.res;
-        m >> o.output;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusCommitWoGraphResponse& o) {
         ar << o.res;
         ar << o.output;
@@ -6775,11 +6001,6 @@ public:
         epoch_t epoch;
         txnid_t txn_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusInquireRequest& o) {
-        m >> o.epoch;
-        m >> o.txn_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusInquireRequest& o) {
         ar << o.epoch;
         ar << o.txn_id;
@@ -6794,10 +6015,6 @@ public:
     struct RpcJanusInquireResponse {
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusInquireResponse& o) {
-        m >> o.ret_graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusInquireResponse& o) {
         ar << o.ret_graph;
         return ar;
@@ -6812,12 +6029,6 @@ public:
         rank_t rank;
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccPreAcceptRequest& o) {
-        m >> o.txn_id;
-        m >> o.rank;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccPreAcceptRequest& o) {
         ar << o.txn_id;
         ar << o.rank;
@@ -6835,11 +6046,6 @@ public:
         rrr::i32 res;
         parent_set_t x;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccPreAcceptResponse& o) {
-        m >> o.res;
-        m >> o.x;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccPreAcceptResponse& o) {
         ar << o.res;
         ar << o.x;
@@ -6857,13 +6063,6 @@ public:
         std::vector<SimpleCommand> cmd;
         MarshallDeputy graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptRequest& o) {
-        m >> o.txn_id;
-        m >> o.rank;
-        m >> o.cmd;
-        m >> o.graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusPreAcceptRequest& o) {
         ar << o.txn_id;
         ar << o.rank;
@@ -6883,11 +6082,6 @@ public:
         rrr::i32 res;
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptResponse& o) {
-        m >> o.res;
-        m >> o.ret_graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusPreAcceptResponse& o) {
         ar << o.res;
         ar << o.ret_graph;
@@ -6904,12 +6098,6 @@ public:
         rank_t rank;
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptWoGraphRequest& o) {
-        m >> o.txn_id;
-        m >> o.rank;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusPreAcceptWoGraphRequest& o) {
         ar << o.txn_id;
         ar << o.rank;
@@ -6927,11 +6115,6 @@ public:
         rrr::i32 res;
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptWoGraphResponse& o) {
-        m >> o.res;
-        m >> o.ret_graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusPreAcceptWoGraphResponse& o) {
         ar << o.res;
         ar << o.ret_graph;
@@ -6949,13 +6132,6 @@ public:
         ballot_t ballot;
         parent_set_t p;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccAcceptRequest& o) {
-        m >> o.txn_id;
-        m >> o.rank;
-        m >> o.ballot;
-        m >> o.p;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccAcceptRequest& o) {
         ar << o.txn_id;
         ar << o.rank;
@@ -6974,10 +6150,6 @@ public:
     struct RpcRccAcceptResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccAcceptResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccAcceptResponse& o) {
         ar << o.res;
         return ar;
@@ -6993,13 +6165,6 @@ public:
         ballot_t ballot;
         MarshallDeputy graph;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusAcceptRequest& o) {
-        m >> o.txn_id;
-        m >> o.rank;
-        m >> o.ballot;
-        m >> o.graph;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusAcceptRequest& o) {
         ar << o.txn_id;
         ar << o.rank;
@@ -7018,10 +6183,6 @@ public:
     struct RpcJanusAcceptResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusAcceptResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusAcceptResponse& o) {
         ar << o.res;
         return ar;
@@ -7036,12 +6197,6 @@ public:
         MarshallDeputy new_view;
         epoch_t new_view_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackBeginRecoveryRequest& o) {
-        m >> o.old_view;
-        m >> o.new_view;
-        m >> o.new_view_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackBeginRecoveryRequest& o) {
         ar << o.old_view;
         ar << o.new_view;
@@ -7057,9 +6212,6 @@ public:
 
     struct RpcJetpackBeginRecoveryResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackBeginRecoveryResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackBeginRecoveryResponse& o) {
         return ar;
     }
@@ -7071,11 +6223,6 @@ public:
         epoch_t jepoch;
         epoch_t oepoch;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullIdSetRequest& o) {
-        m >> o.jepoch;
-        m >> o.oepoch;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPullIdSetRequest& o) {
         ar << o.jepoch;
         ar << o.oepoch;
@@ -7095,15 +6242,6 @@ public:
         MarshallDeputy reply_new_view;
         MarshallDeputy id_set;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullIdSetResponse& o) {
-        m >> o.ok;
-        m >> o.reply_jepoch;
-        m >> o.reply_oepoch;
-        m >> o.reply_old_view;
-        m >> o.reply_new_view;
-        m >> o.id_set;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPullIdSetResponse& o) {
         ar << o.ok;
         ar << o.reply_jepoch;
@@ -7128,12 +6266,6 @@ public:
         epoch_t oepoch;
         MarshallDeputy key_batch;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullCmdRequest& o) {
-        m >> o.jepoch;
-        m >> o.oepoch;
-        m >> o.key_batch;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPullCmdRequest& o) {
         ar << o.jepoch;
         ar << o.oepoch;
@@ -7155,15 +6287,6 @@ public:
         MarshallDeputy reply_new_view;
         MarshallDeputy cmd_batch;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullCmdResponse& o) {
-        m >> o.ok;
-        m >> o.reply_jepoch;
-        m >> o.reply_oepoch;
-        m >> o.reply_old_view;
-        m >> o.reply_new_view;
-        m >> o.cmd_batch;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPullCmdResponse& o) {
         ar << o.ok;
         ar << o.reply_jepoch;
@@ -7190,14 +6313,6 @@ public:
         int32_t rid;
         MarshallDeputy cmd_batch;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackRecordCmdRequest& o) {
-        m >> o.jepoch;
-        m >> o.oepoch;
-        m >> o.sid;
-        m >> o.rid;
-        m >> o.cmd_batch;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackRecordCmdRequest& o) {
         ar << o.jepoch;
         ar << o.oepoch;
@@ -7217,9 +6332,6 @@ public:
 
     struct RpcJetpackRecordCmdResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackRecordCmdResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackRecordCmdResponse& o) {
         return ar;
     }
@@ -7232,12 +6344,6 @@ public:
         epoch_t oepoch;
         ballot_t max_seen_ballot;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPrepareRequest& o) {
-        m >> o.jepoch;
-        m >> o.oepoch;
-        m >> o.max_seen_ballot;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPrepareRequest& o) {
         ar << o.jepoch;
         ar << o.oepoch;
@@ -7262,18 +6368,6 @@ public:
         int32_t replied_sid;
         int32_t replied_set_size;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPrepareResponse& o) {
-        m >> o.ok;
-        m >> o.reply_jepoch;
-        m >> o.reply_oepoch;
-        m >> o.reply_old_view;
-        m >> o.reply_new_view;
-        m >> o.reply_max_seen_ballot;
-        m >> o.accepted_ballot;
-        m >> o.replied_sid;
-        m >> o.replied_set_size;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPrepareResponse& o) {
         ar << o.ok;
         ar << o.reply_jepoch;
@@ -7306,14 +6400,6 @@ public:
         int32_t sid;
         int32_t set_size;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackAcceptRequest& o) {
-        m >> o.jepoch;
-        m >> o.oepoch;
-        m >> o.max_seen_ballot;
-        m >> o.sid;
-        m >> o.set_size;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackAcceptRequest& o) {
         ar << o.jepoch;
         ar << o.oepoch;
@@ -7339,15 +6425,6 @@ public:
         MarshallDeputy reply_new_view;
         ballot_t reply_max_seen_ballot;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackAcceptResponse& o) {
-        m >> o.ok;
-        m >> o.reply_jepoch;
-        m >> o.reply_oepoch;
-        m >> o.reply_old_view;
-        m >> o.reply_new_view;
-        m >> o.reply_max_seen_ballot;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackAcceptResponse& o) {
         ar << o.ok;
         ar << o.reply_jepoch;
@@ -7373,13 +6450,6 @@ public:
         int32_t sid;
         int32_t set_size;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackCommitRequest& o) {
-        m >> o.jepoch;
-        m >> o.oepoch;
-        m >> o.sid;
-        m >> o.set_size;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackCommitRequest& o) {
         ar << o.jepoch;
         ar << o.oepoch;
@@ -7397,9 +6467,6 @@ public:
 
     struct RpcJetpackCommitResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackCommitResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackCommitResponse& o) {
         return ar;
     }
@@ -7413,13 +6480,6 @@ public:
         int32_t sid;
         int32_t rid;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullRecSetInsRequest& o) {
-        m >> o.jepoch;
-        m >> o.oepoch;
-        m >> o.sid;
-        m >> o.rid;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPullRecSetInsRequest& o) {
         ar << o.jepoch;
         ar << o.oepoch;
@@ -7443,15 +6503,6 @@ public:
         MarshallDeputy reply_new_view;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullRecSetInsResponse& o) {
-        m >> o.ok;
-        m >> o.reply_jepoch;
-        m >> o.reply_oepoch;
-        m >> o.reply_old_view;
-        m >> o.reply_new_view;
-        m >> o.cmd;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackPullRecSetInsResponse& o) {
         ar << o.ok;
         ar << o.reply_jepoch;
@@ -7474,10 +6525,6 @@ public:
     struct RpcJetpackFinishRecoveryRequest {
         epoch_t oepoch;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackFinishRecoveryRequest& o) {
-        m >> o.oepoch;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackFinishRecoveryRequest& o) {
         ar << o.oepoch;
         return ar;
@@ -7489,9 +6536,6 @@ public:
 
     struct RpcJetpackFinishRecoveryResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackFinishRecoveryResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJetpackFinishRecoveryResponse& o) {
         return ar;
     }
@@ -11340,9 +10384,6 @@ public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcServerShutdownRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerShutdownRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerShutdownRequest& o) {
         return ar;
     }
@@ -11352,9 +10393,6 @@ public:
 
     struct RpcServerShutdownResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerShutdownResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerShutdownResponse& o) {
         return ar;
     }
@@ -11364,9 +10402,6 @@ public:
 
     struct RpcServerReadyRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerReadyRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerReadyRequest& o) {
         return ar;
     }
@@ -11377,10 +10412,6 @@ public:
     struct RpcServerReadyResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerReadyResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerReadyResponse& o) {
         ar << o.res;
         return ar;
@@ -11392,9 +10423,6 @@ public:
 
     struct RpcServerHeartBeatWithDataRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatWithDataRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerHeartBeatWithDataRequest& o) {
         return ar;
     }
@@ -11405,10 +10433,6 @@ public:
     struct RpcServerHeartBeatWithDataResponse {
         ServerResponse res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatWithDataResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerHeartBeatWithDataResponse& o) {
         ar << o.res;
         return ar;
@@ -11420,9 +10444,6 @@ public:
 
     struct RpcServerHeartBeatRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerHeartBeatRequest& o) {
         return ar;
     }
@@ -11432,9 +10453,6 @@ public:
 
     struct RpcServerHeartBeatResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcServerHeartBeatResponse& o) {
         return ar;
     }
@@ -11775,9 +10793,6 @@ public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcClientGetTxnNamesRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientGetTxnNamesRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientGetTxnNamesRequest& o) {
         return ar;
     }
@@ -11788,10 +10803,6 @@ public:
     struct RpcClientGetTxnNamesResponse {
         std::map<rrr::i32, std::string> txn_names;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientGetTxnNamesResponse& o) {
-        m >> o.txn_names;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientGetTxnNamesResponse& o) {
         ar << o.txn_names;
         return ar;
@@ -11803,9 +10814,6 @@ public:
 
     struct RpcClientShutdownRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientShutdownRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientShutdownRequest& o) {
         return ar;
     }
@@ -11815,9 +10823,6 @@ public:
 
     struct RpcClientShutdownResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientShutdownResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientShutdownResponse& o) {
         return ar;
     }
@@ -11827,9 +10832,6 @@ public:
 
     struct RpcClientForceStopRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientForceStopRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientForceStopRequest& o) {
         return ar;
     }
@@ -11839,9 +10841,6 @@ public:
 
     struct RpcClientForceStopResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientForceStopResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientForceStopResponse& o) {
         return ar;
     }
@@ -11852,10 +10851,6 @@ public:
     struct RpcClientResponseRequest {
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientResponseRequest& o) {
-        m >> o.dep_id;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientResponseRequest& o) {
         ar << o.dep_id;
         return ar;
@@ -11868,10 +10863,6 @@ public:
     struct RpcClientResponseResponse {
         ClientResponse res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientResponseResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientResponseResponse& o) {
         ar << o.res;
         return ar;
@@ -11883,9 +10874,6 @@ public:
 
     struct RpcClientReadyRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientReadyRequest& o) {
         return ar;
     }
@@ -11896,10 +10884,6 @@ public:
     struct RpcClientReadyResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientReadyResponse& o) {
         ar << o.res;
         return ar;
@@ -11911,9 +10895,6 @@ public:
 
     struct RpcClientReadyBlockRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyBlockRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientReadyBlockRequest& o) {
         return ar;
     }
@@ -11924,10 +10905,6 @@ public:
     struct RpcClientReadyBlockResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyBlockResponse& o) {
-        m >> o.res;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientReadyBlockResponse& o) {
         ar << o.res;
         return ar;
@@ -11939,9 +10916,6 @@ public:
 
     struct RpcClientStartRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientStartRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientStartRequest& o) {
         return ar;
     }
@@ -11951,9 +10925,6 @@ public:
 
     struct RpcClientStartResponse {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientStartResponse& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcClientStartResponse& o) {
         return ar;
     }
@@ -11964,10 +10935,6 @@ public:
     struct RpcDispatchTxnRequest {
         TxDispatchRequest req;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchTxnRequest& o) {
-        m >> o.req;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDispatchTxnRequest& o) {
         ar << o.req;
         return ar;
@@ -11980,10 +10947,6 @@ public:
     struct RpcDispatchTxnResponse {
         TxReply result;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchTxnResponse& o) {
-        m >> o.result;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDispatchTxnResponse& o) {
         ar << o.result;
         return ar;
@@ -12638,10 +11601,6 @@ public:
     struct RpcGetConfigRequest {
         uint64_t client_version;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigRequest& o) {
-        m >> o.client_version;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigRequest& o) {
         ar << o.client_version;
         return ar;
@@ -12656,12 +11615,6 @@ public:
         rrr::i32 has_update;
         std::string config_data;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigResponse& o) {
-        m >> o.current_version;
-        m >> o.has_update;
-        m >> o.config_data;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigResponse& o) {
         ar << o.current_version;
         ar << o.has_update;
@@ -12677,9 +11630,6 @@ public:
 
     struct RpcGetConfigVersionRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigVersionRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigVersionRequest& o) {
         return ar;
     }
@@ -12690,10 +11640,6 @@ public:
     struct RpcGetConfigVersionResponse {
         uint64_t version;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigVersionResponse& o) {
-        m >> o.version;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigVersionResponse& o) {
         ar << o.version;
         return ar;
@@ -12705,9 +11651,6 @@ public:
 
     struct RpcHasConfigRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasConfigRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasConfigRequest& o) {
         return ar;
     }
@@ -12718,10 +11661,6 @@ public:
     struct RpcHasConfigResponse {
         rrr::i32 has_config;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasConfigResponse& o) {
-        m >> o.has_config;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasConfigResponse& o) {
         ar << o.has_config;
         return ar;
@@ -12734,10 +11673,6 @@ public:
     struct RpcSetShardingPolicyRequest {
         std::string policy_data;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSetShardingPolicyRequest& o) {
-        m >> o.policy_data;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSetShardingPolicyRequest& o) {
         ar << o.policy_data;
         return ar;
@@ -12750,10 +11685,6 @@ public:
     struct RpcSetShardingPolicyResponse {
         rrr::i32 success;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSetShardingPolicyResponse& o) {
-        m >> o.success;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSetShardingPolicyResponse& o) {
         ar << o.success;
         return ar;
@@ -12766,10 +11697,6 @@ public:
     struct RpcGetShardingPolicyRequest {
         uint64_t client_version;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyRequest& o) {
-        m >> o.client_version;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyRequest& o) {
         ar << o.client_version;
         return ar;
@@ -12784,12 +11711,6 @@ public:
         rrr::i32 has_update;
         std::string policy_data;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyResponse& o) {
-        m >> o.current_version;
-        m >> o.has_update;
-        m >> o.policy_data;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyResponse& o) {
         ar << o.current_version;
         ar << o.has_update;
@@ -12805,9 +11726,6 @@ public:
 
     struct RpcGetShardingPolicyVersionRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyVersionRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyVersionRequest& o) {
         return ar;
     }
@@ -12818,10 +11736,6 @@ public:
     struct RpcGetShardingPolicyVersionResponse {
         uint64_t version;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyVersionResponse& o) {
-        m >> o.version;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyVersionResponse& o) {
         ar << o.version;
         return ar;
@@ -12833,9 +11747,6 @@ public:
 
     struct RpcHasShardingPolicyRequest {
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasShardingPolicyRequest& o) {
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasShardingPolicyRequest& o) {
         return ar;
     }
@@ -12846,10 +11757,6 @@ public:
     struct RpcHasShardingPolicyResponse {
         rrr::i32 has_policy;
     };
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasShardingPolicyResponse& o) {
-        m >> o.has_policy;
-        return m;
-    }
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasShardingPolicyResponse& o) {
         ar << o.has_policy;
         return ar;

@@ -62,17 +62,19 @@ def verify_alpha_service_block(block: str) -> None:
     assert_contains(block, "struct RpcPingResponse {\n        std::string msg;\n    };")
     # Workstream N Phase 3e-2: the legacy `Marshal&` operator<<
     # emission is gone from auto-generated typed wrappers.  The
-    # matching `operator>>` stays for the request-decode path.
+    # Workstream N Phase 3g-2: the `operator>>(Marshal&, ...)` form is
+    # also dropped — every read path now routes through
+    # `BinaryReadArchive`, including the routed
+    # `operator>>(rusty::RefMut<Marshal>&, U&)` overload in
+    # `client.hpp`.  Both Marshal-shaped operators are gone; only the
+    # archive-shaped pair remains.
     assert_not_contains(
         block,
         "friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPingRequest& o)",
     )
-    assert_contains(
+    assert_not_contains(
         block,
-        "friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPingResponse& o) {\n"
-        "        m >> o.msg;\n"
-        "        return m;\n"
-        "    }",
+        "friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPingResponse& o)",
     )
     assert_contains(block, "struct RpcNopRequest {\n    };")
     assert_contains(block, "struct RpcNopResponse {\n    };")
@@ -361,11 +363,16 @@ def verify_alpha_service_block(block: str) -> None:
 def verify_beta_service_block(block: str) -> None:
     assert_contains(block, "struct RpcPingRequest {\n        rrr::i32 other_id;\n    };")
     assert_contains(block, "struct RpcPingResponse {\n        std::string echoed;\n    };")
-    # Workstream N Phase 3e-2: see verify_alpha_service_block — the
-    # `Marshal&` operator<< emission was dropped.
+    # Workstream N Phase 3e-2 / Phase 3g-2: see
+    # verify_alpha_service_block — both Marshal& operator<< and
+    # operator>> emissions are dropped.
     assert_not_contains(
         block,
         "friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPingRequest& o)",
+    )
+    assert_not_contains(
+        block,
+        "friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPingRequest& o)",
     )
     assert_contains(
         block,

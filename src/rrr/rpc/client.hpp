@@ -43,16 +43,31 @@
 
 namespace rrr {
 
-// Stream operator for RefMut<Marshal> - allows get_reply() >> x pattern
-// This forwards to Marshal's operator>> while caller holds the guard
+// Stream operator for RefMut<Marshal> — supports the
+// `fu->get_reply() >> x` pattern.  Workstream N Phase 3g-2: each
+// read dispatches through a `BinaryReadArchive` over a fresh
+// `MarshalSource` so the format-decode contract matches the
+// rpcgen-emitted dispatchers (which were flipped to archive in
+// Phase 3g-1).  The archive is a thin format wrapper — its read
+// state lives on the underlying `Marshal`'s read cursor, so
+// constructing a new archive per `>>` call produces the same byte
+// stream as a single chained reader.  We return the guard
+// reference for chaining; subsequent `>>` calls in a chain
+// (`fu->get_reply() >> a >> b >> c`) all hit this same overload.
 template<typename U>
-Marshal& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
-    return *guard >> value;
+rusty::RefMut<Marshal>& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
+    rrr::MarshalSource src(&*guard);
+    rrr::BinaryReadArchive ar(&src);
+    ar >> value;
+    return guard;
 }
 
 template<typename U>
-Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
-    return *guard >> value;
+rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
+    rrr::MarshalSource src(&*guard);
+    rrr::BinaryReadArchive ar(&src);
+    ar >> value;
+    return std::move(guard);
 }
 
 } // namespace rrr
