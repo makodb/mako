@@ -253,9 +253,12 @@ class MarshallDeputy {
   public:
     bool bypass_to_socket_ = false;
     // size_t written_to_socket = 0;
-    // @safe - Proxy-backed marshallable storage (shared_ptr keeps MarshallDeputy copyable).
-    std::shared_ptr<rrr::MarshallableProxy> sp_data_;
-    // Compatibility mirror for legacy call sites needing shared_ptr& from inner().
+    // Workstream N Phase 3f-1: collapsed `sp_data_` (was
+    // `shared_ptr<MarshallableProxy>`) and `inner_sp_data_` into a
+    // single `shared_ptr<Marshallable>` storage. The MarshallableProxy
+    // form is constructed on demand inside `data_proxy()`. Public API
+    // (`inner()`, `data_proxy()`-using `entity_size()`/`write_to_fd`)
+    // is preserved.
     std::shared_ptr<rrr::Marshallable> inner_sp_data_;
     int32_t kind_{0};
     enum Kind {
@@ -335,9 +338,11 @@ class MarshallDeputy {
       set_marshallable(wrap_typed_marshallable(std::move(typed)));
     }
 
-    bool has_marshallable() const { return sp_data_ != nullptr; }
+    bool has_marshallable() const { return inner_sp_data_ != nullptr; }
 
-    // @safe - Accessor for underlying shared_ptr (keeps legacy shared_ptr& API stable).
+    // @safe - Accessor for underlying shared_ptr (keeps legacy
+    // shared_ptr& API stable for call sites that pass `md.inner()` to
+    // functions taking `std::shared_ptr<Marshallable>&`).
     std::shared_ptr<rrr::Marshallable>& inner() { return inner_sp_data_; }
 
     const std::shared_ptr<rrr::Marshallable>& inner() const {
@@ -376,11 +381,10 @@ class MarshallDeputy {
           if(written_to_socket < sizeof(kind_))return sz;
         }
         //Log_info("Written bytes of ghost chunk 1 %d %d %d", sz, kind_, written_to_socket);
-        // sp_data_->reset_write_offset();
         // @unsafe {
-        // Safety check: sp_data_ must not be null when writing
+        // Safety check: inner_sp_data_ must not be null when writing.
         if (!has_marshallable()) {
-          Log_error("MarshallDeputy::write_to_fd called with null sp_data_ (kind=%d)", kind_);
+          Log_error("MarshallDeputy::write_to_fd called with null inner_sp_data_ (kind=%d)", kind_);
           return 0;
         }
         sz = data_proxy()->write_to_fd(fd, written_to_socket - sizeof(kind_));
@@ -403,36 +407,36 @@ class MarshallDeputy {
       MarInitializerState state;
       state.kind = m->kind();
       state.marshallable = std::move(m);
+      // Phase 3f-1: legacy `state.proxy` field still populated for
+      // backward compat with external `MarInitializerFn`s, but
+      // `set_marshallable_state` no longer consumes it.
       state.proxy = std::make_shared<rrr::MarshallableProxy>(
           make_marshallable_proxy(state.marshallable));
       return state;
     }
 
-    // @unsafe - Moves shared_ptr state into MarshallDeputy internal fields
+    // @unsafe - Moves shared_ptr state into MarshallDeputy internal field
     void set_marshallable_state(MarInitializerState state) {
-      verify(sp_data_ == nullptr);
       verify(inner_sp_data_ == nullptr);
       verify(state.marshallable != nullptr);
-      verify(state.proxy != nullptr);
       verify(state.kind != UNKNOWN);
       verify(state.kind == state.marshallable->kind());
-      verify(state.kind == (*state.proxy)->kind());
+      // Phase 3f-1: state.proxy is no longer used; the
+      // MarshallableProxy form is constructed on demand inside
+      // `data_proxy()` from `inner_sp_data_`.
       inner_sp_data_ = std::move(state.marshallable);
-      sp_data_ = std::move(state.proxy);
       kind_ = state.kind;
       bypass_to_socket_ = inner_sp_data_->bypass_to_socket_;
     }
 
-    // @unsafe - Returns reference to internal shared_ptr target (no @lifetime annotation)
-    rrr::MarshallableProxy& data_proxy() {
-      verify(sp_data_ != nullptr);
-      return *sp_data_;
-    }
-
-    // @unsafe - Returns reference to internal shared_ptr target (no @lifetime annotation)
-    const rrr::MarshallableProxy& data_proxy() const {
-      verify(sp_data_ != nullptr);
-      return *sp_data_;
+    // @unsafe - Returns a fresh `MarshallableProxy` constructed from
+    // `inner_sp_data_`. Callers use the result transiently, e.g.
+    // `data_proxy()->entity_size()` — the temporary lives until the
+    // end of the full-expression. Phase 3f-1 collapsed the previously
+    // cached `sp_data_` field into this on-demand construction.
+    rrr::MarshallableProxy data_proxy() const {
+      verify(inner_sp_data_ != nullptr);
+      return make_marshallable_proxy(inner_sp_data_);
     }
 };
 
@@ -711,7 +715,7 @@ private:
         if(data->shared_data){
           // Safety check: marshallable_entity must have valid sp_data_
           if (!data->marshallable_entity.has_marshallable()) {
-            Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
+            Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity has no Marshallable");
             return -1;
           }
           cnt = data->marshallable_entity.write_to_fd(fd, data->written_to_socket);
