@@ -461,8 +461,10 @@ class TxData: public CmdData {
   vector<SimpleCommand> GetCmdsByPartition(parid_t par_id);
   vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t par_id, rank_t rank);
 
-  Marshal& to_marshal(Marshal& m) const override;
-  Marshal& from_marshal(Marshal& m) override;
+  // Workstream N Phase 5b-1: removed dead TxData::to_marshal/from_marshal
+  // overrides (never invoked in production). The Marshallable base's
+  // `verify(0)` defaults remain for any unintentionally surviving
+  // virtual-dispatch path.
 
   inline bool can_retry() {
     return (max_try_ == 0 || n_try_ < max_try_);

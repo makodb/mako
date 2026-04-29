@@ -469,46 +469,13 @@ void TxRequest::get_log(i64 tid, std::string &log) {
   }
 }
 
-Marshal& TxData::to_marshal(Marshal& m) const {
-  m << ws_;
-  m << ws_init_;
-  m << inputs_;
-  m << output_size_;
-  m << p_types_;
-  m << sharding_;
-  m << status_;
-  // FIXME
-  //  m << cmd_;
-  m << partition_ids_;
-  m << n_pieces_all_;
-  m << n_pieces_dispatchable_;
-  m << n_pieces_dispatch_acked_;
-  m << n_pieces_dispatched_;
-  m << n_finished_;
-  m << max_try_;
-  m << n_try_;
-  return m;
-}
-
-Marshal& TxData::from_marshal(Marshal& m) {
-  m >> ws_;
-  m >> ws_init_;
-  m >> inputs_;
-  m >> output_size_;
-  m >> p_types_;
-  m >> sharding_;
-  m >> status_;
-  // FIXME
-  //  m >> cmd_;
-  m >> partition_ids_;
-  m >> n_pieces_all_;
-  m >> n_pieces_dispatchable_;
-  m >> n_pieces_dispatch_acked_;
-  m >> n_pieces_dispatched_;
-  m >> n_finished_;
-  m >> max_try_;
-  m >> n_try_;
-  return m;
-}
+// (Workstream N Phase 5b-1: TxData::to_marshal/from_marshal deleted.
+// They were inherited Marshallable virtual overrides but never
+// invoked: TxData is never registered with `MarshallDeputy::reg_initializer`,
+// no caller wraps it in a `MarshallDeputy`, and no production path
+// dispatches `to_marshal`/`from_marshal` virtually on a TxData
+// pointer. The Marshallable base's `verify(0)` defaults will trigger
+// if the dead path is ever exercised — a stricter, more honest
+// failure than silently writing partial bytes.)
 
 } // namespace janus
