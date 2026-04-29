@@ -6,8 +6,12 @@
 
 namespace janus {
 
+// Workstream N Phase 4d-5: RccGraph migrated to Serializable.
+// Only empty graphs ever round-trip on the wire (RccTx's operator<<
+// and operator>> are `verify(0)` stubs); the new save/load preserve
+// that contract with byte-identical encoding (`uint64_t n=0`).
 static int volatile gx =
-  MarshallDeputy::reg_initializer<RccGraph>(
+  rrr::reg_serializable_in_deputy<RccGraph>(
       MarshallDeputy::RCC_GRAPH);
 // Workstream N Phase 4d-1: EmptyGraph migrated to Serializable.
 static int volatile gxx =

@@ -33,6 +33,17 @@ class EmptyGraph {
 };
 
 class RccServer;
+// Workstream N Phase 4d-5: migrated from Marshallable to Serializable.
+// The base `Graph<RccTx>` carries a `to_marshal`/`from_marshal` pair
+// (graph.h:966) that emits `uint64_t size` followed by per-vertex
+// (id, *vertex) pairs. RccTx's `operator<<`/`operator>>` are
+// `verify(0)` stubs (tx.h:353-365), so in practice only the empty
+// graph (size==0) ever round-trips on the wire — confirmed by
+// `RccGraphRoundTripUsesTypedAdapter` in
+// `rpc_marshallable_proxy_test.cc`. Migration preserves that
+// behavior: `save`/`load` write `uint64_t 0` and `verify(n == 0)` on
+// read, byte-for-byte identical to the legacy encoding for the
+// only inputs that ever worked.
 class RccGraph : public Graph<RccTx> {
  public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::RCC_GRAPH;
@@ -49,6 +60,23 @@ class RccGraph : public Graph<RccTx> {
 
   virtual ~RccGraph() {
     // XXX hopefully some memory leak here does not hurt. :(
+  }
+
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    uint64_t n = size();
+    verify(n == 0);  // RccTx archive operators are not implemented;
+                     // only empty graphs ever round-trip in practice.
+    ar << n;
+  }
+
+  void load(BinaryReadArchive& ar) {
+    verify(size() == 0);
+    uint64_t n;
+    ar >> n;
+    verify(n == 0);  // matches the legacy `m >> *v` verify(0) stub
+                     // for non-empty graphs.
   }
 
   /** on start_req */
@@ -86,17 +114,9 @@ class RccGraph : public Graph<RccTx> {
 };
 } // namespace janus
 
-namespace rrr {
-
-// (EmptyGraph is a Serializable now — no TypedMarshallableAdapter
-// trait. RccGraph stays Marshallable-flavored for now, pending its
-// own migration.)
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::RccGraph> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::RccGraph, MarshallDeputy::RCC_GRAPH>;
-};
-
-}  // namespace rrr
+// (EmptyGraph and RccGraph are both Serializables now — no
+// TypedMarshallableAdapter traits. Construction sites continue to
+// use `MarshallDeputy(make_shared<T>())` / `set_marshallable<T>` /
+// `wrap_typed_marshallable<T>` transparently via the Phase 4d-prep
+// bridge dispatch. Cast sites continue to use
+// `marshallable_cast<T>` transparently via the bridge.)
