@@ -1,6 +1,7 @@
 #include "tpc_command.h"
 #include "../command.h"
 #include "../command_marshaler.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"
 
 using namespace janus;
 
@@ -16,8 +17,13 @@ static int volatile x3 =
     MarshallDeputy::reg_initializer<TpcEmptyCommand>(
         MarshallDeputy::CMD_TPC_EMPTY);
 
+// Workstream N Phase 4a-1: TpcNoopCommand migrated from Marshallable
+// to Serializable. Uses the new `reg_serializable_in_deputy`
+// registration path; on the wire it produces zero payload bytes (just
+// the kind prefix that the MarshallDeputy framing layer prepends),
+// byte-for-byte identical to the previous Marshallable encoding.
 static int volatile x4 =
-    MarshallDeputy::reg_initializer<TpcNoopCommand>(
+    rrr::reg_serializable_in_deputy<TpcNoopCommand>(
         MarshallDeputy::CMD_NOOP);
 
 static int volatile x5 =
@@ -107,13 +113,8 @@ Marshal& TpcEmptyCommand::from_marshal(Marshal& m) {
   return m;
 }
 
-Marshal& TpcNoopCommand::to_marshal(Marshal& m) const {
-  return m;
-}
-
-Marshal& TpcNoopCommand::from_marshal(Marshal& m) {
-  return m;
-}
+// (TpcNoopCommand's Marshal-based serialization removed in Phase 4a-1;
+// see save/load methods inline in tpc_command.h.)
 
 Marshal& TpcBatchCommand::to_marshal(Marshal& m) const {
   verify(size_ == cmds_.size());

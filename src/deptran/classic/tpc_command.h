@@ -44,12 +44,17 @@ class TpcEmptyCommand {
   void Done() { event->set(1); };
 };
 
+// Workstream N Phase 4a-1: migrated from Marshallable to Serializable.
+// Stateless tag command — no fields, save/load are no-ops.
+// Registered with `MarshallDeputy::reg_initializer` via the
+// `reg_serializable_in_deputy` bridge in tpc_command.cc.
 class TpcNoopCommand {
-  public:
+ public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_NOOP;
 
-  Marshal& to_marshal(Marshal&) const;
-  Marshal& from_marshal(Marshal&);
+  int32_t kind() const { return kMarshallKind; }
+  void save(BinaryWriteArchive&) const {}
+  void load(BinaryReadArchive&) {}
 };
 
 class TpcBatchCommand {
@@ -96,13 +101,9 @@ struct TypedMarshallableAdapterTraits<janus::TpcEmptyCommand> {
                                MarshallDeputy::CMD_TPC_EMPTY>;
 };
 
-template <>
-struct TypedMarshallableAdapterTraits<janus::TpcNoopCommand> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::TpcNoopCommand,
-                               MarshallDeputy::CMD_NOOP>;
-};
+// (TpcNoopCommand is a Serializable now — no TypedMarshallableAdapter
+// trait. See tpc_command.cc for its `reg_serializable_in_deputy`
+// registration; construction sites use `wrap_serializable`.)
 
 template <>
 struct TypedMarshallableAdapterTraits<janus::TpcBatchCommand> {
