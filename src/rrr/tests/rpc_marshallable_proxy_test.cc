@@ -420,7 +420,12 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   auto src = MakeTypedTpcCommitPayload(/*tx_id=*/321, /*ret=*/9, /*term=*/17,
                                        /*recovery=*/1);
 
-  MarshallDeputy outgoing(src);
+  // Phase 4a-3b: TpcCommitCommand is now Serializable. The
+  // `MarshallDeputy(shared_ptr<T>)` ctor's requires clause checks
+  // `kHasTypedMarshallableAdapter<T>` (no longer satisfied for
+  // migrated types). Explicitly route through wrap_typed_marshallable
+  // — its bridge overload (Phase 4a-prep) handles Serializable T's.
+  MarshallDeputy outgoing(wrap_typed_marshallable(src));
   EXPECT_EQ(outgoing.kind_, MarshallDeputy::CMD_TPC_COMMIT);
 
   Marshal m;
@@ -454,7 +459,9 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
                                 /*recovery=*/1)};
   batch->AddCmds(commits);
 
-  MarshallDeputy batch_outgoing(batch);
+  // Phase 4a-3c: TpcBatchCommand migrated to Serializable; route
+  // through wrap_typed_marshallable as in the Commit case above.
+  MarshallDeputy batch_outgoing(wrap_typed_marshallable(batch));
   EXPECT_EQ(batch_outgoing.kind_, MarshallDeputy::CMD_TPC_BATCH);
   Marshal batch_marshaled;
   batch_marshaled << batch_outgoing;
