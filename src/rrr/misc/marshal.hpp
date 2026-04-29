@@ -41,6 +41,18 @@
 
 #include "../base/all.hpp"
 
+// Workstream N Phase 4d-prep: pull in `marshal_archive.hpp` so
+// `SerializableConcept<T>` is visible at template definition time
+// for `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>`.
+// This lets those templates dispatch transparently to the
+// `wrap_typed_marshallable` bridge overload (declared below) for
+// migrated Serializable types — call sites need no updates.
+//
+// `marshal_archive.hpp` forward-declares `class Marshal` rather than
+// including this file, so this is acyclic. The archive's MarshalSink/
+// MarshalSource use `Marshal*` only; method bodies live in the .cpp.
+#include "marshal_archive.hpp"
+
 
 namespace rrr {
 
@@ -205,6 +217,24 @@ inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
       std::make_shared<Adapter>(std::move(typed)));
 }
 
+// Workstream N Phase 4d-prep: forward declaration of the bridge
+// overload of `wrap_typed_marshallable<T>` for SerializableConcept T.
+// The actual definition lives in `marshal_serializable_bridge.hpp`
+// (which is included via the rrr.hpp umbrella in production code).
+//
+// The forward decl is needed here so that two-phase template lookup
+// inside `MarshallDeputy::set_marshallable<T>` (and the matching
+// constructor) finds this overload during Phase 1 unqualified lookup
+// at template definition. Without it, only the legacy
+// (TypedMarshallableAdapter) overload would be visible, since ADL
+// on `shared_ptr<T>` only adds `std` and T's namespace — not `rrr`.
+template <typename T>
+  requires (!std::is_base_of_v<Marshallable, T> &&
+            !kHasTypedMarshallableAdapter<T> &&
+            SerializableConcept<T>)
+std::shared_ptr<Marshallable> wrap_typed_marshallable(
+    std::shared_ptr<T> typed);
+
 // @safe - Type-erasing wrapper for polymorphic Marshallable objects
 // NOTE: Stores a proxy facade over shared_ptr<Marshallable>:
 //   1. Polymorphism requirement - Marshallable is abstract base with many derived types
@@ -312,10 +342,18 @@ class MarshallDeputy {
           std::static_pointer_cast<rrr::Marshallable>(std::move(sp_m)));
     }
 
+    // Workstream N Phase 4d-prep: requires clause now also matches
+    // `SerializableConcept<T>`. The forward decl above of the bridge
+    // `wrap_typed_marshallable<T>` for Serializable T means this
+    // template's body finds the right overload at instantiation
+    // time, regardless of T's migration state. Call sites that do
+    // `MarshallDeputy md(make_shared<T>())` keep working as T is
+    // migrated.
     template<typename T>
     explicit MarshallDeputy(std::shared_ptr<T> sp_t)
       requires (!std::is_base_of_v<rrr::Marshallable, T> &&
-                kHasTypedMarshallableAdapter<T>)
+                (kHasTypedMarshallableAdapter<T> ||
+                 SerializableConcept<T>))
     {
       set_marshallable(std::move(sp_t));
     }
@@ -331,11 +369,16 @@ class MarshallDeputy {
       set_marshallable_state(make_initializer_state(std::move(m)));
     }
 
-    // @unsafe - Template delegates to non-borrow-checked set_marshallable
+    // @unsafe - Template delegates to non-borrow-checked set_marshallable.
+    // Workstream N Phase 4d-prep: requires clause also matches
+    // `SerializableConcept<T>`. `wrap_typed_marshallable` is
+    // forward-declared above for both legacy and Serializable T's;
+    // the right overload is picked at instantiation time.
     template <typename T>
     void set_marshallable(std::shared_ptr<T> typed)
       requires (!std::is_base_of_v<rrr::Marshallable, T> &&
-                kHasTypedMarshallableAdapter<T>)
+                (kHasTypedMarshallableAdapter<T> ||
+                 SerializableConcept<T>))
     {
       set_marshallable(wrap_typed_marshallable(std::move(typed)));
     }

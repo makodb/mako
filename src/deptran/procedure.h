@@ -190,91 +190,97 @@ class VecPieceData {
   }
 };
 
+// Workstream N Phase 4d-3: migrated from Marshallable to Serializable.
 class VecRecData {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<key_t>> key_data_{};
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_REC_VEC;
   VecRecData() = default;
 
-  Marshal& to_marshal(Marshal& m) const {
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
     verify(key_data_);
-    m << (int32_t) key_data_->size();
-    for (const key_t& k: *key_data_) {
-      m << k;
+    ar << static_cast<int32_t>(key_data_->size());
+    for (const key_t& k : *key_data_) {
+      ar << k;
     }
-//    m << *key_data_;
-    return m;
   }
 
-  Marshal& from_marshal(Marshal& m) {
+  void load(BinaryReadArchive& ar) {
     verify(!key_data_);
     key_data_ = std::make_shared<vector<key_t>>();
     int32_t sz;
-    m >> sz;
+    ar >> sz;
     for (int i = 0; i < sz; i++) {
       key_t x;
-      m >> x;
+      ar >> x;
       key_data_->push_back(x);
     }
-//    m >> *key_data_;
-    return m;
   }
 };
 
+// Workstream N Phase 4d-3: migrated from Marshallable to Serializable.
 class ViewData {
  public:
   View view_;
   parid_t partition_id_ = 0; // partition id for which this view applies
-  
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_VIEW_DATA;
+
   ViewData() = default;
-  
+
   explicit ViewData(const View& view) : view_(view) {}
-  
+
   ViewData(const View& view, parid_t pid) : view_(view), partition_id_(pid) {}
-  
+
   // Get the embedded View
   const View& GetView() const { return view_; }
   View& GetView() { return view_; }
-  
-  Marshal& to_marshal(Marshal& m) const {
-    m << view_.n_;
-    m << view_.view_id_;
-    m << view_.timestamp_;
-    m << (int32_t)view_.leaders_.size();
+
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << view_.n_;
+    ar << view_.view_id_;
+    ar << view_.timestamp_;
+    ar << static_cast<int32_t>(view_.leaders_.size());
     for (int leader : view_.leaders_) {
-      m << leader;
+      ar << leader;
     }
-    m << partition_id_;
-    return m;
+    ar << partition_id_;
   }
-  
-  Marshal& from_marshal(Marshal& m) {
-    m >> view_.n_;
-    m >> view_.view_id_;
-    m >> view_.timestamp_;
+
+  void load(BinaryReadArchive& ar) {
+    ar >> view_.n_;
+    ar >> view_.view_id_;
+    ar >> view_.timestamp_;
     int32_t leader_count;
-    m >> leader_count;
+    ar >> leader_count;
     view_.leaders_.clear();
     view_.leaders_.reserve(leader_count);
     for (int i = 0; i < leader_count; i++) {
       int leader;
-      m >> leader;
+      ar >> leader;
       view_.leaders_.push_back(leader);
     }
-    m >> partition_id_;
-    return m;
+    ar >> partition_id_;
   }
-  
+
   std::string ToString() const {
-    return "ViewData{partition=" + std::to_string(partition_id_) + 
+    return "ViewData{partition=" + std::to_string(partition_id_) +
            ", " + view_.ToString() + "}";
   }
 };
 
+// Workstream N Phase 4d-3: migrated from Marshallable to Serializable.
+// Uses Phase 3f-prep nested-MarshallDeputy archive operators for the
+// per-entry command payloads.
 class KeyCmdBatchData {
  public:
   std::vector<key_t> keys_;
   std::vector<shared_ptr<Marshallable>> commands_;
+  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_KEY_CMD_BATCH;
 
   KeyCmdBatchData() = default;
 
@@ -301,31 +307,31 @@ class KeyCmdBatchData {
     return commands_[idx];
   }
 
-  Marshal& to_marshal(Marshal& m) const {
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
     verify(keys_.size() == commands_.size());
     int32_t sz = commands_.size();
-    m << sz;
+    ar << sz;
     for (int32_t i = 0; i < sz; i++) {
-      m << keys_[i];
+      ar << keys_[i];
       MarshallDeputy deputy;
       deputy.set_marshallable(commands_[i]);
-      m << deputy;
+      ar << deputy;
     }
-    return m;
   }
 
-  Marshal& from_marshal(Marshal& m) {
+  void load(BinaryReadArchive& ar) {
     int32_t sz = 0;
-    m >> sz;
+    ar >> sz;
     keys_.resize(sz);
     commands_.resize(sz);
     for (int32_t i = 0; i < sz; i++) {
-      m >> keys_[i];
+      ar >> keys_[i];
       MarshallDeputy deputy;
-      m >> deputy;
+      ar >> deputy;
       commands_[i] = deputy.inner();
     }
-    return m;
   }
 };
 
@@ -469,28 +475,9 @@ struct TypedMarshallableAdapterTraits<janus::VecPieceData> {
                                MarshallDeputy::CMD_VEC_PIECE>;
 };
 
-template <>
-struct TypedMarshallableAdapterTraits<janus::VecRecData> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::VecRecData,
-                               MarshallDeputy::CMD_REC_VEC>;
-};
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::ViewData> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::ViewData,
-                               MarshallDeputy::CMD_VIEW_DATA>;
-};
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::KeyCmdBatchData> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::KeyCmdBatchData,
-                               MarshallDeputy::CMD_KEY_CMD_BATCH>;
-};
+// (Phase 4d-3: VecRecData, ViewData, KeyCmdBatchData are
+// Serializables now — no TypedMarshallableAdapter traits.
+// VecPieceData stays Marshallable for now — has nested SimpleCommand
+// serialization that needs SimpleCommand archive support first.)
 
 }  // namespace rrr

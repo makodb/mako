@@ -374,11 +374,18 @@ TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
   src.view_.leaders_ = {1, 2, 1};
   src.partition_id_ = 7;
 
+  // Phase 4d-3: ViewData migrated to Serializable. Use Archive
+  // round-trip — the Marshal-based to_marshal/from_marshal methods
+  // are gone.
   Marshal m;
-  src.to_marshal(m);
+  MarshalSink sink(&m);
+  BinaryWriteArchive writer(&sink);
+  src.save(writer);
 
   janus::ViewData dst;
-  dst.from_marshal(m);
+  MarshalSource source(&m);
+  BinaryReadArchive reader(&source);
+  dst.load(reader);
 
   EXPECT_EQ(dst.view_.n_, 3);
   EXPECT_EQ(dst.view_.view_id_, 9);

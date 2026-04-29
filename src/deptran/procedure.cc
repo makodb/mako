@@ -2,25 +2,30 @@
 #include "marshal-value.h"
 #include "coordinator.h"
 #include "procedure.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"
 #include "benchmark_control_rpc.h"
 
 
 namespace janus {
 
+// VecPieceData stays Marshallable for now — nested SimpleCommand
+// fields need their own archive support first.
 static int volatile x1 =
     MarshallDeputy::reg_initializer<VecPieceData>(
         MarshallDeputy::CMD_VEC_PIECE);
 
+// Workstream N Phase 4d-3: VecRecData, ViewData, KeyCmdBatchData
+// migrated to Serializable. Wire format byte-for-byte identical.
 static int volatile x2 =
-    MarshallDeputy::reg_initializer<VecRecData>(
+    rrr::reg_serializable_in_deputy<VecRecData>(
         MarshallDeputy::CMD_REC_VEC);
 
 static int volatile x3 =
-    MarshallDeputy::reg_initializer<ViewData>(
+    rrr::reg_serializable_in_deputy<ViewData>(
         MarshallDeputy::CMD_VIEW_DATA);
 
 static int volatile x4 =
-    MarshallDeputy::reg_initializer<KeyCmdBatchData>(
+    rrr::reg_serializable_in_deputy<KeyCmdBatchData>(
         MarshallDeputy::CMD_KEY_CMD_BATCH);
 
 TxWorkspace::TxWorkspace() {
