@@ -95,23 +95,11 @@ class Marshallable {
     verify(0);
     return m;
   }
-  virtual size_t entity_size() const {
-    verify(0);
-    return 0;
-  }
-  // @unsafe
-  virtual size_t write_to_fd(int fd, size_t written_to_socket) const {
-    verify(0);
-    return 0;
-  }
-
-  // virtual size_t need_to_write(){
-  //   return entity_size() ; - written_to_socket;
-  // }
-
-  // virtual void reset_write_offsets(){
-  //    written_to_socket = 0;
-  // }
+  // Workstream N Phase 5b-6: removed `entity_size()` and
+  // `write_to_fd()` virtual methods. They were the consumer end of
+  // the dead bypass-to-socket fast path that Phase 5b-3 deleted; no
+  // production code calls them, and the test fixtures that
+  // overrode them did so for an invariant nobody checks.
 };
 
 // Workstream N Phase 5b-4: removed `MarshallableFacade`,
