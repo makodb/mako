@@ -23,7 +23,7 @@
 // `setsockopt(2)` / `getaddrinfo(3)` / `::close(fd)` calls remain in
 // the RPC client; the channel layer's `TcpConnection` owns the fd
 // and the syscalls. `<errno.h>` is kept for the errno-shaped error
-// codes (`ENOTCONN`, `ECONNREFUSED`, `EPROTO`, `ETIMEDOUT`, ...) the
+// codes (`EINVAL`, `ENOTCONN`, `ECONNRESET`, `ETIMEDOUT`, ...) the
 // RPC layer still surfaces through `invoke_error_callback`.
 #include <errno.h>
 
@@ -894,33 +894,27 @@ void ClientConnection::run_recv_loop() {
 // surfaced through `ChannelFrame`.
 void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
                                                   std::size_t size) {
-  // Wrap the bytes in a Marshal so we can reuse the existing
-  // operator>> codecs for v64 / v32 / Marshal::read.
-  Marshal body;
-  if (size > 0) {
-    body.write(bytes, size);
-  }
+  // Workstream N Phase 3d-1: parse the response header directly from
+  // the input bytes via BufferSource + BinaryReadArchive — no
+  // intermediate `Marshal body` allocation.  The payload tail (if
+  // any) is written into the matching Future's `reply_` Marshal via
+  // a single byte-copy.  BufferSource bounds reads to `size`, so a
+  // truncated frame aborts inside `BinaryReadArchive::read_exact`
+  // (matches the legacy `Marshal::operator>>` behaviour on short
+  // reads).
+  BufferSource src(bytes, size);
+  BinaryReadArchive ar(&src);
 
   v64 v_reply_xid;
   v32 v_error_code;
-  size_t parsed_header_size = 0;
-
-  body >> v_reply_xid >> v_error_code;
-  parsed_header_size += v_reply_xid.val_size() + v_error_code.val_size();
-
   // See the function-header note: in channel mode the extended-header
-  // flag is consumed by the framing layer. We assume the server
+  // flag is consumed by the framing layer.  We assume the server
   // always emits the extended form (matches `server.hpp` today).
   v64 v_server_instance_id;
-  body >> v_server_instance_id;
-  parsed_header_size += v_server_instance_id.val_size();
+  ar >> v_reply_xid >> v_error_code >> v_server_instance_id;
   check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
 
-  if (size < parsed_header_size) {
-    invoke_error_callback(EPROTO, "response header larger than packet payload");
-    return;
-  }
-
+  size_t parsed_header_size = src.pos();
   size_t response_payload_bytes = size - parsed_header_size;
   heartbeat_manager_.on_pong_received();
 
@@ -938,7 +932,10 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
     auto fu = fu_opt.unwrap();
     verify(fu->xid_ == v_reply_xid.get());
     fu->error_code_.set(v_error_code.get());
-    fu->reply_.borrow_mut()->read_from_marshal(body, response_payload_bytes);
+    if (response_payload_bytes > 0) {
+      fu->reply_.borrow_mut()->write(bytes + parsed_header_size,
+                                     response_payload_bytes);
+    }
 
     if (v_error_code.get() == 0) {
       metrics_.record_request_completed();
@@ -948,13 +945,12 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
     record_circuit_result(v_error_code.get());
 
     fu->notify_ready(fu);
-  } else {
-    // No matching future (timed out or replaced). Drain the payload
-    // anyway to keep the Marshal balanced — same idiom as the legacy
-    // fd path's branch in `handle_read`.
-    Marshal reply;
-    reply.read_from_marshal(body, response_payload_bytes);
   }
+  // No matching future (timed out or replaced) → drop the payload.
+  // The legacy fd path drained the bytes through a throwaway Marshal
+  // to keep its chunk list balanced, but that was an idiom of the
+  // legacy fd reader; with channel-mode framing the input bytes are
+  // owned by the caller and freed on return — nothing to drain.
 }
 
 // @unsafe - Channel-mode close fan-out (Workstream K, sub-leaf 4d).

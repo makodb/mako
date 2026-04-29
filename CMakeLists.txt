@@ -90,6 +90,17 @@ if(NOT DEFINED ENV{LIBCLANG_PATH})
     endforeach()
 endif()
 
+# Default ENABLE_BORROW_CHECKING to OFF.  This MUST be set before the
+# include below — `third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake`
+# calls `option(ENABLE_BORROW_CHECKING ... ON)` which would otherwise
+# win the cache race.  `set(... CACHE BOOL ...)` without FORCE is a
+# no-op when the cache already has a value, so a `-DENABLE_BORROW_CHECKING=ON`
+# on the command line still wins.
+# TEMPORARY: disabled during CMake 3.28+ native-module migration — the
+# rusty-cpp checker cannot resolve `import rrr;` without being handed the
+# BMI paths. Re-enable once the checker integrates with CMake module info.
+set(ENABLE_BORROW_CHECKING OFF CACHE BOOL "Enable RustyCpp borrow checking")
+
 # Configure and enable rusty-cpp-checker
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
 set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
@@ -97,13 +108,6 @@ set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 # NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
 # build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
 # support is bypassed.
-
-# Enable borrow checking (can be disabled with -DENABLE_BORROW_CHECKING=OFF)
-# Don't use FORCE so command-line option takes precedence.
-# TEMPORARY: disabled during CMake 3.28+ native-module migration — the
-# rusty-cpp checker cannot resolve `import rrr;` without being handed the
-# BMI paths. Re-enable once the checker integrates with CMake module info.
-set(ENABLE_BORROW_CHECKING OFF CACHE BOOL "Enable RustyCpp borrow checking")
 if(ENABLE_BORROW_CHECKING)
     enable_borrow_checking()
     set(BORROW_CHECKER_INCLUDE_PATHS
@@ -1969,7 +1973,17 @@ if(BUILD_TESTS)
     add_test(NAME test_raft_transport_facade COMMAND test_raft_transport_facade)
 
     add_executable(test_raft_rrr_transport_compile tests/raft_rrr_transport_compile_test.cc)
-    target_include_directories(test_raft_rrr_transport_compile PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_include_directories(test_raft_rrr_transport_compile PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        # raft_rrr_transport_compile_test.cc transitively pulls in
+        # `src/deptran/raft/rrr_transport.hpp` → ... →
+        # `src/deptran/rcc/graph.h` → `__dep__.h` (lives in
+        # `src/deptran/`), which includes `yaml-cpp/yaml.h`.  Neither
+        # path is propagated through `rrr`, so add both explicitly
+        # here (same pattern as `txlog_core_obj`'s PUBLIC include set).
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
     target_compile_options(test_raft_rrr_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_raft_rrr_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_rrr_transport_compile COMMAND test_raft_rrr_transport_compile)

@@ -29,6 +29,19 @@
 
 
 
+// Defensive: erpc's `third-party/erpc/src/common.h` defines `likely(x)`
+// and `unlikely(x)` as preprocessor macros.  When that header is
+// transitively included before this one (e.g.
+// `mako/lib/rrr_rpc_backend.h` pulls in `lib/configuration.h` →
+// `common.h` → erpc, then `rrr/rrr.hpp` → us), the macro replacement
+// turns our `inline bool likely(bool)` function into a syntax error.
+// Stash the prior definitions, undef them while we declare our
+// namespace-scoped functions, then restore on exit.
+#pragma push_macro("likely")
+#pragma push_macro("unlikely")
+#undef likely
+#undef unlikely
+
 namespace rrr {
 
 // @unsafe - Uses backtrace functions and raw memory operations
@@ -63,3 +76,6 @@ inline void verify(const Expr& expr,
 }
 
 } // namespace rrr
+
+#pragma pop_macro("unlikely")
+#pragma pop_macro("likely")
