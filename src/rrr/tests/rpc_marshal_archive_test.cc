@@ -1465,5 +1465,101 @@ TEST(RegSerializableInDeputy, RoundTripThroughMarshallDeputy) {
   EXPECT_EQ(bytes, bytes2);
 }
 
+TEST(SerializableCast, RecoversTypedPayloadFromMarshallDeputy) {
+  // After Phase 4 migration, callers will use `serializable_cast<T>`
+  // in place of `marshallable_cast<T>` for types that switched from
+  // Marshallable to Serializable. Verify the cast helper returns the
+  // underlying T from a deputy populated via the
+  // reg_serializable_in_deputy factory.
+
+  CanaryDeputyCommand orig;
+  orig.header = 12345;
+  orig.name = "cast me";
+  orig.values = {7, 8, 9};
+
+  // Encode → decode round-trip through MarshallDeputy via the
+  // registered Serializable factory.
+  auto orig_marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+  MarshallDeputy md_orig{orig_marsh};
+  Marshal m;
+  m << md_orig;
+  auto bytes = drain_marshal(m);
+
+  Marshal m2;
+  m2.write(bytes.data(), bytes.size());
+  MarshallDeputy md_decoded;
+  m2 >> md_decoded;
+
+  // Cast via serializable_cast; verify the recovered T's fields match.
+  CanaryDeputyCommand* recovered =
+      serializable_cast<CanaryDeputyCommand>(md_decoded);
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered->header, orig.header);
+  EXPECT_EQ(recovered->name, orig.name);
+  EXPECT_EQ(recovered->values, orig.values);
+}
+
+TEST(SerializableCast, ReturnsNullForWrongType) {
+  // serializable_cast should fail safely when the requested T does
+  // not match the wrapped type.
+  struct OtherSerializable {
+    int32_t kind() const { return 0x20002; }
+    void save(BinaryWriteArchive&) const {}
+    void load(BinaryReadArchive&) {}
+  };
+
+  auto marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>());
+  ASSERT_NE(marsh, nullptr);
+
+  // Cast to the actual type — succeeds.
+  EXPECT_NE(serializable_cast<CanaryDeputyCommand>(marsh), nullptr);
+  // Cast to a different Serializable type — returns nullptr.
+  EXPECT_EQ(serializable_cast<OtherSerializable>(marsh), nullptr);
+}
+
+TEST(SerializableCast, ReturnsNullForNonSerializableMarshallable) {
+  // serializable_cast on a Marshallable that's NOT a
+  // SerializableMarshallableAdapter (e.g. a plain Marshallable
+  // subclass from the legacy path) returns nullptr cleanly.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  std::shared_ptr<Marshallable> marsh = canary;
+  EXPECT_EQ(serializable_cast<CanaryMarshallable>(marsh), nullptr);
+  EXPECT_EQ(serializable_cast<CanaryDeputyCommand>(marsh), nullptr);
+}
+
+TEST(SerializableCast, MutationVisibleThroughProxy) {
+  // serializable_cast returns a pointer to the proxy-owned T; mutating
+  // it should be visible to subsequent saves through the proxy.
+  CanaryDeputyCommand orig;
+  orig.header = 1;
+  orig.name = "before";
+
+  auto marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+  CanaryDeputyCommand* p = serializable_cast<CanaryDeputyCommand>(marsh);
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(p->name, "before");
+
+  // Mutate through the recovered pointer.
+  p->name = "after";
+  p->header = 999;
+
+  // Save through the Marshallable interface; bytes should reflect the
+  // mutation.
+  Marshal m;
+  marsh->to_marshal(m);
+  auto bytes = drain_marshal(m);
+
+  // Decode into a fresh independent CanaryDeputyCommand and verify.
+  BufferSource src(bytes.data(), bytes.size());
+  BinaryReadArchive reader(&src);
+  CanaryDeputyCommand decoded;
+  decoded.load(reader);
+  EXPECT_EQ(decoded.name, "after");
+  EXPECT_EQ(decoded.header, 999);
+}
+
 }  // namespace
 }  // namespace rrr

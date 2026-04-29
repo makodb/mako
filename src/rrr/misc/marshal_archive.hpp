@@ -830,6 +830,11 @@ struct SerializableFacade : pro::facade_builder
     ::add_convention<SerializableMemSave, void(BinaryWriteArchive&) const>
     ::add_convention<SerializableMemLoad, void(BinaryReadArchive&)>
     ::add_convention<SerializableMemKind, int32_t() const>
+    // Phase 4 prep: enable `pro::proxy_cast<T*>(&proxy)` for type-safe
+    // downcast back to the underlying T. Used by `serializable_cast<T>`
+    // in `marshal_serializable_bridge.hpp` to extract a typed payload
+    // from a SerializableMarshallableAdapter wrapped in MarshallDeputy.
+    ::add_skill<pro::skills::indirect_rtti>
     ::build {};
 
 using SerializableProxy = pro::proxy<SerializableFacade>;
