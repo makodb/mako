@@ -156,4 +156,41 @@ inline SerializableProxy as_serializable(const MarshallDeputy& md) {
   return as_serializable(std::move(inner));
 }
 
+// ---- MarshallDeputy ↔ Serializable registration --------------------
+//
+// Phase 4 prep: register a Serializable type T (one with `save`,
+// `load`, `kind` methods but no Marshallable inheritance and no
+// TypedMarshallableAdapter trait) under `kind` so that
+// `MarshallDeputy::operator>>` can decode an instance of T from the
+// wire. The factory creates a fresh T-backed SerializableProxy and
+// wraps it as a Marshallable via `SerializableMarshallableAdapter`,
+// which routes its `to_marshal` / `from_marshal` calls through the
+// Phase 3a `MarshalSink` / `MarshalSource` bridges to T's `save` /
+// `load`. T is therefore byte-for-byte indistinguishable on the wire
+// from a Marshallable subclass implementing the same fields.
+//
+// Usage (mirrors `MarshallDeputy::reg_initializer<T>(kind)` for
+// Marshallable types):
+//
+//   static int reg_my_cmd =
+//       rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
+//
+// `MarshallDeputy(as_marshallable(make_serializable_proxy<T>()))` is
+// the matching write-side call until a `MarshallDeputy(SerializableProxy)`
+// constructor lands in Phase 3f.
+template<typename T>
+inline int reg_serializable_in_deputy(int32_t kind) {
+  return MarshallDeputy::reg_initializer(kind, [kind]() {
+    auto proxy = make_serializable_proxy<T>();
+    verify(proxy->kind() == kind);
+    auto marsh = as_marshallable(std::move(proxy));
+    MarshallDeputy::MarInitializerState state;
+    state.kind = kind;
+    state.marshallable = marsh;
+    state.proxy = std::make_shared<MarshallableProxy>(
+        make_marshallable_proxy(marsh));
+    return state;
+  });
+}
+
 }  // namespace rrr

@@ -1379,5 +1379,91 @@ TEST(AsSerializableMarshallDeputy, ViewSavesUnderlyingMarshallableBytes) {
   EXPECT_EQ(ref_bytes, view_bytes);
 }
 
+// ---- MarshallDeputy registration of Serializable types (Phase 4 prep)
+
+// Test fixture: a Serializable type that does NOT inherit Marshallable
+// and does NOT have a TypedMarshallableAdapterTraits specialization.
+// This is the shape that Phase 4 migrations move command types toward
+// — pure save/load/kind, no virtual inheritance.
+struct CanaryDeputyCommand {
+  int32_t header{0};
+  std::string name;
+  std::vector<int32_t> values;
+
+  // Use a kind in the user range (avoid colliding with
+  // MarshallDeputy's reserved CMD_* enum values).
+  static constexpr int32_t kKind = 0x10001;
+
+  int32_t kind() const { return kKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << header << name << values;
+  }
+
+  void load(BinaryReadArchive& ar) {
+    ar >> header >> name >> values;
+  }
+};
+
+// Static-initializer registration. Runs once at TU load time; safe
+// because the registry is SpinMutex-protected.
+static int _reg_canary_deputy_command =
+    reg_serializable_in_deputy<CanaryDeputyCommand>(
+        CanaryDeputyCommand::kKind);
+
+TEST(RegSerializableInDeputy, RegistersUnderKind) {
+  // The registration ran at static init. Confirm the factory exists.
+  auto factory = MarshallDeputy::get_initializer(
+      CanaryDeputyCommand::kKind);
+  ASSERT_TRUE(static_cast<bool>(factory));
+  auto state = factory();
+  EXPECT_EQ(state.kind, CanaryDeputyCommand::kKind);
+  ASSERT_NE(state.marshallable, nullptr);
+  EXPECT_EQ(state.marshallable->kind(), CanaryDeputyCommand::kKind);
+}
+
+TEST(RegSerializableInDeputy, RoundTripThroughMarshallDeputy) {
+  // Construct a MarshallDeputy holding a CanaryDeputyCommand wrapped
+  // via the existing as_marshallable bridge (the write side; a
+  // dedicated MarshallDeputy(SerializableProxy) ctor lands in Phase
+  // 3f). Encode via Marshal (kind | payload), decode into a fresh
+  // MarshallDeputy via the registered factory, verify bytes survive
+  // a re-encode round-trip.
+  CanaryDeputyCommand orig;
+  orig.header = 7;
+  orig.name = "canary deputy";
+  orig.values = {1, 2, 3};
+
+  // Build a MarshallDeputy whose inner is a SerializableMarshallable-
+  // Adapter wrapping orig.
+  auto orig_proxy = make_serializable_proxy<CanaryDeputyCommand>(orig);
+  auto orig_marsh = as_marshallable(std::move(orig_proxy));
+  MarshallDeputy md_orig{orig_marsh};
+  EXPECT_EQ(md_orig.kind_, CanaryDeputyCommand::kKind);
+
+  // Encode via the existing Marshal-based MarshallDeputy operator<<.
+  Marshal m;
+  m << md_orig;
+  auto bytes = drain_marshal(m);
+
+  // Decode into a fresh MarshallDeputy. This triggers
+  // create_actual_object_from → registered factory → SerializableProxy
+  // → SerializableMarshallableAdapter → from_marshal via MarshalSource.
+  Marshal m2;
+  m2.write(bytes.data(), bytes.size());
+  MarshallDeputy md_decoded;
+  m2 >> md_decoded;
+  EXPECT_EQ(md_decoded.kind_, CanaryDeputyCommand::kKind);
+  ASSERT_NE(md_decoded.inner(), nullptr);
+  EXPECT_EQ(md_decoded.inner()->kind(), CanaryDeputyCommand::kKind);
+
+  // Re-encode the decoded deputy. Bytes must match the original
+  // encoding (proves the load reconstructed state correctly).
+  Marshal m3;
+  m3 << md_decoded;
+  auto bytes2 = drain_marshal(m3);
+  EXPECT_EQ(bytes, bytes2);
+}
+
 }  // namespace
 }  // namespace rrr
