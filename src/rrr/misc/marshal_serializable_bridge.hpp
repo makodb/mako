@@ -253,11 +253,13 @@ inline int reg_serializable_in_deputy(int32_t kind) {
     auto proxy = make_serializable_proxy<T>();
     verify(proxy->kind() == kind);
     auto marsh = as_marshallable(std::move(proxy));
+    // Workstream N Phase 5b-2: no `state.proxy` here — the legacy
+    // field was dropped. `MarshallDeputy::data_proxy()` builds the
+    // MarshallableProxy on demand from `state.marshallable` for the
+    // few sites that still need the proxy view.
     MarshallDeputy::MarInitializerState state;
     state.kind = kind;
     state.marshallable = marsh;
-    state.proxy = std::make_shared<MarshallableProxy>(
-        make_marshallable_proxy(marsh));
     return state;
   });
 }
