@@ -274,6 +274,15 @@ class SyncLogRequest {
     }
 };
 
+// Workstream N Phase 4d-4: migrated from Marshallable to Serializable.
+// Wire payload preserved byte-for-byte:
+//   int32_t sync_data.size() | N x MarshallDeputy bytes
+//   int32_t missing_slots.size()
+//   per missing_slots row: int32_t inner.size() | M x slotid_t
+// The nested `vector<shared_ptr<MarshallDeputy>>` field uses the
+// Phase 3f-prep `operator<<` / `operator>>` overloads for
+// MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
+// layout as the legacy `m << *sync_data[i]` / `m >> *x`.
 class SyncLogResponse {
   public:
     static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCRESP_PXS;
@@ -281,43 +290,42 @@ class SyncLogResponse {
     vector<vector<slotid_t>> missing_slots;
     SyncLogResponse() = default;
 
-    Marshal& to_marshal(Marshal& m) const {
-      m << (int32_t)sync_data.size();
-      for(int i = 0; i < sync_data.size(); i++){
-        m << *sync_data[i];
+    int32_t kind() const { return kMarshallKind; }
+
+    void save(BinaryWriteArchive& ar) const {
+      ar << static_cast<int32_t>(sync_data.size());
+      for (size_t i = 0; i < sync_data.size(); i++) {
+        ar << *sync_data[i];
       }
-      m << (int32_t)missing_slots.size();
-      for(int i = 0; i < missing_slots.size(); i++){
-        m << (int32_t)missing_slots[i].size();
-        for(int j = 0; j < missing_slots[i].size(); j++){
-          m << missing_slots[i][j];
+      ar << static_cast<int32_t>(missing_slots.size());
+      for (size_t i = 0; i < missing_slots.size(); i++) {
+        ar << static_cast<int32_t>(missing_slots[i].size());
+        for (size_t j = 0; j < missing_slots[i].size(); j++) {
+          ar << missing_slots[i][j];
         }
       }
-      return m;
     }
 
-    Marshal& from_marshal(Marshal& m) {
+    void load(BinaryReadArchive& ar) {
       int32_t sz;
-      m >> sz;
-      for(int i = 0; i < sz; i++){
-        MarshallDeputy* x = new MarshallDeputy;
-        m >> *x;
-        auto shrd_ptr = shared_ptr<MarshallDeputy>(x);
-        sync_data.push_back(shrd_ptr);
+      ar >> sz;
+      for (int i = 0; i < sz; i++) {
+        auto x = std::make_shared<MarshallDeputy>();
+        ar >> *x;
+        sync_data.push_back(std::move(x));
       }
-      m >> sz;
-      for(int i = 0; i < sz; i++){
+      ar >> sz;
+      for (int i = 0; i < sz; i++) {
         int32_t sz1;
-        m >> sz1;
+        ar >> sz1;
         vector<slotid_t> cur;
-        for(int j = 0; j < sz1; j++){
+        for (int j = 0; j < sz1; j++) {
           slotid_t x;
-          m >> x;
+          ar >> x;
           cur.push_back(x);
         }
-        missing_slots.push_back(cur);
-      } 
-      return m;
+        missing_slots.push_back(std::move(cur));
+      }
     }
 };
 
@@ -876,15 +884,10 @@ class TypedPaxosLogEnvelopeAdapter : public Marshallable {
 // through `wrap_serializable`. Cast sites continue to use
 // `marshallable_cast<T>` transparently via the bridge.)
 //
-// SyncLogResponse stays Marshallable for now — has nested
-// `vector<shared_ptr<MarshallDeputy>>` requiring more careful save/load.
-template <>
-struct TypedMarshallableAdapterTraits<janus::SyncLogResponse> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::SyncLogResponse,
-                               MarshallDeputy::CMD_SYNCRESP_PXS>;
-};
+// (Phase 4d-4: SyncLogResponse migrated to Serializable; the nested
+// `vector<shared_ptr<MarshallDeputy>>` field uses the Phase 3f-prep
+// MarshallDeputy archive operators on BinaryWriteArchive /
+// BinaryReadArchive.)
 
 template <>
 struct TypedMarshallableAdapterTraits<janus::LogEntry> {

@@ -38,10 +38,13 @@ static int volatile x6 =
       rrr::reg_serializable_in_deputy<SyncLogRequest>(
           MarshallDeputy::CMD_SYNCREQ_PXS);
 
-// SyncLogResponse stays Marshallable (has nested
-// vector<shared_ptr<MarshallDeputy>>).
+// Workstream N Phase 4d-4: SyncLogResponse migrated to Serializable.
+// The nested `vector<shared_ptr<MarshallDeputy>>` field uses the
+// Phase 3f-prep MarshallDeputy archive operators on
+// BinaryWriteArchive / BinaryReadArchive — wire format byte-for-byte
+// identical to the previous Marshallable encoding.
 static int volatile x7 =
-      MarshallDeputy::reg_initializer<SyncLogResponse>(
+      rrr::reg_serializable_in_deputy<SyncLogResponse>(
           MarshallDeputy::CMD_SYNCRESP_PXS);
 static int volatile x8 =
       rrr::reg_serializable_in_deputy<SyncNoOpRequest>(
