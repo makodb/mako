@@ -104,15 +104,9 @@ public:
 
 } // namespace janus
 
-namespace rrr {
-
-// (All TPC command types are now Serializables — no
-// TypedMarshallableAdapter traits. See tpc_command.cc for their
-// `reg_serializable_in_deputy` registrations. Construction sites use
-// `wrap_serializable` (Prepare/Commit/Batch/Noop, stateless) or
-// `wrap_serializable_aliased` (Empty, preserves event-member
-// aliasing). Cast sites continue to use `marshallable_cast<T>` —
-// the Phase 4a-prep bridge overload routes Serializable T's to
-// `serializable_cast<T>` and synthesizes a `shared_ptr<T>`.)
-
-}  // namespace rrr
+// Workstream N Phase 4e-2: removed an empty `namespace rrr {}` block
+// that previously held `TypedMarshallableAdapterTraits<T>`
+// specializations for the TPC command types.  The traits machinery
+// went away in Phase 5b-5; all TPC types are now Serializables, and
+// their `reg_serializable_in_deputy` registrations live in
+// `tpc_command.cc`.

@@ -77,8 +77,13 @@ class SerializableMarshallableAdapter : public Marshallable {
   // Expose the inner SerializableProxy so callers can downcast to the
   // underlying T via `pro::proxy_cast<T*>(&adapter.proxy_mut())`. Used
   // by `serializable_cast<T>` below.
+  //
+  // Workstream N Phase 4e-2: removed the unused
+  // `const SerializableProxy& proxy_view() const` accessor.  All
+  // existing callers (`serializable_cast<T>` overloads) need the
+  // mutable form to invoke `proxy_cast` against the proxy_indirect
+  // accessor; nothing read-only consumed `proxy_view`.
   SerializableProxy& proxy_mut() { return serializable_; }
-  const SerializableProxy& proxy_view() const { return serializable_; }
 
  private:
   // mutable so the const-only `to_marshal` can call `serializable_->save`
