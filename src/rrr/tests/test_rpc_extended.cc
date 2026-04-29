@@ -191,7 +191,7 @@ TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCall
         DeferredReply defer(
             std::move(req),
             weak_sconn,
-            [](Marshal&) {},
+            [](BinaryWriteArchive&) {},
             [&]() { cleanup_called = true; });
 
         EXPECT_EQ(defer.run_async([&]() { callback_count.fetch_add(1); }), 0);

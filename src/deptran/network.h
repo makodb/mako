@@ -346,7 +346,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_rmw(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -362,7 +362,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -378,7 +378,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_new_order(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -394,7 +394,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_payment(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -410,7 +410,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_delivery(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -426,7 +426,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_order_status(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -442,7 +442,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->txn_stock_level(__typed_req__, *__typed_resp__, std::move(__defer__));

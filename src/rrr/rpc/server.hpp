@@ -572,7 +572,13 @@ namespace rrr {
 class DeferredReply {
     rusty::Box<rrr::Request> req_;
     WeakServerConnection weak_sconn_;
-    rusty::Function<void(Marshal&)> marshal_reply_;  // Takes Marshal& to write response
+    // Workstream N Phase 3d-4: stored callback signature is now
+    // `void(BinaryWriteArchive&)` so generated `defer` handlers can
+    // write through the archive layer matching every other Phase 3d
+    // emission point.  `ServerConnection::reply<F>` is dual-signature
+    // (Phase 3d-3) so the inner dispatch picks the archive branch
+    // automatically when this callback runs.
+    rusty::Function<void(BinaryWriteArchive&)> archive_reply_;
     rusty::Function<void()> cleanup_;
     bool replied_ = false;  // Track if reply was sent
 
@@ -585,9 +591,10 @@ public:
 
     // @safe - Initializes deferred reply with move semantics
     DeferredReply(rusty::Box<rrr::Request> req, WeakServerConnection weak_sconn,
-                  rusty::Function<void(Marshal&)> marshal_reply, rusty::Function<void()> cleanup)
+                  rusty::Function<void(BinaryWriteArchive&)> archive_reply,
+                  rusty::Function<void()> cleanup)
         : req_(std::move(req)), weak_sconn_(weak_sconn),
-          marshal_reply_(std::move(marshal_reply)), cleanup_(std::move(cleanup)) {}
+          archive_reply_(std::move(archive_reply)), cleanup_(std::move(cleanup)) {}
 
     // @safe - Cleanup destructor
     // SAFETY: cleanup_() deletes in_ and out_ params allocated by wrapper
@@ -618,7 +625,7 @@ public:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 // No const_cast needed: reply() is now a const method with interior mutability
-                sconn->reply(*req_, 0, marshal_reply_);
+                sconn->reply(*req_, 0, archive_reply_);
             } else {
                 // Connection closed, silently drop reply
                 Log_debug("Connection closed before reply sent, dropping reply");

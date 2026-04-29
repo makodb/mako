@@ -355,7 +355,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         with f.indent():
                             f.writeln("std::move(req),")
                             f.writeln("weak_sconn,")
-                            f.writeln("[__typed_resp__](rrr::Marshal& m) {")
+                            f.writeln("[__typed_resp__](rrr::BinaryWriteArchive& m) {")
                             with f.indent():
                                 for _, field_name in output_fields:
                                     f.writeln("m << __typed_resp__->%s;" % field_name)

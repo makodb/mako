@@ -1108,7 +1108,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->coro_id;
                 },
                 []() {});
@@ -1126,7 +1126,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->coro_id;
                 },
@@ -1147,7 +1147,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->coro_id;
                 },
@@ -1167,7 +1167,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->Decide(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1183,7 +1183,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                 },
@@ -1204,7 +1204,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ret_slot;
                     m << __typed_resp__->ret_ballot;
                 },
@@ -1222,7 +1222,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                 },
@@ -1240,7 +1240,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                 },
@@ -1258,7 +1258,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                     m << __typed_resp__->ret;
@@ -1277,7 +1277,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                     m << __typed_resp__->ret;
@@ -1296,7 +1296,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                 },
@@ -1314,7 +1314,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                 },
@@ -1332,7 +1332,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ballot;
                     m << __typed_resp__->val;
                 },
@@ -2111,7 +2111,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->Commit(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -2405,7 +2405,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->coro_id;
                 },
@@ -2429,7 +2429,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->coro_id;
                 },
@@ -2449,7 +2449,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->Decide(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -3143,7 +3143,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->followerPrevLogIndex;
                 },
                 []() {});
@@ -3160,7 +3160,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->cmt_idx;
                 },
                 []() {});
@@ -3180,7 +3180,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->vote_granted;
                 },
@@ -3201,7 +3201,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->vote_granted;
                 },
@@ -3226,7 +3226,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->followerAppendOK;
                     m << __typed_resp__->followerCurrentTerm;
                     m << __typed_resp__->followerLastLogIndex;
@@ -3252,7 +3252,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->followerAppendOK;
                     m << __typed_resp__->followerCurrentTerm;
                     m << __typed_resp__->followerLastLogIndex;
@@ -3274,7 +3274,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->Decide(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -5609,7 +5609,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->Forward(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -5628,7 +5628,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ret_cmd;
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->dep;
@@ -5653,7 +5653,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                     m << __typed_resp__->ret_dep;
                 },
@@ -5676,7 +5676,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->max_ballot;
                 },
                 []() {});
@@ -5696,7 +5696,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->Commit(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -8668,7 +8668,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ret;
                 },
                 []() {});
@@ -8685,7 +8685,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ret;
                 },
                 []() {});
@@ -8701,7 +8701,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->success;
                 },
                 []() {});
@@ -8718,7 +8718,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->accepted;
                     m << __typed_resp__->result;
                     m << __typed_resp__->is_leader;
@@ -8739,7 +8739,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->output;
                     m << __typed_resp__->coro_id;
@@ -8761,7 +8761,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->slow;
                     m << __typed_resp__->coro_id;
@@ -8781,7 +8781,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->slow;
                     m << __typed_resp__->coro_id;
@@ -8803,7 +8803,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->slow;
                     m << __typed_resp__->coro_id;
@@ -8824,7 +8824,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -8841,7 +8841,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -8858,7 +8858,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->TruncateEpoch(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -8874,7 +8874,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->is_leader;
                 },
                 []() {});
@@ -8891,7 +8891,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->is_leader;
                 },
                 []() {});
@@ -8908,7 +8908,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -8924,7 +8924,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -8940,7 +8940,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -8956,7 +8956,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->rpc_null(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -8974,7 +8974,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->TapirAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -8991,7 +8991,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -9009,7 +9009,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->TapirDecide(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -9025,7 +9025,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->output;
                     m << __typed_resp__->md_graph;
@@ -9045,7 +9045,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->outputs;
                 },
                 []() {});
@@ -9063,7 +9063,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->out_0;
                 },
                 []() {});
@@ -9080,7 +9080,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->output;
                 },
                 []() {});
@@ -9098,7 +9098,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -9117,7 +9117,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->RccNotifyGlobalValidation(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -9133,7 +9133,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->output;
                     m << __typed_resp__->ret_graph;
@@ -9155,7 +9155,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->output;
                 },
@@ -9176,7 +9176,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->output;
                 },
@@ -9196,7 +9196,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->output;
                 },
@@ -9215,7 +9215,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ret_graph;
                 },
                 []() {});
@@ -9234,7 +9234,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->x;
                 },
@@ -9255,7 +9255,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->ret_graph;
                 },
@@ -9275,7 +9275,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                     m << __typed_resp__->ret_graph;
                 },
@@ -9296,7 +9296,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -9316,7 +9316,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -9335,7 +9335,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->JetpackBeginRecovery(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -9352,7 +9352,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ok;
                     m << __typed_resp__->reply_jepoch;
                     m << __typed_resp__->reply_oepoch;
@@ -9376,7 +9376,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ok;
                     m << __typed_resp__->reply_jepoch;
                     m << __typed_resp__->reply_oepoch;
@@ -9402,7 +9402,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->JetpackRecordCmd(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -9420,7 +9420,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ok;
                     m << __typed_resp__->reply_jepoch;
                     m << __typed_resp__->reply_oepoch;
@@ -9449,7 +9449,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ok;
                     m << __typed_resp__->reply_jepoch;
                     m << __typed_resp__->reply_oepoch;
@@ -9474,7 +9474,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->JetpackCommit(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -9493,7 +9493,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->ok;
                     m << __typed_resp__->reply_jepoch;
                     m << __typed_resp__->reply_oepoch;
@@ -9515,7 +9515,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->JetpackFinishRecovery(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -12118,7 +12118,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->server_shutdown(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -12133,7 +12133,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -12149,7 +12149,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -12165,7 +12165,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->server_heart_beat(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -12750,7 +12750,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->txn_names;
                 },
                 []() {});
@@ -12766,7 +12766,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->client_shutdown(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -12781,7 +12781,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->client_force_stop(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -12797,7 +12797,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -12813,7 +12813,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -12829,7 +12829,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->res;
                 },
                 []() {});
@@ -12845,7 +12845,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                 },
                 []() {});
             this->client_start(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -12861,7 +12861,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->result;
                 },
                 []() {});
@@ -13646,7 +13646,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->current_version;
                     m << __typed_resp__->has_update;
                     m << __typed_resp__->config_data;
@@ -13664,7 +13664,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->version;
                 },
                 []() {});
@@ -13680,7 +13680,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->has_config;
                 },
                 []() {});
@@ -13697,7 +13697,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->success;
                 },
                 []() {});
@@ -13714,7 +13714,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->current_version;
                     m << __typed_resp__->has_update;
                     m << __typed_resp__->policy_data;
@@ -13732,7 +13732,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->version;
                 },
                 []() {});
@@ -13748,7 +13748,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->has_policy;
                 },
                 []() {});

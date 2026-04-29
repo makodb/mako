@@ -1289,12 +1289,16 @@ to `ServerConnection::reply<F>` and flipped `rpcgen`'s emission to
 write `BinaryWriteArchive&` lambdas in every generated proxy
 request and reply — `rcc_rpc.h` and the small fixture headers
 regenerated, so production code is now on the archive path with no
-Marshal-write call sites in the generated layer (the `DeferredReply`
-deferred-reply lambda still emits `Marshal&` until its stored
-function type flips).  Sub-leaves 3d-4..3d-6 (`DeferredReply` flip,
-sweep of remaining `Marshal&` write_fn callers in tests/apps, and
-the final deletion of the legacy `Marshal&` write_fn overloads) are
-queued. Phase 3f-2/3
+Marshal-write call sites in the generated layer.  Phase 3d-4 flipped
+`DeferredReply`'s stored callback type from
+`rusty::Function<void(Marshal&)>` to
+`rusty::Function<void(BinaryWriteArchive&)>` and updated lang_cpp.py
+to emit the matching lambda for deferred-style RPCs — every
+write-side lambda the rpcgen output now generates lands as
+`BinaryWriteArchive&`.  Sub-leaves 3d-5..3d-6 (sweep of remaining
+hand-written `Marshal&` write_fn callers in tests/apps, and the
+final deletion of the legacy `Marshal&` write_fn overloads + Phase
+3e-2 user-struct operator drop) are queued. Phase 3f-2/3
 (`MarshallDeputy` SerializableProxy storage), and the remaining
 Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
 virtuals, now gated only on test-fixture migration since `CmdData`
