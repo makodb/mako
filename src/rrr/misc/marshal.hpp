@@ -242,9 +242,12 @@ std::shared_ptr<Marshallable> wrap_typed_marshallable(
 //   3. Shared ownership is still available through inner() for dynamic casts
 class MarshallDeputy {
   public:
+    // Workstream N Phase 5b-2: dropped legacy `proxy` field.
+    // Phase 3f-1 stopped consuming it inside `set_marshallable_state`,
+    // and no remaining caller / test relies on it. The MarshallableProxy
+    // is constructed on demand from `inner_sp_data_` via `data_proxy()`.
     struct MarInitializerState {
       std::shared_ptr<rrr::Marshallable> marshallable;
-      std::shared_ptr<rrr::MarshallableProxy> proxy;
       int32_t kind{0};
     };
     typedef std::function<MarInitializerState()> MarInitializerFn;
@@ -445,18 +448,18 @@ class MarshallDeputy {
     ~MarshallDeputy() = default;
 
   private:
-    // @unsafe - Constructs MarInitializerState with shared_ptr / proxy operations
+    // @unsafe - Constructs MarInitializerState from a shared_ptr<Marshallable>
+    // Workstream N Phase 5b-2: no longer populates a legacy `proxy`
+    // field — that field was removed alongside the dead consumer
+    // path. `data_proxy()` constructs a fresh `MarshallableProxy` on
+    // demand from `inner_sp_data_` for the few sites that still need
+    // the proxy view.
     static MarInitializerState make_initializer_state(
         std::shared_ptr<rrr::Marshallable> m) {
       verify(m != nullptr);
       MarInitializerState state;
       state.kind = m->kind();
       state.marshallable = std::move(m);
-      // Phase 3f-1: legacy `state.proxy` field still populated for
-      // backward compat with external `MarInitializerFn`s, but
-      // `set_marshallable_state` no longer consumes it.
-      state.proxy = std::make_shared<rrr::MarshallableProxy>(
-          make_marshallable_proxy(state.marshallable));
       return state;
     }
 
@@ -466,9 +469,6 @@ class MarshallDeputy {
       verify(state.marshallable != nullptr);
       verify(state.kind != UNKNOWN);
       verify(state.kind == state.marshallable->kind());
-      // Phase 3f-1: state.proxy is no longer used; the
-      // MarshallableProxy form is constructed on demand inside
-      // `data_proxy()` from `inner_sp_data_`.
       inner_sp_data_ = std::move(state.marshallable);
       kind_ = state.kind;
       bypass_to_socket_ = inner_sp_data_->bypass_to_socket_;

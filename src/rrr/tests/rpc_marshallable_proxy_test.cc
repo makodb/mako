@@ -263,17 +263,18 @@ TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
   EXPECT_EQ(decoded->value, 321);
 }
 
+// Phase 5b-2: dropped MarInitializerState::proxy assertions. The
+// legacy `proxy` field was deleted alongside the dead consumer path
+// in `set_marshallable_state` — only `marshallable` and `kind` are
+// part of the live initializer-state contract now.
 TEST(MarshallableProxyFacadeTest, InitializerReturnsProxyBackedMetadata) {
   EnsureTestMarshallableInitializer();
 
   auto initializer = MarshallDeputy::get_initializer(kTestMarshallableKind);
   auto state = initializer();
   ASSERT_NE(state.marshallable, nullptr);
-  ASSERT_NE(state.proxy, nullptr);
   EXPECT_EQ(state.kind, kTestMarshallableKind);
   EXPECT_EQ(state.marshallable->kind(), kTestMarshallableKind);
-  EXPECT_EQ((*state.proxy)->kind(), kTestMarshallableKind);
-  EXPECT_EQ((*state.proxy)->inner(), state.marshallable);
 }
 
 TEST(MarshallableProxyFacadeTest, MarshallableCastFromSharedPtrKeepsType) {
@@ -329,6 +330,10 @@ TEST(MarshallableProxyFacadeTest, TypedPayloadRoundTripsViaDeputyAdapter) {
   EXPECT_EQ(decoded->value, 913);
 }
 
+// Phase 5b-2: dropped MarInitializerState::proxy assertions (see
+// InitializerReturnsProxyBackedMetadata). This test still verifies
+// that the typed-adapter trait path produces a marshallable wrapping
+// the right payload kind.
 TEST(MarshallableProxyFacadeTest, TypedPayloadInitializerStateContainsAdapter) {
   EnsureTypedOnlyPayloadInitializer();
   auto initializer = MarshallDeputy::get_initializer(
@@ -337,13 +342,11 @@ TEST(MarshallableProxyFacadeTest, TypedPayloadInitializerStateContainsAdapter) {
 
   EXPECT_EQ(state.kind, marshallable_proxy_test_types::kTypedOnlyPayloadKind);
   ASSERT_NE(state.marshallable, nullptr);
-  ASSERT_NE(state.proxy, nullptr);
 
   auto decoded =
       marshallable_cast<marshallable_proxy_test_types::TypedOnlyPayload>(
           state.marshallable);
   ASSERT_NE(decoded, nullptr);
-  EXPECT_EQ((*state.proxy)->inner(), state.marshallable);
 }
 
 TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataUsesTypedAdapterPath) {
