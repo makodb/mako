@@ -19,32 +19,12 @@
 using namespace rrr;
 using namespace janus::raft;
 
-// ============================================================================
-// Test Marshallable Command for testing
-// ============================================================================
-
-class TestCommand : public Marshallable {
-public:
-    std::string data;
-    int32_t value{0};
-
-    TestCommand() : Marshallable(MarshallDeputy::CMD_NOOP) {}
-
-    TestCommand(const std::string& d, int32_t v)
-        : Marshallable(MarshallDeputy::CMD_NOOP), data(d), value(v) {}
-
-    Marshal& to_marshal(Marshal& m) const override {
-        m << data;
-        m << value;
-        return m;
-    }
-
-    Marshal& from_marshal(Marshal& m) override {
-        m >> data;
-        m >> value;
-        return m;
-    }
-};
+// Workstream N Phase 4e-1: removed the unused `TestCommand`
+// Marshallable subclass.  None of the tests in this file ever
+// instantiated it (`grep make_shared<TestCommand>` returns zero hits
+// here); it was a defined-but-dead test fixture left over from an
+// earlier draft.  The companion `TestCommand` in
+// `rpc_log_storage_test.cc` is the one that's actually used.
 
 // ============================================================================
 // RocksDBLogStorage Tests
