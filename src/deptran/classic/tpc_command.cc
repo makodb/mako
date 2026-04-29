@@ -14,8 +14,13 @@ static int volatile x1 =
     rrr::reg_serializable_in_deputy<TpcPrepareCommand>(
         MarshallDeputy::CMD_TPC_PREPARE);
 
+// Workstream N Phase 4a-3b: TpcCommitCommand migrated to Serializable.
+// Wire payload: tx_id (i64) | ret (i32) | term (ballot_t) | nested
+// MarshallDeputy<cmd_> | bool_t has_view_data | optional nested
+// MarshallDeputy<sp_view_data_>. Byte-for-byte identical to the
+// previous Marshallable encoding.
 static int volatile x2 =
-    MarshallDeputy::reg_initializer<TpcCommitCommand>(
+    rrr::reg_serializable_in_deputy<TpcCommitCommand>(
         MarshallDeputy::CMD_TPC_COMMIT);
 
 // Workstream N Phase 4a-2: TpcEmptyCommand migrated to Serializable.
@@ -38,8 +43,12 @@ static int volatile x4 =
     rrr::reg_serializable_in_deputy<TpcNoopCommand>(
         MarshallDeputy::CMD_NOOP);
 
+// Workstream N Phase 4a-3c: TpcBatchCommand migrated to Serializable.
+// Wire payload: uint32_t size prefix + concatenated commit bytes
+// (each commit's save). Byte-for-byte identical to the previous
+// Marshallable encoding.
 static int volatile x5 =
-    MarshallDeputy::reg_initializer<TpcBatchCommand>(
+    rrr::reg_serializable_in_deputy<TpcBatchCommand>(
         MarshallDeputy::CMD_TPC_BATCH);
 
 
@@ -71,41 +80,45 @@ void TpcPrepareCommand::load(BinaryReadArchive& ar) {
   }
 }
 
-Marshal& TpcCommitCommand::to_marshal(Marshal& m) const {
-  m << tx_id_;
-  m << ret_;
-  m << term;  // Marshal the term field
+// Workstream N Phase 4a-3b: TpcCommitCommand serialization via
+// BinaryWriteArchive / BinaryReadArchive. Both nested
+// `cmd_` (shared_ptr<Marshallable>) and optional
+// `sp_view_data_` (shared_ptr<ViewData>) are wrapped/unwrapped through
+// MarshallDeputy on each save/load — the Phase 3f-prep
+// `operator<<>>(BinaryWriteArchive/BinaryReadArchive, MarshallDeputy)`
+// overloads make this byte-for-byte equivalent to the legacy
+// Marshal encoding.
+void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
+  ar << tx_id_;
+  ar << ret_;
+  ar << term;
   MarshallDeputy md(cmd_);
-  m << md;
-  // Marshal view data if present
+  ar << md;
   bool_t has_view_data = (sp_view_data_ != nullptr) ? 1 : 0;
-  m << has_view_data;
+  ar << has_view_data;
   if (has_view_data) {
     MarshallDeputy view_md(sp_view_data_);
-    m << view_md;
+    ar << view_md;
   }
-  return m;
 }
 
-Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
-  m >> tx_id_;
-  m >> ret_;
-  m >> term;  // Unmarshal the term field
+void TpcCommitCommand::load(BinaryReadArchive& ar) {
+  ar >> tx_id_;
+  ar >> ret_;
+  ar >> term;
   MarshallDeputy md;
-  m >> md;
+  ar >> md;
   if (!cmd_)
     cmd_ = md.inner();
   else
     verify(0);
-  // Unmarshal view data if present
   bool_t has_view_data;
-  m >> has_view_data;
+  ar >> has_view_data;
   if (has_view_data) {
     MarshallDeputy view_md;
-    m >> view_md;
+    ar >> view_md;
     sp_view_data_ = marshallable_cast<ViewData>(view_md);
   }
-  return m;
 }
 
 // (TpcEmptyCommand's Marshal-based serialization removed in Phase
@@ -114,22 +127,24 @@ Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
 // (TpcNoopCommand's Marshal-based serialization removed in Phase 4a-1;
 // see save/load methods inline in tpc_command.h.)
 
-Marshal& TpcBatchCommand::to_marshal(Marshal& m) const {
+// Workstream N Phase 4a-3c: TpcBatchCommand serialization via
+// BinaryWriteArchive / BinaryReadArchive. Iterates each commit and
+// delegates to its save/load. uint32_t size prefix matches the
+// legacy encoding.
+void TpcBatchCommand::save(BinaryWriteArchive& ar) const {
   verify(size_ == cmds_.size());
-  m << size_;
+  ar << size_;
   for (auto it = cmds_.begin(); it != cmds_.end(); ++it) {
-    (*it)->to_marshal(m);
+    (*it)->save(ar);
   }
-  return m;
 }
 
-Marshal& TpcBatchCommand::from_marshal(Marshal& m) {
-  m >> size_;
+void TpcBatchCommand::load(BinaryReadArchive& ar) {
+  ar >> size_;
   for (uint32_t i = 0; i < size_; i++) {
     cmds_.emplace_back(std::make_shared<TpcCommitCommand>());
-    cmds_[i]->from_marshal(m);
+    cmds_[i]->load(ar);
   }
-  return m;
 }
 
 void TpcBatchCommand::AddCmd(shared_ptr<TpcCommitCommand> cmd) {

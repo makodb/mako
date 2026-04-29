@@ -25,6 +25,13 @@ class TpcPrepareCommand {
   void load(BinaryReadArchive& ar);
 };
 
+// Workstream N Phase 4a-3b: migrated from Marshallable to
+// Serializable. Has nested `cmd_` (shared_ptr<Marshallable>) and
+// optional `sp_view_data_` (shared_ptr<ViewData>) fields, both
+// serialized through the Phase 3f-prep BinaryWriteArchive /
+// BinaryReadArchive operator<<>> overloads for MarshallDeputy. Wire
+// format byte-for-byte identical to the previous Marshallable
+// encoding.
 class TpcCommitCommand {
  public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_TPC_COMMIT;
@@ -34,9 +41,10 @@ class TpcCommitCommand {
   ballot_t term;
   // Optional view data for WRONG_LEADER responses
   std::shared_ptr<ViewData> sp_view_data_ = nullptr;
-  
-  Marshal& to_marshal(Marshal&) const;
-  Marshal& from_marshal(Marshal&);
+
+  int32_t kind() const { return kMarshallKind; }
+  void save(BinaryWriteArchive& ar) const;
+  void load(BinaryReadArchive& ar);
 };
 
 // Workstream N Phase 4a-2: migrated from Marshallable to Serializable.
@@ -72,6 +80,11 @@ class TpcNoopCommand {
   void load(BinaryReadArchive&) {}
 };
 
+// Workstream N Phase 4a-3c: migrated from Marshallable to
+// Serializable. Holds a vector of TpcCommitCommand; each element's
+// save/load uses TpcCommitCommand's Serializable interface (4a-3b).
+// Wire format byte-for-byte identical to the previous Marshallable
+// encoding (uint32_t size prefix + concatenated commit bytes).
 class TpcBatchCommand {
   uint32_t size_ = 0;
 public:
@@ -83,40 +96,23 @@ public:
   void AddCmds(vector<shared_ptr<TpcCommitCommand> >& cmds);
   void ClearCmd();
   inline size_t Size() const { return cmds_.size(); }
-  
-  Marshal& to_marshal(Marshal&) const;
-  Marshal& from_marshal(Marshal&);
+
+  int32_t kind() const { return kMarshallKind; }
+  void save(BinaryWriteArchive& ar) const;
+  void load(BinaryReadArchive& ar);
 };
 
 } // namespace janus
 
 namespace rrr {
 
-// (TpcPrepareCommand is a Serializable now — no
-// TypedMarshallableAdapter trait. See tpc_command.cc for its
-// `reg_serializable_in_deputy` registration; construction sites use
-// `wrap_serializable`.)
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::TpcCommitCommand> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::TpcCommitCommand,
-                               MarshallDeputy::CMD_TPC_COMMIT>;
-};
-
-// (TpcEmptyCommand and TpcNoopCommand are Serializables now — no
+// (All TPC command types are now Serializables — no
 // TypedMarshallableAdapter traits. See tpc_command.cc for their
-// `reg_serializable_in_deputy` registrations; construction sites use
-// `wrap_serializable_aliased` (TpcEmpty, preserves event-member
-// aliasing) and `wrap_serializable` (TpcNoop, stateless).)
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::TpcBatchCommand> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::TpcBatchCommand,
-                               MarshallDeputy::CMD_TPC_BATCH>;
-};
+// `reg_serializable_in_deputy` registrations. Construction sites use
+// `wrap_serializable` (Prepare/Commit/Batch/Noop, stateless) or
+// `wrap_serializable_aliased` (Empty, preserves event-member
+// aliasing). Cast sites continue to use `marshallable_cast<T>` —
+// the Phase 4a-prep bridge overload routes Serializable T's to
+// `serializable_cast<T>` and synthesizes a `shared_ptr<T>`.)
 
 }  // namespace rrr

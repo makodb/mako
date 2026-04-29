@@ -41,6 +41,14 @@
 #include "misc/cpuinfo.hpp"
 #include "misc/marshal.hpp"
 #include "misc/marshal_archive.hpp"
+// marshal_serializable_bridge.hpp is part of the umbrella so every TU
+// that uses MarshallDeputy (via marshal.hpp) automatically gets the
+// Phase 4a-prep bridge overloads of `marshallable_cast<T>` and
+// `wrap_typed_marshallable<T>` for Serializable types. Without this,
+// call sites that invoke those templates with a Serializable T (one
+// migrated off Marshallable) would fail the legacy `requires` clause
+// and emit a no-matching-function error.
+#include "misc/marshal_serializable_bridge.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/event.h"
 #include "misc/marshallable_proxy.h"
