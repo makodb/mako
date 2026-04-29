@@ -45,7 +45,11 @@ class MenciusServer : public TxLogServer {
   bool in_applying_logs_{false};
 
   MenciusServer() {
-    witness_.set_belongs_to_leader(true);
+    // Workstream N Phase 4e-7: removed
+    // `witness_.set_belongs_to_leader(true);` — the
+    // `belongs_to_leader_` field on Witness was never read and was
+    // already commented `// discard`; the setter went away in the
+    // same commit.
   }
 
   ~MenciusServer() {

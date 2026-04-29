@@ -23,7 +23,9 @@ CopilotServer::CopilotServer(Frame* frame) : log_infos_(2) {
   id_ = frame->site_info_->id;
   setIsPilot(frame_->site_info_->locale_id == 0);
   setIsCopilot(frame_->site_info_->locale_id == 1);
-  witness_.set_belongs_to_leader(frame_->site_info_->locale_id == 0 || frame_->site_info_->locale_id == 1);
+  // Workstream N Phase 4e-7: removed
+  // `witness_.set_belongs_to_leader(...);` — see the companion
+  // comment on the deleted field/setter in scheduler.h.
   Setup();
 }
 

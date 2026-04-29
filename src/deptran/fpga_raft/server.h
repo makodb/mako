@@ -72,7 +72,9 @@ class FpgaRaftServer : public TxLogServer {
   {
     Log_debug("set loc_id %d is leader %d", loc_id_, isLeader) ;
     is_leader_ = isLeader ;
-    witness_.set_belongs_to_leader(isLeader);
+    // Workstream N Phase 4e-7: removed
+    // `witness_.set_belongs_to_leader(isLeader);` — see the
+    // companion comment on the deleted field/setter in scheduler.h.
   }
 
   void setIsFPGALeader(bool isLeader)

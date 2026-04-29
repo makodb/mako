@@ -183,7 +183,12 @@ class Witness {
       }
     }
   };
-  bool belongs_to_leader_{false}; // i.e. This server can propose value // discard
+  // Workstream N Phase 4e-7: removed `bool belongs_to_leader_{false};`
+  // and `void set_belongs_to_leader(bool);` — the field was already
+  // commented `// discard`; it was set in 3 callers
+  // (`mencius/server.h:48`, `fpga_raft/server.h:75`,
+  // `copilot/server.cc:26`) but never read by anything.  The 3 calls
+  // to the setter were removed alongside the field.
   int witness_size_ = 0;
   Distribution witness_size_distribution_;
 
@@ -195,7 +200,11 @@ class Witness {
   /* Recover related begin */
   ballot_t max_seen_ballot_ = -1, max_accepted_ballot_ = -1;
   int sid_ = -1, set_size_ = 0;
-  bool committed_ = false;
+  // Workstream N Phase 4e-7: removed `bool committed_ = false;` —
+  // set by `TxLogServer::OnJetpackCommit` at scheduler.cc:1437 but
+  // never read anywhere.  The matching `sid_` / `set_size_` fields
+  // it was set alongside ARE read at scheduler.cc:1388-1389, so
+  // those stay; only `committed_` was dead state.
   /* Recover related end */
 
   Witness() {};
@@ -206,7 +215,6 @@ class Witness {
   int remove(const shared_ptr<Marshallable>& cmd);
   // return whether all cmds appeared before
   bool has_appeared(const shared_ptr<Marshallable>& cmd);
-  void set_belongs_to_leader(bool belongs_to_leader); // discard
   // return 50pct, 90pct, 99pct, ave of the witness_size_distribution_
   std::vector<double> witness_size_distribution();
   /* Recover related begin */
@@ -512,7 +520,10 @@ class TxLogServer {
    */
   virtual bool CheckCommitted(Marshallable& commit_cmd) { verify(0); }
 
-  virtual void Next(Marshallable& cmd) { verify(0); };
+  // Workstream N Phase 4e-7: removed `virtual void Next(Marshallable&)
+  // { verify(0); }` — declared on the base but never overridden in
+  // any subclass and never called.  The live virtual is the
+  // `Next(int, shared_ptr<Marshallable>)` overload above.
 
 	virtual void Setup() { verify(0); } ;
   virtual bool IsLeader() {

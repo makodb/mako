@@ -637,9 +637,8 @@ bool Witness::has_appeared(const shared_ptr<Marshallable>& cmd) {
   }
 }
 
-void Witness::set_belongs_to_leader(bool belongs_to_leader) {
-  belongs_to_leader_ = belongs_to_leader;
-}
+// Workstream N Phase 4e-7: removed `void Witness::set_belongs_to_leader(bool)`
+// — see the companion comment on the deleted field in scheduler.h.
 
 std::vector<double> Witness::witness_size_distribution() {
   // Log_info("witness 50pct %d %.2f" , witness_size_distribution_.count(), witness_size_distribution_.pct50());
@@ -683,7 +682,8 @@ void Witness::reset() {
   max_accepted_ballot_ = -1;
   sid_ = -1;
   set_size_ = 0;
-  committed_ = false;
+  // Workstream N Phase 4e-7: removed `committed_ = false;` — the
+  // Witness::committed_ field was deleted in the same commit.
 }
 
 
@@ -1427,14 +1427,16 @@ void TxLogServer::OnJetpackAccept(const epoch_t& jepoch,
   }
 }
 
-void TxLogServer::OnJetpackCommit(const epoch_t& jepoch, 
-                                  const epoch_t& oepoch, 
-                                  const int32_t& sid, 
+void TxLogServer::OnJetpackCommit(const epoch_t& jepoch,
+                                  const epoch_t& oepoch,
+                                  const int32_t& sid,
                                   const int32_t& set_size) {
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->witness_.sid_ = sid;
     rep_sched_->witness_.set_size_ = set_size;
-    rep_sched_->witness_.committed_ = true;
+    // Workstream N Phase 4e-7: removed
+    // `rep_sched_->witness_.committed_ = true;` along with the
+    // never-read `committed_` field on Witness.
   }
 }
 
