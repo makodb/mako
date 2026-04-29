@@ -382,11 +382,33 @@ class Communicator {
   map<siteid_t, ClassicProxy *> rpc_proxies_{};
   map<parid_t, vector<SiteProxyPair>> rpc_par_proxies_{};
   map<parid_t, SiteProxyPair> leader_cache_ = {};
-  unordered_map<uint64_t, pair<rrr::i64, rrr::i64>> outbound_{};
   // Workstream N Phase 4e-10: removed `lat_util_` and `leader_`
   // fields — `lat_util_` was referenced only in commented-out
   // `Log_info` lines at `classic/coordinator.cc:474, 651`; `leader_`
   // had no readers or writers anywhere in the codebase.
+  //
+  // Workstream N Phase 4e-17: excised the dead CPU-utilization /
+  // RPC-latency profiling subsystem.  Removed fields:
+  //   - `unordered_map<uint64_t, pair<rrr::i64, rrr::i64>> outbound_`
+  //     (RPC start-time map; written in `BroadcastDispatch` callback
+  //     at `communicator.cc:782` and read only inside the dead
+  //     window-tracking blocks at `communicator.cc:1023-1048` and
+  //     `communicator.cc:1161-1192`).
+  //   - `int index`, `int total`, `int low_util` (the `_` suffix
+  //     versions like `total_` are LIVE and stay).
+  //   - `rrr::i64 window[200]`, `window_time`, `total_time`,
+  //     `window_avg`, `total_avg` (the rolling-window latency
+  //     accounting).
+  //   - `double cpu = 1.0`, `last_cpu = 1.0`, `tx` (the CPU /
+  //     network utilisation snapshot).
+  //   - `void ResetProfiles()` member function — reset all of the
+  //     above; called only from the dead `if(false && ...)` re-elect
+  //     branches in `classic/coordinator.cc`.
+  // The matching writes in `communicator.cc` (the start-time
+  // record at line 782, the window-tracking blocks in the Commit /
+  // Abort callbacks) and the dead `if(false && ...)` re-elect
+  // branches in `classic/coordinator.cc:469-497` and
+  // `classic/coordinator.cc:644-678` were removed alongside.
 
   // Global view tracking for all partitions (shared across all communicators)
   static std::map<parid_t, View> partition_views_;
@@ -397,22 +419,8 @@ class Communicator {
 	int begin_index = 0;
 	bool paused = false;
 	bool slow = false;
-	int index;
-	// Workstream N Phase 4e-10: removed `int cpu_index;`,
-	// `double cpu_stor[10];`, and `double cpu_total;` — none had
-	// any reader or writer anywhere in the codebase.
-	int low_util;
-  int total;
 	int total_;
 	shared_ptr<QuorumEvent> qe;
-  rrr::i64 window[200];
-  rrr::i64 window_time;
-  rrr::i64 total_time;
-	rrr::i64 window_avg;
-	rrr::i64 total_avg;
-	double cpu = 1.0;
-	double last_cpu = 1.0;
-	double tx;
   vector<ClientSiteProxyPair> client_leaders_;
   std::atomic_bool client_leaders_connected_;
   std::vector<std::thread> threads;
@@ -478,7 +486,6 @@ class Communicator {
   vector<function<bool(const MarshallDeputy& arg,
                        MarshallDeputy& ret)> > msg_marshall_handlers_{};
 
-	void ResetProfiles();
   void SendStart(SimpleCommand& cmd,
                  int32_t output_size,
                  std::function<void(rusty::Arc<Future> fu)> &callback);

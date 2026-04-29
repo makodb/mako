@@ -127,17 +127,14 @@ void Communicator::WaitConnectClientLeaders() {
   Log_info("Done waiting to connect to client leaders.");
 }
 
-void Communicator::ResetProfiles(){
-	index = 0;
-	total = 0;
-	for(int i = 0; i < 100; i++){
-		window[i] = 0;
-	}
-	window_time = 0;
-	total_time = 0;
-	window_avg = 0;
-	total_avg = 0;
-}
+// Workstream N Phase 4e-17: removed `Communicator::ResetProfiles()`
+// — reset all of the now-deleted CPU-utilization / RPC-latency
+// profiling fields (`index`, `total`, `window`, `window_time`,
+// `total_time`, `window_avg`, `total_avg`). Its only callers were
+// inside `if(false && ...)` short-circuited re-elect branches in
+// `classic/coordinator.cc:494, 675`, both of which were removed
+// alongside.
+
 Communicator::~Communicator() {
   verify(rpc_clients_.size() > 0);
   for (auto& pair : rpc_clients_) {
@@ -776,10 +773,10 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
     CoordinatorClassic* classic_coo = (CoordinatorClassic*) coo;
     //classic_coo->debug_cnt++;
 
-    struct timespec start_;
-    clock_gettime(CLOCK_REALTIME, &start_);
-
-    outbound_[src_coroid] = make_pair((rrr::i64)start_.tv_sec, (rrr::i64)start_.tv_nsec);
+    // Workstream N Phase 4e-17: removed the `outbound_[src_coroid]` start-time
+    // record + the matching `clock_gettime(CLOCK_REALTIME, &start_)` — the
+    // recorded start times were only consumed by the dead window-tracking
+    // blocks in the Commit / Abort callbacks below, also removed.
 
 		DepId di;
 		di.str = "dep";
@@ -1003,10 +1000,9 @@ Communicator::SendCommit(Coordinator* coo,
       MarshallDeputy view_md;
       fu->get_reply() >> res >> slow >> coro_id >> profile >> view_md;
 			this->slow = slow;
-			if(profile.cpu_util >= 0.0){
-				cpu = profile.cpu_util;
-				//Log_info("cpu: %f and network: %f and memory: %f", profile.cpu_util, profile.tx_util, profile.mem_util);
-			}
+			// Workstream N Phase 4e-17: removed `cpu = profile.cpu_util;`
+			// — the `cpu` field was deleted alongside the rest of the
+			// dead CPU / RPC-latency profiling subsystem.
       // Propagate the result status (including WRONG_LEADER) back to the coordinator
       cmd->reply_.res_ = res;
       
@@ -1020,32 +1016,14 @@ Communicator::SendCommit(Coordinator* coo,
         }
       }
 
-      struct timespec end_;
-	  	clock_gettime(CLOCK_REALTIME,&end_);
-
-	  	rrr::i64 start_sec = this->outbound_[src_coroid].first;
-	  	rrr::i64 start_nsec = this->outbound_[src_coroid].second;
-
-	  	rrr::i64 curr = ((rrr::i64)end_.tv_sec - start_sec)*1000000000 + ((rrr::i64)end_.tv_nsec - start_nsec);
-	  	curr /= 1000;
-	  	this->total_time += curr;
-	  	this->total++;
-      if(this->index < 200){
-	    	this->window[this->index] = curr;
-	    	this->index++;
-	    	this->window_time = this->total_time;
-	  	}
-      else{
-	    	this->window_time = 0;
-	    	for(int i = 0; i < 199; i++){
-	      	this->window[i] = this->window[i+1];
-	      	this->window_time += this->window[i];
-	    	}
-	    	this->window[199] = curr;
-	    	this->window_time += curr;
-	  	}
-			this->window_avg = this->window_time/this->index;
-			this->total_avg = this->total_time/this->total;
+      // Workstream N Phase 4e-17: removed the rolling-window
+      // RPC-latency tracking block that read
+      // `outbound_[src_coroid]`, computed `curr` in microseconds,
+      // and updated `total_time` / `window_time` / `window_avg`
+      // / `total_avg` / `total` / `index` / `window[200]`.  The
+      // averages were never read outside commented-out
+      // `Log_info` lines and `if(false && ...)` short-circuited
+      // re-elect branches in `classic/coordinator.cc`.
 
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
 
@@ -1158,38 +1136,13 @@ Communicator::SendAbort(Coordinator* coo,
         }
       }
 
-      if(profile.cpu_util != -1.0){
-        Log_info("cpu: %f and network: %f", profile.cpu_util, profile.tx_util);
-        this->cpu = profile.cpu_util;
-        this->tx = profile.tx_util;
-      }
-
-      struct timespec end_;
-      clock_gettime(CLOCK_REALTIME,&end_);
-
-      rrr::i64 start_sec = this->outbound_[src_coroid].first;
-      rrr::i64 start_nsec = this->outbound_[src_coroid].second;
-
-      rrr::i64 curr = ((rrr::i64)end_.tv_sec - start_sec)*1000000000 + ((rrr::i64)end_.tv_nsec - start_nsec);
-      curr /= 1000;
-      this->total_time += curr;
-      this->total++;
-      if(this->index < 100){
-        this->window[this->index];
-        this->index++;
-        this->window_time = this->total_time;
-      }
-      else{
-        this->window_time = 0;
-        for(int i = 0; i < 99; i++){
-          this->window[i] = this->window[i+1];
-          this->window_time += this->window[i];
-        }
-        this->window[99] = curr;
-        this->window_time += curr;
-      }
-      //Log_info("average time of RPC is: %d", this->total_time/this->total);
-      //Log_info("window time of RPC is: %d", this->window_time/this->index);
+      // Workstream N Phase 4e-17: removed the CPU-utilization /
+      // network-utilization snapshot (`profile.cpu_util` /
+      // `profile.tx_util` writes into `this->cpu` / `this->tx`)
+      // and the rolling-window RPC-latency tracking block that
+      // updated `total_time` / `window_time` / `window` / `total`
+      // / `index`.  Same dead-state cleanup as the Commit-callback
+      // path above.
 
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
 
