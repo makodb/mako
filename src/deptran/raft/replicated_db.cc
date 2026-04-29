@@ -1,5 +1,6 @@
 #include "replicated_db.h"
 #include "server.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -8,9 +9,17 @@
 
 using namespace janus;
 
-// @unsafe - Static registration with Marshallable factory
+// Workstream N Phase 4c-1: ReplicatedDBCommand migrated from
+// TypedMarshallableAdapter to Serializable. Registration switched
+// to `rrr::reg_serializable_in_deputy<T>` (replaces
+// `MarshallDeputy::reg_initializer<T>`). Wire format byte-for-byte
+// identical: the Marshal-based to_marshal/from_marshal wrappers below
+// delegate to save/load via a MarshalSink/MarshalSource bridge, and
+// bridge-dispatched `wrap_typed_marshallable` / `marshallable_cast<T>`
+// keep the legacy call sites working unchanged.
+// @unsafe - Static registration with MarshallDeputy factory
 static int volatile x_replicated_db =
-    MarshallDeputy::reg_initializer<ReplicatedDBCommand>(
+    rrr::reg_serializable_in_deputy<ReplicatedDBCommand>(
         MarshallDeputy::CMD_REPLICATED_DB);
 
 // ===========================================================================
@@ -46,42 +55,62 @@ shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
   return cmd;
 }
 
-// @unsafe - Marshal I/O is not borrow-checked
-Marshal& ReplicatedDBCommand::to_marshal(Marshal& m) const {
-  m << static_cast<uint8_t>(op_);
-  m << key_;
-  m << value_;
+// Workstream N Phase 4c-1: Serializable save/load — moved here from
+// to_marshal/from_marshal. Wire format is byte-for-byte identical;
+// the BinaryWriteArchive/BinaryReadArchive `<<`/`>>` overloads for
+// uint8_t / uint32_t / std::string match the legacy Marshal encoding.
+void ReplicatedDBCommand::save(BinaryWriteArchive& ar) const {
+  ar << static_cast<uint8_t>(op_);
+  ar << key_;
+  ar << value_;
   if (op_ == ReplicatedDBOp::BATCH) {
     uint32_t count = static_cast<uint32_t>(batch_ops_.size());
-    m << count;
+    ar << count;
     for (const auto& op : batch_ops_) {
-      m << static_cast<uint8_t>(op.op);
-      m << op.key;
-      m << op.value;
+      ar << static_cast<uint8_t>(op.op);
+      ar << op.key;
+      ar << op.value;
     }
   }
+}
+
+void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
+  uint8_t op_val;
+  ar >> op_val;
+  op_ = static_cast<ReplicatedDBOp>(op_val);
+  ar >> key_;
+  ar >> value_;
+  if (op_ == ReplicatedDBOp::BATCH) {
+    uint32_t count;
+    ar >> count;
+    batch_ops_.resize(count);
+    for (uint32_t i = 0; i < count; i++) {
+      uint8_t sub_op_val;
+      ar >> sub_op_val;
+      batch_ops_[i].op = static_cast<ReplicatedDBOp>(sub_op_val);
+      ar >> batch_ops_[i].key;
+      ar >> batch_ops_[i].value;
+    }
+  }
+}
+
+// Phase 4c-1 legacy wrappers: keep the existing test.cc call sites
+// (cmd->to_marshal(m) / cmd2->from_marshal(m)) compiling. Each wrapper
+// builds a single-use BinaryWriteArchive/BinaryReadArchive on top of a
+// MarshalSink/MarshalSource adapter and delegates to save/load.
+// @unsafe - Marshal I/O is not borrow-checked
+Marshal& ReplicatedDBCommand::to_marshal(Marshal& m) const {
+  rrr::MarshalSink sink(&m);
+  rrr::BinaryWriteArchive ar(&sink);
+  save(ar);
   return m;
 }
 
 // @unsafe - Marshal I/O is not borrow-checked
 Marshal& ReplicatedDBCommand::from_marshal(Marshal& m) {
-  uint8_t op_val;
-  m >> op_val;
-  op_ = static_cast<ReplicatedDBOp>(op_val);
-  m >> key_;
-  m >> value_;
-  if (op_ == ReplicatedDBOp::BATCH) {
-    uint32_t count;
-    m >> count;
-    batch_ops_.resize(count);
-    for (uint32_t i = 0; i < count; i++) {
-      uint8_t sub_op_val;
-      m >> sub_op_val;
-      batch_ops_[i].op = static_cast<ReplicatedDBOp>(sub_op_val);
-      m >> batch_ops_[i].key;
-      m >> batch_ops_[i].value;
-    }
-  }
+  rrr::MarshalSource source(&m);
+  rrr::BinaryReadArchive ar(&source);
+  load(ar);
   return m;
 }
 

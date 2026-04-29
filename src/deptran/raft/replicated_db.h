@@ -26,6 +26,18 @@ struct KVOperation {
     std::string value;  // empty for DELETE
 };
 
+// Workstream N Phase 4c-1: migrated from TypedMarshallableAdapter to
+// Serializable. Wire payload preserved byte-for-byte:
+//   uint8_t op | std::string key | std::string value
+//   [if op == BATCH] uint32_t count
+//   for each batch op: uint8_t op | std::string key | std::string value
+// Construction sites use `wrap_typed_marshallable` (still works through
+// the Phase 4d-prep bridge dispatch) and `marshallable_cast<T>` (also
+// dispatched through the bridge for SerializableConcept T). The
+// legacy `to_marshal` / `from_marshal` member functions are kept as
+// thin wrappers that build a BinaryWriteArchive/BinaryReadArchive on
+// top of a MarshalSink/MarshalSource and delegate to save/load — this
+// keeps the existing test.cc round-trip sites compiling unchanged.
 class ReplicatedDBCommand {
 public:
     static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_REPLICATED_DB;
@@ -43,6 +55,15 @@ public:
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
     static shared_ptr<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
 
+    // Serializable interface (Phase 4c-1).
+    int32_t kind() const { return kMarshallKind; }
+    void save(BinaryWriteArchive& ar) const;
+    void load(BinaryReadArchive& ar);
+
+    // Legacy Marshal-based round-trip wrappers (Phase 4c-1) — kept for
+    // test sites that exercise the on-wire encoding directly. They
+    // delegate to save/load via MarshalSink/MarshalSource so the bytes
+    // are byte-for-byte identical to the pre-migration encoding.
     Marshal& to_marshal(Marshal& m) const;
     Marshal& from_marshal(Marshal& m);
 };
@@ -151,14 +172,10 @@ private:
 
 } // namespace janus
 
-namespace rrr {
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::ReplicatedDBCommand> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::ReplicatedDBCommand,
-                               MarshallDeputy::CMD_REPLICATED_DB>;
-};
-
-}  // namespace rrr
+// (ReplicatedDBCommand is now a Serializable — no
+// TypedMarshallableAdapterTraits specialization. See replicated_db.cc
+// for the `reg_serializable_in_deputy` registration. Construction
+// sites use `wrap_typed_marshallable(cmd)`; cast sites use
+// `marshallable_cast<ReplicatedDBCommand>(value)` — both routed
+// through the Phase 4d-prep bridge overloads to the SerializableConcept
+// path.)

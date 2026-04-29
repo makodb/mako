@@ -1001,14 +1001,22 @@ struct TypedMarshallableAdapterTraits<MyTypedData> {
 } // namespace rrr
 ```
 
-In-tree deptran payloads (`VecPieceData`, `VecRecData`, `ViewData`,
-`KeyCmdBatchData`, `TpcPrepareCommand`, `TpcCommitCommand`,
-`TpcEmptyCommand`, `TpcNoopCommand`, `TpcBatchCommand`,
-`TpcPrepareCarouselCommand`,
-`ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`, `BulkPrepareLog`,
-`PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`, `SyncLogResponse`,
-`SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`) use this trait-backed
-typed-adapter path and no longer inherit `Marshallable` directly.
+In-tree deptran payloads `VecPieceData`, `RccGraph`, `SyncLogResponse`,
+`LogEntry`, and `BulkPaxosCmd` currently use this trait-backed typed-adapter
+path and no longer inherit `Marshallable` directly.
+
+The other in-tree types (`VecRecData`, `ViewData`, `KeyCmdBatchData`,
+`TpcPrepareCommand`, `TpcCommitCommand`, `TpcEmptyCommand`, `TpcNoopCommand`,
+`TpcBatchCommand`, `ReplicatedDBCommand`, `EmptyGraph`, `BulkPrepareLog`,
+`PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`, `SyncNoOpRequest`) have
+been migrated to the new `Serializable` path (see §10) — they expose
+`save`/`load`/`kind` methods directly on the type, register through
+`reg_serializable_in_deputy<T>(kind)`, and skip the `TypedMarshallableAdapter`
+machinery entirely. Wire format is byte-for-byte identical between the two
+paths; the bridges in `marshal_serializable_bridge.hpp` route call sites
+that use `wrap_typed_marshallable<T>` / `marshallable_cast<T>` /
+`MarshallDeputy(shared_ptr<T>)` / `set_marshallable(shared_ptr<T>)` to the
+correct backing implementation, so the migration is transparent to callers.
 
 For `MarshallDeputy` round-trip support, register a typed initializer (no raw
 pointer factory needed). This works for both direct `Marshallable` classes and
@@ -1232,15 +1240,22 @@ Status: Phase 1 (primitives, containers, FdSink/FdSource), Phase 2
 (Marshal↔Archive and Marshallable↔Serializable bridges), Phase 3c
 (`rpcgen --archive` flag), Phase 3b-2
 (`reg_serializable_in_deputy`), Phase 3b-3 (`serializable_cast<T>` +
-RTTI on `SerializableFacade`), Phase 4a-1 (`TpcNoopCommand`
-migration via value-semantic `wrap_serializable`), and Phase 4a-2
-(`TpcEmptyCommand` migration via aliased-semantic
-`wrap_serializable_aliased` — `SerializableSharedPtrAdapter<T>`
-preserves the caller's `shared_ptr<T>` identity through the proxy
-so the apply path's `Done()` wakes the sender's `Wait()`) have
-landed. Phase 3d–3f (reactor TX/RX path on Sink/Source, default
-emission switch, `MarshallDeputy` internals rewrite) and Phase 4
-follow-on migrations are upcoming. See
+RTTI on `SerializableFacade`), Phase 3f-1 (`MarshallDeputy::sp_data_`
+elimination), Phase 3f-prep (`MarshallDeputy` archive operators),
+Phase 4a-prep (`marshallable_cast` / `wrap_typed_marshallable`
+overloads for Serializable types — call-site transparency for
+migrations), Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
+`TpcEmptyCommand` via aliased adapter, `TpcPrepareCommand`,
+`TpcCommitCommand`, `TpcBatchCommand`), Phase 4d-prep (forward-declared
+bridge `wrap_typed_marshallable` in `marshal.hpp` so
+`MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` accept
+Serializable T's transparently), Phase 4d-1/2/3 (`EmptyGraph`,
+five simple paxos types, three `procedure.h` types), and Phase 4c-1
+(`ReplicatedDBCommand`) have all landed. Phase 3d–3f (reactor TX/RX
+path on Sink/Source, default emission switch, `MarshallDeputy`
+internals rewrite) and remaining Phase 4 migrations
+(`VecPieceData`, `RccGraph`, `SyncLogResponse`, `LogEntry`,
+`BulkPaxosCmd`, plus `deptran/janus/`) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 
