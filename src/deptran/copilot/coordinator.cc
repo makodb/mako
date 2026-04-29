@@ -57,7 +57,9 @@ void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
 #endif
   verify(!cmd_now_);
 
-  begin = Time::now(true);
+  // Workstream N Phase 4e-13: removed `begin = Time::now(true);` —
+  // the `begin` field was used only to compute `fac` / `ac`, both
+  // of which were dead state.
 
   cmd_now_ = cmd;
   auto slot_and_dep = sch_->PickInitSlotAndDep();
@@ -177,7 +179,8 @@ void CoordinatorCopilot::FastAccept() {
       "partition: %u, %s : %lu -> %lu",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
       // marshallable_cast<TpcCommitCommand>(cmd_now_)->tx_id_);
-  begin = Time::now(true);
+  // Workstream N Phase 4e-13: removed `begin = Time::now(true);` —
+  // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("FastAccept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
   auto sq_quorum = commo()->BroadcastFastAccept(par_id_,
@@ -197,7 +200,8 @@ void CoordinatorCopilot::FastAccept() {
   gettimeofday(&tp, NULL);
   Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", marshallable_cast<TpcBatchCommand>(cmd_now_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
-  fac = Time::now(true) - begin;
+  // Workstream N Phase 4e-13: removed `fac = Time::now(true) - begin;`
+  // — `fac` was a timing counter that nothing read.
 #ifdef DO_FINALIZE
   sq_quorum->finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
@@ -251,7 +255,8 @@ void CoordinatorCopilot::Accept() {
       "partition: %u, %s : %lu -> %lu",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
 
-  begin = Time::now(true);
+  // Workstream N Phase 4e-13: removed `begin = Time::now(true);` —
+  // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("Accept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
   auto sp_quorum = commo()->BroadcastAccept(par_id_,
@@ -270,7 +275,8 @@ void CoordinatorCopilot::Accept() {
   // cout << "ac";
   // sp_quorum->Log();
   // if ((static_cast<CopilotFrame*>(frame_)->n_accept_ & 0x3ff) == 0)
-  ac = Time::now(true) - begin;
+  // Workstream N Phase 4e-13: removed `ac = Time::now(true) - begin;`
+  // — `ac` was a timing counter that nothing read.
 
   if (sp_quorum->yes()) {
     committed_ = true;
@@ -315,7 +321,8 @@ void CoordinatorCopilot::Commit() {
   auto dep_ins = sch_->GetInstance(dep_, REVERSE(is_pilot_));
   int take = 0;
   if (dep_ins && !in_fast_takeover_ && dep_ != 0) {
-      begin = Time::now(true);
+      // Workstream N Phase 4e-13: removed `begin = Time::now(true);`
+      // — see companion comment in CoordinatorCopilot::Submit.
   // if (false) {
     // auto dep_ins = sch_->GetInstance(dep_, REVERSE(is_pilot_));
     /* It must proceed after all entries before its dependency have committed
@@ -349,8 +356,11 @@ void CoordinatorCopilot::Commit() {
         }
       }
     }
-    uint64_t finish = Time::now(true) - begin;
-    // Log_info("takeover %lldus", finish);
+    // Workstream N Phase 4e-13: removed
+    //   `uint64_t finish = Time::now(true) - begin;`
+    // — `finish` was unused (the only Log_info consumer is
+    // commented-out below) and `begin` went away with the other
+    // dead timing counters.
   }
   clearStatus();
 }
@@ -429,7 +439,9 @@ inline void CoordinatorCopilot::clearStatus() {
 
   is_pilot_ = 0;
   slot_id_ = 0;
-  slot_hint_ = nullptr;
+  // Workstream N Phase 4e-13: removed `slot_hint_ = nullptr;` —
+  // the field was never read; the frame-side write at frame.cc:85
+  // also went away.
   dep_ = 0;
 }
 

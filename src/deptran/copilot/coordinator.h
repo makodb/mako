@@ -23,10 +23,10 @@ class CoordinatorCopilot : public Coordinator {
   bool in_fast_takeover_ = false;
   bool done_ = false;
 
-  uint64_t begin = 0;
-  uint64_t fac = 0;
-  uint64_t ac = 0;
-  uint64_t cmt = 0;
+  // Workstream N Phase 4e-13: removed `uint64_t begin / fac / ac /
+  // cmt` timing counters.  `cmt` was never written or read anywhere.
+  // `begin` was reset 4 times to compute `fac` and `ac`, but those
+  // were never read.  All four fields were dead state.
 
  private:
   CopilotCommo *commo() {
@@ -85,7 +85,10 @@ class CoordinatorCopilot : public Coordinator {
   /* info of the current instance being coordinated */
   uint8_t is_pilot_ = 0;
   slotid_t slot_id_ = 0;
-  slotid_t *slot_hint_ = nullptr;
+  // Workstream N Phase 4e-13: removed `slotid_t *slot_hint_ = nullptr;`
+  // — assigned at `frame.cc:85` (`coord->slot_hint_ = &slot_hint_;`),
+  // reset to `nullptr` at `coordinator.cc:432`, but never read.  The
+  // frame-side write went away in the same commit.
   slotid_t dep_ = 0;
 };
 

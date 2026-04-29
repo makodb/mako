@@ -82,7 +82,10 @@ void CopilotFrame::setupCoordinator(CoordinatorCopilot *coord, Config *config) {
 
   verify(sch_ != nullptr);
   coord->sch_ = sch_;
-  coord->slot_hint_ = &slot_hint_;
+  // Workstream N Phase 4e-13: removed
+  // `coord->slot_hint_ = &slot_hint_;` — the
+  // `CoordinatorCopilot::slot_hint_` field had no readers anywhere
+  // and was deleted in the same commit.
   // coord->slot_id_ = slot_hint_++;
   coord->n_replica_ = config->GetPartitionSize(site_info_->partition_id_);
   coord->loc_id_ = site_info_->locale_id;
