@@ -168,7 +168,10 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
     verify(TpcPrepareCommand::kMarshallKind == MarshallDeputy::CMD_TPC_PREPARE);
     sp_prepare_cmd->tx_id_ = tx_id;
     sp_prepare_cmd->cmd_ = sp_tx->cmd_;
-    auto sp_m = wrap_typed_marshallable(sp_prepare_cmd);
+    // Phase 4a-3a: TpcPrepareCommand is now a Serializable; wrap via
+    // value-semantic `wrap_serializable` (no aliasing needed — the
+    // sender doesn't synchronize on sp_prepare_cmd, only on sp_tx).
+    auto sp_m = rrr::wrap_serializable(sp_prepare_cmd);
     sp_tx->is_leader_hint_ = true;
 		
 		struct timespec begin, end;
@@ -384,7 +387,8 @@ bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
 
 int SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {
   if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_PREPARE) {
-    auto c = marshallable_cast<TpcPrepareCommand>(cmd);
+    // Phase 4a-3a: TpcPrepareCommand migrated to Serializable.
+    auto* c = serializable_cast<TpcPrepareCommand>(cmd);
     verify(c != nullptr);
     PrepareReplicated(*c);
   } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
