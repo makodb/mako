@@ -1198,6 +1198,11 @@ serial->save(writer);  // OK
 rrr::MarshallDeputy md{...};
 auto view = rrr::as_serializable(md);
 view->save(writer);  // bytes match md.inner()->to_marshal(...)
+
+// Register a Serializable type T (no Marshallable inheritance) so
+// MarshallDeputy::operator>> can decode an instance of it from the
+// wire. Mirrors the pattern of MarshallDeputy::reg_initializer<T>.
+static int _reg = rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
 ```
 
 #### `rpcgen --archive` emission flag (transitional)
