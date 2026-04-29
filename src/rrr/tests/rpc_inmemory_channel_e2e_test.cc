@@ -147,6 +147,92 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3d-2: round-trip with a `BinaryWriteArchive&` write_fn (instead
+// of the legacy `Marshal&`).  `request_via_channel<F>` dual-dispatches
+// via `if constexpr (std::is_invocable_v<F&, BinaryWriteArchive&>)`,
+// wrapping the same `Marshal body` through a `MarshalSink`. Bytes on
+// the wire stay identical to the legacy path; the server-side decode
+// (which still goes through `req->m >> echo`) consumes them with no
+// changes.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
+    server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
+    auto svc_box = rusty::make_box<EchoService>();
+    auto* svc_raw = svc_box.get();
+    (*server_)->reg_service<EchoService>(std::move(svc_box));
+    (*server_)->set_channel_factory(make_factory());
+    ASSERT_EQ((*server_)->start("inmemory://e2e-server-archive"), 0);
+
+    auto client = Client::create((*poll_thread_).clone());
+    client_ = rusty::Some(client.clone());
+    client->set_channel_factory(make_factory());
+    ASSERT_EQ(client->connect("inmemory://e2e-server-archive"), 0);
+    EXPECT_TRUE(client->connected());
+
+    const std::string input = "hello-archive";
+    auto fu_result = client->request(EchoService::kEchoRpcId,
+        [&](BinaryWriteArchive& ar) { ar << input; });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+    fu->wait();
+
+    EXPECT_EQ(fu->get_error_code(), 0);
+    std::string echoed;
+    fu->get_reply() >> echoed;
+    EXPECT_EQ(echoed, input);
+
+    EXPECT_EQ(svc_raw->dispatch_count(), 1);
+    EXPECT_EQ(svc_raw->last_payload(), input);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3d-2: a single test that exercises BOTH write_fn signatures on
+// the same client/server pair, asserting both succeed and produce the
+// expected echoed payload.  Guards against regressions where one or the
+// other branch of the `if constexpr` selection diverges from the wire
+// format the server expects.
+// ---------------------------------------------------------------------------
+
+TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
+    server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
+    auto svc_box = rusty::make_box<EchoService>();
+    auto* svc_raw = svc_box.get();
+    (*server_)->reg_service<EchoService>(std::move(svc_box));
+    (*server_)->set_channel_factory(make_factory());
+    ASSERT_EQ((*server_)->start("inmemory://e2e-server-mixed"), 0);
+
+    auto client = Client::create((*poll_thread_).clone());
+    client_ = rusty::Some(client.clone());
+    client->set_channel_factory(make_factory());
+    ASSERT_EQ(client->connect("inmemory://e2e-server-mixed"), 0);
+
+    // Marshal-flavoured request.
+    {
+        const std::string input = "via-marshal";
+        auto fu = client->request(EchoService::kEchoRpcId,
+            [&](Marshal& m) { m << input; }).unwrap();
+        fu->wait();
+        ASSERT_EQ(fu->get_error_code(), 0);
+        std::string echoed;
+        fu->get_reply() >> echoed;
+        EXPECT_EQ(echoed, input);
+    }
+    // Archive-flavoured request, same client.
+    {
+        const std::string input = "via-archive";
+        auto fu = client->request(EchoService::kEchoRpcId,
+            [&](BinaryWriteArchive& ar) { ar << input; }).unwrap();
+        fu->wait();
+        ASSERT_EQ(fu->get_error_code(), 0);
+        std::string echoed;
+        fu->get_reply() >> echoed;
+        EXPECT_EQ(echoed, input);
+    }
+    EXPECT_EQ(svc_raw->dispatch_count(), 2);
+}
+
+// ---------------------------------------------------------------------------
 // Multiple sequential requests over the same connection.
 // ---------------------------------------------------------------------------
 
