@@ -29,7 +29,9 @@ namespace paxos_impl {
 
 // network client
 std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
-std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};
+// Workstream N Phase 4e-16: removed
+//   `std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};`
+// — declared but never written or read anywhere in the codebase.
 // end of network client
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
@@ -40,11 +42,18 @@ typedef std::chrono::high_resolution_clock::time_point tp;
 typedef pair<const char*, pair<int,tp>> queue_entry;
 typedef pair<const char*, pair<int,int>> queue_entry_par;
 static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;
-static std::queue<queue_entry_par> submit_queue_nc;
+// Workstream N Phase 4e-16: removed
+//   `static std::queue<queue_entry_par> submit_queue_nc;`
+// — only used inside the now-deleted `PollSubQNc` function.
 static rrr::SpinLock l_;
-static atomic<int> producer{0}, consumer{0};
+// Workstream N Phase 4e-16: removed `consumer` from
+// `static atomic<int> producer{0}, consumer{0};` — only
+// commented-out reference; never read by live code.
+static atomic<int> producer{0};
 static atomic<int> submit_tot{0};
-pthread_t submit_poll_th_;
+// Workstream N Phase 4e-16: removed `pthread_t submit_poll_th_;` —
+// referenced only in commented-out `pthread_create(...)` /
+// `pthread_detach(...)` lines.
 const int len = 5;
 static std::map<std::string,long double> timer;
 
@@ -456,31 +465,12 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   Log_error("add_log_to_nc: no worker found for par_id %d", par_id);
 }
 
-void* PollSubQNc(void* arg){
-   Log_error("exit branch");
-   exit(1);
-   while(true){
-     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-     l_.lock();
-     //Log_info("Clearing queue of size %d", submit_queue_nc.size());
-     int deleted = 0;
-     while(!submit_queue_nc.empty()){
-	     auto edt = std::chrono::high_resolution_clock::now();
-	     auto x = submit_queue_nc.front();
-	     //auto time_in_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(edt - x.second.second).count();
-	     //if(time_in_queue < 100.0)break;
-	     submit_queue_nc.pop();
-	     //free((char*)x.first);
-	     //deleted++;
-	     add_log_without_queue((char*)x.first, x.second.first, x.second.second);
-
-     }
-     //Log_info("Cleared %d entries", deleted);
-     l_.unlock();
-  }
-   pthread_exit(nullptr);
-   return nullptr;
-}
+// Workstream N Phase 4e-16: removed `void* PollSubQNc(void*)` — body
+// started with `Log_error("exit branch"); exit(1);`, making everything
+// after unreachable.  The only reference to the function (a
+// `pthread_create(..., PollSubQNc, ...)` at line 939) was already
+// commented out.  `submit_queue_nc` and `submit_poll_th_` went away
+// alongside.
 
 shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
   auto bulk_prepare = make_shared<BulkPrepareLog>();
