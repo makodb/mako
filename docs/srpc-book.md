@@ -1252,16 +1252,16 @@ Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
 `TpcCommitCommand`, `TpcBatchCommand`), Phase 4d-prep (forward-declared
 bridge `wrap_typed_marshallable` in `marshal.hpp` so
 `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` accept
-Serializable T's transparently), Phase 4d-1/2/3/4/5/6/7
+Serializable T's transparently), Phase 4d-1/2/3/4/5/6/7/8
 (`EmptyGraph`, five simple paxos types, three `procedure.h` types,
 `SyncLogResponse`, `RccGraph`, `VecPieceData` plus archive operators
 for `SimpleCommand`/`TxWorkspace`/`mdb::Value`, `LogEntry` +
-`BulkPaxosCmd`), Phase 4c-1 (`ReplicatedDBCommand`), and Phase 5a-1
-(prune dead bypass-to-socket machinery on LogEntry / BulkPaxosCmd +
-delete unused `TypedPaxosLogEnvelopeAdapter`) have all landed —
-every in-tree deptran payload now uses the Serializable path,
-generated headers carry archive ops by default, and the dead
-fast-path code is gone. Phase 3d (reactor TX/RX path on Sink/Source,
+`BulkPaxosCmd`, `SimpleRWCommand`), Phase 4c-1
+(`ReplicatedDBCommand`), and Phase 5a-1 (prune dead bypass-to-socket
+machinery on LogEntry / BulkPaxosCmd + delete unused
+`TypedPaxosLogEnvelopeAdapter`) have all landed — every in-tree
+deptran payload now uses the Serializable path, generated headers
+carry archive ops by default, and the dead fast-path code is gone. Phase 3d (reactor TX/RX path on Sink/Source,
 + matching Phase 3e-2 to drop the legacy Marshal& emission), Phase
 3f-2/3 (`MarshallDeputy` SerializableProxy storage), and the
 remaining Phase 5 deletions (`MarshallableProxy`,

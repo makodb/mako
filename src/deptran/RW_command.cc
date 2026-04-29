@@ -8,18 +8,21 @@
 
 namespace janus {
 
+// Workstream N Phase 4d-8: SimpleRWCommand migrated to Serializable.
+// Wire format byte-for-byte identical to the previous Marshallable
+// encoding (int32_t type_ | key_t key_ | int32_t value_).
 static int volatile x =
-    MarshallDeputy::reg_initializer<SimpleRWCommand>(
+    rrr::reg_serializable_in_deputy<SimpleRWCommand>(
         MarshallDeputy::CMD_KV);
 
-SimpleRWCommand::SimpleRWCommand(): Marshallable(MarshallDeputy::CMD_KV) {
+SimpleRWCommand::SimpleRWCommand() {
   //Log_info("[copilot+] SimpleRWCommand Empty created");
   type_ = RW_BENCHMARK_NOOP;
   key_ = 0;
   value_ = 0;
 }
 
-SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd): Marshallable(MarshallDeputy::CMD_KV) {
+SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd) {
   verify(cmd != nullptr);
   //Log_info("[copilot+] SimpleRWCommand created");
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
@@ -120,18 +123,19 @@ bool SimpleRWCommand::same_as(SimpleRWCommand &other) {
 }
 
 
-Marshal& SimpleRWCommand::to_marshal(Marshal& m) const {
-  m << type_;
-  m << key_;
-  m << value_;
-  return m;
+// Workstream N Phase 4d-8: Serializable save/load. Wire format
+// identical to the legacy to_marshal/from_marshal pair (just three
+// fields: type_, key_, value_).
+void SimpleRWCommand::save(BinaryWriteArchive& ar) const {
+  ar << type_;
+  ar << key_;
+  ar << value_;
 }
 
-Marshal& SimpleRWCommand::from_marshal(Marshal& m) {
-  m >> type_;
-  m >> key_;
-  m >> value_;
-  return m;
+void SimpleRWCommand::load(BinaryReadArchive& ar) {
+  ar >> type_;
+  ar >> key_;
+  ar >> value_;
 }
 
 bool SimpleRWCommand::IsRead() {
