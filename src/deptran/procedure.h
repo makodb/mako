@@ -125,6 +125,13 @@ Marshal& operator << (Marshal& m, const TxReply& reply);
 
 Marshal& operator >> (Marshal& m, TxReply& reply);
 
+// Workstream N Phase 3e: archive operators for TxReply (mirrors the
+// Marshal-based pair byte-for-byte). Used by the rcc_rpc.h archive
+// emission now that rpcgen defaults to --archive.
+BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply);
+
+BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply);
+
 enum CommandStatus {
   WAITING=-1,
   DISPATCHABLE=0,

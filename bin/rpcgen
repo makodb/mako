@@ -12,15 +12,25 @@ def main():
     argparser.add_argument("--python", action="store_true", help="generate Python stub files")
     # Backward-compatible no-op: typed mode is now the default/only C++ mode.
     argparser.add_argument("--cpp-mode", default="typed", help=argparse.SUPPRESS)
-    # Workstream N Phase 3c: emit additional BinaryWriteArchive /
+    # Workstream N Phase 3e: emit additional BinaryWriteArchive /
     # BinaryReadArchive operator<<>> overloads alongside the Marshal&
-    # ones. Default off — keeps existing .rpc files that reference
-    # user types like MarshallDeputy / Value (no archive overloads
-    # yet) compiling unchanged. Phase 3f / Phase 4 add those.
+    # ones. Default ON as of Phase 3e — every in-tree .rpc file now
+    # references types (MarshallDeputy via Phase 3f-prep, Value via
+    # Phase 4d-6) that have archive overloads, so the default is safe.
+    # Use `--no-archive` to opt out (e.g., when generating against a
+    # custom .rpc that uses user types without archive overloads).
     argparser.add_argument(
         "--archive",
+        dest="archive",
         action="store_true",
-        help="also emit BinaryWriteArchive / BinaryReadArchive operator<<>> overloads",
+        default=True,
+        help="emit BinaryWriteArchive / BinaryReadArchive operator<<>> overloads (default)",
+    )
+    argparser.add_argument(
+        "--no-archive",
+        dest="archive",
+        action="store_false",
+        help="suppress BinaryWriteArchive / BinaryReadArchive operator<<>> overloads",
     )
     argparser.add_argument("rpc_file")
     opt = argparser.parse_args()

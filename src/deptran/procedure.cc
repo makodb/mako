@@ -171,7 +171,7 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
   memset(&reply.start_time_, 0, sizeof(reply.start_time_));
   m >> reply.time_;
   m >> reply.txn_type_;
-  
+
   // Unmarshal view data if present
   bool_t has_view_data;
   m >> has_view_data;
@@ -182,8 +182,51 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
   } else {
     reply.sp_view_data_ = nullptr;
   }
-  
+
   return m;
+}
+
+// Workstream N Phase 3e: archive operators for TxReply. Wire format
+// byte-for-byte identical to the Marshal-based pair above:
+//   res_ (i32) | output_ (map<int32_t, Value>) | n_try_ (i32) |
+//   time_ (double) | txn_type_ (i32) |
+//   has_view_data (bool_t) | optional MarshallDeputy view_md
+BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply) {
+  ar << reply.res_;
+  ar << reply.output_;
+  ar << reply.n_try_;
+  // start_time_ is intentionally not serialized (legacy comment).
+  ar << reply.time_;
+  ar << reply.txn_type_;
+
+  bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
+  ar << has_view_data;
+  if (has_view_data) {
+    MarshallDeputy view_md;
+    view_md.set_marshallable(reply.sp_view_data_);
+    ar << view_md;
+  }
+  return ar;
+}
+
+BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply) {
+  ar >> reply.res_;
+  ar >> reply.output_;
+  ar >> reply.n_try_;
+  memset(&reply.start_time_, 0, sizeof(reply.start_time_));
+  ar >> reply.time_;
+  ar >> reply.txn_type_;
+
+  bool_t has_view_data;
+  ar >> has_view_data;
+  if (has_view_data) {
+    MarshallDeputy view_md;
+    ar >> view_md;
+    reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
+  } else {
+    reply.sp_view_data_ = nullptr;
+  }
+  return ar;
 }
 
 set<parid_t>& TxData::GetPartitionIds() {

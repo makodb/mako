@@ -338,7 +338,7 @@ def generate_rpc_table(rpc_source, existing_codes=None):
             used_codes.add(rpc_code)
     return rpc_table
 
-def rpcgen(rpc_fpath, languages, archive=False):
+def rpcgen(rpc_fpath, languages, archive=True):
     with open(rpc_fpath) as f:
         rpc_src = f.read()
 

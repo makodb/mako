@@ -1219,32 +1219,35 @@ static int _reg = rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
 MyCommand* p = rrr::serializable_cast<MyCommand>(md);
 ```
 
-#### `rpcgen --archive` emission flag (transitional)
+#### `rpcgen --archive` emission (default ON)
 
-`bin/rpcgen` accepts a `--archive` flag that causes generated headers
-to emit BinaryWriteArchive / BinaryReadArchive operator<<>> overloads
-*in addition to* the existing Marshal& ones — both forms compile and
-produce identical wire bytes. Default off. The flag is opt-in
-because `rcc_rpc.rpc` references types like `MarshallDeputy` and
-`Value` that don't yet have archive operators (Phase 3f / Phase 4
-work); regenerating it with `--archive` would not compile.
+`bin/rpcgen` emits BinaryWriteArchive / BinaryReadArchive operator<<>>
+overloads alongside the existing Marshal& ones for generated headers.
+Both forms compile and produce identical wire bytes. As of Phase 3e
+(2026-04-29) this is the default — every in-tree .rpc file now
+references types with archive operators (`MarshallDeputy` via
+Phase 3f-prep, `Value` / `SimpleCommand` / `TxWorkspace` via Phase 4d-6,
+`TxReply` and `ParentEdge<RccTx>` via Phase 3e), so the additive
+emission compiles cleanly. Use `--no-archive` to opt out (e.g., when
+generating against a custom .rpc that uses user types without archive
+overloads).
 
-Small fixtures (`helloworld.rpc`, `network.rpc`,
-`benchmark_service.rpc`) only reference primitives, containers, and
-self-contained user structs — they regenerate cleanly under
-`--archive` and are exercised in both modes by
-`rpcgen_compile_test.py`.
+The four in-tree generated headers (`rcc_rpc.h`, `helloworld.h`,
+`network.h`, `benchmark_service.h`) all carry archive operators;
+`rpcgen_compile_test.py` exercises both modes.
 
 Status: Phase 1 (primitives, containers, FdSink/FdSource), Phase 2
 (`SerializableProxy` + registry), Phase 3a/3b
 (Marshal↔Archive and Marshallable↔Serializable bridges), Phase 3c
 (`rpcgen --archive` flag), Phase 3b-2
 (`reg_serializable_in_deputy`), Phase 3b-3 (`serializable_cast<T>` +
-RTTI on `SerializableFacade`), Phase 3f-1 (`MarshallDeputy::sp_data_`
-elimination), Phase 3f-prep (`MarshallDeputy` archive operators),
-Phase 4a-prep (`marshallable_cast` / `wrap_typed_marshallable`
-overloads for Serializable types — call-site transparency for
-migrations), Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
+RTTI on `SerializableFacade`), Phase 3e (rpcgen default flipped to
+`--archive`; archive ops added for `TxReply` and `ParentEdge<RccTx>`),
+Phase 3f-1 (`MarshallDeputy::sp_data_` elimination), Phase 3f-prep
+(`MarshallDeputy` archive operators), Phase 4a-prep
+(`marshallable_cast` / `wrap_typed_marshallable` overloads for
+Serializable types — call-site transparency for migrations),
+Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
 `TpcEmptyCommand` via aliased adapter, `TpcPrepareCommand`,
 `TpcCommitCommand`, `TpcBatchCommand`), Phase 4d-prep (forward-declared
 bridge `wrap_typed_marshallable` in `marshal.hpp` so
@@ -1253,13 +1256,17 @@ Serializable T's transparently), Phase 4d-1/2/3/4/5/6/7
 (`EmptyGraph`, five simple paxos types, three `procedure.h` types,
 `SyncLogResponse`, `RccGraph`, `VecPieceData` plus archive operators
 for `SimpleCommand`/`TxWorkspace`/`mdb::Value`, `LogEntry` +
-`BulkPaxosCmd`), and Phase 4c-1 (`ReplicatedDBCommand`) have all
-landed — every in-tree deptran payload now uses the Serializable
-path. Phase 3d–3f (reactor TX/RX path on Sink/Source, default
-emission switch, `MarshallDeputy` internals rewrite) and Phase 5
-(deletion of `MarshallableProxy`, `TypedMarshallableAdapter`,
-`TypedPaxosLogEnvelopeAdapter`, the dead bypass_to_socket
-machinery, etc.) are upcoming. See
+`BulkPaxosCmd`), Phase 4c-1 (`ReplicatedDBCommand`), and Phase 5a-1
+(prune dead bypass-to-socket machinery on LogEntry / BulkPaxosCmd +
+delete unused `TypedPaxosLogEnvelopeAdapter`) have all landed —
+every in-tree deptran payload now uses the Serializable path,
+generated headers carry archive ops by default, and the dead
+fast-path code is gone. Phase 3d (reactor TX/RX path on Sink/Source,
++ matching Phase 3e-2 to drop the legacy Marshal& emission), Phase
+3f-2/3 (`MarshallDeputy` SerializableProxy storage), and the
+remaining Phase 5 deletions (`MarshallableProxy`,
+`TypedMarshallableAdapter`, `Marshallable::to_marshal`/`from_marshal`)
+are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 
