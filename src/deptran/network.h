@@ -18,10 +18,6 @@ public:
     struct RpcTxnRmwRequest {
         std::vector<rrr::i64> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnRmwRequest& o) {
-        m << o._req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnRmwRequest& o) {
         m >> o._req;
         return m;
@@ -37,9 +33,6 @@ public:
 
     struct RpcTxnRmwResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnRmwResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnRmwResponse& o) {
         return m;
     }
@@ -53,10 +46,6 @@ public:
     struct RpcTxnReadRequest {
         std::vector<rrr::i64> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnReadRequest& o) {
-        m << o._req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnReadRequest& o) {
         m >> o._req;
         return m;
@@ -72,9 +61,6 @@ public:
 
     struct RpcTxnReadResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnReadResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnReadResponse& o) {
         return m;
     }
@@ -88,10 +74,6 @@ public:
     struct RpcTxnNewOrderRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnNewOrderRequest& o) {
-        m << o._req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnNewOrderRequest& o) {
         m >> o._req;
         return m;
@@ -107,9 +89,6 @@ public:
 
     struct RpcTxnNewOrderResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnNewOrderResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnNewOrderResponse& o) {
         return m;
     }
@@ -123,10 +102,6 @@ public:
     struct RpcTxnPaymentRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnPaymentRequest& o) {
-        m << o._req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnPaymentRequest& o) {
         m >> o._req;
         return m;
@@ -142,9 +117,6 @@ public:
 
     struct RpcTxnPaymentResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnPaymentResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnPaymentResponse& o) {
         return m;
     }
@@ -158,10 +130,6 @@ public:
     struct RpcTxnDeliveryRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnDeliveryRequest& o) {
-        m << o._req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnDeliveryRequest& o) {
         m >> o._req;
         return m;
@@ -177,9 +145,6 @@ public:
 
     struct RpcTxnDeliveryResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnDeliveryResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnDeliveryResponse& o) {
         return m;
     }
@@ -193,10 +158,6 @@ public:
     struct RpcTxnOrderStatusRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnOrderStatusRequest& o) {
-        m << o._req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnOrderStatusRequest& o) {
         m >> o._req;
         return m;
@@ -212,9 +173,6 @@ public:
 
     struct RpcTxnOrderStatusResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnOrderStatusResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnOrderStatusResponse& o) {
         return m;
     }
@@ -228,10 +186,6 @@ public:
     struct RpcTxnStockLevelRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnStockLevelRequest& o) {
-        m << o._req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnStockLevelRequest& o) {
         m >> o._req;
         return m;
@@ -247,9 +201,6 @@ public:
 
     struct RpcTxnStockLevelResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnStockLevelResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnStockLevelResponse& o) {
         return m;
     }

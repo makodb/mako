@@ -20,13 +20,6 @@ struct point3 {
     double z;
 };
 
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const point3& o) {
-    m << o.x;
-    m << o.y;
-    m << o.z;
-    return m;
-}
-
 inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
     m >> o.x;
     m >> o.y;
@@ -54,10 +47,6 @@ public:
     struct RpcFastPrimeRequest {
         rrr::i32 n;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastPrimeRequest& o) {
-        m << o.n;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastPrimeRequest& o) {
         m >> o.n;
         return m;
@@ -74,10 +63,6 @@ public:
     struct RpcFastPrimeResponse {
         rrr::i8 flag;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastPrimeResponse& o) {
-        m << o.flag;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastPrimeResponse& o) {
         m >> o.flag;
         return m;
@@ -95,11 +80,6 @@ public:
         point3 p1;
         point3 p2;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastDotProdRequest& o) {
-        m << o.p1;
-        m << o.p2;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastDotProdRequest& o) {
         m >> o.p1;
         m >> o.p2;
@@ -119,10 +99,6 @@ public:
     struct RpcFastDotProdResponse {
         double v;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastDotProdResponse& o) {
-        m << o.v;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastDotProdResponse& o) {
         m >> o.v;
         return m;
@@ -140,11 +116,6 @@ public:
         rrr::v32 a;
         rrr::v32 b;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastAddRequest& o) {
-        m << o.a;
-        m << o.b;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAddRequest& o) {
         m >> o.a;
         m >> o.b;
@@ -164,10 +135,6 @@ public:
     struct RpcFastAddResponse {
         rrr::v32 a_add_b;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastAddResponse& o) {
-        m << o.a_add_b;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAddResponse& o) {
         m >> o.a_add_b;
         return m;
@@ -184,10 +151,6 @@ public:
     struct RpcFastNopRequest {
         std::string in_0;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastNopRequest& o) {
-        m << o.in_0;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastNopRequest& o) {
         m >> o.in_0;
         return m;
@@ -203,9 +166,6 @@ public:
 
     struct RpcFastNopResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastNopResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastNopResponse& o) {
         return m;
     }
@@ -219,10 +179,6 @@ public:
     struct RpcFastVecRequest {
         rrr::i32 n;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastVecRequest& o) {
-        m << o.n;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastVecRequest& o) {
         m >> o.n;
         return m;
@@ -239,10 +195,6 @@ public:
     struct RpcFastVecResponse {
         std::vector<rrr::i64> v;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastVecResponse& o) {
-        m << o.v;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastVecResponse& o) {
         m >> o.v;
         return m;
@@ -259,10 +211,6 @@ public:
     struct RpcPrimeRequest {
         rrr::i32 n;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrimeRequest& o) {
-        m << o.n;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrimeRequest& o) {
         m >> o.n;
         return m;
@@ -279,10 +227,6 @@ public:
     struct RpcPrimeResponse {
         rrr::i8 flag;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrimeResponse& o) {
-        m << o.flag;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrimeResponse& o) {
         m >> o.flag;
         return m;
@@ -300,11 +244,6 @@ public:
         point3 p1;
         point3 p2;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDotProdRequest& o) {
-        m << o.p1;
-        m << o.p2;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDotProdRequest& o) {
         m >> o.p1;
         m >> o.p2;
@@ -324,10 +263,6 @@ public:
     struct RpcDotProdResponse {
         double v;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDotProdResponse& o) {
-        m << o.v;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDotProdResponse& o) {
         m >> o.v;
         return m;
@@ -345,11 +280,6 @@ public:
         rrr::v32 a;
         rrr::v32 b;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAddRequest& o) {
-        m << o.a;
-        m << o.b;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddRequest& o) {
         m >> o.a;
         m >> o.b;
@@ -369,10 +299,6 @@ public:
     struct RpcAddResponse {
         rrr::v32 a_add_b;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAddResponse& o) {
-        m << o.a_add_b;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddResponse& o) {
         m >> o.a_add_b;
         return m;
@@ -389,10 +315,6 @@ public:
     struct RpcNopRequest {
         std::string in_0;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcNopRequest& o) {
-        m << o.in_0;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNopRequest& o) {
         m >> o.in_0;
         return m;
@@ -408,9 +330,6 @@ public:
 
     struct RpcNopResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcNopResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNopResponse& o) {
         return m;
     }
@@ -424,10 +343,6 @@ public:
     struct RpcAsyncNopRequest {
         std::string in_0;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAsyncNopRequest& o) {
-        m << o.in_0;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAsyncNopRequest& o) {
         m >> o.in_0;
         return m;
@@ -443,9 +358,6 @@ public:
 
     struct RpcAsyncNopResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAsyncNopResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAsyncNopResponse& o) {
         return m;
     }
@@ -459,10 +371,6 @@ public:
     struct RpcSleepRequest {
         double sec;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSleepRequest& o) {
-        m << o.sec;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSleepRequest& o) {
         m >> o.sec;
         return m;
@@ -478,9 +386,6 @@ public:
 
     struct RpcSleepResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSleepResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSleepResponse& o) {
         return m;
     }
@@ -494,10 +399,6 @@ public:
     struct RpcDeferredEchoRequest {
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDeferredEchoRequest& o) {
-        m << o.val;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDeferredEchoRequest& o) {
         m >> o.val;
         return m;
@@ -514,10 +415,6 @@ public:
     struct RpcDeferredEchoResponse {
         rrr::i32 result;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDeferredEchoResponse& o) {
-        m << o.result;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDeferredEchoResponse& o) {
         m >> o.result;
         return m;

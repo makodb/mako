@@ -18,12 +18,6 @@ struct ValueTimesPair {
     rrr::i64 times;
 };
 
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const ValueTimesPair& o) {
-    m << o.value;
-    m << o.times;
-    return m;
-}
-
 inline rrr::Marshal& operator >>(rrr::Marshal& m, ValueTimesPair& o) {
     m >> o.value;
     m >> o.times;
@@ -46,12 +40,6 @@ struct DepId {
     std::string str;
     rrr::i64 id;
 };
-
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const DepId& o) {
-    m << o.str;
-    m << o.id;
-    return m;
-}
 
 inline rrr::Marshal& operator >>(rrr::Marshal& m, DepId& o) {
     m >> o.str;
@@ -84,21 +72,6 @@ struct TxnInfoRes {
     std::vector<double> all_interval_latency;
     std::vector<rrr::i32> num_try;
 };
-
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const TxnInfoRes& o) {
-    m << o.start_txn;
-    m << o.total_txn;
-    m << o.total_try;
-    m << o.commit_txn;
-    m << o.num_exhausted;
-    m << o.this_latency;
-    m << o.last_latency;
-    m << o.attempt_latency;
-    m << o.interval_latency;
-    m << o.all_interval_latency;
-    m << o.num_try;
-    return m;
-}
 
 inline rrr::Marshal& operator >>(rrr::Marshal& m, TxnInfoRes& o) {
     m >> o.start_txn;
@@ -154,16 +127,6 @@ struct ServerResponse {
     rrr::i64 r_sz_num;
 };
 
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const ServerResponse& o) {
-    m << o.statistics;
-    m << o.cpu_util;
-    m << o.r_cnt_sum;
-    m << o.r_cnt_num;
-    m << o.r_sz_sum;
-    m << o.r_sz_num;
-    return m;
-}
-
 inline rrr::Marshal& operator >>(rrr::Marshal& m, ServerResponse& o) {
     m >> o.statistics;
     m >> o.cpu_util;
@@ -203,17 +166,6 @@ struct ClientResponse {
     rrr::i32 is_finish;
     rrr::i64 n_asking;
 };
-
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const ClientResponse& o) {
-    m << o.txn_info;
-    m << o.run_sec;
-    m << o.run_nsec;
-    m << o.period_sec;
-    m << o.period_nsec;
-    m << o.is_finish;
-    m << o.n_asking;
-    return m;
-}
 
 inline rrr::Marshal& operator >>(rrr::Marshal& m, ClientResponse& o) {
     m >> o.txn_info;
@@ -255,14 +207,6 @@ struct Profiling {
     double mem_util;
 };
 
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const Profiling& o) {
-    m << o.cpu_util;
-    m << o.tx_util;
-    m << o.rx_util;
-    m << o.mem_util;
-    return m;
-}
-
 inline rrr::Marshal& operator >>(rrr::Marshal& m, Profiling& o) {
     m >> o.cpu_util;
     m >> o.tx_util;
@@ -293,13 +237,6 @@ struct TxDispatchRequest {
     std::vector<Value> input;
 };
 
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const TxDispatchRequest& o) {
-    m << o.id;
-    m << o.tx_type;
-    m << o.input;
-    return m;
-}
-
 inline rrr::Marshal& operator >>(rrr::Marshal& m, TxDispatchRequest& o) {
     m >> o.id;
     m >> o.tx_type;
@@ -324,10 +261,6 @@ inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxDispatc
 struct TxnDispatchResponse {
 };
 
-inline rrr::Marshal& operator <<(rrr::Marshal& m, const TxnDispatchResponse& o) {
-    return m;
-}
-
 inline rrr::Marshal& operator >>(rrr::Marshal& m, TxnDispatchResponse& o) {
     return m;
 }
@@ -347,11 +280,6 @@ public:
         MarshallDeputy cmd;
         uint64_t dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardRequest& o) {
-        m << o.cmd;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardRequest& o) {
         m >> o.cmd;
         m >> o.dep_id;
@@ -371,10 +299,6 @@ public:
     struct RpcForwardResponse {
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardResponse& o) {
-        m << o.coro_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardResponse& o) {
         m >> o.coro_id;
         return m;
@@ -392,11 +316,6 @@ public:
         uint64_t slot;
         ballot_t ballot;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -417,11 +336,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareResponse& o) {
-        m << o.max_ballot;
-        m << o.coro_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
         m >> o.max_ballot;
         m >> o.coro_id;
@@ -444,13 +358,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAcceptRequest& o) {
-        m << o.slot;
-        m << o.time;
-        m << o.ballot;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptRequest& o) {
         m >> o.slot;
         m >> o.time;
@@ -477,11 +384,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAcceptResponse& o) {
-        m << o.max_ballot;
-        m << o.coro_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptResponse& o) {
         m >> o.max_ballot;
         m >> o.coro_id;
@@ -503,12 +405,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDecideRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -530,9 +426,6 @@ public:
 
     struct RpcDecideResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideResponse& o) {
         return m;
     }
@@ -546,10 +439,6 @@ public:
     struct RpcHeartbeatRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHeartbeatRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatRequest& o) {
         m >> o.cmd;
         return m;
@@ -567,11 +456,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHeartbeatResponse& o) {
-        m << o.ballot;
-        m << o.val;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatResponse& o) {
         m >> o.ballot;
         m >> o.val;
@@ -594,13 +478,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardToLearnerServerRequest& o) {
-        m << o.par_id;
-        m << o.slot;
-        m << o.ballot;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardToLearnerServerRequest& o) {
         m >> o.par_id;
         m >> o.slot;
@@ -627,11 +504,6 @@ public:
         uint64_t ret_slot;
         ballot_t ret_ballot;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardToLearnerServerResponse& o) {
-        m << o.ret_slot;
-        m << o.ret_ballot;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardToLearnerServerResponse& o) {
         m >> o.ret_slot;
         m >> o.ret_ballot;
@@ -651,10 +523,6 @@ public:
     struct RpcBulkPrepareRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkPrepareRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepareRequest& o) {
         m >> o.cmd;
         return m;
@@ -672,11 +540,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkPrepareResponse& o) {
-        m << o.ballot;
-        m << o.val;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepareResponse& o) {
         m >> o.ballot;
         m >> o.val;
@@ -696,10 +559,6 @@ public:
     struct RpcBulkAcceptRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkAcceptRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkAcceptRequest& o) {
         m >> o.cmd;
         return m;
@@ -717,11 +576,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkAcceptResponse& o) {
-        m << o.ballot;
-        m << o.val;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkAcceptResponse& o) {
         m >> o.ballot;
         m >> o.val;
@@ -741,10 +595,6 @@ public:
     struct RpcBulkPrepare2Request {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkPrepare2Request& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepare2Request& o) {
         m >> o.cmd;
         return m;
@@ -763,12 +613,6 @@ public:
         rrr::i32 val;
         MarshallDeputy ret;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkPrepare2Response& o) {
-        m << o.ballot;
-        m << o.val;
-        m << o.ret;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkPrepare2Response& o) {
         m >> o.ballot;
         m >> o.val;
@@ -791,10 +635,6 @@ public:
     struct RpcSyncLogRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSyncLogRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncLogRequest& o) {
         m >> o.cmd;
         return m;
@@ -813,12 +653,6 @@ public:
         rrr::i32 val;
         MarshallDeputy ret;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSyncLogResponse& o) {
-        m << o.ballot;
-        m << o.val;
-        m << o.ret;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncLogResponse& o) {
         m >> o.ballot;
         m >> o.val;
@@ -841,10 +675,6 @@ public:
     struct RpcSyncCommitRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSyncCommitRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncCommitRequest& o) {
         m >> o.cmd;
         return m;
@@ -862,11 +692,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSyncCommitResponse& o) {
-        m << o.ballot;
-        m << o.val;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncCommitResponse& o) {
         m >> o.ballot;
         m >> o.val;
@@ -886,10 +711,6 @@ public:
     struct RpcSyncNoOpsRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSyncNoOpsRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncNoOpsRequest& o) {
         m >> o.cmd;
         return m;
@@ -907,11 +728,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSyncNoOpsResponse& o) {
-        m << o.ballot;
-        m << o.val;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSyncNoOpsResponse& o) {
         m >> o.ballot;
         m >> o.val;
@@ -931,10 +747,6 @@ public:
     struct RpcBulkDecideRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkDecideRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkDecideRequest& o) {
         m >> o.cmd;
         return m;
@@ -952,11 +764,6 @@ public:
         rrr::i32 ballot;
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcBulkDecideResponse& o) {
-        m << o.ballot;
-        m << o.val;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcBulkDecideResponse& o) {
         m >> o.ballot;
         m >> o.val;
@@ -2041,10 +1848,6 @@ public:
     struct RpcCommitRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitRequest& o) {
         m >> o.cmd;
         return m;
@@ -2060,9 +1863,6 @@ public:
 
     struct RpcCommitResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitResponse& o) {
         return m;
     }
@@ -2184,11 +1984,6 @@ public:
         uint64_t slot;
         ballot_t ballot;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -2209,11 +2004,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareResponse& o) {
-        m << o.max_ballot;
-        m << o.coro_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
         m >> o.max_ballot;
         m >> o.coro_id;
@@ -2239,16 +2029,6 @@ public:
         std::vector<uint64_t> skip_potentials;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSuggestRequest& o) {
-        m << o.slot;
-        m << o.time;
-        m << o.ballot;
-        m << o.sender;
-        m << o.skip_commits;
-        m << o.skip_potentials;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSuggestRequest& o) {
         m >> o.slot;
         m >> o.time;
@@ -2284,11 +2064,6 @@ public:
         ballot_t max_ballot;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSuggestResponse& o) {
-        m << o.max_ballot;
-        m << o.coro_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSuggestResponse& o) {
         m >> o.max_ballot;
         m >> o.coro_id;
@@ -2310,12 +2085,6 @@ public:
         ballot_t ballot;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDecideRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -2337,9 +2106,6 @@ public:
 
     struct RpcDecideResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideResponse& o) {
         return m;
     }
@@ -2635,11 +2401,6 @@ public:
         uint64_t leaderPrevLogIndex;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHeartbeatRequest& o) {
-        m << o.leaderPrevLogIndex;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatRequest& o) {
         m >> o.leaderPrevLogIndex;
         m >> o.dep_id;
@@ -2659,10 +2420,6 @@ public:
     struct RpcHeartbeatResponse {
         uint64_t followerPrevLogIndex;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHeartbeatResponse& o) {
-        m << o.followerPrevLogIndex;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHeartbeatResponse& o) {
         m >> o.followerPrevLogIndex;
         return m;
@@ -2679,10 +2436,6 @@ public:
     struct RpcForwardRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardRequest& o) {
         m >> o.cmd;
         return m;
@@ -2699,10 +2452,6 @@ public:
     struct RpcForwardResponse {
         uint64_t cmt_idx;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardResponse& o) {
-        m << o.cmt_idx;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardResponse& o) {
         m >> o.cmt_idx;
         return m;
@@ -2722,13 +2471,6 @@ public:
         parid_t par_id;
         ballot_t cur_term;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVoteRequest& o) {
-        m << o.lst_log_idx;
-        m << o.lst_log_term;
-        m << o.par_id;
-        m << o.cur_term;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteRequest& o) {
         m >> o.lst_log_idx;
         m >> o.lst_log_term;
@@ -2755,11 +2497,6 @@ public:
         ballot_t max_ballot;
         bool_t vote_granted;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVoteResponse& o) {
-        m << o.max_ballot;
-        m << o.vote_granted;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteResponse& o) {
         m >> o.max_ballot;
         m >> o.vote_granted;
@@ -2782,13 +2519,6 @@ public:
         parid_t par_id;
         ballot_t cur_term;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVote2FPGARequest& o) {
-        m << o.lst_log_idx;
-        m << o.lst_log_term;
-        m << o.par_id;
-        m << o.cur_term;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVote2FPGARequest& o) {
         m >> o.lst_log_idx;
         m >> o.lst_log_term;
@@ -2815,11 +2545,6 @@ public:
         ballot_t max_ballot;
         bool_t vote_granted;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVote2FPGAResponse& o) {
-        m << o.max_ballot;
-        m << o.vote_granted;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVote2FPGAResponse& o) {
         m >> o.max_ballot;
         m >> o.vote_granted;
@@ -2846,17 +2571,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntriesRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        m << o.leaderCurrentTerm;
-        m << o.leaderPrevLogIndex;
-        m << o.leaderPrevLogTerm;
-        m << o.leaderCommitIndex;
-        m << o.dep_id;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -2896,12 +2610,6 @@ public:
         uint64_t followerCurrentTerm;
         uint64_t followerLastLogIndex;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntriesResponse& o) {
-        m << o.followerAppendOK;
-        m << o.followerCurrentTerm;
-        m << o.followerLastLogIndex;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesResponse& o) {
         m >> o.followerAppendOK;
         m >> o.followerCurrentTerm;
@@ -2931,17 +2639,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntries2Request& o) {
-        m << o.slot;
-        m << o.ballot;
-        m << o.leaderCurrentTerm;
-        m << o.leaderPrevLogIndex;
-        m << o.leaderPrevLogTerm;
-        m << o.leaderCommitIndex;
-        m << o.dep_id;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntries2Request& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -2981,12 +2678,6 @@ public:
         uint64_t followerCurrentTerm;
         uint64_t followerLastLogIndex;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntries2Response& o) {
-        m << o.followerAppendOK;
-        m << o.followerCurrentTerm;
-        m << o.followerLastLogIndex;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntries2Response& o) {
         m >> o.followerAppendOK;
         m >> o.followerCurrentTerm;
@@ -3012,13 +2703,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDecideRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        m << o.dep_id;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -3043,9 +2727,6 @@ public:
 
     struct RpcDecideResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDecideResponse& o) {
         return m;
     }
@@ -3685,13 +3366,6 @@ public:
         siteid_t site_id;
         ballot_t cur_term;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVoteRequest& o) {
-        m << o.lst_log_idx;
-        m << o.lst_log_term;
-        m << o.site_id;
-        m << o.cur_term;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteRequest& o) {
         m >> o.lst_log_idx;
         m >> o.lst_log_term;
@@ -3718,11 +3392,6 @@ public:
         ballot_t max_ballot;
         bool_t vote_granted;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVoteResponse& o) {
-        m << o.max_ballot;
-        m << o.vote_granted;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteResponse& o) {
         m >> o.max_ballot;
         m >> o.vote_granted;
@@ -3743,11 +3412,6 @@ public:
         ballot_t term;
         siteid_t voter_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVoteDurableRequest& o) {
-        m << o.term;
-        m << o.voter_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteDurableRequest& o) {
         m >> o.term;
         m >> o.voter_id;
@@ -3767,10 +3431,6 @@ public:
     struct RpcVoteDurableResponse {
         bool_t acknowledged;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcVoteDurableResponse& o) {
-        m << o.acknowledged;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcVoteDurableResponse& o) {
         m >> o.acknowledged;
         return m;
@@ -3795,18 +3455,6 @@ public:
         MarshallDeputy cmd;
         uint64_t leaderNextLogTerm;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntriesRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        m << o.leaderCurrentTerm;
-        m << o.leaderSiteId;
-        m << o.leaderPrevLogIndex;
-        m << o.leaderPrevLogTerm;
-        m << o.leaderCommitIndex;
-        m << o.cmd;
-        m << o.leaderNextLogTerm;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -3850,13 +3498,6 @@ public:
         uint64_t followerLastLogIndex;
         uint64_t followerAckType;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntriesResponse& o) {
-        m << o.followerAppendOK;
-        m << o.followerCurrentTerm;
-        m << o.followerLastLogIndex;
-        m << o.followerAckType;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesResponse& o) {
         m >> o.followerAppendOK;
         m >> o.followerCurrentTerm;
@@ -3889,17 +3530,6 @@ public:
         uint64_t leaderCommitIndex;
         bool_t trigger_election_now;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcEmptyAppendEntriesRequest& o) {
-        m << o.slot;
-        m << o.ballot;
-        m << o.leaderCurrentTerm;
-        m << o.leaderSiteId;
-        m << o.leaderPrevLogIndex;
-        m << o.leaderPrevLogTerm;
-        m << o.leaderCommitIndex;
-        m << o.trigger_election_now;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEmptyAppendEntriesRequest& o) {
         m >> o.slot;
         m >> o.ballot;
@@ -3940,13 +3570,6 @@ public:
         uint64_t followerLastLogIndex;
         uint64_t followerAckType;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcEmptyAppendEntriesResponse& o) {
-        m << o.followerAppendOK;
-        m << o.followerCurrentTerm;
-        m << o.followerLastLogIndex;
-        m << o.followerAckType;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEmptyAppendEntriesResponse& o) {
         m >> o.followerAppendOK;
         m >> o.followerCurrentTerm;
@@ -3974,12 +3597,6 @@ public:
         siteid_t follower_id;
         uint64_t lastLogIndex;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntriesDurableRequest& o) {
-        m << o.term;
-        m << o.follower_id;
-        m << o.lastLogIndex;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesDurableRequest& o) {
         m >> o.term;
         m >> o.follower_id;
@@ -4002,10 +3619,6 @@ public:
     struct RpcAppendEntriesDurableResponse {
         bool_t acknowledged;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAppendEntriesDurableResponse& o) {
-        m << o.acknowledged;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAppendEntriesDurableResponse& o) {
         m >> o.acknowledged;
         return m;
@@ -4023,11 +3636,6 @@ public:
         uint64_t leaderTerm;
         siteid_t leaderSiteId;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTimeoutNowRequest& o) {
-        m << o.leaderTerm;
-        m << o.leaderSiteId;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTimeoutNowRequest& o) {
         m >> o.leaderTerm;
         m >> o.leaderSiteId;
@@ -4048,11 +3656,6 @@ public:
         uint64_t followerTerm;
         bool_t success;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTimeoutNowResponse& o) {
-        m << o.followerTerm;
-        m << o.success;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTimeoutNowResponse& o) {
         m >> o.followerTerm;
         m >> o.success;
@@ -4072,10 +3675,6 @@ public:
     struct RpcNotifyRestartRequest {
         siteid_t restartedSiteId;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcNotifyRestartRequest& o) {
-        m << o.restartedSiteId;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNotifyRestartRequest& o) {
         m >> o.restartedSiteId;
         return m;
@@ -4092,10 +3691,6 @@ public:
     struct RpcNotifyRestartResponse {
         bool_t acknowledged;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcNotifyRestartResponse& o) {
-        m << o.acknowledged;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcNotifyRestartResponse& o) {
         m >> o.acknowledged;
         return m;
@@ -4116,14 +3711,6 @@ public:
         uint64_t last_included_term;
         std::string data;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcInstallSnapshotRequest& o) {
-        m << o.term;
-        m << o.leader_id;
-        m << o.last_included_index;
-        m << o.last_included_term;
-        m << o.data;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcInstallSnapshotRequest& o) {
         m >> o.term;
         m >> o.leader_id;
@@ -4152,10 +3739,6 @@ public:
     struct RpcInstallSnapshotResponse {
         uint64_t term_out;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcInstallSnapshotResponse& o) {
-        m << o.term_out;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcInstallSnapshotResponse& o) {
         m >> o.term_out;
         return m;
@@ -4174,12 +3757,6 @@ public:
         uint64_t new_server_id;
         std::string new_server_addr;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAddServerRequest& o) {
-        m << o.term;
-        m << o.new_server_id;
-        m << o.new_server_addr;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddServerRequest& o) {
         m >> o.term;
         m >> o.new_server_id;
@@ -4204,12 +3781,6 @@ public:
         std::string error_msg;
         uint64_t leader_hint;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAddServerResponse& o) {
-        m << o.success;
-        m << o.error_msg;
-        m << o.leader_hint;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAddServerResponse& o) {
         m >> o.success;
         m >> o.error_msg;
@@ -4233,11 +3804,6 @@ public:
         uint64_t term;
         uint64_t server_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRemoveServerRequest& o) {
-        m << o.term;
-        m << o.server_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRemoveServerRequest& o) {
         m >> o.term;
         m >> o.server_id;
@@ -4259,12 +3825,6 @@ public:
         std::string error_msg;
         uint64_t leader_hint;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRemoveServerResponse& o) {
-        m << o.success;
-        m << o.error_msg;
-        m << o.leader_hint;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRemoveServerResponse& o) {
         m >> o.success;
         m >> o.error_msg;
@@ -5252,10 +4812,6 @@ public:
     struct RpcForwardRequest {
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardRequest& o) {
         m >> o.cmd;
         return m;
@@ -5271,9 +4827,6 @@ public:
 
     struct RpcForwardResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcForwardResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcForwardResponse& o) {
         return m;
     }
@@ -5290,13 +4843,6 @@ public:
         ballot_t ballot;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareRequest& o) {
-        m << o.is_pilot;
-        m << o.slot;
-        m << o.ballot;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
         m >> o.is_pilot;
         m >> o.slot;
@@ -5325,13 +4871,6 @@ public:
         uint64_t dep;
         status_t status;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareResponse& o) {
-        m << o.ret_cmd;
-        m << o.max_ballot;
-        m << o.dep;
-        m << o.status;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
         m >> o.ret_cmd;
         m >> o.max_ballot;
@@ -5362,15 +4901,6 @@ public:
         MarshallDeputy cmd;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastAcceptRequest& o) {
-        m << o.is_pilot;
-        m << o.slot;
-        m << o.ballot;
-        m << o.dep;
-        m << o.cmd;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAcceptRequest& o) {
         m >> o.is_pilot;
         m >> o.slot;
@@ -5403,11 +4933,6 @@ public:
         ballot_t max_ballot;
         uint64_t ret_dep;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFastAcceptResponse& o) {
-        m << o.max_ballot;
-        m << o.ret_dep;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFastAcceptResponse& o) {
         m >> o.max_ballot;
         m >> o.ret_dep;
@@ -5432,15 +4957,6 @@ public:
         MarshallDeputy cmd;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAcceptRequest& o) {
-        m << o.is_pilot;
-        m << o.slot;
-        m << o.ballot;
-        m << o.dep;
-        m << o.cmd;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptRequest& o) {
         m >> o.is_pilot;
         m >> o.slot;
@@ -5472,10 +4988,6 @@ public:
     struct RpcAcceptResponse {
         ballot_t max_ballot;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAcceptResponse& o) {
-        m << o.max_ballot;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAcceptResponse& o) {
         m >> o.max_ballot;
         return m;
@@ -5495,13 +5007,6 @@ public:
         uint64_t dep;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitRequest& o) {
-        m << o.is_pilot;
-        m << o.slot;
-        m << o.dep;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitRequest& o) {
         m >> o.is_pilot;
         m >> o.slot;
@@ -5526,9 +5031,6 @@ public:
 
     struct RpcCommitResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitResponse& o) {
         return m;
     }
@@ -5991,10 +5493,6 @@ public:
     struct RpcMsgStringRequest {
         std::string arg;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcMsgStringRequest& o) {
-        m << o.arg;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgStringRequest& o) {
         m >> o.arg;
         return m;
@@ -6011,10 +5509,6 @@ public:
     struct RpcMsgStringResponse {
         std::string ret;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcMsgStringResponse& o) {
-        m << o.ret;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgStringResponse& o) {
         m >> o.ret;
         return m;
@@ -6031,10 +5525,6 @@ public:
     struct RpcMsgMarshallRequest {
         MarshallDeputy arg;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcMsgMarshallRequest& o) {
-        m << o.arg;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgMarshallRequest& o) {
         m >> o.arg;
         return m;
@@ -6051,10 +5541,6 @@ public:
     struct RpcMsgMarshallResponse {
         MarshallDeputy ret;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcMsgMarshallResponse& o) {
-        m << o.ret;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcMsgMarshallResponse& o) {
         m >> o.ret;
         return m;
@@ -6070,9 +5556,6 @@ public:
 
     struct RpcReElectRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcReElectRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcReElectRequest& o) {
         return m;
     }
@@ -6086,10 +5569,6 @@ public:
     struct RpcReElectResponse {
         bool_t success;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcReElectResponse& o) {
-        m << o.success;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcReElectResponse& o) {
         m >> o.success;
         return m;
@@ -6106,10 +5585,6 @@ public:
     struct RpcRuleSpeculativeExecuteRequest {
         MarshallDeputy md;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRuleSpeculativeExecuteRequest& o) {
-        m << o.md;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRuleSpeculativeExecuteRequest& o) {
         m >> o.md;
         return m;
@@ -6128,12 +5603,6 @@ public:
         int32_t result;
         bool_t is_leader;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRuleSpeculativeExecuteResponse& o) {
-        m << o.accepted;
-        m << o.result;
-        m << o.is_leader;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRuleSpeculativeExecuteResponse& o) {
         m >> o.accepted;
         m >> o.result;
@@ -6158,12 +5627,6 @@ public:
         DepId dep_id;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDispatchRequest& o) {
-        m << o.tid;
-        m << o.dep_id;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchRequest& o) {
         m >> o.tid;
         m >> o.dep_id;
@@ -6189,13 +5652,6 @@ public:
         uint64_t coro_id;
         MarshallDeputy view_data;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDispatchResponse& o) {
-        m << o.res;
-        m << o.output;
-        m << o.coro_id;
-        m << o.view_data;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchResponse& o) {
         m >> o.res;
         m >> o.output;
@@ -6223,12 +5679,6 @@ public:
         std::vector<rrr::i32> sids;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareRequest& o) {
-        m << o.tid;
-        m << o.sids;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareRequest& o) {
         m >> o.tid;
         m >> o.sids;
@@ -6253,12 +5703,6 @@ public:
         bool_t slow;
         uint64_t coro_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPrepareResponse& o) {
-        m << o.res;
-        m << o.slow;
-        m << o.coro_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcPrepareResponse& o) {
         m >> o.res;
         m >> o.slow;
@@ -6282,11 +5726,6 @@ public:
         rrr::i64 tid;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitRequest& o) {
-        m << o.tid;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitRequest& o) {
         m >> o.tid;
         m >> o.dep_id;
@@ -6310,14 +5749,6 @@ public:
         Profiling profile;
         MarshallDeputy view_data;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcCommitResponse& o) {
-        m << o.res;
-        m << o.slow;
-        m << o.coro_id;
-        m << o.profile;
-        m << o.view_data;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcCommitResponse& o) {
         m >> o.res;
         m >> o.slow;
@@ -6347,11 +5778,6 @@ public:
         rrr::i64 tid;
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAbortRequest& o) {
-        m << o.tid;
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAbortRequest& o) {
         m >> o.tid;
         m >> o.dep_id;
@@ -6375,14 +5801,6 @@ public:
         Profiling profile;
         MarshallDeputy view_data;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcAbortResponse& o) {
-        m << o.res;
-        m << o.slow;
-        m << o.coro_id;
-        m << o.profile;
-        m << o.view_data;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcAbortResponse& o) {
         m >> o.res;
         m >> o.slow;
@@ -6411,10 +5829,6 @@ public:
     struct RpcEarlyAbortRequest {
         rrr::i64 tid;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcEarlyAbortRequest& o) {
-        m << o.tid;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEarlyAbortRequest& o) {
         m >> o.tid;
         return m;
@@ -6431,10 +5845,6 @@ public:
     struct RpcEarlyAbortResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcEarlyAbortResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcEarlyAbortResponse& o) {
         m >> o.res;
         return m;
@@ -6451,10 +5861,6 @@ public:
     struct RpcUpgradeEpochRequest {
         uint32_t curr_epoch;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcUpgradeEpochRequest& o) {
-        m << o.curr_epoch;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcUpgradeEpochRequest& o) {
         m >> o.curr_epoch;
         return m;
@@ -6471,10 +5877,6 @@ public:
     struct RpcUpgradeEpochResponse {
         int32_t res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcUpgradeEpochResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcUpgradeEpochResponse& o) {
         m >> o.res;
         return m;
@@ -6491,10 +5893,6 @@ public:
     struct RpcTruncateEpochRequest {
         uint32_t old_epoch;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTruncateEpochRequest& o) {
-        m << o.old_epoch;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTruncateEpochRequest& o) {
         m >> o.old_epoch;
         return m;
@@ -6510,9 +5908,6 @@ public:
 
     struct RpcTruncateEpochResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTruncateEpochResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTruncateEpochResponse& o) {
         return m;
     }
@@ -6526,10 +5921,6 @@ public:
     struct RpcIsLeaderRequest {
         locid_t cur_pause;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcIsLeaderRequest& o) {
-        m << o.cur_pause;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsLeaderRequest& o) {
         m >> o.cur_pause;
         return m;
@@ -6546,10 +5937,6 @@ public:
     struct RpcIsLeaderResponse {
         bool_t is_leader;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcIsLeaderResponse& o) {
-        m << o.is_leader;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsLeaderResponse& o) {
         m >> o.is_leader;
         return m;
@@ -6566,10 +5953,6 @@ public:
     struct RpcIsFPGALeaderRequest {
         locid_t cur_pause;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcIsFPGALeaderRequest& o) {
-        m << o.cur_pause;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsFPGALeaderRequest& o) {
         m >> o.cur_pause;
         return m;
@@ -6586,10 +5969,6 @@ public:
     struct RpcIsFPGALeaderResponse {
         bool_t is_leader;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcIsFPGALeaderResponse& o) {
-        m << o.is_leader;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcIsFPGALeaderResponse& o) {
         m >> o.is_leader;
         return m;
@@ -6606,10 +5985,6 @@ public:
     struct RpcSimpleCmdRequest {
         SimpleCommand cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSimpleCmdRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSimpleCmdRequest& o) {
         m >> o.cmd;
         return m;
@@ -6626,10 +6001,6 @@ public:
     struct RpcSimpleCmdResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSimpleCmdResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSimpleCmdResponse& o) {
         m >> o.res;
         return m;
@@ -6645,9 +6016,6 @@ public:
 
     struct RpcFailoverPauseSocketOutRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFailoverPauseSocketOutRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverPauseSocketOutRequest& o) {
         return m;
     }
@@ -6661,10 +6029,6 @@ public:
     struct RpcFailoverPauseSocketOutResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFailoverPauseSocketOutResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverPauseSocketOutResponse& o) {
         m >> o.res;
         return m;
@@ -6680,9 +6044,6 @@ public:
 
     struct RpcFailoverResumeSocketOutRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFailoverResumeSocketOutRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverResumeSocketOutRequest& o) {
         return m;
     }
@@ -6696,10 +6057,6 @@ public:
     struct RpcFailoverResumeSocketOutResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcFailoverResumeSocketOutResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcFailoverResumeSocketOutResponse& o) {
         m >> o.res;
         return m;
@@ -6715,9 +6072,6 @@ public:
 
     struct RpcRpcNullRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRpcNullRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRpcNullRequest& o) {
         return m;
     }
@@ -6730,9 +6084,6 @@ public:
 
     struct RpcRpcNullResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRpcNullResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRpcNullResponse& o) {
         return m;
     }
@@ -6748,12 +6099,6 @@ public:
         int64_t ballot;
         int32_t decision;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTapirAcceptRequest& o) {
-        m << o.cmd_id;
-        m << o.ballot;
-        m << o.decision;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirAcceptRequest& o) {
         m >> o.cmd_id;
         m >> o.ballot;
@@ -6775,9 +6120,6 @@ public:
 
     struct RpcTapirAcceptResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTapirAcceptResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirAcceptResponse& o) {
         return m;
     }
@@ -6792,11 +6134,6 @@ public:
         uint64_t cmd_id;
         std::vector<SimpleCommand> txn_cmds;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTapirFastAcceptRequest& o) {
-        m << o.cmd_id;
-        m << o.txn_cmds;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirFastAcceptRequest& o) {
         m >> o.cmd_id;
         m >> o.txn_cmds;
@@ -6816,10 +6153,6 @@ public:
     struct RpcTapirFastAcceptResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTapirFastAcceptResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirFastAcceptResponse& o) {
         m >> o.res;
         return m;
@@ -6837,11 +6170,6 @@ public:
         uint64_t cmd_id;
         rrr::i32 commit;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTapirDecideRequest& o) {
-        m << o.cmd_id;
-        m << o.commit;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirDecideRequest& o) {
         m >> o.cmd_id;
         m >> o.commit;
@@ -6860,9 +6188,6 @@ public:
 
     struct RpcTapirDecideResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTapirDecideResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTapirDecideResponse& o) {
         return m;
     }
@@ -6876,10 +6201,6 @@ public:
     struct RpcRccDispatchRequest {
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccDispatchRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchRequest& o) {
         m >> o.cmd;
         return m;
@@ -6898,12 +6219,6 @@ public:
         TxnOutput output;
         MarshallDeputy md_graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccDispatchResponse& o) {
-        m << o.res;
-        m << o.output;
-        m << o.md_graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchResponse& o) {
         m >> o.res;
         m >> o.output;
@@ -6927,11 +6242,6 @@ public:
         cmdid_t id;
         MarshallDeputy md_graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccFinishRequest& o) {
-        m << o.id;
-        m << o.md_graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccFinishRequest& o) {
         m >> o.id;
         m >> o.md_graph;
@@ -6951,10 +6261,6 @@ public:
     struct RpcRccFinishResponse {
         std::map<uint32_t, std::map<int32_t, Value>> outputs;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccFinishResponse& o) {
-        m << o.outputs;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccFinishResponse& o) {
         m >> o.outputs;
         return m;
@@ -6972,11 +6278,6 @@ public:
         txnid_t txn_id;
         int32_t rank;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccInquireRequest& o) {
-        m << o.txn_id;
-        m << o.rank;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireRequest& o) {
         m >> o.txn_id;
         m >> o.rank;
@@ -6996,10 +6297,6 @@ public:
     struct RpcRccInquireResponse {
         std::map<uint64_t, parent_set_t> out_0;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccInquireResponse& o) {
-        m << o.out_0;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireResponse& o) {
         m >> o.out_0;
         return m;
@@ -7016,10 +6313,6 @@ public:
     struct RpcRccDispatchRoRequest {
         SimpleCommand cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccDispatchRoRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchRoRequest& o) {
         m >> o.cmd;
         return m;
@@ -7036,10 +6329,6 @@ public:
     struct RpcRccDispatchRoResponse {
         std::map<rrr::i32, Value> output;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccDispatchRoResponse& o) {
-        m << o.output;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccDispatchRoResponse& o) {
         m >> o.output;
         return m;
@@ -7057,11 +6346,6 @@ public:
         txid_t tx_id;
         int32_t rank;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccInquireValidationRequest& o) {
-        m << o.tx_id;
-        m << o.rank;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireValidationRequest& o) {
         m >> o.tx_id;
         m >> o.rank;
@@ -7081,10 +6365,6 @@ public:
     struct RpcRccInquireValidationResponse {
         int32_t res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccInquireValidationResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccInquireValidationResponse& o) {
         m >> o.res;
         return m;
@@ -7103,12 +6383,6 @@ public:
         int32_t rank;
         int32_t res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccNotifyGlobalValidationRequest& o) {
-        m << o.tx_id;
-        m << o.rank;
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccNotifyGlobalValidationRequest& o) {
         m >> o.tx_id;
         m >> o.rank;
@@ -7130,9 +6404,6 @@ public:
 
     struct RpcRccNotifyGlobalValidationResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccNotifyGlobalValidationResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccNotifyGlobalValidationResponse& o) {
         return m;
     }
@@ -7146,10 +6417,6 @@ public:
     struct RpcJanusDispatchRequest {
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusDispatchRequest& o) {
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusDispatchRequest& o) {
         m >> o.cmd;
         return m;
@@ -7168,12 +6435,6 @@ public:
         TxnOutput output;
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusDispatchResponse& o) {
-        m << o.res;
-        m << o.output;
-        m << o.ret_graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusDispatchResponse& o) {
         m >> o.res;
         m >> o.output;
@@ -7199,13 +6460,6 @@ public:
         int32_t need_validation;
         parent_set_t parents;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccCommitRequest& o) {
-        m << o.id;
-        m << o.rank;
-        m << o.need_validation;
-        m << o.parents;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccCommitRequest& o) {
         m >> o.id;
         m >> o.rank;
@@ -7232,11 +6486,6 @@ public:
         int32_t res;
         TxnOutput output;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccCommitResponse& o) {
-        m << o.res;
-        m << o.output;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccCommitResponse& o) {
         m >> o.res;
         m >> o.output;
@@ -7259,13 +6508,6 @@ public:
         int32_t need_validation;
         MarshallDeputy graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusCommitRequest& o) {
-        m << o.id;
-        m << o.rank;
-        m << o.need_validation;
-        m << o.graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitRequest& o) {
         m >> o.id;
         m >> o.rank;
@@ -7292,11 +6534,6 @@ public:
         int32_t res;
         TxnOutput output;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusCommitResponse& o) {
-        m << o.res;
-        m << o.output;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitResponse& o) {
         m >> o.res;
         m >> o.output;
@@ -7318,12 +6555,6 @@ public:
         rank_t rank;
         int32_t need_validation;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusCommitWoGraphRequest& o) {
-        m << o.id;
-        m << o.rank;
-        m << o.need_validation;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitWoGraphRequest& o) {
         m >> o.id;
         m >> o.rank;
@@ -7347,11 +6578,6 @@ public:
         int32_t res;
         TxnOutput output;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusCommitWoGraphResponse& o) {
-        m << o.res;
-        m << o.output;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusCommitWoGraphResponse& o) {
         m >> o.res;
         m >> o.output;
@@ -7372,11 +6598,6 @@ public:
         epoch_t epoch;
         txnid_t txn_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusInquireRequest& o) {
-        m << o.epoch;
-        m << o.txn_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusInquireRequest& o) {
         m >> o.epoch;
         m >> o.txn_id;
@@ -7396,10 +6617,6 @@ public:
     struct RpcJanusInquireResponse {
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusInquireResponse& o) {
-        m << o.ret_graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusInquireResponse& o) {
         m >> o.ret_graph;
         return m;
@@ -7418,12 +6635,6 @@ public:
         rank_t rank;
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccPreAcceptRequest& o) {
-        m << o.txn_id;
-        m << o.rank;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccPreAcceptRequest& o) {
         m >> o.txn_id;
         m >> o.rank;
@@ -7447,11 +6658,6 @@ public:
         rrr::i32 res;
         parent_set_t x;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccPreAcceptResponse& o) {
-        m << o.res;
-        m << o.x;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccPreAcceptResponse& o) {
         m >> o.res;
         m >> o.x;
@@ -7474,13 +6680,6 @@ public:
         std::vector<SimpleCommand> cmd;
         MarshallDeputy graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusPreAcceptRequest& o) {
-        m << o.txn_id;
-        m << o.rank;
-        m << o.cmd;
-        m << o.graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptRequest& o) {
         m >> o.txn_id;
         m >> o.rank;
@@ -7507,11 +6706,6 @@ public:
         rrr::i32 res;
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusPreAcceptResponse& o) {
-        m << o.res;
-        m << o.ret_graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptResponse& o) {
         m >> o.res;
         m >> o.ret_graph;
@@ -7533,12 +6727,6 @@ public:
         rank_t rank;
         std::vector<SimpleCommand> cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusPreAcceptWoGraphRequest& o) {
-        m << o.txn_id;
-        m << o.rank;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptWoGraphRequest& o) {
         m >> o.txn_id;
         m >> o.rank;
@@ -7562,11 +6750,6 @@ public:
         rrr::i32 res;
         MarshallDeputy ret_graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusPreAcceptWoGraphResponse& o) {
-        m << o.res;
-        m << o.ret_graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusPreAcceptWoGraphResponse& o) {
         m >> o.res;
         m >> o.ret_graph;
@@ -7589,13 +6772,6 @@ public:
         ballot_t ballot;
         parent_set_t p;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccAcceptRequest& o) {
-        m << o.txn_id;
-        m << o.rank;
-        m << o.ballot;
-        m << o.p;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccAcceptRequest& o) {
         m >> o.txn_id;
         m >> o.rank;
@@ -7621,10 +6797,6 @@ public:
     struct RpcRccAcceptResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcRccAcceptResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcRccAcceptResponse& o) {
         m >> o.res;
         return m;
@@ -7644,13 +6816,6 @@ public:
         ballot_t ballot;
         MarshallDeputy graph;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusAcceptRequest& o) {
-        m << o.txn_id;
-        m << o.rank;
-        m << o.ballot;
-        m << o.graph;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusAcceptRequest& o) {
         m >> o.txn_id;
         m >> o.rank;
@@ -7676,10 +6841,6 @@ public:
     struct RpcJanusAcceptResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJanusAcceptResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJanusAcceptResponse& o) {
         m >> o.res;
         return m;
@@ -7698,12 +6859,6 @@ public:
         MarshallDeputy new_view;
         epoch_t new_view_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackBeginRecoveryRequest& o) {
-        m << o.old_view;
-        m << o.new_view;
-        m << o.new_view_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackBeginRecoveryRequest& o) {
         m >> o.old_view;
         m >> o.new_view;
@@ -7725,9 +6880,6 @@ public:
 
     struct RpcJetpackBeginRecoveryResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackBeginRecoveryResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackBeginRecoveryResponse& o) {
         return m;
     }
@@ -7742,11 +6894,6 @@ public:
         epoch_t jepoch;
         epoch_t oepoch;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPullIdSetRequest& o) {
-        m << o.jepoch;
-        m << o.oepoch;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullIdSetRequest& o) {
         m >> o.jepoch;
         m >> o.oepoch;
@@ -7771,15 +6918,6 @@ public:
         MarshallDeputy reply_new_view;
         MarshallDeputy id_set;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPullIdSetResponse& o) {
-        m << o.ok;
-        m << o.reply_jepoch;
-        m << o.reply_oepoch;
-        m << o.reply_old_view;
-        m << o.reply_new_view;
-        m << o.id_set;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullIdSetResponse& o) {
         m >> o.ok;
         m >> o.reply_jepoch;
@@ -7813,12 +6951,6 @@ public:
         epoch_t oepoch;
         MarshallDeputy key_batch;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPullCmdRequest& o) {
-        m << o.jepoch;
-        m << o.oepoch;
-        m << o.key_batch;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullCmdRequest& o) {
         m >> o.jepoch;
         m >> o.oepoch;
@@ -7846,15 +6978,6 @@ public:
         MarshallDeputy reply_new_view;
         MarshallDeputy cmd_batch;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPullCmdResponse& o) {
-        m << o.ok;
-        m << o.reply_jepoch;
-        m << o.reply_oepoch;
-        m << o.reply_old_view;
-        m << o.reply_new_view;
-        m << o.cmd_batch;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullCmdResponse& o) {
         m >> o.ok;
         m >> o.reply_jepoch;
@@ -7890,14 +7013,6 @@ public:
         int32_t rid;
         MarshallDeputy cmd_batch;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackRecordCmdRequest& o) {
-        m << o.jepoch;
-        m << o.oepoch;
-        m << o.sid;
-        m << o.rid;
-        m << o.cmd_batch;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackRecordCmdRequest& o) {
         m >> o.jepoch;
         m >> o.oepoch;
@@ -7925,9 +7040,6 @@ public:
 
     struct RpcJetpackRecordCmdResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackRecordCmdResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackRecordCmdResponse& o) {
         return m;
     }
@@ -7943,12 +7055,6 @@ public:
         epoch_t oepoch;
         ballot_t max_seen_ballot;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPrepareRequest& o) {
-        m << o.jepoch;
-        m << o.oepoch;
-        m << o.max_seen_ballot;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPrepareRequest& o) {
         m >> o.jepoch;
         m >> o.oepoch;
@@ -7979,18 +7085,6 @@ public:
         int32_t replied_sid;
         int32_t replied_set_size;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPrepareResponse& o) {
-        m << o.ok;
-        m << o.reply_jepoch;
-        m << o.reply_oepoch;
-        m << o.reply_old_view;
-        m << o.reply_new_view;
-        m << o.reply_max_seen_ballot;
-        m << o.accepted_ballot;
-        m << o.replied_sid;
-        m << o.replied_set_size;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPrepareResponse& o) {
         m >> o.ok;
         m >> o.reply_jepoch;
@@ -8035,14 +7129,6 @@ public:
         int32_t sid;
         int32_t set_size;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackAcceptRequest& o) {
-        m << o.jepoch;
-        m << o.oepoch;
-        m << o.max_seen_ballot;
-        m << o.sid;
-        m << o.set_size;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackAcceptRequest& o) {
         m >> o.jepoch;
         m >> o.oepoch;
@@ -8076,15 +7162,6 @@ public:
         MarshallDeputy reply_new_view;
         ballot_t reply_max_seen_ballot;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackAcceptResponse& o) {
-        m << o.ok;
-        m << o.reply_jepoch;
-        m << o.reply_oepoch;
-        m << o.reply_old_view;
-        m << o.reply_new_view;
-        m << o.reply_max_seen_ballot;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackAcceptResponse& o) {
         m >> o.ok;
         m >> o.reply_jepoch;
@@ -8119,13 +7196,6 @@ public:
         int32_t sid;
         int32_t set_size;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackCommitRequest& o) {
-        m << o.jepoch;
-        m << o.oepoch;
-        m << o.sid;
-        m << o.set_size;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackCommitRequest& o) {
         m >> o.jepoch;
         m >> o.oepoch;
@@ -8150,9 +7220,6 @@ public:
 
     struct RpcJetpackCommitResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackCommitResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackCommitResponse& o) {
         return m;
     }
@@ -8169,13 +7236,6 @@ public:
         int32_t sid;
         int32_t rid;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPullRecSetInsRequest& o) {
-        m << o.jepoch;
-        m << o.oepoch;
-        m << o.sid;
-        m << o.rid;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullRecSetInsRequest& o) {
         m >> o.jepoch;
         m >> o.oepoch;
@@ -8206,15 +7266,6 @@ public:
         MarshallDeputy reply_new_view;
         MarshallDeputy cmd;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackPullRecSetInsResponse& o) {
-        m << o.ok;
-        m << o.reply_jepoch;
-        m << o.reply_oepoch;
-        m << o.reply_old_view;
-        m << o.reply_new_view;
-        m << o.cmd;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackPullRecSetInsResponse& o) {
         m >> o.ok;
         m >> o.reply_jepoch;
@@ -8246,10 +7297,6 @@ public:
     struct RpcJetpackFinishRecoveryRequest {
         epoch_t oepoch;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackFinishRecoveryRequest& o) {
-        m << o.oepoch;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackFinishRecoveryRequest& o) {
         m >> o.oepoch;
         return m;
@@ -8265,9 +7312,6 @@ public:
 
     struct RpcJetpackFinishRecoveryResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcJetpackFinishRecoveryResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcJetpackFinishRecoveryResponse& o) {
         return m;
     }
@@ -11929,9 +10973,6 @@ public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcServerShutdownRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerShutdownRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerShutdownRequest& o) {
         return m;
     }
@@ -11944,9 +10985,6 @@ public:
 
     struct RpcServerShutdownResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerShutdownResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerShutdownResponse& o) {
         return m;
     }
@@ -11959,9 +10997,6 @@ public:
 
     struct RpcServerReadyRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerReadyRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerReadyRequest& o) {
         return m;
     }
@@ -11975,10 +11010,6 @@ public:
     struct RpcServerReadyResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerReadyResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerReadyResponse& o) {
         m >> o.res;
         return m;
@@ -11994,9 +11025,6 @@ public:
 
     struct RpcServerHeartBeatWithDataRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerHeartBeatWithDataRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatWithDataRequest& o) {
         return m;
     }
@@ -12010,10 +11038,6 @@ public:
     struct RpcServerHeartBeatWithDataResponse {
         ServerResponse res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerHeartBeatWithDataResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatWithDataResponse& o) {
         m >> o.res;
         return m;
@@ -12029,9 +11053,6 @@ public:
 
     struct RpcServerHeartBeatRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerHeartBeatRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatRequest& o) {
         return m;
     }
@@ -12044,9 +11065,6 @@ public:
 
     struct RpcServerHeartBeatResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcServerHeartBeatResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcServerHeartBeatResponse& o) {
         return m;
     }
@@ -12384,9 +11402,6 @@ public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcClientGetTxnNamesRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientGetTxnNamesRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientGetTxnNamesRequest& o) {
         return m;
     }
@@ -12400,10 +11415,6 @@ public:
     struct RpcClientGetTxnNamesResponse {
         std::map<rrr::i32, std::string> txn_names;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientGetTxnNamesResponse& o) {
-        m << o.txn_names;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientGetTxnNamesResponse& o) {
         m >> o.txn_names;
         return m;
@@ -12419,9 +11430,6 @@ public:
 
     struct RpcClientShutdownRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientShutdownRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientShutdownRequest& o) {
         return m;
     }
@@ -12434,9 +11442,6 @@ public:
 
     struct RpcClientShutdownResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientShutdownResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientShutdownResponse& o) {
         return m;
     }
@@ -12449,9 +11454,6 @@ public:
 
     struct RpcClientForceStopRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientForceStopRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientForceStopRequest& o) {
         return m;
     }
@@ -12464,9 +11466,6 @@ public:
 
     struct RpcClientForceStopResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientForceStopResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientForceStopResponse& o) {
         return m;
     }
@@ -12480,10 +11479,6 @@ public:
     struct RpcClientResponseRequest {
         DepId dep_id;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientResponseRequest& o) {
-        m << o.dep_id;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientResponseRequest& o) {
         m >> o.dep_id;
         return m;
@@ -12500,10 +11495,6 @@ public:
     struct RpcClientResponseResponse {
         ClientResponse res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientResponseResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientResponseResponse& o) {
         m >> o.res;
         return m;
@@ -12519,9 +11510,6 @@ public:
 
     struct RpcClientReadyRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientReadyRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyRequest& o) {
         return m;
     }
@@ -12535,10 +11523,6 @@ public:
     struct RpcClientReadyResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientReadyResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyResponse& o) {
         m >> o.res;
         return m;
@@ -12554,9 +11538,6 @@ public:
 
     struct RpcClientReadyBlockRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientReadyBlockRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyBlockRequest& o) {
         return m;
     }
@@ -12570,10 +11551,6 @@ public:
     struct RpcClientReadyBlockResponse {
         rrr::i32 res;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientReadyBlockResponse& o) {
-        m << o.res;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientReadyBlockResponse& o) {
         m >> o.res;
         return m;
@@ -12589,9 +11566,6 @@ public:
 
     struct RpcClientStartRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientStartRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientStartRequest& o) {
         return m;
     }
@@ -12604,9 +11578,6 @@ public:
 
     struct RpcClientStartResponse {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcClientStartResponse& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcClientStartResponse& o) {
         return m;
     }
@@ -12620,10 +11591,6 @@ public:
     struct RpcDispatchTxnRequest {
         TxDispatchRequest req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDispatchTxnRequest& o) {
-        m << o.req;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchTxnRequest& o) {
         m >> o.req;
         return m;
@@ -12640,10 +11607,6 @@ public:
     struct RpcDispatchTxnResponse {
         TxReply result;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcDispatchTxnResponse& o) {
-        m << o.result;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcDispatchTxnResponse& o) {
         m >> o.result;
         return m;
@@ -13283,10 +12246,6 @@ public:
     struct RpcGetConfigRequest {
         uint64_t client_version;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetConfigRequest& o) {
-        m << o.client_version;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigRequest& o) {
         m >> o.client_version;
         return m;
@@ -13305,12 +12264,6 @@ public:
         rrr::i32 has_update;
         std::string config_data;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetConfigResponse& o) {
-        m << o.current_version;
-        m << o.has_update;
-        m << o.config_data;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigResponse& o) {
         m >> o.current_version;
         m >> o.has_update;
@@ -13332,9 +12285,6 @@ public:
 
     struct RpcGetConfigVersionRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetConfigVersionRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigVersionRequest& o) {
         return m;
     }
@@ -13348,10 +12298,6 @@ public:
     struct RpcGetConfigVersionResponse {
         uint64_t version;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetConfigVersionResponse& o) {
-        m << o.version;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetConfigVersionResponse& o) {
         m >> o.version;
         return m;
@@ -13367,9 +12313,6 @@ public:
 
     struct RpcHasConfigRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHasConfigRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasConfigRequest& o) {
         return m;
     }
@@ -13383,10 +12326,6 @@ public:
     struct RpcHasConfigResponse {
         rrr::i32 has_config;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHasConfigResponse& o) {
-        m << o.has_config;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasConfigResponse& o) {
         m >> o.has_config;
         return m;
@@ -13403,10 +12342,6 @@ public:
     struct RpcSetShardingPolicyRequest {
         std::string policy_data;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSetShardingPolicyRequest& o) {
-        m << o.policy_data;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSetShardingPolicyRequest& o) {
         m >> o.policy_data;
         return m;
@@ -13423,10 +12358,6 @@ public:
     struct RpcSetShardingPolicyResponse {
         rrr::i32 success;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcSetShardingPolicyResponse& o) {
-        m << o.success;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcSetShardingPolicyResponse& o) {
         m >> o.success;
         return m;
@@ -13443,10 +12374,6 @@ public:
     struct RpcGetShardingPolicyRequest {
         uint64_t client_version;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetShardingPolicyRequest& o) {
-        m << o.client_version;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyRequest& o) {
         m >> o.client_version;
         return m;
@@ -13465,12 +12392,6 @@ public:
         rrr::i32 has_update;
         std::string policy_data;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetShardingPolicyResponse& o) {
-        m << o.current_version;
-        m << o.has_update;
-        m << o.policy_data;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyResponse& o) {
         m >> o.current_version;
         m >> o.has_update;
@@ -13492,9 +12413,6 @@ public:
 
     struct RpcGetShardingPolicyVersionRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetShardingPolicyVersionRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyVersionRequest& o) {
         return m;
     }
@@ -13508,10 +12426,6 @@ public:
     struct RpcGetShardingPolicyVersionResponse {
         uint64_t version;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcGetShardingPolicyVersionResponse& o) {
-        m << o.version;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcGetShardingPolicyVersionResponse& o) {
         m >> o.version;
         return m;
@@ -13527,9 +12441,6 @@ public:
 
     struct RpcHasShardingPolicyRequest {
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHasShardingPolicyRequest& o) {
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasShardingPolicyRequest& o) {
         return m;
     }
@@ -13543,10 +12454,6 @@ public:
     struct RpcHasShardingPolicyResponse {
         rrr::i32 has_policy;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcHasShardingPolicyResponse& o) {
-        m << o.has_policy;
-        return m;
-    }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcHasShardingPolicyResponse& o) {
         m >> o.has_policy;
         return m;

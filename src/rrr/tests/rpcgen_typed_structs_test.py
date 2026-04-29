@@ -52,15 +52,20 @@ def assert_contains(haystack: str, needle: str) -> None:
         raise AssertionError(f"expected to find snippet:\n{needle}\n")
 
 
+def assert_not_contains(haystack: str, needle: str) -> None:
+    if needle in haystack:
+        raise AssertionError(f"snippet should NOT appear (Phase 3e-2 dropped emission):\n{needle}\n")
+
+
 def verify_alpha_service_block(block: str) -> None:
     assert_contains(block, "struct RpcPingRequest {\n        rrr::i32 id;\n    };")
     assert_contains(block, "struct RpcPingResponse {\n        std::string msg;\n    };")
-    assert_contains(
+    # Workstream N Phase 3e-2: the legacy `Marshal&` operator<<
+    # emission is gone from auto-generated typed wrappers.  The
+    # matching `operator>>` stays for the request-decode path.
+    assert_not_contains(
         block,
-        "friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPingRequest& o) {\n"
-        "        m << o.id;\n"
-        "        return m;\n"
-        "    }",
+        "friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPingRequest& o)",
     )
     assert_contains(
         block,
@@ -344,12 +349,11 @@ def verify_alpha_service_block(block: str) -> None:
 def verify_beta_service_block(block: str) -> None:
     assert_contains(block, "struct RpcPingRequest {\n        rrr::i32 other_id;\n    };")
     assert_contains(block, "struct RpcPingResponse {\n        std::string echoed;\n    };")
-    assert_contains(
+    # Workstream N Phase 3e-2: see verify_alpha_service_block — the
+    # `Marshal&` operator<< emission was dropped.
+    assert_not_contains(
         block,
-        "friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPingRequest& o) {\n"
-        "        m << o.other_id;\n"
-        "        return m;\n"
-        "    }",
+        "friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcPingRequest& o)",
     )
     assert_contains(
         block,
