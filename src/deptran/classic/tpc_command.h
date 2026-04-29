@@ -7,6 +7,12 @@ namespace janus {
 
 
 class TxData;
+// Workstream N Phase 4a-3a: migrated from Marshallable to
+// Serializable. The nested `cmd_` field (shared_ptr<Marshallable>)
+// is wrapped/unwrapped through a MarshallDeputy on each save/load,
+// using the Phase 3f-prep BinaryWriteArchive/BinaryReadArchive
+// operator<<>> overloads for MarshallDeputy. Wire format byte-for-
+// byte identical to the previous Marshallable encoding.
 class TpcPrepareCommand {
  public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_TPC_PREPARE;
@@ -14,8 +20,9 @@ class TpcPrepareCommand {
   int32_t ret_ = -1;
   shared_ptr<Marshallable> cmd_{nullptr};
 
-  Marshal& to_marshal(Marshal&) const;
-  Marshal& from_marshal(Marshal&);
+  int32_t kind() const { return kMarshallKind; }
+  void save(BinaryWriteArchive& ar) const;
+  void load(BinaryReadArchive& ar);
 };
 
 class TpcCommitCommand {
@@ -85,13 +92,10 @@ public:
 
 namespace rrr {
 
-template <>
-struct TypedMarshallableAdapterTraits<janus::TpcPrepareCommand> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedMarshallableAdapter<janus::TpcPrepareCommand,
-                               MarshallDeputy::CMD_TPC_PREPARE>;
-};
+// (TpcPrepareCommand is a Serializable now — no
+// TypedMarshallableAdapter trait. See tpc_command.cc for its
+// `reg_serializable_in_deputy` registration; construction sites use
+// `wrap_serializable`.)
 
 template <>
 struct TypedMarshallableAdapterTraits<janus::TpcCommitCommand> {

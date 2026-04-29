@@ -5,8 +5,13 @@
 
 using namespace janus;
 
+// Workstream N Phase 4a-3a: TpcPrepareCommand migrated to Serializable.
+// Wire payload: tx_id (i64) | ret (i32) | nested MarshallDeputy
+// (kind | inner save bytes). Byte-for-byte identical to the previous
+// Marshallable encoding, since the nested-deputy archive operators
+// (Phase 3f-prep) match the legacy `m << md` byte layout.
 static int volatile x1 =
-    MarshallDeputy::reg_initializer<TpcPrepareCommand>(
+    rrr::reg_serializable_in_deputy<TpcPrepareCommand>(
         MarshallDeputy::CMD_TPC_PREPARE);
 
 static int volatile x2 =
@@ -38,41 +43,32 @@ static int volatile x5 =
         MarshallDeputy::CMD_TPC_BATCH);
 
 
-Marshal& TpcPrepareCommand::to_marshal(Marshal& m) const {
-  m << tx_id_;
-  m << ret_;
-//  m << (int32_t) cmd_.size();
-//  for (auto o : cmd_) {
-//    m << *o;
-//  }
-  // Pass shared_ptr directly to MarshallDeputy
+// Workstream N Phase 4a-3a: TpcPrepareCommand serialization via
+// BinaryWriteArchive / BinaryReadArchive. The nested
+// `shared_ptr<Marshallable> cmd_` field is wrapped/unwrapped through
+// a MarshallDeputy on each save/load — the Phase 3f-prep
+// `operator<<>>(BinaryWriteArchive/BinaryReadArchive, MarshallDeputy)`
+// overloads make this byte-for-byte equivalent to the legacy
+// Marshal encoding.
+void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
+  ar << tx_id_;
+  ar << ret_;
   MarshallDeputy md(cmd_);
-  m << md;
-  return m;
+  ar << md;
 }
 
-Marshal& TpcPrepareCommand::from_marshal(Marshal& m) {
-  m >> tx_id_;
-  m >> ret_;
-//  int32_t sz;
-//  m >> sz;
-//  verify(cmd_.empty());
-//  for (int i = 0; i < sz; i++) {
-//    auto o = make_shared<SimpleCommand>();
-//    m >> *o;
-//    cmd_.push_back(o);
-//  }
+void TpcPrepareCommand::load(BinaryReadArchive& ar) {
+  ar >> tx_id_;
+  ar >> ret_;
   MarshallDeputy md;
-  m >> md;
+  ar >> md;
   if (!cmd_) {
-    // Use the shared_ptr directly from MarshallDeputy
     if (md.inner() != nullptr) {
       cmd_ = md.inner();
     }
   } else {
     verify(0);
   }
-  return m;
 }
 
 Marshal& TpcCommitCommand::to_marshal(Marshal& m) const {
