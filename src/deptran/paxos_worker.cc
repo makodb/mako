@@ -18,11 +18,18 @@ std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
 
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
+// Workstream N Phase 4d-7: LogEntry and BulkPaxosCmd migrated to
+// Serializable. Wire format byte-for-byte identical (LogEntry uses
+// int length + std::string bytes; BulkPaxosCmd uses leader_id +
+// slots vec + ballots vec + cmds via Phase 3f-prep MarshallDeputy
+// archive operators). The bypass_to_socket_/entity_size/write_to_fd
+// fast path is dead code in production (no caller enables it) — see
+// the class comments and the Phase 5 cleanup TODO.
 static int volatile xx =
-    MarshallDeputy::reg_initializer<LogEntry>(
+    rrr::reg_serializable_in_deputy<LogEntry>(
         MarshallDeputy::CONTAINER_CMD);
 static int volatile xxx =
-      MarshallDeputy::reg_initializer<BulkPaxosCmd>(
+      rrr::reg_serializable_in_deputy<BulkPaxosCmd>(
           MarshallDeputy::CMD_BLK_PXS);
 // Workstream N Phase 4d-2: 5 simple paxos types migrated to
 // Serializable. Wire format byte-for-byte identical to the previous
@@ -54,38 +61,31 @@ static int volatile x9 =
           MarshallDeputy::CMD_PREP_PXS);
 
 static int shared_ptr_apprch = 1;
-Marshal& LogEntry::to_marshal(Marshal& m) const {
-  m << length;
-  //Log_info("The legnth of the log is %d", length);
-  if(shared_ptr_apprch){
-	 if(operation_test.get())
-	   m << std::string(operation_test.get(), length);
-         else
-	   m << log_entry;
-  } else{
-	  m << log_entry;
-  }
-  return m;
-};
 
-Marshal& LogEntry::from_marshal(Marshal& m) {
-  //return m;
-  m >> length;
-  if(false && shared_ptr_apprch){
-	  std::string str;
-	  m >> str;
-	  // marker:ansh check here
-	  //std::cout << str << " " << length << std::endl;
-	  Log_info("from_marshal %d", length);
-	  operation_test = shared_ptr<char>(new char[length+1]);
-	  operation_test.get()[length] = '\0';
-	  memcpy(operation_test.get(), str.c_str(), str.length());
-	  //fprintf(stderr, "%s\n", operation_test.get());
-  }else{
- 	 m >> log_entry;
+// Workstream N Phase 4d-7: LogEntry::save/load. Wire format
+// byte-for-byte preserved from the legacy to_marshal/from_marshal
+// pair. Encode: int length, then the operation_test bytes (as a
+// length-prefixed std::string) when present, else log_entry.
+// Decode: int length, then std::string into log_entry (mirrors the
+// effective branch of the legacy from_marshal — the
+// `false && shared_ptr_apprch` arm was unreachable).
+void LogEntry::save(BinaryWriteArchive& ar) const {
+  ar << length;
+  if (shared_ptr_apprch) {
+    if (operation_test.get()) {
+      ar << std::string(operation_test.get(), length);
+    } else {
+      ar << log_entry;
+    }
+  } else {
+    ar << log_entry;
   }
-  return m;
-};
+}
+
+void LogEntry::load(BinaryReadArchive& ar) {
+  ar >> length;
+  ar >> log_entry;
+}
 
 void PaxosWorker::SetupBase() {
   auto config = Config::GetConfig();

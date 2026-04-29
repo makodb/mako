@@ -363,6 +363,19 @@ class SyncNoOpRequest {
 };
 
 
+// Workstream N Phase 4d-7: migrated from TypedPaxosLogEnvelopeAdapter
+// to Serializable. Wire format byte-for-byte preserved:
+//   int length
+//   std::string log_entry-equivalent bytes
+// (the shared_ptr_apprch=1 fast path that copies operation_test bytes
+// into a temporary std::string is reproduced inside save()).
+//
+// The `bypass_to_socket_` / `entity_size` / `write_to_fd` machinery
+// is dead code in production: no code path sets `bypass_to_socket_`
+// to true, so MarshallDeputy::operator<< always takes the slow path
+// (m << kind_; inner->to_marshal(m) — which under Serializable
+// becomes inner->save(BinaryWriteArchive)). The methods are kept as
+// inert members for now; Phase 5 cleanup can prune them.
 class LogEntry {
 public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CONTAINER_CMD;
@@ -381,8 +394,12 @@ public:
     //free(operation_test.get());
   }
 
-  Marshal& to_marshal(Marshal&) const;
-  Marshal& from_marshal(Marshal&);
+  // Serializable interface (Phase 4d-7). Implementations live in
+  // paxos_worker.cc — they reference the file-static `shared_ptr_apprch`
+  // flag that gates the operation_test-vs-log_entry encoding choice.
+  int32_t kind() const { return kMarshallKind; }
+  void save(BinaryWriteArchive& ar) const;
+  void load(BinaryReadArchive& ar);
   size_t entity_size() const {
     return sizeof(int) + length_as_v64() + length;
   }
@@ -448,6 +465,20 @@ inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
   return m;
 }
 */
+// Workstream N Phase 4d-7: migrated from TypedPaxosLogEnvelopeAdapter
+// to Serializable. Wire format byte-for-byte preserved:
+//   int32_t leader_id
+//   int32_t slots.size() | N x slotid_t
+//   int32_t ballots.size() | N x ballot_t
+//   int32_t cmds.size() | N x MarshallDeputy bytes
+// The nested MarshallDeputies use the Phase 3f-prep `operator<<` /
+// `operator>>` overloads on BinaryWriteArchive / BinaryReadArchive —
+// same byte layout as legacy `m << *cmds[i]` / `m >> *cmds[i]`.
+//
+// The `bypass_to_socket_` / `entity_size` / `serialize_slots_ballots`
+// / `write_to_fd` machinery is dead code in production: no code path
+// sets `bypass_to_socket_` to true. Kept as inert members for now;
+// Phase 5 cleanup can prune them.
 class BulkPaxosCmd {
 public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_BLK_PXS;
@@ -464,50 +495,47 @@ public:
       ballots.clear();
       cmds.clear();
   }
-  Marshal& to_marshal(Marshal& m) const {
-      m << (int32_t) leader_id;
-      m << (int32_t) slots.size();
-      for(auto i : slots){
-          m << i;
+
+  int32_t kind() const { return kMarshallKind; }
+
+  void save(BinaryWriteArchive& ar) const {
+      ar << static_cast<int32_t>(leader_id);
+      ar << static_cast<int32_t>(slots.size());
+      for (auto i : slots) {
+          ar << i;
       }
-      m << (int32_t) ballots.size();
-      for(auto i : ballots){
-          m << i;
+      ar << static_cast<int32_t>(ballots.size());
+      for (auto i : ballots) {
+          ar << i;
       }
-      m << (int32_t) cmds.size();
-      for (auto sp : cmds) {
-        auto p = sp.get();
-          m << *p;
+      ar << static_cast<int32_t>(cmds.size());
+      for (const auto& sp : cmds) {
+          ar << *sp;
       }
-      return m;
   }
 
-  Marshal& from_marshal(Marshal& m) {
-      //return m;
+  void load(BinaryReadArchive& ar) {
       int32_t szs, szb, szc;
-      m >> leader_id;
-      m >> szs;
+      ar >> leader_id;
+      ar >> szs;
       for (int i = 0; i < szs; i++) {
           slotid_t x;
-          m >> x;
+          ar >> x;
           slots.push_back(x);
       }
-      //return m;
-      m >> szb;
-      // Read exactly the number of ballots that were serialized
+      ar >> szb;
+      // Read exactly the number of ballots that were serialized.
       for (int i = 0; i < szb; i++) {
           ballot_t x;
-          m >> x;
+          ar >> x;
           ballots.push_back(x);
       }
-      m >> szc;
+      ar >> szc;
       for (int i = 0; i < szc; i++) {
-        auto x = new MarshallDeputy;
-        m >> *x;
-        auto sp_md = shared_ptr<MarshallDeputy>(x);
-        cmds.push_back(sp_md);
+          auto sp_md = std::make_shared<MarshallDeputy>();
+          ar >> *sp_md;
+          cmds.push_back(std::move(sp_md));
       }
-      return m;
   }
 
   size_t entity_size() const {
@@ -888,21 +916,12 @@ class TypedPaxosLogEnvelopeAdapter : public Marshallable {
 // `vector<shared_ptr<MarshallDeputy>>` field uses the Phase 3f-prep
 // MarshallDeputy archive operators on BinaryWriteArchive /
 // BinaryReadArchive.)
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::LogEntry> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedPaxosLogEnvelopeAdapter<janus::LogEntry,
-                                   MarshallDeputy::CONTAINER_CMD>;
-};
-
-template <>
-struct TypedMarshallableAdapterTraits<janus::BulkPaxosCmd> {
-  static constexpr bool kEnabled = true;
-  using Adapter =
-      TypedPaxosLogEnvelopeAdapter<janus::BulkPaxosCmd,
-                                   MarshallDeputy::CMD_BLK_PXS>;
-};
+//
+// (Phase 4d-7: LogEntry and BulkPaxosCmd migrated to Serializable.
+// `TypedPaxosLogEnvelopeAdapter` is now unused — left in place for a
+// brief deprecation window and a follow-up cleanup commit can remove
+// it. `bypass_to_socket_`, `entity_size`, `write_to_fd` on the inner
+// types are dead code (no production path enables `bypass_to_socket_`)
+// — Phase 5 will prune those alongside the wider Marshallable cleanup.)
 
 }  // namespace rrr
