@@ -4,6 +4,7 @@
 #include "commo.h"
 #include "server.h"
 #include "frame.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"  // wrap_serializable
 
 // #define DO_FINALIZE
 
@@ -125,7 +126,7 @@ start_prepare:
        * There are < [f+1]/2 replies r 2 S with fast-accepted as their
        * progress. Then pick no-op with an empty dependency.
        */
-      cmd_now_ = wrap_typed_marshallable(make_shared<TpcNoopCommand>());  // no-op
+      cmd_now_ = rrr::wrap_serializable(make_shared<TpcNoopCommand>());  // no-op
       dep_ = 0;
     } else if (n_fastac >= maxFail()) {
       /**
@@ -146,7 +147,7 @@ start_prepare:
       dep_ = curr_ins->dep_id;
     }
   } else if (sq_quorum->GetCmds(Status::NOT_ACCEPTED).size() >= maxFail() + 1) {
-    cmd_now_ = wrap_typed_marshallable(make_shared<TpcNoopCommand>());  // no-op
+    cmd_now_ = rrr::wrap_serializable(make_shared<TpcNoopCommand>());  // no-op
     dep_ = 0;
   } else {
     // retry with higher ballot number

@@ -158,6 +158,30 @@ inline SerializableProxy as_serializable(const MarshallDeputy& md) {
   return as_serializable(std::move(inner));
 }
 
+// Wrap a `shared_ptr<T>` typed payload as a `shared_ptr<Marshallable>`
+// via the Serializable adapter chain. Intended as the Phase 4
+// replacement for `wrap_typed_marshallable<T>(...)` when T has been
+// migrated from Marshallable to Serializable.
+//
+// Semantics: COPY. The new SerializableProxy owns a fresh T copy-
+// constructed from `*typed`. The caller's `typed` shared_ptr is left
+// pointing to its original instance, which is now SEPARATE from the
+// proxy's instance — mutations on one don't reflect in the other.
+//
+// For Phase 4 migrations of stateless command types
+// (`TpcNoopCommand`, etc.) this is fine: there's nothing to alias.
+// For types with embedded synchronization state (e.g.
+// `TpcEmptyCommand`'s `event` member), the leader-local
+// "wrap_then_apply-locally" pattern requires aliasing — a future
+// `wrap_serializable_aliased<T>` helper that holds the typed
+// shared_ptr inside the adapter will land when needed.
+template<typename T>
+inline std::shared_ptr<Marshallable> wrap_serializable(
+    std::shared_ptr<T> typed) {
+  verify(typed != nullptr);
+  return as_marshallable(make_serializable_proxy<T>(*typed));
+}
+
 // ---- MarshallDeputy ↔ Serializable registration --------------------
 //
 // Phase 4 prep: register a Serializable type T (one with `save`,

@@ -1,6 +1,7 @@
 #include "server.h"
 #include "frame.h"
 #include "coordinator.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"  // wrap_serializable
 
 // #define DEBUG
 #define WAIT_AT_UNCOMMIT
@@ -221,7 +222,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   log_infos_[is_pilot].current_slot = std::max(slot, log_infos_[is_pilot].current_slot);
   if (!ins) {
     // this entry is too old that it's already freed
-    ret_cmd->set_marshallable(wrap_typed_marshallable(make_shared<TpcNoopCommand>()));
+    ret_cmd->set_marshallable(rrr::wrap_serializable(make_shared<TpcNoopCommand>()));
     *dep = 0;
     *status = Status::EXECUTED;
     *max_ballot = ballot;
@@ -249,7 +250,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   if (ins->cmd)
     ret_cmd->set_marshallable(ins->cmd);
   else
-    ret_cmd->set_marshallable(wrap_typed_marshallable(make_shared<TpcNoopCommand>()));
+    ret_cmd->set_marshallable(rrr::wrap_serializable(make_shared<TpcNoopCommand>()));
   *dep = ins->dep_id;
   *status = ins->status;
 
