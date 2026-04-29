@@ -24,7 +24,8 @@ class CoordinatorMultiPaxos : public Coordinator {
   bool in_prepare_ = false; // debug
   bool in_accept = false; // debug
   bool in_commit = false;
-  bool in_forward = false; //debug
+  // Workstream N Phase 4e-14: removed `bool in_forward = false;` —
+  // declared but never written or read.
   shared_ptr<Marshallable> cmd_{nullptr};
   vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md{};
   CoordinatorMultiPaxos(uint32_t coo_id,

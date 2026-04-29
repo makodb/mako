@@ -22,8 +22,9 @@ class CoordinatorFpgaRaft : public Coordinator {
     return (FpgaRaftCommo *) commo_;
   }
   bool in_submission_ = false; // debug;
-  bool in_prepare_ = false; // debug
-  bool in_accept = false; // debug
+  // Workstream N Phase 4e-14: removed `in_prepare_` and `in_accept`
+  // debug-guard fields — neither was ever written or read in the
+  // fpga_raft path.
   bool in_append_entries = false; // debug
   uint64_t minIndex = 0;
 

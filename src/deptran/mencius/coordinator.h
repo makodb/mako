@@ -22,7 +22,8 @@ class CoordinatorMencius : public Coordinator {
   bool in_submission_ = false; // debug;
   bool in_prepare_ = false; // debug
   bool in_suggest = false; // debug
-  bool in_forward = false; //debug
+  // Workstream N Phase 4e-14: removed `bool in_forward = false;` —
+  // declared but never written or read.
   shared_ptr<Marshallable> cmd_{nullptr};
   CoordinatorMencius(uint32_t coo_id,
                         int32_t benchmark,
