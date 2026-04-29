@@ -326,7 +326,7 @@ def verify_alpha_service_block(block: str) -> None:
         "            rrr::DeferredReply __defer__(\n"
         "                std::move(req),\n"
         "                weak_sconn,\n"
-        "                [__typed_resp__](rrr::Marshal& m) {\n"
+        "                [__typed_resp__](rrr::BinaryWriteArchive& m) {\n"
         "                    m << __typed_resp__->sequence;\n"
         "                },\n"
         "                []() {});\n"

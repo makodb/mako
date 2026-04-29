@@ -902,7 +902,7 @@ private:
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->result;
                 },
                 []() {});
