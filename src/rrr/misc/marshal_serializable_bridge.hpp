@@ -74,10 +74,12 @@ class SerializableMarshallableAdapter : public Marshallable {
     return in;
   }
 
-  // The SerializableProxy is owned exclusively by this adapter; we
-  // never re-expose it externally. Callers needing the proxy go
-  // through `as_serializable(MarshallDeputy)` or similar paths that
-  // construct a fresh proxy.
+  // Expose the inner SerializableProxy so callers can downcast to the
+  // underlying T via `pro::proxy_cast<T*>(&adapter.proxy_mut())`. Used
+  // by `serializable_cast<T>` below.
+  SerializableProxy& proxy_mut() { return serializable_; }
+  const SerializableProxy& proxy_view() const { return serializable_; }
+
  private:
   // mutable so the const-only `to_marshal` can call `serializable_->save`
   // through pro::proxy's non-const operator-> (the proxy is mutable
@@ -191,6 +193,48 @@ inline int reg_serializable_in_deputy(int32_t kind) {
         make_marshallable_proxy(marsh));
     return state;
   });
+}
+
+// Cast a `shared_ptr<Marshallable>` (typically from
+// `MarshallDeputy::inner()`) back to the underlying Serializable type
+// `T`. Returns nullptr if the value is null, or if it does not wrap a
+// `T` via `SerializableMarshallableAdapter`.
+//
+// Phase 4 migrations replace `marshallable_cast<T>(md.inner())` with
+// `serializable_cast<T>(md.inner())` for types moved from
+// `Marshallable` to `Serializable`. The two coexist during the
+// migration window: the old call site stays working for unmigrated
+// types, the new one for migrated ones.
+//
+// Returns a raw `T*` rather than a `shared_ptr<T>` because the
+// underlying T is owned by the proxy (heap-allocated inplace by
+// `pro::make_proxy`), not by an external shared_ptr. The pointer is
+// valid for the lifetime of the SerializableMarshallableAdapter
+// instance — typically as long as the MarshallDeputy holding it.
+template <typename T>
+inline T* serializable_cast(const std::shared_ptr<Marshallable>& value) {
+  if (value == nullptr) return nullptr;
+  auto adapter = std::dynamic_pointer_cast<SerializableMarshallableAdapter>(
+      value);
+  if (adapter == nullptr) return nullptr;
+  // `proxy_cast` is a friend function injected by
+  // `pro::skills::indirect_rtti`. Found via ADL on the
+  // proxy_indirect_accessor returned by `*proxy`. Returns nullptr if
+  // the wrapped type is not T (no exception).
+  return proxy_cast<T>(&*adapter->proxy_mut());
+}
+
+template <typename T>
+inline T* serializable_cast(Marshallable* value) {
+  if (value == nullptr) return nullptr;
+  auto* adapter = dynamic_cast<SerializableMarshallableAdapter*>(value);
+  if (adapter == nullptr) return nullptr;
+  return proxy_cast<T>(&*adapter->proxy_mut());
+}
+
+template <typename T>
+inline T* serializable_cast(const MarshallDeputy& md) {
+  return serializable_cast<T>(md.inner());
 }
 
 }  // namespace rrr

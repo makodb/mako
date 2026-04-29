@@ -1203,6 +1203,12 @@ view->save(writer);  // bytes match md.inner()->to_marshal(...)
 // MarshallDeputy::operator>> can decode an instance of it from the
 // wire. Mirrors the pattern of MarshallDeputy::reg_initializer<T>.
 static int _reg = rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
+
+// Recover the typed payload from a MarshallDeputy populated via the
+// Serializable factory path. Returns nullptr on type mismatch — the
+// Phase 4 replacement for `marshallable_cast<T>(md.inner())` when T
+// is Serializable.
+MyCommand* p = rrr::serializable_cast<MyCommand>(md);
 ```
 
 #### `rpcgen --archive` emission flag (transitional)
