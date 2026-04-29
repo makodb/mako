@@ -350,6 +350,20 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, ParentEdge<RccTx> &e) {
   return m;
 }
 
+// Workstream N Phase 3e: archive operators for ParentEdge<RccTx>
+// (mirrors the Marshal-based pair byte-for-byte). Used by rcc_rpc.h's
+// archive emission to serialize parent_set_t fields (a typedef for
+// vector<pair<txid_t, ParentEdge<RccTx>>>).
+inline rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const ParentEdge<RccTx> &e) {
+  ar << e.partitions_;
+  return ar;
+}
+
+inline rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, ParentEdge<RccTx> &e) {
+  ar >> e.partitions_;
+  return ar;
+}
+
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const RccTx &ti) {
 //  m << ti.tid_ << ti.status() << ti.partition_ << ti.parents_;
   verify(0);

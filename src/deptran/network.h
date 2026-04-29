@@ -1,10 +1,13 @@
 #pragma once
 
 #include "rrr/rrr.hpp"
+#include <rusty/async.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/result.hpp>
 
 #include <errno.h>
 #include <memory>
-#include <rusty/box.hpp>
 
 
 namespace network_client {
@@ -23,6 +26,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnRmwResponse {
     };
@@ -31,6 +42,12 @@ public:
     }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnRmwResponse& o) {
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwResponse& o) {
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwResponse& o) {
+        return ar;
     }
 
     struct RpcTxnReadRequest {
@@ -44,6 +61,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnReadResponse {
     };
@@ -52,6 +77,12 @@ public:
     }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnReadResponse& o) {
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) {
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) {
+        return ar;
     }
 
     struct RpcTxnNewOrderRequest {
@@ -65,6 +96,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnNewOrderResponse {
     };
@@ -73,6 +112,12 @@ public:
     }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnNewOrderResponse& o) {
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderResponse& o) {
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderResponse& o) {
+        return ar;
     }
 
     struct RpcTxnPaymentRequest {
@@ -86,6 +131,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnPaymentResponse {
     };
@@ -94,6 +147,12 @@ public:
     }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnPaymentResponse& o) {
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentResponse& o) {
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentResponse& o) {
+        return ar;
     }
 
     struct RpcTxnDeliveryRequest {
@@ -107,6 +166,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnDeliveryResponse {
     };
@@ -115,6 +182,12 @@ public:
     }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnDeliveryResponse& o) {
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryResponse& o) {
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryResponse& o) {
+        return ar;
     }
 
     struct RpcTxnOrderStatusRequest {
@@ -128,6 +201,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnOrderStatusResponse {
     };
@@ -136,6 +217,12 @@ public:
     }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnOrderStatusResponse& o) {
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusResponse& o) {
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusResponse& o) {
+        return ar;
     }
 
     struct RpcTxnStockLevelRequest {
@@ -149,6 +236,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnStockLevelResponse {
     };
@@ -157,6 +252,12 @@ public:
     }
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnStockLevelResponse& o) {
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelResponse& o) {
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelResponse& o) {
+        return ar;
     }
 
     enum {

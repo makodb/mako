@@ -1,10 +1,13 @@
 #pragma once
 
 #include "rrr/rrr.hpp"
+#include <rusty/async.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/result.hpp>
 
 #include <errno.h>
 #include <memory>
-#include <rusty/box.hpp>
 
 
 namespace helloworld_client {
@@ -23,6 +26,14 @@ public:
         m >> o._req;
         return m;
     }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) {
+        ar << o._req;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) {
+        ar >> o._req;
+        return ar;
+    }
 
     struct RpcTxnReadResponse {
         rrr::i32 val;
@@ -34,6 +45,14 @@ public:
     friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnReadResponse& o) {
         m >> o.val;
         return m;
+    }
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) {
+        ar << o.val;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) {
+        ar >> o.val;
+        return ar;
     }
 
     enum {
