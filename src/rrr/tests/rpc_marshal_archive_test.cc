@@ -1561,5 +1561,99 @@ TEST(SerializableCast, MutationVisibleThroughProxy) {
   EXPECT_EQ(decoded.header, 999);
 }
 
+// ---- Aliased wrap (Phase 4a-2) ---------------------------------------
+
+TEST(WrapSerializableAliased, PreservesSharedPtrAliasing) {
+  // wrap_serializable_aliased holds a shared_ptr<T> inside the
+  // adapter, so the proxy and the caller's shared_ptr reference the
+  // SAME T instance. Mutations through either are visible to the
+  // other.
+  auto sp = std::make_shared<CanaryDeputyCommand>();
+  sp->header = 100;
+  sp->name = "before";
+
+  auto marsh = wrap_serializable_aliased<CanaryDeputyCommand>(sp);
+  ASSERT_NE(marsh, nullptr);
+  EXPECT_EQ(marsh->kind(), CanaryDeputyCommand::kKind);
+
+  // Mutate through the original shared_ptr.
+  sp->header = 200;
+  sp->name = "after";
+
+  // Save through the Marshallable interface; bytes should reflect the
+  // mutation (proves the proxy aliases the same instance).
+  Marshal m;
+  marsh->to_marshal(m);
+  auto bytes = drain_marshal(m);
+
+  // Independently decode and verify.
+  BufferSource src(bytes.data(), bytes.size());
+  BinaryReadArchive reader(&src);
+  CanaryDeputyCommand decoded;
+  decoded.load(reader);
+  EXPECT_EQ(decoded.name, "after");
+  EXPECT_EQ(decoded.header, 200);
+}
+
+TEST(SerializableCast, RecoversAliasedTypedPayload) {
+  // serializable_cast<T> should also recover T from an aliased wrap
+  // (SerializableSharedPtrAdapter<T> shape), returning a pointer
+  // aliasing the caller's shared_ptr<T>.
+  auto sp = std::make_shared<CanaryDeputyCommand>();
+  sp->header = 7;
+  sp->name = "aliased";
+
+  auto marsh = wrap_serializable_aliased<CanaryDeputyCommand>(sp);
+  CanaryDeputyCommand* p = serializable_cast<CanaryDeputyCommand>(marsh);
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(p, sp.get())
+      << "serializable_cast on an aliased wrap should return the same "
+         "instance as the caller's shared_ptr";
+  EXPECT_EQ(p->header, 7);
+  EXPECT_EQ(p->name, "aliased");
+
+  // Mutate through the recovered pointer.
+  p->header = 42;
+  // The caller's shared_ptr observes the mutation (aliased).
+  EXPECT_EQ(sp->header, 42);
+}
+
+TEST(WrapSerializableAliased, RoundTripsThroughMarshallDeputy) {
+  // Encode an aliased wrap into a MarshallDeputy → wire bytes →
+  // decode through the registered factory. The READ side gets a fresh
+  // (non-aliased) instance via reg_serializable_in_deputy, so
+  // serializable_cast there returns a different pointer — but bytes
+  // match.
+  auto sp = std::make_shared<CanaryDeputyCommand>();
+  sp->header = 333;
+  sp->name = "round trip aliased";
+  sp->values = {1, 2, 3};
+
+  // Wrap aliased; build deputy.
+  auto marsh = wrap_serializable_aliased<CanaryDeputyCommand>(sp);
+  MarshallDeputy md_orig{marsh};
+
+  // Encode via Marshal, decode into fresh deputy.
+  Marshal m;
+  m << md_orig;
+  auto bytes = drain_marshal(m);
+
+  Marshal m2;
+  m2.write(bytes.data(), bytes.size());
+  MarshallDeputy md_decoded;
+  m2 >> md_decoded;
+
+  // The decoded side has a value-semantic proxy (created by the
+  // factory). serializable_cast<T> works on either shape.
+  CanaryDeputyCommand* recovered =
+      serializable_cast<CanaryDeputyCommand>(md_decoded);
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_NE(recovered, sp.get())
+      << "decoded side should be a fresh instance (factory creates new T)";
+  EXPECT_EQ(recovered->header, 333);
+  EXPECT_EQ(recovered->name, "round trip aliased");
+  EXPECT_EQ(recovered->values, (std::vector<int32_t>{1, 2, 3}));
+}
+
 }  // namespace
 }  // namespace rrr

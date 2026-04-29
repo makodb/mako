@@ -13,8 +13,15 @@ static int volatile x2 =
     MarshallDeputy::reg_initializer<TpcCommitCommand>(
         MarshallDeputy::CMD_TPC_COMMIT);
 
+// Workstream N Phase 4a-2: TpcEmptyCommand migrated to Serializable.
+// Wire payload is empty (no fields); on the wire this is byte-for-byte
+// identical to the previous Marshallable encoding. Construction sites
+// use `wrap_serializable_aliased<T>` to preserve `event` member
+// aliasing for the leader-local sender↔apply sync. The read-side
+// factory uses value semantics (creates a fresh TpcEmptyCommand with
+// its own BoxEvent — nothing's waiting on it on the receiver).
 static int volatile x3 =
-    MarshallDeputy::reg_initializer<TpcEmptyCommand>(
+    rrr::reg_serializable_in_deputy<TpcEmptyCommand>(
         MarshallDeputy::CMD_TPC_EMPTY);
 
 // Workstream N Phase 4a-1: TpcNoopCommand migrated from Marshallable
@@ -105,13 +112,8 @@ Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
   return m;
 }
 
-Marshal& TpcEmptyCommand::to_marshal(Marshal& m) const {
-  return m;
-}
-
-Marshal& TpcEmptyCommand::from_marshal(Marshal& m) {
-  return m;
-}
+// (TpcEmptyCommand's Marshal-based serialization removed in Phase
+// 4a-2; see save/load methods inline in tpc_command.h.)
 
 // (TpcNoopCommand's Marshal-based serialization removed in Phase 4a-1;
 // see save/load methods inline in tpc_command.h.)

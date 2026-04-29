@@ -6,6 +6,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"  // wrap_serializable_aliased
 
 
 namespace janus {
@@ -248,7 +249,11 @@ bool FpgaRaftServer::RequestVote() {
     auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
     verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
-    auto sp_m = wrap_typed_marshallable(empty_cmd);
+    // Phase 4a-2: aliased wrap. (This site's empty_cmd is fire-and-
+    // forget — no Wait() is called — but using the aliased wrap is
+    // consistent with the migration pattern and preserves the option
+    // of synchronizing later if desired.)
+    auto sp_m = rrr::wrap_serializable_aliased(empty_cmd);
     ((CoordinatorFpgaRaft*)co)->Submit(sp_m);
     
     //RequestVote2FPGA() ;

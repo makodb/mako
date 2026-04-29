@@ -3,6 +3,7 @@
 #include "../procedure.h"
 #include "../coordinator.h"
 #include "../2pl/tx.h"
+#include "rrr/misc/marshal_serializable_bridge.hpp"  // serializable_cast
 #include "scheduler.h"
 #include "tpc_command.h"
 #include "tx.h"
@@ -391,8 +392,12 @@ int SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {
     verify(c != nullptr);
     CommitReplicated(*c);
   } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_EMPTY) {
-    // do nothing
-    auto c = marshallable_cast<TpcEmptyCommand>(cmd);
+    // Phase 4a-2: TpcEmptyCommand is now a Serializable; the apply
+    // path's Done() must wake the original sender's Wait() — possible
+    // because construction sites use `wrap_serializable_aliased`,
+    // which preserves shared_ptr aliasing through the proxy. On the
+    // leader, `c` here aliases the sender's instance.
+    auto* c = serializable_cast<TpcEmptyCommand>(cmd);
     verify(c != nullptr);
     c->Done();
   } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_BATCH) {

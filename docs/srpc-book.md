@@ -1228,17 +1228,19 @@ self-contained user structs — they regenerate cleanly under
 `rpcgen_compile_test.py`.
 
 Status: Phase 1 (primitives, containers, FdSink/FdSource), Phase 2
-(`SerializableProxy` + registry), Phase 3a/3b (Marshal↔Archive and
-Marshallable↔Serializable bridges), Phase 3c (`rpcgen --archive`
-flag), Phase 3b-2 (`reg_serializable_in_deputy`), and Phase 3b-3
-(`serializable_cast<T>` + RTTI on `SerializableFacade`) have landed.
-Phase 4a-1 has done the first real per-command migration:
-`TpcNoopCommand` was flipped from Marshallable to Serializable in a
-single commit (registration via `reg_serializable_in_deputy`,
-construction via `wrap_serializable`, recovery via
-`serializable_cast`). Phase 3d–3f (reactor TX/RX path on Sink/Source,
-default emission switch, `MarshallDeputy` internals rewrite) and
-Phase 4 follow-on migrations are upcoming. See
+(`SerializableProxy` + registry), Phase 3a/3b
+(Marshal↔Archive and Marshallable↔Serializable bridges), Phase 3c
+(`rpcgen --archive` flag), Phase 3b-2
+(`reg_serializable_in_deputy`), Phase 3b-3 (`serializable_cast<T>` +
+RTTI on `SerializableFacade`), Phase 4a-1 (`TpcNoopCommand`
+migration via value-semantic `wrap_serializable`), and Phase 4a-2
+(`TpcEmptyCommand` migration via aliased-semantic
+`wrap_serializable_aliased` — `SerializableSharedPtrAdapter<T>`
+preserves the caller's `shared_ptr<T>` identity through the proxy
+so the apply path's `Done()` wakes the sender's `Wait()`) have
+landed. Phase 3d–3f (reactor TX/RX path on Sink/Source, default
+emission switch, `MarshallDeputy` internals rewrite) and Phase 4
+follow-on migrations are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 

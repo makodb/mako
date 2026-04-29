@@ -171,15 +171,58 @@ inline SerializableProxy as_serializable(const MarshallDeputy& md) {
 // For Phase 4 migrations of stateless command types
 // (`TpcNoopCommand`, etc.) this is fine: there's nothing to alias.
 // For types with embedded synchronization state (e.g.
-// `TpcEmptyCommand`'s `event` member), the leader-local
-// "wrap_then_apply-locally" pattern requires aliasing — a future
-// `wrap_serializable_aliased<T>` helper that holds the typed
-// shared_ptr inside the adapter will land when needed.
+// `TpcEmptyCommand`'s `event` member), use `wrap_serializable_aliased`
+// below instead — it preserves the caller's `shared_ptr` aliasing.
 template<typename T>
 inline std::shared_ptr<Marshallable> wrap_serializable(
     std::shared_ptr<T> typed) {
   verify(typed != nullptr);
   return as_marshallable(make_serializable_proxy<T>(*typed));
+}
+
+// Aliased Serializable adapter: holds a `shared_ptr<T>` and forwards
+// `save` / `load` / `kind` to the pointed-to T. The proxy and the
+// caller's `shared_ptr<T>` reference the SAME T instance — mutations
+// through one are visible to the other.
+//
+// Used by `wrap_serializable_aliased`. Construction takes the
+// shared_ptr by value (move-able), then exposes the inner shared_ptr
+// via `typed()` so `serializable_cast<T>` can recover it.
+template<typename T>
+class SerializableSharedPtrAdapter {
+ public:
+  explicit SerializableSharedPtrAdapter(std::shared_ptr<T> typed)
+      : typed_(std::move(typed)) {
+    verify(typed_ != nullptr);
+  }
+
+  int32_t kind() const { return typed_->kind(); }
+  void save(BinaryWriteArchive& ar) const { typed_->save(ar); }
+  void load(BinaryReadArchive& ar) { typed_->load(ar); }
+
+  std::shared_ptr<T> typed() const { return typed_; }
+
+ private:
+  std::shared_ptr<T> typed_;
+};
+
+// Wrap a `shared_ptr<T>` typed payload as a `shared_ptr<Marshallable>`
+// PRESERVING aliasing: the resulting Marshallable's underlying data is
+// the SAME T instance as `*typed`. Mutations through `typed` after the
+// wrap are visible to the encoded value (and vice versa for the
+// underlying T's state).
+//
+// Required for command types with embedded sender↔apply
+// synchronization (e.g., `TpcEmptyCommand`'s `event` member, where
+// the apply path on the leader needs to call `Done()` on the sender's
+// instance to wake `Wait()`).
+template<typename T>
+inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
+    std::shared_ptr<T> typed) {
+  verify(typed != nullptr);
+  return as_marshallable(
+      make_serializable_proxy<SerializableSharedPtrAdapter<T>>(
+          std::move(typed)));
 }
 
 // ---- MarshallDeputy ↔ Serializable registration --------------------
@@ -221,20 +264,25 @@ inline int reg_serializable_in_deputy(int32_t kind) {
 
 // Cast a `shared_ptr<Marshallable>` (typically from
 // `MarshallDeputy::inner()`) back to the underlying Serializable type
-// `T`. Returns nullptr if the value is null, or if it does not wrap a
-// `T` via `SerializableMarshallableAdapter`.
+// `T`. Returns nullptr if the value is null, or if it does not wrap
+// `T` via either `SerializableMarshallableAdapter` shape:
+//
+//   - Value-semantic: proxy holds T directly (created by
+//     `make_serializable_proxy<T>`, via `wrap_serializable` or the
+//     `reg_serializable_in_deputy` factory).
+//   - Aliased: proxy holds `SerializableSharedPtrAdapter<T>`, which
+//     in turn holds a `shared_ptr<T>` (created by
+//     `wrap_serializable_aliased`).
+//
+// The returned `T*` aliases the proxy's owned T; valid for the
+// lifetime of the SerializableMarshallableAdapter (typically as long
+// as the MarshallDeputy holding it).
 //
 // Phase 4 migrations replace `marshallable_cast<T>(md.inner())` with
 // `serializable_cast<T>(md.inner())` for types moved from
 // `Marshallable` to `Serializable`. The two coexist during the
 // migration window: the old call site stays working for unmigrated
 // types, the new one for migrated ones.
-//
-// Returns a raw `T*` rather than a `shared_ptr<T>` because the
-// underlying T is owned by the proxy (heap-allocated inplace by
-// `pro::make_proxy`), not by an external shared_ptr. The pointer is
-// valid for the lifetime of the SerializableMarshallableAdapter
-// instance — typically as long as the MarshallDeputy holding it.
 template <typename T>
 inline T* serializable_cast(const std::shared_ptr<Marshallable>& value) {
   if (value == nullptr) return nullptr;
@@ -245,7 +293,16 @@ inline T* serializable_cast(const std::shared_ptr<Marshallable>& value) {
   // `pro::skills::indirect_rtti`. Found via ADL on the
   // proxy_indirect_accessor returned by `*proxy`. Returns nullptr if
   // the wrapped type is not T (no exception).
-  return proxy_cast<T>(&*adapter->proxy_mut());
+  // Try value-semantic shape first.
+  if (auto* p = proxy_cast<T>(&*adapter->proxy_mut())) {
+    return p;
+  }
+  // Try aliased shape.
+  if (auto* sptr_adapter = proxy_cast<SerializableSharedPtrAdapter<T>>(
+          &*adapter->proxy_mut())) {
+    return sptr_adapter->typed().get();
+  }
+  return nullptr;
 }
 
 template <typename T>
@@ -253,7 +310,14 @@ inline T* serializable_cast(Marshallable* value) {
   if (value == nullptr) return nullptr;
   auto* adapter = dynamic_cast<SerializableMarshallableAdapter*>(value);
   if (adapter == nullptr) return nullptr;
-  return proxy_cast<T>(&*adapter->proxy_mut());
+  if (auto* p = proxy_cast<T>(&*adapter->proxy_mut())) {
+    return p;
+  }
+  if (auto* sptr_adapter = proxy_cast<SerializableSharedPtrAdapter<T>>(
+          &*adapter->proxy_mut())) {
+    return sptr_adapter->typed().get();
+  }
+  return nullptr;
 }
 
 template <typename T>
