@@ -72,7 +72,9 @@ Value& TxWorkspace::operator[](size_t idx) {
 
 TxData::TxData() {
   clock_gettime(&start_time_);
-  read_only_failed_ = false;
+  // Workstream N Phase 4e-4: removed `read_only_failed_ = false;`
+  // (the field went away with its only remaining writer; default
+  // initialization for the bool was already false anyway).
   pre_time_ = timespec2ms(start_time_);
   early_return_ = Config::GetConfig()->do_early_return();
 }
@@ -237,16 +239,9 @@ bool TxData::IsOneRound() {
   return false;
 }
 
-vector<TxPieceData> TxData::GetCmdsByPartitionAndRank(parid_t par_id, rank_t rank) {
-  vector<TxPieceData> cmds;
-  for (auto& pair: map_piece_data_) {
-    auto d = pair.second;
-    if (d->partition_id_ == par_id && d->rank_ == rank) {
-      cmds.push_back(*d);
-    }
-  }
-  return cmds;
-}
+// Workstream N Phase 4e-4: removed `vector<TxPieceData>
+// TxData::GetCmdsByPartitionAndRank(parid_t, rank_t)` — declared and
+// defined but never called anywhere in the codebase.
 
 vector<TxPieceData> TxData::GetCmdsByPartition(parid_t par_id) {
   vector<TxPieceData> cmds;
@@ -308,45 +303,12 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
   return ready_pieces_data;
 }
 
-shared_ptr<TxPieceData> TxData::GetNextReadySubCmd() {
-  verify(0);
-  verify(n_pieces_dispatched_ < n_pieces_dispatchable_);
-  verify(n_pieces_dispatched_ < n_pieces_all_);
-
-  auto sz = status_.size();
-  for (auto &kv : status_) {
-    auto pi = kv.first;
-    auto &status = kv.second;
-    if (status == DISPATCHABLE) {
-      status = INIT;
-      auto piece_data = std::make_shared<TxPieceData>();
-      piece_data->inn_id_ = pi;
-      piece_data->partition_id_ = GetPiecePartitionId(pi);
-      piece_data->type_ = pi;
-      piece_data->root_id_ = id_;
-      piece_data->root_type_ = type_;
-      piece_data->input = inputs_[pi];
-      piece_data->output_size = output_size_[pi];
-      // Workstream N Phase 4e-3: removed `piece_data->root_ = this;`
-      // — the `root_` back-pointer field on SimpleCommand was unread.
-      piece_data->timestamp_ = timestamp_;
-      map_piece_data_[pi] = piece_data;
-      partition_ids_.insert(piece_data->partition_id_);
-
-      Log_debug("getting subcmd i: %d, thread id: %x",
-                pi, std::this_thread::get_id());
-      verify(status_[pi] == INIT);
-      status_[pi] = DISPATCHED;
-
-      verify(type_ == type());
-      verify(piece_data->root_type_ == type());
-      verify(piece_data->root_type_ > 0);
-      n_pieces_dispatched_++;
-      return piece_data;
-    }
-  }
-  return nullptr;
-}
+// Workstream N Phase 4e-4: removed `shared_ptr<TxPieceData>
+// TxData::GetNextReadySubCmd()`.  The function body started with
+// `verify(0)` (intentionally disabled) and the only call sites were
+// commented-out code in `snow/ro6_coord.cc:22, 179` and
+// `rcc/coord.cc:231`.  The live dispatch path is
+// `TxData::GetReadyPiecesData(int32_t max)`.
 
 bool TxData::OutputReady() {
   if (n_pieces_all_ == n_pieces_dispatch_acked_) {
@@ -356,11 +318,11 @@ bool TxData::OutputReady() {
   }
 }
 
-void TxData::Merge(TxnOutput& output) {
-  for (auto& pair: output) {
-    Merge(pair.first, pair.second);
-  }
-}
+// Workstream N Phase 4e-4: removed `void TxData::Merge(TxnOutput&)`
+// — the only call sites (`janus/coordinator.cc:228`,
+// `rcc/coord.cc:214`) were already commented out.  The live overloads
+// `Merge(CmdData&)` and `Merge(innid_t, map<int32_t, Value>&)` cover
+// the per-piece merge path.
 
 void TxData::Merge(innid_t inn_id, map<int32_t, Value>& output) {
   verify(outputs_.find(inn_id) == outputs_.end());
@@ -404,10 +366,11 @@ void TxData::Reset() {
   outputs_.clear();
 }
 
-void TxData::read_only_reset() {
-  read_only_failed_ = false;
-  Reset();
-}
+// Workstream N Phase 4e-4: removed `void TxData::read_only_reset()`
+// — the only call sites (`snow/ro6_coord.cc:216`, `rcc/coord.cc:272`)
+// were already commented out, and the `read_only_failed_` field it
+// reset went away in the same commit.  Callers needing a reset use
+// `TxData::Reset()` directly.
 //
 //bool Procedure::read_only_start_callback(int pi,
 //                                          int *res,

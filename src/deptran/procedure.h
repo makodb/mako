@@ -377,7 +377,11 @@ class TxData: public CmdData {
   }
   map<innid_t, TxWorkspace> inputs_ = {};  // input of each piece.
  public:
-  bool read_only_failed_ = false;
+  // Workstream N Phase 4e-4: removed `bool read_only_failed_ = false;`
+  // — the field was reset in `TxData::TxData()` and inside the now-
+  // deleted `read_only_reset()` but never read by anything.  The
+  // only `read_only_failed_ = true` writers were already
+  // commented-out code in procedure.cc.
   double pre_time_ = 0.0;
   bool early_return_ = false;
  protected:
@@ -432,17 +436,22 @@ class TxData: public CmdData {
                             int res,
                             map<int32_t, Value> &output) = 0;
   virtual bool IsReadOnly() = 0;
-  virtual void read_only_reset();
+  // Workstream N Phase 4e-4: removed several dead virtual methods —
+  //   `read_only_reset()`, `IsFinished()`, `Merge(TxnOutput&)`, and
+  //   `GetNextReadySubCmd()` — none had any production callers. Each
+  //   was either a `verify(0)` stub on the base class with no
+  //   subclass override (`IsFinished`, `GetNextReadySubCmd`) or a
+  //   helper whose only call sites were already commented-out
+  //   (`read_only_reset`, `Merge(TxnOutput&)` were referenced only by
+  //   commented-out code in `snow/ro6_coord.cc`, `rcc/coord.cc`,
+  //   `janus/coordinator.cc`).
   virtual int GetNPieceAll() {
     return n_pieces_all_;
   }
   virtual bool OutputReady();
-  virtual bool IsFinished(){verify(0);}
   virtual void Merge(CmdData&) override;
   virtual void Merge(innid_t inn_id, map<int32_t, Value>& output);
-  virtual void Merge(TxnOutput& output);
   virtual bool HasMoreUnsentPiece();
-  virtual shared_ptr<TxPieceData> GetNextReadySubCmd();
   virtual ReadyPiecesData GetReadyPiecesData(int32_t max = 0);
   virtual set<parid_t>& GetPartitionIds() override;
   TxWorkspace& GetWorkspace(innid_t inn_id) {
@@ -459,7 +468,9 @@ class TxData: public CmdData {
   }
   virtual bool IsOneRound();
   vector<SimpleCommand> GetCmdsByPartition(parid_t par_id);
-  vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t par_id, rank_t rank);
+  // Workstream N Phase 4e-4: removed
+  // `vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t, rank_t)`
+  // — declared and defined but never called anywhere.
 
   // Workstream N Phase 5b-1: removed dead TxData::to_marshal/from_marshal
   // overrides (never invoked in production). The Marshallable base's
@@ -490,13 +501,10 @@ class TxData: public CmdData {
 
 } // namespace rcc
 
-namespace rrr {
-
-// (Phase 4d-3/4d-6: VecRecData, ViewData, KeyCmdBatchData,
-// VecPieceData are Serializables now — no TypedMarshallableAdapter
-// traits. VecPieceData's migration adds archive operators for
-// SimpleCommand, TxWorkspace, and mdb::Value as free functions in
-// command_marshaler.cc / procedure.cc / marshal-value.cc, mirroring
-// the legacy Marshal-based pairs byte-for-byte.)
-
-}  // namespace rrr
+// Workstream N Phase 4e-4: removed an empty `namespace rrr {}` block
+// at the bottom of this header — companion to the Phase 4e-2 cleanup
+// of the same shape in `tpc_command.h`.  The block previously held
+// `TypedMarshallableAdapterTraits<T>` specializations for VecRecData
+// / ViewData / KeyCmdBatchData / VecPieceData; the traits machinery
+// went away in Phase 5b-5 and the per-type registrations now live in
+// `procedure.cc` via `reg_serializable_in_deputy`.
