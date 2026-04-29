@@ -165,18 +165,16 @@ TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
   EXPECT_EQ(decoded->value, 321);
 }
 
-// Phase 5b-2: dropped MarInitializerState::proxy assertions. The
-// legacy `proxy` field was deleted alongside the dead consumer path
-// in `set_marshallable_state` — only `marshallable` and `kind` are
-// part of the live initializer-state contract now.
+// Phase 5b-9: simplified — the factory now returns
+// `shared_ptr<Marshallable>` directly (no MarInitializerState wrapper).
+// Kind is verified via `m->kind()`.
 TEST(MarshallableProxyFacadeTest, InitializerReturnsProxyBackedMetadata) {
   EnsureTestMarshallableInitializer();
 
   auto initializer = MarshallDeputy::get_initializer(kTestMarshallableKind);
-  auto state = initializer();
-  ASSERT_NE(state.marshallable, nullptr);
-  EXPECT_EQ(state.kind, kTestMarshallableKind);
-  EXPECT_EQ(state.marshallable->kind(), kTestMarshallableKind);
+  auto m = initializer();
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(m->kind(), kTestMarshallableKind);
 }
 
 TEST(MarshallableProxyFacadeTest, MarshallableCastFromSharedPtrKeepsType) {

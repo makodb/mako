@@ -472,30 +472,23 @@ MarshallDeputy::get_initializer(int32_t type) {
 
 // @unsafe - Calls initializer factory and unmarshals into proxied payload.
 // @lifetime: (&'a mut) -> &'a mut
+//
+// Workstream N Phase 5b-9: simplified — the factory now returns a
+// `shared_ptr<Marshallable>` directly (no MarInitializerState
+// wrapper). We snapshot the wire kind, clear `kind_` so
+// `set_marshallable` can repopulate it from `func()`'s result, and
+// verify the factory-produced kind matches the wire kind.
 Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   verify(!has_marshallable());
-  switch (kind_) {
-    case UNKNOWN:
-      verify(0);
-      break;
-    default:
-      auto func = get_initializer(kind_);
-      verify(static_cast<bool>(func));
-      auto state = func();
-      verify(state.kind != UNKNOWN);
-      verify(state.kind == kind_);
-      set_marshallable_state(std::move(state));
-      break;
-  }
-  auto object = inner();
-  verify(object != nullptr);
-  // Use get() to get pointer access
-  Marshallable* mut_data = object.get();
-  verify(mut_data);  // Should succeed - we just created it
-  mut_data->from_marshal(m);
-  verify(object->kind());
-  verify(kind_);
-  verify(object->kind() == kind_);
+  verify(kind_ != UNKNOWN);
+  auto func = get_initializer(kind_);
+  verify(static_cast<bool>(func));
+
+  int32_t wire_kind = kind_;
+  kind_ = UNKNOWN;  // set_marshallable will repopulate from the new payload's kind
+  set_marshallable(func());
+  verify(kind_ == wire_kind);
+  inner()->from_marshal(m);
   return m;
 }
 

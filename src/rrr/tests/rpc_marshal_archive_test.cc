@@ -1413,13 +1413,14 @@ static int _reg_canary_deputy_command =
 
 TEST(RegSerializableInDeputy, RegistersUnderKind) {
   // The registration ran at static init. Confirm the factory exists.
+  // Phase 5b-9: factory now returns shared_ptr<Marshallable> directly
+  // (no MarInitializerState wrapper). Kind is verified via m->kind().
   auto factory = MarshallDeputy::get_initializer(
       CanaryDeputyCommand::kKind);
   ASSERT_TRUE(static_cast<bool>(factory));
-  auto state = factory();
-  EXPECT_EQ(state.kind, CanaryDeputyCommand::kKind);
-  ASSERT_NE(state.marshallable, nullptr);
-  EXPECT_EQ(state.marshallable->kind(), CanaryDeputyCommand::kKind);
+  auto m = factory();
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(m->kind(), CanaryDeputyCommand::kKind);
 }
 
 TEST(RegSerializableInDeputy, RoundTripThroughMarshallDeputy) {
