@@ -1888,63 +1888,85 @@ TEST(WrapTypedMarshallableSerializable, RoutesToWrapSerializable) {
   EXPECT_EQ(bytes_typed, bytes_direct);
 }
 
-// ---- Phase 3f-2: SerializableProxy storage on MarshallDeputy ------
+// ---- Phase 3f-2 (added field) / Phase 3f-3 (made it lazy) --------
 //
-// The deputy gains a parallel `serializable_` field populated eagerly
-// inside `set_marshallable`. These tests verify:
-//   - The field is non-null after each population path.
-//   - The kind reported through the proxy matches the deputy's kind.
+// The deputy holds a `mutable shared_ptr<SerializableProxy> serializable_`
+// field that is populated lazily on first call to `serializable()`,
+// not eagerly inside `set_marshallable`. These tests verify:
+//   - The field starts null after construction (no eager work).
+//   - `serializable()` populates the cache on first call.
+//   - Subsequent calls return the same cached proxy instance.
+//   - The proxy's `kind()` matches the deputy's `kind_`.
 //   - Bytes saved through the proxy match the bytes that
-//     `inner()->to_marshal` would produce (so callers can shift to
-//     the proxy without changing the wire).
-//   - Wire format is unchanged on encode / decode.
-//   - Copy semantics still work (the field is a shared_ptr).
+//     `inner()->to_marshal` would produce.
+//   - Wire format on the Marshal `<<` / `>>` path is unchanged.
+//   - Copy semantics: copying before any access leaves both copies
+//     unpopulated; copying after access shares the cached proxy.
+//   - Move semantics: moves transfer the cached proxy (or the empty
+//     sentinel) cleanly.
 //   - The wire-decode path (`operator>> + create_actual_object_from`)
-//     also populates the field.
+//     does NOT pre-populate the cache (lazy on the receive side too).
 
-TEST(MarshallDeputySerializableField, PopulatedFromMarshallableCtor) {
-  // Construct via the legacy Marshallable ctor; serializable_ should
-  // be non-null and report the same kind as the deputy.
+TEST(MarshallDeputySerializableField, FieldStartsNullAfterCtor) {
+  // After construction (any path), `serializable_` is null until the
+  // accessor runs.
   auto canary = std::make_shared<CanaryMarshallable>();
   canary->id = 42;
-  canary->name = "from marshallable";
+  canary->name = "starts null";
   canary->values = {1, 2, 3};
 
   MarshallDeputy md{std::static_pointer_cast<Marshallable>(canary)};
-  ASSERT_NE(md.serializable_, nullptr);
+  EXPECT_EQ(md.serializable_, nullptr);
   EXPECT_EQ(md.kind_, CanaryMarshallable::kKind);
-  EXPECT_EQ((*md.serializable_)->kind(), CanaryMarshallable::kKind);
 }
 
-TEST(MarshallDeputySerializableField, PopulatedFromSetMarshallable) {
-  // Default-construct then call set_marshallable; the field should be
-  // populated by the setter.
+TEST(MarshallDeputySerializableField, FieldStartsNullAfterSetMarshallable) {
+  // Default-construct then call set_marshallable; the field stays
+  // null.
   auto canary = std::make_shared<CanaryMarshallable>();
   canary->id = 7;
 
   MarshallDeputy md;
   EXPECT_EQ(md.serializable_, nullptr);  // unset before set_marshallable
   md.set_marshallable(std::static_pointer_cast<Marshallable>(canary));
-  ASSERT_NE(md.serializable_, nullptr);
-  EXPECT_EQ((*md.serializable_)->kind(), CanaryMarshallable::kKind);
+  EXPECT_EQ(md.serializable_, nullptr);  // unset after set_marshallable too
 }
 
-TEST(MarshallDeputySerializableField, PopulatedFromSerializableCtor) {
-  // Construct via the SerializableConcept ctor (Phase 3b path);
-  // serializable_ should be non-null and route through the
-  // SerializableMarshallableAdapter that wraps the Serializable T.
+TEST(MarshallDeputySerializableField, FieldStartsNullForSerializableCtor) {
+  // The SerializableConcept ctor follows the same lazy path.
   auto cmd = std::make_shared<CanaryDeputyCommand>();
   cmd->header = 99;
   cmd->name = "from serializable";
 
   MarshallDeputy md{cmd};
-  ASSERT_NE(md.serializable_, nullptr);
+  EXPECT_EQ(md.serializable_, nullptr);
   EXPECT_EQ(md.kind_, CanaryDeputyCommand::kKind);
-  EXPECT_EQ((*md.serializable_)->kind(), CanaryDeputyCommand::kKind);
 }
 
-TEST(MarshallDeputySerializableField, BytesMatchInnerToMarshal) {
-  // Save bytes through serializable_ vs through inner()->to_marshal;
+TEST(MarshallDeputySerializableField, AccessorPopulatesAndCaches) {
+  // `serializable()` populates on first call and caches for
+  // subsequent calls.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 11;
+  canary->name = "lazy populate";
+
+  MarshallDeputy md{std::static_pointer_cast<Marshallable>(canary)};
+  EXPECT_EQ(md.serializable_, nullptr);
+
+  SerializableProxy& first = md.serializable();
+  EXPECT_NE(md.serializable_, nullptr);
+  auto* cached_ptr = md.serializable_.get();
+
+  SerializableProxy& second = md.serializable();
+  EXPECT_EQ(md.serializable_.get(), cached_ptr);  // same shared_ptr
+  EXPECT_EQ(&first, &second);                     // same proxy instance
+
+  // Proxy's kind matches the deputy's.
+  EXPECT_EQ(first->kind(), CanaryMarshallable::kKind);
+}
+
+TEST(MarshallDeputySerializableField, AccessorBytesMatchInnerToMarshal) {
+  // Save bytes through `serializable()` vs `inner()->to_marshal`;
   // they must be byte-for-byte identical (the proxy is a save-only
   // view of the same underlying Marshallable).
   auto canary = std::make_shared<CanaryMarshallable>();
@@ -1953,17 +1975,16 @@ TEST(MarshallDeputySerializableField, BytesMatchInnerToMarshal) {
   canary->values = {7, 8, 9, 10};
 
   MarshallDeputy md{std::static_pointer_cast<Marshallable>(canary)};
-  ASSERT_NE(md.serializable_, nullptr);
 
   // (a) save through inner.
   Marshal m_inner;
   md.inner()->to_marshal(m_inner);
   auto bytes_inner = drain_marshal(m_inner);
 
-  // (b) save through serializable_.
+  // (b) save through serializable() (lazy populate happens here).
   BufferSink sink;
   BinaryWriteArchive writer(&sink);
-  (*md.serializable_)->save(writer);
+  md.serializable()->save(writer);
   auto bytes_proxy = sink_to_vector(sink);
 
   ASSERT_EQ(bytes_inner.size(), bytes_proxy.size());
@@ -1971,11 +1992,12 @@ TEST(MarshallDeputySerializableField, BytesMatchInnerToMarshal) {
 }
 
 TEST(MarshallDeputySerializableField, WireFormatUnchanged) {
-  // The whole purpose of Phase 3f-2: adding the field must NOT
-  // perturb the wire. Encode via Marshal `<<`; bytes should match
-  // exactly the legacy encoding. Uses CanaryDeputyCommand because it
-  // is registered (via `_reg_canary_deputy_command`) and so the
-  // decode side can dispatch to a factory.
+  // The whole purpose of Phase 3f-2 / 3f-3: adding the field +
+  // making it lazy must NOT perturb the wire. Encode via Marshal
+  // `<<`; bytes should match exactly the legacy encoding. Uses
+  // CanaryDeputyCommand because it is registered (via
+  // `_reg_canary_deputy_command`) and so the decode side can
+  // dispatch to a factory.
   CanaryDeputyCommand orig;
   orig.header = 13;
   orig.name = "wire unchanged";
@@ -2001,13 +2023,14 @@ TEST(MarshallDeputySerializableField, WireFormatUnchanged) {
   EXPECT_EQ(bytes, bytes_out);
 }
 
-TEST(MarshallDeputySerializableField, PopulatedAfterWireDecode) {
+TEST(MarshallDeputySerializableField, FieldStaysLazyAfterWireDecode) {
   // After `operator>>` runs `create_actual_object_from`, which calls
-  // `set_marshallable(func())`, the decoded deputy should have its
-  // serializable_ populated too (via the registered factory path).
+  // `set_marshallable(func())`, the decoded deputy's `serializable_`
+  // remains null too — Phase 3f-3 lazy semantics extend to the wire
+  // decode path; the receive side never touched the proxy view.
   CanaryDeputyCommand orig;
   orig.header = 81;
-  orig.name = "decoded path";
+  orig.name = "decoded path stays lazy";
   orig.values = {1, 2, 3, 4};
 
   // Build a deputy holding the orig and encode.
@@ -2023,37 +2046,86 @@ TEST(MarshallDeputySerializableField, PopulatedAfterWireDecode) {
   m >> md_dst;
 
   ASSERT_NE(md_dst.inner(), nullptr);
-  ASSERT_NE(md_dst.serializable_, nullptr);
-  EXPECT_EQ((*md_dst.serializable_)->kind(), CanaryDeputyCommand::kKind);
+  EXPECT_EQ(md_dst.serializable_, nullptr);  // still null after decode
   EXPECT_EQ(md_dst.kind_, CanaryDeputyCommand::kKind);
+
+  // Demand the proxy view; populates cache.
+  SerializableProxy& proxy = md_dst.serializable();
+  EXPECT_NE(md_dst.serializable_, nullptr);
+  EXPECT_EQ(proxy->kind(), CanaryDeputyCommand::kKind);
 }
 
-TEST(MarshallDeputySerializableField, CopyShareSerializableProxy) {
-  // shared_ptr<SerializableProxy> means MarshallDeputy stays
-  // copyable. After `MarshallDeputy b = a;`, b.serializable_ should
-  // alias a.serializable_ (same shared_ptr; same proxy instance).
+TEST(MarshallDeputySerializableField, CopyBeforeAccessLeavesBothLazy) {
+  // Copying a fresh deputy that hasn't accessed `serializable()`
+  // yet leaves both copies with null cached proxy.
   auto canary = std::make_shared<CanaryMarshallable>();
   canary->id = 11;
   MarshallDeputy a{std::static_pointer_cast<Marshallable>(canary)};
+  EXPECT_EQ(a.serializable_, nullptr);
+
+  MarshallDeputy b = a;
+  EXPECT_EQ(a.serializable_, nullptr);
+  EXPECT_EQ(b.serializable_, nullptr);
+  EXPECT_EQ(a.kind_, b.kind_);
+
+  // Independently demanding from each populates each independently;
+  // both wrap the same `inner_sp_data_` and produce identical bytes.
+  Marshal m_a;
+  {
+    MarshalSink sink_a(&m_a);
+    BinaryWriteArchive writer_a(&sink_a);
+    a.serializable()->save(writer_a);
+  }
+  Marshal m_b;
+  {
+    MarshalSink sink_b(&m_b);
+    BinaryWriteArchive writer_b(&sink_b);
+    b.serializable()->save(writer_b);
+  }
+  EXPECT_EQ(drain_marshal(m_a), drain_marshal(m_b));
+}
+
+TEST(MarshallDeputySerializableField, CopyAfterAccessSharesCache) {
+  // Copying after `serializable()` ran shares the cached proxy
+  // (shared_ptr semantics).
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 11;
+  MarshallDeputy a{std::static_pointer_cast<Marshallable>(canary)};
+  (void)a.serializable();  // populate cache.
   ASSERT_NE(a.serializable_, nullptr);
 
   MarshallDeputy b = a;
   EXPECT_EQ(a.serializable_, b.serializable_);
   EXPECT_EQ(a.serializable_.get(), b.serializable_.get());
-  EXPECT_EQ(a.kind_, b.kind_);
 }
 
-TEST(MarshallDeputySerializableField, MoveTransfersSerializableProxy) {
-  // Move semantics: source loses its serializable_, destination owns it.
+TEST(MarshallDeputySerializableField, MoveTransfersCachedProxy) {
+  // Move after access: source loses its cached proxy, destination owns it.
   auto canary = std::make_shared<CanaryMarshallable>();
   canary->id = 22;
   MarshallDeputy a{std::static_pointer_cast<Marshallable>(canary)};
+  (void)a.serializable();  // populate cache.
   auto* a_proxy_ptr = a.serializable_.get();
   ASSERT_NE(a_proxy_ptr, nullptr);
 
   MarshallDeputy b = std::move(a);
   EXPECT_EQ(b.serializable_.get(), a_proxy_ptr);
   EXPECT_EQ(a.serializable_, nullptr);  // moved-from is empty
+}
+
+TEST(MarshallDeputySerializableField, MoveBeforeAccessLeavesBothLazy) {
+  // Move before access: both source and destination have null caches.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 22;
+  MarshallDeputy a{std::static_pointer_cast<Marshallable>(canary)};
+  EXPECT_EQ(a.serializable_, nullptr);
+
+  MarshallDeputy b = std::move(a);
+  EXPECT_EQ(b.serializable_, nullptr);
+  EXPECT_EQ(a.serializable_, nullptr);
+
+  // Demanding on the destination still populates correctly.
+  EXPECT_EQ(b.serializable()->kind(), CanaryMarshallable::kKind);
 }
 
 }  // namespace
