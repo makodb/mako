@@ -535,9 +535,11 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::BTreeMap<K, V>& v) {
     rrr::v64 v_len = static_cast<rrr::i64>(v.len());
     *this << v_len;
+    // L9: rusty::BTreeMap iter `operator*()` returns
+    // `std::tuple<const K&, V&>` (post-2026-04 API).
     for (auto it = v.begin(); it != v.end(); ++it) {
       auto kv = *it;
-      *this << kv.first << kv.second;
+      *this << std::get<0>(kv) << std::get<1>(kv);
     }
     return *this;
   }
@@ -556,9 +558,11 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::HashMap<K, V>& v) {
     rrr::v64 v_len = static_cast<rrr::i64>(v.len());
     *this << v_len;
+    // L9: rusty::HashMap iter `operator*()` returns
+    // `std::tuple<const K&, V&>` (post-2026-04 API).
     for (auto it = v.begin(); it != v.end(); ++it) {
       auto kv = *it;
-      *this << kv.first << kv.second;
+      *this << std::get<0>(kv) << std::get<1>(kv);
     }
     return *this;
   }

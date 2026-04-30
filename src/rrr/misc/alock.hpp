@@ -681,9 +681,10 @@ class ALockGroup {
 
   void abort_all_locked() {
     //        mtx_locks_.lock();
-    for (auto pair: locked_) {
-      auto &alock = pair.first;
-      auto &areq_id = pair.second;
+    // L9: rusty::BTreeMap iter `operator*()` returns
+    // `std::tuple<const K&, V&>` (post-2026-04 API). Use structured
+    // bindings to keep the same `alock`/`areq_id` names.
+    for (auto&& [alock, areq_id] : locked_) {
       if (areq_id != 0) {
         alock->abort(areq_id);
       }
