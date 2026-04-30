@@ -474,61 +474,17 @@ void* PaxosWorker::StartReadAccept(void* arg){
   return nullptr;
 }
 
-void PaxosWorker::AddAcceptNc(shared_ptr<Coordinator> coord) {
-  //nc_submit_l_.lock();
-  //PaxosWorker::coo_queue_nc.push(coord);
-  //nc_submit_l_.unlock();
-  all_coords[bulk_writer++] = coord;
-}
+// Workstream N Phase 4e-28: removed `AddAcceptNc` and
+// `StartReadAcceptNc` — the NC-batching path was driven by a
+// pthread launched from `InitQueueRead`'s commented-out
+// `Pthread_create(&bulkops_th_, ..., StartReadAcceptNc, ...)` line.
+// No surviving call site started this thread, so the producer
+// (`AddAcceptNc`) and consumer (`StartReadAcceptNc`) were both dead.
+// Companion `all_coords[]`, `bulk_writer`, `bulk_reader`, and
+// `bulkops_th_` fields are also removed in this phase.
 
 void PaxosWorker::submitJob(rusty::Arc<Job> arc_job){
 	GetPollThread()->add(arc_job);
-}
-
-void* PaxosWorker::StartReadAcceptNc(void* arg){
-  PaxosWorker* pw = (PaxosWorker*)arg;
-  std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
-  int sent = 0;
-  while (!pw->stop_flag) {
-    int cur_req = pw->cnt;
-    /*pw->nc_submit_l_.lock();
-    while(!PaxosWorker::coo_queue_nc.empty() && cur_req > 0){
-      auto x = PaxosWorker::coo_queue_nc.front();
-      PaxosWorker::coo_queue_nc.pop();
-      current.push_back(x);
-      cur_req--;
-    }
-    pw->nc_submit_l_.unlock();*/
-    while(cur_req > 0 and pw->all_coords[pw->bulk_reader] != nullptr){
-	   //pw->bulk_reader++; 
-	   current[pw->cnt - cur_req] = pw->all_coords[pw->bulk_reader];
-	   cur_req--;
-	   pw->bulk_reader++;
-    }
-    int cnt = pw->cnt - cur_req;
-    if(cnt == 0)continue;
-    std::vector<shared_ptr<Coordinator>> curr2(current.begin(), current.begin() + cnt);
-    //Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)curr2.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, curr2]() {
-      pw->BulkSubmit(curr2);
-    }));
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
-    /*Log_info("alalslal %d %d %d", cnt, (int)pw->n_tot, (int)pw->n_current);
-    if(pw->n_current + cnt >= pw->n_tot){
-	    pw->finish_cond.bcast();
-    }*/
-    auto strt = std::chrono::high_resolution_clock::now();
-    pw->submitJob(arc_job_base);
-    auto endt = std::chrono::high_resolution_clock::now();
-    sent += cnt;
-    //if(sent % 2 == 0)Log_info("The number of submitted entries is %d %d", sent, cnt);
-    //pw->n_current+= cnt;
-    auto secs = std::chrono::duration_cast<std::chrono::nanoseconds>(endt - strt).count();
-    //if(sent % 2 == 0)Log_info("Time spent is submitting the job %f", secs/(1000.0*1000.0*1000.0));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  }
-  pthread_exit(nullptr);
-  return nullptr;
 }
 
 void PaxosWorker::WaitForNoops() {
@@ -555,39 +511,32 @@ void PaxosWorker::WaitForSubmit() {
 void PaxosWorker::InitQueueRead(){
   if(IsLeader(site_info_->partition_id_)){
     stop_flag = false;
-    //Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAcceptNc, this);
-    //pthread_detach(bulkops_th_);
+    // Workstream N Phase 4e-28: removed commented-out
+    // `Pthread_create(&bulkops_th_, ..., StartReadAcceptNc, this)` /
+    // `pthread_detach(bulkops_th_)` — both target and field gone.
   }
 }
 
-void PaxosWorker::AddReplayEntry(Marshallable& entry){
-  Marshallable *p = &entry;
-  replay_queue.enqueue(p);
-}
-
-void* PaxosWorker::StartReplayRead(void* arg){
-  PaxosWorker* pw = (PaxosWorker*)arg;
-  while(!pw->stop_replay_flag){
-    sleep(10000); // this is NOT used again, we sleep here for a cpu saving
-    Marshallable* p;
-    auto res = pw->replay_queue.try_dequeue(p);
-    if(!res)continue;
-    exit(1);
-    //pw->Next(*p);
-  }
-  return nullptr;
-}
+// Workstream N Phase 4e-28: removed `AddReplayEntry` and
+// `StartReplayRead` — `StartReplayRead` was launched from a
+// commented-out `Pthread_create(&replay_th_, ..., StartReplayRead,
+// this)` line in the `PaxosWorker()` constructor; no surviving call
+// site started the thread.  The companion `replay_queue`,
+// `stop_replay_flag`, and `replay_th_` fields are also removed in
+// this phase.
 
 PaxosWorker::PaxosWorker() {
-  stop_replay_flag = true;
-  // Pthread_create(&replay_th_, nullptr, PaxosWorker::StartReplayRead, this);
-  // pthread_detach(replay_th_);
+  // Workstream N Phase 4e-28: removed `stop_replay_flag = true;` plus
+  // the commented-out `Pthread_create(&replay_th_, ..., StartReplayRead,
+  // this)` / `pthread_detach(replay_th_)` lines — the replay thread
+  // never ran; the field went away with the dead method.
 }
 
 PaxosWorker::~PaxosWorker() {
   Log_info("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
   stop_flag = true;
-  stop_replay_flag = true;
+  // Workstream N Phase 4e-28: removed `stop_replay_flag = true;` —
+  // the field went away with the dead `StartReplayRead`.
 
   // Shutdown PollThreads if we own them
   if (svr_poll_thread_worker_.is_some()) {

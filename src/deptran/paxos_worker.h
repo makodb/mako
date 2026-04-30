@@ -486,8 +486,9 @@ public:
   int tot_num = 0;
   int cur_epoch;
   int is_leader;
-  int bulk_writer = 0;
-  int bulk_reader = 0;
+  // Workstream N Phase 4e-28: removed `int bulk_writer = 0;` and
+  // `int bulk_reader = 0;` — only used inside the now-deleted
+  // `AddAcceptNc` / `StartReadAcceptNc` NC-batching pair.
 
 
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
@@ -504,18 +505,14 @@ public:
   std::mutex condition_mutex;
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
   static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
-  moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
-  // Reduced from 1,000,000 to 100,000 (10x bulkBatchCount of 10,000)
-  // 1M entries × 16 bytes = 16MB per PaxosWorker, which caused memory explosion
-  // when running multiple shards (12 workers × 16MB = 192MB just for this vector)
-  vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(100000, nullptr);
+  // Workstream N Phase 4e-28: removed `replay_queue`, `all_coords`,
+  // `bulkops_th_`, `replay_th_`, `stop_replay_flag` — all only fed
+  // the dead `AddAcceptNc` / `StartReadAcceptNc` / `AddReplayEntry`
+  // / `StartReplayRead` paths.
   std::mutex nc_submit_l_;
   std::recursive_mutex election_state_lock;
   const unsigned int cnt = bulkBatchCount;
-  pthread_t bulkops_th_;
-  pthread_t replay_th_;
   bool stop_flag = false;
-  bool stop_replay_flag = true;
 
   void SetupHeartbeat();
   void InitQueueRead();
@@ -530,16 +527,15 @@ public:
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);
   void AddAccept(shared_ptr<Coordinator>);
-  void AddAcceptNc(shared_ptr<Coordinator>);
-  void AddReplayEntry(Marshallable&);
+  // Workstream N Phase 4e-28: removed `AddAcceptNc`, `AddReplayEntry`,
+  // `StartReplayRead`, `StartReadAcceptNc` declarations — see
+  // paxos_worker.cc retirement comments.
   void submitJob(rusty::Arc<Job>);
   // Workstream N Phase 4e-25: removed `SendBulkPrepare`, `SendHeartBeat`,
   // `SendSyncNoOpLog` declarations — definitions deleted; see
   // paxos_worker.cc retirement comments.
   int SendSyncLog(shared_ptr<SyncLogRequest>);
   static void* StartReadAccept(void*);
-  static void* StartReplayRead(void*);
-  static void* StartReadAcceptNc(void*);
   PaxosWorker();
   ~PaxosWorker();
 
