@@ -1888,5 +1888,173 @@ TEST(WrapTypedMarshallableSerializable, RoutesToWrapSerializable) {
   EXPECT_EQ(bytes_typed, bytes_direct);
 }
 
+// ---- Phase 3f-2: SerializableProxy storage on MarshallDeputy ------
+//
+// The deputy gains a parallel `serializable_` field populated eagerly
+// inside `set_marshallable`. These tests verify:
+//   - The field is non-null after each population path.
+//   - The kind reported through the proxy matches the deputy's kind.
+//   - Bytes saved through the proxy match the bytes that
+//     `inner()->to_marshal` would produce (so callers can shift to
+//     the proxy without changing the wire).
+//   - Wire format is unchanged on encode / decode.
+//   - Copy semantics still work (the field is a shared_ptr).
+//   - The wire-decode path (`operator>> + create_actual_object_from`)
+//     also populates the field.
+
+TEST(MarshallDeputySerializableField, PopulatedFromMarshallableCtor) {
+  // Construct via the legacy Marshallable ctor; serializable_ should
+  // be non-null and report the same kind as the deputy.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 42;
+  canary->name = "from marshallable";
+  canary->values = {1, 2, 3};
+
+  MarshallDeputy md{std::static_pointer_cast<Marshallable>(canary)};
+  ASSERT_NE(md.serializable_, nullptr);
+  EXPECT_EQ(md.kind_, CanaryMarshallable::kKind);
+  EXPECT_EQ((*md.serializable_)->kind(), CanaryMarshallable::kKind);
+}
+
+TEST(MarshallDeputySerializableField, PopulatedFromSetMarshallable) {
+  // Default-construct then call set_marshallable; the field should be
+  // populated by the setter.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 7;
+
+  MarshallDeputy md;
+  EXPECT_EQ(md.serializable_, nullptr);  // unset before set_marshallable
+  md.set_marshallable(std::static_pointer_cast<Marshallable>(canary));
+  ASSERT_NE(md.serializable_, nullptr);
+  EXPECT_EQ((*md.serializable_)->kind(), CanaryMarshallable::kKind);
+}
+
+TEST(MarshallDeputySerializableField, PopulatedFromSerializableCtor) {
+  // Construct via the SerializableConcept ctor (Phase 3b path);
+  // serializable_ should be non-null and route through the
+  // SerializableMarshallableAdapter that wraps the Serializable T.
+  auto cmd = std::make_shared<CanaryDeputyCommand>();
+  cmd->header = 99;
+  cmd->name = "from serializable";
+
+  MarshallDeputy md{cmd};
+  ASSERT_NE(md.serializable_, nullptr);
+  EXPECT_EQ(md.kind_, CanaryDeputyCommand::kKind);
+  EXPECT_EQ((*md.serializable_)->kind(), CanaryDeputyCommand::kKind);
+}
+
+TEST(MarshallDeputySerializableField, BytesMatchInnerToMarshal) {
+  // Save bytes through serializable_ vs through inner()->to_marshal;
+  // they must be byte-for-byte identical (the proxy is a save-only
+  // view of the same underlying Marshallable).
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 555;
+  canary->name = "bytes match";
+  canary->values = {7, 8, 9, 10};
+
+  MarshallDeputy md{std::static_pointer_cast<Marshallable>(canary)};
+  ASSERT_NE(md.serializable_, nullptr);
+
+  // (a) save through inner.
+  Marshal m_inner;
+  md.inner()->to_marshal(m_inner);
+  auto bytes_inner = drain_marshal(m_inner);
+
+  // (b) save through serializable_.
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  (*md.serializable_)->save(writer);
+  auto bytes_proxy = sink_to_vector(sink);
+
+  ASSERT_EQ(bytes_inner.size(), bytes_proxy.size());
+  EXPECT_EQ(bytes_inner, bytes_proxy);
+}
+
+TEST(MarshallDeputySerializableField, WireFormatUnchanged) {
+  // The whole purpose of Phase 3f-2: adding the field must NOT
+  // perturb the wire. Encode via Marshal `<<`; bytes should match
+  // exactly the legacy encoding. Uses CanaryDeputyCommand because it
+  // is registered (via `_reg_canary_deputy_command`) and so the
+  // decode side can dispatch to a factory.
+  CanaryDeputyCommand orig;
+  orig.header = 13;
+  orig.name = "wire unchanged";
+  orig.values = {100, 200};
+
+  MarshallDeputy md{
+      as_marshallable(make_serializable_proxy<CanaryDeputyCommand>(orig))};
+  EXPECT_EQ(md.kind_, CanaryDeputyCommand::kKind);
+
+  Marshal m;
+  m << md;
+  auto bytes = drain_marshal(m);
+
+  // Decode and re-encode; round-trip preserves bytes.
+  Marshal m_in;
+  m_in.write(bytes.data(), bytes.size());
+  MarshallDeputy md_decoded;
+  m_in >> md_decoded;
+
+  Marshal m_out;
+  m_out << md_decoded;
+  auto bytes_out = drain_marshal(m_out);
+  EXPECT_EQ(bytes, bytes_out);
+}
+
+TEST(MarshallDeputySerializableField, PopulatedAfterWireDecode) {
+  // After `operator>>` runs `create_actual_object_from`, which calls
+  // `set_marshallable(func())`, the decoded deputy should have its
+  // serializable_ populated too (via the registered factory path).
+  CanaryDeputyCommand orig;
+  orig.header = 81;
+  orig.name = "decoded path";
+  orig.values = {1, 2, 3, 4};
+
+  // Build a deputy holding the orig and encode.
+  auto orig_marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+  MarshallDeputy md_src{orig_marsh};
+  Marshal m;
+  m << md_src;
+
+  // Decode into a fresh deputy.
+  MarshallDeputy md_dst;
+  EXPECT_EQ(md_dst.serializable_, nullptr);  // empty before decode
+  m >> md_dst;
+
+  ASSERT_NE(md_dst.inner(), nullptr);
+  ASSERT_NE(md_dst.serializable_, nullptr);
+  EXPECT_EQ((*md_dst.serializable_)->kind(), CanaryDeputyCommand::kKind);
+  EXPECT_EQ(md_dst.kind_, CanaryDeputyCommand::kKind);
+}
+
+TEST(MarshallDeputySerializableField, CopyShareSerializableProxy) {
+  // shared_ptr<SerializableProxy> means MarshallDeputy stays
+  // copyable. After `MarshallDeputy b = a;`, b.serializable_ should
+  // alias a.serializable_ (same shared_ptr; same proxy instance).
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 11;
+  MarshallDeputy a{std::static_pointer_cast<Marshallable>(canary)};
+  ASSERT_NE(a.serializable_, nullptr);
+
+  MarshallDeputy b = a;
+  EXPECT_EQ(a.serializable_, b.serializable_);
+  EXPECT_EQ(a.serializable_.get(), b.serializable_.get());
+  EXPECT_EQ(a.kind_, b.kind_);
+}
+
+TEST(MarshallDeputySerializableField, MoveTransfersSerializableProxy) {
+  // Move semantics: source loses its serializable_, destination owns it.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 22;
+  MarshallDeputy a{std::static_pointer_cast<Marshallable>(canary)};
+  auto* a_proxy_ptr = a.serializable_.get();
+  ASSERT_NE(a_proxy_ptr, nullptr);
+
+  MarshallDeputy b = std::move(a);
+  EXPECT_EQ(b.serializable_.get(), a_proxy_ptr);
+  EXPECT_EQ(a.serializable_, nullptr);  // moved-from is empty
+}
+
 }  // namespace
 }  // namespace rrr

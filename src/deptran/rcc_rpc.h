@@ -450,14 +450,14 @@ public:
     }
 
     enum {
-        PREPARE = 0x2e51fe3a,
-        ACCEPT = 0x2bd37965,
-        DECIDE = 0x1a9b90e5,
-        FORWARDTOLEARNERSERVER = 0x346285c8,
-        BULKACCEPT = 0x22c9ee7c,
-        SYNCLOG = 0x5227cc11,
-        SYNCCOMMIT = 0x4bc30200,
-        BULKDECIDE = 0x6f0e0035,
+        PREPARE = 0x172f676f,
+        ACCEPT = 0x603f2a18,
+        DECIDE = 0x6d09d9b0,
+        FORWARDTOLEARNERSERVER = 0x587ae4e0,
+        BULKACCEPT = 0x24f1fd40,
+        SYNCLOG = 0x26c77f1d,
+        SYNCCOMMIT = 0x26011919,
+        BULKDECIDE = 0x5a128e17,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1181,7 +1181,7 @@ public:
     }
 
     enum {
-        COMMIT = 0x6d3ea14e,
+        COMMIT = 0x2b3e6e60,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1392,9 +1392,9 @@ public:
     }
 
     enum {
-        PREPARE = 0x393178f1,
-        SUGGEST = 0x5acbe0e9,
-        DECIDE = 0x14b0edc3,
+        PREPARE = 0x19671d2a,
+        SUGGEST = 0x4e119b40,
+        DECIDE = 0x61d56ab4,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1916,12 +1916,12 @@ public:
     }
 
     enum {
-        HEARTBEAT = 0x25083c7e,
-        VOTE = 0x6c3c4c2c,
-        VOTE2FPGA = 0x49f2330e,
-        APPENDENTRIES = 0x64cd73ef,
-        APPENDENTRIES2 = 0x4cbd65b7,
-        DECIDE = 0x6bf353b5,
+        HEARTBEAT = 0x35e4d10d,
+        VOTE = 0x6bfae80c,
+        VOTE2FPGA = 0x6ceced1a,
+        APPENDENTRIES = 0x6e14aa20,
+        APPENDENTRIES2 = 0x3e05a5b4,
+        DECIDE = 0x4ad9571e,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -2853,16 +2853,16 @@ public:
     }
 
     enum {
-        VOTE = 0x54599348,
-        VOTEDURABLE = 0x2efe28d5,
-        APPENDENTRIES = 0x1f7384ff,
-        EMPTYAPPENDENTRIES = 0x1a184d6b,
-        APPENDENTRIESDURABLE = 0x127f4dca,
-        TIMEOUTNOW = 0x5ce55119,
-        NOTIFYRESTART = 0x63232e0d,
-        INSTALLSNAPSHOT = 0x413081d1,
-        ADDSERVER = 0x112c2581,
-        REMOVESERVER = 0x3172431a,
+        VOTE = 0x2e8faefb,
+        VOTEDURABLE = 0x3b55f89c,
+        APPENDENTRIES = 0x14dd12c9,
+        EMPTYAPPENDENTRIES = 0x27e556e2,
+        APPENDENTRIESDURABLE = 0x4ac1783b,
+        TIMEOUTNOW = 0x6eb5025d,
+        NOTIFYRESTART = 0x63252ebf,
+        INSTALLSNAPSHOT = 0x205aad5d,
+        ADDSERVER = 0x2bffd2f2,
+        REMOVESERVER = 0x28026074,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -4021,10 +4021,10 @@ public:
     }
 
     enum {
-        PREPARE = 0x35abf4b5,
-        FASTACCEPT = 0x3c54e0d1,
-        ACCEPT = 0x3f9aacaa,
-        COMMIT = 0x226298ec,
+        PREPARE = 0x20981bee,
+        FASTACCEPT = 0x364acd20,
+        ACCEPT = 0x41fbb96f,
+        COMMIT = 0x13999fd3,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -5787,51 +5787,51 @@ public:
     }
 
     enum {
-        MSGSTRING = 0x661295a0,
-        MSGMARSHALL = 0x23083568,
-        REELECT = 0x40f62460,
-        RULESPECULATIVEEXECUTE = 0x6839a779,
-        DISPATCH = 0x26df3f29,
-        PREPARE = 0x3140a676,
-        COMMIT = 0x3db4bdb4,
-        ABORT = 0x408d85a3,
-        EARLYABORT = 0x56e1d901,
-        UPGRADEEPOCH = 0x3f61fd3a,
-        TRUNCATEEPOCH = 0x45a66deb,
-        ISLEADER = 0x6d870df1,
-        ISFPGALEADER = 0x6d852a79,
-        SIMPLECMD = 0x2cd1b841,
-        FAILOVERPAUSESOCKETOUT = 0x3aaa42c4,
-        FAILOVERRESUMESOCKETOUT = 0x56c518f2,
-        RPC_NULL = 0x21ac5a90,
-        TAPIRACCEPT = 0x585dd566,
-        TAPIRFASTACCEPT = 0x29cd1629,
-        TAPIRDECIDE = 0x41dce770,
-        RCCDISPATCH = 0x49fc5c31,
-        RCCFINISH = 0x1ad5b4ef,
-        RCCINQUIRE = 0x591189dd,
-        RCCDISPATCHRO = 0x53af16c0,
-        RCCINQUIREVALIDATION = 0x5fabe589,
-        RCCNOTIFYGLOBALVALIDATION = 0x5e021fa2,
-        JANUSDISPATCH = 0x4cb78ff6,
-        RCCCOMMIT = 0x325a49e6,
-        JANUSCOMMIT = 0x13e916f9,
-        JANUSCOMMITWOGRAPH = 0x4c8a71be,
-        JANUSINQUIRE = 0x60729333,
-        RCCPREACCEPT = 0x304d20c5,
-        JANUSPREACCEPT = 0x1a787633,
-        JANUSPREACCEPTWOGRAPH = 0x56a53311,
-        RCCACCEPT = 0x513b4ec9,
-        JANUSACCEPT = 0x3db392ae,
-        JETPACKBEGINRECOVERY = 0x1833580f,
-        JETPACKPULLIDSET = 0x3586a029,
-        JETPACKPULLCMD = 0x5f56b35b,
-        JETPACKRECORDCMD = 0x1452647d,
-        JETPACKPREPARE = 0x1d0d002d,
-        JETPACKACCEPT = 0x189ba3f5,
-        JETPACKCOMMIT = 0x43704792,
-        JETPACKPULLRECSETINS = 0x2fca6af6,
-        JETPACKFINISHRECOVERY = 0x654bb81a,
+        MSGSTRING = 0x535dc30a,
+        MSGMARSHALL = 0x2db67f17,
+        REELECT = 0x341daaa1,
+        RULESPECULATIVEEXECUTE = 0x467d754e,
+        DISPATCH = 0x3b1d7028,
+        PREPARE = 0x655cd21a,
+        COMMIT = 0x397c9062,
+        ABORT = 0x4c2e30f0,
+        EARLYABORT = 0x6d818795,
+        UPGRADEEPOCH = 0x69748a2e,
+        TRUNCATEEPOCH = 0x45200620,
+        ISLEADER = 0x26d8c060,
+        ISFPGALEADER = 0x25b6aeda,
+        SIMPLECMD = 0x6305874a,
+        FAILOVERPAUSESOCKETOUT = 0x2f8dcfdd,
+        FAILOVERRESUMESOCKETOUT = 0x1a6407d5,
+        RPC_NULL = 0x1c517a4a,
+        TAPIRACCEPT = 0x57c774df,
+        TAPIRFASTACCEPT = 0x466d1563,
+        TAPIRDECIDE = 0x3604b603,
+        RCCDISPATCH = 0x6a8b3d79,
+        RCCFINISH = 0x2949a812,
+        RCCINQUIRE = 0x3bbf6031,
+        RCCDISPATCHRO = 0x66e0aa1e,
+        RCCINQUIREVALIDATION = 0x4e19e0ca,
+        RCCNOTIFYGLOBALVALIDATION = 0x3c8ee84c,
+        JANUSDISPATCH = 0x1d64b0b3,
+        RCCCOMMIT = 0x5504ec6d,
+        JANUSCOMMIT = 0x27e3ad10,
+        JANUSCOMMITWOGRAPH = 0x292c301c,
+        JANUSINQUIRE = 0x103bad74,
+        RCCPREACCEPT = 0x172fc74e,
+        JANUSPREACCEPT = 0x16e3464e,
+        JANUSPREACCEPTWOGRAPH = 0x4deb2a05,
+        RCCACCEPT = 0x48be2655,
+        JANUSACCEPT = 0x2815a9b0,
+        JETPACKBEGINRECOVERY = 0x56c370ca,
+        JETPACKPULLIDSET = 0x39df12ce,
+        JETPACKPULLCMD = 0x544de091,
+        JETPACKRECORDCMD = 0x1704d366,
+        JETPACKPREPARE = 0x3daebc10,
+        JETPACKACCEPT = 0x43da8399,
+        JETPACKCOMMIT = 0x2c3b79cc,
+        JETPACKPULLRECSETINS = 0x3e4298f1,
+        JETPACKFINISHRECOVERY = 0x535d36c4,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -9704,10 +9704,10 @@ public:
     }
 
     enum {
-        SERVER_SHUTDOWN = 0x1c9b94fc,
-        SERVER_READY = 0x53b51b03,
-        SERVER_HEART_BEAT_WITH_DATA = 0x59cc373e,
-        SERVER_HEART_BEAT = 0x5e7c21cc,
+        SERVER_SHUTDOWN = 0x5349b83f,
+        SERVER_READY = 0x18e66b98,
+        SERVER_HEART_BEAT_WITH_DATA = 0x4ec0e6ad,
+        SERVER_HEART_BEAT = 0x152223b0,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -10200,14 +10200,14 @@ public:
     }
 
     enum {
-        CLIENT_GET_TXN_NAMES = 0x457651df,
-        CLIENT_SHUTDOWN = 0x11788cfe,
-        CLIENT_FORCE_STOP = 0x6177b77d,
-        CLIENT_RESPONSE = 0x29dd0b89,
-        CLIENT_READY = 0x64d730c9,
-        CLIENT_READY_BLOCK = 0x302dcbd7,
-        CLIENT_START = 0x60f325c4,
-        DISPATCHTXN = 0x3c85b211,
+        CLIENT_GET_TXN_NAMES = 0x55f17642,
+        CLIENT_SHUTDOWN = 0x354ff61f,
+        CLIENT_FORCE_STOP = 0x5a8a8e6b,
+        CLIENT_RESPONSE = 0x2115d60e,
+        CLIENT_READY = 0x4cc4ba40,
+        CLIENT_READY_BLOCK = 0x698d63ee,
+        CLIENT_START = 0x680da952,
+        DISPATCHTXN = 0x2ab6dd77,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -11010,13 +11010,13 @@ public:
     }
 
     enum {
-        GETCONFIG = 0x4eb60912,
-        GETCONFIGVERSION = 0x171f6cc7,
-        HASCONFIG = 0x56b01064,
-        SETSHARDINGPOLICY = 0x5409c22e,
-        GETSHARDINGPOLICY = 0x5d252795,
-        GETSHARDINGPOLICYVERSION = 0x112b20f1,
-        HASSHARDINGPOLICY = 0x540712c0,
+        GETCONFIG = 0x4289fdd7,
+        GETCONFIGVERSION = 0x3eb5aba4,
+        HASCONFIG = 0x5b584b39,
+        SETSHARDINGPOLICY = 0x22314f6d,
+        GETSHARDINGPOLICY = 0x28484d32,
+        GETSHARDINGPOLICYVERSION = 0x38474207,
+        HASSHARDINGPOLICY = 0x3d4f96e8,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)

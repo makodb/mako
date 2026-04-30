@@ -1239,7 +1239,10 @@ Status: Phase 1 (primitives, containers, FdSink/FdSource), Phase 2
 RTTI on `SerializableFacade`), Phase 3e (rpcgen default flipped to
 `--archive`; archive ops added for `TxReply` and `ParentEdge<RccTx>`),
 Phase 3f-1 (`MarshallDeputy::sp_data_` elimination), Phase 3f-prep
-(`MarshallDeputy` archive operators), Phase 4a-prep
+(`MarshallDeputy` archive operators), Phase 3f-2
+(`MarshallDeputy` parallel `SerializableProxy` storage via
+`shared_ptr<SerializableProxy>` field, populated eagerly in
+`set_marshallable`), Phase 4a-prep
 (`marshallable_cast` / `wrap_typed_marshallable` overloads for
 Serializable types — call-site transparency for migrations),
 Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
@@ -1318,9 +1321,16 @@ overloads (Phase 3e-2 drops those), (b) the legacy
 `Marshallable::to_marshal` virtual override pattern in
 non-Serializable types (Phase 4 + Phase 5 territory), and (c) the
 intentional byte-format-parity tests in
-`rpc_marshal_archive_test.cc`.  Phase 3d is complete. Phase 3f-2/3
-(`MarshallDeputy` SerializableProxy storage), and the remaining
-Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
+`rpc_marshal_archive_test.cc`.  Phase 3d is complete. Phase 3f-2
+landed 2026-04-30 (added `std::shared_ptr<SerializableProxy> serializable_`
+storage to MarshallDeputy, populated eagerly inside `set_marshallable`
+via `as_serializable(inner_sp_data_)`; stored as shared_ptr to keep
+the deputy copyable for the ~25 `req.cmd = md;` call sites across
+commo.cc files; explicit copy/move special-member defaults to
+counteract the implicit-move suppression caused by the user-declared
+destructor; wire format unchanged).  Phase 3f-3
+(`MarshallDeputy` single-field storage; gated on Phase 4 complete),
+and the remaining Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
 virtuals, now gated only on test-fixture migration since `CmdData`
 is done) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)

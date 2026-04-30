@@ -397,4 +397,38 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   return m;
 }
 
+// @unsafe - Stores a shared_ptr<Marshallable> as the deputy's payload
+// and constructs the parallel SerializableProxy view via the bridge.
+//
+// Workstream N Phase 3f-2: defined out-of-line in marshal.cpp because
+// `as_serializable(...)` lives in marshal_serializable_bridge.hpp,
+// which itself depends on marshal.hpp. The .cpp pulls in `../rrr.hpp`
+// (line 33 above) so the bridge is reachable here without inducing a
+// header-include cycle.
+//
+// Population semantics:
+//   - inner_sp_data_ owns the Marshallable (existing behavior).
+//   - serializable_ holds a SerializableProxy view of the same
+//     payload. For raw Marshallable subclasses this is a save-only
+//     `MarshallableSerializableAdapter`; for already-Serializable
+//     types entered via `as_marshallable(proxy)`
+//     (SerializableMarshallableAdapter), the same bridge call still
+//     yields a save-only stacked view. Wire format is unchanged —
+//     only `inner_sp_data_->to_marshal` runs on the encode path.
+//
+// Phase 3f-3 / Phase 5 may collapse the two fields once call sites
+// have shifted off `inner()`; for now the parallel storage gives
+// downstream code a stable Serializable-typed handle to develop
+// against.
+void MarshallDeputy::set_marshallable(
+    std::shared_ptr<rrr::Marshallable> m) {
+  verify(inner_sp_data_ == nullptr);
+  verify(m != nullptr);
+  kind_ = m->kind();
+  verify(kind_ != UNKNOWN);
+  inner_sp_data_ = std::move(m);
+  serializable_ = std::make_shared<SerializableProxy>(
+      as_serializable(inner_sp_data_));
+}
+
 } // namespace rrr
