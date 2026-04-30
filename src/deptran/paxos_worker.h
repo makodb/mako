@@ -533,10 +533,10 @@ public:
   void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
   void submitJob(rusty::Arc<Job>);
-  int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
-  int SendHeartBeat(shared_ptr<HeartBeatLog>);
+  // Workstream N Phase 4e-25: removed `SendBulkPrepare`, `SendHeartBeat`,
+  // `SendSyncNoOpLog` declarations — definitions deleted; see
+  // paxos_worker.cc retirement comments.
   int SendSyncLog(shared_ptr<SyncLogRequest>);
-  int SendSyncNoOpLog(shared_ptr<SyncNoOpRequest>);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
   static void* StartReadAcceptNc(void*);

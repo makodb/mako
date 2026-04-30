@@ -333,50 +333,13 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
     });
 }
 
-// marker:ansh
-int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
-  auto sp_m = wrap_typed_marshallable(bp_log);
-  ballot_t received_epoch = -1;
-  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-  coord->par_id_ = site_info_->partition_id_;
-  coord->loc_id_ = site_info_->locale_id;
-  auto sp_quorum = coord->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
-    Log_info("BulkPrepare: response received %d", valid);
-    if(!valid){
-      //Log_info("BulkPrepare: response received");
-      received_epoch = max(received_epoch, ballot);
-    }
-  });
-  Log_info("BulkPrepare: waiting for response");
-  WAN_WAIT;
-  sp_quorum->wait();
-  if (sp_quorum->yes()) {
-    Log_info("SendBulkPrepare: Leader election successfull");
-    return -1;
-  } else{
-    Log_debug("SendBulkPrepare: Leader election unsuccessfull");
-  }
-  return received_epoch;
-}
-
-// marker:ansh
-int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
-  void(0);
-  auto sp_m = wrap_typed_marshallable(hb_log);
-  ballot_t received_epoch = -1;
-  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-  coord->par_id_ = site_info_->partition_id_;
-  coord->loc_id_ = site_info_->locale_id;
-  auto sp_quorum = coord->commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
-    if(!resp_type)
-      received_epoch = ballot;
-  });
-  sp_quorum->wait();
-  if (sp_quorum->yes()) {
-    return -1;
-  }
-  return received_epoch;
-}
+// Workstream N Phase 4e-25: removed `PaxosWorker::SendBulkPrepare` and
+// `PaxosWorker::SendHeartBeat` — both became dead in Phase 4e-24 when
+// `send_bulk_prep` and `electionMonitor` (their only callers) went
+// away.  The `BroadcastBulkPrepare` / `BroadcastHeartBeat` commo
+// methods + `MultiPaxosService::Heartbeat` / `BulkPrepare` service
+// handlers are also dead now but left for a follow-up sweep that
+// also clears the rcc_rpc.proto definitions.
 
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   auto sp_m = wrap_typed_marshallable(sync_log_req);
@@ -470,35 +433,12 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   return received_epoch;
 }
 
-int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
-  auto sp_m = wrap_typed_marshallable(sync_log_req);
-  ballot_t received_epoch = -1;
-  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-  coord->par_id_ = site_info_->partition_id_;
-  coord->loc_id_ = site_info_->locale_id;
-  bool done = false;
-  auto es_pww = es_pw;
-  auto sp_quorum = coord->commo_->BroadcastSyncNoOps(site_info_->partition_id_, 
-                                                   sp_m, 
-                                                   [&received_epoch, &done, es_pww](ballot_t ballot, 
-                                                                                    int resp_type) {
-    if(!resp_type)
-      es_pww->step_down(ballot);
-    else{
-      if(!done){
-      } else{
-        return;
-      }
-    }
-  });
-  WAN_WAIT;
-  sp_quorum->wait();
-  done = true;
-  if(sp_quorum->yes()){
-    return -1;
-  }
-  return received_epoch;
-}
+// Workstream N Phase 4e-25: removed `PaxosWorker::SendSyncNoOpLog` —
+// became dead in Phase 4e-24 when `send_no_ops_to_all_workers` (its
+// only caller) went away.  The `BroadcastSyncNoOps` commo method and
+// `MultiPaxosService::SyncNoOps` service handler / `OnSyncNoOps`
+// server-side impl are also dead now but left for the same follow-up
+// sweep as the other dead Broadcast* paths.
 
 void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
   //Log_info("current batch cnt %d", cnt);
