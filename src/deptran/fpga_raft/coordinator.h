@@ -61,9 +61,8 @@ class CoordinatorFpgaRaft : public Coordinator {
   }
 
   void DoTxAsync(TxRequest &req) override {}
-  void Forward(shared_ptr<Marshallable> &cmd,
-              rusty::Function<void()> func = {},
-              rusty::Function<void()> exe_callback = {}) ;
+  // Workstream N Phase 4e-39: removed `Forward(...)` declaration —
+  // body had `verify(0); // TODO delete it` and was never called.
 
   void Submit(shared_ptr<Marshallable> &cmd,
               rusty::Function<void()> func = {},

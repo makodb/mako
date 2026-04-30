@@ -8,18 +8,8 @@ namespace janus {
 
 class TxData;
 
-class FpgaRaftForwardQuorumEvent: public QuorumEvent {
- public:
-  using QuorumEvent::QuorumEvent;
-  uint64_t CommitIdx()
-  {
-    return cmt_idx_ ;
-  }
-  void FeedResponse(uint64_t cmt_idx) {
-    vote_yes();
-    cmt_idx_ = cmt_idx ;
-  }
-};
+// Workstream N Phase 4e-39: removed `class FpgaRaftForwardQuorumEvent`
+// — only constructed by the now-deleted `FpgaRaftCommo::SendForward`.
 
 class FpgaRaftPrepareQuorumEvent: public QuorumEvent {
  public:
@@ -130,8 +120,9 @@ friend class FpgaRaftProxy;
 	
   FpgaRaftCommo() = delete;
   FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>>);
-  shared_ptr<FpgaRaftForwardQuorumEvent>
-  SendForward(parid_t par_id, parid_t self_id, shared_ptr<Marshallable> cmd);  
+  // Workstream N Phase 4e-39: removed `SendForward(par_id, self_id,
+  // cmd)` declaration — only call site was the now-deleted
+  // `CoordinatorFpgaRaft::Forward`.
 	void BroadcastHeartbeat(parid_t par_id,
 													uint64_t logIndex);
 	void SendHeartbeat(parid_t par_id,

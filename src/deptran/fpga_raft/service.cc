@@ -15,9 +15,8 @@ void FpgaRaftServiceImpl::Heartbeat(const FpgaRaftService::RpcHeartbeatRequest& 
   this->Heartbeat(req.leaderPrevLogIndex, req.dep_id, &resp.followerPrevLogIndex, std::move(defer));
 }
 
-void FpgaRaftServiceImpl::Forward(const FpgaRaftService::RpcForwardRequest& req, FpgaRaftService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
-  this->Forward(req.cmd, &resp.cmt_idx, std::move(defer));
-}
+// Workstream N Phase 4e-39: removed `Forward` typed-rpc override
+// (and matching N-arg overload further below).
 
 void FpgaRaftServiceImpl::Vote(const FpgaRaftService::RpcVoteRequest& req, FpgaRaftService::RpcVoteResponse& resp, rrr::DeferredReply defer) {
   this->Vote(req.lst_log_idx, req.lst_log_term, req.par_id, req.cur_term, &resp.max_ballot, &resp.vote_granted, std::move(defer));
@@ -51,14 +50,9 @@ void FpgaRaftServiceImpl::Heartbeat(const uint64_t& leaderPrevLogIndex,
   defer.reply();
 }
 
-void FpgaRaftServiceImpl::Forward(const MarshallDeputy& cmd,
-                                  uint64_t* cmt_idx,
-                                  rrr::DeferredReply defer) {
-  verify(sched_ != nullptr);
-  sched_->OnForward(const_cast<MarshallDeputy&>(cmd).inner(),
-                    cmt_idx,
-                    [defer = std::move(defer)]() mutable { defer.reply(); });
-}
+// Workstream N Phase 4e-39: removed `Forward(MarshallDeputy, ...)`
+// N-arg overload — only caller was the deleted typed-rpc shim
+// above; the receiver `FpgaRaftServer::OnForward` is also gone.
 
 void FpgaRaftServiceImpl::Vote(const uint64_t& lst_log_idx,
                                const ballot_t& lst_log_term,

@@ -13,41 +13,10 @@ FpgaRaftCommo::FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_w
 //  verify(poll != nullptr);
 }
 
-shared_ptr<FpgaRaftForwardQuorumEvent> FpgaRaftCommo::SendForward(parid_t par_id, 
-                                            parid_t self_id, shared_ptr<Marshallable> cmd)
-{
-    int n = Config::GetConfig()->GetPartitionSize(par_id);
-    auto e = Reactor::create_sp_event<FpgaRaftForwardQuorumEvent>(1,1);
-    parid_t fid = (self_id + 1 ) % n ;
-    if (fid != self_id + 1 )
-    {
-      // sleep for 2 seconds cos no leader
-      int32_t timeout = 2*1000*1000 ;
-      auto sp_e = Reactor::create_sp_event<TimeoutEvent>(timeout);
-      sp_e->wait();    
-    }
-    auto proxies = rpc_par_proxies_[par_id];
-    WAN_WAIT;
-    auto proxy = (FpgaRaftProxy*) proxies[fid].second ;
-    FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
-      if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
-        return;
-      }
-      uint64_t cmt_idx = 0;
-      fu->get_reply() >> cmt_idx;
-      e->FeedResponse(cmt_idx);
-    };    
-    MarshallDeputy md(cmd);
-    FpgaRaftProxy::RpcForwardRequest req{};
-    req.cmd = md;
-    auto f = proxy->async_Forward(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-    return e;
-}
+// Workstream N Phase 4e-39: removed `FpgaRaftCommo::SendForward` —
+// only call site was the now-deleted `CoordinatorFpgaRaft::Forward`.
+// `FpgaRaftForwardQuorumEvent` deleted alongside; the FpgaRaft::
+// Forward RPC declaration is gone from rcc_rpc.rpc.
 
 void FpgaRaftCommo::BroadcastHeartbeat(parid_t par_id,
 																			 uint64_t logIndex) {

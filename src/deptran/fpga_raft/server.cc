@@ -483,25 +483,10 @@ void FpgaRaftServer::StartTimer()
         cb();
     }
 
-    void FpgaRaftServer::OnForward(shared_ptr<Marshallable> &cmd, 
-                                          uint64_t *cmt_idx,
-                                          rusty::Function<void()> cb) {
-        this->rep_frame_ = this->frame_ ;
-        auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
-        ((CoordinatorFpgaRaft*)co)->Submit(cmd);
-        
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        *cmt_idx = ((CoordinatorFpgaRaft*)co)->cmt_idx_ ;
-        if(IsLeader() || *cmt_idx == 0 )
-        {
-          Log_debug(" is leader");
-          *cmt_idx = this->commitIndex ;
-        }
-
-        verify(*cmt_idx != 0) ;
-        WAN_WAIT
-        cb() ;        
-    }
+// Workstream N Phase 4e-39: removed `FpgaRaftServer::OnForward`
+// (~20 LOC) — only caller was the deleted
+// `FpgaRaftServiceImpl::Forward` handler; the matching
+// FpgaRaft::Forward RPC declaration is gone from rcc_rpc.rpc.
 
   void FpgaRaftServer::OnCommit(const slotid_t slot_id,
                               const ballot_t ballot,
