@@ -267,7 +267,8 @@ class Config {
   uint64_t get_txn_timeout() const { return txn_timeout_us_; }
   bool get_batch_start();
   bool do_early_return();
-  bool do_logging();
+  // Workstream N Phase 4e-41: removed `bool do_logging();` declaration
+  // — see config.cc retirement comment.
   bool IsReplicated();
   int32_t get_tot_req();
   bool get_failover() { return failover_; }
@@ -277,7 +278,8 @@ class Config {
   bool get_failover_random() { return failover_random_; }
   bool get_failover_leader() { return failover_leader_; }
 
-  const char *log_path();
+  // Workstream N Phase 4e-41: removed `const char *log_path();`
+  // declaration — no callers anywhere.
 
   bool retry_wait();
 
