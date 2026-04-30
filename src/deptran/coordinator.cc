@@ -42,31 +42,24 @@ Coordinator::Coordinator(uint32_t coo_id,
 	struct timespec begin, end;
 	//clock_gettime(CLOCK_MONOTONIC, &begin);
   
-	// TODO this would be slow.
-  vector<string> addrs;
-  Config::GetConfig()->get_all_site_addr(addrs);
-//  Log_info("Initializing site_prepare_ for %x: %p", this, site_prepare_);
-  site_prepare_.resize(addrs.size(), 0);
-  // Log_info("What is the first value of site_prepare_ for %x: %d", this, site_prepare_[0]);
-  site_commit_.resize(addrs.size(), 0);
-  site_abort_.resize(addrs.size(), 0);
-  // Workstream N Phase 4e-8: removed `site_piece_.resize(addrs.size(), 0);`
-  // — the `Coordinator::site_piece_` vector had no readers (only the
-  // sibling `site_prepare_`/`site_commit_`/`site_abort_` are
-  // incremented and inspected); the field went away in the same
-  // commit.
-	
+	// Workstream N Phase 4e-32: removed `site_prepare_`,
+	// `site_commit_`, and `site_abort_` `.resize(addrs.size(), 0)`
+	// calls (and the dead `get_all_site_addr` it fed) — the three
+	// counter vectors are gone.
+	// Workstream N Phase 4e-8: removed `site_piece_.resize(addrs.size(), 0);`
+	// — the `Coordinator::site_piece_` vector had no readers (only the
+	// sibling `site_prepare_`/`site_commit_`/`site_abort_` are
+	// incremented and inspected); the field went away in the same
+	// commit.
+
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
 	Log_info("time of 2nd part of CreateCoordinator: %d", end.tv_nsec-begin.tv_nsec);*/
 }
 
 Coordinator::~Coordinator() {
-//  for (int i = 0; i < site_prepare_.size(); i++) {
-//    Log_debug("Coo: %u, Site: %d, accept: %d, "
-//                 "prepare: %d, commit: %d, abort: %d",
-//             coo_id_, i, site_piece_[i], site_prepare_[i],
-//             site_commit_[i], site_abort_[i]);
-//  }
+//  Workstream N Phase 4e-32: dropped commented-out
+//  `for (i = 0; i < site_prepare_.size(); i++)` debug Log_debug
+//  block — `site_*` counter vectors are gone.
 
   if (recorder_) delete recorder_;
 #ifdef TXN_STAT

@@ -103,13 +103,20 @@ class Coordinator {
   // `if(repeat_) {}` (which was therefore unreachable code).
   uint32_t n_dispatch_ = 0;
   uint32_t n_dispatch_ack_ = 0;
-  uint32_t n_prepare_req_ = 0;
+  // Workstream N Phase 4e-32: removed `uint32_t n_prepare_req_ = 0;`
+  // — only ever zeroed (in Reset() and classic/coordinator.cc:180);
+  // never incremented or read.  Counterpart `n_prepare_ack_` stays
+  // because classic/coordinator.cc::DispatchAck increments it.
   uint32_t n_prepare_ack_ = 0;
   uint32_t n_finish_req_ = 0;
   uint32_t n_finish_ack_ = 0;
-  std::vector<int> site_prepare_;
-  std::vector<int> site_commit_;
-  std::vector<int> site_abort_;
+  // Workstream N Phase 4e-32: removed `std::vector<int> site_prepare_;`,
+  // `site_commit_;`, and `site_abort_;` — write-only counters with
+  // no observers.  All `site_*[rp]++` increments and the
+  // `site_prepare_[i] = 0` reset loop were dead-as-side-effect.
+  // Companion `.resize(...)` initialisations in `coordinator.cc::Reset`
+  // and the loop in `classic/coordinator.cc::DispatchRetry` removed
+  // alongside the fields.
   // Workstream N Phase 4e-8: removed `std::vector<int> site_piece_;`
   // — resized at coordinator.cc:53 alongside the other site_* vectors
   // but never written or read otherwise (only commented-out debug
@@ -219,7 +226,7 @@ class Coordinator {
     aborted_ = false;
     n_dispatch_ = 0;
     n_dispatch_ack_ = 0;
-    n_prepare_req_ = 0;
+    // Workstream N Phase 4e-32: removed `n_prepare_req_ = 0;` — field gone.
     n_prepare_ack_ = 0;
     n_finish_req_ = 0;
     n_finish_ack_ = 0;
