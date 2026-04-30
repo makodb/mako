@@ -73,7 +73,7 @@ using rrr::i64;
 using rrr::Future;
 using rrr::DragonBall;
 using rrr::RandomGenerator;
-using rrr::Recorder;
+// Workstream N Phase 4e-36: removed `using rrr::Recorder;` — class deleted.
 using rrr::AvgStat;
 using rrr::ALock;
 using rrr::TimeoutALock;
