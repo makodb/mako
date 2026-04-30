@@ -1557,8 +1557,10 @@ bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
 
 // @safe - Destroys pool and all cached connections
 ClientPool::~ClientPool() {
-  for (auto it : cache_) {
-    for (auto& client : it.second) {
+  // L9: rusty::BTreeMap iter `operator*()` returns
+  // `std::tuple<const K&, V&>` (post-2026-04 API).
+  for (auto&& [_addr, clients] : cache_) {
+    for (auto& client : clients) {
       client->close();
     }
   }
@@ -1575,7 +1577,10 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
   size_t count = 0;
   auto clients_opt = cache_.get(addr);
   if (clients_opt.is_some()) {
-    for (const auto& client : *clients_opt.unwrap()) {
+    // L9: rusty::BTreeMap::get returns `Option<V&>` (post-2026-04
+    // API), so unwrap() yields a reference, not a pointer.
+    auto& clients = clients_opt.unwrap();
+    for (const auto& client : clients) {
       if (is_client_healthy(client)) {
         count++;
       }
@@ -1591,14 +1596,16 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
   size_t removed = 0;
   auto clients_opt = cache_.get(addr);
   if (clients_opt.is_some()) {
-    auto* clients = clients_opt.unwrap();
+    // L9: BTreeMap::get returns `Option<V&>`; unwrap() yields a
+    // reference. Use `.` instead of `->`, drop the `*` deref.
+    auto& clients = clients_opt.unwrap();
     auto cfg = config_.get();
 
     // Remove unhealthy clients, but keep at least min_connections.
     rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients->len());
-    for (const auto& client : *clients) {
-      if (clients->len() - removed <= static_cast<size_t>(cfg.min_connections)) {
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - removed <= static_cast<size_t>(cfg.min_connections)) {
         kept.push(client.clone());
         continue;
       }
@@ -1609,10 +1616,10 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
         kept.push(client.clone());
       }
     }
-    *clients = std::move(kept);
+    clients = std::move(kept);
 
     // Remove empty entries from cache
-    if (clients->is_empty()) {
+    if (clients.is_empty()) {
       cache_.remove(addr);
     }
   }
@@ -1634,12 +1641,13 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
 
   auto clients_opt = cache_.get(addr);
   if (clients_opt.is_some()) {
-    auto* clients = clients_opt.unwrap();
+    // L9: BTreeMap::get returns `Option<V&>`.
+    auto& clients = clients_opt.unwrap();
 
     rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients->len());
-    for (const auto& client : *clients) {
-      if (clients->len() - closed <= static_cast<size_t>(cfg.min_connections)) {
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - closed <= static_cast<size_t>(cfg.min_connections)) {
         kept.push(client.clone());
         continue;
       }
@@ -1650,9 +1658,9 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
         kept.push(client.clone());
       }
     }
-    *clients = std::move(kept);
+    clients = std::move(kept);
 
-    if (clients->is_empty()) {
+    if (clients.is_empty()) {
       cache_.remove(addr);
     }
   }
@@ -1666,19 +1674,31 @@ size_t ClientPool::remove_all_unhealthy() {
   size_t total_removed = 0;
   auto cfg = config_.get();
 
-  rusty::Vec<std::string> keys = cache_.keys();
+  // L9: BTreeMap::keys() now returns `keys_range` (a transient
+  // iterator-shaped object), not `Vec<K>`. Drain into a Vec so the
+  // subsequent loop body — which mutates `cache_` via `remove(...)`
+  // — doesn't iterate while modifying.
+  rusty::Vec<std::string> keys;
+  {
+    auto it = cache_.keys();
+    keys.reserve(it.len());
+    for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
+      keys.push(std::string(opt.unwrap()));
+    }
+  }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
     auto clients_opt = cache_.get(addr);
     if (clients_opt.is_none()) {
       continue;
     }
-    auto* clients = clients_opt.unwrap();
+    // L9: BTreeMap::get returns `Option<V&>`.
+    auto& clients = clients_opt.unwrap();
     size_t removed = 0;
     rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients->len());
-    for (const auto& client : *clients) {
-      if (clients->len() - removed <= static_cast<size_t>(cfg.min_connections)) {
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - removed <= static_cast<size_t>(cfg.min_connections)) {
         kept.push(client.clone());
         continue;
       }
@@ -1689,9 +1709,9 @@ size_t ClientPool::remove_all_unhealthy() {
         kept.push(client.clone());
       }
     }
-    *clients = std::move(kept);
+    clients = std::move(kept);
     total_removed += removed;
-    if (clients->is_empty()) {
+    if (clients.is_empty()) {
       empty_keys.push(addr);
     }
   }
@@ -1713,19 +1733,28 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
     return 0;
   }
 
-  rusty::Vec<std::string> keys = cache_.keys();
+  // L9: same drain pattern as remove_all_unhealthy above —
+  // BTreeMap::keys() returns a transient `keys_range`.
+  rusty::Vec<std::string> keys;
+  {
+    auto it = cache_.keys();
+    keys.reserve(it.len());
+    for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
+      keys.push(std::string(opt.unwrap()));
+    }
+  }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
     auto clients_opt = cache_.get(addr);
     if (clients_opt.is_none()) {
       continue;
     }
-    auto* clients = clients_opt.unwrap();
+    auto& clients = clients_opt.unwrap();
     size_t closed = 0;
     rusty::Vec<rusty::Arc<Client>> kept;
-    kept.reserve(clients->len());
-    for (const auto& client : *clients) {
-      if (clients->len() - closed <= static_cast<size_t>(cfg.min_connections)) {
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - closed <= static_cast<size_t>(cfg.min_connections)) {
         kept.push(client.clone());
         continue;
       }
@@ -1736,9 +1765,9 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
         kept.push(client.clone());
       }
     }
-    *clients = std::move(kept);
+    clients = std::move(kept);
     total_closed += closed;
-    if (clients->is_empty()) {
+    if (clients.is_empty()) {
       empty_keys.push(addr);
     }
   }
@@ -1753,8 +1782,9 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
 size_t ClientPool::total_client_count() {
   l_.lock();
   size_t count = 0;
-  for (const auto& it : cache_) {
-    count += it.second.size();
+  // L9: BTreeMap iter returns `tuple<const K&, V&>`.
+  for (auto&& [_addr, clients] : cache_) {
+    count += clients.size();
   }
   l_.unlock();
   return count;
@@ -1780,7 +1810,9 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
     l_.lock();
     auto clients_opt = cache_.get(addr);
     if (clients_opt.is_some()) {
-      for (const auto& client : *clients_opt.unwrap()) {
+      // L9: BTreeMap::get returns `Option<V&>`.
+      auto& clients = clients_opt.unwrap();
+      for (const auto& client : clients) {
         auto state = client->connection_state();
         if (config.skip_connected && state == ConnectionState::CONNECTED) {
           result.skipped++;
@@ -1864,8 +1896,9 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
   rusty::Vec<std::string> addresses;
   {
     l_.lock();
-    for (const auto& kv : cache_) {
-      addresses.push(kv.first);
+    // L9: BTreeMap iter returns `tuple<const K&, V&>`.
+    for (auto&& [addr, _clients] : cache_) {
+      addresses.push(addr);
     }
     l_.unlock();
   }
@@ -1897,24 +1930,25 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     lb_state_.insert(addr, LoadBalancerState{});
     lb_state_opt = lb_state_.get(addr);
   }
-  auto* lb_state = lb_state_opt.unwrap();
+  // L9: BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
+  auto& lb_state = lb_state_opt.unwrap();
 
   auto clients_opt = cache_.get(addr);
   if (clients_opt.is_some()) {
-    auto* clients = clients_opt.unwrap();
-    int client_count = static_cast<int>(clients->size());
+    auto& clients = clients_opt.unwrap();
+    int client_count = static_cast<int>(clients.size());
 
     // Use load balancer to select starting index
     size_t start_idx = LoadBalancer::select(
         cfg.load_balancing,
-        *clients,
-        *lb_state,
+        clients,
+        lb_state,
         rand_()
     );
 
     for (int i = 0; i < client_count; i++) {
       int idx = (start_idx + i) % client_count;
-      auto& client = (*clients)[idx];
+      auto& client = clients[idx];
 
       // Check if client is connected and healthy
       if (client->connected() && is_client_healthy(client)) {
@@ -1941,10 +1975,10 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     if (sp_cl.is_none()) {
       Log_info("ClientPool: all clients to %s failed, recreating connections", addr.c_str());
       // Close old connections
-      for (auto& client : *clients) {
+      for (auto& client : clients) {
         client->close();
       }
-      clients->clear();
+      clients.clear();
 
       // Create new connections (use min_connections)
       bool ok = true;
@@ -1956,11 +1990,11 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
           ok = false;
           break;
         }
-        clients->push(client);
+        clients.push(client);
       }
 
-      if (ok && !clients->is_empty()) {
-        sp_cl = rusty::Some((*clients)[rand_() % clients->size()].clone());
+      if (ok && !clients.is_empty()) {
+        sp_cl = rusty::Some(clients[rand_() % clients.size()].clone());
       } else {
         // Remove from cache if we can't connect
         cache_.remove(addr);

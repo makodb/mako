@@ -1060,9 +1060,12 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v)
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
+    // L9: rusty::BTreeMap iter `operator*()` returns
+    // `std::tuple<const K&, const V&>` (post-2026-04 API).
     for (typename rusty::BTreeMap<K, V>::const_iterator it = v.begin(); it != v.end();
          ++it) {
-      m << it->first << it->second;
+      auto kv = *it;
+      m << std::get<0>(kv) << std::get<1>(kv);
     }
     return m;
   // }
@@ -1119,9 +1122,12 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
+    // L9: rusty::HashMap iter `operator*()` returns
+    // `std::tuple<const K&, const V&>` (post-2026-04 API).
     for (typename rusty::HashMap<K, V>::const_iterator it = v.begin();
          it != v.end(); ++it) {
-      m << it->first << it->second;
+      auto kv = *it;
+      m << std::get<0>(kv) << std::get<1>(kv);
     }
     return m;
   // }
