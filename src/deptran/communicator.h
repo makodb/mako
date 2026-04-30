@@ -496,9 +496,9 @@ class Communicator {
   virtual void BroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
                          Coordinator *coo,
                          const std::function<void(int res, TxnOutput &)> &) ;
-  virtual void SyncBroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
-                         Coordinator *coo,
-                         const std::function<void(int res, TxnOutput &)> &) ;
+  // Workstream N Phase 4e-44: removed `SyncBroadcastDispatch(...)`
+  // declaration — only call site was the now-deleted
+  // `CoordinatorClassic::DispatchSync` (Phase 4e-43).
 
 	shared_ptr<QuorumEvent> SendReelect();
 

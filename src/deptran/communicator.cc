@@ -589,85 +589,11 @@ void Communicator::BroadcastDispatch(
   }
 }
 
-void Communicator::SyncBroadcastDispatch(
-    shared_ptr<vector<shared_ptr<TxPieceData>>> sp_vec_piece,
-    Coordinator* coo,
-    const function<void(int, TxnOutput&)> & callback) {
-
-  Log_debug("Do a dispatch on client worker");
-  cmdid_t cmd_id = sp_vec_piece->at(0)->root_id_;
-  verify(!sp_vec_piece->empty());
-  auto par_id = sp_vec_piece->at(0)->PartitionId();
-
-  std::pair<siteid_t, ClassicProxy*> pair_leader_proxy;
-  if (Config::GetConfig()->replica_proto_==MODE_MENCIUS) {
-    // The logic here is: Mencius have multiple proposor, if the client is co-locate with a proposer, it give all commands to this proposor.
-    // If not, round-robin with all proposors.
-    auto server_infos = Config::GetConfig()->GetMyServers();
-    if (server_infos.size() == 1) {
-      int n = rpc_par_proxies_.find(par_id)->second.size();
-      pair_leader_proxy = LeaderProxyForPartition(par_id, server_infos[0].id);
-    } else {
-      int n = rpc_par_proxies_.find(par_id)->second.size();
-      pair_leader_proxy = LeaderProxyForPartition(par_id, coo->coo_id_ % n);
-    }
-  } else {
-    pair_leader_proxy = LeaderProxyForPartition(par_id);
-  }
-  
-  SetLeaderCache(par_id, pair_leader_proxy);
-  Log_debug("send dispatch to site %ld, par %d",
-            pair_leader_proxy.first, par_id);
-  auto proxy = pair_leader_proxy.second;
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-
-  // Record Time
-  sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
-
-  MarshallDeputy md(sp_vpd); // ????
-
-	DepId di;
-	di.str = "dep";
-	di.id = Communicator::global_id++;
-
-#ifdef COPILOT_TIME_DEBUG
-  struct timeval tp;
-  gettimeofday(&tp, NULL);
-  Log_info("[Jetpack] [C-] BroadcastDispatch at Communicator %.3f", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
-#endif
-
-  WAN_WAIT;
-#ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md.inner()).first, SimpleRWCommand::GetCmdID(md.inner()).second);
-#endif
-  int32_t ret;
-  TxnOutput outputs;
-  uint64_t coro_id;
-  MarshallDeputy view_md;
-  ClassicProxy::RpcDispatchRequest dispatch_req;
-  dispatch_req.tid = cmd_id;
-  dispatch_req.dep_id = di;
-  dispatch_req.cmd = md;
-  auto dispatch_result = proxy->Dispatch(dispatch_req);
-	verify(dispatch_result.is_ok());
-  auto dispatch_response = dispatch_result.unwrap();
-  ret = dispatch_response.res;
-  outputs = dispatch_response.output;
-  coro_id = dispatch_response.coro_id;
-  view_md = dispatch_response.view_data;
-  
-  // Handle WRONG_LEADER response with view data
-  if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
-    auto sp_view_data = marshallable_cast<ViewData>(view_md);
-    if (sp_view_data) {
-      UpdatePartitionView(par_id, sp_view_data);
-    }
-  }
-  
-  callback(ret, outputs);
-}
-
+// Workstream N Phase 4e-44: removed `Communicator::SyncBroadcastDispatch`
+// (~78 LOC) — only call site was the now-deleted
+// `CoordinatorClassic::DispatchSync` (Phase 4e-43).  This was the
+// synchronous (blocking `proxy->Dispatch(req)`) twin of the live
+// async `BroadcastDispatch` path; no surviving caller anywhere.
 
 //need to change this code to solve the quorum info in the graphs
 //either create another event here or inside the coordinator.
