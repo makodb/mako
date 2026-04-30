@@ -30,19 +30,13 @@ bool CoordinatorFpgaRaft::IsFPGALeader() {
    return this->sch_->IsFPGALeader() ;
 }
 
-void CoordinatorFpgaRaft::Forward(shared_ptr<Marshallable>& cmd,
-                                   rusty::Function<void()> func,
-                                   rusty::Function<void()> exe_callback) {
-    //for(int i = 0; i < 100; i++) Log_info("inside forward");
-		verify(0) ; // TODO delete it
-    auto e = commo()->SendForward(par_id_, loc_id_, cmd);
-    e->wait();
-    uint64_t cmt_idx = e->CommitIdx() ;
-    cmt_idx_ = cmt_idx ;
-    Fiber::create_run([&] () {
-      this->sch_->SpCommit(cmt_idx) ;
-    }) ;
-}
+// Workstream N Phase 4e-39: removed `CoordinatorFpgaRaft::Forward`
+// — body started with `verify(0); // TODO delete it` and the only
+// upstream caller would have been a forwarding-from-follower path
+// that was never wired up.  Companion `FpgaRaftCommo::SendForward`,
+// `FpgaRaftForwardQuorumEvent`, and the FpgaRaft::Forward RPC
+// handler chain (`FpgaRaftServiceImpl::Forward` +
+// `FpgaRaftServer::OnForward`) are also gone in this phase.
 
 
 void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
@@ -53,9 +47,11 @@ void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
 #endif
   // client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
   if (!IsLeader()) {
-    //Log_fatal("i am not the leader; site %d; locale %d",
-    //          frame_->site_info_->id, loc_id_);
-    Forward(cmd, std::move(func), std::move(exe_callback)) ;
+    // Workstream N Phase 4e-39: removed `Forward(cmd, ...)` call —
+    // `Forward` method deleted (was `verify(0)`-tagged dead code).
+    // Treat non-leader submission as a hard failure for now —
+    // production behavior was already a crash via the dead Forward.
+    verify(0); // not the leader; non-leader submission unsupported
     return ;
   }
 
@@ -165,12 +161,9 @@ void CoordinatorFpgaRaft::AppendEntries() {
     }
     else if (sp_quorum->no()) {
         verify(0);
-        // TODO should become a follower if the term is smaller
-        //if(!IsLeader())
-        {
-            Forward(cmd_, std::move(commit_callback_)) ;
-            return ;
-        }
+        // Workstream N Phase 4e-39: removed `Forward(cmd_,
+        // commit_callback_)` call inside this `verify(0)`-guarded
+        // unreachable branch — `Forward` method deleted.
     }
     else {
         verify(0);
@@ -228,8 +221,10 @@ void CoordinatorFpgaRaft::GotoNextPhase() {
       } else {
         // TODO
         verify(0);
-        Forward(cmd_, std::move(commit_callback_)) ;
-        phase_ = Phase::COMMIT;
+        // Workstream N Phase 4e-39: removed `Forward(cmd_,
+        // commit_callback_)` and `phase_ = Phase::COMMIT;` inside
+        // this `verify(0)`-guarded unreachable branch — `Forward`
+        // method deleted.
       }
     case Phase::ACCEPT:
       verify(phase_ % n_phase == Phase::COMMIT);

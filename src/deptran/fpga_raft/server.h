@@ -285,9 +285,10 @@ class FpgaRaftServer : public TxLogServer {
                 const ballot_t ballot,
                 shared_ptr<Marshallable> &cmd);
 
-  void OnForward(shared_ptr<Marshallable> &cmd, 
-                          uint64_t *cmt_idx,
-                          rusty::Function<void()> cb) ;
+  // Workstream N Phase 4e-39: removed `OnForward` declaration —
+  // only caller was the deleted `FpgaRaftServiceImpl::Forward`
+  // handler; the matching FpgaRaft::Forward RPC was dropped from
+  // rcc_rpc.rpc.
 
   void SpCommit(const uint64_t cmt_idx) ;
 

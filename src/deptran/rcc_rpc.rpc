@@ -88,8 +88,10 @@ abstract service FpgaRaft {
 									DepId dep_id |
 									uint64_t followerPrevLogIndex);
 
-  defer Forward(MarshallDeputy cmd |
-                uint64_t cmt_idx );
+  // Workstream N Phase 4e-39: removed `Forward(MarshallDeputy cmd |
+  // uint64_t cmt_idx)` RPC declaration — only sender
+  // (`CoordinatorFpgaRaft::Forward`) had `verify(0); // TODO delete it`
+  // and was never called.  No live caller anywhere in the tree.
 
   defer Vote(uint64_t lst_log_idx,
                 ballot_t lst_log_term,
