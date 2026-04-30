@@ -142,10 +142,12 @@ class PaxosServer : public TxLogServer {
     return sp_instance;
   }
 
-  void OnForward(shared_ptr<Marshallable> &cmd,
-                 uint64_t dep_id,
-                 uint64_t* coro_id,
-                 rusty::Function<void()> cb);
+  // Workstream N Phase 4e-37: removed `OnForward` declaration —
+  // body was `verify(0); // Should never be called in Mako`; the
+  // `MultiPaxosServiceImpl::Forward(MarshallDeputy, ...)` handler
+  // has an empty body that never reaches this method (Mako uses
+  // `OnForwardToLearner` instead via the `ForwardToLearnerServer`
+  // RPC).
 
   void OnPrepare(slotid_t slot_id,
                  ballot_t ballot,

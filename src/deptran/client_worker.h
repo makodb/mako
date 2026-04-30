@@ -98,7 +98,9 @@ class ClientWorker {
                volatile double* total_throughput = nullptr);
   ClientWorker() = delete;
   ~ClientWorker();
-  void retrive_statistic();  // Jetpack: statistics collection
+  // Workstream N Phase 4e-37: removed `void retrive_statistic();`
+  // declaration — body was `verify(0); // No longer need...`; only
+  // call site (`s_main.cc:242`) was already commented out.
   // This is called from a different thread.
   void Work();
   Coordinator* FindOrCreateCoordinator();
