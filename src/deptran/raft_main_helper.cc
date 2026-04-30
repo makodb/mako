@@ -694,10 +694,9 @@ int shutdown_paxos() {
   return 0;
 }
 
-// microbench_paxos placeholder keeps params aligned with the Paxos helper.
-void microbench_paxos() {
-  Log_warn("microbench_paxos is not supported for Raft; skipping.");
-}
+// Workstream N Phase 4e-22: removed `microbench_paxos()` Log_warn-only
+// stub — both impls (paxos + raft) and the dispatcher in
+// `replication_helper.cc` are gone (no callers anywhere in tree).
 
 // register_for_follower installs a lightweight follower callback.
 void register_for_follower(std::function<void(const char*, int)> cb,
@@ -829,10 +828,8 @@ void wait_for_submit(uint32_t par_id) {
   worker->WaitForSubmit();
 }
 
-// microbench_paxos_queue placeholder matches Paxos helper API.
-void microbench_paxos_queue() {
-  Log_warn("microbench_paxos_queue is not supported for Raft; skipping.");
-}
+// Workstream N Phase 4e-22: removed `microbench_paxos_queue()`
+// Log_warn-only stub — counterpart in paxos_impl deleted; no callers.
 
 // pre_shutdown_step politely drops control RPC connections before shutdown.
 void pre_shutdown_step() {
