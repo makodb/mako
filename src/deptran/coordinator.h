@@ -74,7 +74,13 @@ class Coordinator {
   std::atomic<uint64_t> next_txn_id_;
 
   std::recursive_mutex mtx_{};
-  Recorder *recorder_{nullptr};
+  // Workstream N Phase 4e-33: removed `Recorder *recorder_{nullptr};`
+  // — only assignment was `recorder_ = NULL;` in the constructor;
+  // no surviving `recorder_ = new Recorder(...)` call site, so the
+  // field was always nullptr.  The `if (recorder_) delete recorder_;`
+  // destructor cleanup was dead-after-null-check-only.  The
+  // `JanusCoordinator::recorder_` shadow declaration is also removed
+  // in this phase.
   CmdData *cmd_{nullptr};
   phase_t phase_ = 0;
   map<innid_t, bool> dispatch_acks_ = {};
