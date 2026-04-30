@@ -405,24 +405,11 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
 // commented out.  `submit_queue_nc` and `submit_poll_th_` went away
 // alongside.
 
-shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
-  auto bulk_prepare = make_shared<BulkPrepareLog>();
-  for(int i = 0; i < pxs_workers_g.size(); i++){
-    int32_t par_id = pxs_workers_g[i]->site_info_->partition_id_;
-    slotid_t slot = pxs_workers_g[i]->n_current+1;
-    bulk_prepare->min_prepared_slots.push_back(make_pair(par_id, slot));
-  }
-  bulk_prepare->epoch = epoch;
-  bulk_prepare->leader_id = machine_id;
-  return bulk_prepare;
-}
-
-shared_ptr<HeartBeatLog> createHeartBeat(int epoch, int machine_id){
-  auto heart_beat = make_shared<HeartBeatLog>();
-  heart_beat->epoch = epoch;
-  heart_beat->leader_id = machine_id;
-  return heart_beat;
-}
+// Workstream N Phase 4e-24: removed `createBulkPrepare(epoch, machine_id)`
+// — only call site was inside the now-deleted `send_bulk_prep`.
+// Workstream N Phase 4e-24: removed `createHeartBeat(epoch, machine_id)`
+// — only call site was inside the deleted `electionMonitor` thread fn
+// (Phase 4e-20).  No surviving caller.
 
 shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   auto syncLog = make_shared<SyncLogRequest>();
@@ -453,23 +440,10 @@ shared_ptr<SyncNoOpRequest> createSyncNoOpLog(int epoch, int machine_id){
 }
 
 
-void send_no_ops_to_all_workers(int epoch){
-  auto pw = pxs_workers_g.back();
-  auto syncNoOpLog = createSyncNoOpLog(epoch, es->machine_id);
-  auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncNoOpLog, ess](){
-    int val = pw->SendSyncNoOpLog(syncNoOpLog);
-    if(val == -1){
-      ess->stuff_after_election_cond_.notify_all();
-    }
-  }));
-  auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
-  {
-    std::unique_lock<std::mutex> lock(es->stuff_after_election_mutex_);
-    es->stuff_after_election_cond_.wait(lock);
-  }
-}
+// Workstream N Phase 4e-24: removed `send_no_ops_to_all_workers(epoch)`
+// — only call site was inside the now-deleted `stuff_todo_leader_election`.
+// The commented-out `// send_no_ops_to_all_workers(epoch)` line in
+// `stuff_todo_learner_upgrade` is unaffected.
 
 /*
 change state to 1,
@@ -564,47 +538,12 @@ void stuff_todo_learner_upgrade(){
   }
 }
 
-void stuff_todo_leader_election(){
-  es->state_lock();
-  es->set_state(1);
-  for(int i = 0; i < pxs_workers_g.size(); i++){
-    pxs_workers_g[i]->election_state_lock.lock();
-    pxs_workers_g[i]->cur_epoch = es->get_epoch();
-    pxs_workers_g[i]->is_leader = 1;
-    pxs_workers_g[i]->election_state_lock.unlock();
-    auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    ps->mtx_.lock();
-    //ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_executed_slot_+1); // reset open slot counter
-    //ps->cur_open_slot_ = ps->max_executed_slot_+1;
-    ps->cur_open_slot_ = ps->max_committed_slot_+1;
-    Log_info("The last committed slot %d and executed slot %d and open %d and touched %d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot);
-    ps->mtx_.unlock();
-  }
-  int epoch = es->get_epoch();
-  es->state_unlock();
-  sync_callbacks_for_new_leader();
-  send_sync_logs(epoch);
-  send_no_ops_to_all_workers(epoch);
-  send_no_ops_for_mark(epoch);
-}
-
-void send_bulk_prep(int send_epoch){
-  auto pw = pxs_workers_g.back();
-  auto bp_log = createBulkPrepare(send_epoch, pw->site_info_->locale_id);
-  auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, bp_log, ess]() {
-      int val = pw->SendBulkPrepare(bp_log);
-      if(val != -1){
-        ess->state_lock();
-        ess->set_state(0);
-        ess->set_epoch(val);
-        ess->state_unlock();
-      }
-      ess->election_cond.notify_all();
-  }));
-  auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
-}
+// Workstream N Phase 4e-24: removed `stuff_todo_leader_election()` —
+// no caller anywhere; the `electionMonitor` thread fn (Phase 4e-20)
+// was its only invoker, and the surviving cluster-internal
+// `heartbeatMonitor2` path uses `stuff_todo_learner_upgrade` instead.
+// Workstream N Phase 4e-24: removed `send_bulk_prep(send_epoch)` —
+// also referenced only by the deleted `electionMonitor` thread fn.
 
 // Workstream N Phase 4e-20: removed dead `void* electionMonitor(void*)`
 // (~46 lines) and `void* heartbeatMonitor(void*)` (~29 lines)
