@@ -425,20 +425,10 @@ shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   return syncLog;
 }
 
-shared_ptr<SyncNoOpRequest> createSyncNoOpLog(int epoch, int machine_id){
-  auto syncNoOpLog = make_shared<SyncNoOpRequest>();
-  syncNoOpLog->leader_id = machine_id;
-  syncNoOpLog->epoch = epoch;
-  for(int i = 0; i < pxs_workers_g.size(); i++){
-    auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    pw->mtx_.lock();
-    slotid_t min_slot = pw->max_executed_slot_;
-    pw->mtx_.unlock();
-    syncNoOpLog->sync_slots.push_back(min_slot);
-  }
-  return syncNoOpLog;
-}
-
+// Workstream N Phase 4e-25: removed `createSyncNoOpLog(epoch, machine_id)`
+// — only call site was inside the now-deleted `send_no_ops_to_all_workers`
+// (Phase 4e-24).  No surviving caller; the matching
+// `PaxosWorker::SendSyncNoOpLog` is also removed in this phase.
 
 // Workstream N Phase 4e-24: removed `send_no_ops_to_all_workers(epoch)`
 // — only call site was inside the now-deleted `stuff_todo_leader_election`.
