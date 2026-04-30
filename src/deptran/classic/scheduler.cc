@@ -189,15 +189,16 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
 		slow_ = coo->slow_;
 //    Log_debug("finished prepare command replication");
     return sp_tx->prepare_result->get();
-  } else if (Config::GetConfig()->do_logging()) {
-    string log;
-    this->get_prepare_log(tx_id, sids, &log);
-    // Workstream N Phase 4e-35: removed `//   recorder_->submit(log,
-    // callback);` comment — `recorder_` field is gone.
   } else {
+    // Workstream N Phase 4e-41: collapsed `else if (do_logging()) {
+    // string log; get_prepare_log(tx_id, sids, &log); }` branch into
+    // the else — the disk-logging path was a no-op (built `log` and
+    // discarded it; `Recorder::submit` was already commented out and
+    // the field is gone since Phases 4e-33..4e-36).  `do_logging`,
+    // `get_prepare_log`, and `Config::log_path()` also removed in
+    // this phase.
     return DoPrepare(tx_id);
   }
-  return false;
 }
 
 int SchedulerClassic::PrepareReplicated(TpcPrepareCommand& prepare_cmd) {

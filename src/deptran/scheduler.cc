@@ -150,49 +150,10 @@ mdb::Txn *TxLogServer::GetOrCreateMTxn(const i64 tid) {
   return txn;
 }
 
-// TODO move this to the dtxn class
-void TxLogServer::get_prepare_log(i64 txn_id,
-                                  const std::vector<i32> &sids,
-                                  std::string *str) {
-  auto it = mdb_txns_.find(txn_id);
-  verify(it != mdb_txns_.end() && it->second != NULL);
-
-  // marshal txn_id
-  uint64_t len = str->size();
-  str->resize(len + sizeof(txn_id));
-  memcpy((void *) (str->data()), (void *) (&txn_id), sizeof(txn_id));
-  len += sizeof(txn_id);
-  verify(len == str->size());
-
-  // p denotes prepare log
-  const char prepare_tag = 'p';
-  str->resize(len + sizeof(prepare_tag));
-  memcpy((void *) (str->data() + len),
-         (void *) &prepare_tag,
-         sizeof(prepare_tag));
-  len += sizeof(prepare_tag);
-  verify(len == str->size());
-
-  // marshal related servers
-  uint32_t num_servers = sids.size();
-  str->resize(len + sizeof(num_servers) + sizeof(i32) * num_servers);
-  memcpy((void *) (str->data() + len),
-         (void *) &num_servers,
-         sizeof(num_servers));
-  len += sizeof(num_servers);
-  for (uint32_t i = 0; i < num_servers; i++) {
-    memcpy((void *) (str->data() + len), (void *) (&(sids[i])), sizeof(i32));
-    len += sizeof(i32);
-  }
-  verify(len == str->size());
-
-  switch (mode_) {
-    case MODE_2PL:
-    case MODE_OCC:((mdb::Txn2PL *) it->second)->marshal_stage(*str);
-      break;
-    default:verify(0);
-  }
-}
+// Workstream N Phase 4e-41: removed `TxLogServer::get_prepare_log`
+// (~42 LOC) — only call site was the now-deleted `do_logging()`-
+// gated branch in `SchedulerClassic::Prepare`, which built a `log`
+// string only to discard it.
 
 TxLogServer::TxLogServer() : mtx_() {
   mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();

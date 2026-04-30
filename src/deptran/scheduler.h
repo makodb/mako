@@ -496,10 +496,8 @@ class TxLogServer {
   virtual mdb::Txn *GetOrCreateMTxn(const i64 tid);
   virtual mdb::Txn *RemoveMTxn(const i64 tid);
 
-  void get_prepare_log(i64 txn_id,
-                       const std::vector<i32> &sids,
-                       std::string *str
-  );
+  // Workstream N Phase 4e-41: removed `get_prepare_log` declaration —
+  // see scheduler.cc retirement comment.
 
   // TODO: (Shuai: I am not sure this is supposed to be here.)
   // I think it used to initialized the database?

@@ -1106,18 +1106,17 @@ bool Config::do_early_return() {
   return early_return_;
 }
 
-bool Config::do_logging() {
-  return logging_path_.empty();
-}
+// Workstream N Phase 4e-41: removed `Config::do_logging()` and
+// `Config::log_path()` — only call site of `do_logging` was the
+// now-deleted `else if (do_logging())` branch in
+// `SchedulerClassic::Prepare`; `log_path` had no callers.  The
+// `logging_path_` field stays for now (its constructor parameter
+// chain and `-r` CLI flag are a follow-up cleanup).
 
 bool Config::IsReplicated() {
   // TODO
   return (replica_proto_ != MODE_NONE);
   return true;
-}
-
-const char * Config::log_path() {
-  return logging_path_.c_str();
 }
 
 bool Config::retry_wait() {
