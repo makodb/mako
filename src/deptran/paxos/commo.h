@@ -86,11 +86,10 @@ class MultiPaxosCommo : public Communicator {
   // `BulkCoordinatorMultiPaxos::Prepare()`; the body was already a
   // `verify(0)`-then-commented-out shell.
 
-  shared_ptr<PaxosPrepareQuorumEvent>
-  SendForward(parid_t par_id,
-              uint64_t follower_id,
-              uint64_t dep_id,
-              shared_ptr<Marshallable> cmd);
+  // Workstream N Phase 4e-38: removed `SendForward(parid, follower_id,
+  // dep_id, cmd)` declaration — never called from anywhere in the
+  // tree; the only candidate caller would have been a Jetpack
+  // forward-to-leader path that was never wired up.
 };
 
 } // namespace janus
