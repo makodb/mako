@@ -7,10 +7,8 @@ CopilotServiceImpl::CopilotServiceImpl(TxLogServer *sched)
     : sched_((CopilotServer *)sched) {
 }
 
-void CopilotServiceImpl::Forward(const CopilotService::RpcForwardRequest& req, CopilotService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
-  (void)resp;
-  this->Forward(req.cmd, std::move(defer));
-}
+// Workstream N Phase 4e-40: removed `Forward` typed-rpc override
+// (and matching N-arg overload further below).
 
 void CopilotServiceImpl::Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
   this->Prepare(req.is_pilot, req.slot, req.ballot, req.dep_id, &resp.ret_cmd, &resp.max_ballot, &resp.dep, &resp.status, std::move(defer));
@@ -29,14 +27,9 @@ void CopilotServiceImpl::Commit(const CopilotService::RpcCommitRequest& req, Cop
   this->Commit(req.is_pilot, req.slot, req.dep, req.cmd, std::move(defer));
 }
 
-void CopilotServiceImpl::Forward(const MarshallDeputy& cmd,
-                                 rrr::DeferredReply defer) {
-  verify(sched_);
-  Fiber::create_run([this, cmd, defer = std::move(defer)]() mutable {
-    sched_->OnForward(const_cast<MarshallDeputy&>(cmd).inner(),
-                      [defer = std::move(defer)]() mutable { defer.reply(); });
-  });
-}
+// Workstream N Phase 4e-40: removed `Forward(MarshallDeputy, ...)`
+// N-arg overload — only caller was the deleted typed-rpc shim above;
+// the receiver `CopilotServer::OnForward` is also gone.
 
 void CopilotServiceImpl::Prepare(const uint8_t& is_pilot,
                                  const uint64_t& slot,

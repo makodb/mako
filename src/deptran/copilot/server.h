@@ -96,8 +96,10 @@ class CopilotServer : public TxLogServer {
   void WaitForPingPong();
   bool WillWait(int& time_to_wait) const;
 
-  void OnForward(shared_ptr<Marshallable>& cmd,
-                 rusty::Function<void()> cb);
+  // Workstream N Phase 4e-40: removed `OnForward` declaration —
+  // only caller was the deleted `CopilotServiceImpl::Forward`
+  // handler; the matching Copilot::Forward RPC was dropped from
+  // rcc_rpc.rpc.
 
   void OnPrepare(const uint8_t& is_pilot,
                  const uint64_t& slot,

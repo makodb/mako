@@ -20,8 +20,10 @@ class CopilotServiceImpl : public CopilotService {
   CopilotServiceImpl(TxLogServer *sched);
 
   // Defer handlers (preferred for async RPC completion).
-  void Forward(const MarshallDeputy& cmd,
-               rrr::DeferredReply defer);
+  // Workstream N Phase 4e-40: removed `Forward(MarshallDeputy, ...)`
+  // declaration — paired with its typed-rpc override (also removed
+  // below); matching `Copilot::Forward` RPC was dropped from
+  // rcc_rpc.rpc and `CopilotServer::OnForward` is also gone.
 
   void Prepare(const uint8_t& is_pilot,
                const uint64_t& slot,
@@ -60,7 +62,8 @@ class CopilotServiceImpl : public CopilotService {
 
   // BEGIN typed-rpc-decls (CopilotServiceImpl)
   // Typed RPC interface overrides (new API).
-  void Forward(const CopilotService::RpcForwardRequest& req, CopilotService::RpcForwardResponse& resp, rrr::DeferredReply defer) override;
+  // Workstream N Phase 4e-40: removed `Forward` typed-rpc override —
+  // matching abstract base class virtual is gone (rcc_rpc.rpc updated).
   void Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, rrr::DeferredReply defer) override;
   void FastAccept(const CopilotService::RpcFastAcceptRequest& req, CopilotService::RpcFastAcceptResponse& resp, rrr::DeferredReply defer) override;
   void Accept(const CopilotService::RpcAcceptRequest& req, CopilotService::RpcAcceptResponse& resp, rrr::DeferredReply defer) override;

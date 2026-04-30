@@ -215,7 +215,11 @@ abstract service Raft {
 }
 
 abstract service Copilot {
-  defer Forward(MarshallDeputy cmd);
+  // Workstream N Phase 4e-40: removed `Forward(MarshallDeputy cmd);`
+  // RPC declaration — no sender anywhere in the tree (no
+  // `CopilotCommo::SendForward`, no `async_Forward(...)` call site).
+  // The matching `CopilotServiceImpl::Forward` and
+  // `CopilotServer::OnForward` handlers were therefore unreachable.
 
   defer Prepare(uint8_t is_pilot,
                 uint64_t slot,
