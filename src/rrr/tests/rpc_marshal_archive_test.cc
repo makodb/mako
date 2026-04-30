@@ -2134,5 +2134,110 @@ TEST(MarshallDeputySerializableField, MoveBeforeAccessLeavesBothLazy) {
   EXPECT_EQ(b.serializable()->kind(), CanaryMarshallable::kKind);
 }
 
+// ---- Phase 3f-5: serializable() short-circuit for SerializableMarshallableAdapter
+
+TEST(MarshallDeputySerializableField,
+     ShortCircuitsThroughSerializableMarshallableAdapter) {
+  // When `inner_sp_data_` is a SerializableMarshallableAdapter (the
+  // production path for every Phase 4-migrated type), the
+  // `serializable()` accessor should NOT build a stacked
+  // `MarshallableSerializableAdapter` view — it should alias the
+  // SMA's inner proxy directly. We probe this via `proxy_cast<T>`:
+  // if the short-circuit fired, the proxy holds T itself; if it
+  // didn't, the proxy holds a `MarshallableSerializableAdapter`
+  // wrapping the SMA, and `proxy_cast<T>` returns nullptr.
+  CanaryDeputyCommand orig;
+  orig.header = 17;
+  orig.name = "short-circuit";
+  orig.values = {1, 2};
+
+  auto orig_marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+  MarshallDeputy md{orig_marsh};
+
+  // Trigger the lazy populate.
+  SerializableProxy& proxy = md.serializable();
+  EXPECT_EQ(proxy->kind(), CanaryDeputyCommand::kKind);
+
+  // proxy_cast<T> succeeds only if the short-circuit fired —
+  // i.e. the cached proxy IS the SMA's inner proxy (which holds T)
+  // rather than a fresh MarshallableSerializableAdapter (which
+  // holds a shared_ptr<Marshallable> pointing at the SMA).
+  CanaryDeputyCommand* p = proxy_cast<CanaryDeputyCommand>(&*proxy);
+  ASSERT_NE(p, nullptr)
+      << "Phase 3f-5 short-circuit: serializable() should alias the "
+         "SerializableMarshallableAdapter's inner proxy directly, "
+         "not wrap it in a MarshallableSerializableAdapter.";
+  EXPECT_EQ(p->header, 17);
+  EXPECT_EQ(p->name, "short-circuit");
+  EXPECT_EQ(p->values, (std::vector<int32_t>{1, 2}));
+}
+
+TEST(MarshallDeputySerializableField,
+     ShortCircuitFallsBackForLegacyMarshallable) {
+  // For a deputy holding a non-SMA Marshallable subclass (the
+  // legacy path — only test fixtures and the CmdData family hit
+  // this in production), `serializable()` falls back to wrapping
+  // via `as_serializable(inner_sp_data_)`. The cached proxy is a
+  // MarshallableSerializableAdapter; `proxy_cast<CanaryMarshallable>`
+  // returns nullptr because the proxy's underlying T is the
+  // adapter, not the canary itself.
+  auto canary = std::make_shared<CanaryMarshallable>();
+  canary->id = 33;
+  canary->name = "fallback";
+  MarshallDeputy md{std::static_pointer_cast<Marshallable>(canary)};
+
+  SerializableProxy& proxy = md.serializable();
+  EXPECT_EQ(proxy->kind(), CanaryMarshallable::kKind);
+
+  // Fallback path: the proxy wraps a MarshallableSerializableAdapter
+  // (not the canary itself), so a direct cast to CanaryMarshallable
+  // returns nullptr.
+  EXPECT_EQ(proxy_cast<CanaryMarshallable>(&*proxy), nullptr);
+
+  // Bytes still round-trip correctly through the fallback path.
+  Marshal m_inner;
+  md.inner()->to_marshal(m_inner);
+  auto bytes_inner = drain_marshal(m_inner);
+
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  proxy->save(writer);
+  auto bytes_proxy = sink_to_vector(sink);
+  EXPECT_EQ(bytes_inner, bytes_proxy);
+}
+
+TEST(MarshallDeputySerializableField,
+     ShortCircuitBytesByteForByteIdenticalToFreshAsSerializable) {
+  // Phase 3f-5 must not perturb wire bytes. For an SMA-entered
+  // deputy: bytes from `md.serializable()->save(...)` (cached,
+  // short-circuited) must equal bytes from the fresh non-cached
+  // path `as_serializable(md.inner())->save(...)` (the pre-3f-5
+  // path).
+  CanaryDeputyCommand orig;
+  orig.header = 99;
+  orig.name = "bytes equal";
+  orig.values = {7, 8, 9, 10, 11};
+
+  auto orig_marsh = as_marshallable(
+      make_serializable_proxy<CanaryDeputyCommand>(orig));
+  MarshallDeputy md{orig_marsh};
+
+  // (a) cached / short-circuited bytes.
+  BufferSink sink_cached;
+  BinaryWriteArchive writer_cached(&sink_cached);
+  md.serializable()->save(writer_cached);
+  auto bytes_cached = sink_to_vector(sink_cached);
+
+  // (b) fresh non-cached bytes via as_serializable(md.inner()).
+  auto fresh_proxy = as_serializable(md.inner());
+  BufferSink sink_fresh;
+  BinaryWriteArchive writer_fresh(&sink_fresh);
+  fresh_proxy->save(writer_fresh);
+  auto bytes_fresh = sink_to_vector(sink_fresh);
+
+  EXPECT_EQ(bytes_cached, bytes_fresh);
+}
+
 }  // namespace
 }  // namespace rrr

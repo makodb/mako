@@ -1246,7 +1246,13 @@ semantics — field starts null and is populated on first
 `serializable()` accessor call), Phase 3f-4 (wired the bridge
 `operator<<(BinaryWriteArchive&, MarshallDeputy&)` through
 `md.serializable()` — first production caller of the lazy accessor;
-per-call alloc savings on the hot path), Phase 4a-prep
+per-call alloc savings on the hot path), Phase 3f-5
+(`serializable()` short-circuits through
+`SerializableMarshallableAdapter` — when the deputy was entered via
+`as_marshallable(proxy)`, alias the SMA's inner proxy directly via
+`shared_ptr` aliasing, avoiding the stacked `M→S→M→S` adapter
+wrapping; the production path skips one heap allocation and one
+temp-Marshal byte copy per first proxy access), Phase 4a-prep
 (`marshallable_cast` / `wrap_typed_marshallable` overloads for
 Serializable types — call-site transparency for migrations),
 Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,

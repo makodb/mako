@@ -441,11 +441,40 @@ void MarshallDeputy::set_marshallable(
 // reasoning as `set_marshallable`). The const qualifier means the
 // accessor is callable from const-qualified contexts; it mutates
 // `serializable_` through its `mutable` qualifier.
+//
+// Workstream N Phase 3f-5: short-circuit when `inner_sp_data_` is a
+// `SerializableMarshallableAdapter` — i.e. the deputy was entered
+// via `as_marshallable(proxy)` (the common production path; every
+// migrated Phase 4 / 4d type goes through this).  Without the
+// short-circuit, `as_serializable(inner_sp_data_)` would build a
+// `MarshallableSerializableAdapter` wrapping the SMA, producing a
+// stacked `M→S→M→S` proxy whose `save(ar)` drives bytes through a
+// temporary Marshal and drains them into `ar` (one extra copy per
+// payload byte plus a fresh proxy heap allocation per first read).
+// Aliasing into the SMA's inner `serializable_` member directly via
+// `shared_ptr`'s aliasing constructor avoids both costs while
+// keeping the SMA alive for the cache's lifetime.
+//
+// The fallback path (legacy Marshallable subclass not
+// SerializableMarshallableAdapter — only test fixtures and the
+// CmdData family hit this in practice) keeps the prior behavior:
+// build a `MarshallableSerializableAdapter` view via
+// `as_serializable(inner_sp_data_)` and cache it.
 rrr::SerializableProxy& MarshallDeputy::serializable() const {
   verify(inner_sp_data_ != nullptr);
   if (serializable_ == nullptr) {
-    serializable_ = std::make_shared<SerializableProxy>(
-        as_serializable(inner_sp_data_));
+    if (auto sma = std::dynamic_pointer_cast<
+            SerializableMarshallableAdapter>(inner_sp_data_)) {
+      // Aliasing shared_ptr: shares ownership with `sma` (and
+      // therefore with `inner_sp_data_`) but points at the SMA's
+      // inner proxy member. The proxy stays alive as long as
+      // `serializable_` (or `inner_sp_data_`) keeps the SMA alive.
+      serializable_ = std::shared_ptr<SerializableProxy>(
+          sma, &sma->proxy_mut());
+    } else {
+      serializable_ = std::make_shared<SerializableProxy>(
+          as_serializable(inner_sp_data_));
+    }
   }
   return *serializable_;
 }
