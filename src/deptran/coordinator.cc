@@ -35,7 +35,7 @@ Coordinator::Coordinator(uint32_t coo_id,
   k++;
   this->next_pie_id_.store(k);
   this->next_txn_id_.store(k);
-  recorder_ = NULL;
+  // Workstream N Phase 4e-33: removed `recorder_ = NULL;` — field gone.
   retry_wait_ = Config::GetConfig()->retry_wait();
   txn_timeout_ = Config::GetConfig()->get_txn_timeout();
 
@@ -61,7 +61,8 @@ Coordinator::~Coordinator() {
 //  `for (i = 0; i < site_prepare_.size(); i++)` debug Log_debug
 //  block — `site_*` counter vectors are gone.
 
-  if (recorder_) delete recorder_;
+  // Workstream N Phase 4e-33: removed `if (recorder_) delete recorder_;`
+  // — field is gone; was always nullptr anyway.
 #ifdef TXN_STAT
 
   for (auto& it : txn_stats_) {

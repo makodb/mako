@@ -19,16 +19,11 @@ RccCommo* RccCoord::commo() {
 
 void RccCoord::PreDispatch() {
   verify(ro_state_ == BEGIN);
-  auto dispatch = std::bind(&RccCoord::DispatchAsync, this);
-  if (recorder_) {
-    std::string log_s;
-    verify(0);
-    // TODO get appropriate log
-//    req.get_log(cmd_->id_, log_s);
-    //recorder_->submit(log_s, dispatch);
-  } else {
-    dispatch();
-  }
+  // Workstream N Phase 4e-33: simplified `if (recorder_) { ... }
+  // else { dispatch(); }` — `recorder_` field is gone (was always
+  // nullptr); the if-branch was a `verify(0)`-only TODO shell with
+  // commented-out `recorder_->submit(...)` body.
+  DispatchAsync();
 }
 
 
