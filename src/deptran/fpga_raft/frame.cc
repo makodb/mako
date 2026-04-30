@@ -1,7 +1,8 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-#include "exec.h"
+// Workstream N Phase 4e-45: removed `#include "exec.h"` —
+// FpgaRaftExecutor class deleted (was 4 verify(0) stubs).
 #include "coordinator.h"
 #include "server.h"
 #include "service.h"
@@ -45,10 +46,11 @@ FpgaRaftFrame::FpgaRaftFrame(int mode) : Frame(mode) {
 
 }
 
-Executor *FpgaRaftFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
-  Executor *exec = new FpgaRaftExecutor(cmd_id, sched);
-  return exec;
-}
+// Workstream N Phase 4e-45: removed `FpgaRaftFrame::CreateExecutor`
+// — `FpgaRaftExecutor` class deleted (was 4 verify(0) stubs); the
+// `Frame::CreateExecutor` virtual is also never called anywhere
+// in the tree (no `frame_->CreateExecutor(...)` site survives), so
+// dropping this override is safe.
 
 Coordinator *FpgaRaftFrame::CreateCoordinator(cooid_t coo_id,
                                                 Config *config,
