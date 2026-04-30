@@ -1335,9 +1335,16 @@ eager (inside `set_marshallable`) to a lazy cache: the field is
 `inner_sp_data_` via `as_serializable(...)` and caches the result.
 Lazy semantics extend to the wire-decode path; the receive side
 never touches the proxy view. Wire format unchanged. The remaining
-Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
-virtuals, now gated only on test-fixture migration since `CmdData`
-is done) are upcoming. See
+Phase 5 deletion (`Marshallable::to_marshal`/`from_marshal`
+virtuals) is **blocked** — `SerializableMarshallableAdapter` (the
+production bridge in `marshal_serializable_bridge.hpp` that lets a
+Serializable type flow through `MarshallDeputy::operator<<` /
+`operator>>`) overrides these virtuals, and the legacy
+`operator<<(Marshal&, MarshallDeputy&)` dispatches
+`rhs.inner()->to_marshal(m)` through the virtual table; closing
+the loop would require an architectural change (route every wire
+encode through `serializable()->save(...)`, or migrate the bridge
+class away from `Marshallable` inheritance). See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 
