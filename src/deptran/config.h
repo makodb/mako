@@ -61,7 +61,10 @@ class Config {
   bool batch_start_;
   bool early_return_;
   bool retry_wait_;
-  string logging_path_;
+  // Workstream N Phase 4e-42: removed `string logging_path_;` field
+  // — only readers (`do_logging` and `log_path`) were already
+  // deleted in Phase 4e-41; only writer was the `-r` CLI flag (also
+  // removed in this phase).
   single_server_t single_server_;
   uint16_t n_concurrent_;
   int32_t max_retry_;
@@ -174,7 +177,8 @@ class Config {
          uint32_t duration,
          bool heart_beat,
          single_server_t single_server,
-         string logging_path,
+         // Workstream N Phase 4e-42: removed `string logging_path,`
+         // ctor parameter — field gone.
          int jetpack_fastpath_attempt_rate
   );
   int GetClientPort(std::string site_name);

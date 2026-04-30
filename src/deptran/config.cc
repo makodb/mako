@@ -41,7 +41,10 @@ int Config::CreateConfig(int argc, char **argv) {
   vector<string> config_paths;
   std::string proc_name = "localhost"; // default as "localhost"
   std::string exp_setting_name = "not_set"; // used to dump Distribution to file
-  std::string logging_path = "./disk_log/";
+  // Workstream N Phase 4e-42: removed `std::string logging_path =
+  // "./disk_log/";` local — only fed the now-deleted `logging_path_`
+  // field on Config; only assignment via the `-r` CLI flag (also
+  // gone in this phase).
   char *end_ptr    = NULL;
 
   char *hostspath               = NULL;
@@ -66,7 +69,9 @@ int Config::CreateConfig(int argc, char **argv) {
   int c;
   optind = 1;
   string filename;
-  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:r:s:S:t:H:T:n:A:F:O:m:a:N:")) != -1) {
+  // Workstream N Phase 4e-42: dropped `r:` from getopt string —
+  // `case 'r':` (logging path) handler was the only consumer.
+  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:s:S:t:H:T:n:A:F:O:m:a:N:")) != -1) {
     switch (c) {
       case 'b': // heartbeat to controller
         heart_beat = true;
@@ -122,10 +127,9 @@ int Config::CreateConfig(int argc, char **argv) {
         ctrl_key = (char *)malloc((strlen(optarg) + 1) * sizeof(char));
         strcpy(ctrl_key, optarg);
         break;
-      case 'r': // logging path
-        // TODO remove
-        logging_path = string(optarg);
-        break;
+      // Workstream N Phase 4e-42: removed `case 'r':` (logging path)
+      // CLI flag — `logging_path` local + Config::logging_path_
+      // field both gone.
       case 'p':
         // TODO remove
         ctrl_port = strtoul(optarg, &end_ptr, 10);
@@ -208,7 +212,8 @@ int Config::CreateConfig(int argc, char **argv) {
     duration,
     heart_beat,
     single_server,
-    logging_path,
+    // Workstream N Phase 4e-42: dropped `logging_path,` arg — Config
+    // ctor parameter and `logging_path_` field both gone.
     jetpack_fastpath_attempt_rate);
   config_s->proc_name_ = proc_name;
   config_s->exp_setting_name_ = exp_setting_name;
@@ -236,7 +241,8 @@ Config::Config(char           *ctrl_hostname,
                uint32_t        duration,
                bool            heart_beat,
                single_server_t single_server,
-               string           logging_path,
+               // Workstream N Phase 4e-42: removed `string logging_path,`
+               // ctor parameter — field gone.
                int              jetpack_fastpath_attempt_rate) :
   heart_beat_(heart_beat),
   ctrl_hostname_(ctrl_hostname),
@@ -259,7 +265,8 @@ Config::Config(char           *ctrl_hostname,
   batch_start_(false),
   early_return_(false),
   retry_wait_(false),
-  logging_path_(logging_path),
+  // Workstream N Phase 4e-42: removed `logging_path_(logging_path),`
+  // initializer — field gone.
   single_server_(single_server),
   n_concurrent_(n_concurrent),
   max_retry_(1),
@@ -1109,9 +1116,10 @@ bool Config::do_early_return() {
 // Workstream N Phase 4e-41: removed `Config::do_logging()` and
 // `Config::log_path()` — only call site of `do_logging` was the
 // now-deleted `else if (do_logging())` branch in
-// `SchedulerClassic::Prepare`; `log_path` had no callers.  The
-// `logging_path_` field stays for now (its constructor parameter
-// chain and `-r` CLI flag are a follow-up cleanup).
+// `SchedulerClassic::Prepare`; `log_path` had no callers.
+// Workstream N Phase 4e-42: removed `logging_path_` field, its
+// constructor parameter, and the `-r` CLI flag (handled in the
+// getopt loop).
 
 bool Config::IsReplicated() {
   // TODO
