@@ -73,17 +73,19 @@ class CoordinatorMultiPaxos : public Coordinator {
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
-  ballot_t PickBallot();
+  // Workstream N Phase 4e-31: removed `PickBallot()` and `Forward()`
+  // declarations — `PickBallot()` was used only by the now-deleted
+  // `Prepare()` (Phase 4e-30); `Forward()` was declared but never
+  // defined (commented-out call site at coordinator.cc:157 also gone).
   void Submit();
-
-  void Forward();
 
   // Workstream N Phase 4e-30: removed `Prepare()` declaration —
   // the body was `verify(0)`-tagged debug code, and `GotoNextPhase`
   // skips the prepare phase entirely.  The commented-out `PrepareAck`
   // legacy callback signature is also gone now.
   void Accept();
-//  void AcceptAck(phase_t phase, Future *fu);
+  // Workstream N Phase 4e-31: removed commented-out
+  // `// void AcceptAck(phase_t phase, Future *fu);` legacy decl.
   void Commit();
 
   void Reset() override {}
