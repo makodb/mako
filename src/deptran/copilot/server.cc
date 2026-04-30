@@ -193,22 +193,10 @@ bool CopilotServer::WillWait(int &time_to_wait) const {
   }
 }
 
-void CopilotServer::OnForward(shared_ptr<Marshallable>& cmd,
-                              rusty::Function<void()> cb) {
-  verify(isPilot_ || isCopilot_);
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_info("This Copilot server is: %d", id_);
-  rep_frame_ = frame_;
-
-  if (!isPilot_ && !isCopilot_) {
-    verify(0);
-    // TODO: forward to pilot server
-  }
-  auto coord = (CoordinatorCopilot *)CreateRepCoord();
-  coord->Submit(cmd);
-
-  cb();
-}
+// Workstream N Phase 4e-40: removed `CopilotServer::OnForward`
+// (~17 LOC) — only caller was the deleted
+// `CopilotServiceImpl::Forward` handler; the matching
+// Copilot::Forward RPC declaration is gone from rcc_rpc.rpc.
 
 void CopilotServer::OnPrepare(const uint8_t& is_pilot,
                               const uint64_t& slot,
