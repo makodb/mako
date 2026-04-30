@@ -24,116 +24,13 @@ namespace janus {
 		Log_info("commit id %ld and length %d from %s", cid, length, custom);
 	}
 
-	class SubmitPool {
-		private:
-			struct start_submit_pool_args {
-				SubmitPool* subpool;
-			};
-
-			int n_;
-			std::list<std::function<void()>*>* q_;
-			pthread_cond_t not_empty_;
-			pthread_mutex_t m_;
-			pthread_mutex_t run_;
-			pthread_t th_;
-			bool should_stop_{false};
-
-			static void* start_thread_pool(void* args) {
-				start_submit_pool_args* t_args = (start_submit_pool_args *) args;
-				t_args->subpool->run_thread();
-				delete t_args;
-				pthread_exit(nullptr);
-				return nullptr;
-			}
-			void run_thread() {
-				for (;;) {
-					function<void()>* job = nullptr;
-					Pthread_mutex_lock(&m_);
-					while (q_->empty()) {
-						Pthread_cond_wait(&not_empty_, &m_);
-					}
-					Pthread_mutex_lock(&run_);
-					job = q_->front();
-					q_->pop_front();
-					Pthread_mutex_unlock(&m_);
-					if (job == nullptr) {
-						Pthread_mutex_unlock(&run_);
-						break;
-					}
-					(*job)();
-					delete job;
-					Pthread_mutex_unlock(&run_);
-				}
-			}
-			bool try_pop(std::function<void()>** t) {
-				bool ret = false;
-				if (!q_->empty()) {
-					ret = true;
-					*t = q_->front();
-					q_->pop_front();
-				}
-				return ret;
-			}
-
-		public:
-			SubmitPool()
-				: n_(1), th_(0), q_(new std::list<std::function<void()>*>), not_empty_(), m_(), run_() {
-					verify(n_ >= 0);
-					Pthread_mutex_init(&m_, nullptr);
-					Pthread_mutex_init(&run_, nullptr);
-					Pthread_cond_init(&not_empty_, nullptr);
-					for (int i = 0; i < n_; i++) {
-						start_submit_pool_args* args = new start_submit_pool_args();
-						args->subpool = this;
-						Pthread_create(&th_, nullptr, SubmitPool::start_thread_pool, args);
-					}
-				}
-			SubmitPool(const SubmitPool&) = delete;
-  SubmitPool& operator=(const SubmitPool&) = delete;
-  ~SubmitPool() {
-    should_stop_ = true;
-    for (int i = 0; i < n_; i++) {
-      Pthread_mutex_lock(&m_);
-      q_->push_back(nullptr); //death pill
-      Pthread_cond_signal(&not_empty_);
-      Pthread_mutex_unlock(&m_);
-    }
-    for (int i = 0; i < n_; i++) {
-      Pthread_join(th_, nullptr);
-    }
-    Log_debug("%s: enter in wait_for_all", __FUNCTION__);
-    wait_for_all();
-    Pthread_cond_destroy(&not_empty_);
-    Pthread_mutex_destroy(&m_);
-    Pthread_mutex_destroy(&run_);
-    delete q_;
-  }
-  void wait_for_all() {
-    for (int i = 0; i < n_; i++) {
-      function<void()>* job;
-      Pthread_mutex_lock(&m_);
-      Pthread_mutex_lock(&run_);
-      while (try_pop(&job)) {
-        if (job != nullptr) {
-          (*job)();
-          delete job;
-        }
-      }
-      Pthread_mutex_unlock(&m_);
-      Pthread_mutex_unlock(&run_);
-    }
-  }
-  int add(const std::function<void()>& f) {
-    if (should_stop_) {
-      return -1;
-    }
-    Pthread_mutex_lock(&m_);
-    q_->push_back(new function<void()>(f));
-    Pthread_cond_signal(&not_empty_);
-    Pthread_mutex_unlock(&m_);
-    return 0;
-  }
-};
+	// Workstream N Phase 4e-29: removed `class SubmitPool` (~120 LOC) —
+	// the only user was the `SubmitPool* submit_pool = nullptr;` field
+	// on `PaxosWorker`, and that field was always nullptr (the only
+	// assignment, `submit_pool = new SubmitPool();`, was already
+	// commented out in `SetupBase()`).  The class itself was a small
+	// pthread-based job-queue thread pool; nothing in the rest of the
+	// codebase referenced it.
 
 // Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
 class BulkPrepareLog {
@@ -472,7 +369,9 @@ public:
   std::atomic<int> n_current{0};  // requests sent out
   std::atomic<int> n_submit{0};
   std::atomic<int> n_tot{0};
-  SubmitPool* submit_pool = nullptr;
+  // Workstream N Phase 4e-29: removed `SubmitPool* submit_pool = nullptr;`
+  // — always nullptr; the assignment was commented out and the
+  // class itself is now deleted.
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
   rrr::Server* rpc_server_ = nullptr;
@@ -504,12 +403,16 @@ public:
   std::recursive_mutex mtx_worker_submit{};
   std::mutex condition_mutex;
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
-  static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
+  // Workstream N Phase 4e-29: removed `static std::queue<shared_ptr<Coordinator>>
+  // coo_queue_nc;` — declared and defined but never read or written
+  // anywhere outside commented-out code in the now-deleted
+  // `StartReadAcceptNc` / `AddAcceptNc` pair.
   // Workstream N Phase 4e-28: removed `replay_queue`, `all_coords`,
   // `bulkops_th_`, `replay_th_`, `stop_replay_flag` — all only fed
   // the dead `AddAcceptNc` / `StartReadAcceptNc` / `AddReplayEntry`
   // / `StartReplayRead` paths.
-  std::mutex nc_submit_l_;
+  // Workstream N Phase 4e-29: removed `std::mutex nc_submit_l_;` —
+  // declared but never locked anywhere outside commented-out code.
   std::recursive_mutex election_state_lock;
   const unsigned int cnt = bulkBatchCount;
   bool stop_flag = false;
