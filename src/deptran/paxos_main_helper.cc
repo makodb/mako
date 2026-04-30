@@ -81,8 +81,13 @@ std::map<int, std::function<int(const char*&, int, int, int, std::queue<std::tup
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
-const bool is_datacenter_failure = false;  // data center failures
-const bool is_fail_new_impl = true; // the new implementation for the shard failure
+// Workstream N Phase 4e-23: removed `const bool is_datacenter_failure = false;`
+// and `const bool is_fail_new_impl = true;` — both were hard-coded
+// constants with no command-line / YAML override path, gating dead
+// branches in `setup2()` (the `is_datacenter_failure` branch and its
+// `heartbeatBackground2` / `heartbeatMonitor3` thread fns) and in
+// `heartbeatMonitor2()` (the `else` branch of `if(is_fail_new_impl)`).
+// All gated-off code removed alongside the constants.
 
 int get_epoch(){
   int x;
@@ -641,32 +646,10 @@ void* heartbeatBackground(void* arg) {
   return nullptr;
 }
 
-// between distant datacenters
-void* heartbeatBackground2(void* arg) {
-  auto poll_arc = PollThread::create();
-  auto rpc_cli = rrr::Client::create(poll_arc);
-  auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0); // tie to the partition0
-  // get the leader's host + port
-  auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
-  std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
-  Log_info("start a heartbeatBackground2, addr:%s",addr_port.c_str());
-  while (rpc_cli->connect(addr_port.c_str())!=0) {
-     usleep(100 * 1000); // retry to connect
-  }
-
-  // Arc::get() returns const T*, but proxy doesn't mutate client
-  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
-  while (es->running) {
-    ServerControlProxy::RpcServerHeartBeatRequest req;
-    auto connected = client_proxy->server_heart_beat(req);
-    if (connected.is_ok()){
-      es->set_heartbeat_seen();
-    }
-    std::this_thread::sleep_for(30ms); // for the heartbeat between 2 distant datacenters
-  }
-  Log_info("heartbeatBackground2 is ended!");
-  return nullptr;
-}
+// Workstream N Phase 4e-23: removed `void* heartbeatBackground2(void*)`
+// — referenced only inside the now-deleted `if (is_datacenter_failure)`
+// branch of `setup2()` (`Pthread_create(..., heartbeatBackground2, ...)`)
+// and the constant gating that branch was hard-coded `false`.
 
 // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
 void* heartbeatMonitor2(void* arg) { // happens on the learner
@@ -687,67 +670,23 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
 
      Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
 
-     if (is_fail_new_impl) {
-      leader_callback_(0); // call register_leader_election_callback in dbtest.cc
-      stuff_todo_learner_upgrade();
-      leader_callback_(2);
-      std::this_thread::sleep_for(std::chrono::seconds(100000));
-      break;
-     } else {
-      auto x0 = std::chrono::high_resolution_clock::now() ;
-      leader_callback_(0); // call register_leader_election_callback in dbtest.cc
-      auto x1 = std::chrono::high_resolution_clock::now() ;
-      stuff_todo_learner_upgrade();
-      auto x2 = std::chrono::high_resolution_clock::now() ;
-      leader_callback_(2); // prepare
-      leader_callback_(3); // commit
-      auto x3 = std::chrono::high_resolution_clock::now() ;
-      // milliseconds: x1-x0:40402, x2-x1:103832, x3-x2:2011
-      Log_info("x1-x0:%d, x2-x1:%d, x3-x2:%d",
-              std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count(),
-              std::chrono::duration_cast<std::chrono::microseconds>(x2-x1).count(),
-              std::chrono::duration_cast<std::chrono::microseconds>(x3-x2).count());
-      std::this_thread::sleep_for(std::chrono::seconds(100000));
-     }
-    }
-  }
-  return nullptr;
-}
-
-// this is for the datacenter failure, on the p1
-void* heartbeatMonitor3(void* arg) {  
-  Log_info("start a heartbeatMonitor3");
-  time_t st = time(NULL);
-
-  std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
-
-  while (es->running) {
-    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                  std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    WAN_WAIT_TIME(100);
-    // 1. detect
-    if (duration2.count()/1000.0/1000.0 > 1000) { // if not received about 10 times, datacenter failure very expensive
-     Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
-     // reach threshold to trigger a failover
-     // 5ms is far enough within the same data center, otherwise, several seconds across data-center
-     time_t end = time (NULL);
-     if (end - st > 35) {
-       Log_info("Let's stop it automatically without failover2!!!");
-       exit(0);
-     }
-
-     // by default, p1 is the new leader datacenter, p2 is still the follower datacenter
-     // the synchrnization is equivalent to the leader election overhead
-     // synchronize the consensus between different datacenter
-     leader_callback_(4);  // call register_leader_election_callback
-
+     // Workstream N Phase 4e-23: collapsed `if (is_fail_new_impl) {...}
+     // else {...}` (the constant was hard-coded `true`); the dead else
+     // branch ran a stale 4-step `leader_callback_(0/2/3)` sequence
+     // with chrono timing instrumentation.
+     leader_callback_(0); // call register_leader_election_callback in dbtest.cc
+     stuff_todo_learner_upgrade();
+     leader_callback_(2);
      std::this_thread::sleep_for(std::chrono::seconds(100000));
      break;
     }
   }
-  Log_info("end a heartbeatMonitor3");
   return nullptr;
 }
+
+// Workstream N Phase 4e-23: removed `void* heartbeatMonitor3(void*)`
+// — paired with the deleted `heartbeatBackground2`; referenced only
+// inside the same dead `if (is_datacenter_failure)` branch.
 
 // to be called after setup 1; needed for multiprocess setup
 int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 is forced to be follower
@@ -769,32 +708,23 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
     es->set_epoch(0);
     es->set_leader(0);
   }
-  if (is_datacenter_failure){
-    if (Config::GetConfig()->proc_name_.compare("p1")==0
-        && shardIndex == 0) {
-      Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground2, nullptr);
-      pthread_detach(es->heartbeat_th_);
+  // Workstream N Phase 4e-23: collapsed `if (is_datacenter_failure)
+  // {...} else {...}` to just the else-branch (the constant was
+  // hard-coded `false`).  The dead if-branch launched
+  // `heartbeatBackground2` / `heartbeatMonitor3`, both removed above.
+  if (Config::GetConfig()->proc_name_.compare("learner")==0) {
+    Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
+    pthread_detach(es->heartbeat_th_);
 
-      Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor3, nullptr);
-      pthread_detach(es->heartbeat_th_checking_);
-    }
-  }else{
-    if (Config::GetConfig()->proc_name_.compare("learner")==0) {
-      Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
-      pthread_detach(es->heartbeat_th_);
-
-      Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
-      pthread_detach(es->heartbeat_th_checking_);
-    }
-    return 0;
+    Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
+    pthread_detach(es->heartbeat_th_checking_);
   }
-
   // Workstream N Phase 4e-20 / 4e-19 / 4e-16: cleared a stale
   // commented-out block that referenced now-deleted thread entry
   // points (`PollSubQNc`, `electionMonitor`, `heartbeatMonitor`)
   // and their `Pthread_create` / `pthread_detach` lines.  The live
-  // pthread starts (`heartbeatBackground{,2}` /
-  // `heartbeatMonitor{2,3}`) above this point are unaffected.
+  // pthread starts (`heartbeatBackground` / `heartbeatMonitor2` above)
+  // are unaffected.
   return 0;
 }
 
