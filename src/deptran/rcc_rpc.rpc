@@ -6,9 +6,12 @@ namespace janus;
 
 abstract service MultiPaxos {
 
-  defer Forward(MarshallDeputy cmd,
-                uint64_t dep_id |
-                uint64_t coro_id);
+  // Workstream N Phase 4e-38: removed `Forward(cmd, dep_id | coro_id)`
+  // RPC declaration — no sender (`MultiPaxosCommo::SendForward` was
+  // never called) and no real handler (`MultiPaxosServiceImpl::
+  // Forward` had an empty body marked "Mako uses OnForwardToLearner
+  // instead").  The matching `OnForward` server-side impl was already
+  // removed in Phase 4e-37.
 
   defer Prepare(uint64_t slot,
                 ballot_t ballot |

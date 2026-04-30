@@ -4,9 +4,8 @@
 #include "../paxos_worker.h"
 
 namespace janus {
-void MultiPaxosServiceImpl::Forward(const MultiPaxosService::RpcForwardRequest& req, MultiPaxosService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
-  this->Forward(req.cmd, req.dep_id, &resp.coro_id, std::move(defer));
-}
+// Workstream N Phase 4e-38: removed `Forward` typed-rpc override
+// (and matching N-arg overload further below).
 
 void MultiPaxosServiceImpl::Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
   this->Prepare(req.slot, req.ballot, &resp.max_ballot, &resp.coro_id, std::move(defer));
@@ -55,12 +54,9 @@ MultiPaxosServiceImpl::MultiPaxosServiceImpl(TxLogServer *sched)
 
 }
 
-void MultiPaxosServiceImpl::Forward(const MarshallDeputy& md_cmd,
-                                    const uint64_t& dep_id,
-                                    uint64_t* coro_id,
-                                    rrr::DeferredReply defer) {
-  // NOTE: Original Mako leaves this empty - Mako uses ForwardToLearner instead
-}
+// Workstream N Phase 4e-38: removed `Forward(MarshallDeputy, ...)`
+// N-arg overload — body was empty (Mako uses ForwardToLearner
+// instead via ForwardToLearnerServer RPC).
 
 void MultiPaxosServiceImpl::Prepare(const uint64_t& slot,
                                     const ballot_t& ballot,

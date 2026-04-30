@@ -13,41 +13,11 @@ MultiPaxosCommo::MultiPaxosCommo(rusty::Option<rusty::Arc<PollThread>> poll)
   : Communicator(std::move(poll)) {
 }
 
-// Jetpack: SendForward for forwarding commands to leader
-shared_ptr<PaxosPrepareQuorumEvent>
-MultiPaxosCommo::SendForward(parid_t par_id,
-                             uint64_t follower_id,
-                             uint64_t dep_id,
-                             shared_ptr<Marshallable> cmd) {
-  auto e = Reactor::create_sp_event<PaxosPrepareQuorumEvent>(1, 1);
-  auto src_coroid = e->get_fiber_id();
-  auto leader_id = LeaderProxyForPartition(par_id).first;
-  auto leader_proxy = (MultiPaxosProxy*) LeaderProxyForPartition(par_id).second;
-
-  FutureAttr fuattr;
-  fuattr.callback = [e, leader_id, src_coroid, follower_id](rusty::Arc<Future> fu) {
-    if (fu->get_error_code() != 0) {
-      Log_info("Get a error message in reply");
-      return;
-    }
-    uint64_t coro_id = 0;
-    fu->get_reply() >> coro_id;
-    e->FeedResponse(1);
-    Log_info("adding dependency");
-    // e->add_dep(follower_id, src_coroid, leader_id, coro_id);
-  };
-
-  MarshallDeputy md(cmd);
-  MultiPaxosProxy::RpcForwardRequest req;
-  req.cmd = md;
-  req.dep_id = dep_id;
-  auto f = leader_proxy->async_Forward(req, fuattr);
-  if (f.is_ok()) {
-    Future::safe_release(f.unwrap().raw_future());
-  }
-
-  return e;
-}
+// Workstream N Phase 4e-38: removed `MultiPaxosCommo::SendForward` —
+// never called from anywhere in the tree; was a stub for an
+// unwired-up Jetpack forward-to-leader path.  The corresponding
+// `Forward` RPC declaration in rcc_rpc.rpc and the
+// `MultiPaxosServiceImpl::Forward` empty handler are also gone.
 
 // Workstream N Phase 4e-12: removed deprecated callback-style
 // `void MultiPaxosCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,

@@ -209,33 +209,6 @@ inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxnDispat
 class MultiPaxosService {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
-    struct RpcForwardRequest {
-        MarshallDeputy cmd;
-        uint64_t dep_id;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardRequest& o) {
-        ar << o.cmd;
-        ar << o.dep_id;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcForwardRequest& o) {
-        ar >> o.cmd;
-        ar >> o.dep_id;
-        return ar;
-    }
-
-    struct RpcForwardResponse {
-        uint64_t coro_id;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcForwardResponse& o) {
-        ar << o.coro_id;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcForwardResponse& o) {
-        ar >> o.coro_id;
-        return ar;
-    }
-
     struct RpcPrepareRequest {
         uint64_t slot;
         ballot_t ballot;
@@ -477,23 +450,19 @@ public:
     }
 
     enum {
-        FORWARD = 0x2d01a9a3,
-        PREPARE = 0x2001fe7c,
-        ACCEPT = 0x241810c4,
-        DECIDE = 0x5a74db9a,
-        FORWARDTOLEARNERSERVER = 0x55e1aedf,
-        BULKACCEPT = 0x38b4c768,
-        SYNCLOG = 0x5a432d0e,
-        SYNCCOMMIT = 0x15ac3d67,
-        BULKDECIDE = 0x2f0862cd,
+        PREPARE = 0x696054f9,
+        ACCEPT = 0x1d84853a,
+        DECIDE = 0x6cfa1052,
+        FORWARDTOLEARNERSERVER = 0x1499774c,
+        BULKACCEPT = 0x50588b15,
+        SYNCLOG = 0x4f84ece8,
+        SYNCCOMMIT = 0x14133c5e,
+        BULKDECIDE = 0x14abf676,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
-        if ((ret = svr.reg_rpc(FORWARD, svc_index)) != 0) {
-            goto err;
-        }
         if ((ret = svr.reg_rpc(PREPARE, svc_index)) != 0) {
             goto err;
         }
@@ -520,7 +489,6 @@ public:
         }
         return 0;
     err:
-        svr.unreg(FORWARD);
         svr.unreg(PREPARE);
         svr.unreg(ACCEPT);
         svr.unreg(DECIDE);
@@ -534,7 +502,6 @@ public:
     // @safe - Dispatch for RPC requests
     void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         switch (rpc_id) {
-        case FORWARD: __Forward__wrapper__(std::move(req), weak_sconn); break;
         case PREPARE: __Prepare__wrapper__(std::move(req), weak_sconn); break;
         case ACCEPT: __Accept__wrapper__(std::move(req), weak_sconn); break;
         case DECIDE: __Decide__wrapper__(std::move(req), weak_sconn); break;
@@ -547,8 +514,6 @@ public:
         }
     }
     // typed service signatures
-    // @safe
-    virtual void Forward(const RpcForwardRequest& req, RpcForwardResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void Prepare(const RpcPrepareRequest& req, RpcPrepareResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
@@ -568,26 +533,6 @@ public:
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
-    // @safe
-    void __Forward__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcForwardRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(&__req_src__);
-            __req_ar__ >> __typed_req__.cmd;
-            __req_ar__ >> __typed_req__.dep_id;
-            auto __typed_resp__ = std::make_shared<RpcForwardResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->coro_id;
-                },
-                []() {});
-            this->Forward(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
     // @safe
     void __Prepare__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
@@ -764,8 +709,6 @@ protected:
 public:
     MultiPaxosProxy(rrr::Client* cl): __cl__(cl) { }
     // Alias typed request/response structs from the sibling Service class.
-    using RpcForwardRequest = MultiPaxosService::RpcForwardRequest;
-    using RpcForwardResponse = MultiPaxosService::RpcForwardResponse;
     using RpcPrepareRequest = MultiPaxosService::RpcPrepareRequest;
     using RpcPrepareResponse = MultiPaxosService::RpcPrepareResponse;
     using RpcAcceptRequest = MultiPaxosService::RpcAcceptRequest;
@@ -782,59 +725,6 @@ public:
     using RpcSyncCommitResponse = MultiPaxosService::RpcSyncCommitResponse;
     using RpcBulkDecideRequest = MultiPaxosService::RpcBulkDecideRequest;
     using RpcBulkDecideResponse = MultiPaxosService::RpcBulkDecideResponse;
-    class ForwardTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit ForwardTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcForwardResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcForwardResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcForwardResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
-            __reply_ar__ >> __typed_resp__.coro_id;
-            return rusty::Result<RpcForwardResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<ForwardTypedFuture, rrr::i32> async_Forward(const RpcForwardRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::FORWARD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
-            __m__ << req.dep_id;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<ForwardTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<ForwardTypedFuture, rrr::i32>::Ok(ForwardTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<ForwardTypedFuture> await_Forward(const RpcForwardRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Forward(req, __fu_attr__));
-    }
-    rusty::Result<RpcForwardResponse, rrr::i32> Forward(const RpcForwardRequest& req) {
-        auto __typed_fu_result__ = this->async_Forward(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcForwardResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
     class PrepareTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1291,7 +1181,7 @@ public:
     }
 
     enum {
-        COMMIT = 0x18ff1738,
+        COMMIT = 0x6eb5382a,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1502,9 +1392,9 @@ public:
     }
 
     enum {
-        PREPARE = 0x1a3a3de7,
-        SUGGEST = 0x3bd2f6b7,
-        DECIDE = 0x660707a1,
+        PREPARE = 0x5891b38b,
+        SUGGEST = 0x12518b9e,
+        DECIDE = 0x483cffcd,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -2050,13 +1940,13 @@ public:
     }
 
     enum {
-        HEARTBEAT = 0x21a4e1d5,
-        FORWARD = 0x482f2501,
-        VOTE = 0x3db150d2,
-        VOTE2FPGA = 0x67bd4297,
-        APPENDENTRIES = 0x49d2bdcf,
-        APPENDENTRIES2 = 0x370fc740,
-        DECIDE = 0x6521d69c,
+        HEARTBEAT = 0x439d4830,
+        FORWARD = 0x3889da39,
+        VOTE = 0x532a97f2,
+        VOTE2FPGA = 0x6ae5c072,
+        APPENDENTRIES = 0x16292f2c,
+        APPENDENTRIES2 = 0x6b3af6f7,
+        DECIDE = 0x19a50c83,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -3068,16 +2958,16 @@ public:
     }
 
     enum {
-        VOTE = 0x55453e6b,
-        VOTEDURABLE = 0x3f260f47,
-        APPENDENTRIES = 0x1d9303f0,
-        EMPTYAPPENDENTRIES = 0x4923198b,
-        APPENDENTRIESDURABLE = 0x1676d69e,
-        TIMEOUTNOW = 0x211280ff,
-        NOTIFYRESTART = 0x3e886cf2,
-        INSTALLSNAPSHOT = 0x60f3985e,
-        ADDSERVER = 0x3d9cde09,
-        REMOVESERVER = 0x682fcb6d,
+        VOTE = 0x421f48a8,
+        VOTEDURABLE = 0x50242c4b,
+        APPENDENTRIES = 0x425d1b54,
+        EMPTYAPPENDENTRIES = 0x10d4851a,
+        APPENDENTRIESDURABLE = 0x4037ea2d,
+        TIMEOUTNOW = 0x525324fc,
+        NOTIFYRESTART = 0x60094372,
+        INSTALLSNAPSHOT = 0x519de26d,
+        ADDSERVER = 0x1b1c300d,
+        REMOVESERVER = 0x1f781600,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -4257,11 +4147,11 @@ public:
     }
 
     enum {
-        FORWARD = 0x24a97446,
-        PREPARE = 0x56da2406,
-        FASTACCEPT = 0x20a13faa,
-        ACCEPT = 0x22c3b4aa,
-        COMMIT = 0x1e869820,
+        FORWARD = 0x2024674d,
+        PREPARE = 0x2240cc40,
+        FASTACCEPT = 0x35deb79e,
+        ACCEPT = 0x2529aef2,
+        COMMIT = 0x26d0e39b,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -6099,51 +5989,51 @@ public:
     }
 
     enum {
-        MSGSTRING = 0x1a238481,
-        MSGMARSHALL = 0x1bff69f7,
-        REELECT = 0x663b43e0,
-        RULESPECULATIVEEXECUTE = 0x4cfe9a6e,
-        DISPATCH = 0x54a1ed29,
-        PREPARE = 0x617a2808,
-        COMMIT = 0x30276afc,
-        ABORT = 0x566ea870,
-        EARLYABORT = 0x28316f4f,
-        UPGRADEEPOCH = 0x288e35f1,
-        TRUNCATEEPOCH = 0x53e6a02a,
-        ISLEADER = 0x3a707d1a,
-        ISFPGALEADER = 0x68d65c20,
-        SIMPLECMD = 0x6cd87a72,
-        FAILOVERPAUSESOCKETOUT = 0x569ae938,
-        FAILOVERRESUMESOCKETOUT = 0x4b4afcb8,
-        RPC_NULL = 0x21ceac92,
-        TAPIRACCEPT = 0x546f2e25,
-        TAPIRFASTACCEPT = 0x16a6befa,
-        TAPIRDECIDE = 0x4cf33256,
-        RCCDISPATCH = 0x651fec93,
-        RCCFINISH = 0x3128b2f9,
-        RCCINQUIRE = 0x46b71d8e,
-        RCCDISPATCHRO = 0x1a8730e9,
-        RCCINQUIREVALIDATION = 0x4767436a,
-        RCCNOTIFYGLOBALVALIDATION = 0x5031de44,
-        JANUSDISPATCH = 0x14700f6c,
-        RCCCOMMIT = 0x56808bb8,
-        JANUSCOMMIT = 0x4b1c74aa,
-        JANUSCOMMITWOGRAPH = 0x540dee02,
-        JANUSINQUIRE = 0x5fafce06,
-        RCCPREACCEPT = 0x5a29b60d,
-        JANUSPREACCEPT = 0x53e0cce8,
-        JANUSPREACCEPTWOGRAPH = 0x28b207cd,
-        RCCACCEPT = 0x22f90096,
-        JANUSACCEPT = 0x51264979,
-        JETPACKBEGINRECOVERY = 0x284c2e62,
-        JETPACKPULLIDSET = 0x571116b2,
-        JETPACKPULLCMD = 0x4ab2420d,
-        JETPACKRECORDCMD = 0x62a30314,
-        JETPACKPREPARE = 0x58253dab,
-        JETPACKACCEPT = 0x47890a2b,
-        JETPACKCOMMIT = 0x43d3282f,
-        JETPACKPULLRECSETINS = 0x5cf159ae,
-        JETPACKFINISHRECOVERY = 0x11456b2c,
+        MSGSTRING = 0x6ff648ab,
+        MSGMARSHALL = 0x47abacae,
+        REELECT = 0x3b6c04f7,
+        RULESPECULATIVEEXECUTE = 0x66b9a1e2,
+        DISPATCH = 0x63a63a26,
+        PREPARE = 0x6b53edae,
+        COMMIT = 0x3bd5319c,
+        ABORT = 0x654b69d1,
+        EARLYABORT = 0x1026a476,
+        UPGRADEEPOCH = 0x55d97a01,
+        TRUNCATEEPOCH = 0x2f74d413,
+        ISLEADER = 0x4873a35c,
+        ISFPGALEADER = 0x6e29e23b,
+        SIMPLECMD = 0x4d8b8cde,
+        FAILOVERPAUSESOCKETOUT = 0x1eb3c363,
+        FAILOVERRESUMESOCKETOUT = 0x4392d154,
+        RPC_NULL = 0x53d52177,
+        TAPIRACCEPT = 0x3c580f2f,
+        TAPIRFASTACCEPT = 0x5bcbe192,
+        TAPIRDECIDE = 0x197ce066,
+        RCCDISPATCH = 0x6b2d319e,
+        RCCFINISH = 0x3edfaa52,
+        RCCINQUIRE = 0x6fd2191e,
+        RCCDISPATCHRO = 0x3fe316eb,
+        RCCINQUIREVALIDATION = 0x20b52b6c,
+        RCCNOTIFYGLOBALVALIDATION = 0x4e92a8ab,
+        JANUSDISPATCH = 0x5bcfa49d,
+        RCCCOMMIT = 0x40c4499c,
+        JANUSCOMMIT = 0x435a6518,
+        JANUSCOMMITWOGRAPH = 0x1adf190a,
+        JANUSINQUIRE = 0x6c677247,
+        RCCPREACCEPT = 0x186981f0,
+        JANUSPREACCEPT = 0x6f0f14b6,
+        JANUSPREACCEPTWOGRAPH = 0x416b7510,
+        RCCACCEPT = 0x2e5ec009,
+        JANUSACCEPT = 0x6affde3e,
+        JETPACKBEGINRECOVERY = 0x31a690c6,
+        JETPACKPULLIDSET = 0x1ac3c9e5,
+        JETPACKPULLCMD = 0x62c784ce,
+        JETPACKRECORDCMD = 0x1dd34e67,
+        JETPACKPREPARE = 0x6d15469c,
+        JETPACKACCEPT = 0x57d00d96,
+        JETPACKCOMMIT = 0x5de55e5d,
+        JETPACKPULLRECSETINS = 0x667174f8,
+        JETPACKFINISHRECOVERY = 0x6d5f057f,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -10016,10 +9906,10 @@ public:
     }
 
     enum {
-        SERVER_SHUTDOWN = 0x10a81afd,
-        SERVER_READY = 0x5e19de36,
-        SERVER_HEART_BEAT_WITH_DATA = 0x6390ad83,
-        SERVER_HEART_BEAT = 0x245a8ffe,
+        SERVER_SHUTDOWN = 0x5fff27e1,
+        SERVER_READY = 0x18ec083c,
+        SERVER_HEART_BEAT_WITH_DATA = 0x3ed55fef,
+        SERVER_HEART_BEAT = 0x4c7fcdad,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -10512,14 +10402,14 @@ public:
     }
 
     enum {
-        CLIENT_GET_TXN_NAMES = 0x68e095d9,
-        CLIENT_SHUTDOWN = 0x1f55a48e,
-        CLIENT_FORCE_STOP = 0x3faee27d,
-        CLIENT_RESPONSE = 0x24190cf8,
-        CLIENT_READY = 0x486d78bf,
-        CLIENT_READY_BLOCK = 0x6910e7cf,
-        CLIENT_START = 0x54a119de,
-        DISPATCHTXN = 0x3f7d0efb,
+        CLIENT_GET_TXN_NAMES = 0x141892df,
+        CLIENT_SHUTDOWN = 0x6a1eaf02,
+        CLIENT_FORCE_STOP = 0x5edc3b37,
+        CLIENT_RESPONSE = 0x1c4b9bb9,
+        CLIENT_READY = 0x199fa2ea,
+        CLIENT_READY_BLOCK = 0x10d56f0a,
+        CLIENT_START = 0x200b39bf,
+        DISPATCHTXN = 0x547ed911,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -11322,13 +11212,13 @@ public:
     }
 
     enum {
-        GETCONFIG = 0x254a9519,
-        GETCONFIGVERSION = 0x60337922,
-        HASCONFIG = 0x36727510,
-        SETSHARDINGPOLICY = 0x48a5a0a7,
-        GETSHARDINGPOLICY = 0x688bbdb9,
-        GETSHARDINGPOLICYVERSION = 0x58f28980,
-        HASSHARDINGPOLICY = 0x1f132a40,
+        GETCONFIG = 0x3a671af9,
+        GETCONFIGVERSION = 0x62cf4285,
+        HASCONFIG = 0x12bc9b77,
+        SETSHARDINGPOLICY = 0x4ab22f71,
+        GETSHARDINGPOLICY = 0x156b2925,
+        GETSHARDINGPOLICYVERSION = 0x38fb3e7e,
+        HASSHARDINGPOLICY = 0x6b5bc715,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)

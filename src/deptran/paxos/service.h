@@ -19,10 +19,10 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
  public:
   PaxosServer* sched_;
   MultiPaxosServiceImpl(TxLogServer* sched);
-  void Forward(const MarshallDeputy& cmd,
-               const uint64_t& dep_id,
-               uint64_t* coro_id,
-               rrr::DeferredReply defer);
+  // Workstream N Phase 4e-38: removed `Forward(MarshallDeputy, ...)`
+  // declaration — paired with its typed-rpc override (also removed
+  // below); body was empty and the matching `MultiPaxos::Forward`
+  // RPC was dropped from rcc_rpc.rpc.
 
   void Prepare(const uint64_t& slot,
                const ballot_t& ballot,
@@ -82,7 +82,9 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
 
   // BEGIN typed-rpc-decls (MultiPaxosServiceImpl)
   // Typed RPC interface overrides (new API).
-  void Forward(const MultiPaxosService::RpcForwardRequest& req, MultiPaxosService::RpcForwardResponse& resp, rrr::DeferredReply defer) override;
+  // Workstream N Phase 4e-38: removed `Forward` typed-rpc override —
+  // the matching abstract base class virtual is gone (rcc_rpc.rpc
+  // updated; rcc_rpc.h regenerated) and the body was empty.
   void Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, rrr::DeferredReply defer) override;
   void Accept(const MultiPaxosService::RpcAcceptRequest& req, MultiPaxosService::RpcAcceptResponse& resp, rrr::DeferredReply defer) override;
   void Decide(const MultiPaxosService::RpcDecideRequest& req, MultiPaxosService::RpcDecideResponse& resp, rrr::DeferredReply defer) override;
