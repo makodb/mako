@@ -28,6 +28,8 @@ namespace raft {
 using ::rrr::Marshal;
 using ::rrr::Marshallable;
 using ::rrr::MarshallDeputy;
+using ::rrr::BinaryWriteArchive;
+using ::rrr::BinaryReadArchive;
 using ::rrr::i8;
 
 // Type aliases matching existing codebase
@@ -85,57 +87,68 @@ struct LogEntry {
     }
 
     /**
-     * Serialize the log entry to a Marshal buffer.
+     * Serialize the log entry to a `BinaryWriteArchive`.
      * Format: slot_id, term, max_ballot_seen, max_ballot_accepted,
      *         committed, is_no_op, has_command, [command]
-     * Note: bools are serialized as i8 since Marshal doesn't support bool directly
+     * Note: bools are serialized as i8 since the wire format doesn't
+     * carry a native bool primitive.
+     *
+     * Workstream N Phase 4d-9 (2026-04-30): migrated from the legacy
+     * `Marshal& to_marshal(Marshal&) const` / `from_marshal` member
+     * pair to `save(BinaryWriteArchive&)` / `load(BinaryReadArchive&)`.
+     * Wire format byte-for-byte preserved (the new archive operators
+     * for primitives + the Phase 3f-prep MarshallDeputy archive op
+     * produce the same bytes as their legacy Marshal counterparts).
+     * The lone production callers in `rocksdb_log_storage.hpp` were
+     * updated; no other callers existed.
      */
-    // @unsafe - Uses Marshal which has non-borrow-checked operations
-    Marshal& to_marshal(Marshal& m) const {
-        m << slot_id;
-        m << term;
-        m << max_ballot_seen;
-        m << max_ballot_accepted;
-        m << static_cast<i8>(committed ? 1 : 0);
-        m << static_cast<i8>(is_no_op ? 1 : 0);
+    // @unsafe - delegates to BinaryWriteArchive primitive operators
+    void save(BinaryWriteArchive& ar) const {
+        ar << slot_id;
+        ar << term;
+        ar << max_ballot_seen;
+        ar << max_ballot_accepted;
+        ar << static_cast<i8>(committed ? 1 : 0);
+        ar << static_cast<i8>(is_no_op ? 1 : 0);
 
         i8 has_command = (command != nullptr) ? 1 : 0;
-        m << has_command;
+        ar << has_command;
         if (has_command) {
             MarshallDeputy md(command);
-            m << md;
+            ar << md;
         }
-        return m;
     }
 
     /**
-     * Deserialize a log entry from a Marshal buffer.
+     * Deserialize a log entry from a `BinaryReadArchive`.
+     * Required: archive's source must be a `MarshalSource` (the
+     * Phase 3f-prep `operator>>(BinaryReadArchive&, MarshallDeputy&)`
+     * needs a backing `Marshal` to drain into the legacy decode path).
      */
-    // @unsafe - Uses Marshal which has non-borrow-checked operations
-    Marshal& from_marshal(Marshal& m) {
-        m >> slot_id;
-        m >> term;
-        m >> max_ballot_seen;
-        m >> max_ballot_accepted;
+    // @unsafe - delegates to BinaryReadArchive primitive operators
+    void load(BinaryReadArchive& ar) {
+        ar >> slot_id;
+        ar >> term;
+        ar >> max_ballot_seen;
+        ar >> max_ballot_accepted;
 
         i8 committed_byte = 0;
-        m >> committed_byte;
+        ar >> committed_byte;
         committed = (committed_byte != 0);
 
         i8 is_no_op_byte = 0;
-        m >> is_no_op_byte;
+        ar >> is_no_op_byte;
         is_no_op = (is_no_op_byte != 0);
 
         i8 has_command = 0;
-        m >> has_command;
+        ar >> has_command;
         if (has_command) {
             MarshallDeputy md;
-            m >> md;
+            ar >> md;
             command = md.inner();
         } else {
             command = nullptr;
         }
-        return m;
     }
 };
 
