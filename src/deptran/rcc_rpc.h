@@ -329,33 +329,6 @@ public:
         return ar;
     }
 
-    struct RpcHeartbeatRequest {
-        MarshallDeputy cmd;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHeartbeatRequest& o) {
-        ar << o.cmd;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcHeartbeatRequest& o) {
-        ar >> o.cmd;
-        return ar;
-    }
-
-    struct RpcHeartbeatResponse {
-        rrr::i32 ballot;
-        rrr::i32 val;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHeartbeatResponse& o) {
-        ar << o.ballot;
-        ar << o.val;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcHeartbeatResponse& o) {
-        ar >> o.ballot;
-        ar >> o.val;
-        return ar;
-    }
-
     struct RpcForwardToLearnerServerRequest {
         rrr::i32 par_id;
         uint64_t slot;
@@ -389,33 +362,6 @@ public:
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcForwardToLearnerServerResponse& o) {
         ar >> o.ret_slot;
         ar >> o.ret_ballot;
-        return ar;
-    }
-
-    struct RpcBulkPrepareRequest {
-        MarshallDeputy cmd;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkPrepareRequest& o) {
-        ar << o.cmd;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcBulkPrepareRequest& o) {
-        ar >> o.cmd;
-        return ar;
-    }
-
-    struct RpcBulkPrepareResponse {
-        rrr::i32 ballot;
-        rrr::i32 val;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcBulkPrepareResponse& o) {
-        ar << o.ballot;
-        ar << o.val;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcBulkPrepareResponse& o) {
-        ar >> o.ballot;
-        ar >> o.val;
         return ar;
     }
 
@@ -533,33 +479,6 @@ public:
         return ar;
     }
 
-    struct RpcSyncNoOpsRequest {
-        MarshallDeputy cmd;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncNoOpsRequest& o) {
-        ar << o.cmd;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSyncNoOpsRequest& o) {
-        ar >> o.cmd;
-        return ar;
-    }
-
-    struct RpcSyncNoOpsResponse {
-        rrr::i32 ballot;
-        rrr::i32 val;
-    };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSyncNoOpsResponse& o) {
-        ar << o.ballot;
-        ar << o.val;
-        return ar;
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSyncNoOpsResponse& o) {
-        ar >> o.ballot;
-        ar >> o.val;
-        return ar;
-    }
-
     struct RpcBulkDecideRequest {
         MarshallDeputy cmd;
     };
@@ -588,19 +507,16 @@ public:
     }
 
     enum {
-        FORWARD = 0x419ba43f,
-        PREPARE = 0x550d7fe8,
-        ACCEPT = 0x140e9911,
-        DECIDE = 0x4fbcfca0,
-        HEARTBEAT = 0x1e8b9537,
-        FORWARDTOLEARNERSERVER = 0x37d2f953,
-        BULKPREPARE = 0x5c0d75b6,
-        BULKACCEPT = 0x46242176,
-        BULKPREPARE2 = 0x266b332a,
-        SYNCLOG = 0x56c09359,
-        SYNCCOMMIT = 0x35baef0a,
-        SYNCNOOPS = 0x60221a53,
-        BULKDECIDE = 0x11ea45b3,
+        FORWARD = 0x3b2b6187,
+        PREPARE = 0x3fb17952,
+        ACCEPT = 0x4729cf18,
+        DECIDE = 0x208c4df1,
+        FORWARDTOLEARNERSERVER = 0x5ea02d46,
+        BULKACCEPT = 0x2a5d2e38,
+        BULKPREPARE2 = 0x67a6492e,
+        SYNCLOG = 0x5dfa11b0,
+        SYNCCOMMIT = 0x34ec4745,
+        BULKDECIDE = 0x4fda4897,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -618,13 +534,7 @@ public:
         if ((ret = svr.reg_rpc(DECIDE, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(HEARTBEAT, svc_index)) != 0) {
-            goto err;
-        }
         if ((ret = svr.reg_rpc(FORWARDTOLEARNERSERVER, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(BULKPREPARE, svc_index)) != 0) {
             goto err;
         }
         if ((ret = svr.reg_rpc(BULKACCEPT, svc_index)) != 0) {
@@ -639,9 +549,6 @@ public:
         if ((ret = svr.reg_rpc(SYNCCOMMIT, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr.reg_rpc(SYNCNOOPS, svc_index)) != 0) {
-            goto err;
-        }
         if ((ret = svr.reg_rpc(BULKDECIDE, svc_index)) != 0) {
             goto err;
         }
@@ -651,14 +558,11 @@ public:
         svr.unreg(PREPARE);
         svr.unreg(ACCEPT);
         svr.unreg(DECIDE);
-        svr.unreg(HEARTBEAT);
         svr.unreg(FORWARDTOLEARNERSERVER);
-        svr.unreg(BULKPREPARE);
         svr.unreg(BULKACCEPT);
         svr.unreg(BULKPREPARE2);
         svr.unreg(SYNCLOG);
         svr.unreg(SYNCCOMMIT);
-        svr.unreg(SYNCNOOPS);
         svr.unreg(BULKDECIDE);
         return ret;
     }
@@ -669,14 +573,11 @@ public:
         case PREPARE: __Prepare__wrapper__(std::move(req), weak_sconn); break;
         case ACCEPT: __Accept__wrapper__(std::move(req), weak_sconn); break;
         case DECIDE: __Decide__wrapper__(std::move(req), weak_sconn); break;
-        case HEARTBEAT: __Heartbeat__wrapper__(std::move(req), weak_sconn); break;
         case FORWARDTOLEARNERSERVER: __ForwardToLearnerServer__wrapper__(std::move(req), weak_sconn); break;
-        case BULKPREPARE: __BulkPrepare__wrapper__(std::move(req), weak_sconn); break;
         case BULKACCEPT: __BulkAccept__wrapper__(std::move(req), weak_sconn); break;
         case BULKPREPARE2: __BulkPrepare2__wrapper__(std::move(req), weak_sconn); break;
         case SYNCLOG: __SyncLog__wrapper__(std::move(req), weak_sconn); break;
         case SYNCCOMMIT: __SyncCommit__wrapper__(std::move(req), weak_sconn); break;
-        case SYNCNOOPS: __SyncNoOps__wrapper__(std::move(req), weak_sconn); break;
         case BULKDECIDE: __BulkDecide__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
         }
@@ -691,11 +592,7 @@ public:
     // @safe
     virtual void Decide(const RpcDecideRequest& req, RpcDecideResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
-    virtual void Heartbeat(const RpcHeartbeatRequest& req, RpcHeartbeatResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
     virtual void ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req, RpcForwardToLearnerServerResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void BulkPrepare(const RpcBulkPrepareRequest& req, RpcBulkPrepareResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void BulkAccept(const RpcBulkAcceptRequest& req, RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
@@ -704,8 +601,6 @@ public:
     virtual void SyncLog(const RpcSyncLogRequest& req, RpcSyncLogResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void SyncCommit(const RpcSyncCommitRequest& req, RpcSyncCommitResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void SyncNoOps(const RpcSyncNoOpsRequest& req, RpcSyncNoOpsResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void BulkDecide(const RpcBulkDecideRequest& req, RpcBulkDecideResponse& resp, rrr::DeferredReply defer) = 0;
     // these RPC handler functions need to be implemented by user
@@ -796,26 +691,6 @@ private:
         }
     }
     // @safe
-    void __Heartbeat__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcHeartbeatRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(&__req_src__);
-            __req_ar__ >> __typed_req__.cmd;
-            auto __typed_resp__ = std::make_shared<RpcHeartbeatResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ballot;
-                    m << __typed_resp__->val;
-                },
-                []() {});
-            this->Heartbeat(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
     void __ForwardToLearnerServer__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
         {
@@ -836,26 +711,6 @@ private:
                 },
                 []() {});
             this->ForwardToLearnerServer(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __BulkPrepare__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcBulkPrepareRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(&__req_src__);
-            __req_ar__ >> __typed_req__.cmd;
-            auto __typed_resp__ = std::make_shared<RpcBulkPrepareResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ballot;
-                    m << __typed_resp__->val;
-                },
-                []() {});
-            this->BulkPrepare(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
     // @safe
@@ -941,26 +796,6 @@ private:
         }
     }
     // @safe
-    void __SyncNoOps__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcSyncNoOpsRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(&__req_src__);
-            __req_ar__ >> __typed_req__.cmd;
-            auto __typed_resp__ = std::make_shared<RpcSyncNoOpsResponse>();
-            rrr::DeferredReply __defer__(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ballot;
-                    m << __typed_resp__->val;
-                },
-                []() {});
-            this->SyncNoOps(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
     void __BulkDecide__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
         {
@@ -996,12 +831,8 @@ public:
     using RpcAcceptResponse = MultiPaxosService::RpcAcceptResponse;
     using RpcDecideRequest = MultiPaxosService::RpcDecideRequest;
     using RpcDecideResponse = MultiPaxosService::RpcDecideResponse;
-    using RpcHeartbeatRequest = MultiPaxosService::RpcHeartbeatRequest;
-    using RpcHeartbeatResponse = MultiPaxosService::RpcHeartbeatResponse;
     using RpcForwardToLearnerServerRequest = MultiPaxosService::RpcForwardToLearnerServerRequest;
     using RpcForwardToLearnerServerResponse = MultiPaxosService::RpcForwardToLearnerServerResponse;
-    using RpcBulkPrepareRequest = MultiPaxosService::RpcBulkPrepareRequest;
-    using RpcBulkPrepareResponse = MultiPaxosService::RpcBulkPrepareResponse;
     using RpcBulkAcceptRequest = MultiPaxosService::RpcBulkAcceptRequest;
     using RpcBulkAcceptResponse = MultiPaxosService::RpcBulkAcceptResponse;
     using RpcBulkPrepare2Request = MultiPaxosService::RpcBulkPrepare2Request;
@@ -1010,8 +841,6 @@ public:
     using RpcSyncLogResponse = MultiPaxosService::RpcSyncLogResponse;
     using RpcSyncCommitRequest = MultiPaxosService::RpcSyncCommitRequest;
     using RpcSyncCommitResponse = MultiPaxosService::RpcSyncCommitResponse;
-    using RpcSyncNoOpsRequest = MultiPaxosService::RpcSyncNoOpsRequest;
-    using RpcSyncNoOpsResponse = MultiPaxosService::RpcSyncNoOpsResponse;
     using RpcBulkDecideRequest = MultiPaxosService::RpcBulkDecideRequest;
     using RpcBulkDecideResponse = MultiPaxosService::RpcBulkDecideResponse;
     class ForwardTypedFuture {
@@ -1227,59 +1056,6 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
-    class HeartbeatTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit HeartbeatTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcHeartbeatResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcHeartbeatResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcHeartbeatResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
-            __reply_ar__ >> __typed_resp__.ballot;
-            __reply_ar__ >> __typed_resp__.val;
-            return rusty::Result<RpcHeartbeatResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<HeartbeatTypedFuture, rrr::i32> async_Heartbeat(const RpcHeartbeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::HEARTBEAT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<HeartbeatTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<HeartbeatTypedFuture, rrr::i32>::Ok(HeartbeatTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<HeartbeatTypedFuture> await_Heartbeat(const RpcHeartbeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_Heartbeat(req, __fu_attr__));
-    }
-    rusty::Result<RpcHeartbeatResponse, rrr::i32> Heartbeat(const RpcHeartbeatRequest& req) {
-        auto __typed_fu_result__ = this->async_Heartbeat(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcHeartbeatResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
     class ForwardToLearnerServerTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1333,59 +1109,6 @@ public:
         auto __typed_fu_result__ = this->async_ForwardToLearnerServer(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcForwardToLearnerServerResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class BulkPrepareTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit BulkPrepareTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcBulkPrepareResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcBulkPrepareResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcBulkPrepareResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
-            __reply_ar__ >> __typed_resp__.ballot;
-            __reply_ar__ >> __typed_resp__.val;
-            return rusty::Result<RpcBulkPrepareResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<BulkPrepareTypedFuture, rrr::i32> async_BulkPrepare(const RpcBulkPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::BULKPREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<BulkPrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<BulkPrepareTypedFuture, rrr::i32>::Ok(BulkPrepareTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<BulkPrepareTypedFuture> await_BulkPrepare(const RpcBulkPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_BulkPrepare(req, __fu_attr__));
-    }
-    rusty::Result<RpcBulkPrepareResponse, rrr::i32> BulkPrepare(const RpcBulkPrepareRequest& req) {
-        auto __typed_fu_result__ = this->async_BulkPrepare(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcBulkPrepareResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
@@ -1603,59 +1326,6 @@ public:
         }
         return __typed_fu_result__.unwrap().resolve();
     }
-    class SyncNoOpsTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit SyncNoOpsTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcSyncNoOpsResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcSyncNoOpsResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcSyncNoOpsResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
-            __reply_ar__ >> __typed_resp__.ballot;
-            __reply_ar__ >> __typed_resp__.val;
-            return rusty::Result<RpcSyncNoOpsResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<SyncNoOpsTypedFuture, rrr::i32> async_SyncNoOps(const RpcSyncNoOpsRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCNOOPS, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<SyncNoOpsTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<SyncNoOpsTypedFuture, rrr::i32>::Ok(SyncNoOpsTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<SyncNoOpsTypedFuture> await_SyncNoOps(const RpcSyncNoOpsRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_SyncNoOps(req, __fu_attr__));
-    }
-    rusty::Result<RpcSyncNoOpsResponse, rrr::i32> SyncNoOps(const RpcSyncNoOpsRequest& req) {
-        auto __typed_fu_result__ = this->async_SyncNoOps(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcSyncNoOpsResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
     class BulkDecideTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -1736,7 +1406,7 @@ public:
     }
 
     enum {
-        COMMIT = 0x24071557,
+        COMMIT = 0x5a8baa47,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -1947,9 +1617,9 @@ public:
     }
 
     enum {
-        PREPARE = 0x62160823,
-        SUGGEST = 0x39cd31d9,
-        DECIDE = 0x51e66aa4,
+        PREPARE = 0x4107ff0b,
+        SUGGEST = 0x63177c3f,
+        DECIDE = 0x4df9b020,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -2495,13 +2165,13 @@ public:
     }
 
     enum {
-        HEARTBEAT = 0x5f0be14c,
-        FORWARD = 0x50c5cdb4,
-        VOTE = 0x18ffa30a,
-        VOTE2FPGA = 0x52343ebb,
-        APPENDENTRIES = 0x522cc0aa,
-        APPENDENTRIES2 = 0x41c8f62a,
-        DECIDE = 0x1c1307ac,
+        HEARTBEAT = 0x1d1772ff,
+        FORWARD = 0x57353e87,
+        VOTE = 0x1f92e9f3,
+        VOTE2FPGA = 0x42685763,
+        APPENDENTRIES = 0x3901e7e8,
+        APPENDENTRIES2 = 0x64d464ec,
+        DECIDE = 0x676a72cb,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -3513,16 +3183,16 @@ public:
     }
 
     enum {
-        VOTE = 0x20755676,
-        VOTEDURABLE = 0x29426b27,
-        APPENDENTRIES = 0x4df01b48,
-        EMPTYAPPENDENTRIES = 0x23e4f644,
-        APPENDENTRIESDURABLE = 0x194969a7,
-        TIMEOUTNOW = 0x6be8294d,
-        NOTIFYRESTART = 0x1a2040d7,
-        INSTALLSNAPSHOT = 0x442a1a33,
-        ADDSERVER = 0x42a70c01,
-        REMOVESERVER = 0x3b645d90,
+        VOTE = 0x38b4fdd1,
+        VOTEDURABLE = 0x2a866056,
+        APPENDENTRIES = 0x4f361eb9,
+        EMPTYAPPENDENTRIES = 0x5b8035c6,
+        APPENDENTRIESDURABLE = 0x62921862,
+        TIMEOUTNOW = 0x200a5403,
+        NOTIFYRESTART = 0x1dda15b6,
+        INSTALLSNAPSHOT = 0x58192645,
+        ADDSERVER = 0x44e8ea45,
+        REMOVESERVER = 0x192d2a47,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -4702,11 +4372,11 @@ public:
     }
 
     enum {
-        FORWARD = 0x57663233,
-        PREPARE = 0x68858598,
-        FASTACCEPT = 0x2a6fadd6,
-        ACCEPT = 0x62dc45e9,
-        COMMIT = 0x31e65b03,
+        FORWARD = 0x38a0a899,
+        PREPARE = 0x38b068b0,
+        FASTACCEPT = 0x11463156,
+        ACCEPT = 0x20d74490,
+        COMMIT = 0x47914965,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -6544,51 +6214,51 @@ public:
     }
 
     enum {
-        MSGSTRING = 0x2d35eb44,
-        MSGMARSHALL = 0x66dd1a19,
-        REELECT = 0x1b3e5e9c,
-        RULESPECULATIVEEXECUTE = 0x344ae751,
-        DISPATCH = 0x3159350b,
-        PREPARE = 0x4c8ee6a6,
-        COMMIT = 0x21872eff,
-        ABORT = 0x370ac909,
-        EARLYABORT = 0x68808397,
-        UPGRADEEPOCH = 0x65426a4e,
-        TRUNCATEEPOCH = 0x288aaede,
-        ISLEADER = 0x5967a9b3,
-        ISFPGALEADER = 0x29c89916,
-        SIMPLECMD = 0x5712870a,
-        FAILOVERPAUSESOCKETOUT = 0x253cf289,
-        FAILOVERRESUMESOCKETOUT = 0x453da7a4,
-        RPC_NULL = 0x5fe9b9df,
-        TAPIRACCEPT = 0x2eda0a07,
-        TAPIRFASTACCEPT = 0x27fd8c8b,
-        TAPIRDECIDE = 0x26409a2a,
-        RCCDISPATCH = 0x4d08edd7,
-        RCCFINISH = 0x1670c488,
-        RCCINQUIRE = 0x1005ae8a,
-        RCCDISPATCHRO = 0x5af14ed5,
-        RCCINQUIREVALIDATION = 0x6c58048c,
-        RCCNOTIFYGLOBALVALIDATION = 0x52ffb57f,
-        JANUSDISPATCH = 0x212dfeb8,
-        RCCCOMMIT = 0x3e821ba0,
-        JANUSCOMMIT = 0x3cca6d6e,
-        JANUSCOMMITWOGRAPH = 0x6a18d238,
-        JANUSINQUIRE = 0x341c9904,
-        RCCPREACCEPT = 0x15927851,
-        JANUSPREACCEPT = 0x4515a224,
-        JANUSPREACCEPTWOGRAPH = 0x3d42df8c,
-        RCCACCEPT = 0x5a67c109,
-        JANUSACCEPT = 0x223c28dd,
-        JETPACKBEGINRECOVERY = 0x54e25e73,
-        JETPACKPULLIDSET = 0x1d18df28,
-        JETPACKPULLCMD = 0x6ffc0b43,
-        JETPACKRECORDCMD = 0x24707eb9,
-        JETPACKPREPARE = 0x66dfd5d5,
-        JETPACKACCEPT = 0x27b4bd34,
-        JETPACKCOMMIT = 0x2ba32667,
-        JETPACKPULLRECSETINS = 0x5dd05010,
-        JETPACKFINISHRECOVERY = 0x373ef1a8,
+        MSGSTRING = 0x4fd8139b,
+        MSGMARSHALL = 0x48529ef3,
+        REELECT = 0x13c97067,
+        RULESPECULATIVEEXECUTE = 0x5dd5e9c0,
+        DISPATCH = 0x1b06c1da,
+        PREPARE = 0x58ea8d11,
+        COMMIT = 0x5703a7b6,
+        ABORT = 0x51077e93,
+        EARLYABORT = 0x2729d088,
+        UPGRADEEPOCH = 0x50e16759,
+        TRUNCATEEPOCH = 0x23057c6c,
+        ISLEADER = 0x5291f3ec,
+        ISFPGALEADER = 0x14a20a96,
+        SIMPLECMD = 0x454ca502,
+        FAILOVERPAUSESOCKETOUT = 0x60f5938f,
+        FAILOVERRESUMESOCKETOUT = 0x5c9f8e4a,
+        RPC_NULL = 0x1675cd60,
+        TAPIRACCEPT = 0x60690a56,
+        TAPIRFASTACCEPT = 0x6c1ff356,
+        TAPIRDECIDE = 0x51f91bd8,
+        RCCDISPATCH = 0x116c9c3d,
+        RCCFINISH = 0x6d349c39,
+        RCCINQUIRE = 0x63808e6c,
+        RCCDISPATCHRO = 0x38234dc2,
+        RCCINQUIREVALIDATION = 0x4ed96fef,
+        RCCNOTIFYGLOBALVALIDATION = 0x4ff348d8,
+        JANUSDISPATCH = 0x67214ef2,
+        RCCCOMMIT = 0x5e2bd8dc,
+        JANUSCOMMIT = 0x4193dcf7,
+        JANUSCOMMITWOGRAPH = 0x1925ed9d,
+        JANUSINQUIRE = 0x2050fb27,
+        RCCPREACCEPT = 0x1b1c1da5,
+        JANUSPREACCEPT = 0x2ff9c75f,
+        JANUSPREACCEPTWOGRAPH = 0x6b571387,
+        RCCACCEPT = 0x1edc3c90,
+        JANUSACCEPT = 0x531b356b,
+        JETPACKBEGINRECOVERY = 0x1dc7cd8c,
+        JETPACKPULLIDSET = 0x47f74d93,
+        JETPACKPULLCMD = 0x5e6c96b3,
+        JETPACKRECORDCMD = 0x1e9c5c26,
+        JETPACKPREPARE = 0x61774c3e,
+        JETPACKACCEPT = 0x32e92f58,
+        JETPACKCOMMIT = 0x2f579a85,
+        JETPACKPULLRECSETINS = 0x1ba38b52,
+        JETPACKFINISHRECOVERY = 0x3cbf40e1,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -10461,10 +10131,10 @@ public:
     }
 
     enum {
-        SERVER_SHUTDOWN = 0x638f24b0,
-        SERVER_READY = 0x4c0f61f0,
-        SERVER_HEART_BEAT_WITH_DATA = 0x3989f168,
-        SERVER_HEART_BEAT = 0x68fb5a30,
+        SERVER_SHUTDOWN = 0x6d810cad,
+        SERVER_READY = 0x1520b624,
+        SERVER_HEART_BEAT_WITH_DATA = 0x1df54628,
+        SERVER_HEART_BEAT = 0x503b0d9a,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -10957,14 +10627,14 @@ public:
     }
 
     enum {
-        CLIENT_GET_TXN_NAMES = 0x26475fd6,
-        CLIENT_SHUTDOWN = 0x39a472f8,
-        CLIENT_FORCE_STOP = 0x2717b42e,
-        CLIENT_RESPONSE = 0x6e7c6e71,
-        CLIENT_READY = 0x1743de0d,
-        CLIENT_READY_BLOCK = 0x2426e092,
-        CLIENT_START = 0x6665f28c,
-        DISPATCHTXN = 0x62dd650b,
+        CLIENT_GET_TXN_NAMES = 0x14ad2e2e,
+        CLIENT_SHUTDOWN = 0x5e88956b,
+        CLIENT_FORCE_STOP = 0x13f70a90,
+        CLIENT_RESPONSE = 0x30fc363d,
+        CLIENT_READY = 0x5753e741,
+        CLIENT_READY_BLOCK = 0x481671c7,
+        CLIENT_START = 0x51a12687,
+        DISPATCHTXN = 0x6471624d,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -11767,13 +11437,13 @@ public:
     }
 
     enum {
-        GETCONFIG = 0x3b7820d8,
-        GETCONFIGVERSION = 0x51bef2f8,
-        HASCONFIG = 0x604d966c,
-        SETSHARDINGPOLICY = 0x2204aabc,
-        GETSHARDINGPOLICY = 0x25068e31,
-        GETSHARDINGPOLICYVERSION = 0x6fefc069,
-        HASSHARDINGPOLICY = 0x63d6fe5b,
+        GETCONFIG = 0x6d3de0b3,
+        GETCONFIGVERSION = 0x3017fada,
+        HASCONFIG = 0x122bdba8,
+        SETSHARDINGPOLICY = 0x35aeff95,
+        GETSHARDINGPOLICY = 0x6082d27e,
+        GETSHARDINGPOLICYVERSION = 0x1f8b7d9b,
+        HASSHARDINGPOLICY = 0x3b7094b4,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)

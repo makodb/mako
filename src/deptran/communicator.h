@@ -554,19 +554,10 @@ class Communicator {
   void AddMessageHandler(std::function<bool(const MarshallDeputy&,
                                             MarshallDeputy&)>);
 
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastBulkPrepare(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        std::function<void(ballot_t, int)> cb){
-      verify(0);
-    }
-
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastHeartBeat(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        const std::function<void(ballot_t, int)>& cb){
-      verify(0);
-    }
+  // Workstream N Phase 4e-26: removed `BroadcastBulkPrepare`,
+  // `BroadcastHeartBeat`, `BroadcastSyncNoOps` virtual stubs — the
+  // matching `MultiPaxosCommo` overrides + `PaxosWorker::Send*`
+  // senders were deleted in Phases 4e-25/4e-26.
 
     virtual void ForwardToLearner(parid_t par_id,
                                   uint64_t slot,
@@ -582,14 +573,6 @@ class Communicator {
                       const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb){
       verify(0);
     }
-
-   virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastSyncNoOps(parid_t par_id,
-                    shared_ptr<Marshallable> cmd,
-                    const std::function<void(ballot_t, int)>& cb){
-
-	verify(0);
-   }
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncCommit(parid_t par_id,

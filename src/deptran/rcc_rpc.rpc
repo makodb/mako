@@ -27,14 +27,16 @@ abstract service MultiPaxos {
                MarshallDeputy cmd);
 
   // Mako's bulk Paxos operations for optimized batching
-  defer Heartbeat(MarshallDeputy cmd | i32 ballot, i32 val);
+  // Workstream N Phase 4e-26: removed `Heartbeat`, `BulkPrepare`,
+  // `SyncNoOps` RPC declarations — became dead in Phase 4e-25 when the
+  // matching `PaxosWorker::SendHeartBeat` / `SendBulkPrepare` /
+  // `SendSyncNoOpLog` senders went away.  No callers, no service-side
+  // handlers remain.
 
   defer ForwardToLearnerServer(i32 par_id,
                                uint64_t slot,
                                ballot_t ballot,
                                MarshallDeputy cmd | uint64_t ret_slot, ballot_t ret_ballot);
-
-  defer BulkPrepare(MarshallDeputy cmd | i32 ballot, i32 val);
 
   defer BulkAccept(MarshallDeputy cmd | i32 ballot, i32 val);
 
@@ -43,8 +45,6 @@ abstract service MultiPaxos {
   defer SyncLog(MarshallDeputy cmd | i32 ballot, i32 val, MarshallDeputy ret);
 
   defer SyncCommit(MarshallDeputy cmd | i32 ballot, i32 val);
-
-  defer SyncNoOps(MarshallDeputy cmd | i32 ballot, i32 val);
 
   defer BulkDecide(MarshallDeputy cmd | i32 ballot, i32 val);
 }

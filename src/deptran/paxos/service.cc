@@ -21,13 +21,8 @@ void MultiPaxosServiceImpl::Decide(const MultiPaxosService::RpcDecideRequest& re
   this->Decide(req.slot, req.ballot, req.cmd, std::move(defer));
 }
 
-void MultiPaxosServiceImpl::BulkPrepare(const MultiPaxosService::RpcBulkPrepareRequest& req, MultiPaxosService::RpcBulkPrepareResponse& resp, rrr::DeferredReply defer) {
-  this->BulkPrepare(req.cmd, &resp.ballot, &resp.val, std::move(defer));
-}
-
-void MultiPaxosServiceImpl::Heartbeat(const MultiPaxosService::RpcHeartbeatRequest& req, MultiPaxosService::RpcHeartbeatResponse& resp, rrr::DeferredReply defer) {
-  this->Heartbeat(req.cmd, &resp.ballot, &resp.val, std::move(defer));
-}
+// Workstream N Phase 4e-26: removed `BulkPrepare` and `Heartbeat`
+// typed-rpc overrides (and matching N-arg overloads further below).
 
 void MultiPaxosServiceImpl::BulkPrepare2(const MultiPaxosService::RpcBulkPrepare2Request& req, MultiPaxosService::RpcBulkPrepare2Response& resp, rrr::DeferredReply defer) {
   this->BulkPrepare2(req.cmd, &resp.ballot, &resp.val, &resp.ret, std::move(defer));
@@ -49,9 +44,8 @@ void MultiPaxosServiceImpl::SyncCommit(const MultiPaxosService::RpcSyncCommitReq
   this->SyncCommit(req.cmd, &resp.ballot, &resp.val, std::move(defer));
 }
 
-void MultiPaxosServiceImpl::SyncNoOps(const MultiPaxosService::RpcSyncNoOpsRequest& req, MultiPaxosService::RpcSyncNoOpsResponse& resp, rrr::DeferredReply defer) {
-  this->SyncNoOps(req.cmd, &resp.ballot, &resp.val, std::move(defer));
-}
+// Workstream N Phase 4e-26: removed `SyncNoOps` typed-rpc override
+// (and matching N-arg overload further below).
 
 void MultiPaxosServiceImpl::ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, rrr::DeferredReply defer) {
   this->ForwardToLearnerServer(req.par_id, req.slot, req.ballot, req.cmd, &resp.ret_slot, &resp.ret_ballot, std::move(defer));
@@ -134,33 +128,10 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
 }
 
 
-void MultiPaxosServiceImpl::BulkPrepare(const MarshallDeputy& md_cmd,
-                                       i32* ballot,
-                                       i32* valid,
-                                       rrr::DeferredReply defer) {
-  verify(sched_ != nullptr);
-  Fiber::create_run([&] () {
-    //std::cout << "send a BulkPrepare\n";
-    sched_->OnBulkPrepare(const_cast<MarshallDeputy&>(md_cmd).inner(),
-                          ballot,
-                          valid,
-                          [defer = std::move(defer)]() mutable { defer.reply(); });
-  });
-}
-
-//marker:ansh complete, basic skeleton, add rpc definition in rcc_rpc.rpc
-void MultiPaxosServiceImpl::Heartbeat(const MarshallDeputy& md_cmd,
-                                       i32* ballot,
-                                       i32* valid,
-                                       rrr::DeferredReply defer) {
-  verify(sched_ != nullptr);
-  Fiber::create_run([&] () {
-    sched_->OnHeartbeat(const_cast<MarshallDeputy&>(md_cmd).inner(),
-                          ballot,
-                          valid,
-                          [defer = std::move(defer)]() mutable { defer.reply(); });
-  });
-}
+// Workstream N Phase 4e-26: removed `BulkPrepare(MarshallDeputy, ...)`
+// and `Heartbeat(MarshallDeputy, ...)` N-arg overloads — only callers
+// were the now-deleted typed-rpc shims; the corresponding
+// `PaxosServer::OnBulkPrepare` / `OnHeartbeat` impls are also gone.
 
 void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
                                        i32* ballot,
@@ -252,19 +223,8 @@ void MultiPaxosServiceImpl::SyncCommit(const MarshallDeputy& md_cmd,
   });
 }
 
-void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
-                                      i32* ballot,
-                                      i32* valid,
-                                      rrr::DeferredReply defer) {
-  verify(sched_ != nullptr);
-  Fiber::create_run([&] () {
-    sched_->OnSyncNoOps(const_cast<MarshallDeputy&>(md_cmd).inner(),
-                         ballot,
-                         valid,
-                         [defer = std::move(defer)]() mutable { defer.reply(); });
-    //defer.reply();
-  });
-}
+// Workstream N Phase 4e-26: removed `SyncNoOps(MarshallDeputy, ...)`
+// N-arg overload — only caller was the deleted typed-rpc shim above.
 
 void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
                                                    const uint64_t& slot, 

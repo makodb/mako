@@ -53,15 +53,10 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                   i32* valid,
                   rrr::DeferredReply defer);
 
-  void BulkPrepare(const MarshallDeputy& cmd,
-                  i32* ballot,
-                  i32* valid,
-                  rrr::DeferredReply defer);
-
-  void Heartbeat(const MarshallDeputy& cmd,
-                  i32* ballot,
-                  i32* valid,
-                  rrr::DeferredReply defer);
+  // Workstream N Phase 4e-26: removed `BulkPrepare(MarshallDeputy, ...)`
+  // and `Heartbeat(MarshallDeputy, ...)` declarations — paired with
+  // their typed-rpc overrides (also removed below); both became dead
+  // when their senders went away in Phase 4e-25.
 
   void BulkPrepare2(const MarshallDeputy& md_cmd,
                      i32* ballot,
@@ -80,10 +75,9 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                      i32* valid,
                      rrr::DeferredReply defer);
 
-  void SyncNoOps(const MarshallDeputy& md_cmd,
-                 i32* ballot,
-                 i32* valid,
-                 rrr::DeferredReply defer);
+  // Workstream N Phase 4e-26: removed `SyncNoOps(MarshallDeputy, ...)`
+  // declaration — paired with its typed-rpc override (also removed
+  // below).
 
   void ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer);
 
@@ -94,14 +88,15 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   void Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, rrr::DeferredReply defer) override;
   void Accept(const MultiPaxosService::RpcAcceptRequest& req, MultiPaxosService::RpcAcceptResponse& resp, rrr::DeferredReply defer) override;
   void Decide(const MultiPaxosService::RpcDecideRequest& req, MultiPaxosService::RpcDecideResponse& resp, rrr::DeferredReply defer) override;
-  void BulkPrepare(const MultiPaxosService::RpcBulkPrepareRequest& req, MultiPaxosService::RpcBulkPrepareResponse& resp, rrr::DeferredReply defer) override;
-  void Heartbeat(const MultiPaxosService::RpcHeartbeatRequest& req, MultiPaxosService::RpcHeartbeatResponse& resp, rrr::DeferredReply defer) override;
+  // Workstream N Phase 4e-26: removed `BulkPrepare`, `Heartbeat`,
+  // `SyncNoOps` typed-rpc overrides — the matching abstract base
+  // class virtuals are gone (rcc_rpc.rpc updated; rcc_rpc.h
+  // regenerated) and no senders remain.
   void BulkPrepare2(const MultiPaxosService::RpcBulkPrepare2Request& req, MultiPaxosService::RpcBulkPrepare2Response& resp, rrr::DeferredReply defer) override;
   void BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) override;
   void BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, rrr::DeferredReply defer) override;
   void SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, rrr::DeferredReply defer) override;
   void SyncCommit(const MultiPaxosService::RpcSyncCommitRequest& req, MultiPaxosService::RpcSyncCommitResponse& resp, rrr::DeferredReply defer) override;
-  void SyncNoOps(const MultiPaxosService::RpcSyncNoOpsRequest& req, MultiPaxosService::RpcSyncNoOpsResponse& resp, rrr::DeferredReply defer) override;
   void ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, rrr::DeferredReply defer) override;
   // END typed-rpc-decls (MultiPaxosServiceImpl)
 };

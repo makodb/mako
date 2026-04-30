@@ -57,19 +57,10 @@ class MultiPaxosCommo : public Communicator {
                        const slotid_t slot_id,
                        const ballot_t ballot,
                        const shared_ptr<Marshallable> cmd);
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastBulkPrepare(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        std::function<void(ballot_t, int)> cb) override;
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastHeartBeat(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        const std::function<void(ballot_t, int)>& cb) override;
-
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastSyncNoOps(parid_t par_id,
-                    shared_ptr<Marshallable> cmd,
-                    const std::function<void(ballot_t, int)>& cb) override;
+  // Workstream N Phase 4e-26: removed `BroadcastBulkPrepare`,
+  // `BroadcastHeartBeat`, `BroadcastSyncNoOps` — became dead in
+  // Phase 4e-25 when the matching `PaxosWorker::SendHeartBeat` /
+  // `SendBulkPrepare` / `SendSyncNoOpLog` senders went away.
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,

@@ -165,15 +165,9 @@ class PaxosServer : public TxLogServer {
                 const ballot_t ballot,
                 shared_ptr<Marshallable> &cmd);
 
-  void OnBulkPrepare(shared_ptr<Marshallable> &cmd,
-                    i32 *ballot,
-                    i32* valid,
-                    rusty::Function<void()> cb);
-
-  void OnHeartbeat(shared_ptr<Marshallable> &cmd,
-                    i32 *ballot,
-                    i32* valid,
-                    rusty::Function<void()> cb);
+  // Workstream N Phase 4e-26: removed `OnBulkPrepare`, `OnHeartbeat`
+  // declarations — only callers were the now-deleted
+  // `MultiPaxosServiceImpl::BulkPrepare` / `Heartbeat` handlers.
 
   void OnBulkAccept(shared_ptr<Marshallable> &cmd,
                     i32* ballot,
@@ -203,11 +197,10 @@ class PaxosServer : public TxLogServer {
                       rusty::Function<void()> cb);
 
 
-  void OnSyncNoOps(shared_ptr<Marshallable> &cmd,
-                  i32* ballot,
-                  i32 *valid,
-                  rusty::Function<void()> cb);
-  
+  // Workstream N Phase 4e-26: removed `OnSyncNoOps` declaration — only
+  // caller was the now-deleted `MultiPaxosServiceImpl::SyncNoOps`
+  // handler.
+
   void OnForwardToLearner(const rrr::i32& par_id,
                         const uint64_t& slot, 
                         const ballot_t& ballot,
