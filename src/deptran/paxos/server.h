@@ -179,11 +179,9 @@ class PaxosServer : public TxLogServer {
                     i32 *valid,
                     rusty::Function<void()> cb);
 
-  void OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
-                      i32* ballot,
-                      i32 *valid,
-                      shared_ptr<BulkPaxosCmd> ret_cmd,
-                      rusty::Function<void()> cb);
+  // Workstream N Phase 4e-27: removed `OnBulkPrepare2` declaration —
+  // only caller was the now-deleted
+  // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
   void OnSyncLog(shared_ptr<Marshallable> &cmd,
                       i32* ballot,

@@ -97,7 +97,9 @@ class CoordinatorMultiPaxos : public Coordinator {
 class BulkCoordinatorMultiPaxos : public CoordinatorMultiPaxos {
 public:
     shared_ptr<Marshallable> cmd_{nullptr};
-    void Prepare();
+    // Workstream N Phase 4e-27: removed `Prepare()` declaration — the
+    // method was dead (`GotoNextPhase` skips the prepare phase via a
+    // `// Prepare();` comment, and no other caller exists).
     void Accept();
     void Commit();
     void GotoNextPhase();

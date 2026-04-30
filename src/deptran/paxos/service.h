@@ -58,11 +58,9 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   // their typed-rpc overrides (also removed below); both became dead
   // when their senders went away in Phase 4e-25.
 
-  void BulkPrepare2(const MarshallDeputy& md_cmd,
-                     i32* ballot,
-                     i32* valid,
-                     MarshallDeputy* ret,
-                     rrr::DeferredReply defer);
+  // Workstream N Phase 4e-27: removed `BulkPrepare2(MarshallDeputy, ...)`
+  // declaration — paired with its typed-rpc override (also removed
+  // below).
 
   void SyncLog(const MarshallDeputy& md_cmd,
                      i32* ballot,
@@ -92,7 +90,9 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   // `SyncNoOps` typed-rpc overrides — the matching abstract base
   // class virtuals are gone (rcc_rpc.rpc updated; rcc_rpc.h
   // regenerated) and no senders remain.
-  void BulkPrepare2(const MultiPaxosService::RpcBulkPrepare2Request& req, MultiPaxosService::RpcBulkPrepare2Response& resp, rrr::DeferredReply defer) override;
+  // Workstream N Phase 4e-27: removed `BulkPrepare2` typed-rpc
+  // override — the matching `MultiPaxos::BulkPrepare2` RPC was
+  // dropped from rcc_rpc.rpc; no senders remain.
   void BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) override;
   void BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, rrr::DeferredReply defer) override;
   void SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, rrr::DeferredReply defer) override;

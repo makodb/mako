@@ -24,9 +24,8 @@ void MultiPaxosServiceImpl::Decide(const MultiPaxosService::RpcDecideRequest& re
 // Workstream N Phase 4e-26: removed `BulkPrepare` and `Heartbeat`
 // typed-rpc overrides (and matching N-arg overloads further below).
 
-void MultiPaxosServiceImpl::BulkPrepare2(const MultiPaxosService::RpcBulkPrepare2Request& req, MultiPaxosService::RpcBulkPrepare2Response& resp, rrr::DeferredReply defer) {
-  this->BulkPrepare2(req.cmd, &resp.ballot, &resp.val, &resp.ret, std::move(defer));
-}
+// Workstream N Phase 4e-27: removed `BulkPrepare2` typed-rpc override
+// (and matching N-arg overload further below).
 
 void MultiPaxosServiceImpl::BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) {
   this->BulkAccept(req.cmd, &resp.ballot, &resp.val, std::move(defer));
@@ -133,22 +132,9 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
 // were the now-deleted typed-rpc shims; the corresponding
 // `PaxosServer::OnBulkPrepare` / `OnHeartbeat` impls are also gone.
 
-void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
-                                       i32* ballot,
-                                       i32* valid,
-                                       MarshallDeputy* ret,
-                                       rrr::DeferredReply defer) {
-  verify(sched_ != nullptr);
-  ret->set_marshallable(std::make_shared<BulkPaxosCmd>());
-  auto p = marshallable_cast<BulkPaxosCmd>(ret);
-  Fiber::create_run([&] () {
-    sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).inner(),
-                          ballot,
-                          valid,
-                          p,
-                          [defer = std::move(defer)]() mutable { defer.reply(); });
-  });
-}
+// Workstream N Phase 4e-27: removed `BulkPrepare2(MarshallDeputy, ...)`
+// N-arg overload — only caller was the deleted typed-rpc shim above;
+// the corresponding `PaxosServer::OnBulkPrepare2` impl is also gone.
 
 void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
                                        i32* ballot,

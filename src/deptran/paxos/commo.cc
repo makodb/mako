@@ -205,40 +205,10 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
 // (`PaxosWorker::SendBulkPrepare`) went away.  The body was already a
 // `verify(0)`-then-commented-out shell.
 
-shared_ptr<PaxosAcceptQuorumEvent>
-MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
-                                 shared_ptr<Marshallable> cmd,
-                                 const std::function<void(MarshallDeputy, ballot_t, int)>& cb) {
-  verify(0);
-  int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); //marker:debug
-  // auto proxies = rpc_par_proxies_[par_id];
-  // vector<Future*> fus;
-  // //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
-  // int cur_batch_idx = current_proxy_batch_idx;
-  // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  // for (int i=0;i<n+1;i++) {
-  //   auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = [e, cb] (Future* fu) {
-  //     i32 valid;
-  //     i32 ballot;
-  //     MarshallDeputy response_val;
-  //     fu->get_reply() >> ballot >> valid >> response_val;
-  //     //Log_info("BroadcastPrepare2: received response: %d %d", ballot, valid);
-  //     cb(response_val, ballot, valid);
-  //     e->FeedResponse(valid);
-  //   };
-  //   verify(cmd != nullptr);
-  //   MarshallDeputy md(cmd);
-  //   auto f = proxy->async_BulkPrepare2(md, fuattr);
-  //   Future::safe_release(f);
-  // }
-  return e;
-}
+// Workstream N Phase 4e-27: removed `MultiPaxosCommo::BroadcastPrepare2`
+// — only call site was the now-deleted
+// `BulkCoordinatorMultiPaxos::Prepare()`; body was a
+// `verify(0)`-then-commented-out shell.
 
 // Workstream N Phase 4e-26: removed `MultiPaxosCommo::BroadcastHeartBeat`
 // — became dead in Phase 4e-25 when the only sender

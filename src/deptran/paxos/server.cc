@@ -121,90 +121,9 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
 // were the now-deleted `MultiPaxosServiceImpl::BulkPrepare` /
 // `Heartbeat` handlers in paxos/service.cc.
 
-void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
-                               i32* ballot,
-                               i32* valid,
-                               shared_ptr<BulkPaxosCmd> ret_cmd,
-                               rusty::Function<void()> cb){
-  //pthread_setname_np(pthread_self(), "Follower server thread");
-  auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd);
-  verify(bcmd != nullptr);
-  ballot_t cur_b = bcmd->ballots[0];
-  slotid_t cur_slot = bcmd->slots[0];
-  int req_leader = bcmd->leader_id;
-  if(req_leader == 1 && es->machine_id != 1)
-    //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
-    *valid = 1;
-  //cb();
-  //return;
-  auto rbcmd = make_shared<BulkPaxosCmd>();
-  Log_debug("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
-  //es->state_lock();
-  // mtx_.lock();
-  if(cur_b < cur_epoch){
-    *ballot = cur_epoch;
-    //es->state_unlock();
-    *valid = 0;
-    // mtx_.unlock();
-    cb();
-    return;
-  }
-  // mtx_.unlock();
-
-  // es->state_lock();
-  // es->set_lastseen();
-  // if(req_leader != es->machine_id)
-	// es->set_state(0);
-  // es->state_unlock();
-
-  // mtx_.lock();
-  max_touched_slot = max(max_touched_slot, cur_slot);
-  if(cur_b > cur_epoch){
-    // mtx_.unlock();
-    // es->state_lock();
-    // es->set_epoch(cur_b);
-    // es->set_leader(req_leader); // marker:ansh send leader in every request.
-    // for(int i = 0; i < pxs_workers_g.size(); i++){
-    //   PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    //   ps->mtx_.lock();
-    //   ps->cur_epoch = cur_b;
-    //   ps->leader_id = req_leader;
-    //   ps->mtx_.unlock();
-    // }
-    //es->state_unlock();
-  } else{
-    //mtx_.unlock();
-    if(req_leader != es->leader_id){
-      Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
-      verify(0); //more than one leader in a term, should not send prepare if not leader.
-    }
-  }
-
-  //mtx_.lock();
-  auto instance = GetInstance(cur_slot);
-  Log_debug("OnBulkPrepare2: Checks successfull preparing response for slot %d %d", cur_slot, partition_id_);
-  if(!instance || !instance->accepted_cmd_){
-    //mtx_.unlock();
-    *valid = 2;
-    *ballot = cur_b;
-    //*ret_cmd = *bcmd;
-    // ret_cmd->ballots.push_back(bcmd->ballots[0]);
-    // ret_cmd->slots.push_back(bcmd->slots[0]);
-    // ret_cmd->cmds.push_back(bcmd->cmds[0]);
-    //Log_info("OnBulkPrepare2: the kind_ of the response object is");
-    //es->state_unlock();
-    cb();
-    //es->state_unlock();
-    return;
-  }
-  //es->state_unlock();
-  Log_debug("OnBulkPrepare2: instance found, Preparing response");
-  ret_cmd->ballots.push_back(instance->max_ballot_accepted_);
-  ret_cmd->slots.push_back(cur_slot);
-  ret_cmd->cmds.push_back(make_shared<MarshallDeputy>(instance->accepted_cmd_));
-  // mtx_.unlock();
-  cb();
-}
+// Workstream N Phase 4e-27: removed `PaxosServer::OnBulkPrepare2`
+// (~85 LOC) — only caller was the now-deleted
+// `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
 void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
                                i32* ballot,

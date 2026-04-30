@@ -82,10 +82,10 @@ class MultiPaxosCommo : public Communicator {
                            const shared_ptr<Marshallable> cmd,
                            const std::function<void(ballot_t, int)>& cb);
 
-  shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastPrepare2(parid_t par_id,
-                      const shared_ptr<Marshallable> cmd,
-                      const std::function<void(MarshallDeputy, ballot_t, int)>& cb);
+  // Workstream N Phase 4e-27: removed `BroadcastPrepare2` declaration
+  // — only call site was the now-deleted
+  // `BulkCoordinatorMultiPaxos::Prepare()`; the body was already a
+  // `verify(0)`-then-commented-out shell.
 
   shared_ptr<PaxosPrepareQuorumEvent>
   SendForward(parid_t par_id,

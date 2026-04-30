@@ -271,79 +271,11 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
   }
 }
 
-void BulkCoordinatorMultiPaxos::Prepare() {
-  //std::lock_guard<std::recursive_mutex> lock(mtx_);
-   in_prepare_ = true;
-  // curr_ballot_ = PickBallot();
-  // verify(slot_id_ > 0);
-  // Log_debug("multi-paxos coordinator broadcasts prepare, "
-  //               "par_id_: %lx, slot_id: %llx",
-  //           par_id_,
-  //           slot_id_);
-  // verify(n_prepare_ack_ == 0);
-  // int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
-  //return;
-  auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
-  verify(cmd_temp1 != nullptr);
-  auto prep_cmd = make_shared<PaxosPrepCmd>();
-  prep_cmd->slots = cmd_temp1->slots;
-  prep_cmd->ballots = cmd_temp1->ballots;
-  prep_cmd->leader_id = cmd_temp1->leader_id;
-
-  auto prep_cmd_marshallable = wrap_typed_marshallable(prep_cmd);
-
-  //std::vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md;
-  auto ess_cc = es_cc;
-  if(es_cc->machine_id == 0)
-	Log_debug("Sending paxos prepare request for slot %d and partition %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
-  auto sp_quorum = commo()->BroadcastPrepare2(par_id_, prep_cmd_marshallable, [this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
-    if(!this->in_prepare_)
-	     return;
-    if(!valid){
-      //Log_info("Invalid value received for prepare and leader steps down");
-      //verify(0);
-      ess_cc->step_down(bt);
-      this->in_submission_ = false;
-    } else{
-      //Log_info("Valid value received for prepare %d", bt);
-      if(valid == 1)
-        this->vec_md.push_back(make_pair(bt, md.inner()));
-      // Weihai: comment, this line will cause an seg fault
-      //else
-      //  this->vec_md.push_back(make_pair(bt, cmd_));
-    }
-  });
-  sp_quorum->wait();
-  if (sp_quorum->yes()) {
-    //Log_info("The prepare is successfull");
-    ballot_t candidate_b = 0;
-    shared_ptr<Marshallable> candidate_val = nullptr;
-    for(int i = 0; i < vec_md.size(); i++){
-      if(vec_md[i].first > candidate_b){
-        candidate_b = vec_md[i].first;
-        candidate_val = vec_md[i].second;
-      }
-    }
-    if(candidate_val){
-      auto cmd_temp = marshallable_cast<BulkPaxosCmd>(candidate_val);
-      auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
-      (void)cmd_temp;
-      (void)cmd_temp1;
-      //cmd_temp1->cmds.clear();
-      //cmd_temp1->cmds.push_back(cmd_temp->cmds[0]);
-    }
-    //Log_info("in submission ? %d", in_submission_);
-    // Log_info("Should be in accept now for slot %d", cmd_temp1->slots[0]);
-  } else if (sp_quorum->no()) {
-    // TODO restart prepare?
-    // verify(0);
-    //.. not a leader anymore, exit.
-  } else {
-    // TODO timeout
-    verify(0);
-  }
-  in_prepare_ = false;
-}
+// Workstream N Phase 4e-27: removed `BulkCoordinatorMultiPaxos::Prepare()`
+// (~70 LOC) — never called.  `GotoNextPhase` already skipped this
+// phase via a `// Prepare();` comment + `phase_++` workaround.  The
+// matching `BroadcastPrepare2`, `MultiPaxosServiceImpl::BulkPrepare2`,
+// and `OnBulkPrepare2` chain is removed in this phase.
 
 void BulkCoordinatorMultiPaxos::Accept() {
     in_accept = true;
