@@ -223,12 +223,10 @@ ClassicServiceImpl::ClassicServiceImpl(TxLogServer* sched,
   piece_count_prepare_success_ = 0;
 #endif
 
-  if (Config::GetConfig()->do_logging()) {
-    verify(0); // TODO disable logging for now.
-    auto path = Config::GetConfig()->log_path();
-//    recorder_ = new Recorder(path);
-//    poll_thread_worker->add(recorder_);
-  }
+  // Workstream N Phase 4e-35: removed `if (do_logging()) { verify(0);
+  // ... }` block — body was a `verify(0)`-only TODO shell with the
+  // `recorder_ = new Recorder(path);` and `poll_thread_worker->add`
+  // calls already commented out; `Service::recorder_` field gone.
 
   this->RegisterStats();
 }
@@ -949,7 +947,9 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
 
 void ClassicServiceImpl::RegisterStats() {
   auto& registry = StatsRegistry::instance();
-  registry.set_recorder(recorder_);
+  // Workstream N Phase 4e-35: removed `registry.set_recorder(recorder_);`
+  // — `Service::recorder_` field is gone; `StatsRegistry::set_recorder`
+  // method removed in this phase too.
   registry.set_stat(StatsRegistry::STAT_SZ_SCC, &stat_sz_scc_);
   registry.set_stat(StatsRegistry::STAT_SZ_GRAPH_START, &stat_sz_gra_start_);
   registry.set_stat(StatsRegistry::STAT_SZ_GRAPH_COMMIT, &stat_sz_gra_commit_);

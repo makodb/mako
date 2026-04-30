@@ -192,7 +192,8 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
   } else if (Config::GetConfig()->do_logging()) {
     string log;
     this->get_prepare_log(tx_id, sids, &log);
-    //   recorder_->submit(log, callback);
+    // Workstream N Phase 4e-35: removed `//   recorder_->submit(log,
+    // callback);` comment — `recorder_` field is gone.
   } else {
     return DoPrepare(tx_id);
   }

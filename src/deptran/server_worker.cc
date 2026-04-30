@@ -263,21 +263,11 @@ void ServerWorker::WaitForShutdown() {
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     // Arc auto-releases on destruction (hb_thread_pool_g goes out of scope with ServerWorker)
 
-    // Use for_each_service to access services owned by rpc_server_
-    if (rpc_server_ != nullptr) {
-      rpc_server_->for_each_service([](rrr::Service& service) {
-        if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(&service)) {
-          auto& recorder = s->recorder_;
-          if (recorder) {
-            auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;
-            auto sz_flush_avg_ = recorder->stat_sz_.peek().avg_;
-            Log::info("Log to disk, average log per flush: %lld,"
-                          " average size per flush: %lld",
-                      n_flush_avg_, sz_flush_avg_);
-          }
-        }
-      });
-    }
+    // Workstream N Phase 4e-35: removed `for_each_service(...) { if
+    // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
+    // recorder = s->recorder_; if (recorder) { Log::info(...) } } }`
+    // block — `Service::recorder_` field is always nullptr (now
+    // gone); the `if (recorder)` branch was unreachable.
   }
   Log_debug("exit %s", __FUNCTION__);
 }

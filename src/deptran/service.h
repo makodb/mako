@@ -24,7 +24,12 @@ class ClassicServiceImpl : public ClassicService {
   uint64_t n_asking_ = 0;
 
 //  std::mutex mtx_;
-  Recorder* recorder_{nullptr};
+  // Workstream N Phase 4e-35: removed `Recorder* recorder_{nullptr};`
+  // — only assignment was a commented-out
+  // `recorder_ = new Recorder(path);` in `service.cc::SetupTransport`
+  // and the only readers were `auto& recorder = s->recorder_;
+  // if (recorder) {...}` blocks in `paxos_worker.cc::WaitForShutdown`
+  // and `server_worker.cc::WaitForShutdown` (also gone in this phase).
   Communicator* comm_{nullptr};
 
   TxLogServer* dtxn_sched_;
