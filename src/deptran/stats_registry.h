@@ -37,11 +37,9 @@ public:
     // Record a statistic value
     void do_statistics(const char* key, int64_t value_delta);
 
-    // Set the recorder
-    void set_recorder(Recorder* recorder);
-
-    // Get the recorder
-    Recorder* get_recorder();
+    // Workstream N Phase 4e-35: removed `set_recorder(Recorder*)` /
+    // `get_recorder()` declarations — see stats_registry.cc retirement
+    // comment.
 
     // Get all stats (for heartbeat response)
     std::map<std::string, AvgStat*> get_all_stats();
