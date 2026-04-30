@@ -9,14 +9,12 @@ namespace janus {
 
 shared_ptr<ElectionState> es = ElectionState::instance();
 
-void PaxosServer::OnForward(shared_ptr<Marshallable> &cmd,
-                            uint64_t dep_id,
-                            uint64_t* coro_id,
-                            rusty::Function<void()> cb){
-  // NOTE: Mako doesn't use this - it uses OnForwardToLearner instead.
-  // Empty stub for RPC interface compatibility.
-  verify(0); // Should never be called in Mako
-}
+// Workstream N Phase 4e-37: removed `PaxosServer::OnForward` —
+// body was `verify(0); // Should never be called in Mako`.  The
+// `MultiPaxosServiceImpl::Forward(MarshallDeputy, ...)` handler
+// already has an empty body (Mako uses `OnForwardToLearner` via
+// `ForwardToLearnerServer` RPC instead), so this method was
+// genuinely unreachable.
 
 void PaxosServer::OnPrepare(slotid_t slot_id,
                             ballot_t ballot,

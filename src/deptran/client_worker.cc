@@ -35,9 +35,10 @@ ClientWorker::~ClientWorker() {
   }
 }
 
-void ClientWorker::retrive_statistic() {
-  verify(0); // No longer need since date are recorded directly to ClientWorker instead of Coordinator
-}
+// Workstream N Phase 4e-37: removed `ClientWorker::retrive_statistic()`
+// — body was `verify(0); // No longer need since date are recorded
+// directly to ClientWorker instead of Coordinator`; only call site
+// (`s_main.cc:242`) was already commented out.
 
 void ClientWorker::ForwardRequestDone(Coordinator* coo,
                                       TxReply* output,
