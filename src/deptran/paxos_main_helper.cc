@@ -713,13 +713,18 @@ void wait_for_submit(uint32_t par_id) {
         worker->election_state_lock.unlock();
         //verify(worker->submit_pool != nullptr);
         //worker->submit_pool->wait_for_all();
-	      Log_info("The number of completed submits n_current: %ld replay_queue: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx(), par_id, (int)worker->n_tot);
+	      // Workstream N Phase 4e-28: dropped `replay_queue.size_approx()`
+	      // from this Log_info — `replay_queue` field went away with
+	      // the dead `AddReplayEntry` / `StartReplayRead` pair.
+	      Log_info("The number of completed submits n_current: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, par_id, (int)worker->n_tot);
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
     for (auto& worker : pxs_workers_g) {
         if (!worker->IsPartition(par_id)) continue;
-	      Log_info("Par_id %ld [partition], the number of completed submits %ld %ld", par_id, (int)worker->n_current, (int)worker->replay_queue.size_approx());
+	      // Workstream N Phase 4e-28: dropped `replay_queue.size_approx()`
+	      // from this Log_info too.
+	      Log_info("Par_id %ld [partition], the number of completed submits %ld", par_id, (int)worker->n_current);
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }
