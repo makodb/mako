@@ -40,7 +40,11 @@ abstract service MultiPaxos {
 
   defer BulkAccept(MarshallDeputy cmd | i32 ballot, i32 val);
 
-  defer BulkPrepare2(MarshallDeputy cmd | i32 ballot, i32 val, MarshallDeputy ret);
+  // Workstream N Phase 4e-27: removed `BulkPrepare2` RPC declaration
+  // — the only sender (`BulkCoordinatorMultiPaxos::Prepare()`) was
+  // dead.  No callers; the matching `BroadcastPrepare2` /
+  // `MultiPaxosServiceImpl::BulkPrepare2` / `OnBulkPrepare2` chain
+  // is removed in this phase.
 
   defer SyncLog(MarshallDeputy cmd | i32 ballot, i32 val, MarshallDeputy ret);
 
