@@ -1348,10 +1348,17 @@ TEST(MarshallableSerializableAdapter, LoadAborts) {
   // marshal_serializable_bridge.hpp.
 }
 
-TEST(AsSerializableMarshallDeputy, ViewSavesUnderlyingMarshallableBytes) {
-  // Construct a MarshallDeputy holding a Marshallable. Take its
-  // as_serializable view; save through it; verify bytes match the
-  // raw to_marshal of the underlying Marshallable.
+TEST(MarshallDeputySerializableAccessor, SavesUnderlyingMarshallableBytes) {
+  // Construct a MarshallDeputy holding a Marshallable. Use the
+  // Phase 3f-3 lazy `serializable()` accessor; save through it;
+  // verify bytes match the raw to_marshal of the underlying
+  // Marshallable.
+  //
+  // Workstream N Phase 5b-14: renamed from
+  // `AsSerializableMarshallDeputy.ViewSavesUnderlyingMarshallableBytes`
+  // when the deputy-overload `as_serializable(const MarshallDeputy&)`
+  // helper was dropped in favor of the cached
+  // `MarshallDeputy::serializable()` accessor.
   auto canary = std::make_shared<CanaryMarshallable>();
   canary->id = 7777;
   canary->name = "deputy view";
@@ -1367,12 +1374,11 @@ TEST(AsSerializableMarshallDeputy, ViewSavesUnderlyingMarshallableBytes) {
   auto ref_bytes = drain_marshal(m);
 
   // (b) save through the deputy's serializable view.
-  auto serial = as_serializable(md);
-  EXPECT_EQ(serial->kind(), CanaryMarshallable::kKind);
+  EXPECT_EQ(md.serializable()->kind(), CanaryMarshallable::kKind);
 
   BufferSink sink;
   BinaryWriteArchive writer(&sink);
-  serial->save(writer);
+  md.serializable()->save(writer);
   auto view_bytes = sink_to_vector(sink);
 
   ASSERT_EQ(ref_bytes.size(), view_bytes.size());
