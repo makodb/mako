@@ -417,9 +417,11 @@ void add_time(std::string key, long double value,long double denom){
   }
 }
 
-static tp firstTime;
-static tp endTime;
-static bool debug = false;
+// Workstream N Phase 4e-20: removed dead `static tp firstTime;`,
+// `static tp endTime;`, `static bool debug = false;` — declared
+// but no production reader or writer anywhere.  The only `debug`
+// reference was a `// marker:ansh for debug` line comment inside
+// the also-dead `electionMonitor` (deleted alongside).
 void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   // Find the worker for this partition by iterating, don't assume index == partition_id
   for (auto& worker : pxs_workers_g) {
@@ -651,84 +653,19 @@ void send_bulk_prep(int send_epoch){
   pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
 }
 
-// marker:ansh
-void* electionMonitor(void* arg){
-   void(1);
-   // we need to take two situations into consideration: 1) startup; 2) exit
-   // startup: sleep 5 seconds for the startup
-   usleep(5 * 1000 * 1000);
-
-   while(es->running){
-
-    es->state_lock();
-    /*if(es->machine_id == 2){ // marker:ansh for debug
-      es->state_unlock();
-      break;
-    }*/
-    if(es->cur_state == 1){
-      if(es->did_not_send_prep()){
-       //send_bulk_prep(es->get_epoch());
-       //es->set_bulkprep_time();
-      }
-      es->state_unlock();
-      es->sleep_timeout();
-      continue;
-    }
-    if(!es->did_not_see_leader()){
-      es->state_unlock();
-      es->sleep_timeout();
-      continue;
-    }
-    int send_epoch = es->set_epoch();
-    es->state_unlock();
-    send_bulk_prep(send_epoch);
-    {
-      std::unique_lock<std::mutex> lock(es->election_state);
-      es->election_cond.wait(lock);
-    }
-    es->state_lock();
-    if(send_epoch != es->cur_epoch){
-      es->state_unlock();
-      continue;
-    }
-    es->state_unlock();
-    stuff_todo_leader_election();
-    leader_callback_(0);
-  }
-  pthread_exit(nullptr);
-  return nullptr;
-}
-
-//marker:ansh
-void* heartbeatMonitor(void* arg){
-   void(1);
-   while(es->running){
-     es->sleep_heartbeat();
-     es->state_lock();
-     if(es->cur_state == 0){
-      es->state_unlock();
-      continue;
-     }
-     int send_epoch = es->get_epoch();
-     es->state_unlock();
-     auto pw = pxs_workers_g.back();
-     auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
-     auto ess = es;
-     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, hb_log, ess]() {
-        int val = pw->SendHeartBeat(hb_log);
-        if(val != -1){
-          ess->state_lock();
-          ess->set_state(0);
-          ess->set_epoch(val);
-          ess->state_unlock();
-        }
-    }));
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
-    pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
-  }
-   pthread_exit(nullptr);
-   return nullptr;
-}
+// Workstream N Phase 4e-20: removed dead `void* electionMonitor(void*)`
+// (~46 lines) and `void* heartbeatMonitor(void*)` (~29 lines)
+// pthread thread functions.  Both were referenced only inside
+// commented-out `// Pthread_create(...)` lines further down in
+// `setup2()` (around line 910/913 of the pre-cleanup file); no
+// surviving call site started either thread.  The live election
+// path is `setup2()`'s `Pthread_create(..., heartbeatBackground{,2}, ...)`
+// + `Pthread_create(..., heartbeatMonitor{2,3}, ...)` set, which
+// stays.  Both deleted functions referenced live state
+// (`es->state_lock()`, `send_bulk_prep`, `stuff_todo_leader_election`,
+// `pxs_workers_g.back()->GetPollThread()`, `createHeartBeat`,
+// `OneTimeJob`, `leader_callback_`), but nothing on the live path
+// invokes them.
 
 void* heartbeatBackground(void* arg) {
   auto poll_arc = PollThread::create();
@@ -904,14 +841,12 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
     return 0;
   }
 
-  // Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
-  // pthread_detach(submit_poll_th_);
-  // if (action != 1) {
-  //      Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
-  //      pthread_detach(es->election_th_);
-  //  }
-  //  Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
-  //  pthread_detach(es->heartbeat_th_);
+  // Workstream N Phase 4e-20 / 4e-19 / 4e-16: cleared a stale
+  // commented-out block that referenced now-deleted thread entry
+  // points (`PollSubQNc`, `electionMonitor`, `heartbeatMonitor`)
+  // and their `Pthread_create` / `pthread_detach` lines.  The live
+  // pthread starts (`heartbeatBackground{,2}` /
+  // `heartbeatMonitor{2,3}`) above this point are unaffected.
   return 0;
 }
 
