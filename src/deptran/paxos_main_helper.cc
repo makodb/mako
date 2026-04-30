@@ -352,7 +352,12 @@ void register_for_leader_par_id_return(std::function<int(const char*&, int, int,
 void submit(const char* log, int len, uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {  // submit a transaction
         if (!worker->IsLeader(par_id)) continue;
-        verify(worker->submit_pool != nullptr);
+        // Workstream N Phase 4e-29: removed
+        // `verify(worker->submit_pool != nullptr);` — `submit_pool`
+        // was always nullptr (assignment was commented out in
+        // `SetupBase`), so this verify would have always fired had
+        // this branch ever been reached.  Field + class deleted in
+        // this phase.
         string log_str;
         std::copy(log, log + len, std::back_inserter(log_str));
         worker->IncSubmit();
@@ -711,8 +716,10 @@ void wait_for_submit(uint32_t par_id) {
           continue;
         }
         worker->election_state_lock.unlock();
-        //verify(worker->submit_pool != nullptr);
-        //worker->submit_pool->wait_for_all();
+        // Workstream N Phase 4e-29: removed commented-out
+        // `//verify(worker->submit_pool != nullptr);` and
+        // `//worker->submit_pool->wait_for_all();` — `submit_pool`
+        // field is gone.
 	      // Workstream N Phase 4e-28: dropped `replay_queue.size_approx()`
 	      // from this Log_info — `replay_queue` field went away with
 	      // the dead `AddReplayEntry` / `StartReplayRead` pair.

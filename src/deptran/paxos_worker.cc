@@ -14,7 +14,8 @@ vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 vector<shared_ptr<PaxosWorker>> ler_workers_g = {};
 
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
-std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
+// Workstream N Phase 4e-29: removed `coo_queue_nc` static definition
+// — never read or written outside commented-out code; field also gone.
 
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
@@ -227,7 +228,8 @@ void PaxosWorker::SetupCommo() {
     }
     rep_sched_->commo_ = rep_commo_;
   }
-  //if (IsLeader(site_info_->partition_id_))submit_pool = new SubmitPool();
+  // Workstream N Phase 4e-29: removed commented-out
+  // `submit_pool = new SubmitPool();` — `SubmitPool` class deleted.
 }
 
 void PaxosWorker::SetupHeartbeat() {
@@ -255,10 +257,10 @@ void PaxosWorker::SetupHeartbeat() {
 }
 
 void PaxosWorker::WaitForShutdown() {
-  if (submit_pool != nullptr) {
-    delete submit_pool;
-    submit_pool = nullptr;
-  }
+  // Workstream N Phase 4e-29: removed `if (submit_pool != nullptr)
+  // { delete submit_pool; submit_pool = nullptr; }` — field always
+  // nullptr (never assigned non-null), and the `SubmitPool` class
+  // is gone.
   if (hb_rpc_server_ != nullptr) {
 //    scsi_->server_heart_beat();
     hb_rpc_server_->wait_for_shutdown();
