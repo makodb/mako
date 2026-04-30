@@ -63,7 +63,8 @@ class CoordinatorMencius : public Coordinator {
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
-  ballot_t PickBallot();
+  // Workstream N Phase 4e-31: removed `PickBallot()` declaration —
+  // only call site was the now-deleted `Prepare()` (Phase 4e-30).
   void Submit();
 
   // Workstream N Phase 4e-30: removed `Prepare()` declaration —

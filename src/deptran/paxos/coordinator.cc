@@ -58,10 +58,8 @@ void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
     GotoNextPhase();
 }
 
-ballot_t CoordinatorMultiPaxos::PickBallot() {
-  return curr_ballot_ + 1;
-}
-
+// Workstream N Phase 4e-31: removed `CoordinatorMultiPaxos::PickBallot()`
+// — only call site was the now-deleted `Prepare()` (Phase 4e-30).
 // Workstream N Phase 4e-30: removed `CoordinatorMultiPaxos::Prepare()`
 // (~50 LOC) — body started with `verify(0); // for debug;`, and the
 // only place the method could have been reached was via
@@ -93,38 +91,12 @@ void CoordinatorMultiPaxos::Accept() {
     // TODO process timeout.
     verify(0);
   }
-//  commo()->BroadcastAccept(par_id_,
-//                           slot_id_,
-//                           curr_ballot_,
-//                           cmd_,
-//                           std::bind(&CoordinatorMultiPaxos::AcceptAck,
-//                                     this,
-//                                     phase_,
-//                                     std::placeholders::_1));
-//}
-//
-//void CoordinatorMultiPaxos::AcceptAck(phase_t phase, Future* fu) {
-//  std::lock_guard<std::recursive_mutex> lock(mtx_);
-//  if (phase_ > phase) return;
-//  ballot_t max_ballot;
-//  fu->get_reply() >> max_ballot;
-//  if (max_ballot == curr_ballot_) {
-//    n_finish_ack_++;
-//    if (n_finish_ack_ >= GetQuorum()) {
-//      committed_ = true;
-//      GotoNextPhase();
-//    }
-//  } else {
-//    if (max_ballot > curr_ballot_) {
-//      curr_ballot_ = max_ballot + 1;
-//      Log_debug("%s: saw greater ballot increment to %d",
-//                __FUNCTION__, curr_ballot_);
-//      phase_ = Phase::INIT_END;
-//      GotoNextPhase();
-//    } else {
-//      // max_ballot < curr_ballot ignore
-//    }
-//  }
+// Workstream N Phase 4e-31: removed ~30 LOC of commented-out
+// `BroadcastAccept(..., AcceptAck-callback)` legacy + companion
+// `AcceptAck(phase_t, Future*)` body.  The shape was the
+// callback-style RPC dispatch that pre-dated the
+// `commo()->BroadcastAccept(...) -> sp_quorum->wait()` / `yes()`
+// pattern used today.  No live code; no surviving caller.
 }
 
 void CoordinatorMultiPaxos::Commit() {
@@ -151,14 +123,12 @@ void CoordinatorMultiPaxos::GotoNextPhase() {
         phase_++;
         verify(phase_ % n_phase == Phase::COMMIT);
       } else {
-        // TODO
+        // Workstream N Phase 4e-31: dropped commented-out
+        // `//Forward();` and stale TODO breadcrumbs — `Forward()`
+        // was never defined and the non-leader branch is
+        // `verify(0)`-guarded anyway.
         verify(0);
         Log_info("The local id is %d", this->loc_id_);
-        //Forward();
-        //Log_info("Follower logic");
-        //For now, do nothing
-        //
-        //Next steps: Find the leader, call submit, wait for the reply
       }
     case Phase::ACCEPT:
       verify(phase_ % n_phase == Phase::COMMIT);

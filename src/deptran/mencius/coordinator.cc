@@ -38,10 +38,8 @@ void CoordinatorMencius::Submit(shared_ptr<Marshallable>& cmd,
   GotoNextPhase();
 }
 
-ballot_t CoordinatorMencius::PickBallot() {
-  return curr_ballot_ + 1;
-}
-
+// Workstream N Phase 4e-31: removed `CoordinatorMencius::PickBallot()`
+// — only call site was the now-deleted `Prepare()` (Phase 4e-30).
 // Workstream N Phase 4e-30: removed `CoordinatorMencius::Prepare()`
 // (~67 LOC) — body started with `verify(0); // for debug;`, and the
 // only path that could reach it was via `GotoNextPhase()`'s
@@ -79,38 +77,10 @@ void CoordinatorMencius::Suggest() {
     // TODO process timeout.
     verify(0);
   }
-//  commo()->BroadcastSuggest(par_id_,
-//                           slot_id_,
-//                           curr_ballot_,
-//                           cmd_,
-//                           std::bind(&CoordinatorMencius::SuggestAck,
-//                                     this,
-//                                     phase_,
-//                                     std::placeholders::_1));
-//}
-//
-//void CoordinatorMencius::SuggestAck(phase_t phase, Future* fu) {
-//  std::lock_guard<std::recursive_mutex> lock(mtx_);
-//  if (phase_ > phase) return;
-//  ballot_t max_ballot;
-//  fu->get_reply() >> max_ballot;
-//  if (max_ballot == curr_ballot_) {
-//    n_finish_ack_++;
-//    if (n_finish_ack_ >= GetQuorum()) {
-//      committed_ = true;
-//      GotoNextPhase();
-//    }
-//  } else {
-//    if (max_ballot > curr_ballot_) {
-//      curr_ballot_ = max_ballot + 1;
-//      Log_debug("%s: saw greater ballot increment to %d",
-//                __FUNCTION__, curr_ballot_);
-//      phase_ = Phase::INIT_END;
-//      GotoNextPhase();
-//    } else {
-//      // max_ballot < curr_ballot ignore
-//    }
-//  }
+// Workstream N Phase 4e-31: removed ~30 LOC of commented-out
+// `BroadcastSuggest(..., SuggestAck-callback)` legacy + companion
+// `SuggestAck(phase_t, Future*)` body — same shape as the also-gone
+// AcceptAck variant in paxos/coordinator.cc.
 }
 
 void CoordinatorMencius::Commit() {
