@@ -31,7 +31,8 @@ read_only) {
   auto dtxn = frame_->CreateTx(epoch, tid, read_only, this);
   if (dtxn != nullptr) {
     dtxns_[tid] = dtxn;
-    dtxn->recorder_ = this->recorder_;
+    // Workstream N Phase 4e-34: removed
+    // `dtxn->recorder_ = this->recorder_;` — both fields gone.
     dtxn->txn_reg_ = txn_reg_;
     verify(txn_reg_ != nullptr);
     verify(dtxn->tid_ == tid);
@@ -52,7 +53,8 @@ shared_ptr<Tx> TxLogServer::CreateTx(txnid_t tx_id, bool ro) {
   auto dtxn = frame_->CreateTx(epoch_mgr_.curr_epoch_, tx_id, ro, this);
   if (dtxn != nullptr) {
     dtxns_[tx_id] = dtxn;
-    dtxn->recorder_ = this->recorder_;
+    // Workstream N Phase 4e-34: removed
+    // `dtxn->recorder_ = this->recorder_;` — both fields gone.
     verify(txn_reg_);
     dtxn->txn_reg_ = txn_reg_;
     verify(dtxn->tid_ == tx_id);
@@ -194,11 +196,9 @@ void TxLogServer::get_prepare_log(i64 txn_id,
 
 TxLogServer::TxLogServer() : mtx_() {
   mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();
-  if (Config::GetConfig()->do_logging()) {
-    auto path = Config::GetConfig()->log_path();
-    // TODO free this
-//    recorder_ = new Recorder(path);
-  }
+  // Workstream N Phase 4e-34: removed `if (do_logging()) { ... }`
+  // block — body was a commented-out
+  // `// recorder_ = new Recorder(path);` and the field is gone.
 }
 
 // @unsafe - Logs recovery status

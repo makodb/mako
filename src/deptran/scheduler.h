@@ -363,7 +363,12 @@ class TxLogServer {
 
   shared_ptr<mdb::TxnMgr> mdb_txn_mgr_{};
   int mode_;
-  Recorder *recorder_ = nullptr;
+  // Workstream N Phase 4e-34: removed `Recorder *recorder_ = nullptr;`
+  // — only assignment was a commented-out
+  // `recorder_ = new Recorder(path);` in `scheduler.cc::SetupTransport`,
+  // and the only readers were `dtxn->recorder_ = this->recorder_;`
+  // propagation lines in `scheduler.cc::CreateRccDtxn` /
+  // `CreateTx` (also gone in this phase).  Field always nullptr.
   Frame *frame_ = nullptr;
   Frame *rep_frame_ = nullptr;
   TxLogServer *tx_sched_ = nullptr;
