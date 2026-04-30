@@ -240,9 +240,9 @@ inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
 
 // ---- MarshallDeputy ↔ Serializable registration --------------------
 //
-// Phase 4 prep: register a Serializable type T (one with `save`,
-// `load`, `kind` methods but no Marshallable inheritance and no
-// TypedMarshallableAdapter trait) under `kind` so that
+// Phase 4 prep: register a Serializable type T (one satisfying
+// `SerializableConcept` — has `save`/`load`/`kind` methods but no
+// Marshallable inheritance) under `kind` so that
 // `MarshallDeputy::operator>>` can decode an instance of T from the
 // wire. The factory creates a fresh T-backed SerializableProxy and
 // wraps it as a Marshallable via `SerializableMarshallableAdapter`,
@@ -251,15 +251,26 @@ inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
 // `load`. T is therefore byte-for-byte indistinguishable on the wire
 // from a Marshallable subclass implementing the same fields.
 //
+// (Workstream N Phase 5b-5 deleted the legacy
+// `TypedMarshallableAdapter` trait, so the original "no
+// TypedMarshallableAdapter trait" qualifier here is moot;
+// `SerializableConcept` is now the only path for a non-Marshallable
+// T to register here.)
+//
 // Usage (mirrors `MarshallDeputy::reg_initializer<T>(kind)` for
 // Marshallable types):
 //
 //   static int reg_my_cmd =
 //       rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
 //
-// `MarshallDeputy(as_marshallable(make_serializable_proxy<T>()))` is
-// the matching write-side call until a `MarshallDeputy(SerializableProxy)`
-// constructor lands in Phase 3f.
+// Write-side construction: `MarshallDeputy(make_shared<MyCommand>())`
+// works directly — the `MarshallDeputy(shared_ptr<T>)` template ctor's
+// `SerializableConcept` requires-clause routes through
+// `wrap_typed_marshallable` → `wrap_serializable` → `as_marshallable`
+// to land a `SerializableMarshallableAdapter` in `inner_sp_data_`.
+// No dedicated `MarshallDeputy(SerializableProxy)` ctor exists; Phase
+// 3f-2/3 added the parallel lazy `serializable_` field via the
+// existing `as_marshallable` entry path rather than a new ctor.
 template<typename T>
 inline int reg_serializable_in_deputy(int32_t kind) {
   // Workstream N Phase 5b-9: factory returns
