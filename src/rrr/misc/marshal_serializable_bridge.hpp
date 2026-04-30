@@ -33,8 +33,11 @@
 //       (save-only; aborts on load)
 //   as_marshallable(SerializableProxy) -> shared_ptr<Marshallable>
 //       (full bidirectional via 3a bridges)
-//   as_serializable(const MarshallDeputy&) -> SerializableProxy
-//       (save-only view of the deputy's contents)
+//
+// Workstream N Phase 5b-14: dropped the deputy-overload
+// `as_serializable(const MarshallDeputy&)`. Use `md.serializable()`
+// (the Phase 3f-3 lazy cached accessor) — equivalent semantics, plus
+// caching across repeat reads.
 
 #include <memory>
 #include <utility>
@@ -155,13 +158,18 @@ inline std::shared_ptr<Marshallable> as_marshallable(
       std::move(proxy));
 }
 
-// Save-only SerializableProxy view of a MarshallDeputy's contents.
-// Aborts if the deputy is empty.
-inline SerializableProxy as_serializable(const MarshallDeputy& md) {
-  auto inner = md.inner();
-  verify(inner != nullptr);
-  return as_serializable(std::move(inner));
-}
+// Workstream N Phase 5b-14: removed `as_serializable(const MarshallDeputy&)`
+// (the deputy-overload save-only view helper).  Phase 3f-2/3f-3
+// added `MarshallDeputy::serializable()` — a lazy cached accessor
+// that serves the same purpose; Phase 3f-4 routed the bridge
+// `operator<<(BinaryWriteArchive&, MarshallDeputy&)` through it,
+// retiring the only production caller.  The matching test
+// `AsSerializableMarshallDeputy.ViewSavesUnderlyingMarshallableBytes`
+// migrated to call `md.serializable()` directly and dropped the
+// MarshallDeputy-overload reference.  The remaining
+// `as_serializable(shared_ptr<Marshallable>)` overload above is the
+// underlying primitive that `MarshallDeputy::serializable()`
+// dispatches to internally.
 
 // Wrap a `shared_ptr<T>` typed payload as a `shared_ptr<Marshallable>`
 // via the Serializable adapter chain. Intended as the Phase 4
