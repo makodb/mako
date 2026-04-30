@@ -397,29 +397,31 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   return m;
 }
 
-// @unsafe - Stores a shared_ptr<Marshallable> as the deputy's payload
-// and constructs the parallel SerializableProxy view via the bridge.
+// @unsafe - Stores a shared_ptr<Marshallable> as the deputy's payload.
 //
 // Workstream N Phase 3f-2: defined out-of-line in marshal.cpp because
-// `as_serializable(...)` lives in marshal_serializable_bridge.hpp,
-// which itself depends on marshal.hpp. The .cpp pulls in `../rrr.hpp`
-// (line 33 above) so the bridge is reachable here without inducing a
-// header-include cycle.
+// the original Phase 3f-2 implementation eagerly populated
+// `serializable_` here via `as_serializable(...)` from
+// `marshal_serializable_bridge.hpp`, which itself depends on
+// marshal.hpp.  The .cpp pulls in `../rrr.hpp` (line 33 above) so the
+// bridge is reachable here without inducing a header-include cycle.
+//
+// Workstream N Phase 3f-3: dropped the eager `serializable_`
+// population.  The field is now populated lazily on first call to
+// `serializable()` (defined below) — deputies that never go through
+// the proxy-shaped accessor pay no proxy-construction cost.  This
+// also avoids stacked `M→S→M→S` adapter wrapping for the
+// `as_marshallable(proxy)` entry path, since `serializable()` is
+// only consulted by callers that actually want a save-shaped view.
 //
 // Population semantics:
 //   - inner_sp_data_ owns the Marshallable (existing behavior).
-//   - serializable_ holds a SerializableProxy view of the same
-//     payload. For raw Marshallable subclasses this is a save-only
-//     `MarshallableSerializableAdapter`; for already-Serializable
-//     types entered via `as_marshallable(proxy)`
-//     (SerializableMarshallableAdapter), the same bridge call still
-//     yields a save-only stacked view. Wire format is unchanged —
-//     only `inner_sp_data_->to_marshal` runs on the encode path.
+//   - serializable_ stays null until `serializable()` is called for
+//     the first time; first call wraps the underlying via
+//     `as_serializable(inner_sp_data_)` and caches the result.
 //
-// Phase 3f-3 / Phase 5 may collapse the two fields once call sites
-// have shifted off `inner()`; for now the parallel storage gives
-// downstream code a stable Serializable-typed handle to develop
-// against.
+// Wire format is unchanged — `operator<<` / `operator>>` continue
+// to drive `inner_sp_data_->to_marshal` / `from_marshal` directly.
 void MarshallDeputy::set_marshallable(
     std::shared_ptr<rrr::Marshallable> m) {
   verify(inner_sp_data_ == nullptr);
@@ -427,8 +429,25 @@ void MarshallDeputy::set_marshallable(
   kind_ = m->kind();
   verify(kind_ != UNKNOWN);
   inner_sp_data_ = std::move(m);
-  serializable_ = std::make_shared<SerializableProxy>(
-      as_serializable(inner_sp_data_));
+  // Phase 3f-3: leave `serializable_` null. It is populated lazily
+  // by `serializable()` on first proxy-shaped read.
+}
+
+// @unsafe - Lazily constructs the SerializableProxy cache on first
+// call. Subsequent calls return the cached proxy.
+//
+// Workstream N Phase 3f-3: implemented out-of-line so the bridge
+// helper `as_serializable(...)` is reachable (same header-cycle
+// reasoning as `set_marshallable`). The const qualifier means the
+// accessor is callable from const-qualified contexts; it mutates
+// `serializable_` through its `mutable` qualifier.
+rrr::SerializableProxy& MarshallDeputy::serializable() const {
+  verify(inner_sp_data_ != nullptr);
+  if (serializable_ == nullptr) {
+    serializable_ = std::make_shared<SerializableProxy>(
+        as_serializable(inner_sp_data_));
+  }
+  return *serializable_;
 }
 
 } // namespace rrr

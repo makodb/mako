@@ -1241,8 +1241,9 @@ RTTI on `SerializableFacade`), Phase 3e (rpcgen default flipped to
 Phase 3f-1 (`MarshallDeputy::sp_data_` elimination), Phase 3f-prep
 (`MarshallDeputy` archive operators), Phase 3f-2
 (`MarshallDeputy` parallel `SerializableProxy` storage via
-`shared_ptr<SerializableProxy>` field, populated eagerly in
-`set_marshallable`), Phase 4a-prep
+`shared_ptr<SerializableProxy>` field), Phase 3f-3 (lazy cache
+semantics — field starts null and is populated on first
+`serializable()` accessor call), Phase 4a-prep
 (`marshallable_cast` / `wrap_typed_marshallable` overloads for
 Serializable types — call-site transparency for migrations),
 Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
@@ -1323,14 +1324,18 @@ non-Serializable types (Phase 4 + Phase 5 territory), and (c) the
 intentional byte-format-parity tests in
 `rpc_marshal_archive_test.cc`.  Phase 3d is complete. Phase 3f-2
 landed 2026-04-30 (added `std::shared_ptr<SerializableProxy> serializable_`
-storage to MarshallDeputy, populated eagerly inside `set_marshallable`
-via `as_serializable(inner_sp_data_)`; stored as shared_ptr to keep
-the deputy copyable for the ~25 `req.cmd = md;` call sites across
-commo.cc files; explicit copy/move special-member defaults to
-counteract the implicit-move suppression caused by the user-declared
-destructor; wire format unchanged).  Phase 3f-3
-(`MarshallDeputy` single-field storage; gated on Phase 4 complete),
-and the remaining Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
+storage to MarshallDeputy; stored as shared_ptr to keep the deputy
+copyable for the ~25 `req.cmd = md;` call sites across commo.cc
+files; explicit copy/move special-member defaults to counteract the
+implicit-move suppression caused by the user-declared destructor).
+Phase 3f-3 also landed 2026-04-30 — flipped the population from
+eager (inside `set_marshallable`) to a lazy cache: the field is
+`mutable` and is populated on first call to a public
+`SerializableProxy& serializable() const` accessor that wraps
+`inner_sp_data_` via `as_serializable(...)` and caches the result.
+Lazy semantics extend to the wire-decode path; the receive side
+never touches the proxy view. Wire format unchanged. The remaining
+Phase 5 deletions (`Marshallable::to_marshal`/`from_marshal`
 virtuals, now gated only on test-fixture migration since `CmdData`
 is done) are upcoming. See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
