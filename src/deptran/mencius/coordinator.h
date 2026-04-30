@@ -66,7 +66,9 @@ class CoordinatorMencius : public Coordinator {
   ballot_t PickBallot();
   void Submit();
 
-  void Prepare();
+  // Workstream N Phase 4e-30: removed `Prepare()` declaration —
+  // body was `verify(0)`-tagged debug code; `GotoNextPhase` skips
+  // the prepare phase entirely.
   void Suggest();
   void Commit();
 

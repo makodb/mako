@@ -78,8 +78,10 @@ class CoordinatorMultiPaxos : public Coordinator {
 
   void Forward();
 
-  void Prepare();
-//  void PrepareAck(phase_t phase, Future *fu);
+  // Workstream N Phase 4e-30: removed `Prepare()` declaration —
+  // the body was `verify(0)`-tagged debug code, and `GotoNextPhase`
+  // skips the prepare phase entirely.  The commented-out `PrepareAck`
+  // legacy callback signature is also gone now.
   void Accept();
 //  void AcceptAck(phase_t phase, Future *fu);
   void Commit();

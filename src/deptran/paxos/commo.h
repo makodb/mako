@@ -32,10 +32,9 @@ class MultiPaxosCommo : public Communicator {
   int current_proxy_batch_idx = 0;
   bool is_broadcast_syncLog = false;
 
-  shared_ptr<PaxosPrepareQuorumEvent>
-  BroadcastPrepare(parid_t par_id,
-                   slotid_t slot_id,
-                   ballot_t ballot);
+  // Workstream N Phase 4e-30: removed `BroadcastPrepare(parid, slot,
+  // ballot)` declaration — only call site was the now-deleted
+  // `CoordinatorMultiPaxos::Prepare()`; body was a `verify(0)` shell.
   // Workstream N Phase 4e-12: removed deprecated callback-style
   // `void BroadcastPrepare(parid_t, slotid_t, ballot_t, callback)` —
   // body had `verify(0);` and was mostly commented out; no live

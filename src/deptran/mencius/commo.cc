@@ -20,47 +20,9 @@ MenciusCommo::MenciusCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communi
 // `void MenciusCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,
 // callback)`.  See companion comment in commo.h.
 
-shared_ptr<MenciusPrepareQuorumEvent>
-MenciusCommo::BroadcastPrepare(parid_t par_id,
-                                  slotid_t slot_id,
-                                  ballot_t ballot) {
-  verify(0);
-  int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<MenciusPrepareQuorumEvent>(n, n/2+1);
-  auto src_coroid = e->get_fiber_id();
-  auto proxies = rpc_par_proxies_[par_id];
-  auto leader_id = LeaderProxyForPartition(par_id).first;
-
-  WAN_WAIT
-  for (auto& p : proxies) {
-    auto proxy = (MenciusProxy*) p.second;
-    auto follower_id = p.first;
-    // e->add_dep(leader_id, src_coroid, follower_id, -1);
-
-    FutureAttr fuattr;
-    fuattr.callback = [e, ballot, leader_id, src_coroid, follower_id](rusty::Arc<Future> fu) {
-      if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
-        return;
-      }
-      ballot_t b = 0;
-      uint64_t coro_id = 0;
-      fu->get_reply() >> b >> coro_id;
-      e->FeedResponse(b==ballot);
-      // e->deps[leader_id][src_coroid][follower_id].erase(-1);
-      // e->deps[leader_id][src_coroid][follower_id].insert(coro_id);
-      // TODO add max accepted value.
-    };
-    MenciusProxy::RpcPrepareRequest req{};
-    req.slot = slot_id;
-    req.ballot = ballot;
-    auto f = proxy->async_Prepare(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-  return e;
-}
+// Workstream N Phase 4e-30: removed `MenciusCommo::BroadcastPrepare`
+// (parid, slot, ballot) — body was a `verify(0);` shell.  Only call
+// site was the now-deleted `CoordinatorMencius::Prepare()`.
 
 shared_ptr<MenciusSuggestQuorumEvent>
 MenciusCommo::BroadcastSuggest(parid_t par_id,
