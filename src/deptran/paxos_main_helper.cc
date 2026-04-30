@@ -27,8 +27,15 @@ using namespace network_client;
 // ============================================================================
 namespace paxos_impl {
 
-// network client
-std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
+// Workstream N Phase 4e-21: removed
+//   `std::vector<shared_ptr<network_client::NetworkClientServiceImpl>>
+//    nc_services = {};`
+// — never populated anywhere (only `vector::push_back` etc. would
+// add elements).  Reads at the now-deleted `nc_get_*_requests`
+// getter functions accessed `nc_services[par_id]` which would have
+// been UB on the empty vector.  The live `nc_setup_server` /
+// `nc_start_server` create their own `NetworkClientServiceImpl`
+// instances inside an `rrr::Server` and never touch this global.
 // Workstream N Phase 4e-16: removed
 //   `std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};`
 // — declared but never written or read anywhere in the codebase.
@@ -50,7 +57,9 @@ typedef pair<const char*, pair<int,int>> queue_entry_par;
 // Workstream N Phase 4e-16: removed
 //   `static std::queue<queue_entry_par> submit_queue_nc;`
 // — only used inside the now-deleted `PollSubQNc` function.
-static rrr::SpinLock l_;
+// Workstream N Phase 4e-21: removed `static rrr::SpinLock l_;` —
+// declared but no `lock()` / `unlock()` calls anywhere in the file
+// or codebase.
 // Workstream N Phase 4e-19: removed `static atomic<int> producer{0};`
 // — only read inside the now-deleted `PollSubmitLog`'s
 // `while(producer >= 0)` loop guard; no writers anywhere.
@@ -1077,32 +1086,20 @@ void nc_setup_server(int nthreads, std::string host) {
   }
 }
 
-std::vector<std::vector<int>> *nc_get_new_order_requests(int par_id) {
-  return &nc_services[par_id]->new_order_requests;
-}
-
-std::vector<std::vector<int>>* nc_get_payment_requests(int par_id) {
-  return &nc_services[par_id]->payment_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_delivery_requests(int par_id) {
-  return &nc_services[par_id]->delivery_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_order_status_requests(int par_id) {
-  return &nc_services[par_id]->order_status_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_stock_level_requests(int par_id) {
-  return &nc_services[par_id]->stock_level_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_read_requests(int par_id) {
-  return &nc_services[par_id]->read_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_rmw_requests(int par_id) {
-  return &nc_services[par_id]->rmw_requests;
-};
+// Workstream N Phase 4e-21: removed seven `nc_get_*_requests` getter
+// functions (~30 lines):
+//   nc_get_new_order_requests, nc_get_payment_requests,
+//   nc_get_delivery_requests, nc_get_order_status_requests,
+//   nc_get_stock_level_requests, nc_get_read_requests,
+//   nc_get_rmw_requests.
+// All seven returned `&nc_services[par_id]->{varies}_requests`, but
+// `nc_services` was never populated, so any call would have been
+// UB on an empty vector.  The only external caller in `nc_main.cc`
+// at line 381 was already a single-line `//` comment.  The
+// matching dispatchers in `replication_helper.cc` and the seven
+// declarations in each of `paxos_impl` / `raft_impl` / global
+// namespaces in `replication_helper.h` (21 total) were removed
+// alongside, plus the seven Raft-side `Log_warn`-only
+// placeholders in `raft_main_helper.cc`.
 
 }  // namespace paxos_impl

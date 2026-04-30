@@ -944,45 +944,19 @@ void set_preferred_leader(int site_id) {
   }
 }
 
-// nc_* helpers are unused in Mako+Raft; keep stubs for linkage parity.
+// nc_setup_server stub kept for linkage parity (the Paxos-side
+// implementation IS live — `nc_main.cc` calls it).
 void nc_setup_server(int /*port*/, std::string /*ip*/) {
   Log_warn("nc_setup_server not implemented for Raft helper (unused).");
 }
 
-std::vector<std::vector<int>>* nc_get_new_order_requests(int /*id*/) {
-  Log_warn("nc_get_new_order_requests not implemented for Raft helper.");
-  return nullptr;
-}
-
-std::vector<std::vector<int>>* nc_get_payment_requests(int /*id*/) {
-  Log_warn("nc_get_payment_requests not implemented for Raft helper.");
-  return nullptr;
-}
-
-std::vector<std::vector<int>>* nc_get_delivery_requests(int /*id*/) {
-  Log_warn("nc_get_delivery_requests not implemented for Raft helper.");
-  return nullptr;
-}
-
-std::vector<std::vector<int>>* nc_get_order_status_requests(int /*id*/) {
-  Log_warn("nc_get_order_status_requests not implemented for Raft helper.");
-  return nullptr;
-}
-
-std::vector<std::vector<int>>* nc_get_stock_level_requests(int /*id*/) {
-  Log_warn("nc_get_stock_level_requests not implemented for Raft helper.");
-  return nullptr;
-}
-
-std::vector<std::vector<int>>* nc_get_read_requests(int /*id*/) {
-  Log_warn("nc_get_read_requests not implemented for Raft helper.");
-  return nullptr;
-}
-
-std::vector<std::vector<int>>* nc_get_rmw_requests(int /*id*/) {
-  Log_warn("nc_get_rmw_requests not implemented for Raft helper.");
-  return nullptr;
-}
+// Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
+// `Log_warn`-only stubs (~35 lines).  The Paxos-side `nc_get_*`
+// getters they paralleled returned `&nc_services[par_id]->...`
+// against an unpopulated `nc_services` global (UB), and the only
+// external caller in `nc_main.cc` was a single-line `//` comment.
+// Both implementations + the matching dispatchers in
+// `replication_helper.{cc,h}` were dropped together.
 
 }  // namespace raft_impl
 

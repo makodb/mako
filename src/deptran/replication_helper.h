@@ -75,13 +75,8 @@ void set_epoch(int epoch);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
 void nc_setup_server(int, std::string);
-std::vector<std::vector<int>>* nc_get_new_order_requests(int);
-std::vector<std::vector<int>>* nc_get_payment_requests(int);
-std::vector<std::vector<int>>* nc_get_delivery_requests(int);
-std::vector<std::vector<int>>* nc_get_order_status_requests(int);
-std::vector<std::vector<int>>* nc_get_stock_level_requests(int);
-std::vector<std::vector<int>>* nc_get_read_requests(int);
-std::vector<std::vector<int>>* nc_get_rmw_requests(int);
+// Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
+// declarations (paxos_impl side) — see replication_helper.cc.
 }  // namespace paxos_impl
 
 // ============================================================================
@@ -119,13 +114,8 @@ void set_epoch(int epoch);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
 void nc_setup_server(int, std::string);
-std::vector<std::vector<int>>* nc_get_new_order_requests(int);
-std::vector<std::vector<int>>* nc_get_payment_requests(int);
-std::vector<std::vector<int>>* nc_get_delivery_requests(int);
-std::vector<std::vector<int>>* nc_get_order_status_requests(int);
-std::vector<std::vector<int>>* nc_get_stock_level_requests(int);
-std::vector<std::vector<int>>* nc_get_read_requests(int);
-std::vector<std::vector<int>>* nc_get_rmw_requests(int);
+// Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
+// declarations (raft_impl side) — see replication_helper.cc.
 void set_preferred_leader(int site_id);
 }  // namespace raft_impl
 
@@ -163,13 +153,8 @@ void set_epoch(int epoch = -1);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
 void nc_setup_server(int, std::string);
-std::vector<std::vector<int>>* nc_get_new_order_requests(int);
-std::vector<std::vector<int>>* nc_get_payment_requests(int);
-std::vector<std::vector<int>>* nc_get_delivery_requests(int);
-std::vector<std::vector<int>>* nc_get_order_status_requests(int);
-std::vector<std::vector<int>>* nc_get_stock_level_requests(int);
-std::vector<std::vector<int>>* nc_get_read_requests(int);
-std::vector<std::vector<int>>* nc_get_rmw_requests(int);
+// Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
+// declarations (unified API side) — see replication_helper.cc.
 
 // Raft-specific function (no-op for Paxos)
 void set_preferred_leader(int site_id);
