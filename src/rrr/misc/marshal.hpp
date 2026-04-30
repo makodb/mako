@@ -204,6 +204,25 @@ class MarshallDeputy {
     // is preserved.
     std::shared_ptr<rrr::Marshallable> inner_sp_data_;
     int32_t kind_{0};
+    // Workstream N Phase 3f-2: SerializableProxy view of
+    // `inner_sp_data_`, populated eagerly inside `set_marshallable`.
+    // For legacy Marshallable types this wraps the underlying via
+    // `as_serializable(inner_sp_data_)` (the
+    // MarshallableSerializableAdapter — save-only). For
+    // already-Serializable types (entered via `as_marshallable(proxy)`
+    // → SerializableMarshallableAdapter), the same path applies; the
+    // resulting proxy is a save-only stacked view. Wire format is
+    // unchanged — `operator<<`/`operator>>` continue to drive
+    // `inner_sp_data_->to_marshal` / `from_marshal` directly.
+    //
+    // Stored as `shared_ptr<SerializableProxy>` to keep MarshallDeputy
+    // copyable; ~25 call sites do `req.cmd = md;` copy-assign that
+    // would otherwise need to be retrofitted with std::move. SBO
+    // inside the proxy plus shared_ptr aliasing keeps the per-deputy
+    // overhead at one heap allocation. Phase 3f-3 / Phase 5 may
+    // collapse to a single-field representation once call sites have
+    // shifted off `inner()`.
+    std::shared_ptr<rrr::SerializableProxy> serializable_;
     enum Kind {
       UNKNOWN=0,
       EMPTY_GRAPH=1,
@@ -276,13 +295,15 @@ class MarshallDeputy {
     // payload. Workstream N Phase 5b-9: inlined the previous
     // make_initializer_state / set_marshallable_state two-step;
     // there's no separate state struct anymore.
-    void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
-      verify(inner_sp_data_ == nullptr);
-      verify(m != nullptr);
-      kind_ = m->kind();
-      verify(kind_ != UNKNOWN);
-      inner_sp_data_ = std::move(m);
-    }
+    //
+    // Workstream N Phase 3f-2: body moved to marshal.cpp so the
+    // bridge helper `as_serializable(...)` (declared in
+    // marshal_serializable_bridge.hpp, which depends on this header)
+    // is reachable when populating `serializable_`. The header
+    // dependency graph is acyclic: marshal.hpp → marshal_archive.hpp;
+    // marshal_serializable_bridge.hpp → marshal.hpp, and marshal.cpp
+    // pulls in `../rrr.hpp` which exports the bridge.
+    void set_marshallable(std::shared_ptr<rrr::Marshallable> m);
 
     // @unsafe - Template delegates to non-borrow-checked set_marshallable.
     // Workstream N Phase 5b-5: simplified — only SerializableConcept T
@@ -315,6 +336,20 @@ class MarshallDeputy {
     // infrastructure deleted in the same commit).
 
     ~MarshallDeputy() = default;
+    // Workstream N Phase 3f-2: explicitly default the copy/move
+    // special members. Declaring the destructor (= default) suppresses
+    // the implicit move ctor / move assignment per [class.copy.ctor]/8;
+    // without these defaults, `MarshallDeputy b = std::move(a)` would
+    // fall back to copy semantics — the shared_ptr fields would not be
+    // nulled in `a` after the move, and the new `serializable_` field
+    // breaks our move-leaves-source-empty test expectation. With
+    // these explicit defaults, copy semantics still work (matches the
+    // ~25 `req.cmd = md;` call sites) and move semantics work as the
+    // shared_ptr fields' default move dictates.
+    MarshallDeputy(const MarshallDeputy&) = default;
+    MarshallDeputy(MarshallDeputy&&) noexcept = default;
+    MarshallDeputy& operator=(const MarshallDeputy&) = default;
+    MarshallDeputy& operator=(MarshallDeputy&&) noexcept = default;
 
     // Workstream N Phase 5b-9: removed private `make_initializer_state` /
     // `set_marshallable_state` helpers. The work is now inlined in the
