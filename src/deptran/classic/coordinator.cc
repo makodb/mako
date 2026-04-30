@@ -249,42 +249,10 @@ void CoordinatorClassic::DispatchAsync() {
   Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
 }
 
-void CoordinatorClassic::DispatchSync() {
-  Log_debug("commo Broadcast to the server on client worker");
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  auto txn = (TxData*) cmd_;
-
-  int cnt = 0;
-  auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
-  n_pd = 100;
-  ReadyPiecesData cmds_by_par;
-  cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
-  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
-  for (auto& pair: cmds_by_par) {
-    const parid_t& par_id = pair.first;
-    auto& cmds = pair.second;
-    n_dispatch_ += cmds.size();
-    cnt += cmds.size();
-    auto sp_vec_piece = std::make_shared<vector<shared_ptr<TxPieceData>>>();
-    for (auto c: cmds) {
-      c->id_ = next_pie_id();
-      dispatch_acks_[c->inn_id_] = false;
-      sp_vec_piece->push_back(c);
-    }
-
-    commo()->SyncBroadcastDispatch(sp_vec_piece,
-                                    this,
-                                    std::bind(&CoordinatorClassic::DispatchAck,
-                                              this,
-                                              phase_,
-                                              -1, 
-                                              std::placeholders::_1,
-                                              std::placeholders::_2));
-
-  }
-
-  Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
-}
+// Workstream N Phase 4e-43: removed `CoordinatorClassic::DispatchSync`
+// (~36 LOC) — never called externally; was the synchronous twin of
+// `DispatchAsync` and the only call site of
+// `Communicator::SyncBroadcastDispatch` (left for follow-up).
 
 // not used
 void CoordinatorClassic::DispatchAsync(bool last) {
@@ -517,7 +485,8 @@ void CoordinatorClassic::Commit() {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
   auto it = dispatch_acks_.begin();
   it->second = true;
-//  ___TestPhaseThree(cmd_->id_);
+  // Workstream N Phase 4e-43: removed commented-out
+  // `// ___TestPhaseThree(cmd_->id_);` — method deleted.
   auto mode = Config::GetConfig()->tx_proto_;
   verify(mode == MODE_OCC || mode == MODE_2PL);
   Log_debug("send out finish request, cmd_id: %"
@@ -731,17 +700,11 @@ void CoordinatorClassic::Report(TxReply& txn_reply,
   }
 }
 
-void CoordinatorClassic::___TestPhaseThree(txnid_t txn_id) {
-  // auto it = ___phase_three_tids_.find(txn_id);
-//  verify(it == ___phase_three_tids_.end());
-//  ___phase_three_tids_.insert(txn_id);
-}
-
-void CoordinatorClassic::___TestPhaseOne(txnid_t txn_id) {
-  auto it = ___phase_one_tids_.find(txn_id);
-  verify(it == ___phase_one_tids_.end());
-  ___phase_one_tids_.insert(txn_id);
-}
+// Workstream N Phase 4e-43: removed `___TestPhaseOne(txnid_t)` and
+// `___TestPhaseThree(txnid_t)` test helpers + companion
+// `___phase_one_tids_` / `___phase_three_tids_` set fields — only
+// references were commented-out call sites in
+// `tapir/coordinator.cc:23` and `classic/coordinator.cc:520`.
 
 void CoordinatorClassic::SetNewLeader(parid_t par_id, volatile locid_t* cur_pause) {
   locid_t prev_pause_srv = *cur_pause;
