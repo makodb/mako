@@ -54,31 +54,10 @@ MultiPaxosCommo::SendForward(parid_t par_id,
 // callback)` — body had `verify(0);` and was mostly commented out;
 // no live callers anywhere.
 
-shared_ptr<PaxosPrepareQuorumEvent>
-MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
-                                  slotid_t slot_id,
-                                  ballot_t ballot) {
-  verify(0);
-  int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  auto e = Reactor::create_sp_event<PaxosPrepareQuorumEvent>(n, n); //marker:ansh debug
-  // auto proxies = rpc_par_proxies_[par_id];
-  // int cur_batch_idx = current_proxy_batch_idx;
-  // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  // for (int i=0;i<n+1;i++) {
-  //   auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = [e, ballot](Future* fu) {
-  //     ballot_t b = 0;
-  //     fu->get_reply() >> b;
-  //     e->FeedResponse(b==ballot);
-  //     // TODO add max accepted value.
-  //   };
-  //   Future::safe_release(proxy->async_Prepare(slot_id, ballot, fuattr));
-  // }
-  return e;
-}
+// Workstream N Phase 4e-30: removed `MultiPaxosCommo::BroadcastPrepare`
+// (parid, slot, ballot) — body was a `verify(0);` shell with the
+// real implementation commented out.  Only call site was the
+// now-deleted `CoordinatorMultiPaxos::Prepare()`.
 
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastAccept(parid_t par_id,
