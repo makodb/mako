@@ -99,13 +99,24 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
     original.committed = true;
     original.is_no_op = true;
 
-    // Serialize
+    // Workstream N Phase 4d-9: LogEntry's `to_marshal`/`from_marshal`
+    // were replaced with `save(BinaryWriteArchive&)` /
+    // `load(BinaryReadArchive&)`. Drive bytes through the same backing
+    // Marshal via MarshalSink/MarshalSource so this test continues to
+    // exercise an on-wire round-trip.
     Marshal m;
-    original.to_marshal(m);
+    {
+        rrr::MarshalSink sink(&m);
+        rrr::BinaryWriteArchive writer(&sink);
+        original.save(writer);
+    }
 
-    // Deserialize
     LogEntry restored;
-    restored.from_marshal(m);
+    {
+        rrr::MarshalSource src(&m);
+        rrr::BinaryReadArchive reader(&src);
+        restored.load(reader);
+    }
 
     EXPECT_EQ(restored.slot_id, 42u);
     EXPECT_EQ(restored.term, 7u);
@@ -120,9 +131,14 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
     auto cmd = std::make_shared<TestCommand>("hello", 999);
     LogEntry original(100, 20, cmd, true);
 
-    // Serialize
+    // Workstream N Phase 4d-9: see SerializationWithoutCommand for
+    // the to_marshal → save migration rationale.
     Marshal m;
-    original.to_marshal(m);
+    {
+        rrr::MarshalSink sink(&m);
+        rrr::BinaryWriteArchive writer(&sink);
+        original.save(writer);
+    }
 
     // Verify serialization produced data
     EXPECT_GT(m.content_size(), 0u);

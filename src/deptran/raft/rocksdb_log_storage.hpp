@@ -89,21 +89,34 @@ private:
         return std::string(META_PREFIX) + key;  // @unsafe
     }
 
-    // @unsafe - Uses Marshal which has non-borrow-checked operations
+    // @unsafe - Uses Marshal which has non-borrow-checked operations.
+    // Workstream N Phase 4d-9: routes through `LogEntry::save(BinaryWriteArchive&)`
+    // (the migrated archive method) by way of a `MarshalSink` over the
+    // backing `Marshal`. Wire format byte-for-byte unchanged.  The
+    // const_cast on `entry` was removed — `save` is `const`-qualified.
     bool serialize_entry(const LogEntry& entry, std::string* out) const {
         Marshal m;
-        const_cast<LogEntry&>(entry).to_marshal(m);  // @unsafe
+        rrr::MarshalSink sink(&m);
+        BinaryWriteArchive writer(&sink);
+        entry.save(writer);
         size_t size = m.content_size();
         out->resize(size);
         m.read(out->data(), size);  // @unsafe - read Marshal contents into string
         return true;
     }
 
-    // @unsafe - Uses Marshal which has non-borrow-checked operations
+    // @unsafe - Uses Marshal which has non-borrow-checked operations.
+    // Workstream N Phase 4d-9: routes through `LogEntry::load(BinaryReadArchive&)`
+    // by way of a `MarshalSource` over the same backing `Marshal`.
+    // The Phase 3f-prep MarshallDeputy archive op requires a
+    // MarshalSource (no length prefix on the deputy payload), which
+    // this satisfies.
     bool deserialize_entry(const std::string& data, LogEntry* out) const {
         Marshal m;
         m.write(data.data(), data.size());  // @unsafe - write string bytes into Marshal
-        out->from_marshal(m);  // @unsafe
+        rrr::MarshalSource src(&m);
+        BinaryReadArchive reader(&src);
+        out->load(reader);
         return true;
     }
 
