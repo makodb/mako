@@ -1065,7 +1065,8 @@ Communicator::SendCommit(Coordinator* coo,
       }
     }
 
-    coo->site_commit_[rp]++;
+    // Workstream N Phase 4e-32: removed `coo->site_commit_[rp]++;` —
+    // counter was write-only; field gone.
 
   }
   return e;
@@ -1184,7 +1185,8 @@ Communicator::SendAbort(Coordinator* coo,
       }
 
     }
-    coo->site_abort_[rp]++;
+    // Workstream N Phase 4e-32: removed `coo->site_abort_[rp]++;` —
+    // counter was write-only; field gone.
   }
   return e;
 }

@@ -172,12 +172,10 @@ void CoordinatorClassic::GotoNextPhase() {
 
 void CoordinatorClassic::Reset() {
   Coordinator::Reset();
-  for (int i = 0; i < site_prepare_.size(); i++) {
-    site_prepare_[i] = 0;
-  }
+  // Workstream N Phase 4e-32: removed `site_prepare_[i] = 0;` reset
+  // loop and `n_prepare_req_ = 0;` write — both fields are gone.
   n_dispatch_ = 0;
   n_dispatch_ack_ = 0;
-  n_prepare_req_ = 0;
   n_prepare_ack_ = 0;
   n_finish_req_ = 0;
   n_finish_ack_ = 0;
@@ -510,7 +508,7 @@ void CoordinatorClassic::EarlyAbort() {
                   PRIx64
                   " to %d", tx_data().id_, rp);
     commo()->SendEarlyAbort(rp, cmd_->id_);
-    site_abort_[rp]++;
+    // Workstream N Phase 4e-32: removed `site_abort_[rp]++;` — write-only.
   }
   GotoNextPhase();
 }
