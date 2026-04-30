@@ -2,7 +2,8 @@
 
 #include "server.h"
 // #include "paxos_worker.h"
-#include "exec.h"
+// Workstream N Phase 4e-45: removed `#include "exec.h"` —
+// FpgaRaftExecutor class deleted.
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
