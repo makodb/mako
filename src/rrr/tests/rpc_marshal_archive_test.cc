@@ -2239,5 +2239,81 @@ TEST(MarshallDeputySerializableField,
   EXPECT_EQ(bytes_cached, bytes_fresh);
 }
 
+TEST(MarshallDeputySerializableField,
+     ShortCircuitWorksForAliasedAdapter) {
+  // wrap_serializable_aliased<T>(sp) builds a SerializableProxy
+  // holding SerializableSharedPtrAdapter<T> (which itself holds
+  // shared_ptr<T>). That proxy is then wrapped in a
+  // SerializableMarshallableAdapter (SMA) by `as_marshallable`.
+  // So inner_sp_data_ is an SMA; serializable() short-circuits
+  // through the SMA's proxy. The proxy's underlying type is
+  // SerializableSharedPtrAdapter<T>, NOT T directly.
+  //
+  // This test verifies:
+  //   - The short-circuit fires for the aliased shape too.
+  //   - proxy_cast<T> on the cached proxy returns nullptr (the
+  //     proxy holds SerializableSharedPtrAdapter<T>, not T).
+  //   - proxy_cast<SerializableSharedPtrAdapter<T>> on the cached
+  //     proxy returns the adapter, from which T can be recovered.
+  //   - serializable_cast<T>(md.inner()) still works (it tries
+  //     both shapes — value-semantic and aliased).
+  //   - Mutations through the original shared_ptr<T> are visible
+  //     to bytes saved through the cached proxy (aliasing
+  //     preserved end-to-end).
+  auto sp = std::make_shared<CanaryDeputyCommand>();
+  sp->header = 444;
+  sp->name = "aliased + short-circuit";
+  sp->values = {10, 20, 30};
+
+  auto marsh = wrap_serializable_aliased<CanaryDeputyCommand>(sp);
+  MarshallDeputy md{marsh};
+  EXPECT_EQ(md.kind_, CanaryDeputyCommand::kKind);
+
+  // Trigger lazy short-circuit.
+  SerializableProxy& proxy = md.serializable();
+  EXPECT_EQ(proxy->kind(), CanaryDeputyCommand::kKind);
+
+  // Proxy's underlying T is the aliased adapter, not the canary
+  // itself.
+  EXPECT_EQ(proxy_cast<CanaryDeputyCommand>(&*proxy), nullptr)
+      << "Aliased shape: proxy holds SerializableSharedPtrAdapter<T>, "
+         "not T directly.";
+
+  auto* sptr_adapter =
+      proxy_cast<SerializableSharedPtrAdapter<CanaryDeputyCommand>>(
+          &*proxy);
+  ASSERT_NE(sptr_adapter, nullptr)
+      << "Phase 3f-5 short-circuit should produce a cached proxy "
+         "whose underlying type is SerializableSharedPtrAdapter<T> "
+         "for aliased entries.";
+  EXPECT_EQ(sptr_adapter->typed().get(), sp.get())
+      << "Aliased adapter must point at the caller's T instance.";
+
+  // serializable_cast<T> handles BOTH shapes — verify it recovers
+  // the same instance.
+  CanaryDeputyCommand* via_cast = serializable_cast<CanaryDeputyCommand>(
+      md.inner());
+  ASSERT_NE(via_cast, nullptr);
+  EXPECT_EQ(via_cast, sp.get());
+
+  // Mutate through the original shared_ptr; bytes saved through
+  // the cached proxy reflect the mutation (aliasing preserved end
+  // to end).
+  sp->header = 999;
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  proxy->save(writer);
+  auto bytes = sink_to_vector(sink);
+
+  // Decode the bytes independently and verify the post-mutation
+  // value made it through.
+  BufferSource src(bytes.data(), bytes.size());
+  BinaryReadArchive reader(&src);
+  CanaryDeputyCommand decoded;
+  decoded.load(reader);
+  EXPECT_EQ(decoded.header, 999);
+  EXPECT_EQ(decoded.name, "aliased + short-circuit");
+}
+
 }  // namespace
 }  // namespace rrr
