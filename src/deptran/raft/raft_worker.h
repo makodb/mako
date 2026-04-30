@@ -90,10 +90,12 @@ public:
   std::atomic<int> n_current{0};   // Current in-flight requests
   std::atomic<int> n_submit{0};    // Total submitted
   std::atomic<int> n_tot{0};       // Total processed
-  std::atomic<int> submit_num{0};  // For microbench
+  // Workstream N Phase 4e-22: removed `std::atomic<int> submit_num{0};`
+  // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
+  // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
+  // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place
+  // alongside its PaxosWorker counterpart.
   int tot_num = 0;
-  int submit_tot_sec_ = 0;
-  int submit_tot_usec_ = 0;
 
   // Configuration
   Config::SiteInfo* site_info_ = nullptr;

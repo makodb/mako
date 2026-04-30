@@ -201,9 +201,8 @@ int shutdown_paxos() {
     DISPATCH_RAFT_OR_PAXOS(shutdown_paxos);  // @unsafe
 }
 
-void microbench_paxos() {
-    DISPATCH_VOID_RAFT_OR_PAXOS(microbench_paxos);  // @unsafe
-}
+// Workstream N Phase 4e-22: removed `microbench_paxos()` dispatcher
+// — no callers anywhere; both impls (paxos + raft) deleted.
 
 void register_for_follower(std::function<void(const char*, int)> cb, uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(register_for_follower, cb, par_id);  // @unsafe
@@ -267,9 +266,8 @@ void wait_for_submit(uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(wait_for_submit, par_id);  // @unsafe
 }
 
-void microbench_paxos_queue() {
-    DISPATCH_VOID_RAFT_OR_PAXOS(microbench_paxos_queue);  // @unsafe
-}
+// Workstream N Phase 4e-22: removed `microbench_paxos_queue()`
+// dispatcher — no callers anywhere; both impls deleted.
 
 void pre_shutdown_step() {
     DISPATCH_VOID_RAFT_OR_PAXOS(pre_shutdown_step);  // @unsafe

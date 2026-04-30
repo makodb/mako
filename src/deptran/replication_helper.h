@@ -49,7 +49,6 @@ int setup2(int action, int shardIndex);
 std::map<std::string, std::string> getHosts(std::string);
 int get_outstanding_logs(uint32_t);
 int shutdown_paxos();
-void microbench_paxos();
 void register_for_follower(std::function<void(const char*, int)>, uint32_t);
 void register_for_follower_par_id(std::function<void(const char*&, int, int)>, uint32_t);
 void register_for_follower_par_id_return(
@@ -68,13 +67,15 @@ void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
 void add_log_to_nc(const char*, int, uint32_t, int);
 void wait_for_submit(uint32_t);
-void microbench_paxos_queue();
 void pre_shutdown_step();
 int get_epoch();
 void set_epoch(int epoch);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
 void nc_setup_server(int, std::string);
+// Workstream N Phase 4e-22: removed `microbench_paxos()` and
+// `microbench_paxos_queue()` declarations (paxos_impl side) — see
+// paxos_main_helper.cc retirement comments.
 // Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
 // declarations (paxos_impl side) — see replication_helper.cc.
 }  // namespace paxos_impl
@@ -88,7 +89,6 @@ int setup2(int action, int shardIndex);
 std::map<std::string, std::string> getHosts(std::string);
 int get_outstanding_logs(uint32_t);
 int shutdown_paxos();
-void microbench_paxos();
 void register_for_follower(std::function<void(const char*, int)>, uint32_t);
 void register_for_follower_par_id(std::function<void(const char*&, int, int)>, uint32_t);
 void register_for_follower_par_id_return(
@@ -107,13 +107,15 @@ void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
 bool add_log_to_nc(const char*, int, uint32_t, int, uint16_t* leader_hint_out = nullptr);
 void wait_for_submit(uint32_t);
-void microbench_paxos_queue();
 void pre_shutdown_step();
 int get_epoch();
 void set_epoch(int epoch);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
 void nc_setup_server(int, std::string);
+// Workstream N Phase 4e-22: removed `microbench_paxos()` and
+// `microbench_paxos_queue()` declarations (raft_impl side) — both
+// stubs and dispatcher deleted.
 // Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
 // declarations (raft_impl side) — see replication_helper.cc.
 void set_preferred_leader(int site_id);
@@ -127,7 +129,6 @@ int setup2(int action = 0, int shardIndex = -1);
 std::map<std::string, std::string> getHosts(std::string);
 int get_outstanding_logs(uint32_t);
 int shutdown_paxos();
-void microbench_paxos();
 void register_for_follower(std::function<void(const char*, int)>, uint32_t);
 void register_for_follower_par_id(std::function<void(const char*&, int, int)>, uint32_t);
 void register_for_follower_par_id_return(
@@ -146,13 +147,15 @@ void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
 bool add_log_to_nc(const char*, int, uint32_t, int = 0, uint16_t* leader_hint_out = nullptr);
 void wait_for_submit(uint32_t);
-void microbench_paxos_queue();
 void pre_shutdown_step();
 int get_epoch();
 void set_epoch(int epoch = -1);
 void upgrade_p1_to_leader();
 void worker_info_stats(size_t);
 void nc_setup_server(int, std::string);
+// Workstream N Phase 4e-22: removed `microbench_paxos()` and
+// `microbench_paxos_queue()` declarations (unified API side) — both
+// dispatcher impls deleted.
 // Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
 // declarations (unified API side) — see replication_helper.cc.
 

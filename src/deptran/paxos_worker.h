@@ -477,11 +477,13 @@ public:
   // Services are now owned by rpc_server_ via reg_service()
   rrr::Server* rpc_server_ = nullptr;
   rusty::Arc<base::ThreadPool> thread_pool_g{nullptr};
-  // for microbench
-  std::atomic<int> submit_num{0};
+  // Workstream N Phase 4e-22: removed `std::atomic<int> submit_num{0};`
+  // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
+  // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
+  // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place: it
+  // is initialized via `Config::get_tot_req()` at worker construction
+  // and a follow-up sweep can chase the Config wiring.
   int tot_num = 0;
-  int submit_tot_sec_ = 0;
-  int submit_tot_usec_ = 0;
   int cur_epoch;
   int is_leader;
   int bulk_writer = 0;
