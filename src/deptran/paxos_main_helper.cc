@@ -41,15 +41,22 @@ vector<unique_ptr<ClientWorker>> client_workers_g = {};
 typedef std::chrono::high_resolution_clock::time_point tp;
 typedef pair<const char*, pair<int,tp>> queue_entry;
 typedef pair<const char*, pair<int,int>> queue_entry_par;
-static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;
+// Workstream N Phase 4e-19: removed
+//   `static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;`
+// — `add_log` enqueued into it but the only dequeue happened in
+// the now-deleted `submit_logger` (which was itself only called from
+// the dead `PollSubmitLog` thread function — no `pthread_create`
+// for it survived the Phase 4e-16 cleanup).
 // Workstream N Phase 4e-16: removed
 //   `static std::queue<queue_entry_par> submit_queue_nc;`
 // — only used inside the now-deleted `PollSubQNc` function.
 static rrr::SpinLock l_;
-// Workstream N Phase 4e-16: removed `consumer` from
-// `static atomic<int> producer{0}, consumer{0};` — only
-// commented-out reference; never read by live code.
-static atomic<int> producer{0};
+// Workstream N Phase 4e-19: removed `static atomic<int> producer{0};`
+// — only read inside the now-deleted `PollSubmitLog`'s
+// `while(producer >= 0)` loop guard; no writers anywhere.
+// Workstream N Phase 4e-16 already removed the `consumer` half of
+// the original `static atomic<int> producer{0}, consumer{0};`
+// pair for the same reason.
 static atomic<int> submit_tot{0};
 // Workstream N Phase 4e-16: removed `pthread_t submit_poll_th_;` —
 // referenced only in commented-out `pthread_create(...)` /
@@ -201,11 +208,9 @@ void microbench_paxos() {
     }
 }
 
-/*pair<pair<string, pair<int, uint32_t>>, bool> remove_from_submitq(){
-  pair<string, pair<int,uint32_t>> paxos_entry;
-  bool found = submit_queue.try_dequeue(paxos_entry);
-  return make_pair(paxos_entry, found);
-}*/
+// Workstream N Phase 4e-19: removed long-commented-out
+// `remove_from_submitq()` helper that called
+// `submit_queue.try_dequeue` — `submit_queue` is gone.
 
 void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
@@ -224,44 +229,17 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
 }
 
 
-static bool wait = false;
-static int count_free = 0;
-void submit_logger() {
-  auto endTime = std::chrono::high_resolution_clock::now(); 
-  pair<const char*, pair<int,int>> paxos_entry;
-  auto res = submit_queue.try_dequeue(paxos_entry);
-  if(!res){
-    return;
-  }
-  //auto time_in_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - paxos_entry.second.second).count();
-  //free((char*)paxos_entry.first);
-  //Log_info("Time spent in queue for this entry is %d", time_in_queue);
-//  if(time_in_queue < (int64_t)100*1000*1000){
-//	  wait = true;
-//  }else{
-//	wait = false;
-//  }
-//  count_free++;
-//  return;
-  //consumer++;
-  const char* nlog = paxos_entry.first;
-  int len = paxos_entry.second.first;
-  uint32_t par_id = paxos_entry.second.second;
-  add_log_without_queue(nlog, len, par_id);
-}
-
-void* PollSubmitLog(void* arg){
-    while(producer >= 0){
-      submit_logger();
-      if(wait){
-	      //Log_info("The number of entries freed are %d, size of the queue is %d", count_free, submit_queue.size_approx());
-	      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	      count_free = 0;
-      }
-    }
-    pthread_exit(nullptr);
-    return nullptr;
-}
+// Workstream N Phase 4e-19: removed dead `wait` / `count_free` /
+// `submit_logger()` / `PollSubmitLog()` chain.  `PollSubmitLog`
+// was a `pthread_create` worker entry point that polled
+// `submit_queue` and called `submit_logger`, which in turn
+// dequeued and routed to `add_log_without_queue`.  No surviving
+// `pthread_create(..., PollSubmitLog, ...)` call site referenced
+// it — Phase 4e-16's commented-out `// pthread_create(...,
+// PollSubQNc, nullptr)` left both polling threads as orphans —
+// so `PollSubmitLog` was never started.  Without a live thread
+// dequeueing, `submit_queue.enqueue(...)` in `add_log` (now also
+// removed) was leaking entries.
 
 map<string, string> getHosts(std::string filename) {
     map<string, string> proc_host_map_;
@@ -938,19 +916,20 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
 }
 
 void add_log(const char* log, int len, uint32_t par_id){
-    auto startTime = std::chrono::high_resolution_clock::now();
     //read_log(log, len, "silo");
+    // Workstream N Phase 4e-19: removed the `chrono::high_resolution_clock`
+    // start/end snapshots, the `paxos_entry = make_pair(...)` packing,
+    // and `submit_queue.enqueue(paxos_entry)` — `submit_queue` was a
+    // leaked write-only queue (no live dequeue thread; see the
+    // file-scope retirement note above).  The `IncSubmit` accounting
+    // on the leader worker stays.  The chrono snapshots fed only the
+    // commented-out `add_time("enqueue_time", ...)` reporting line.
     for (auto& worker : pxs_workers_g) {
       if (!worker->IsLeader(par_id)) continue;
       worker->IncSubmit();
       break;
     }
-    auto endTime = std::chrono::high_resolution_clock::now();
-    auto paxos_entry = make_pair(log, make_pair(len, par_id));
-    submit_queue.enqueue(paxos_entry);
-    endTime = std::chrono::high_resolution_clock::now();
     submit_tot++;
-    //add_time("enqueue_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
 }
 
 
