@@ -295,10 +295,11 @@ class MarshallDeputy {
       set_marshallable(std::move(sp_t));
     }
 
-    // virtual void reset_write_offsets(){
-    //   written_to_socket = 0;
-    //   sp_data_->reset_write_offsets();
-    // }
+    // Workstream N Phase 5b-15: removed a 4-line commented-out
+    // `reset_write_offsets()` virtual that referenced two long-gone
+    // fields (`written_to_socket` deleted in 5b-3 and `sp_data_`
+    // deleted in 3f-1).  The method was tied to the bypass-to-socket
+    // fast path that 5b-3 retired wholesale; nothing else used it.
 
     rrr::Marshal& create_actual_object_from(rrr::Marshal& m);
 
