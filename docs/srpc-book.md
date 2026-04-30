@@ -1243,7 +1243,10 @@ Phase 3f-1 (`MarshallDeputy::sp_data_` elimination), Phase 3f-prep
 (`MarshallDeputy` parallel `SerializableProxy` storage via
 `shared_ptr<SerializableProxy>` field), Phase 3f-3 (lazy cache
 semantics — field starts null and is populated on first
-`serializable()` accessor call), Phase 4a-prep
+`serializable()` accessor call), Phase 3f-4 (wired the bridge
+`operator<<(BinaryWriteArchive&, MarshallDeputy&)` through
+`md.serializable()` — first production caller of the lazy accessor;
+per-call alloc savings on the hot path), Phase 4a-prep
 (`marshallable_cast` / `wrap_typed_marshallable` overloads for
 Serializable types — call-site transparency for migrations),
 Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,

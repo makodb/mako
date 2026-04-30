@@ -356,8 +356,15 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
   // identical to `inner()->to_marshal(...)` (which is what the legacy
   // `operator<<(Marshal&, MarshallDeputy)` does after writing the
   // kind prefix).
-  auto serial = as_serializable(md);
-  serial->save(ar);
+  //
+  // Workstream N Phase 3f-4: route through the deputy's lazy
+  // `serializable()` accessor instead of constructing a fresh
+  // `MarshallableSerializableAdapter` on every call. The first call
+  // populates `md.serializable_` (via `as_serializable(inner_sp_data_)`)
+  // and caches the proxy; subsequent serializations of the same
+  // deputy reuse the cache. Wire bytes are unchanged because the
+  // proxy still wraps the same `inner_sp_data_`.
+  md.serializable()->save(ar);
   return ar;
 }
 
