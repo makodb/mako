@@ -45,6 +45,7 @@
 #include <rusty/rusty.hpp>
 #include <rusty/btreemap.hpp>
 #include <rusty/btreeset.hpp>
+#include <rusty/fn.hpp>
 #include <rusty/hashmap.hpp>
 #include <rusty/hashset.hpp>
 #include <rusty/vec.hpp>
@@ -916,7 +917,10 @@ inline SerializableProxy make_serializable_proxy(Args&&... args) {
 // dispatch are concurrent across reactor threads.
 class SerializableRegistry {
  public:
-  using Factory = std::function<SerializableProxy()>;
+  // rusty::Function is move-only; the registry stores each factory by move
+  // and invokes it under the registry's SpinMutex inside `create()` (no
+  // copy-out-of-lock — see marshal_archive.cpp).
+  using Factory = rusty::Function<SerializableProxy()>;
 
   // Register T under `kind`. Returns 0 so it can sit at namespace
   // scope as a static-initializer return value:

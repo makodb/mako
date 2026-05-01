@@ -61,14 +61,15 @@ void SerializableRegistry::register_factory(int32_t kind, Factory factory) {
 }
 
 SerializableProxy SerializableRegistry::create(int32_t kind) {
-  Factory f;
-  {
-    auto guard = registry().lock().unwrap();
-    auto entry = guard->map.get(kind);
-    verify(entry.is_some());
-    f = *entry.unwrap();
-  }
-  return f();
+  // Factory is move-only (rusty::Function), so we invoke it under the
+  // registry lock instead of copying it out. The registered factories
+  // are stateless lambdas that allocate a fresh proxy — fast, no
+  // recursive registry calls — so holding the SpinMutex during the
+  // call is fine.
+  auto guard = registry().lock().unwrap();
+  auto entry = guard->map.get(kind);
+  verify(entry.is_some());
+  return (*entry.unwrap())();
 }
 
 bool SerializableRegistry::is_registered(int32_t kind) {
