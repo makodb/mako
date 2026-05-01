@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 #include <rusty/cell.hpp>
+#include <rusty/function.hpp>
 
 namespace rrr {
 namespace chaos {
@@ -206,9 +207,9 @@ class ChaosController {
 
 public:
     // @safe - Callbacks for chaos events
-    using ServerKillCallback = std::function<void()>;
-    using ServerRestartCallback = std::function<void()>;
-    using ConnectionResetCallback = std::function<void()>;
+    using ServerKillCallback = rusty::Function<void()>;
+    using ServerRestartCallback = rusty::Function<void()>;
+    using ConnectionResetCallback = rusty::Function<void()>;
 
 private:
     ServerKillCallback on_server_kill_;
@@ -394,8 +395,8 @@ class ChaosVerifier {
 
 public:
     // @safe - Callbacks for verification
-    using ConnectivityCheck = std::function<bool()>;
-    using RequestCheck = std::function<bool()>;
+    using ConnectivityCheck = rusty::Function<bool()>;
+    using RequestCheck = rusty::Function<bool()>;
 
 private:
     ConnectivityCheck connectivity_check_;
