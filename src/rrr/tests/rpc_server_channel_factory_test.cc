@@ -184,21 +184,23 @@ inline ChannelFactoryProxy make_factory_proxy(
 
 class ServerChannelFactoryTest : public ::testing::Test {
  protected:
+    // L1c-tests: rusty::Option<T> swap.
     void SetUp() override {
-        poll_thread_.emplace(PollThread::create());
-        server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
+        poll_thread_ = rusty::Some(PollThread::create());
+        server_ = rusty::make_box<Server>(
+            rusty::Some(poll_thread_.as_ref().unwrap().clone()));
     }
 
     void TearDown() override {
-        server_.reset();
-        if (poll_thread_) {
-            (*poll_thread_)->shutdown();
-            poll_thread_.reset();
+        server_ = rusty::None;
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+            poll_thread_ = rusty::None;
         }
     }
 
-    std::optional<rusty::Arc<PollThread>>     poll_thread_;
-    std::optional<rusty::Box<Server>>         server_;
+    rusty::Option<rusty::Arc<PollThread>>     poll_thread_;
+    rusty::Option<rusty::Box<Server>>         server_;
 };
 
 // ---------------------------------------------------------------------------
@@ -207,9 +209,9 @@ class ServerChannelFactoryTest : public ::testing::Test {
 
 TEST_F(ServerChannelFactoryTest, StartCallsFactoryMakeListenerAndListen) {
     auto factory_stub = std::make_shared<FactoryStub>();
-    (*server_)->set_channel_factory(make_factory_proxy(factory_stub));
+    server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
 
-    EXPECT_EQ((*server_)->start("0.0.0.0:0"), 0);
+    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
 
     EXPECT_EQ(factory_stub->make_listener_calls_, 1);
     ASSERT_TRUE(static_cast<bool>(factory_stub->last_listener_));
@@ -225,9 +227,9 @@ TEST_F(ServerChannelFactoryTest, StartCallsFactoryMakeListenerAndListen) {
 TEST_F(ServerChannelFactoryTest, StartReturnsErrorOnListenFailure) {
     auto factory_stub = std::make_shared<FactoryStub>();
     factory_stub->next_listen_should_fail_ = true;
-    (*server_)->set_channel_factory(make_factory_proxy(factory_stub));
+    server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
 
-    EXPECT_EQ((*server_)->start("0.0.0.0:0"), -1);
+    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), -1);
 
     // make_listener() was called, listen() was called, but the
     // listener was NOT parked on the server (the failure path
@@ -248,8 +250,8 @@ TEST_F(ServerChannelFactoryTest, StartReturnsErrorOnListenFailure) {
 
 TEST_F(ServerChannelFactoryTest, OnAcceptParksBoundServerConnection) {
     auto factory_stub = std::make_shared<FactoryStub>();
-    (*server_)->set_channel_factory(make_factory_proxy(factory_stub));
-    EXPECT_EQ((*server_)->start("0.0.0.0:0"), 0);
+    server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
+    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
 
     // Fire on_accept manually.
     auto conn_stub = std::make_shared<ConnStub>();
@@ -276,14 +278,14 @@ TEST_F(ServerChannelFactoryTest, OnAcceptParksBoundServerConnection) {
 
 TEST_F(ServerChannelFactoryTest, DestructorClosesChannelListener) {
     auto factory_stub = std::make_shared<FactoryStub>();
-    (*server_)->set_channel_factory(make_factory_proxy(factory_stub));
-    EXPECT_EQ((*server_)->start("0.0.0.0:0"), 0);
+    server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
+    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
 
     auto listener_stub = factory_stub->last_listener_;
     ASSERT_TRUE(static_cast<bool>(listener_stub));
     EXPECT_EQ(listener_stub->close_calls_, 0);
 
-    server_.reset();
+    server_ = rusty::None;
     // 5f: ~Server schedules listener close on the poll thread via a
     // OneTimeJob (to avoid the CmdAddPollable race), so we poll for
     // the close to take effect.
@@ -303,8 +305,8 @@ TEST_F(ServerChannelFactoryTest, DestructorClosesChannelListener) {
 
 TEST_F(ServerChannelFactoryTest, StopAcceptingClosesListenerOnly) {
     auto factory_stub = std::make_shared<FactoryStub>();
-    (*server_)->set_channel_factory(make_factory_proxy(factory_stub));
-    EXPECT_EQ((*server_)->start("0.0.0.0:0"), 0);
+    server_.as_ref().unwrap()->set_channel_factory(make_factory_proxy(factory_stub));
+    EXPECT_EQ(server_.as_ref().unwrap()->start("0.0.0.0:0"), 0);
 
     auto listener_stub = factory_stub->last_listener_;
 
@@ -314,7 +316,7 @@ TEST_F(ServerChannelFactoryTest, StopAcceptingClosesListenerOnly) {
     EXPECT_FALSE(conn_stub->is_closed());
 
     // Now stop_accepting → listener closed, conn untouched.
-    (*server_)->stop_accepting();
+    server_.as_ref().unwrap()->stop_accepting();
     EXPECT_GE(listener_stub->close_calls_, 1);
     EXPECT_FALSE(conn_stub->is_closed());
 }
@@ -330,7 +332,7 @@ TEST_F(ServerChannelFactoryTest, StopAcceptingClosesListenerOnly) {
 TEST_F(ServerChannelFactoryTest, StartWithoutFactoryAutoInstallsDefault) {
     auto factory_stub = std::make_shared<FactoryStub>();
     // Note: factory NOT installed on the server.
-    EXPECT_EQ((*server_)->start("127.0.0.1:0"), 0);
+    EXPECT_EQ(server_.as_ref().unwrap()->start("127.0.0.1:0"), 0);
     // The fixture's stub was never bound, so it sees no calls.
     EXPECT_EQ(factory_stub->make_listener_calls_, 0);
     // The server is now in channel mode by virtue of auto-install

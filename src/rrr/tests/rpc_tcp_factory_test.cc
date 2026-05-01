@@ -70,29 +70,29 @@ bool wait_for(F&& predicate, std::chrono::milliseconds max = kMaxWait) {
 class TcpFactoryTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        poll_thread_.emplace(PollThread::create());
-        factory_arc_.emplace(rusty::Arc<TcpFactory>::make((*poll_thread_).clone()));
+        poll_thread_ = rusty::Some(PollThread::create());
+        factory_arc_ = rusty::Some(rusty::Arc<TcpFactory>::make(poll_thread_.as_ref().unwrap().clone()));
     }
 
     void TearDown() override {
         // Drop owned proxies / Arcs in inverse order. The poll thread
         // tears down its registered pollables on shutdown.
-        factory_arc_.reset();
-        if (poll_thread_) {
-            (*poll_thread_)->shutdown();
-            poll_thread_.reset();
+        factory_arc_ = rusty::None;
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+            poll_thread_ = rusty::None;
         }
     }
 
     TcpFactory& mut_factory() {
-        return const_cast<TcpFactory&>(*factory_arc_->get());
+        return const_cast<TcpFactory&>(*factory_arc_.as_ref().unwrap().get());
     }
     const TcpFactory& factory() const {
-        return *factory_arc_->get();
+        return *factory_arc_.as_ref().unwrap().get();
     }
 
-    std::optional<rusty::Arc<PollThread>> poll_thread_;
-    std::optional<rusty::Arc<TcpFactory>> factory_arc_;
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_;
+    rusty::Option<rusty::Arc<TcpFactory>> factory_arc_;
 };
 
 // ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     // proxy in shared state because `on_accept` is called on the
     // poll thread.
     std::mutex accept_mu;
-    std::optional<ChannelConnectionProxy> server_side_conn;
+    rusty::Option<ChannelConnectionProxy> server_side_conn;
     std::vector<std::vector<std::uint8_t>> server_received;
 
     listener->set_on_accept([&](ChannelConnectionProxy proxy) {
@@ -165,7 +165,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
             std::lock_guard<std::mutex> g2(accept_mu);
             server_received.emplace_back(f.payload, f.payload + f.size);
         });
-        server_side_conn.emplace(std::move(proxy));
+        server_side_conn = rusty::Some(std::move(proxy));
     });
 
     // Client side: factory.connect().
@@ -183,7 +183,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     // Wait for accept to surface on the poll thread.
     EXPECT_TRUE(wait_for([&] {
         std::lock_guard<std::mutex> g(accept_mu);
-        return server_side_conn.has_value();
+        return server_side_conn.is_some();
     })) << "accept did not fire within deadline";
 
     // Send a frame client → server.
@@ -207,8 +207,8 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     const std::uint8_t s2c[] = {0xD1, 0xD2};
     {
         std::lock_guard<std::mutex> g(accept_mu);
-        ASSERT_TRUE(server_side_conn.has_value());
-        EXPECT_EQ((*server_side_conn)->send_frame({s2c, sizeof(s2c)}),
+        ASSERT_TRUE(server_side_conn.is_some());
+        EXPECT_EQ(server_side_conn.as_ref().unwrap()->send_frame({s2c, sizeof(s2c)}),
                   ChannelError::None);
     }
 
@@ -228,7 +228,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     cresult.connection->close();
     {
         std::lock_guard<std::mutex> g(accept_mu);
-        if (server_side_conn) (*server_side_conn)->close();
+        if (server_side_conn) server_side_conn.as_ref().unwrap()->close();
     }
     listener->close();
 }
@@ -243,7 +243,7 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
     const std::string local_addr = listener->local_address();
 
     std::mutex mu;
-    std::optional<ChannelConnectionProxy> server_conn;
+    rusty::Option<ChannelConnectionProxy> server_conn;
     int server_closes = 0;
     listener->set_on_accept([&](ChannelConnectionProxy proxy) {
         std::lock_guard<std::mutex> g(mu);
@@ -251,7 +251,7 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
             std::lock_guard<std::mutex> g2(mu);
             ++server_closes;
         });
-        server_conn.emplace(std::move(proxy));
+        server_conn = rusty::Some(std::move(proxy));
     });
 
     auto cresult = mut_factory().connect(local_addr);
@@ -259,7 +259,7 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
 
     EXPECT_TRUE(wait_for([&] {
         std::lock_guard<std::mutex> g(mu);
-        return server_conn.has_value();
+        return server_conn.is_some();
     }));
 
     cresult.connection->close();
@@ -272,7 +272,7 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
     {
         std::lock_guard<std::mutex> g(mu);
         EXPECT_EQ(server_closes, 1);
-        if (server_conn) (*server_conn)->close();
+        if (server_conn) server_conn.as_ref().unwrap()->close();
     }
     listener->close();
 }
@@ -327,7 +327,7 @@ TEST_F(TcpFactoryTest, MultipleSequentialConnects) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
-    auto proxy = make_tcp_factory_proxy(factory_arc_->clone());
+    auto proxy = make_tcp_factory_proxy(factory_arc_.as_ref().unwrap().clone());
 
     EXPECT_STREQ(proxy->backend_name(), "tcp");
 
@@ -339,10 +339,10 @@ TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
     // Verify that connect through the proxy lands on a usable
     // accepted connection on the listener side.
     std::mutex mu;
-    std::optional<ChannelConnectionProxy> server_conn;
+    rusty::Option<ChannelConnectionProxy> server_conn;
     listener->set_on_accept([&](ChannelConnectionProxy p) {
         std::lock_guard<std::mutex> g(mu);
-        server_conn.emplace(std::move(p));
+        server_conn = rusty::Some(std::move(p));
     });
 
     auto r = proxy->connect(local_addr);
@@ -351,13 +351,13 @@ TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
 
     EXPECT_TRUE(wait_for([&] {
         std::lock_guard<std::mutex> g(mu);
-        return server_conn.has_value();
+        return server_conn.is_some();
     }));
 
     r.connection->close();
     {
         std::lock_guard<std::mutex> g(mu);
-        if (server_conn) (*server_conn)->close();
+        if (server_conn) server_conn.as_ref().unwrap()->close();
     }
     listener->close();
 }

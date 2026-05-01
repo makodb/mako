@@ -129,24 +129,24 @@ void pump_until(Pred&& pred, int max_iterations = 1000) {
 class ClientChannelCloseTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        poll_thread_.emplace(PollThread::create());
-        conn_.emplace(rusty::Arc<ClientConnection>::make((*poll_thread_).clone()));
+        poll_thread_ = rusty::Some(PollThread::create());
+        conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(poll_thread_.as_ref().unwrap().clone()));
         mut_conn().install_self_weak_for_testing(
-            WeakClientConnection{rusty::sync::downgrade(*conn_)});
+            WeakClientConnection{rusty::sync::downgrade(conn_.as_ref().unwrap())});
 
         // Install a fresh CallbackManager so the test can observe
         // error / disconnected callbacks. The constructor's default
         // would also work, but sharing an Arc lets the test (a)
         // register before bind_channel and (b) read the registered
         // callbacks back if needed.
-        callback_manager_.emplace(rusty::Arc<CallbackManager>::make());
-        mut_conn().set_callback_manager(*callback_manager_);
+        callback_manager_ = rusty::Some(rusty::Arc<CallbackManager>::make());
+        mut_conn().set_callback_manager(callback_manager_.as_ref().unwrap());
 
-        (*callback_manager_)->add_on_error([this](RpcError e, const std::string&) {
+        callback_manager_.as_ref().unwrap()->add_on_error([this](RpcError e, const std::string&) {
             error_callbacks_.fetch_add(1, std::memory_order_acq_rel);
             last_error_ = e;
         });
-        (*callback_manager_)->add_on_disconnected([this]() {
+        callback_manager_.as_ref().unwrap()->add_on_disconnected([this]() {
             disconnected_callbacks_.fetch_add(1, std::memory_order_acq_rel);
         });
 
@@ -161,24 +161,24 @@ class ClientChannelCloseTest : public ::testing::Test {
             stub_->deliver_closed(ChannelError::None);
             (void)Reactor::get_reactor()->loop();
         }
-        conn_.reset();
-        if (poll_thread_) {
-            (*poll_thread_)->shutdown();
-            poll_thread_.reset();
+        conn_ = rusty::None;
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+            poll_thread_ = rusty::None;
         }
     }
 
     ClientConnection& mut_conn() {
-        return const_cast<ClientConnection&>(*(*conn_).get());
+        return const_cast<ClientConnection&>(*conn_.as_ref().unwrap().get());
     }
     const ClientConnection& conn() const {
-        return *(*conn_).get();
+        return *conn_.as_ref().unwrap().get();
     }
 
-    std::optional<rusty::Arc<PollThread>>       poll_thread_;
-    std::optional<rusty::Arc<ClientConnection>> conn_;
+    rusty::Option<rusty::Arc<PollThread>>       poll_thread_;
+    rusty::Option<rusty::Arc<ClientConnection>> conn_;
     std::shared_ptr<CloseDriverChannelStub>     stub_;
-    std::optional<rusty::Arc<CallbackManager>>  callback_manager_;
+    rusty::Option<rusty::Arc<CallbackManager>>  callback_manager_;
 
     std::atomic<int>     error_callbacks_{0};
     std::atomic<int>     disconnected_callbacks_{0};

@@ -35,20 +35,20 @@ namespace {
 class InMemoryChannelTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        switchboard_.emplace(rusty::Arc<InMemorySwitchboard>::make());
-        factory_arc_.emplace(
-            rusty::Arc<InMemoryFactory>::make((*switchboard_).clone()));
-        factory_ = make_inmemory_factory_proxy((*factory_arc_).clone());
+        switchboard_ = rusty::Some(rusty::Arc<InMemorySwitchboard>::make());
+        factory_arc_ = rusty::Some(
+            rusty::Arc<InMemoryFactory>::make(switchboard_.as_ref().unwrap().clone()));
+        factory_ = make_inmemory_factory_proxy(factory_arc_.as_ref().unwrap().clone());
     }
 
     void TearDown() override {
         factory_     = ChannelFactoryProxy{};
-        factory_arc_.reset();
-        switchboard_.reset();
+        factory_arc_ = rusty::None;
+        switchboard_ = rusty::None;
     }
 
-    std::optional<rusty::Arc<InMemorySwitchboard>>  switchboard_;
-    std::optional<rusty::Arc<InMemoryFactory>>      factory_arc_;
+    rusty::Option<rusty::Arc<InMemorySwitchboard>>  switchboard_;
+    rusty::Option<rusty::Arc<InMemoryFactory>>      factory_arc_;
     ChannelFactoryProxy                             factory_;
 };
 
@@ -448,18 +448,18 @@ TEST_F(InMemoryChannelTest, BothSidesCloseFiresOnClosedOnce) {
 
 namespace fault_test_helpers {
 struct PairAndProxies {
-    std::optional<rusty::Arc<InMemoryChannel>> a;
-    std::optional<rusty::Arc<InMemoryChannel>> b;
+    rusty::Option<rusty::Arc<InMemoryChannel>> a;
+    rusty::Option<rusty::Arc<InMemoryChannel>> b;
     ChannelConnectionProxy a_proxy;
     ChannelConnectionProxy b_proxy;
     std::vector<std::vector<std::uint8_t>> a_received;
     std::vector<std::vector<std::uint8_t>> b_received;
 
     InMemoryChannel& mut_a() {
-        return const_cast<InMemoryChannel&>(*(*a).get());
+        return const_cast<InMemoryChannel&>(*a.as_ref().unwrap().get());
     }
     InMemoryChannel& mut_b() {
-        return const_cast<InMemoryChannel&>(*(*b).get());
+        return const_cast<InMemoryChannel&>(*b.as_ref().unwrap().get());
     }
 };
 
@@ -468,10 +468,10 @@ inline rusty::Box<PairAndProxies> make_pair_with_capture(
     auto out = rusty::make_box<PairAndProxies>();
     auto pair = make_channel_pair_for_testing(std::move(a_addr),
                                               std::move(b_addr));
-    out->a.emplace(std::move(pair.first));
-    out->b.emplace(std::move(pair.second));
-    out->a_proxy = make_inmemory_channel_proxy((*out->a).clone());
-    out->b_proxy = make_inmemory_channel_proxy((*out->b).clone());
+    out->a = rusty::Some(std::move(pair.first));
+    out->b = rusty::Some(std::move(pair.second));
+    out->a_proxy = make_inmemory_channel_proxy(out->a.as_ref().unwrap().clone());
+    out->b_proxy = make_inmemory_channel_proxy(out->b.as_ref().unwrap().clone());
 
     auto* a_received_ptr = &out->a_received;
     auto* b_received_ptr = &out->b_received;

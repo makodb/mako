@@ -110,27 +110,27 @@ inline rusty::Arc<RpcServiceContext> make_test_ctx() {
 class ServerChannelCloseTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        ctx_.emplace(make_test_ctx());
-        sconn_.emplace(rusty::Arc<ServerConnection>::make(
-            (*ctx_).clone(), /*socket=*/-1));
-        const_cast<ServerConnection&>(*(*sconn_).get())
-            .install_self_weak_for_testing(rusty::sync::downgrade(*sconn_));
+        ctx_ = rusty::Some(make_test_ctx());
+        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
+            ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
+        const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get())
+            .install_self_weak_for_testing(rusty::sync::downgrade(sconn_.as_ref().unwrap()));
     }
 
     void TearDown() override {
-        sconn_.reset();
-        ctx_.reset();
+        sconn_ = rusty::None;
+        ctx_ = rusty::None;
     }
 
     ServerConnection& mut_sconn() {
-        return const_cast<ServerConnection&>(*(*sconn_).get());
+        return const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get());
     }
     const ServerConnection& sconn() const {
-        return *(*sconn_).get();
+        return *sconn_.as_ref().unwrap().get();
     }
 
-    std::optional<rusty::Arc<RpcServiceContext>> ctx_;
-    std::optional<rusty::Arc<ServerConnection>>  sconn_;
+    rusty::Option<rusty::Arc<RpcServiceContext>> ctx_;
+    rusty::Option<rusty::Arc<ServerConnection>>  sconn_;
 };
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ TEST_F(ServerChannelCloseTest, OnClosedAfterDestroyIsNoop) {
 
     // Drop the ServerConnection; the stub's installed callback's
     // weak should now upgrade to None.
-    sconn_.reset();
+    sconn_ = rusty::None;
 
     // Should not crash, even though the server connection no longer
     // exists. We can't observe state directly anymore, but the

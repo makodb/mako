@@ -181,7 +181,7 @@ class ServerChannelRecvTest : public ::testing::Test {
         rusty::Vec<rusty::RefCell<ServiceProxy>> services;
         auto pending = rusty::Arc<std::atomic<int>>::make(0);
         auto drop = rusty::Arc<std::atomic<bool>>::make(false);
-        ctx_.emplace(rusty::Arc<RpcServiceContext>::make(
+        ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
             std::move(rpc_to_service),
             std::move(fast_rpc_ids),
             std::move(services),
@@ -189,26 +189,26 @@ class ServerChannelRecvTest : public ::testing::Test {
             std::move(pending),
             std::move(drop),
             kFakeServerInstanceId));
-        sconn_.emplace(rusty::Arc<ServerConnection>::make(
-            (*ctx_).clone(), /*socket=*/-1));
+        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
+            ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
         // Wire `weak_self_` so the on_frame callback can upgrade.
         // Production goes through the listener accept path which
         // sets this; we set it manually here.
-        const_cast<ServerConnection&>(*(*sconn_).get())
-            .install_self_weak_for_testing(rusty::sync::downgrade(*sconn_));
+        const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get())
+            .install_self_weak_for_testing(rusty::sync::downgrade(sconn_.as_ref().unwrap()));
     }
 
     void TearDown() override {
-        sconn_.reset();
-        ctx_.reset();
+        sconn_ = rusty::None;
+        ctx_ = rusty::None;
     }
 
     ServerConnection& mut_sconn() {
-        return const_cast<ServerConnection&>(*(*sconn_).get());
+        return const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get());
     }
 
-    std::optional<rusty::Arc<RpcServiceContext>> ctx_;
-    std::optional<rusty::Arc<ServerConnection>>  sconn_;
+    rusty::Option<rusty::Arc<RpcServiceContext>> ctx_;
+    rusty::Option<rusty::Arc<ServerConnection>>  sconn_;
 };
 
 // ---------------------------------------------------------------------------
@@ -293,8 +293,8 @@ TEST_F(ServerChannelRecvTest, MalformedFrameRepliesEinval) {
 
 TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     // Replace ctx_ with one containing a registered service.
-    sconn_.reset();
-    ctx_.reset();
+    sconn_ = rusty::None;
+    ctx_ = rusty::None;
 
     auto svc_box = rusty::make_box<RecordingService>();
     auto* svc_raw = svc_box.get();
@@ -309,7 +309,7 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     fast_rpc_ids.insert(RecordingService::kEchoRpcId);
     auto pending = rusty::Arc<std::atomic<int>>::make(0);
     auto drop = rusty::Arc<std::atomic<bool>>::make(false);
-    ctx_.emplace(rusty::Arc<RpcServiceContext>::make(
+    ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
         std::move(rpc_to_service),
         std::move(fast_rpc_ids),
         std::move(services),
@@ -317,10 +317,10 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
         std::move(pending),
         std::move(drop),
         kFakeServerInstanceId));
-    sconn_.emplace(rusty::Arc<ServerConnection>::make(
-        (*ctx_).clone(), /*socket=*/-1));
-    const_cast<ServerConnection&>(*(*sconn_).get())
-        .install_self_weak_for_testing(rusty::sync::downgrade(*sconn_));
+    sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
+        ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
+    const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get())
+        .install_self_weak_for_testing(rusty::sync::downgrade(sconn_.as_ref().unwrap()));
 
     auto stub = std::make_shared<StubChannel>();
     mut_sconn().bind_channel(make_stub_proxy(stub));

@@ -93,7 +93,7 @@ int connect_to_local(const std::string& local_address) {
 class TcpListenerTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        listener_.emplace(rusty::Arc<TcpListener>::make());
+        listener_ = rusty::Some(rusty::Arc<TcpListener>::make());
     }
 
     void TearDown() override {
@@ -101,14 +101,14 @@ class TcpListenerTest : public ::testing::Test {
             if (fd >= 0) ::close(fd);
         }
         open_client_fds_.clear();
-        listener_.reset();
+        listener_ = rusty::None;
     }
 
     TcpListener& mut_listener() {
-        return const_cast<TcpListener&>(*listener_->get());
+        return const_cast<TcpListener&>(*listener_.as_ref().unwrap().get());
     }
     const TcpListener& listener() const {
-        return *listener_->get();
+        return *listener_.as_ref().unwrap().get();
     }
 
     int connect_and_track() {
@@ -117,7 +117,7 @@ class TcpListenerTest : public ::testing::Test {
         return fd;
     }
 
-    std::optional<rusty::Arc<TcpListener>> listener_;
+    rusty::Option<rusty::Arc<TcpListener>> listener_;
     std::vector<int> open_client_fds_;
 };
 
@@ -284,25 +284,25 @@ TEST_F(TcpListenerTest, HandleReadReturnsFalseAfterClose) {
 TEST_F(TcpListenerTest, AcceptedConnectionIsUsableThroughProxy) {
     EXPECT_EQ(mut_listener().listen("127.0.0.1:0"), ChannelError::None);
 
-    std::optional<ChannelConnectionProxy> received;
+    rusty::Option<ChannelConnectionProxy> received;
     mut_listener().set_on_accept([&](ChannelConnectionProxy proxy) {
-        received.emplace(std::move(proxy));
+        received = rusty::Some(std::move(proxy));
     });
 
     int client_fd = connect_and_track();
     ASSERT_GE(client_fd, 0);
 
     EXPECT_TRUE(mut_listener().handle_read());
-    ASSERT_TRUE(received.has_value());
-    EXPECT_TRUE(received->has_value());
+    ASSERT_TRUE(received.is_some());
+    EXPECT_TRUE(received.as_ref().unwrap().has_value());
 
     // The proxy's facade methods should all be callable; we don't
     // exercise the data path here because that's covered by
     // rpc_tcp_channel_test.cc.
-    EXPECT_FALSE((*received)->is_closed());
-    EXPECT_NE((*received)->peer_address().find("127.0.0.1:"), std::string::npos);
-    (*received)->close();
-    EXPECT_TRUE((*received)->is_closed());
+    EXPECT_FALSE(received.as_ref().unwrap()->is_closed());
+    EXPECT_NE(received.as_ref().unwrap()->peer_address().find("127.0.0.1:"), std::string::npos);
+    received.as_ref().unwrap()->close();
+    EXPECT_TRUE(received.as_ref().unwrap()->is_closed());
 }
 
 TEST_F(TcpListenerTest, AcceptedConnectionDroppedIfNoCallback) {
@@ -325,7 +325,7 @@ TEST_F(TcpListenerTest, AcceptedConnectionDroppedIfNoCallback) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpListenerTest, ChannelProxyForwardsAllOps) {
-    auto proxy = make_tcp_listener_channel_proxy(listener_->clone());
+    auto proxy = make_tcp_listener_channel_proxy(listener_.as_ref().unwrap().clone());
 
     EXPECT_FALSE(proxy->is_closed());
     EXPECT_EQ(proxy->local_address(), "");

@@ -108,28 +108,33 @@ inline rusty::Arc<RpcServiceContext> make_test_ctx() {
 
 class ServerChannelSendTest : public ::testing::Test {
  protected:
+    // L1c-tests: rusty::Option<T> swap. See
+    // rpc_client_channel_recv_test.cc for the API translation
+    // pattern (`emplace` → `= rusty::Some(...)`, `reset` → `=
+    // rusty::None`, `(*opt)` → `opt.as_ref().unwrap()`).
     void SetUp() override {
-        ctx_.emplace(make_test_ctx());
+        ctx_ = rusty::Some(make_test_ctx());
         // socket fd = -1: legacy path is unreachable (we never call
         // handle_read / handle_write); we only exercise reply().
-        sconn_.emplace(rusty::Arc<ServerConnection>::make(
-            (*ctx_).clone(), /*socket=*/-1));
+        sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
+            ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
     }
 
     void TearDown() override {
-        sconn_.reset();
-        ctx_.reset();
+        sconn_ = rusty::None;
+        ctx_ = rusty::None;
     }
 
     ServerConnection& mut_sconn() {
-        return const_cast<ServerConnection&>(*(*sconn_).get());
+        return const_cast<ServerConnection&>(
+            *sconn_.as_ref().unwrap().get());
     }
     const ServerConnection& sconn() const {
-        return *(*sconn_).get();
+        return *sconn_.as_ref().unwrap().get();
     }
 
-    std::optional<rusty::Arc<RpcServiceContext>> ctx_;
-    std::optional<rusty::Arc<ServerConnection>>  sconn_;
+    rusty::Option<rusty::Arc<RpcServiceContext>> ctx_;
+    rusty::Option<rusty::Arc<ServerConnection>>  sconn_;
 };
 
 // ---------------------------------------------------------------------------

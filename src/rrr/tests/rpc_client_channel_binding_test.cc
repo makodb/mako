@@ -81,27 +81,27 @@ inline ChannelConnectionProxy make_stub_channel_proxy() {
 class ClientChannelBindingTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        poll_thread_.emplace(PollThread::create());
-        conn_.emplace(rusty::Arc<ClientConnection>::make((*poll_thread_).clone()));
+        poll_thread_ = rusty::Some(PollThread::create());
+        conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(poll_thread_.as_ref().unwrap().clone()));
     }
 
     void TearDown() override {
-        conn_.reset();
-        if (poll_thread_) {
-            (*poll_thread_)->shutdown();
-            poll_thread_.reset();
+        conn_ = rusty::None;
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+            poll_thread_ = rusty::None;
         }
     }
 
     ClientConnection& mut_conn() {
-        return const_cast<ClientConnection&>(*(*conn_).get());
+        return const_cast<ClientConnection&>(*conn_.as_ref().unwrap().get());
     }
     const ClientConnection& conn() const {
-        return *(*conn_).get();
+        return *conn_.as_ref().unwrap().get();
     }
 
-    std::optional<rusty::Arc<PollThread>>      poll_thread_;
-    std::optional<rusty::Arc<ClientConnection>> conn_;
+    rusty::Option<rusty::Arc<PollThread>>      poll_thread_;
+    rusty::Option<rusty::Arc<ClientConnection>> conn_;
 };
 
 // ---------------------------------------------------------------------------

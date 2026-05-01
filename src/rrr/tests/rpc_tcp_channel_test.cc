@@ -57,7 +57,7 @@ class TcpConnectionTest : public ::testing::Test {
         ASSERT_EQ(0, set_nonblocking(sv[1]));
         conn_fd_ = sv[0];
         peer_fd_ = sv[1];
-        conn_.emplace(rusty::Arc<TcpConnection>::make(conn_fd_, "test-peer"));
+        conn_ = rusty::Some(rusty::Arc<TcpConnection>::make(conn_fd_, "test-peer"));
     }
 
     void TearDown() override {
@@ -67,7 +67,7 @@ class TcpConnectionTest : public ::testing::Test {
         }
         // The connection's destructor closes conn_fd_ if not already
         // closed. Dropping the optional drops the Arc.
-        conn_.reset();
+        conn_ = rusty::None;
     }
 
     // `rusty::Arc<T>` exposes only `const T*` via `operator->`, but
@@ -75,10 +75,10 @@ class TcpConnectionTest : public ::testing::Test {
     // are non-const. Mirror the `mut_conn()` idiom used by the proxy
     // adapters to get mutable access in test bodies.
     TcpConnection& mut_conn() {
-        return const_cast<TcpConnection&>(*conn_->get());
+        return const_cast<TcpConnection&>(*conn_.as_ref().unwrap().get());
     }
     const TcpConnection& conn() const {
-        return *conn_->get();
+        return *conn_.as_ref().unwrap().get();
     }
 
     static int set_nonblocking(int fd) {
@@ -109,7 +109,7 @@ class TcpConnectionTest : public ::testing::Test {
 
     int conn_fd_ = -1;
     int peer_fd_ = -1;
-    std::optional<rusty::Arc<TcpConnection>> conn_;
+    rusty::Option<rusty::Arc<TcpConnection>> conn_;
 };
 
 // ---------------------------------------------------------------------------
@@ -442,7 +442,7 @@ TEST_F(TcpConnectionTest, ContentSizeReportsBufferedBytes) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpConnectionTest, ChannelProxyForwardsAllOps) {
-    auto proxy = make_tcp_connection_channel_proxy(conn_->clone());
+    auto proxy = make_tcp_connection_channel_proxy(conn_.as_ref().unwrap().clone());
 
     int frames_seen = 0;
     proxy->set_on_frame([&](const ChannelFrame&) { ++frames_seen; });

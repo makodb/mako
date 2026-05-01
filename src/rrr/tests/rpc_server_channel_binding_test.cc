@@ -75,23 +75,26 @@ inline ChannelFactoryProxy make_stub_factory_proxy() {
 
 class ServerChannelBindingTest : public ::testing::Test {
  protected:
+    // L1c-tests: rusty::Option<T> swap. See
+    // rpc_client_channel_recv_test.cc for the API translation.
     void SetUp() override {
-        poll_thread_.emplace(PollThread::create());
-        server_ = rusty::make_box<Server>(rusty::Some((*poll_thread_).clone()));
+        poll_thread_ = rusty::Some(PollThread::create());
+        server_ = rusty::make_box<Server>(
+            rusty::Some(poll_thread_.as_ref().unwrap().clone()));
     }
 
     void TearDown() override {
-        server_.reset();
-        if (poll_thread_) {
-            (*poll_thread_)->shutdown();
-            poll_thread_.reset();
+        server_ = rusty::None;
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+            poll_thread_ = rusty::None;
         }
     }
 
-    Server& server() { return **server_; }
+    Server& server() { return *server_.as_ref().unwrap(); }
 
-    std::optional<rusty::Arc<PollThread>>     poll_thread_;
-    std::optional<rusty::Box<Server>>         server_;
+    rusty::Option<rusty::Arc<PollThread>>     poll_thread_;
+    rusty::Option<rusty::Box<Server>>         server_;
 };
 
 // ---------------------------------------------------------------------------

@@ -200,10 +200,10 @@ inline ChannelFactoryProxy make_fake_factory_proxy(
 class ClientChannelFactoryTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        poll_thread_.emplace(PollThread::create());
-        conn_.emplace(rusty::Arc<ClientConnection>::make((*poll_thread_).clone()));
+        poll_thread_ = rusty::Some(PollThread::create());
+        conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(poll_thread_.as_ref().unwrap().clone()));
         mut_conn().install_self_weak_for_testing(
-            WeakClientConnection{rusty::sync::downgrade(*conn_)});
+            WeakClientConnection{rusty::sync::downgrade(conn_.as_ref().unwrap())});
 
         factory_ = std::make_shared<FakeChannelFactory>();
         mut_conn().bind_factory(make_fake_factory_proxy(factory_));
@@ -212,19 +212,19 @@ class ClientChannelFactoryTest : public ::testing::Test {
     void TearDown() override {
         // Drop conn first; the recv-loop fiber holds a Weak so the
         // teardown is straightforward.
-        conn_.reset();
-        if (poll_thread_) {
-            (*poll_thread_)->shutdown();
-            poll_thread_.reset();
+        conn_ = rusty::None;
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+            poll_thread_ = rusty::None;
         }
     }
 
     ClientConnection& mut_conn() {
-        return const_cast<ClientConnection&>(*(*conn_).get());
+        return const_cast<ClientConnection&>(*conn_.as_ref().unwrap().get());
     }
 
-    std::optional<rusty::Arc<PollThread>>       poll_thread_;
-    std::optional<rusty::Arc<ClientConnection>> conn_;
+    rusty::Option<rusty::Arc<PollThread>>       poll_thread_;
+    rusty::Option<rusty::Arc<ClientConnection>> conn_;
     std::shared_ptr<FakeChannelFactory>         factory_;
 };
 

@@ -123,14 +123,14 @@ protected:
     };
 
     // @unsafe - Creates and starts c-node server
-    std::optional<rusty::Box<CNodeServer>> create_cnode_server(int port) {
+    rusty::Option<rusty::Box<CNodeServer>> create_cnode_server(int port) {
         auto cnode = rusty::make_box<CNodeServer>();
         cnode->port = port;
 
         // Create and open store
         cnode->store = new ConfigStore(test_db_path_);
         if (!cnode->store->open()) {
-            return std::nullopt;
+            return rusty::None;
         }
 
         // Create service
@@ -143,7 +143,7 @@ protected:
 
         std::string addr = "0.0.0.0:" + std::to_string(port);
         if (cnode->rpc_server->start(addr.c_str()) != 0) {
-            return std::nullopt;
+            return rusty::None;
         }
 
         return cnode;
@@ -232,11 +232,11 @@ TEST_F(ShardingStartupTest, CNodeServesShardingPolicyViaRpc) {
 
     // Start c-node server with policy
     auto cnode = create_cnode_server(port);
-    ASSERT_TRUE(cnode.has_value());
+    ASSERT_TRUE(cnode.is_some());
 
     // Store a policy
     auto policy = create_sample_policy();
-    EXPECT_TRUE((*cnode)->store->save_sharding_policy(policy));
+    EXPECT_TRUE(cnode.as_ref().unwrap()->store->save_sharding_policy(policy));
 
     // Give server time to start
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -265,7 +265,7 @@ TEST_F(ShardingStartupTest, CNodeServesNoPolicyWhenEmpty) {
 
     // Start c-node server without any policy
     auto cnode = create_cnode_server(port);
-    ASSERT_TRUE(cnode.has_value());
+    ASSERT_TRUE(cnode.is_some());
 
     // Give server time to start
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -294,22 +294,22 @@ TEST_F(ShardingStartupTest, InitializerSendsPolicyToCNode) {
 
     // Start c-node server
     auto cnode = create_cnode_server(port);
-    ASSERT_TRUE(cnode.has_value());
+    ASSERT_TRUE(cnode.is_some());
 
     // Give server time to start
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Verify no policy initially
-    EXPECT_FALSE((*cnode)->store->has_sharding_policy());
+    EXPECT_FALSE(cnode.as_ref().unwrap()->store->has_sharding_policy());
 
     // Send TPC-C policy from initializer
     std::string addr = "127.0.0.1:" + std::to_string(port);
     EXPECT_TRUE(mako::send_tpcc_sharding_policy_to_cnode(addr, 10, 2));
 
     // Verify policy is stored
-    EXPECT_TRUE((*cnode)->store->has_sharding_policy());
+    EXPECT_TRUE(cnode.as_ref().unwrap()->store->has_sharding_policy());
 
-    auto stored = (*cnode)->store->load_sharding_policy();
+    auto stored = cnode.as_ref().unwrap()->store->load_sharding_policy();
     EXPECT_TRUE(stored.is_some());
     EXPECT_EQ(2u, stored.unwrap().num_shards);
 }
@@ -320,7 +320,7 @@ TEST_F(ShardingStartupTest, InitializerInitializesLocalCache) {
 
     // Start c-node server
     auto cnode = create_cnode_server(port);
-    ASSERT_TRUE(cnode.has_value());
+    ASSERT_TRUE(cnode.is_some());
 
     // Give server time to start
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -356,10 +356,10 @@ TEST_F(ShardingStartupTest, DataNodeFetchesFromCNode) {
 
     // Start c-node server with policy
     auto cnode = create_cnode_server(port);
-    ASSERT_TRUE(cnode.has_value());
+    ASSERT_TRUE(cnode.is_some());
 
     auto policy = create_sample_policy();
-    EXPECT_TRUE((*cnode)->store->save_sharding_policy(policy));
+    EXPECT_TRUE(cnode.as_ref().unwrap()->store->save_sharding_policy(policy));
 
     // Give server time to start
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -389,7 +389,7 @@ TEST_F(ShardingStartupTest, DataNodeFallsBackWhenNoPolicyExists) {
 
     // Start c-node server WITHOUT policy
     auto cnode = create_cnode_server(port);
-    ASSERT_TRUE(cnode.has_value());
+    ASSERT_TRUE(cnode.is_some());
 
     // Give server time to start
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -420,16 +420,16 @@ TEST_F(ShardingStartupTest, FullStartupFlow) {
 
     // Step 1: C-node starts (first boot, no policy)
     auto cnode = create_cnode_server(port);
-    ASSERT_TRUE(cnode.has_value());
+    ASSERT_TRUE(cnode.is_some());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    EXPECT_FALSE((*cnode)->store->has_sharding_policy());
+    EXPECT_FALSE(cnode.as_ref().unwrap()->store->has_sharding_policy());
 
     // Step 2: Initializer sends policy to c-node
     std::string addr = "127.0.0.1:" + std::to_string(port);
     EXPECT_TRUE(mako::send_tpcc_sharding_policy_to_cnode(addr, 10, 2));
 
-    EXPECT_TRUE((*cnode)->store->has_sharding_policy());
+    EXPECT_TRUE(cnode.as_ref().unwrap()->store->has_sharding_policy());
 
     // Step 3: Data node fetches policy from c-node
     get_sharding_policy_cache().clear();
@@ -465,7 +465,7 @@ TEST_F(ShardingStartupTest, StartupAfterReboot) {
     // First boot: initializer sets policy
     {
         auto cnode = create_cnode_server(port);
-        ASSERT_TRUE(cnode.has_value());
+        ASSERT_TRUE(cnode.is_some());
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
         std::string addr = "127.0.0.1:" + std::to_string(port);
@@ -478,11 +478,11 @@ TEST_F(ShardingStartupTest, StartupAfterReboot) {
     int reboot_port = next_port();
     {
         auto cnode = create_cnode_server(reboot_port);
-        ASSERT_TRUE(cnode.has_value());
+        ASSERT_TRUE(cnode.is_some());
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
         // Policy should be available from RocksDB
-        EXPECT_TRUE((*cnode)->store->has_sharding_policy());
+        EXPECT_TRUE(cnode.as_ref().unwrap()->store->has_sharding_policy());
 
         // Data node can still fetch
         get_sharding_policy_cache().clear();

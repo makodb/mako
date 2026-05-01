@@ -188,15 +188,22 @@ void pump_until(Pred&& pred, int max_iterations = 1000) {
 class ClientChannelRecvTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        poll_thread_.emplace(PollThread::create());
-        conn_.emplace(rusty::Arc<ClientConnection>::make((*poll_thread_).clone()));
+        // L1c-tests: rusty::Option<T> swap. `(*opt)` no longer
+        // returns the inner T (it returns the Option itself);
+        // use `opt.as_ref().unwrap()` for borrowed access.
+        // `emplace`/`reset` aren't on rusty::Option — assign
+        // `rusty::Some(...)` / `rusty::None`.
+        poll_thread_ = rusty::Some(PollThread::create());
+        conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(
+            poll_thread_.as_ref().unwrap().clone()));
         // Production goes through `Client::connect` which wires the
         // weak self-pointer; the test constructs the connection
         // directly so we install it here. Without this, the recv-loop
         // fiber's lambda would fail its `Weak::upgrade` and exit
         // before parking on the FiberChannel.
         mut_conn().install_self_weak_for_testing(
-            WeakClientConnection{rusty::sync::downgrade(*conn_)});
+            WeakClientConnection{
+                rusty::sync::downgrade(conn_.as_ref().unwrap())});
         stub_ = std::make_shared<RecvDriverChannelStub>();
         mut_conn().bind_channel(make_recv_driver_proxy(stub_));
     }
@@ -208,19 +215,20 @@ class ClientChannelRecvTest : public ::testing::Test {
             stub_->deliver_closed();
             (void)Reactor::get_reactor()->loop();
         }
-        conn_.reset();
-        if (poll_thread_) {
-            (*poll_thread_)->shutdown();
-            poll_thread_.reset();
+        conn_ = rusty::None;
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+            poll_thread_ = rusty::None;
         }
     }
 
     ClientConnection& mut_conn() {
-        return const_cast<ClientConnection&>(*(*conn_).get());
+        return const_cast<ClientConnection&>(
+            *conn_.as_ref().unwrap().get());
     }
 
-    std::optional<rusty::Arc<PollThread>>      poll_thread_;
-    std::optional<rusty::Arc<ClientConnection>> conn_;
+    rusty::Option<rusty::Arc<PollThread>>      poll_thread_;
+    rusty::Option<rusty::Arc<ClientConnection>> conn_;
     std::shared_ptr<RecvDriverChannelStub>     stub_;
 };
 
