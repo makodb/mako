@@ -48,7 +48,6 @@
 //
 // @external: {
 //   const_cast: [unsafe]
-//   std::function::operator=: [safe]
 //   std::vector::operator[]: [safe]
 //   rusty::sync::Weak::Weak: [safe]
 //   rrr::WeakServerConnection: [safe]
