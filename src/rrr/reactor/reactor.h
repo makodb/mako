@@ -14,6 +14,7 @@
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/fn.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/mpsc.hpp>
 #include <rusty/sync/atomic.hpp>
@@ -190,10 +191,14 @@ class Reactor {
   rusty::Cell<int64_t> n_active_fibers_2_{0};
   rusty::Cell<int64_t> n_idle_fibers_{0};
   // Stackless coroutine task slots managed by the reactor loop.
+  // `poll_once` is move-only (rusty::Function): `process_stackless_tasks`
+  // moves the function out of its slot before invoking it (so the
+  // reactor's RefCell guards on `stackless_tasks_` aren't held across
+  // user code), then moves it back if the poll didn't return Ready.
   struct StacklessTaskEntry {
     bool active = false;
     bool queued = false;
-    std::function<bool(rusty::Context&)> poll_once;
+    rusty::Function<bool(rusty::Context&)> poll_once;
   };
   rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
   rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
@@ -241,7 +246,7 @@ class Reactor {
   void enqueue_stackless_task(size_t idx) const;
 
   // @safe - Register a stackless task poller and return slot index.
-  size_t register_stackless_poller(std::function<bool(rusty::Context&)> poller) const;
+  size_t register_stackless_poller(rusty::Function<bool(rusty::Context&)> poller) const;
 
   // @safe - Poll all queued stackless tasks once.
   // Returns true if at least one stackless task was polled.
