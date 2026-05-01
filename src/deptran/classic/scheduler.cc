@@ -377,8 +377,12 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
 
 bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  auto commit_cmd = marshallable_cast<TpcCommitCommand>(
-      std::shared_ptr<Marshallable>(&tpc_commit_cmd, [](Marshallable*) {}));
+  // Use the reference-taking marshallable_cast<T>(Marshallable&) overload
+  // (declared in marshal.hpp:430) instead of forging a non-owning
+  // shared_ptr with a no-op deleter — the overload already does the right
+  // thing internally and is the canonical API for "I have a reference to
+  // a Marshallable, downcast it to T".
+  auto commit_cmd = marshallable_cast<TpcCommitCommand>(tpc_commit_cmd);
   verify(commit_cmd != nullptr);
   auto tx_id = commit_cmd->tx_id_;
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetTx(tx_id));
