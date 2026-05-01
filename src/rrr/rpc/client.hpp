@@ -2049,27 +2049,29 @@ public:
     int reconnect(rusty::Function<void(bool)> on_complete = nullptr) const;
 
     // @safe - Register lifecycle callbacks.
-    void add_on_connected(ConnectionCallback cb) const {
+    // Each callback is wrapped in an Arc<Function const> by CallbackManager so
+    // it can be cloned-out under lock and invoked without holding it.
+    void add_on_connected(rusty::Function<void() const> cb) const {
         callback_manager_->add_on_connected(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_disconnected(ConnectionCallback cb) const {
+    void add_on_disconnected(rusty::Function<void() const> cb) const {
         callback_manager_->add_on_disconnected(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_error(ErrorCallback cb) const {
+    void add_on_error(rusty::Function<void(RpcError, const std::string&) const> cb) const {
         callback_manager_->add_on_error(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_reconnecting(ConnectionCallback cb) const {
+    void add_on_reconnecting(rusty::Function<void() const> cb) const {
         callback_manager_->add_on_reconnecting(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_reconnected(ReconnectCallback cb) const {
+    void add_on_reconnected(rusty::Function<void(bool) const> cb) const {
         callback_manager_->add_on_reconnected(std::move(cb));
     }
 
