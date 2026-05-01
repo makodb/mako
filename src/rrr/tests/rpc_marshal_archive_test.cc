@@ -1939,7 +1939,7 @@ TEST(MarshallDeputySerializableField, FieldStartsNullAfterSetMarshallable) {
 }
 
 TEST(MarshallDeputySerializableField, FieldStartsNullForSerializableCtor) {
-  // The SerializableConcept ctor follows the same lazy path.
+  // The Serializable-side ctor (any non-Marshallable T) follows the same lazy path.
   auto cmd = std::make_shared<CanaryDeputyCommand>();
   cmd->header = 99;
   cmd->name = "from serializable";

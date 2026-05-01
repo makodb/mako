@@ -20,7 +20,7 @@ typedef vector<RccTx*> RccScc;
 // continues to use the existing MarshallDeputy(shared_ptr<T>) ctor
 // and set_marshallable<T> templates (Phase 4d-prep relaxed their
 // requires clauses to dispatch via wrap_typed_marshallable's bridge
-// overload for SerializableConcept T).
+// overload for any non-Marshallable T).
 class EmptyGraph {
  public:
   static constexpr int32_t kMarshallKind = MarshallDeputy::EMPTY_GRAPH;

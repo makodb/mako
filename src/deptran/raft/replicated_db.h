@@ -33,7 +33,7 @@ struct KVOperation {
 //   for each batch op: uint8_t op | std::string key | std::string value
 // Construction sites use `wrap_typed_marshallable` (still works through
 // the Phase 4d-prep bridge dispatch) and `marshallable_cast<T>` (also
-// dispatched through the bridge for SerializableConcept T). The
+// dispatched through the bridge for any non-Marshallable T). The
 // legacy `to_marshal` / `from_marshal` member functions are kept as
 // thin wrappers that build a BinaryWriteArchive/BinaryReadArchive on
 // top of a MarshalSink/MarshalSource and delegate to save/load — this
@@ -181,5 +181,5 @@ private:
 // for the `reg_serializable_in_deputy` registration. Construction
 // sites use `wrap_typed_marshallable(cmd)`; cast sites use
 // `marshallable_cast<ReplicatedDBCommand>(value)` — both routed
-// through the Phase 4d-prep bridge overloads to the SerializableConcept
-// path.)
+// through the Phase 4d-prep bridge overloads — the non-Marshallable
+// path that wraps as `SerializableMarshallableAdapter`.)

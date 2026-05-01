@@ -240,9 +240,8 @@ inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
 
 // ---- MarshallDeputy ↔ Serializable registration --------------------
 //
-// Phase 4 prep: register a Serializable type T (one satisfying
-// `SerializableConcept` — has `save`/`load`/`kind` methods but no
-// Marshallable inheritance) under `kind` so that
+// Phase 4 prep: register a Serializable type T (any non-Marshallable
+// type that has the `save`/`load`/`kind` triplet) under `kind` so that
 // `MarshallDeputy::operator>>` can decode an instance of T from the
 // wire. The factory creates a fresh T-backed SerializableProxy and
 // wraps it as a Marshallable via `SerializableMarshallableAdapter`,
@@ -251,11 +250,12 @@ inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
 // `load`. T is therefore byte-for-byte indistinguishable on the wire
 // from a Marshallable subclass implementing the same fields.
 //
-// (Workstream N Phase 5b-5 deleted the legacy
-// `TypedMarshallableAdapter` trait, so the original "no
-// TypedMarshallableAdapter trait" qualifier here is moot;
-// `SerializableConcept` is now the only path for a non-Marshallable
-// T to register here.)
+// L6-pivot (2026-05-01): the prior dispatch used a `SerializableConcept`
+// C++20 concept to constrain the bridge templates.  That concept was
+// retired (see `marshal_archive.hpp` for the rationale) — the
+// templates now dispatch on `!std::is_base_of_v<Marshallable, T>`
+// alone and trust the proxy library to reject wrong-shaped T at
+// `pro::make_proxy<>` instantiation time.
 //
 // Usage (mirrors `MarshallDeputy::reg_initializer<T>(kind)` for
 // Marshallable types):
@@ -264,8 +264,8 @@ inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
 //       rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
 //
 // Write-side construction: `MarshallDeputy(make_shared<MyCommand>())`
-// works directly — the `MarshallDeputy(shared_ptr<T>)` template ctor's
-// `SerializableConcept` requires-clause routes through
+// works directly — the `MarshallDeputy(shared_ptr<T>)` template ctor
+// (constrained on `!is_base_of_v<Marshallable, T>`) routes through
 // `wrap_typed_marshallable` → `wrap_serializable` → `as_marshallable`
 // to land a `SerializableMarshallableAdapter` in `inner_sp_data_`.
 // No dedicated `MarshallDeputy(SerializableProxy)` ctor exists; Phase
@@ -422,9 +422,14 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
 // `wrap_typed_marshallable(make_shared<TpcCommitCommand>())` continue
 // to compile and produce identical wire bytes after TpcCommitCommand
 // is migrated to Serializable.
+//
+// L6-pivot (2026-05-01): SerializableConcept dropped from the
+// requires-clause.  T is assumed to be Serializable (save/load/kind);
+// if not, the failure surfaces inside `pro::make_proxy<>` rather than
+// at this constraint.  Removes the C++20-concept boilerplate that was
+// redundant with what the proxy library already enforces.
 template<typename T>
-  requires (!std::is_base_of_v<Marshallable, T> &&
-            SerializableConcept<T>)
+  requires (!std::is_base_of_v<Marshallable, T>)
 inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
     std::shared_ptr<T> typed) {
   return wrap_serializable(std::move(typed));
@@ -437,9 +442,14 @@ inline std::shared_ptr<Marshallable> wrap_typed_marshallable(
 // `shared_ptr<T> = marshallable_cast<T>(value)` call shape; the
 // returned shared_ptr extends the lifetime of `value`'s control block
 // (the SerializableMarshallableAdapter).
+//
+// L6-pivot (2026-05-01): SerializableConcept dropped from the
+// requires-clause.  Wrong-T calls now silently return nullptr at
+// runtime via the proxy_cast probe in `serializable_cast<T>` rather
+// than failing at this constraint — the trade-off accepted to remove
+// the redundant concept layer.
 template<typename T>
-  requires (!std::is_base_of_v<Marshallable, T> &&
-            SerializableConcept<T>)
+  requires (!std::is_base_of_v<Marshallable, T>)
 inline std::shared_ptr<T> marshallable_cast(
     const std::shared_ptr<Marshallable>& value) {
   T* p = serializable_cast<T>(value);

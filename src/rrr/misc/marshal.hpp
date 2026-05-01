@@ -42,12 +42,18 @@
 
 #include "../base/all.hpp"
 
-// Workstream N Phase 4d-prep: pull in `marshal_archive.hpp` so
-// `SerializableConcept<T>` is visible at template definition time
-// for `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>`.
-// This lets those templates dispatch transparently to the
-// `wrap_typed_marshallable` bridge overload (declared below) for
-// migrated Serializable types — call sites need no updates.
+// Workstream N Phase 4d-prep: pull in `marshal_archive.hpp` for
+// `SerializableProxy` / `SerializableFacade` definitions used by
+// `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` — the
+// templates dispatch transparently to the `wrap_typed_marshallable`
+// bridge overload (declared below) for migrated Serializable types
+// (any non-Marshallable T) — call sites need no updates.
+//
+// L6-pivot (2026-05-01): the `SerializableConcept<T>` constraint was
+// dropped from the bridge overloads here; templates now dispatch on
+// `!std::is_base_of_v<Marshallable, T>` alone and trust the proxy
+// library to reject wrong-shaped T at instantiation / runtime.  See
+// `marshal_archive.hpp` for the retirement rationale.
 //
 // `marshal_archive.hpp` forward-declares `class Marshal` rather than
 // including this file, so this is acyclic. The archive's MarshalSink/
@@ -129,24 +135,31 @@ class Marshallable {
 // `rpc_marshallable_proxy_test.cc`; that fixture went away in this
 // commit too. Two paths remain for `wrap_typed_marshallable` /
 // `marshallable_cast`: direct Marshallable subclasses (the C-style
-// path) and SerializableConcept types (the bridge path).
+// path) and Serializable types — any non-Marshallable T (the bridge
+// path).
 
 template <typename T>
 inline constexpr bool kAlwaysFalse = false;
 
 // Forward declaration of the bridge `wrap_typed_marshallable<T>` for
-// SerializableConcept T. The actual definition lives in
-// `marshal_serializable_bridge.hpp` (included via the rrr.hpp
-// umbrella in production code).
+// any non-Marshallable T (assumed Serializable). The actual definition
+// lives in `marshal_serializable_bridge.hpp` (included via the
+// rrr.hpp umbrella in production code).
 //
 // The forward decl is needed here so that two-phase template lookup
 // inside `MarshallDeputy::set_marshallable<T>` (and the matching
 // constructor) finds this overload during Phase 1 unqualified lookup
 // at template definition. ADL on `shared_ptr<T>` only adds `std`
 // and T's namespace — not `rrr`.
+// L6-pivot (2026-05-01): SerializableConcept dropped from the
+// requires-clause.  The bridge overload now matches any non-Marshallable
+// T; if T is not actually Serializable, the failure surfaces inside
+// `pro::make_proxy<SerializableFacade, T>(...)` (compile-time check that
+// T has the required save/load/kind members).  Removes the C++20-concept
+// boilerplate from this file's dispatch, which was redundant with what
+// the proxy library already enforces.
 template <typename T>
-  requires (!std::is_base_of_v<Marshallable, T> &&
-            SerializableConcept<T>)
+  requires (!std::is_base_of_v<Marshallable, T>)
 std::shared_ptr<Marshallable> wrap_typed_marshallable(
     std::shared_ptr<T> typed);
 
@@ -308,15 +321,17 @@ class MarshallDeputy {
           std::static_pointer_cast<rrr::Marshallable>(std::move(sp_m)));
     }
 
-    // Workstream N Phase 5b-5: simplified — only SerializableConcept T
-    // remains. The bridge `wrap_typed_marshallable<T>` forward-decl
-    // above lets Phase 1 unqualified lookup find it during template
-    // instantiation.
+    // Workstream N Phase 5b-5 + L6-pivot (2026-05-01): simplified —
+    // only the non-Marshallable branch remains.  The bridge
+    // `wrap_typed_marshallable<T>` forward-decl above lets Phase 1
+    // unqualified lookup find it during template instantiation.  T is
+    // assumed to satisfy the Serializable shape (save/load/kind); if
+    // not, the failure surfaces inside `pro::make_proxy<>` rather than
+    // at this constraint.
     // L6-A2: also non-explicit (see above).
     template<typename T>
     MarshallDeputy(std::shared_ptr<T> sp_t)
-      requires (!std::is_base_of_v<rrr::Marshallable, T> &&
-                SerializableConcept<T>)
+      requires (!std::is_base_of_v<rrr::Marshallable, T>)
     {
       set_marshallable(std::move(sp_t));
     }
@@ -344,14 +359,13 @@ class MarshallDeputy {
     void set_marshallable(std::shared_ptr<rrr::Marshallable> m);
 
     // @unsafe - Template delegates to non-borrow-checked set_marshallable.
-    // Workstream N Phase 5b-5: simplified — only SerializableConcept T
-    // remains. The bridge `wrap_typed_marshallable<T>` forward-decl
-    // above lets Phase 1 unqualified lookup find it during template
-    // instantiation.
+    // Workstream N Phase 5b-5 + L6-pivot (2026-05-01): simplified —
+    // only the non-Marshallable branch remains.  The bridge
+    // `wrap_typed_marshallable<T>` forward-decl above lets Phase 1
+    // unqualified lookup find it during template instantiation.
     template <typename T>
     void set_marshallable(std::shared_ptr<T> typed)
-      requires (!std::is_base_of_v<rrr::Marshallable, T> &&
-                SerializableConcept<T>)
+      requires (!std::is_base_of_v<rrr::Marshallable, T>)
     {
       set_marshallable(wrap_typed_marshallable(std::move(typed)));
     }
@@ -416,12 +430,12 @@ class MarshallDeputy {
 // MarshallDeputy::inner().
 //
 // Workstream N Phase 5b-5: simplified — only Marshallable subclasses
-// hit this overload. SerializableConcept T's are handled by the
-// matching overload in `marshal_serializable_bridge.hpp`, which
-// routes through `serializable_cast<T>` and synthesizes a
-// `shared_ptr<T>` aliasing the underlying
-// SerializableMarshallableAdapter. Call sites continue to use
-// `marshallable_cast<T>(...)` regardless of T's migration state.
+// hit this overload.  Serializable types — any non-Marshallable T —
+// are handled by the matching overload in
+// `marshal_serializable_bridge.hpp`, which routes through
+// `serializable_cast<T>` and synthesizes a `shared_ptr<T>` aliasing
+// the underlying SerializableMarshallableAdapter.  Call sites continue
+// to use `marshallable_cast<T>(...)` regardless of T's migration state.
 template <typename T>
   requires std::is_base_of_v<Marshallable, T>
 inline std::shared_ptr<T> marshallable_cast(
