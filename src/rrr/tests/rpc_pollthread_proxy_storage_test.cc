@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <rusty/arc.hpp>
+#include <rusty/function.hpp>
 
 #include "../rrr.hpp"
 
@@ -18,7 +19,10 @@ namespace {
 
 using namespace std::chrono;
 
-bool wait_until(const std::function<bool()>& pred, int timeout_ms) {
+// L5r: rusty::Function takes the predicate by value-with-move; the
+// non-const operator() is called in the loop body.  Each call site
+// passes a fresh lambda which auto-converts via Function(Callable&&).
+bool wait_until(rusty::Function<bool()> pred, int timeout_ms) {
   const auto deadline = steady_clock::now() + milliseconds(timeout_ms);
   while (steady_clock::now() < deadline) {
     if (pred()) {
