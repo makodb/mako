@@ -223,7 +223,9 @@ class TcpConnection {
 
     // User callbacks, last-writer-wins. Setters and reads are
     // serialized by the spinlock so that `send_frame` and the poll
-    // thread don't race over them. (`std::function` is not atomic.)
+    // thread don't race over them. (`OnXCallback` is the
+    // Arc<Function const>-backed wrapper from channel.hpp; storage
+    // ranks copy-cheaply for the channel callsites that need it.)
     SpinMutex<OnFrameCallback>  on_frame_{OnFrameCallback{}};
     SpinMutex<OnClosedCallback> on_closed_{OnClosedCallback{}};
     SpinMutex<OnErrorCallback>  on_error_{OnErrorCallback{}};

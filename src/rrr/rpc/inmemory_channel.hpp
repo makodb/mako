@@ -181,7 +181,11 @@ struct InMemoryConnectionState {
     // All per-side callbacks, closed flags, and fault-injection knobs
     // live here; access through `inner.lock().unwrap()->...`.
     struct Inner {
-        // A-side state
+        // A-side state.  `OnXCallback` is the Arc<Function const>-
+        // backed wrapper from channel.hpp; default-construction holds
+        // an Arc wrapping an empty inner Function, which the wrapper
+        // surfaces as `operator bool() == false` (the unset-callback
+        // state).
         std::string       a_peer_address;
         OnFrameCallback   a_on_frame;
         OnClosedCallback  a_on_closed;

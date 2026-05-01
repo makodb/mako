@@ -7,6 +7,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <rusty/arc.hpp>
+#include <rusty/function.hpp>
+
 #ifdef RR
 #pragma push_macro("RR")
 #undef RR
@@ -186,11 +189,66 @@ struct ChannelFrame {
  *                             if the error is fatal.
  *
  * All callbacks run on the connection's poll thread.
+ *
+ * Storage is `Arc<Function<...const>>` (a thin wrapper struct hides
+ * this).  This lets the (transport-specific) implementation clone the
+ * Arc under its lock and invoke without holding it — the in-memory
+ * transport relies on this for the receiver→sender re-entrant
+ * `send_frame` path.  Arc clone is a cheap atomic refcount bump; the
+ * contained Function is move-only and shared via the Arc.  The wrapper
+ * preserves the std::function-style API (default-constructible, copy-
+ * able, implicit lambda construction, `operator bool`/`operator()`),
+ * so call sites do not change.
  */
-using OnFrameCallback  = std::function<void(const ChannelFrame&)>;
-using OnClosedCallback = std::function<void(ChannelError reason)>;
-using OnErrorCallback  = std::function<void(ChannelError err,
-                                            std::string_view message)>;
+namespace detail {
+template<typename Sig>
+struct CallbackWrapper {
+    rusty::Arc<rusty::Function<Sig>> inner;
+
+    // Default ctor: Arc holds an empty Function (the unset state).
+    // `operator bool` returns false in this state.
+    CallbackWrapper()
+        : inner(rusty::Arc<rusty::Function<Sig>>::make()) {}
+
+    // Implicit construct from any callable that fits the const-call
+    // signature; mirrors the prior `std::function<Sig>(callable)`
+    // convenience.
+    template<typename Callable,
+             typename = std::enable_if_t<
+                 !std::is_same_v<std::decay_t<Callable>, CallbackWrapper> &&
+                 std::is_constructible_v<rusty::Function<Sig>, Callable&&>
+             >>
+    CallbackWrapper(Callable&& c)
+        : inner(rusty::Arc<rusty::Function<Sig>>::make(std::forward<Callable>(c))) {}
+
+    // Copy/move follow Arc semantics (Arc is copyable; copy = atomic
+    // refcount bump, the inner Function is shared, not duplicated).
+    CallbackWrapper(const CallbackWrapper&) = default;
+    CallbackWrapper(CallbackWrapper&&) noexcept = default;
+    CallbackWrapper& operator=(const CallbackWrapper&) = default;
+    CallbackWrapper& operator=(CallbackWrapper&&) noexcept = default;
+
+    // Truthy iff the inner Function is set (not the default-empty
+    // state). Delegates to rusty::Function::operator bool.
+    explicit operator bool() const noexcept {
+        return static_cast<bool>(*inner);
+    }
+
+    // Forward call to the inner Function. Calling an unset wrapper
+    // aborts (matching rusty::Function::operator() on an empty
+    // Function), so callers must guard with `if (cb)`.
+    template<typename... Args>
+    auto operator()(Args&&... args) const
+        -> decltype((*inner)(std::forward<Args>(args)...)) {
+        return (*inner)(std::forward<Args>(args)...);
+    }
+};
+}  // namespace detail
+
+using OnFrameCallback  = detail::CallbackWrapper<void(const ChannelFrame&) const>;
+using OnClosedCallback = detail::CallbackWrapper<void(ChannelError reason) const>;
+using OnErrorCallback  = detail::CallbackWrapper<void(ChannelError err,
+                                                       std::string_view message) const>;
 
 // ---------------------------------------------------------------------------
 // ChannelConnection facade
@@ -246,9 +304,10 @@ using ChannelConnectionProxy = pro::proxy<ChannelConnectionFacade>;
  * The listener hands off ownership of the new `ChannelConnectionProxy`
  * to the callback. The callback typically attaches RPC server
  * dispatch handlers and registers the connection with the poll
- * thread.
+ * thread.  Same `Arc<Function<...const>>`-backed wrapper as the
+ * conn-level callbacks above.
  */
-using OnAcceptCallback = std::function<void(ChannelConnectionProxy)>;
+using OnAcceptCallback = detail::CallbackWrapper<void(ChannelConnectionProxy) const>;
 
 PRO_DEF_MEM_DISPATCH(ChannelListenerMemListen,      listen);
 PRO_DEF_MEM_DISPATCH(ChannelListenerMemClose,       close);

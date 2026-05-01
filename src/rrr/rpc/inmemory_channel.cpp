@@ -62,6 +62,9 @@ InMemorySwitchboard::find_listener(const std::string& addr) const {
 // ---------------------------------------------------------------------------
 
 ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
+    // Default-constructed wrapper: Arc holds an empty Function; we'll
+    // either reassign (wrapper copy = Arc clone, atomic refcount bump)
+    // or leave it empty.
     OnFrameCallback peer_on_frame;
     bool peer_already_closed = false;
     bool self_already_closed = false;
@@ -335,7 +338,7 @@ InMemoryListener::accept_for_connect(const std::string& client_address) {
         if (guard->closed || guard->local_address.empty()) {
             return rusty::None;
         }
-        cb_to_fire = guard->on_accept;
+        cb_to_fire = guard->on_accept;  // wrapper copy = Arc clone (refcount++)
         server_address = guard->local_address;
     }
     if (!cb_to_fire) {

@@ -35,8 +35,8 @@ FiberChannel::FiberChannel(ChannelConnectionProxy ch)
 FiberChannel::~FiberChannel() {
     // Detach callbacks before the proxy destructor runs to make
     // sure any in-flight callback dispatch can't race with member
-    // teardown. `set_on_*(nullptr)` is harmless if the underlying
-    // type never re-checks.
+    // teardown. `set_on_*({})` resets to the default-constructed
+    // (unset) wrapper.
     ch_->set_on_frame ({});
     ch_->set_on_closed({});
     ch_->set_on_error ({});
