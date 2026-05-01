@@ -322,21 +322,22 @@ Marshal::bookmark Marshal::set_bookmark(size_t n) {
     }
 }
 
-// @safe - Thread-local factory registry copy
-// SAFETY: Each thread has its own copy, no locking needed for access
-thread_local MarshallDeputy::MarContainer mc_th_;
-thread_local bool mc_th_initialized_ = false;
-std::atomic<uint64_t> mc_version_g{0};
-thread_local uint64_t mc_th_version_ = 0;
-
 namespace {
 // SpinMutex-owned global factory registry. Replaces the prior
 // `std::mutex md_mutex_g` + `static MarContainer mc_` pair with a
 // single rusty-style "data inside the mutex" container. Construct
 // On First Use idiom avoids static initialization order fiasco.
 //
-// The unused `mdi_mutex_g` (declared but never locked) was retired
-// alongside the migration.
+// Workstream L L5i removed the prior thread-local cache
+// (`mc_th_`, `mc_th_initialized_`, `mc_th_version_`,
+// `mc_version_g`).  That cache existed only to avoid the global
+// SpinMutex on every dispatch, but it relied on copying
+// `std::function` factories — incompatible with the move-only
+// `rusty::Function`.  Instead, `create_initializer` now invokes
+// the factory directly under the registry lock; the registered
+// factories are stateless lambdas (one heap allocation per call,
+// no recursive registry traffic), so the SpinMutex hold is
+// negligibly short.
 rrr::SpinMutex<MarshallDeputy::MarContainer>& md_registry_locked() {
     static rrr::SpinMutex<MarshallDeputy::MarContainer> registry;
     return registry;
@@ -346,33 +347,22 @@ rrr::SpinMutex<MarshallDeputy::MarContainer>& md_registry_locked() {
 // @unsafe - Registers initializer with SpinMutex locking and map insertion
 int MarshallDeputy::reg_initializer(int32_t cmd_type,
                                    MarInitializerFn init) {
-  {
-    auto guard = md_registry_locked().lock().unwrap();
-    verify(!guard->contains_key(cmd_type));
-    guard->insert(cmd_type, init);
-  }
-  // Bump version after releasing the lock so concurrent
-  // get_initializer readers see the new contents on next refresh.
-  mc_version_g.fetch_add(1, std::memory_order_release);
+  auto guard = md_registry_locked().lock().unwrap();
+  verify(!guard->contains_key(cmd_type));
+  guard->insert(cmd_type, std::move(init));
   return 0;
 }
 
-// @unsafe - Calls rrr::SpinMutex::lock, rusty::HashMap::get, std::function constructor
-MarshallDeputy::MarInitializerFn
-MarshallDeputy::get_initializer(int32_t type) {
-  if (!mc_th_initialized_ ||
-      mc_th_version_ != mc_version_g.load(std::memory_order_acquire)) {
-    {
-      auto guard = md_registry_locked().lock().unwrap();
-      // Copy the container into thread-local storage
-      mc_th_ = guard->clone();
-    }
-    mc_th_initialized_ = true;
-    mc_th_version_ = mc_version_g.load(std::memory_order_relaxed);
-  }
-  auto opt = mc_th_.get(type);
+// @unsafe - Looks up the factory for `cmd_type` under the registry
+// SpinMutex and invokes it, returning the freshly-built
+// Marshallable.  The factory is move-only (rusty::Function), so
+// we invoke under the lock rather than copy out.
+std::shared_ptr<rrr::Marshallable>
+MarshallDeputy::create_initializer(int32_t cmd_type) {
+  auto guard = md_registry_locked().lock().unwrap();
+  auto opt = guard->get(cmd_type);
   verify(opt.is_some());
-  return *opt.unwrap();
+  return (*opt.unwrap())();
 }
 
 // @unsafe - Calls initializer factory and unmarshals into proxied payload.
@@ -381,17 +371,15 @@ MarshallDeputy::get_initializer(int32_t type) {
 // Workstream N Phase 5b-9: simplified — the factory now returns a
 // `shared_ptr<Marshallable>` directly (no MarInitializerState
 // wrapper). We snapshot the wire kind, clear `kind_` so
-// `set_marshallable` can repopulate it from `func()`'s result, and
-// verify the factory-produced kind matches the wire kind.
+// `set_marshallable` can repopulate it from `create_initializer`'s
+// product, and verify the factory-produced kind matches the wire kind.
 Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   verify(!has_marshallable());
   verify(kind_ != UNKNOWN);
-  auto func = get_initializer(kind_);
-  verify(static_cast<bool>(func));
 
   int32_t wire_kind = kind_;
   kind_ = UNKNOWN;  // set_marshallable will repopulate from the new payload's kind
-  set_marshallable(func());
+  set_marshallable(create_initializer(wire_kind));
   verify(kind_ == wire_kind);
   inner()->from_marshal(m);
   return m;

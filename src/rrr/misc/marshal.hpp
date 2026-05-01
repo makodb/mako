@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <rusty/arc.hpp>
+#include <rusty/fn.hpp>
 
 #ifdef RR
 #pragma push_macro("RR")
@@ -156,6 +157,14 @@ std::shared_ptr<Marshallable> wrap_typed_marshallable(
 //   3. Shared ownership is still available through inner() for dynamic casts
 class MarshallDeputy {
   public:
+    // Workstream L L5i: `MarInitializerFn` migrated from
+    // `std::function` to `rusty::Function` (move-only). Because
+    // rusty::Function is move-only, the registry's per-thread
+    // snapshot cache (which relied on HashMap clone) is gone, and
+    // the lookup API changed from "return a copyable Factory" to
+    // "invoke the factory under the registry lock and return its
+    // result" — see `create_initializer` below.
+    //
     // Workstream N Phase 5b-9: simplified — `MarInitializerFn` now
     // returns `std::shared_ptr<Marshallable>` directly. The previous
     // `MarInitializerState` struct (post-5b-2: just `marshallable` +
@@ -164,11 +173,12 @@ class MarshallDeputy {
     // `set_marshallable_state` private setter went away with it;
     // `set_marshallable(shared_ptr<Marshallable>)` is the single
     // entry point.
-    typedef std::function<std::shared_ptr<rrr::Marshallable>()> MarInitializerFn;
+    typedef rusty::Function<std::shared_ptr<rrr::Marshallable>()>
+        MarInitializerFn;
     typedef rusty::HashMap<int32_t, MarInitializerFn> MarContainer;
     // The factory registry is now a file-local
     // `SpinMutex<MarContainer>`-protected static inside marshal.cpp
-    // — see md_registry() / md_registry_locked() in marshal.cpp.
+    // — see md_registry_locked() in marshal.cpp.
     // No external code referenced the prior `get_initializers()`
     // accessor; removed to keep the SpinMutex contained.
     // @unsafe - Registers proxy-backed initializer metadata factory.
@@ -188,7 +198,12 @@ class MarshallDeputy {
         return std::make_shared<T>();
       });
     }
-    static MarInitializerFn get_initializer(int32_t);
+    // @unsafe - Looks up the factory for `cmd_type` under the
+    // registry SpinMutex, invokes it, and returns its product.
+    // The Factory is move-only (rusty::Function), so we invoke
+    // under the lock rather than copy-out. Aborts via verify() if
+    // the kind is not registered.
+    static std::shared_ptr<rrr::Marshallable> create_initializer(int32_t cmd_type);
 
   public:
     // Workstream N Phase 5b-3: removed `bypass_to_socket_` (and the

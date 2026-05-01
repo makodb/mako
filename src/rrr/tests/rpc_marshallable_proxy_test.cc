@@ -171,8 +171,7 @@ TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
 TEST(MarshallableProxyFacadeTest, InitializerReturnsProxyBackedMetadata) {
   EnsureTestMarshallableInitializer();
 
-  auto initializer = MarshallDeputy::get_initializer(kTestMarshallableKind);
-  auto m = initializer();
+  auto m = MarshallDeputy::create_initializer(kTestMarshallableKind);
   ASSERT_NE(m, nullptr);
   EXPECT_EQ(m->kind(), kTestMarshallableKind);
 }
