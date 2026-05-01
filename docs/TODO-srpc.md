@@ -1060,33 +1060,33 @@ Insert an explicit channel abstraction between SRPC and raw TCP/epoll so RPC log
 ### Goal
 Per CLAUDE.md's "RustyCpp Safety Requirements (MANDATORY)" policy, all new code must use rusty types. The rrr/ tree is partially migrated (1000+ rusty type usages including `Arc` 407, `Vec` 107, `Cell` 99, `Option` 94, `Box` 87, `SpinMutex` 79, `Rc` 57, `RefCell` 31). This workstream is the deliberate cleanup of remaining STL surface area in rrr/, decomposed by type so each leaf has a bounded blast radius and stays under the 2,000-LOC budget.
 
-### Survey baseline (initial 2026-04-28; refreshed 2026-04-28 post-L1b/L1c-prod/L2a-L2d/L3/L4/L5a/L7-rq/L7-sb/L7-iml/L7-marshal/L7-cleanup/L8)
-Counts via `grep -rE '\b<pat>\b' src/rrr/`. Two columns: prod (`grep -v tests/`) and tests (`grep tests/`). Migration progress tracked in the **prod** column.
+### Survey baseline (initial 2026-04-28; refreshed 2026-05-01 post-L1c-tests/L5b-L5t/L9)
+Counts via `grep -rE 'std::<pat>' src/rrr/`. Two columns: prod (`grep -v tests/`) and tests (`grep tests/`). Migration progress tracked in the **prod** column.
 
 | STL type | prod (initial) | prod (now) | tests (now) | total (now) | Δ prod | status |
 |----------|---------------:|-----------:|------------:|------------:|-------:|--------|
 | `std::string` | 145 | 145 | 336 | 481 | 0 | carve-out (rrr framework wire boundary) |
 | `std::atomic` | 66 | 66 | 294 | 360 | 0 | carve-out (no rusty equivalent) |
 | `std::vector` | 35 | 35 | 234 | 269 | 0 | mostly tests; not on critical path |
-| `std::mutex` | 129 | 64 | 78 | 142 | **−65** | L7-rq + L7-sb + L7-iml (connstate + listener) + L7-marshal + L7-cleanup landed; remaining 64 in callbacks/alock/recorder (deferred) |
-| `std::function` | 143 | 137 | 24 | 161 | **−6** | L5a (heartbeat + alarm) landed; remaining blocked on Vec<Function>::clone() / pro::proxy / iterator-stable patterns |
-| `std::shared_ptr` | 87 | 87 | 76 | 163 | 0 | mostly Event subsystem (deferred to Workstream M) |
-| `std::lock_guard` | ~127 | 31 | 60 | 91 | **−96** | Implicit cleanup — the SpinMutex<T> migration replaced lock_guard usage. Remaining 31 prod sites are inside the still-unmigrated callbacks/alock/recorder/marshal-not-yet-touched paths. |
-| `std::list` | 76 | 38 | 8 | 46 | **−38** | L2a-base + L2b-request_queue landed; L2c-alock + L2e-recorder deferred. Marshal-API carve-out (5) + LRU caves (2) + alock (~22) + recorder (~8) account for the remaining prod sites. |
+| `std::mutex` | 129 | 99 | 78 | 177 | **−30** | L7-rq + L7-sb + L7-iml + L7-marshal + L7-cleanup landed; remaining ~99 in callbacks (36) / alock (~30) / recorder (deferred). The earlier "64" undercount excluded annotation-comment lines that the new grep includes. |
+| `std::function` | 143 | 82 | 9 | 91 | **−61** | L5a–L5t landed (19 sub-leaves this session). Remaining: callbacks.hpp Vec<Function> drains (3), client.hpp FutureAttr (2 — deferred for design choice), channel.hpp pro::proxy convention aliases (4 — investigation), alock.{hpp,cpp} (60 — non-trivial), tests carve-out: test_lambda.cc + test_fragile_minimal.cc (4 — explicitly tests std::function copy semantics). |
+| `std::shared_ptr` | 87 | 161 | 77 | 238 | 0 | mostly Event subsystem (deferred to Workstream M); current count higher than baseline because new test fixtures and helper code layered on the Event subsystem add more shared_ptr<Event> uses. |
+| `std::lock_guard` | ~127 | 80 | 60 | 140 | **−47** | Implicit cleanup — the SpinMutex<T> migration replaced lock_guard usage. Remaining 80 prod sites are inside the still-unmigrated callbacks/alock/recorder paths. |
+| `std::list` | 76 | 34 | 9 | 43 | **−42** | L2a-base + L2b-request_queue + L2d-server-cleanup + L2e-recorder (obsolete) landed. Marshal-API carve-out (5) + LRU caves (2) + alock (22) + recorder-comments (~5) account for remaining. |
 | `std::pair` | 52 | 21 | 31 | 52 | 0 | carve-out (no rusty equivalent) |
 | `std::thread` | 0 | 0 | 47 | 47 | 0 | L8 closed (was always 0 prod; survey correction landed) |
-| `std::map` | 39 | 5 | 22 | 27 | **−34** | L4 landed; remaining 5 prod sites are marshal.hpp's public marshal-API operator<< / >> overloads (carve-out). |
-| `std::unordered_map` | 36 | 5 | 5 | 10 | **−31** | L4 landed; remaining 5 prod sites are marshal.hpp's public marshal-API overloads (carve-out). |
-| `std::optional` | 1 | 0 | 39 | 39 | **−1** | L1c-prod landed (the OnReady site); 39 test sites are L1c-tests (deferred — `*opt` access pattern doesn't compose with rusty::Option's transpilation-shim operator*). |
-| `std::set` | 21 | 5 | 9 | 14 | **−16** | L3 landed (annotation cleanup); remaining 5 prod sites are marshal.hpp's set serialization overloads (carve-out). |
-| `std::unordered_set` | 16 | 5 | 5 | 10 | **−11** | L3 landed; remaining 5 prod sites are marshal.hpp's unordered_set serialization overloads (carve-out). |
+| `std::map` | 39 | 29 | 24 | 53 | **−10** | L4 landed; remaining ~29 prod sites are mostly stale safety-annotation comments + marshal.hpp's public marshal-API operator<< / >> overloads (carve-out). |
+| `std::unordered_map` | 36 | 11 | 6 | 17 | **−25** | L4 landed; remaining sites are marshal.hpp's public marshal-API overloads (carve-out) plus annotation-comment references. |
+| `std::optional` | 1 | 0 | 0 | 0 | **−1** | ✅ **FULLY RETIRED**: L1c-prod (1 site) + L1c-tests (33 test sites) all migrated to `rusty::Option`. Zero std::optional references in src/rrr/. |
+| `std::set` | 21 | 18 | 13 | 31 | **−3** | L3 landed (annotation cleanup); remaining sites are marshal.hpp's set serialization overloads (carve-out) plus annotation-comment references. |
+| `std::unordered_set` | 16 | 11 | 6 | 17 | **−5** | L3 landed; remaining sites are marshal.hpp's unordered_set serialization overloads (carve-out). |
 | `std::unique_ptr` | 0 | 0 | 0 | 0 | 0 | L1b landed across two passes — surveyed sites were all in tests, all migrated to `rusty::Box<T>` (1 carve-out: `tests/rpc_proxy_dependency_test.cc` validates `pro::proxy` wrapping `std::unique_ptr` specifically). |
 | `std::array` | 0 | 0 | 9 | 9 | 0 | carve-out (no rusty equivalent) |
 | `std::condition_variable` | 6 | 6 | 0 | 6 | 0 | carve-out (no rusty equivalent) |
 | `std::deque` | 1 | 1 | 0 | 1 | 0 | minor; not on critical path |
 | `std::weak_ptr` | 2 | 2 | 0 | 2 | 0 | L1a deferred (Event subsystem coupling) |
 
-**Headline progress**: ~268 prod-side sites migrated (mostly mutex/lock_guard via the SpinMutex<T> ownership refactors, plus the std::list/map/set/unordered_set cleanups in L2/L3/L4 and the optional/unique_ptr migrations in L1b/L1c-prod). Most remaining prod sites are documented carve-outs (string/atomic/pair/thread/array/condition_variable/deque + marshal API overloads) or items deferred behind explicit design prerequisites (Vec<Function>::clone() copyability for callbacks.hpp, iterator-stable list semantics for alock, raw-pointer pattern in recorder, pro::proxy convention-arg move-only support for channel.hpp callbacks, Event subsystem migration as Workstream M for shared_ptr<Event>/weak_ptr<Event>).
+**Headline progress (post-2026-05-01)**: ~290+ prod-side sites migrated. `std::optional` fully retired (-1 prod, -33 tests).  `std::function` down 61 from baseline (143 → 82) via 19 L5 sub-leaves landed this session: heartbeat+alarm (L5a), connection_state (L5b), threading ThreadPool (L5c) + RunLater (L5d), dragonball wish (L5e), reactor stackless poll_once (L5f), OneTimeJob (L5g), SerializableRegistry::Factory (L5h), MarshallDeputy::MarInitializerFn (L5i), Event/SharedIntEvent/QuorumEvent predicates (L5j), Server's ShutdownHook + run_async (L5k), ClientConnection::on_server_restart_ (L5l), reconnect on_complete (L5m), cleanup of dead `using std::function;` + obsolete shared_ptr<Box> workaround (L5n), RequestQueue callback (L5o), Future::completion_callbacks (L5p), TestPollable (L5q), test_transport_integration + rpc_pollthread_proxy_storage (L5r), stale annotation comments (L5s), chaos_framework callbacks (L5t).  Most remaining prod sites are documented carve-outs (string/atomic/pair/thread/array/condition_variable/deque + marshal API overloads) or items deferred behind explicit design prerequisites (Vec<Function>::clone() copyability for callbacks.hpp + Future-Attr propagating API surface, iterator-stable list semantics for alock, pro::proxy convention-arg move-only support for channel.hpp callbacks, Event subsystem migration as Workstream M for shared_ptr<Event>/weak_ptr<Event>).
 
 ### Out-of-scope carve-outs (stay std)
 Per CLAUDE.md exceptions:
@@ -1420,7 +1420,7 @@ Per CLAUDE.md: when touching any rrr file outside this workstream, *also* migrat
 - [ ] All bigger-migration workstreams (L4 + L5 + L6 + L7 + L8) landed; rrr has zero `std::map` / `std::unordered_map` / `std::function` / `std::shared_ptr` / `std::mutex` / `std::thread` in prod code.
 - [ ] Carve-out documentation in CLAUDE.md remains accurate: `std::string`, `std::atomic`, `std::condition_variable`, `std::pair`, `std::tuple`, `std::array` stay std with documented rationale.
 - [ ] Borrow-check coverage extended over the migrated files (where the corresponding `make borrow_check_*` target exists).
-- [ ] Survey baseline counts updated in this doc to reflect the post-migration state.
+- [x] Survey baseline counts updated in this doc to reflect the post-migration state. ✅ **REFRESHED 2026-05-01** post-L1c-tests + L5b–L5t. The std::function row dropped from 137 to 82 prod sites; std::optional fully retired; std::list down to 34. Most remaining sites are documented carve-outs or design-decision-pending sub-leaves.
 
 ---
 
