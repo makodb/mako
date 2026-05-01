@@ -315,7 +315,7 @@ void Reactor::enqueue_stackless_task(size_t idx) const {
 }
 
 // @unsafe - Register a stackless task poller and return slot index.
-size_t Reactor::register_stackless_poller(std::function<bool(rusty::Context&)> poller) const {
+size_t Reactor::register_stackless_poller(rusty::Function<bool(rusty::Context&)> poller) const {
   size_t scanned = 0;
   {
     auto free_guard = free_stackless_task_slots_.borrow_mut();
@@ -367,7 +367,12 @@ bool Reactor::process_stackless_tasks() const {
       ready_guard->pop_front();
     }
 
-    std::function<bool(rusty::Context&)> poll_fn;
+    // Move the poll function out of its slot before invoking it; rusty::Function
+    // is move-only so we can't keep a copy in-place. Reactor is single-threaded,
+    // so any synchronous waker callback during poll only mutates queued/active
+    // flags (never poll_once), and we put the function back below if the poll
+    // didn't complete the task.
+    rusty::Function<bool(rusty::Context&)> poll_fn;
     {
       auto tasks_guard = stackless_tasks_.borrow_mut();
       if (idx >= tasks_guard->size()) {
@@ -378,7 +383,7 @@ bool Reactor::process_stackless_tasks() const {
       if (!entry.active || !entry.poll_once) {
         continue;
       }
-      poll_fn = entry.poll_once;
+      poll_fn = std::move(entry.poll_once);
     }
 
     did_work = true;
@@ -391,17 +396,22 @@ bool Reactor::process_stackless_tasks() const {
     rusty::Context ctx{&waker};
     bool ready = poll_fn(ctx);
 
-    if (ready) {
-      if (stackless_profile_enabled()) {
-        g_stackless_profile.poll_ready.fetch_add(1, std::memory_order_relaxed);
-      }
+    {
       auto tasks_guard = stackless_tasks_.borrow_mut();
       if (idx < tasks_guard->size()) {
         auto& entry = (*tasks_guard)[idx];
-        entry.active = false;
-        entry.queued = false;
-        entry.poll_once = {};
-        free_stackless_task_slots_.borrow_mut()->push(idx);
+        if (ready) {
+          if (stackless_profile_enabled()) {
+            g_stackless_profile.poll_ready.fetch_add(1, std::memory_order_relaxed);
+          }
+          entry.active = false;
+          entry.queued = false;
+          entry.poll_once = {};
+          free_stackless_task_slots_.borrow_mut()->push(idx);
+        } else {
+          // Put the function back so the next poll iteration can fire it.
+          entry.poll_once = std::move(poll_fn);
+        }
       }
     }
   }
