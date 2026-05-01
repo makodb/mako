@@ -180,6 +180,21 @@ class WaitDieALock: public ALock {
     WD_WAIT,
     WD_DIE
   } wd_status_t;
+  // L2c-alock carve-out (2026-05-01): the wait-die lock-waiter queue
+  // stays `std::list` (NOT `rusty::VecDeque`).  alock.cpp relies on
+  // three standard linked-list properties that VecDeque can't supply
+  // without a semantic-level refactor:
+  //   - reverse iteration (`requests_.rbegin/rend` at alock.cpp:309/329)
+  //   - iterator-stable erase-during-iterate (`requests_.erase(it)`
+  //     at alock.cpp:230/257/270/437/459/471 — returns the next iter
+  //     and leaves all others valid)
+  //   - pointer stability across re-entrant `lock()` calls from inside
+  //     a yes_callback (read_acquire collects `lock_req_t*` snapshots
+  //     and would see those invalidated by a VecDeque ring-buffer
+  //     reallocation triggered by a recursive lock())
+  // Same precedent as the LRU caches in rpc/idempotency.hpp and
+  // rpc/completion_tracker.hpp.  See docs/TODO-srpc.md L2c-alock for
+  // the full rationale.
   std::list<lock_req_t> requests_;
 
   uint64_t n_r_in_queue_;
@@ -355,6 +370,9 @@ class WoundDieALock: public ALock {
     }
   };
 
+  // L2c-alock carve-out (2026-05-01) — see the WaitDieALock comment
+  // above for full rationale.  Same iterator-stability / reverse-
+  // iteration / pointer-stability requirements apply here.
   std::list<lock_req_t> requests_;
 
   void wound_die(type_t type, int64_t priority);
@@ -582,6 +600,10 @@ class TimeoutALock: public ALock {
   // re-introduced, follow the L7-request_queue / L7-inmemory_*
   // pattern: wrap the protected fields in `SpinMutex<Inner>` rather
   // than re-adding a separate std::mutex.
+  //
+  // L2c-alock carve-out (2026-05-01) — `std::list<ALockReq>` stays for
+  // the same iterator-stability reasons as the WaitDieALock variant
+  // (see that class's comment above for full rationale).
   std::list<ALockReq> requests_;
   //    uint64_t tm_last_ = 0;
   uint64_t tm_wait_;
