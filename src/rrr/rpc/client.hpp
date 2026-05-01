@@ -1086,7 +1086,7 @@ public:
      * @return 0 on success (reconnection started), error code on failure
      */
     // @unsafe - Attempts reconnection (calls connect which has socket operations)
-    int reconnect(std::function<void(bool)> on_complete = nullptr);
+    int reconnect(rusty::Function<void(bool)> on_complete = nullptr);
 
     /**
      * Set the buffering configuration for this connection.
@@ -2046,7 +2046,7 @@ public:
      * @return 0 on success (reconnection started), error code on failure
      */
     // @unsafe - Attempts reconnection (calls connect which has socket operations)
-    int reconnect(std::function<void(bool)> on_complete = nullptr) const;
+    int reconnect(rusty::Function<void(bool)> on_complete = nullptr) const;
 
     // @safe - Register lifecycle callbacks.
     void add_on_connected(ConnectionCallback cb) const {
