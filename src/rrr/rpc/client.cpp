@@ -300,7 +300,7 @@ int ClientConnection::connect(const char* addr) {
 }
 
 // @unsafe - Attempts to reconnect to the last connected address
-int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
+int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   auto complete_callback = [&](int result) -> int {
     if (on_complete) on_complete(result == 0);
     return result;
@@ -1480,7 +1480,7 @@ int Client::connect(const char* addr, bool client) const {
 }
 
 // @unsafe - Attempts to reconnect to the last connected address
-int Client::reconnect(std::function<void(bool)> on_complete) const {
+int Client::reconnect(rusty::Function<void(bool)> on_complete) const {
   auto guard = connection_.borrow();
   if (guard->is_none()) {
     Log_error("rrr::Client: no connection to reconnect");
@@ -1494,7 +1494,8 @@ int Client::reconnect(std::function<void(bool)> on_complete) const {
 
   // @unsafe - reconnect does socket operations
   {
-    return conn.reconnect(on_complete);
+    // rusty::Function is move-only — std::move into the inner call.
+    return conn.reconnect(std::move(on_complete));
   }
 }
 
