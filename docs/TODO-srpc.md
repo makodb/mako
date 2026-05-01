@@ -1319,6 +1319,11 @@ Per CLAUDE.md exceptions:
       - All call sites in `test_reactor.cc` (8 setter invocations) pass plain lambdas which auto-convert via `Function(Callable&&)` — no test-side change beyond this file.
       - Added `#include <rusty/function.hpp>`.
       - Verification: `test_reactor` 22/22 (the dedicated suite). Full RPC suite green: 102/107 with same 4 pre-existing failures (`test_rpc_timeout_retry`, `test_rpc_validation`, `test_rpc_metrics`, `rpcbench` path issue) plus 1 transient compile-test timeout under heavy load (`test_rpc_docs_snippet_compile` — runtime 308s vs typical 150s); none related to this change.
+    - [x] **L5r-tests-misc — `tests/test_transport_integration.cc` + `tests/rpc_pollthread_proxy_storage_test.cc`** (3 sites). ✅ **LANDED 2026-05-01**.
+      - `test_transport_integration.cc`: migrated `TestRangeService::Handler` and `TestSingleService::Handler` typedefs from `std::function<...>` to `rusty::Function<...>`. Both classes' constructors already took the handler by value-with-move; bodies unchanged. The `__dispatch__` invocation sites (`handler_(...)`) work via rusty::Function's non-const `operator()`.
+      - `rpc_pollthread_proxy_storage_test.cc`: migrated `wait_until(const std::function<bool()>& pred, ...)` to `wait_until(rusty::Function<bool()> pred, ...)` (by value-with-move; the function calls `pred()` repeatedly in a poll loop, which works on a rusty::Function held by value). All ~10 call sites pass plain lambdas which auto-convert via `Function(Callable&&)`.
+      - Added `#include <rusty/function.hpp>` to both files.
+      - Verification: `test_transport_integration` 28/28, `test_rpc_pollthread_proxy_storage` 6/6. Full RPC suite green: 102/107 with same 4 pre-existing failures; runtime 150s (typical, no transient timeouts this run).
   - Goal: zero non-carve-out `std::function` in rrr prod code after all L5 sub-leaves land. The carve-out boundary types (`callbacks.hpp` ConnectionCallbacks API and any pro::proxy convention types if they end up needing copyability) should be documented as such.
 - [ ] *medium* Sub-leaf L6 — `std::shared_ptr<T>` → `rusty::Arc<T>` (multi-thread) or `rusty::Rc<T>` (single-thread). **DEFERRED with documented findings (2026-04-28)**: the 87 prod sites split into two distinct islands, each blocked.
   - **Survey breakdown (2026-04-28)**:

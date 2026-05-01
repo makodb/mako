@@ -1,5 +1,6 @@
 #include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/function.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
 // -*- mode: c++; c-file-style: "k&r"; c-basic-offset: 4 -*-
@@ -73,7 +74,7 @@ inline const char* TransportTypeToString(TransportType type) {
 // TestRangeService: handles a range of RPC IDs for testing
 class TestRangeService : public rrr::Service {
 public:
-    using Handler = std::function<void(uint8_t, rusty::Box<rrr::Request>, rrr::WeakServerConnection)>;
+    using Handler = rusty::Function<void(uint8_t, rusty::Box<rrr::Request>, rrr::WeakServerConnection)>;
 
     TestRangeService(rrr::i32 rpc_start, rrr::i32 rpc_end, Handler handler)
         : rpc_start_(rpc_start), rpc_end_(rpc_end), handler_(std::move(handler)) {}
@@ -109,7 +110,7 @@ private:
 // TestSingleService: handles a single RPC ID for testing
 class TestSingleService : public rrr::Service {
 public:
-    using Handler = std::function<void(rusty::Box<rrr::Request>, rrr::WeakServerConnection)>;
+    using Handler = rusty::Function<void(rusty::Box<rrr::Request>, rrr::WeakServerConnection)>;
 
     TestSingleService(rrr::i32 rpc_id, Handler handler)
         : rpc_id_(rpc_id), handler_(std::move(handler)) {}
