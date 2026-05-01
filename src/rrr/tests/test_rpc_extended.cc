@@ -165,8 +165,8 @@ TEST(ServerApiSafetyTest, ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyC
     EXPECT_EQ(sconn.run_async([&]() { callback_count.fetch_add(1); }), 0);
     EXPECT_EQ(callback_count.load(), 1);
 
-    std::function<void()> empty_callback;
-    EXPECT_NE(sconn.run_async(empty_callback), 0);
+    rusty::Function<void()> empty_callback;
+    EXPECT_NE(sconn.run_async(std::move(empty_callback)), 0);
     EXPECT_EQ(callback_count.load(), 1);
 }
 
@@ -197,8 +197,8 @@ TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCall
         EXPECT_EQ(defer.run_async([&]() { callback_count.fetch_add(1); }), 0);
         EXPECT_EQ(callback_count.load(), 1);
 
-        std::function<void()> empty_callback;
-        EXPECT_NE(defer.run_async(empty_callback), 0);
+        rusty::Function<void()> empty_callback;
+        EXPECT_NE(defer.run_async(std::move(empty_callback)), 0);
         EXPECT_EQ(callback_count.load(), 1);
     }
 
