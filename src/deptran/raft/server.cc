@@ -984,9 +984,9 @@ void RaftServer::Setup() {
       replicated_db_ = std::make_shared<ReplicatedDB>(this, db_path);
 
       // Register apply callback so committed Raft entries are applied to RocksDB
-      RegLearnerAction([this](int slot, shared_ptr<Marshallable> cmd) -> int {
+      RegLearnerAction([this](int slot, MarshallDeputy md) -> int {
         if (replicated_db_) {
-          replicated_db_->ApplyEntry(slot, cmd);
+          replicated_db_->ApplyEntry(slot, md.inner());
         }
         return 0;
       });

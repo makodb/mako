@@ -69,7 +69,9 @@ class SchedulerClassic: public TxLogServer {
 
   virtual void DoAbort(Tx& tx_box);
 
-  virtual int Next(int,shared_ptr<Marshallable>) override;
+  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // signature in deptran/scheduler.h).
+  virtual int Next(int, MarshallDeputy) override;
 
   virtual bool IsLeader() override { return rep_sched_->IsLeader(); }
 

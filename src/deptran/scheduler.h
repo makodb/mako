@@ -356,7 +356,12 @@ class TxLogServer {
   unordered_map<txid_t, mdb::Txn *> mdb_txns_{};
   unordered_map<txid_t, Executor *> executors_{};
 
-  function<int(int,shared_ptr<Marshallable>)> app_next_{};
+  // L6-A2 (2026-05-01): app_next_ now takes MarshallDeputy (not
+  // shared_ptr<Marshallable>) so user code is one type level removed
+  // from the rrr framework's wire-boundary shared_ptr.  MarshallDeputy
+  // ctors are non-explicit, so callers passing `shared_ptr<Marshallable>`
+  // (e.g. `instance->log_`) auto-convert at the call site.
+  function<int(int, MarshallDeputy)> app_next_{};
   // Workstream N Phase 4e-9: removed
   //   `function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};`
   // — declared but never written or invoked anywhere.
@@ -514,11 +519,18 @@ class TxLogServer {
     return REJECT;
   }
 
-  void RegLearnerAction(function<int(int,shared_ptr<Marshallable>)> learner_action) {
+  // L6-A2 (2026-05-01): take a `function<int(int, MarshallDeputy)>`.
+  // Lambdas registered here see the deputy directly; if they need the
+  // legacy shared_ptr they can call `md.inner()`, or use the
+  // `marshallable_cast<T>(md)` overload to downcast to a concrete type.
+  void RegLearnerAction(function<int(int, MarshallDeputy)> learner_action) {
     app_next_ = learner_action;
   }
 
-  virtual int Next(int,shared_ptr<Marshallable> cmd) { verify(0); };
+  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // signature above).  Body uses `md.inner()` / `marshallable_cast<T>(md)`
+  // to access the underlying typed payload.
+  virtual int Next(int, MarshallDeputy md) { verify(0); };
   /**
    * Check if the command is already committed
    * @param commit_cmd command to be checked

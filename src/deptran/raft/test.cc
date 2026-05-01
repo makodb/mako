@@ -7707,8 +7707,8 @@ int RaftLabTest::testReplicatedDBPutGet(void) {
 
   // Register the apply callback on the server
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -7793,8 +7793,8 @@ int RaftLabTest::testReplicatedDBDelete(void) {
 
   // Register apply callback
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -7891,12 +7891,12 @@ int RaftLabTest::testReplicatedDBReplication(void) {
 
   // Register apply callbacks on both
   // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([&leader_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    leader_rdb->ApplyEntry(slot, cmd);
+  leader_svr->RegLearnerAction([&leader_rdb](int slot, MarshallDeputy md) -> int {
+    leader_rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
-  follower_svr->RegLearnerAction([&follower_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    follower_rdb->ApplyEntry(slot, cmd);
+  follower_svr->RegLearnerAction([&follower_rdb](int slot, MarshallDeputy md) -> int {
+    follower_rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -7984,8 +7984,8 @@ int RaftLabTest::testReplicatedDBSnapshot(void) {
   Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
 
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -8100,8 +8100,8 @@ int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
 
   // Register apply callback on leader
   // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([&leader_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    leader_rdb->ApplyEntry(slot, cmd);
+  leader_svr->RegLearnerAction([&leader_rdb](int slot, MarshallDeputy md) -> int {
+    leader_rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -8212,9 +8212,9 @@ int RaftLabTest::testReplicatedDBWiring(void) {
 
   // Register apply callback (same lambda as Setup())
   // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+  leader_svr->RegLearnerAction([rdb](int slot, MarshallDeputy md) -> int {
     if (rdb) {
-      rdb->ApplyEntry(slot, cmd);
+      rdb->ApplyEntry(slot, md.inner());
     }
     return 0;
   });
@@ -8277,9 +8277,9 @@ int RaftLabTest::testReplicatedDBWiring(void) {
   follower_svr->replicated_db_ = follower_rdb;
 
   // @unsafe { RegLearnerAction }
-  follower_svr->RegLearnerAction([follower_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+  follower_svr->RegLearnerAction([follower_rdb](int slot, MarshallDeputy md) -> int {
     if (follower_rdb) {
-      follower_rdb->ApplyEntry(slot, cmd);
+      follower_rdb->ApplyEntry(slot, md.inner());
     }
     return 0;
   });
@@ -8360,8 +8360,8 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
   Assert2(rdb->IsCompressionEnabled(), "Compression should be enabled by default");
 
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -8508,8 +8508,8 @@ int RaftLabTest::testConfigManagerBasic(void) {
 
   // Register apply callback
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -8615,8 +8615,8 @@ int RaftLabTest::testConfigManagerShardLifecycle(void) {
   Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
 
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -8713,8 +8713,8 @@ int RaftLabTest::testConfigManagerEpoch(void) {
   Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
 
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -8867,8 +8867,8 @@ int RaftLabTest::testClusterConfigLoadFromConfigManager(void) {
 
   // Register apply callback
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9002,8 +9002,8 @@ int RaftLabTest::testConfigWatcherDetectsChanges(void) {
 
   // Register apply callback
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9109,8 +9109,8 @@ int RaftLabTest::testConfigWatcherCallback(void) {
 
   // Register apply callback
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9240,8 +9240,8 @@ int RaftLabTest::testLinearizableGet(void) {
 
   // Register the apply callback on the server
   // @unsafe { RegLearnerAction }
-  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb->ApplyEntry(slot, cmd);
+  svr->RegLearnerAction([&rdb](int slot, MarshallDeputy md) -> int {
+    rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9357,8 +9357,8 @@ int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
   Assert2(rdb1->IsOpen(), "ReplicatedDB should be open");
 
   // @unsafe { RegLearnerAction }
-  svr1->RegLearnerAction([&rdb1](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb1->ApplyEntry(slot, cmd);
+  svr1->RegLearnerAction([&rdb1](int slot, MarshallDeputy md) -> int {
+    rdb1->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9410,8 +9410,8 @@ int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
   Assert2(rdb2->IsOpen(), "New leader ReplicatedDB should be open");
 
   // @unsafe { RegLearnerAction }
-  svr2->RegLearnerAction([&rdb2](int slot, shared_ptr<Marshallable> cmd) -> int {
-    rdb2->ApplyEntry(slot, cmd);
+  svr2->RegLearnerAction([&rdb2](int slot, MarshallDeputy md) -> int {
+    rdb2->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9509,8 +9509,8 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   Assert2(leader_rdb->IsOpen(), "Leader ReplicatedDB should be open");
 
   // @unsafe { RegLearnerAction }
-  leader_svr->RegLearnerAction([&leader_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    leader_rdb->ApplyEntry(slot, cmd);
+  leader_svr->RegLearnerAction([&leader_rdb](int slot, MarshallDeputy md) -> int {
+    leader_rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9528,8 +9528,8 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
 
   // @unsafe { RegLearnerAction }
-  follower_svr->RegLearnerAction([&follower_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    follower_rdb->ApplyEntry(slot, cmd);
+  follower_svr->RegLearnerAction([&follower_rdb](int slot, MarshallDeputy md) -> int {
+    follower_rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 
@@ -9599,8 +9599,8 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
 
   // Register apply callback on the restarted server
   // @unsafe { RegLearnerAction }
-  restarted_svr->RegLearnerAction([&restarted_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
-    restarted_rdb->ApplyEntry(slot, cmd);
+  restarted_svr->RegLearnerAction([&restarted_rdb](int slot, MarshallDeputy md) -> int {
+    restarted_rdb->ApplyEntry(slot, md.inner());
     return 0;
   });
 

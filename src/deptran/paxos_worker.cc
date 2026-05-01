@@ -99,17 +99,17 @@ void PaxosWorker::SetupBase() {
 }
 
 
-int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
+int PaxosWorker::Next(int slot_id, MarshallDeputy md) {
   int status=-1;
   // if (site_info_->proc_name.compare("learner")==0){
   //   Log_info("receive a slot_id:%d",slot_id);
   // }
-  auto sp_log_entry = marshallable_cast<LogEntry>(cmd);
+  auto sp_log_entry = marshallable_cast<LogEntry>(md);
   verify(sp_log_entry != nullptr);
   int len = sp_log_entry->length;
 
   //Log_info("apply a log, par_id:%d, epoch:%d, slot_id:%d, len:%d,",site_info_->partition_id_, cur_epoch, slot_id, len);
-  if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
+  if (md.kind_== MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
       // forward the cmd to the learner
       // we use p1 to forward requests to save leader's bandwidth
@@ -122,14 +122,14 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
           ((MultiPaxosCommo*)rep_commo_)->ForwardToLearner(site_info_->partition_id_,
                                          slot_id,
                                          cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
-                                         cmd,
+                                         md.inner(),
                                          [](uint64_t slot, ballot_t ballot) {
                                            //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
                                          });
         }
       }
 
-      auto sp_log_entry = marshallable_cast<LogEntry>(cmd);
+      auto sp_log_entry = marshallable_cast<LogEntry>(md);
       verify(sp_log_entry != nullptr);
       int len = sp_log_entry->length;
       if(sp_log_entry->length == 0){

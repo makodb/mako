@@ -104,7 +104,7 @@ void ServerWorker::SetupBase() {
   // add callbacks to execute commands to rep_sched_
   if (rep_sched_ && tx_sched_) {
     rep_sched_->RegLearnerAction(std::bind(
-        static_cast<int(TxLogServer::*)(int, shared_ptr<Marshallable>)>(&TxLogServer::Next),
+        static_cast<int(TxLogServer::*)(int, MarshallDeputy)>(&TxLogServer::Next),
         tx_sched_,
         std::placeholders::_1,
         std::placeholders::_2));

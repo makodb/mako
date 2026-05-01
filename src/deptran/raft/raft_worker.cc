@@ -585,12 +585,12 @@ void RaftWorker::register_apply_callback_par_id_return(
 }
 
 // @unsafe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
-int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
+int RaftWorker::Next(int slot_id, MarshallDeputy md) {
   int status = -1;
 
   // @unsafe
   { // operator bool on shared_ptr (null check)
-    if (!cmd) {
+    if (!md.inner()) {
       Log_error("Received null command in Next()");
       return status;
     }
@@ -604,7 +604,7 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   int len = 0;
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
-  auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+  auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
   if (tpc_cmd && tpc_cmd->cmd_) {
     // Extract VecPieceData that contains the raw bytes
     auto vpd = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);

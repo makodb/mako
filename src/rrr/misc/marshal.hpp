@@ -284,14 +284,24 @@ class MarshallDeputy {
      */
     // @safe - Constructor accepts shared_ptr<Marshallable> with polymorphism support
     // SAFETY: Moves ownership, proper null checking in usage
-    explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m) {
+    //
+    // L6-A2 (2026-05-01): made non-`explicit` so user code (deptran/) can
+    // hand a `std::shared_ptr<Marshallable>` to any function expecting a
+    // `MarshallDeputy` and the rrr boundary will wrap it automatically —
+    // matching the CLAUDE.md guidance "Convert at the edge; isolate the
+    // conversion in one spot; annotate the boundary `@unsafe`".  The
+    // asymmetry (shared_ptr→MarshallDeputy implicit, not the reverse)
+    // is intentional and lets the signature migration ripple through
+    // without requiring explicit wrapping at every call site.
+    MarshallDeputy(std::shared_ptr<rrr::Marshallable> m) {
       set_marshallable(std::move(m));
     }
 
     // @unsafe - Template constructor for derived types
     // Uses raw pointer dereference through shared_ptr->member
+    // L6-A2: also non-explicit (see above).
     template<typename T>
-    explicit MarshallDeputy(std::shared_ptr<T> sp_m)
+    MarshallDeputy(std::shared_ptr<T> sp_m)
       requires std::is_base_of_v<rrr::Marshallable, T>
     {
       set_marshallable(
@@ -302,8 +312,9 @@ class MarshallDeputy {
     // remains. The bridge `wrap_typed_marshallable<T>` forward-decl
     // above lets Phase 1 unqualified lookup find it during template
     // instantiation.
+    // L6-A2: also non-explicit (see above).
     template<typename T>
-    explicit MarshallDeputy(std::shared_ptr<T> sp_t)
+    MarshallDeputy(std::shared_ptr<T> sp_t)
       requires (!std::is_base_of_v<rrr::Marshallable, T> &&
                 SerializableConcept<T>)
     {
@@ -453,6 +464,9 @@ inline std::shared_ptr<T> marshallable_cast(const Marshallable* value) {
   return marshallable_cast<T>(*value);
 }
 
+// L6-A2 (2026-05-01): a `marshallable_cast<T>(const MarshallDeputy&)`
+// overload was already provided below — user code can write
+// `marshallable_cast<T>(md)` directly without reaching for `md.inner()`.
 template <typename T>
 inline std::shared_ptr<T> marshallable_cast(const MarshallDeputy& deputy) {
   return marshallable_cast<T>(deputy.inner());

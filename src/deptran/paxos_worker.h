@@ -424,7 +424,9 @@ public:
   void SetupService();
   void SetupCommo();
   void ShutDown();
-  int Next(int,shared_ptr<Marshallable>);
+  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // signature in deptran/scheduler.h).
+  int Next(int, MarshallDeputy);
   void WaitForSubmit();
   void WaitForNoops();
   void IncSubmit();

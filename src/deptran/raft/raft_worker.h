@@ -210,7 +210,10 @@ public:
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy
-  int Next(int slot, shared_ptr<Marshallable> cmd);
+  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // signature in deptran/scheduler.h).  Body unwraps via `md.inner()` /
+  // `marshallable_cast<T>(md)` overload as needed.
+  int Next(int slot, MarshallDeputy md);
 
   // @safe
   rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {

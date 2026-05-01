@@ -391,27 +391,27 @@ bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
   return (sp_tx->commit_result->is_ready());
 }
 
-int SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {
-  if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_PREPARE) {
+int SchedulerClassic::Next(int slot, MarshallDeputy md) {
+  if (md.kind_ == MarshallDeputy::CMD_TPC_PREPARE) {
     // Phase 4a-3a: TpcPrepareCommand migrated to Serializable.
-    auto* c = serializable_cast<TpcPrepareCommand>(cmd);
+    auto* c = serializable_cast<TpcPrepareCommand>(md.inner());
     verify(c != nullptr);
     PrepareReplicated(*c);
-  } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto c = marshallable_cast<TpcCommitCommand>(cmd);
+  } else if (md.kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+    auto c = marshallable_cast<TpcCommitCommand>(md);
     verify(c != nullptr);
     CommitReplicated(*c);
-  } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_EMPTY) {
+  } else if (md.kind_ == MarshallDeputy::CMD_TPC_EMPTY) {
     // Phase 4a-2: TpcEmptyCommand is now a Serializable; the apply
     // path's Done() must wake the original sender's Wait() — possible
     // because construction sites use `wrap_serializable_aliased`,
     // which preserves shared_ptr aliasing through the proxy. On the
     // leader, `c` here aliases the sender's instance.
-    auto* c = serializable_cast<TpcEmptyCommand>(cmd);
+    auto* c = serializable_cast<TpcEmptyCommand>(md.inner());
     verify(c != nullptr);
     c->Done();
-  } else if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_BATCH) {
-    auto c = marshallable_cast<TpcBatchCommand>(cmd);
+  } else if (md.kind_ == MarshallDeputy::CMD_TPC_BATCH) {
+    auto c = marshallable_cast<TpcBatchCommand>(md);
     verify(c != nullptr);
     for (auto& cc : c->cmds_)
       CommitReplicated(*cc);

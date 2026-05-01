@@ -46,7 +46,9 @@ class RaftTestConfig {
 
  private:
   static std::map<siteid_t, RaftFrame*> replicas;
-  static std::map<siteid_t, std::function<int(int, std::shared_ptr<Marshallable>)>> commit_callbacks;
+  // L6-A2 (2026-05-01): take MarshallDeputy (matching the
+  // RegLearnerAction signature change in deptran/scheduler.h).
+  static std::map<siteid_t, std::function<int(int, MarshallDeputy)>> commit_callbacks;
   static std::map<siteid_t, std::vector<int>> committed_cmds;
   static std::map<siteid_t, uint64_t> rpc_count_last;
 
