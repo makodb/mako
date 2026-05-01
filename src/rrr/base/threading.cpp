@@ -78,14 +78,14 @@ ThreadPool::ThreadPool(int n /* =... */)
 ThreadPool::~ThreadPool() noexcept {
     should_stop_ = true;
     for (int i = 0; i < n_; i++) {
-        q_[i].push(rusty::Box<function<void()>>(nullptr));  // death pill
+        q_[i].push(rusty::Box<rusty::Function<void()>>(nullptr));  // death pill
     }
     for (int i = 0; i < n_; i++) {
         Pthread_join(th_[i], nullptr);
     }
     // check if there's left over jobs
     for (int i = 0; i < n_; i++) {
-        rusty::Box<function<void()>> job(nullptr);
+        rusty::Box<rusty::Function<void()>> job(nullptr);
         while (q_[i].try_pop(&job)) {
             if (job.is_valid()) {
                 (*job)();
@@ -95,12 +95,12 @@ ThreadPool::~ThreadPool() noexcept {
     // th_ and q_ are now std::vector, automatically cleaned up
 }
 
-int ThreadPool::run_async(const std::function<void()>& f) {
+int ThreadPool::run_async(rusty::Function<void()> f) {
     if (should_stop_) {
         return EPERM;
     }
     int queue_id = round_robin_.next() % n_;
-    q_[queue_id].push(rusty::make_box<function<void()>>(f));
+    q_[queue_id].push(rusty::make_box<rusty::Function<void()>>(std::move(f)));
     return 0;
 }
 
@@ -129,7 +129,7 @@ void ThreadPool::run_thread(int id_in_pool) {
     // succeed: sleep - 1
     // failure: sleep + 10
     for (;;) {
-        rusty::Box<function<void()>> job(nullptr);
+        rusty::Box<rusty::Function<void()>> job(nullptr);
 
         switch(stage) {
         case 0:
