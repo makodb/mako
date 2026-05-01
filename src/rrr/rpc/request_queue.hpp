@@ -14,6 +14,7 @@
 #include <rusty/rusty.hpp>
 
 #include <rusty/arc.hpp>
+#include <rusty/function.hpp>
 #include <rusty/option.hpp>
 #include <rusty/vecdeque.hpp>
 
@@ -50,7 +51,7 @@ struct QueuedRequest {
     std::chrono::steady_clock::time_point timestamp;  // When queued
     uint32_t retry_count;              // Number of retries
     rusty::Arc<Marshal> payload;       // Serialized request data
-    std::function<void(int)> callback; // Completion callback (error_code)
+    rusty::Function<void(int)> callback; // Completion callback (error_code)
     uint32_t ttl_ms;                   // TTL in milliseconds
 
     // @unsafe - Constructor uses std::chrono
@@ -242,27 +243,18 @@ public:
         return rusty::Some(guard->pop_front());
     }
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
-    // Note: Returns pointer that should be used immediately while lock is held
-    // For thread-safety, prefer dequeue() instead
-    bool peek(QueuedRequest& out) const {
-        // @unsafe { SpinMutex lock, VecDeque operations }
-        auto guard = queue_.lock().unwrap();
-
-        if (guard->is_empty()) {
-            return false;
-        }
-
-        // @unsafe { struct assignment }
-        out = guard->front();
-        return true;
-    }
+    // L5o: removed `peek(QueuedRequest&)` — its `out = guard->front();`
+    // copy-assignment relied on QueuedRequest being copyable, which is
+    // no longer the case after the callback field migrated from
+    // std::function to move-only rusty::Function.  The method had no
+    // production callers (tests-only, used for inspection of xid
+    // post-enqueue); coverage moved to size()/empty().
 
     // === Expiration ===
 
     // @unsafe - Uses rusty::VecDeque and SpinMutex
     size_t expire_stale() {
-        rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
+        rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
         size_t removed = 0;
 
         {
@@ -284,8 +276,9 @@ public:
             }
         }
 
-        // Invoke callbacks outside lock
-        for (const auto& cb : callbacks_to_invoke) {
+        // Invoke callbacks outside lock.  rusty::Function::operator()
+        // is non-const, so iterate by mutable reference.
+        for (auto& cb : callbacks_to_invoke) {
             // @unsafe { callback invocation }
             try {
                 cb(kRequestQueueExpiredError);
@@ -330,7 +323,7 @@ public:
 
     // @unsafe - Uses rusty::VecDeque and SpinMutex
     void clear_all(int error_code = -3) {
-        rusty::Vec<std::function<void(int)>> callbacks_to_invoke;
+        rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
 
         {
             // @unsafe { SpinMutex lock, VecDeque operations }
@@ -344,8 +337,9 @@ public:
             guard->clear();
         }
 
-        // Invoke callbacks outside lock
-        for (const auto& cb : callbacks_to_invoke) {
+        // Invoke callbacks outside lock.  rusty::Function::operator()
+        // is non-const, so iterate by mutable reference.
+        for (auto& cb : callbacks_to_invoke) {
             // @unsafe { callback invocation }
             try {
                 cb(error_code);
