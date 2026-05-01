@@ -75,25 +75,31 @@ TEST(RequestQueueTest, FifoOrder) {
     }
 }
 
-TEST(RequestQueueTest, Peek) {
+// L5o (2026-05-01): the prior `Peek` and `PeekEmptyReturnsFalse`
+// tests went away with the `RequestQueue::peek(QueuedRequest&)`
+// method itself — once `QueuedRequest::callback` migrated to
+// move-only rusty::Function, peek's `out = guard->front();` copy
+// no longer compiled.  The method was tests-only (no production
+// callers); equivalent post-enqueue inspection happens via
+// `size()` / `empty()` and via dequeue (which moves out).
+
+TEST(RequestQueueTest, EnqueueIncreasesSize) {
     RequestQueue queue;
+    EXPECT_EQ(queue.size(), 0u);
+    EXPECT_TRUE(queue.empty());
 
     QueuedRequest req;
     req.xid = 999;
     queue.enqueue(std::move(req));
 
-    QueuedRequest peeked;
-    EXPECT_TRUE(queue.peek(peeked));
-    EXPECT_EQ(peeked.xid, 999);
-
-    // Should still be in queue
     EXPECT_EQ(queue.size(), 1u);
+    EXPECT_FALSE(queue.empty());
 }
 
-TEST(RequestQueueTest, PeekEmptyReturnsFalse) {
+TEST(RequestQueueTest, EmptyQueueDequeueReturnsNone) {
     RequestQueue queue;
-    QueuedRequest peeked;
-    EXPECT_FALSE(queue.peek(peeked));
+    auto result = queue.dequeue();
+    EXPECT_TRUE(result.is_none());
 }
 
 // ============================================================================
