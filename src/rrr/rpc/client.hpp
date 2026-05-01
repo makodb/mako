@@ -310,13 +310,24 @@ class ClientConnection;
 // Ok(Arc<Future>) on success, Err(error_code) on failure
 using FutureResult = rusty::Result<rusty::Arc<Future>, i32>;
 
+// FutureAttr's callback is the same `Arc<Function<...const>>`-backed
+// wrapper used by the channel-tier callback typedefs in channel.hpp:
+// default-constructible (empty Function inside the Arc), copyable
+// (Arc clone = atomic refcount bump), implicit construction from any
+// compatible callable, `operator bool` / `operator()`.  Sharing the
+// wrapper keeps the API surface identical to the prior std::function
+// (so the 92+ existing `fuattr.callback = lambda;` callsites compile
+// unchanged) while letting FutureAttr propagate through generated
+// rcc_rpc.h proxy stubs cheaply.
+using FutureCallback = detail::CallbackWrapper<void(rusty::Arc<Future>) const>;
+
 // @safe - Simple attribute struct for Future callbacks
 struct FutureAttr {
-    FutureAttr(const std::function<void(rusty::Arc<Future>)>& cb = std::function<void(rusty::Arc<Future>)>()) : callback(cb) { }
+    FutureAttr(FutureCallback cb = FutureCallback{}) : callback(std::move(cb)) { }
 
     // callback should be fast, otherwise it hurts rpc performance
     // Receives Arc<Future> for lifetime safety (callback keeps Future alive)
-    std::function<void(rusty::Arc<Future>)> callback;
+    FutureCallback callback;
 };
 
 // @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)

@@ -123,8 +123,11 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
     }
   }
 
-  // Execute callback outside lock to avoid deadlock
-  if (should_callback && attr_.callback != nullptr) {
+  // Execute callback outside lock to avoid deadlock.  The wrapper is
+  // copyable (Arc clone = refcount++); we hold a local copy `x` so the
+  // user callable stays alive across the invocation even if the
+  // FutureAttr field is dropped concurrently.
+  if (should_callback && attr_.callback) {
     auto x = attr_.callback;
     x(self);
   }
