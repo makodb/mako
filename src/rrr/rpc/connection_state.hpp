@@ -12,6 +12,7 @@
 #include <ctime>
 
 #include <rusty/cell.hpp>
+#include <rusty/fn.hpp>
 
 
 
@@ -69,10 +70,10 @@ private:
     // Cell provides interior mutability for trivially copyable ConnectionState enum
     rusty::Cell<ConnectionState> state_{ConnectionState::NEW};
 
-    // Callback invoked after successful state transitions
-    // Note: std::function is not trivially copyable, so we don't wrap it in Cell.
-    // The callback is set once during initialization and not modified thereafter.
-    std::function<void(ConnectionState, ConnectionState)> on_state_change_;
+    // Callback invoked after successful state transitions.
+    // rusty::Function is move-only; the callback is set once during
+    // initialization (via set_on_state_change) and not modified thereafter.
+    rusty::Function<void(ConnectionState, ConnectionState)> on_state_change_;
 
 public:
     // @safe - Default constructor, starts in NEW state
@@ -114,7 +115,7 @@ public:
         state_.set(new_state);
 
         // Invoke callback if set
-        // @unsafe - std::function::operator bool is not annotated
+        // @unsafe - rusty::Function::operator bool is not annotated
         {
             if (on_state_change_) {
                 on_state_change_(current, new_state);
@@ -130,7 +131,7 @@ public:
         ConnectionState current = state_.get();
         state_.set(new_state);
 
-        // @unsafe - std::function::operator bool is not annotated
+        // @unsafe - rusty::Function::operator bool is not annotated
         {
             if (on_state_change_) {
                 on_state_change_(current, new_state);
@@ -140,7 +141,7 @@ public:
 
     // @safe - Set callback for state changes
     // Callback receives (from_state, to_state)
-    void set_on_state_change(std::function<void(ConnectionState, ConnectionState)> callback) {
+    void set_on_state_change(rusty::Function<void(ConnectionState, ConnectionState)> callback) {
         // @unsafe
         { on_state_change_ = std::move(callback); }
     }
