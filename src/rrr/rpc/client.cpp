@@ -103,7 +103,7 @@ void Future::timed_wait(double sec) const {
 // @unsafe - rusty-cpp false positive: should_callback IS initialized
 void Future::notify_ready(rusty::Arc<Future> self) const {
   bool should_callback = false;  // Initialized here
-  rusty::Vec<std::function<void()>> completion_callbacks;
+  rusty::Vec<rusty::Function<void()>> completion_callbacks;
   {
     auto guard = state_.lock().unwrap();
     if (!guard->timed_out) {
@@ -115,8 +115,10 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 
   ready_cond_.notify_all();
 
+  // rusty::Function::operator bool() reports presence; iterate by
+  // mutable ref so we can call non-const operator().
   for (auto& callback : completion_callbacks) {
-    if (callback != nullptr) {
+    if (callback) {
       callback();
     }
   }

@@ -330,7 +330,7 @@ class Future {
     struct State {
         bool ready = false;
         bool timed_out = false;
-        rusty::Vec<std::function<void()>> completion_callbacks;
+        rusty::Vec<rusty::Function<void()>> completion_callbacks;
     };
 
     i64 xid_;
@@ -411,7 +411,7 @@ public:
 
     // @safe - Registers a completion callback and returns true if caller should suspend.
     // Returns false when the future is already completed (ready or timed out).
-    bool add_completion_callback(std::function<void()> callback) const {
+    bool add_completion_callback(rusty::Function<void()> callback) const {
         // SAFETY: unwrap() on poisoned mutex intentionally panics, matching existing policy.
         // @unsafe
         {
