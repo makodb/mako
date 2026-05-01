@@ -12,7 +12,9 @@ cd "$REPO"
 
 THREADS="${1:-1 2 3 4 5 6 7 8 9 10 11}"
 OUT="results/benchmarks/raft-single/single_1to1_$(date +%Y%m%d_%H%M%S)"
+PER_T_ROOT="$OUT/per_t"
 mkdir -p "$OUT/logs"
+mkdir -p "$PER_T_ROOT"
 
 merged="$OUT/results.csv"
 # Header stays in sync with run_scalability_sweep.sh's per-run CSV (now
@@ -29,11 +31,14 @@ echo "============================================================"
 for t in $THREADS; do
     echo
     echo "### t=$t  MAKO_REPLAY_THREADS=$t ###"
-    MAKO_REPLAY_THREADS=$t INTER_RUN_SLEEP=30 \
-      bash scripts/sweep_raft_single.sh \
-        --skip-build --threads "$t" --runs 1 --batch-size 400
+    BENCH_ROOT_OVERRIDE="$PER_T_ROOT" \
+    BUILD_DIR=build \
+    MAKO_REPLAY_THREADS=$t \
+    INTER_RUN_SLEEP=30 \
+      bash scripts/run_scalability_sweep.sh \
+        --backend raft-single --threads "$t" --runs 1 --batch-size 400
 
-    src=$(readlink results/benchmarks/raft-single/scalability_latest)
+    src=$(readlink "$PER_T_ROOT/scalability_latest")
 
     # copy log files with the thread suffix (they're already t${t}_ prefixed
     # but unique across the outer sweep since we varied t per run).

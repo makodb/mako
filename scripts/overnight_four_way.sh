@@ -12,7 +12,7 @@
 #        — the other reference (multi-Paxos).
 #
 # All four use the existing no-disk binaries (DISABLE_DISK=ON). Persistence
-# numbers come from the separate overnight_three_way_with_disk.sh.
+# numbers come from the separate run_simulated_persistence_sweep.sh.
 #
 # Total runtime: ~5 hours (4 sweeps × ~75 min + plot generation).
 #

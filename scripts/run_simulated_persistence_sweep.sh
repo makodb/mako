@@ -1,26 +1,29 @@
 #!/bin/bash
-# Overnight three-way TIER-1 PERSISTENCE sweep covering Step 3 of the plan.
+# Overnight three-way SIMULATED-PERSISTENCE sweep.
 #
-# Same three "interesting" backends as the no-disk overnight, but built with
-# DISABLE_DISK=OFF so the Mako RocksDB layer is active. MAKO_PERSIST_ROOT
-# redirects the persistence files to /dev/shm (tmpfs) — modeling an
-# "infinitely fast disk" so we measure the persistence *code path* cost
-# without paying for the lab SSD's hardware speed.
+# Same three backends as the no-persistence overnight, but built with
+# DISABLE_DISK=OFF and FakeDisk enabled so the Mako persistence path pays
+# a shared queued disk cost configured by:
+#   MAKO_PERSIST_BW_MBPS
+#   MAKO_PERSIST_LATENCY_US
+#   DISK_LABEL
 #
 #   Conditions (all at t=1..11, MAKO_REPLAY_THREADS=$t):
 #     1) Single-Raft + replay pool (build_disk/)
 #     2) Multi-Raft  (build_multi_disk/)
 #     3) Paxos       (build_paxos_disk/)
 #
-# Note: per the post-smoke-test investigation, only Mako's RocksDB layer is
-# actually exercised in the Mako benchmark path. The Raft consensus log
-# (LogStorage) is never wired up under RaftWorker::SetupBase. So this sweep
-# measures Mako database snapshot persistence cost specifically.
+# Output layout:
+#   results/benchmarks/simulated-persistence-results/<DISK_LABEL>_<STAMP>/
+#     single_raft/results.csv
+#     multi_raft/results.csv
+#     paxos/results.csv
+#     plots/
 #
 # Total runtime: ~75 minutes.
 #
 # Usage:
-#   nohup bash scripts/overnight_three_way_with_disk.sh > overnight_disk.log 2>&1 &
+#   nohup bash scripts/run_simulated_persistence_sweep.sh > simulated_persistence.log 2>&1 &
 
 set -e
 
@@ -28,17 +31,24 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
 THREADS="${THREADS:-1 2 3 4 5 6 7 8 9 10 11}"
+DISK_LABEL="${DISK_LABEL:-cloudssd}"
+BW="${MAKO_PERSIST_BW_MBPS:-1000}"
+LAT="${MAKO_PERSIST_LATENCY_US:-1000}"
 STAMP=$(date +%Y%m%d_%H%M%S)
-OUT="results/benchmarks/overnight_three_way_with_disk_$STAMP"
+TOP="results/benchmarks/simulated-persistence-results"
+OUT="$TOP/${DISK_LABEL}_$STAMP"
 PERSIST_ROOT="${MAKO_PERSIST_ROOT:-/dev/shm/mako_persist}"
 mkdir -p "$OUT" "$PERSIST_ROOT"
 
 echo "================================================================="
-echo "  Overnight three-way TIER-1 PERSISTENCE sweep (tmpfs)"
+echo "  Overnight three-way simulated-persistence sweep"
 echo "  Started:        $(date)"
 echo "  Output:         $OUT"
 echo "  Threads:        $THREADS"
-echo "  Persist root:   $PERSIST_ROOT  (tmpfs / RAM-backed)"
+echo "  Disk label:     $DISK_LABEL"
+echo "  Bandwidth:      ${BW} MB/s"
+echo "  Latency:        ${LAT} us"
+echo "  Persist root:   $PERSIST_ROOT"
 echo "================================================================="
 
 # Pre-flight: confirm persistence-enabled binaries exist.
@@ -50,6 +60,19 @@ for d in build_disk build_multi_disk build_paxos_disk; do
 done
 echo "Persistence binaries verified:"
 ls -l build_disk/dbtest build_multi_disk/dbtest build_paxos_disk/dbtest
+
+cat > "$OUT/metadata.txt" <<EOF
+kind=simulated-persistence
+started=$(date -Is)
+threads=$THREADS
+disk_label=$DISK_LABEL
+bandwidth_mbps=$BW
+latency_us=$LAT
+persist_root=$PERSIST_ROOT
+single_build=build_disk
+multi_build=build_multi_disk
+paxos_build=build_paxos_disk
+EOF
 
 # Pre-flight: confirm /dev/shm has space.
 SHM_AVAIL=$(df -BG --output=avail "$PERSIST_ROOT" | tail -1 | tr -d ' G')
@@ -75,11 +98,14 @@ run_one_backend() {
     echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,role_worker_mean,role_worker_peak,role_replay_mean,role_replay_peak,role_apply_peak,role_other_mean,exit_code,replay_threads" > "$backend_csv"
 
     for t in $THREADS; do
-        echo "--- ${label}, t=$t (MAKO_REPLAY_THREADS=$t, MAKO_PERSIST_ROOT=$PERSIST_ROOT) ---"
+        echo "--- ${label}, t=$t (MAKO_REPLAY_THREADS=$t, BW=${BW} MB/s, LAT=${LAT} us) ---"
         clean_persist_root
         BUILD_DIR="$build" \
         MAKO_REPLAY_THREADS="$t" \
         MAKO_PERSIST_ROOT="$PERSIST_ROOT" \
+        MAKO_PERSIST_FAKE_DISK=1 \
+        MAKO_PERSIST_BW_MBPS="$BW" \
+        MAKO_PERSIST_LATENCY_US="$LAT" \
         INTER_RUN_SLEEP=30 \
           bash scripts/run_scalability_sweep.sh \
             --backend "$backend" --threads "$t" --runs 1 --batch-size 400
@@ -93,22 +119,29 @@ run_one_backend() {
     echo "${label} done at $(date).  CSV: $backend_csv"
 }
 
-# 1) Single-Raft + pool, with persistence
-run_one_backend "single_raft_pool_disk" build_disk raft-single raft-single
+# 1) Single-Raft + pool, with persistence simulation
+run_one_backend "single_raft" build_disk raft-single raft-single
 
-# 2) Multi-Raft, with persistence
-run_one_backend "multi_raft_disk" build_multi_disk raft-multi raft-multi
+# 2) Multi-Raft, with persistence simulation
+run_one_backend "multi_raft" build_multi_disk raft-multi raft-multi
 
-# 3) Paxos, with persistence
-run_one_backend "paxos_disk" build_paxos_disk paxos paxos
+# 3) Paxos, with persistence simulation
+run_one_backend "paxos" build_paxos_disk paxos paxos
+
+mkdir -p "$OUT/plots"
+python3 scripts/plot_overnight_three_way.py \
+    --single "$OUT/single_raft/results.csv" \
+    --multi  "$OUT/multi_raft/results.csv" \
+    --paxos  "$OUT/paxos/results.csv" \
+    --outdir "$OUT/plots"
 
 # Final cleanup of persist root so we don't leave 64GB of RocksDB sitting around.
 clean_persist_root
 
-ln -sfT "$(basename "$OUT")" "results/benchmarks/overnight_three_way_with_disk_latest"
+ln -sfn "$(basename "$OUT")" "$TOP/latest"
 
 echo
 echo "================================================================="
-echo "  TIER-1 PERSISTENCE SWEEP DONE  ($(date))"
+echo "  SIMULATED-PERSISTENCE SWEEP DONE  ($(date))"
 echo "  Output dir: $OUT"
 echo "================================================================="

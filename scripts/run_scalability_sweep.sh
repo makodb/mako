@@ -55,7 +55,7 @@ esac
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR" || exit 1
-BENCH_ROOT="${SCRIPT_DIR}/results/benchmarks/${BACKEND}"
+BENCH_ROOT="${BENCH_ROOT_OVERRIDE:-${SCRIPT_DIR}/results/benchmarks/${BACKEND}}"
 RESULTS_DIR="${BENCH_ROOT}/scalability_${TIMESTAMP}"
 LOGS_DIR="${RESULTS_DIR}/logs"
 SUMMARY_FILE="${RESULTS_DIR}/summary.txt"

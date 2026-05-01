@@ -18,6 +18,19 @@ project(mako)
 # Prefer shared libraries when available (needed for txlog.so linking)
 set(BUILD_SHARED_LIBS ON)
 
+# Optional compiler cache for faster iterative rebuilds.
+option(ENABLE_CCACHE "Use ccache when available" ON)
+if(ENABLE_CCACHE)
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
+    else()
+        message(STATUS "ccache not found; proceeding without compiler launcher")
+    endif()
+endif()
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,6 +76,15 @@ set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable RustyCpp borrow checking")
 if(ENABLE_BORROW_CHECKING)
     enable_borrow_checking()
 endif()
+
+# Fast-vs-checked workflow:
+#   - dbtest builds normally without waiting on deptran borrow checking
+#   - dbtest_checked explicitly requires both dbtest and borrow_check_deptran
+#
+# This keeps iteration fast while preserving a one-command validation target.
+option(DBTEST_REQUIRE_DEPTRAN_BORROW_CHECK
+       "Force dbtest/deptran_server builds to wait on deptran borrow checking"
+       OFF)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
@@ -1091,11 +1113,38 @@ endif()
 #     add_borrow_check_target(dbtest)
 # endif()
 
-# Enable deptran borrow checking by default for dbtest and related apps
+# Fast default: dbtest itself does not wait on deptran borrow checking.
+# Explicit checked targets below provide the full validation path.
 if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_deptran)
-    add_dependencies(dbtest borrow_check_deptran)
+    if(DBTEST_REQUIRE_DEPTRAN_BORROW_CHECK)
+        add_dependencies(dbtest borrow_check_deptran)
+        if(MAKO_USE_RAFT)
+            add_dependencies(deptran_server borrow_check_deptran)
+        endif()
+    endif()
+
+    add_custom_target(dbtest_checked
+        DEPENDS dbtest borrow_check_deptran
+        COMMENT "Build dbtest and run deptran borrow checking"
+    )
+
     if(MAKO_USE_RAFT)
-        add_dependencies(deptran_server borrow_check_deptran)
+        add_custom_target(deptran_server_checked
+            DEPENDS deptran_server borrow_check_deptran
+            COMMENT "Build deptran_server and run deptran borrow checking"
+        )
+    endif()
+else()
+    add_custom_target(dbtest_checked
+        DEPENDS dbtest
+        COMMENT "Borrow checking disabled; dbtest_checked aliases dbtest"
+    )
+
+    if(MAKO_USE_RAFT)
+        add_custom_target(deptran_server_checked
+            DEPENDS deptran_server
+            COMMENT "Borrow checking disabled; deptran_server_checked aliases deptran_server"
+        )
     endif()
 endif()
 

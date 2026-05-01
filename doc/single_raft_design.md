@@ -1,117 +1,116 @@
-# Single Raft Design Document
+# Single Raft Design
+
+This document explains the **current** single-Raft layout in the repository.
+
+It focuses on the implementation that is checked in now, not the older intermediate design where the single apply thread was assumed to do all follower replay work itself.
 
 ## Overview
 
-This document describes the **Single Raft** architecture where exactly one Raft instance (one `RaftWorker`, one `RaftServer`, one log, one leader election) handles all partitions. Previously, each partition had its own independent Raft group, leading to N redundant elections, heartbeat loops, and logs.
+Single-Raft means:
+
+- one `RaftWorker`
+- one `RaftServer`
+- one Raft log
+- one leader election domain
+- one heartbeat loop
+
+for all partitions hosted by a process.
+
+Extra partition ports are still bound, but they are served by stub RPC servers that forward into the single real Raft instance.
 
 ## Architecture
 
-### Before (Per-Shard Raft)
-```
-Partition 0 → RaftWorker0 → RaftServer0  (port 27001)
-Partition 1 → RaftWorker1 → RaftServer1  (port 27002)
-Partition 2 → RaftWorker2 → RaftServer2  (port 27003)
-(3 separate logs, 3 elections, 3 heartbeat loops)
-```
+### Before: Multi-Raft
 
-### After (Single Raft)
-```
-Partition 0 ──→ ┐
-Partition 1 ──→ ├→ [Queue] → RaftWorker0 → RaftServer0 (port 27001)
-Partition 2 ──→ ┘
-                    Stub RPC servers on ports 27002, 27003
-                    (1 log, 1 election, 1 heartbeat loop)
+```text
+Partition 0 -> RaftWorker0 -> RaftServer0
+Partition 1 -> RaftWorker1 -> RaftServer1
+Partition 2 -> RaftWorker2 -> RaftServer2
 ```
 
-## Data Flow
+### After: Single-Raft
 
-### Submit Path (Leader)
-1. Mako worker thread calls `add_log_to_nc(log, len, par_id, batch_size)`
-2. `find_worker(par_id)` → always returns `raft_workers_g[0]` (the single worker)
-3. `enqueue_to_worker()` → `EnqueueLog()` → submit queue
-4. `SubmitLoop()` drains queue, calls `Submit(log, len, par_id)`
-5. `Submit()` calls `CreateRaftLogCommand(log, len, tx_id, par_id)` — **stores `par_id` in `SimpleCommand::partition_id_`**
-6. `RaftServer::Start()` appends to the single Raft log
-
-### Replication Path
-1. Leader's `HeartbeatLoop()` sends `AppendEntries` RPCs to followers
-2. Followers receive on their main port OR stub ports (both route to the same `RaftServer`)
-3. Followers append to their single log, respond with success
-4. Leader advances `commitIndex` based on majority `match_index_`
-
-### Callback Routing (Apply Path)
-1. `StartApplyFiber()` detects `executeIndex < commitIndex`
-2. Calls `app_next_(slot_id, cmd)` → `RaftWorker::Next()`
-3. `Next()` extracts `par_id` from `SimpleCommand::partition_id_` inside the committed entry
-4. Looks up per-partition callback:
-   - `leader_callbacks_by_partition_[par_id]` if leader
-   - `follower_callbacks_by_partition_[par_id]` if follower
-   - Falls back to `leader_callback_par_id_return_` / `follower_callback_par_id_return_` if maps are empty
-5. Calls the callback with partition-specific `un_replay_logs_by_partition_[par_id]`
-
-## Per-Partition Callback Maps
-
-```cpp
-// In RaftWorker (raft_worker.h)
-std::map<uint32_t, watermark_callback_t> leader_callbacks_by_partition_;
-std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
-std::map<uint32_t, std::queue<...>> un_replay_logs_by_partition_;
+```text
+Partition 0 --\
+Partition 1 ---+-> submit queue -> RaftWorker0 -> RaftServer0
+Partition 2 --/                         |
+                                        +-> stub RPC servers on extra ports
 ```
 
-Registered via:
-- `register_leader_callback_for_partition(par_id, cb)` — called from `apply_callbacks_for_partition()`
-- `register_follower_callback_for_partition(par_id, cb)` — same
+## Submit Path
 
-These are called from `raft_main_helper.cc::apply_callbacks_for_partition()` which in turn is triggered by:
-- `register_for_leader_par_id_return()` / `register_for_follower_par_id_return()` — stores in `leader_replay_cb` / `follower_replay_cb` maps, then calls `apply_callbacks_for_partition()`
-- Leader change events — `handle_leader_change_impl()` re-applies callbacks
+Leader-side submit flow:
+
+1. Mako calls `add_log_to_nc(log, len, par_id, batch_size)`.
+2. `find_worker(par_id)` always returns `raft_workers_g[0]`.
+3. `enqueue_to_worker(...)` increments bookkeeping and queues the payload.
+4. `RaftWorker::SubmitLoop()` drains the queue.
+5. `RaftWorker::Submit(...)` wraps the payload and preserves `par_id`.
+6. `RaftServer::Start(...)` appends the command to the single log.
+
+The key detail is that single-Raft still preserves partition identity in the command payload so the callback path can route replay to the right partition logic.
+
+## Replication Path
+
+1. `HeartbeatLoop()` sends `AppendEntries` to followers.
+2. Followers can receive those RPCs on the main partition port or on one of the stub ports.
+3. All of those RPCs terminate at the same `RaftServer`.
+4. The leader advances `commitIndex` from follower `match_index_` values.
+
+## Current Apply / Replay Path
+
+This is the part that changed most from older docs.
+
+### What happens now
+
+1. Committed entries are queued by `EnqueueCommittedEntries(...)`.
+2. `StartApplyThread()` drains that queue on thread `raft_apply`.
+3. `RaftWorker::Next()` routes the committed entry to the correct partition callback.
+4. In the Mako follower callback path, the expensive database replay is usually handed to `ReplayPool`.
+5. `ReplayPool` runs that heavy work on `replay_*` threads.
+
+### What that means
+
+The apply thread is still important because it keeps the consensus path responsive, but the heavy database replay is no longer supposed to happen there.
+
+Older descriptions that say "single-Raft uses one apply thread for replay" are incomplete for the current code.
+
+## Per-Partition Callback Routing
+
+Single-Raft stores per-partition leader and follower callbacks on the single worker.
+
+That lets one shared Raft log still dispatch committed entries to the correct:
+
+- watermark logic
+- replay queue
+- partition-local bookkeeping
+
+Leader changes re-apply the callback routing so all known partitions stay wired correctly.
 
 ## Stub RPC Servers
 
-Remote replicas' `Communicator` objects expect to connect to ALL partition ports (e.g., 27001-27006 for 6 partitions). With only one real `RaftWorker` bound to port 27001, ports 27002-27006 would be unbound.
+Remote replicas still expect all partition ports to exist.
 
-Solution: Create lightweight `rrr::Server` instances on each extra port, registering the same `RaftService` pointing to the single `RaftServer`. This means:
-- All incoming `AppendEntries` and `RequestVote` RPCs reach the single Raft instance regardless of which port they arrive on
-- Each stub has its own `PollThread` for I/O
-- Stubs are created in `create_stub_servers()` and destroyed in `destroy_stub_servers()`
+Single-Raft therefore creates lightweight stub RPC servers for the extra ports:
 
-## Leader Change Notification
+- they bind the expected addresses
+- they register the same Raft service implementation
+- they forward requests into the single real `RaftServer`
 
-When the single Raft instance changes leadership, ALL registered partitions must be notified (not just partition 0). The `SetupBase()` callback iterates `leader_callbacks_by_partition_` and `follower_callbacks_by_partition_` to collect all known `par_id` values and calls `NotifyRaftLeaderChange()` for each.
+This keeps the wire-level topology compatible with the multi-Raft expectation while collapsing consensus into one local instance.
 
-## Files Modified
+## Debugging Tips
 
-| File | Key Changes |
-|------|-------------|
-| `src/deptran/raft/raft_worker.h` | Added per-partition callback maps, `watermark_callback_t` typedef, `register_*_for_partition()` methods, updated `CreateRaftLogCommand` signature to take `par_id` |
-| `src/deptran/raft/raft_worker.cc` | `CreateRaftLogCommand()` stores `par_id`; `Next()` extracts `par_id` from entry and routes to correct callback map; `IsLeader()`/`IsPartition()` work globally; per-partition registration methods; leader change notifies all partitions |
-| `src/deptran/raft_main_helper.cc` | `setup()` creates 1 worker, stores all site infos; `find_worker()` always returns worker 0; `create_stub_servers()`/`destroy_stub_servers()` for extra ports; `apply_callbacks_for_partition()` uses per-partition registration; `setup2()` configures 1 worker; shutdown cleans up stubs |
+If single-Raft looks wrong, check:
 
-## Files NOT Modified (Reference Only)
+1. `find_worker(par_id)` behavior in `raft_main_helper.cc`
+2. callback registration and leader-change handling
+3. `EnqueueCommittedEntries(...)` and `StartApplyThread()`
+4. whether `ReplayPool` is enabled and how many `replay_*` threads exist
+5. follower `replay_batch` counts and per-role CPU columns in the sweep CSVs
 
-- `src/deptran/raft/server.h/.cc` — RaftServer replicates opaque entries, unchanged
-- `src/mako/mako.hh` — Mako callbacks unchanged
-- `src/mako/benchmarks/sto/sync_util.hh` — Watermark logic unchanged
+## Related Docs
 
-## Debugging Playbook
-
-Add `[SINGLE-RAFT]` prefixed logging at these points if something breaks:
-
-1. **`Next()`**: Log extracted `par_id`, callback found (yes/no), encoded return value
-2. **`Submit()`**: Log `par_id` being submitted, Raft log index returned
-3. **`CreateRaftLogCommand()`**: Log `par_id` stored in `partition_id_`
-4. **`server_launch_worker()`**: Log stub server count and ports
-5. **`apply_callbacks_for_partition()`**: Log which `par_id` callback registered on which worker
-6. **`HeartbeatLoop` in server.cc**: If `match_index` stops advancing, log `next_index_[follower]`, `min_active_slot_`, `lastLogIndex`, batch size
-
-**Key diagnostic**: If `replay_batch` gets stuck:
-- Check follower logs for `FOLLOWER-AE` messages. If they stop → issue is in leader's batch assembly or RPC delivery
-- If they continue but `replay_batch` doesn't increase → issue is in callback or watermark
-- If `match_index` gets stuck → check if GC (`min_active_slot_`) is evicting entries before followers replicate them
-
-## Edge Cases
-
-1. **GC vs Replication**: With all partitions sharing one log, entry rate is N times higher. The 60,000-entry GC buffer should handle ~100 seconds at 600 entries/sec.
-2. **Watermark Starvation**: The advancer skips partitions with `local_timestamp_[i] == 0`. Safe for 1-shard tests.
-3. **RegLearnerAction duplication**: `RaftServer::RegLearnerAction()` overwrites `app_next_`, so multiple calls are idempotent.
-4. **Stub server service registration**: `CreateRpcServices()` creates new service instances per call, each pointing to the same `rep_sched_` (single `RaftServer`). Safe.
+- `docs/architecture/replication-current-state.md`
+- `docs/performance/benchmark-sweeps.md`
+- `docs/raft-book.md`

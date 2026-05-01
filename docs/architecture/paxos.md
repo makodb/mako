@@ -1,41 +1,51 @@
-# Paxos Benchmarking
+# Paxos Notes
 
-> **Note**: Some commands below reference the legacy WAF build system. The project now uses CMake (`make -j32`).
+This page documents how Paxos fits into the current repository.
 
-### For Paxos
+It is **not** the canonical benchmarking guide; for that, use [Benchmark Sweeps](../performance/benchmark-sweeps.md).
 
-#### Multi-process paxos
+## Current Role of Paxos
 
-```
-make
-python3 scripts/paxos-microbench.py -d 60 -f 'config/1c1s3r3p.yml' -f 'config/occ_paxos.yml' -t 30 -T 100000 -n 32 -P p3 -P p2 -P localhost
-```
+Paxos remains a supported replication backend alongside Raft.
 
-#### Multi-thread paxos
+In the current tree it serves two purposes:
 
-```
-make
-python3 scripts/paxos-microbench.py -d 60 -f 'config/1c1s3r1p.yml' -f 'config/occ_paxos.yml' -t 30 -T 100000 -n 32 -P localhost
-```
+- a working replication backend for Mako
+- a comparison baseline against Multi-Raft and Single-Raft in the active sweep scripts
 
-#### Others
+## How Mako Reaches Paxos
 
-run `python3 scripts/paxos-microbench.py -h` for help  
-**MUST** add all process names in the config files  
-see the contents in config files for more information about paxos partition and replication
-for multi-process paxos, if some site fails to start, change the order of your `-P` options and try again
+The current call path is:
 
-#### To See CPU Profiling
+1. Mako transaction code builds serialized log entries.
+2. `replication_helper` dispatches to the Paxos implementation.
+3. `paxos_main_helper` / `PaxosWorker` bridge those entries into the Paxos server path.
+4. Followers replay committed entries and increment replay counters used by the harness.
 
-PS: There are 32 outstanding requests.
+## Current Experiment Usage
 
-```
-./waf configure -p build
-./build/microbench -d 60 -f 'config/1c1s3r1p.yml' -f 'config/occ_paxos.yml' -t 10 -T 5000 -n 32 -P localhost > ./log/proc-localhost.log
-# if pprof is not installed in the system, try use scripts/pprof
-pprof --pdf ./build/deptran_server process-localhost.prof > cpu.pdf
-```
+The canonical Paxos runs in this repository use:
 
-#### Microbench results
+- `scripts/run_scalability_sweep.sh --backend paxos`
+- `scripts/run_non_persistence_sweep.sh`
+- `scripts/run_simulated_persistence_sweep.sh`
+- `scripts/overnight_four_way.sh`
 
-[Google Doc](https://docs.google.com/spreadsheets/d/1ANy2o1RQbw_gjPG1W3pTD3niqLZ8BfI8AwgxFGFBrO8/edit?usp=sharing)
+The sweep scripts assume a dedicated Paxos build directory such as:
+
+- `build_paxos/`
+- `build_paxos_disk/`
+
+## Metrics That Matter
+
+For current sweeps, look at:
+
+- leader-side throughput and latency from the leader log
+- `replay_batch_p1` and `replay_batch_p2` from follower logs
+- thread-role CPU buckets in `results.csv`
+
+Paxos is therefore measured with the same outer harness shape as the Raft backends.
+
+## Historical Notes
+
+Older microbenchmark commands that reference the legacy WAF flow are still useful as historical context, but they are not the normal path for the current thesis-oriented sweep workflow. Prefer the CMake builds and the sweep scripts under `scripts/`.

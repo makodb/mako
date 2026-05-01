@@ -1,5 +1,7 @@
 # Mako-Raft: Raft as a Replication Layer
 
+> **Historical note**: parts of this file describe the migration-era framing and older benchmark assumptions. The current code path and current sweep workflow are documented in [Replication Current State](../../architecture/replication-current-state.md) and [Benchmark Sweeps](../../performance/benchmark-sweeps.md).
+
 This document provides comprehensive documentation for using Raft as the replication layer in the Mako distributed transaction system.
 
 ## Overview

@@ -1,5 +1,7 @@
 # Root-Cause Analysis: Multi-Raft Instance Throughput Variance
 
+> **Historical note**: this file reflects an older experimental phase and earlier conclusions about single-Raft vs multi-Raft. It should not be used as the primary source of truth for current performance claims. For the active architecture and sweep workflow, read [Replication Current State](../architecture/replication-current-state.md) and [Benchmark Sweeps](../performance/benchmark-sweeps.md).
+
 ## Executive Summary
 
 The multi-Raft configuration (6 independent Raft groups, commit `4f99ffb6`) exhibits bimodal throughput — some runs achieve ~200K ops/sec while others drop to ~88K ops/sec (CV 34.6%). The single-Raft consolidation (commit `bba1a5d4`) achieves consistent ~209K ops/sec (CV 1.9%).

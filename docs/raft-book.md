@@ -1,879 +1,148 @@
 # The Raft Book
 
-A comprehensive developer guide for the Raft consensus implementation in Mako.
-
----
-
-## Table of Contents
-
-1. [Introduction](#1-introduction)
-2. [Architecture Overview](#2-architecture-overview)
-3. [Core Data Structures](#3-core-data-structures)
-4. [Leader Election](#4-leader-election)
-5. [Log Replication](#5-log-replication)
-6. [Log Application and Commit](#6-log-application-and-commit)
-7. [Speculative Voting and Replication](#7-speculative-voting-and-replication)
-8. [Preferred Leader Election](#8-preferred-leader-election)
-9. [Leadership Transfer](#9-leadership-transfer)
-10. [Mako Integration](#10-mako-integration)
-11. [Log Persistence](#11-log-persistence)
-12. [RPC Communication Layer](#12-rpc-communication-layer)
-13. [Configuration](#13-configuration)
-14. [Build System](#14-build-system)
-15. [Testing](#15-testing)
-16. [Failure Scenarios and Recovery](#16-failure-scenarios-and-recovery)
-17. [Known Issues and Workarounds](#17-known-issues-and-workarounds)
-18. [Debugging](#18-debugging)
-
----
-
-## 1. Introduction
-
-Mako supports **two pluggable replication backends**: Paxos (default) and Raft. This guide covers the Raft implementation in depth — the protocol, integration with Mako's transaction system, and practical development guidance.
-
-### Raft in Mako
-
-Raft is **not** a separate client-server system. Each Mako node runs Raft **in the same process** as its transaction layer:
-
-```
-Process (e.g., localhost:38100)
-  +-- Mako Worker Threads (TPC-C transactions)
-  +-- RaftWorker (bridge between Mako and Raft)
-  +-- RaftServer (consensus state machine)
-  +-- RaftCommo (inter-node RPC)
-```
-
-Mako worker threads call a **local function** (`add_log_to_nc()`) to submit transaction logs to Raft — this is not an RPC call, it's an in-process function invocation.
-
-### Why Raft?
-
-- Well-understood protocol with clear correctness arguments
-- Strong leader model simplifies reasoning about log ordering
-- Built-in leader election (no separate election service)
-- Easier to debug than Multi-Paxos (single log per partition)
-
-### Key Files
-
-| File | Purpose | LOC |
-|------|---------|-----|
-| `src/deptran/raft/server.{h,cc}` | Core Raft state machine | ~1600 |
-| `src/deptran/raft/raft_worker.{h,cc}` | Worker thread management, callbacks | |
-| `src/deptran/raft/commo.{h,cc}` | RPC communication for Raft messages | |
-| `src/deptran/raft/frame.{h,cc}` | Protocol frame registration | |
-| `src/deptran/raft/service.{h,cc}` | Incoming RPC handlers | |
-| `src/deptran/raft/coordinator.{h,cc}` | Client submission bridge | |
-| `src/deptran/raft/test.{h,cc}` | Lab-style test framework | |
-| `src/deptran/raft/testconf.{h,cc}` | Test configuration and helpers | |
-| `src/deptran/raft_main_helper.{h,cc}` | Mako-Raft bridge layer | ~550 |
-
----
-
-## 2. Architecture Overview
-
-```
-+---------------------------------------------------------------+
-|                    Mako Transaction Layer                       |
-|  (Worker threads execute TPC-C, serialize tx logs)             |
-+------------------------------+--------------------------------+
-                               |  add_log_to_nc() [local call]
-+------------------------------v--------------------------------+
-|                    raft_main_helper                             |
-|  (Bridge: routes logs, registers callbacks, manages workers)   |
-+------------------------------+--------------------------------+
-                               |
-+------------------------------v--------------------------------+
-|                    RaftWorker                                   |
-|  (Submit queue, batch aggregation, callback dispatch)          |
-+------------------------------+--------------------------------+
-                               |
-+------------------------------v--------------------------------+
-|                    RaftServer                                   |
-|  +------------------+  +------------------+                    |
-|  | Leader Election  |  | Log Replication  |                    |
-|  | - RequestVote    |  | - AppendEntries  |                    |
-|  | - Term tracking  |  | - Commit index   |                    |
-|  | - Timeout bias   |  | - Match index    |                    |
-|  +------------------+  +------------------+                    |
-|  +------------------+  +------------------+                    |
-|  | Log Management   |  | State Machine    |                    |
-|  | - raft_logs_     |  | - applyLogs()    |                    |
-|  | - Persistence    |  | - app_next_ cb   |                    |
-|  +------------------+  +------------------+                    |
-+------------------------------+--------------------------------+
-                               |  Raft RPCs
-+------------------------------v--------------------------------+
-|                    RaftCommo                                    |
-|  (SendAppendEntries, BroadcastVote, SendTimeoutNow, etc.)     |
-+---------------------------------------------------------------+
-```
-
-### Registration
+This guide explains the **current Raft implementation as used by Mako today**.
 
-Raft is registered as `MODE_RAFT` via the Frame factory pattern:
+It is intentionally narrower than the older migration and thesis material. The goal here is to make the checked-in code understandable without forcing a new reader through abandoned intermediate designs.
 
-```cpp
-REG_FRAME(MODE_RAFT, vector<string>({"raft"}), RaftFrame);
-```
+For the shortest path, read these first:
 
-This allows runtime switching between Paxos, Raft, and other consensus protocols using YAML configuration:
+1. [Architecture Overview](architecture/overview.md)
+2. [Replication Current State](architecture/replication-current-state.md)
+3. this file
 
-```yaml
-mode:
-  ab: raft    # Use Raft for atomic broadcast
-```
+## What Raft Means in This Repository
 
----
+Raft is one of the runtime-selectable replication backends behind Mako's transaction layer.
 
-## 3. Core Data Structures
+Important consequences:
 
-### RaftServer State
+- Mako does not directly call Raft-specific code from most benchmark paths.
+- The benchmark harness talks to `replication_helper`, which dispatches to Raft or Paxos.
+- Raft is embedded in the same process as the Mako benchmark and storage code.
 
-```cpp
-class RaftServer {
-    // Persistent state (must survive restarts)
-    uint64_t currentTerm;          // Latest term seen
-    siteid_t vote_for_;            // Who we voted for in current term
-    map<slotid_t, RaftData> raft_logs_;  // Log entries
+The main files are:
 
-    // Volatile state (all servers)
-    uint64_t commitIndex;          // Highest committed log index
-    uint64_t executeIndex;         // Highest applied log index
-    uint64_t lastLogIndex;         // Highest log index stored
-    bool is_leader_;               // Current leadership status
+- `src/deptran/replication_helper.*`
+- `src/deptran/raft_main_helper.cc`
+- `src/deptran/raft/raft_worker.*`
+- `src/deptran/raft/server.*`
+- `src/mako/mako.hh`
+- `src/mako/replay_pool.*`
 
-    // Volatile state (leaders only)
-    map<siteid_t, uint64_t> match_index_;  // Highest replicated index per follower
-    map<siteid_t, uint64_t> next_index_;   // Next index to send to each follower
+## Two Raft Layouts
 
-    // Speculative state (Phase 7)
-    uint64_t specCommitIndex_;     // Memory-quorum commit index
-    uint64_t securedLogIndex_;     // Disk-quorum commit index
-    set<siteid_t> specVoters_;     // Replicas that voted in memory
-    set<siteid_t> durableVoters_;  // Replicas that persisted vote
+### Multi-Raft
 
-    // Preferred leader state
-    siteid_t preferred_leader_site_id_;
-    uint64_t startup_timestamp_;
-    uint64_t last_heartbeat_from_preferred_time_;
-};
-```
+- one `RaftWorker` and one `RaftServer` per partition
+- one heartbeat loop per partition
+- per-partition ownership in `find_worker(par_id)`
+- inline apply on the Raft side
 
-### RaftData (Log Entry)
+### Single-Raft
 
-```cpp
-struct RaftData {
-    ballot_t term;                            // Term when entry was created
-    shared_ptr<Marshallable> log_;            // The command payload
-    ballot_t prevTerm;                        // For retry logic
-    slotid_t slot_id;                         // Log index
-    ballot_t ballot;                          // Command ballot
-};
-```
+- one `RaftWorker` and one `RaftServer` handle all partitions
+- `find_worker(par_id)` always returns worker 0
+- stub RPC servers bind the extra partition ports
+- one shared consensus log and one shared heartbeat loop
+- committed entries flow through a lightweight apply queue before callback dispatch
 
----
+## Submission Path
 
-## 4. Leader Election
+The current Raft submission path is:
 
-### Election Flow
+1. Mako calls `add_log_to_nc(log, len, par_id, batch_size)`.
+2. `raft_main_helper` chooses a worker with `find_worker(par_id)`.
+3. `enqueue_to_worker(...)` increments bookkeeping and queues the payload.
+4. `RaftWorker::SubmitLoop()` drains the queue.
+5. `RaftWorker::Submit(...)` wraps the payload in a `TpcCommitCommand`.
+6. `RaftServer::Start(...)` appends the command to the Raft log if the worker is leader for that partition.
 
-1. **Timeout detection**: Follower's election timer expires (150ms-2s depending on role)
-2. **Become candidate**: Increment `currentTerm`, vote for self
-3. **Persist**: Write `currentTerm` and `vote_for_` to disk (critical for safety)
-4. **Broadcast**: Send `RequestVote` RPC to all peers with `(lastLogIndex, lastLogTerm, candidateTerm)`
-5. **Collect votes**: Wait for majority response (with 1-second timeout)
-6. **Win or lose**: If majority grants vote, become leader and begin heartbeats
+Single-Raft preserves the original partition identity by storing `par_id` in the generated command payload, so the callback path can still route replay correctly.
 
-### Vote Decision (OnRequestVote)
+## Replication Path
 
-A server grants its vote if:
-- Candidate's term >= server's current term
-- Server hasn't already voted for a different candidate in this term
-- Candidate's log is at least as up-to-date:
-  - `candidate.lastLogTerm > self.lastLogTerm`, OR
-  - `candidate.lastLogTerm == self.lastLogTerm AND candidate.lastLogIndex >= self.lastLogIndex`
+The leader-side consensus engine is `RaftServer::HeartbeatLoop()`.
 
-### Election Timeout
+In broad strokes it:
 
-Dynamic timeouts based on role (see [Preferred Leader Election](#8-preferred-leader-election)):
+- waits on a short event/timer cadence
+- computes commit advancement from follower `match_index_`
+- sends `AppendEntries` RPCs to followers in parallel
+- processes the responses in one pass
+- advances `commitIndex`
 
-| Role | Timeout Range | Purpose |
-|------|--------------|---------|
-| Preferred replica | 150-300ms | Win elections quickly |
-| Non-preferred (grace period, 0-5s) | 1-2s | Let preferred win at startup |
-| Non-preferred (after grace) | 500ms-1s | Can take over if preferred fails |
+Multi-Raft and Single-Raft differ mainly in what happens after commit:
 
-### Safety Properties
+- **multi-Raft** applies inline
+- **single-Raft** enqueues committed entries to the apply queue
 
-- **Term monotonicity**: Term always increases; seeing a higher term causes immediate step-down
-- **Vote persistence**: Vote is persisted to disk before responding (prevents double-voting after crash)
-- **Log completeness**: Candidate with the most up-to-date log wins
+## Current Apply / Replay Model
 
----
+This is the main place where older docs tend to be wrong.
 
-## 5. Log Replication
+### What the code does now
 
-### AppendEntries RPC
+In current single-Raft:
 
-The leader sends `AppendEntries` to all followers, either as heartbeats (empty) or with log entries:
+1. `EnqueueCommittedEntries()` moves committed log entries to `apply_queue_`.
+2. `StartApplyThread()` drains that queue on thread `raft_apply`.
+3. The callback path in `mako.hh` updates watermark bookkeeping and usually hands the heavy replay work to `ReplayPool`.
+4. `ReplayPool` runs the expensive Masstree replay on `replay_*` threads.
 
-```
-Leader sends:
-  - prevLogIndex, prevLogTerm  (for consistency check)
-  - entries[]                  (log entries to replicate, or empty for heartbeat)
-  - leaderCommitIndex          (leader's commit index)
+So:
 
-Follower checks:
-  1. leaderTerm >= currentTerm?             (accept leader authority)
-  2. leaderPrevLogIndex <= lastLogIndex?     (have log space)
-  3. raft_logs_[prevLogIndex].term == prevLogTerm?  (consistency match)
+- the apply thread is real and still important
+- but the heavy follower-side database replay is no longer supposed to happen there
 
-If all pass:
-  - Append entries to log
-  - Update commitIndex = min(leaderCommitIndex, lastLogIndex)
-  - Return (ok=1, currentTerm, lastLogIndex)
+This is why the benchmark harness now records separate CPU buckets for:
 
-If any fail:
-  - Return (ok=0, currentTerm, lastLogIndex)
-  - Leader decrements next_index_ and retries
-```
+- worker threads
+- replay threads
+- apply thread
 
-### Parallel Replication
+## ReplayPool
 
-AppendEntries RPCs are sent to all followers in parallel using async callbacks:
+`ReplayPool` is a process-wide helper for follower replay.
 
-```cpp
-// In HeartbeatLoop (server.cc)
-for (each follower) {
-    commo->SendAppendEntries2(follower, cmd, prevLogIndex, prevLogTerm, ...);
-    // Non-blocking: callback processes response
-}
-```
+Key properties:
 
-### Commit Index Calculation
+- initialized from `src/mako/mako.hh`
+- sized by `MAKO_REPLAY_THREADS`
+- sharded by `par_id % N`
+- preserves per-partition ordering while letting different partitions replay concurrently
+- maintains per-worker deferred queues for entries that are not yet safe under the watermark checks
 
-The leader calculates the new commit index each heartbeat cycle:
+The "1:1 replay pool" experiments simply set:
 
-1. Collect `match_index_[follower]` from all followers
-2. Sort the values; new commit index = median (quorum position)
-3. Only advance if the entry at the new index has the leader's current term
-4. Trigger `applyLogs()` when commit index advances
+- `MAKO_REPLAY_THREADS = worker_threads`
 
-### Batch Optimization
+## Leader and Follower Callback Roles
 
-When `RAFT_BATCH_OPTIMIZATION` is enabled, multiple log entries are aggregated into a single `TpcBatchCommand` per AppendEntries RPC, reducing per-entry overhead.
+Raft leadership can change, so `RaftWorker` keeps both leader and follower callback registrations and selects the correct one dynamically.
 
----
+The important current behavior is:
 
-## 6. Log Application and Commit
+- callbacks are registered per partition in single-Raft mode
+- a leader change re-applies callback routing so that Mako keeps receiving the right role-specific behavior
 
-### applyLogs()
+## Preferred Leader Behavior
 
-Committed entries are applied to the state machine in order:
+The current Raft implementation still contains preferred-leader logic:
 
-```cpp
-void RaftServer::applyLogs() {
-    while (executeIndex < commitIndex) {
-        auto instance = raft_logs_[executeIndex + 1];
-        if (instance.log_ exists) {
-            app_next_(executeIndex + 1, instance.log_);  // Callback to Mako
-            executeIndex++;
-        } else {
-            break;  // Stop at gaps
-        }
-    }
-}
-```
+- startup election bias toward the preferred replica
+- leadership transfer support
+- monitor-thread-based handling of transfer-related behavior
 
-**Key properties:**
-- Always applies in strict order (slot 1, 2, 3, ...)
-- Stops if a slot is missing (no holes)
-- Calls `app_next_` callback for each entry (registered by Mako layer)
-- Garbage collects old entries (`executeIndex - 60000`)
+This is part of the live implementation, but it is not the main point of the current replay-pool scalability work.
 
-### Client Notification (Phase 5.3)
+## What to Ignore in Older Docs
 
-The leader can notify clients about entry status:
+If you see older Raft docs that claim:
 
-| Status | Meaning |
-|--------|---------|
-| `SPECULATIVE` | Entry reached memory quorum |
-| `DURABLE` | Entry reached disk quorum with secured leader |
-| `ROLLEDBACK` | Entry discarded (leader stepped down) |
+- `applyLogs()` is the whole follower replay path
+- `StartApplyFiber()` is the real apply engine
+- current single-Raft conclusions can be derived from raw leader throughput alone
 
----
+those docs are describing an older stage of the project.
 
-## 7. Speculative Voting and Replication
-
-### Overview
-
-Standard Raft requires disk persistence before responding to RPCs. Speculative mode decouples memory acknowledgment from disk persistence for lower latency:
-
-```
-Standard:   Receive -> Persist to disk -> Respond
-Speculative: Receive -> Respond (memory ack) -> Persist async -> Send durable ack
-```
-
-### Speculative Voting
-
-1. Follower receives `RequestVote`
-2. Responds immediately with memory vote (speculative)
-3. Persists vote asynchronously in background
-4. Sends `VoteDurable` RPC after fsync completes
-
-Leader tracks two voter sets:
-- `specVoters_`: Replicas that voted in memory (fast)
-- `durableVoters_`: Replicas that persisted vote (safe)
-
-Leader becomes **secured** when `durableVoters_ >= quorum`.
-
-### Speculative Replication
-
-1. Follower receives `AppendEntries`
-2. Appends to in-memory log, responds immediately (memory ack)
-3. Persists asynchronously
-4. Sends `AppendEntriesDurable` RPC after fsync
-
-Leader tracks:
-- `specCommitIndex_`: Advances on memory quorum
-- `securedLogIndex_`: Advances on durable quorum (if secured leader)
-
-### Invariants
-
-```
-securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
-durableVoters_ is a subset of specVoters_ (conceptually)
-If durableVoters_ < quorum AND specVoters_ < quorum: step down
-```
-
----
-
-## 8. Preferred Leader Election
-
-### Problem
-
-Under CPU contention (e.g., 6 partitions running TPC-C), heartbeats can be delayed 500ms-1s. Without bias, non-preferred replicas may interpret delayed heartbeats as leader failure and start unnecessary elections, causing leadership churn.
-
-### Phase 1: Election Timeout Bias
-
-```cpp
-uint64_t RaftServer::GetElectionTimeout() {
-    uint64_t now = Time::now();
-    bool in_grace = (now - startup_timestamp_) < 5000000;  // 5s grace
-
-    if (AmIPreferredLeader()) {
-        return 150000 + rand(0, 150000);  // 150-300ms
-    } else if (in_grace) {
-        return 1000000 + rand(0, 1000000);  // 1-2s (let preferred win)
-    } else {
-        return 500000 + rand(0, 500000);  // 500ms-1s (can take over)
-    }
-}
-```
-
-### Phase 2: Conditional Election Suppression
-
-Non-preferred replicas check whether the preferred leader recently sent a heartbeat before starting an election:
-
-```cpp
-// In StartElectionTimer callback
-if (!AmIPreferredLeader() && preferred_leader_site_id_ != INVALID_SITEID) {
-    uint64_t time_since = now - last_heartbeat_from_preferred_time_;
-    if (time_since < 1500000) {  // 1.5 seconds
-        // Preferred is alive but slow - suppress election
-        reset_timer_and_return();
-    }
-    // No heartbeat for 1.5s -> preferred is dead, allow election
-}
-```
-
-This eliminates leadership churn under load while still allowing fast failover when the preferred leader truly fails.
-
----
-
-## 9. Leadership Transfer
-
-### TimeoutNow Protocol
-
-When a non-preferred leader detects that the preferred replica has caught up:
-
-1. **Monitor**: Non-preferred leader checks `match_index_[preferred] == lastLogIndex`
-2. **Transfer**: Send `TimeoutNow` RPC to preferred replica
-3. **Immediate election**: Preferred replica bypasses election timeout, calls `RequestVote()` immediately
-4. **Win**: Preferred replica wins due to election timeout bias (<1 second total)
-
-### Safety
-
-- Transfer only happens after preferred replica has all committed logs
-- 30ms delay before transfer election prevents storms
-- Non-preferred can still take over if preferred subsequently fails
-
----
-
-## 10. Mako Integration
-
-### The Bridge: raft_main_helper
-
-`raft_main_helper.{h,cc}` bridges Mako's transaction layer and Raft:
-
-```cpp
-// Global state
-vector<shared_ptr<RaftWorker>> raft_workers_g;  // Process-local workers
-map<int, callback> leader_replay_cb;            // Leader commit callbacks
-map<int, callback> follower_replay_cb;          // Follower replay callbacks
-```
-
-### Key API Functions
-
-| Function | Purpose |
-|----------|---------|
-| `setup(argc, argv)` | Initialize Raft workers from YAML config |
-| `add_log_to_nc(log, len, par_id, batch)` | Submit transaction log to local Raft |
-| `register_for_leader_par_id_return(cb)` | Register callback for leader log application |
-| `register_for_follower_par_id_return(cb)` | Register callback for follower log replay |
-| `get_outstanding_logs(par_id)` | Query uncommitted log count |
-| `shutdown_paxos()` | Graceful shutdown (name is historical) |
-
-### Log Flow: Transaction to Commitment
-
-```
-Step 1: Mako worker serializes transaction
-  Transaction::serialize_util() -> add_log_to_nc(bytes, len, partition_id, batch)
-
-Step 2: raft_main_helper routes to local RaftWorker
-  find_worker(par_id) -> enqueue_to_worker(worker, log, ...)
-
-Step 3: RaftWorker submits to RaftServer
-  RaftServer::Start(cmd, &index, &term)
-  -> Appends to raft_logs_[++lastLogIndex]
-  -> Signals ready_for_replication_ event
-
-Step 4: Leader replicates via HeartbeatLoop
-  SendAppendEntries2() to all followers (parallel)
-
-Step 5: Followers receive and apply
-  OnAppendEntries() -> append to log -> applyLogs()
-  -> app_next_(slot, cmd) -> follower_replay_cb
-
-Step 6: Leader commits after quorum
-  commitIndex advances -> applyLogs()
-  -> app_next_(slot, cmd) -> leader_replay_cb
-
-Step 7: Mako receives committed transaction
-  Callback decodes bytes -> update watermark -> notify client
-```
-
-### Watermark Integration
-
-Mako's speculative execution uses watermarks (not built into Raft):
-
-- **Leader callback**: Encodes `watermark = timestamp * 10 + leader_status`
-- **Follower callback**: Checks watermark; if not leader, queues for deferred replay
-- **Safety check**: `sync_logger::safety_check(timestamp, watermark)` before follower replay
-
-### Important: Non-Leader Log Drop
-
-When `add_log_to_nc()` is called on a non-leader node, the log is **dropped silently**:
-
-```cpp
-if (!worker->IsLeader(par_id)) {
-    Log_info("partition %u not led here, dropping", par_id);
-    return;  // Log is lost!
-}
-```
-
-This differs from Paxos (where workers only run on the leader node). Currently mitigated by the preferred leader system ensuring stable leadership.
-
----
-
-## 11. Log Persistence
-
-### Configuration
-
-```bash
-MAKO_RAFT_PERSISTENCE=1              # Enable disk persistence
-MAKO_RAFT_ASYNC_PERSISTENCE=1        # Async mode (persist in background)
-MAKO_RAFT_PERSISTENCE_PATH=/var/raft # Storage path (default: /tmp)
-```
-
-### What is Persisted
-
-| State | Criticality | When |
-|-------|-------------|------|
-| `currentTerm` | CRITICAL | On every term change |
-| `vote_for_` | CRITICAL | Before responding to RequestVote |
-| Log entries | CRITICAL | After appending (sync or async) |
-| `commitIndex` | HIGH | After advancing |
-
-### Integration Points
-
-1. **OnRequestVote**: `PersistTermAndVote()` before responding
-2. **OnAppendEntries**: `PersistLogEntries()` after appending
-3. **SetLocalAppend**: `PersistLogEntry()` after leader appends
-4. **Constructor**: `RecoverFromStorage()` on restart
-
-### Async Persistence
-
-In async mode, entries are persisted in a background thread:
-
-```cpp
-async_threads_.push_back({
-    std::thread([this, entries]() {
-        log_storage_->put(entries);   // fsync to disk
-        SendDurableAck();             // Notify leader
-        completion_flag->store(true); // Signal done
-    }),
-    completion_flag
-});
-```
-
-The destructor joins all async threads to ensure clean shutdown.
-
----
-
-## 12. RPC Communication Layer
-
-### RaftCommo
-
-`RaftCommo` handles all inter-replica communication:
-
-| Method | Purpose |
-|--------|---------|
-| `SendAppendEntries2()` | Async log replication to a follower |
-| `BroadcastVote()` | Parallel RequestVote to all replicas |
-| `SendVoteDurable()` | Notify leader of persisted vote |
-| `SendAppendEntriesDurable()` | Notify leader of persisted entries |
-| `SendTimeoutNow()` | Trigger immediate election on target |
-| `SendNotifyRestart()` | Notify peers of server restart |
-| `RetryPendingNotifyRestart()` | Retry notifications to PENDING peers |
-
-### Restart Notification
-
-When a server restarts, it broadcasts a restart notification to all peers. Peers reconnect their RPC proxies to avoid stale connections:
-
-```cpp
-enum class NotifyRestartStatus {
-    ACKNOWLEDGED,   // Peer reconnected
-    DOWN,           // Peer is down (skip retry)
-    PENDING         // Need to retry
-};
-```
-
-PENDING notifications are retried every few heartbeat cycles.
-
-### Proxy Management
-
-RaftCommo maintains `rpc_par_proxies_[partition_id][replica_id]` for each peer. During tests, proxies can be swapped with backup maps to simulate network partitions.
-
----
-
-## 13. Configuration
-
-### YAML Configuration
-
-**Base Raft config** (`config/none_raft.yml`):
-```yaml
-mode:
-  cc: none       # Concurrency control: none, occ, rule, tpl_ww, 2pl_ww
-  ab: raft       # Atomic broadcast: raft
-  batch: false
-  retry: 20
-  ongoing: 1     # Per-client concurrent transactions
-```
-
-**With Jetpack recovery** (`config/rule_raft.yml`):
-```yaml
-mode:
-  cc: rule       # Enables witness tracking for Jetpack
-  ab: raft
-```
-
-**Cluster topology** (separate file):
-```yaml
-site:
-  server:
-    - ["s101:9000", "s102:9001", "s103:9002"]
-
-process:
-  s101: localhost
-  s102: p1
-  s103: p2
-
-host:
-  localhost: 127.0.0.1
-  p1: 10.0.1.100
-  p2: 10.0.2.100
-```
-
-### Available Configurations
-
-| File | CC Mode | Use Case |
-|------|---------|----------|
-| `none_raft.yml` | None | Basic Raft testing |
-| `rule_raft.yml` | Rule | With Jetpack recovery |
-| `occ_raft.yml` | OCC | Optimistic CC |
-| `tpl_ww_raft.yml` | TPL-WW | Two-phase locking |
-| `raft_lab_test.yml` | None | Lab test harness (5 servers) |
-
-### Per-Shard Configs
-
-For multi-shard deployments:
-- `config/1leader_2followers/raft2_shardidx0.yml` (2 replicas, shard 0)
-- `config/1leader_2followers/raft6_shardidx0.yml` (6 replicas, shard 0)
-
----
-
-## 14. Build System
-
-### Build Targets
-
-| Command | Description | Binary |
-|---------|-------------|--------|
-| `make -j32` | Default (Paxos) | `dbtest`, `deptran_server` |
-| `make mako-raft -j64` | Mako with Raft | `dbtest` + Raft test binaries |
-| `make raft-test -j32` | Raft lab tests only | `deptran_server` with test coroutines |
-
-### CMake Flags
-
-| Flag | Default | Effect |
-|------|---------|--------|
-| `MAKO_USE_RAFT` | OFF | Use `raft_main_helper.cc`, build Raft executables |
-| `RAFT_TEST` | OFF | Enable `RAFT_TEST_CORO=1` for lab test coroutines |
-
-### Output Binaries (mako-raft build)
-
-| Binary | Purpose |
-|--------|---------|
-| `build/dbtest` | Main Mako binary with Raft replication |
-| `build/deptran_server` | Standalone Raft server |
-| `build/simpleRaft` | Simple Raft replication test |
-| `build/simpleTransactionRepRaft` | Transaction replication test |
-| `build/testPreferredReplicaStartup` | Preferred leader startup test |
-| `build/testPreferredReplicaLogReplication` | Log replication test |
-| `build/testNoOps` | NO-OP and watermark test |
-
-**Warning**: `make raft-test` enables special coroutines for the lab harness. Normal configs (`1c1s3r1p.yml`, `12c1s3r1p.yml`) will **not work** with this build.
-
----
-
-## 15. Testing
-
-### CI Tests
-
-```bash
-# Build
-make mako-raft -j64
-
-# Run all Raft CI tests
-./ci/ci_mako_raft.sh all
-
-# Individual tests
-./ci/ci_mako_raft.sh simpleRaft                  # Basic 3-node replication
-./ci/ci_mako_raft.sh shard1ReplicationRaft        # 1-shard TPC-C
-./ci/ci_mako_raft.sh shard2ReplicationRaft        # 2-shard TPC-C
-./ci/ci_mako_raft.sh shard1ReplicationSimpleRaft  # Data integrity
-./ci/ci_mako_raft.sh shard2ReplicationSimpleRaft  # Data integrity
-./ci/ci_mako_raft.sh cleanup                      # Kill processes
-```
-
-### Lab Test Framework
-
-The lab test infrastructure (`test.h`, `testconf.h`) provides fine-grained control:
-
-**Server Management:**
-```cpp
-OneLeader()           // Wait for single leader election
-NCommitted(index)     // Count servers that committed at index
-DoAgreement(cmd, n)   // Submit and wait for consensus
-Kill(server_id)       // Destroy server
-Restart(server_id)    // Recreate from persistent state
-Disconnect(server_id) // Network partition
-Reconnect(server_id)  // Restore connectivity
-```
-
-**Test Categories:**
-
-| Category | Tests |
-|----------|-------|
-| Basic consensus | `testInitialElection`, `testReElection`, `testBasicAgree`, `testFailAgree` |
-| Persistence | `testPersistence`, `testLeaderFollowerPersistence`, `testComprehensiveCrashRecovery` |
-| Partitions | `testPartitionPlusRestart`, `testRejoin`, `testUnreliableAgree` |
-| Speculative | `testSpeculativeLeaderElection`, `testSpecCommitIndexAdvances`, `testSpeculativeInvariantsHold` |
-| Preferred leader | `testPreferredReplicaStartup`, `testPreferredReplicaLogReplication` |
-
-### Speculative State Queries (for tests)
-
-```cpp
-bool IsSecuredLeader(siteid_t svr);
-uint64_t GetSpecCommitIndex(siteid_t svr);
-uint64_t GetSecuredLogIndex(siteid_t svr);
-size_t GetSpecVotersCount(siteid_t svr);
-size_t GetDurableVotersCount(siteid_t svr);
-bool VerifySpecInvariants(siteid_t svr);
-```
-
-### Running Standalone Raft (without Mako)
-
-```bash
-# Build (regular make, NOT raft-test)
-make -j32
-
-# Basic: 1 client, 1 shard, 3 replicas
-./build/deptran_server \
-  -f config/none_raft.yml \
-  -f config/1c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_1.yml \
-  -d 30 -m 100 -P localhost
-
-# Higher concurrency: 12 clients
-./build/deptran_server \
-  -f config/none_raft.yml \
-  -f config/12c1s3r1p.yml \
-  -f config/rw.yml \
-  -f config/client_closed.yml \
-  -f config/concurrent_12.yml \
-  -d 30 -m 100 -P localhost
-```
-
----
-
-## 16. Failure Scenarios and Recovery
-
-### Leader Crash During Replication
-
-```
-Before: Leader appended entry 5 to own log, sent to followers 1,3 (not 2,4)
-Crash:  Leader dies before quorum
-Result: Entry 5 was never committed (never reached quorum)
-        New leader elected from {1,2,3,4}
-        If winner has entry 5: replicates to others
-        If winner doesn't: entry 5 is lost (safe — never committed)
-```
-
-### Leader Crash After Quorum Commit
-
-```
-Before: Leader committed entry 5 (replicated to quorum)
-Crash:  Leader dies
-Result: Entry 5 is committed and will survive
-        New leader must have entry 5 (log completeness guarantee)
-        Followers already applied it
-```
-
-### Follower Crash Before Persistence
-
-```
-Before: Follower received entry 5 in memory (not yet fsynced)
-Crash:  Follower dies
-Restart: Loads last persisted state (without entry 5)
-Result: Leader retries AppendEntries, follower gets entry 5 again
-        No data loss
-```
-
-### Network Partition During Speculative Commit
-
-```
-Before: Leader reached memory quorum for entry 5 (specCommitIndex_=5)
-        Disk quorum only for entries 1-3 (securedLogIndex_=3)
-Partition: Leader isolated from majority
-
-Leader side: Loses quorum -> steps down -> ROLLEDBACK for entries 4-5
-Majority side: Elects new leader (may or may not have entry 5)
-
-Result: Safe — entry 5 only discarded if leader was isolated
-        If new leader has entry 5, it becomes committed
-```
-
----
-
-## 17. Known Issues and Workarounds
-
-### Non-Leader Log Drop
-
-**Issue**: `add_log_to_nc()` silently drops logs on non-leader nodes.
-
-**Impact**: If Mako workers run on all nodes, 66% of transaction throughput is lost (in a 3-node cluster).
-
-**Workaround**: The preferred leader system ensures stable leadership, so most logs are submitted on the leader node. Workers on followers should ideally not execute transactions.
-
-### Leader Shutdown Hang
-
-**Issue**: Leader process may hang during shutdown due to a race between poll thread drain and `Server::~Server()`.
-
-**Root cause**: `sconns_ctr_` never reaches 0 because the poll thread exits before processing all `CmdRemovePollable` commands.
-
-**Workaround**: Tests verify replication based on follower results (which exit cleanly). Leader hang is tolerated.
-
-### Follower Replication Bottleneck
-
-**Issue**: `applyLogs()` has a reentrancy guard (`in_applying_logs_`) that can cause work to be dropped when AppendEntries arrives during log application.
-
-**Impact**: Under heavy load, followers may fall behind and only apply 1-30% of expected entries.
-
-**Workaround**: The preferred solutions are:
-1. Track `needs_reapply_` flag and loop until no more work
-2. Use a dedicated async apply thread with a condition variable
-
----
-
-## 18. Debugging
-
-### Log Prefixes
-
-| Prefix | Content |
-|--------|---------|
-| `[RAFT_ELECTION]` | Leader election events |
-| `[APPEND_RPC]` | AppendEntries sends/receives |
-| `[COMMIT-CALC]` | Leader's commit index calculation |
-| `[APPLY-LOGS]` | Log application and execution |
-| `[SPEC-RAFT]` | Speculative voting/commit events |
-| `[TIMER_RESET]` | Election timeout resets |
-| `[RAFT-PERSISTENCE]` | Persistence operations |
-| `[SPEC-INVARIANTS]` | Invariant violations |
-| `[RAFT-ADD-LOG]` | Log submission to Raft |
-
-### Environment Variables
-
-```bash
-MAKO_RAFT_PERSISTENCE=1          # Enable persistence
-MAKO_RAFT_ASYNC_PERSISTENCE=1    # Async persistence
-MAKO_RAFT_PERSISTENCE_PATH=/tmp  # Storage path
-MAKO_DISABLE_JETPACK=1           # Disable Jetpack recovery
-```
-
-### Checking Test Results
-
-```bash
-# For simple test, check follower callbacks
-grep "RESULTS.*follower_callbacks=" raft_a2.log raft_a3.log
-
-# For TPC-C test, check throughput
-grep "agg_persist_throughput" shard0-localhost-*.log
-
-# Check follower replay batches
-grep "replay_batch:" shard0-p1-*.log
-
-# Check for leadership churn
-grep "RAFT_ELECTION" *.log | wc -l
-```
-
-### Stress Testing
-
-```bash
-# Unreliable network (in test framework)
-config->SetUnreliable();  # 1/10 chance of packet loss
-
-# Kill and restart servers
-config->Kill(server_id);
-config->Restart(server_id);
-
-# Network partitions
-config->Disconnect(server_id);
-// ... do work ...
-config->Reconnect(server_id);
-```
-
----
-
-*This document consolidates the Raft implementation documentation from across the Mako project. For detailed phase implementation plans, see `docs/migration/raft/` and `docs/plans/log-persistence/`. For the Mako integration layer, see `docs/migration/raft/architecture-analysis.md` and `docs/migration/raft/mako-explained.md`.*
+Use this file plus [Replication Current State](architecture/replication-current-state.md) instead.

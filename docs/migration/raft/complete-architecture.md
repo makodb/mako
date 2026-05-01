@@ -1,5 +1,7 @@
 # Mako + Raft: Complete System Architecture
 
+> **Historical note**: this file is an older architecture deep dive from the migration period. It is still useful for terminology and broad structure, but it does **not** reflect the latest apply-vs-replay split or the current benchmark story. Read [Architecture Overview](../../architecture/overview.md) and [Replication Current State](../../architecture/replication-current-state.md) first.
+
 **Date**: 2025-11-06
 **Purpose**: Comprehensive visual diagram of entire Mako+Raft system
 

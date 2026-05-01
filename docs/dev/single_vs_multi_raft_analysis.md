@@ -1,5 +1,7 @@
 # Single Raft Instance vs Multiple Raft Instances: Architectural Analysis
 
+> **Historical note**: this analysis captures an earlier stage of the single-vs-multi-Raft work. It is still useful for design evolution, but the checked-in code now includes a replay pool and a different apply/replay split. For the current state, start with [Replication Current State](../architecture/replication-current-state.md).
+
 ## Overview
 
 This document describes the architectural differences between the **multiple Raft instances** approach (commit `4f99ffb6`) and the **single Raft instance** approach (commit `bba1a5d4`), both on the `mako-krish-new` branch.

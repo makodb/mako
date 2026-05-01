@@ -1,5 +1,7 @@
 # Raft in Mako – Plain-English Guide
 
+> **Historical note**: this file predates the current replay-pool-based follower replay path. Use it for broad Raft terminology and flow, but validate callback/apply/replay claims against [Raft Book](../../raft-book.md) and [Replication Current State](../../architecture/replication-current-state.md).
+
 **Location**: `src/deptran/raft`  
 **Audience**: Anyone trying to understand, run, or debug the Raft path (including Jetpack recovery) without digging through every source file.  
 **Updated**: 2025-10-30

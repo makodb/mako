@@ -36,11 +36,13 @@ It intentionally avoids treating roadmap/plan docs as already-shipped behavior.
 Implemented and usable today:
 - Local transaction tests (`simpleTransaction`)
 - Paxos replication tests (`simplePaxos`, `dbtest` with replication enabled)
-- Optional Raft replication path via runtime flag (`--replication=raft`) and `make mako-raft`
+- Optional Raft replication path via runtime flag (`--replication=raft`)
+- Single-Raft and Multi-Raft build variants through the CMake / Make wrappers
 - Multi-shard execution, including single-process multi-shard mode (`--local-shards`)
 - Runtime transport switch (`MAKO_TRANSPORT=rrr|erpc`)
 - CPU throttling flags in `dbtest` (`--cpu-limit`, `--throttle-cycle`)
 - RocksDB persistence path in replicated leader mode
+- Replay-pool-based follower replay controlled by `MAKO_REPLAY_THREADS`
 
 Present but not fully integrated:
 - Config-node startup flags (`--is-config-node`, `--config-node-addr`, etc.) are currently stubs in `src/mako/mako.hh`
@@ -102,7 +104,9 @@ Common build variants:
 
 ```bash
 make                 # default (Paxos build path)
-make mako-raft       # enable Raft helper/binaries
+make mako-raft       # default Raft alias
+make mako-raft-single
+make mako-raft-multi
 make raft-test       # Raft lab test build mode
 ```
 
@@ -523,7 +527,9 @@ Good starting points in `docs/` for current users:
 - `docs/index.md`
 - `docs/getting-started/introduction.md`
 - `docs/architecture/overview.md`
+- `docs/architecture/replication-current-state.md`
 - `docs/architecture/multi-shard.md`
+- `docs/performance/benchmark-sweeps.md`
 - `docs/developer/transport-backends.md`
 - `docs/performance/cpu_throttling.md`
 
