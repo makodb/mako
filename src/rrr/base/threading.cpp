@@ -178,6 +178,17 @@ void ThreadPool::run_thread(int id_in_pool) {
     // steal_order is automatically cleaned up (std::vector)
 }
 
+// Min-heap comparator over the wall-clock timestamp `pair.first`.
+// Replaces the prior `std::greater<job_t>{}`, which transitively required
+// `operator<` on the second element — now `Option<Box<Function>>`, which
+// does not provide one. We only need to order on time anyway.
+struct GreaterByJobTime {
+    template <typename Pair>
+    bool operator()(const Pair& a, const Pair& b) const noexcept {
+        return a.first > b.first;
+    }
+};
+
 void* RunLater::start_run_later(void* thiz) {
     RunLater* rl = (RunLater *) thiz;
     rl->run_later_loop();
@@ -198,8 +209,10 @@ RunLater::~RunLater() noexcept {
     should_stop_ = true;
 
     Pthread_mutex_lock(&m_);
-    jobs_.push(make_pair(0.0, nullptr)); // death pill
-    std::push_heap(jobs_.begin(), jobs_.end(), std::greater<job_t>());
+    // death pill: None payload (former nullptr) signals run_later_loop
+    // to exit on dequeue.
+    jobs_.push(job_t(0.0, rusty::None));
+    std::push_heap(jobs_.begin(), jobs_.end(), GreaterByJobTime{});
     Pthread_cond_signal(&cv_);
     Pthread_mutex_unlock(&m_);
 
@@ -208,14 +221,13 @@ RunLater::~RunLater() noexcept {
     Pthread_cond_destroy(&cv_);
 }
 
-// @unsafe - rusty-cpp false positives: now_f is initialized, job_func null check is done before dereference
+// @unsafe - rusty-cpp false positives: now_f is initialized, job_func is moved out before dereference
 void RunLater::try_one_job() {
     // @unsafe - pthread mutex operations
     { Pthread_mutex_lock(&m_); }
     if (!jobs_.is_empty()) {
-        // Copy job data before potentially modifying container
+        // Peek the time without copying the (move-only) Option payload.
         auto job_time = jobs_.front().first;
-        auto job_func = jobs_.front().second;
 
         struct timeval now;
         // @unsafe - gettimeofday uses address-of
@@ -223,22 +235,26 @@ void RunLater::try_one_job() {
         double now_f = now.tv_sec + now.tv_usec / 1000.0 / 1000.0;
         double wait = job_time - now_f;
         if (wait < 0.0) {
-            // Pop now that we've copied the data
+            // Move the function out before pop_heap shuffles the vector;
+            // pop_heap then leaves the (now-empty) Option at the back, and
+            // jobs_.pop() removes that back slot.
+            auto job_func = std::move(jobs_.front().second);
             // @unsafe - heap operations over internal job vector
             {
-                std::pop_heap(jobs_.begin(), jobs_.end(), std::greater<job_t>());
+                std::pop_heap(jobs_.begin(), jobs_.end(), GreaterByJobTime{});
                 (void)jobs_.pop();
             }
-            if (job_func == nullptr) {
+            if (job_func.is_none()) {
                 // death pill
                 // @unsafe
                 { Pthread_mutex_unlock(&m_); }
                 return;
             } else {
-                // @unsafe - function pointer dereference and delete
+                // @unsafe - move Box out of Option and invoke
                 {
-                    (*job_func)();
-                    delete job_func;
+                    auto box = std::move(job_func).unwrap();
+                    (*box)();
+                    // box drops at end of scope, freeing the Function
                 }
             }
         } else {
@@ -284,7 +300,7 @@ void RunLater::run_later_loop() {
     }
 }
 
-int RunLater::run_later(double sec, const std::function<void()>& f) {
+int RunLater::run_later(double sec, rusty::Function<void()> f) {
     if (should_stop_) {
         return EPERM;
     }
@@ -303,8 +319,8 @@ int RunLater::run_later(double sec, const std::function<void()>& f) {
     latest_l_.unlock();
 
     Pthread_mutex_lock(&m_);
-    jobs_.push(make_pair(later, new std::function<void()>(f)));
-    std::push_heap(jobs_.begin(), jobs_.end(), std::greater<job_t>());
+    jobs_.push(job_t(later, rusty::Some(rusty::make_box<rusty::Function<void()>>(std::move(f)))));
+    std::push_heap(jobs_.begin(), jobs_.end(), GreaterByJobTime{});
     Pthread_cond_signal(&cv_);
     Pthread_mutex_unlock(&m_);
 
