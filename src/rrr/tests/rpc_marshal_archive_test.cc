@@ -1418,13 +1418,13 @@ static int _reg_canary_deputy_command =
         CanaryDeputyCommand::kKind);
 
 TEST(RegSerializableInDeputy, RegistersUnderKind) {
-  // The registration ran at static init. Confirm the factory exists.
-  // Phase 5b-9: factory now returns shared_ptr<Marshallable> directly
-  // (no MarInitializerState wrapper). Kind is verified via m->kind().
-  auto factory = MarshallDeputy::get_initializer(
-      CanaryDeputyCommand::kKind);
-  ASSERT_TRUE(static_cast<bool>(factory));
-  auto m = factory();
+  // The registration ran at static init. Confirm the factory produces
+  // a Marshallable of the right kind.  L5i: the public API is now
+  // `create_initializer`, which invokes the registered factory under
+  // the registry SpinMutex (the prior `get_initializer` returned the
+  // copyable std::function; rusty::Function is move-only, so we
+  // invoke under the lock instead of copying out).
+  auto m = MarshallDeputy::create_initializer(CanaryDeputyCommand::kKind);
   ASSERT_NE(m, nullptr);
   EXPECT_EQ(m->kind(), CanaryDeputyCommand::kKind);
 }
