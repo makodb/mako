@@ -28,6 +28,8 @@
 
 
 
+#include <rusty/fn.hpp>
+
 #include "basetypes.hpp"
 
 namespace rrr {
@@ -116,12 +118,12 @@ class Job {
 // @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug workaround)
 class OneTimeJob : public Job {
  public:
-  // @safe
-  OneTimeJob(std::function<void()> func) : func_(func) {
+  // @safe - Takes ownership of the callable; rusty::Function is move-only.
+  OneTimeJob(rusty::Function<void()> func) : func_(std::move(func)) {
   }
   bool done_{false};
   bool ready_{true};
-  std::function<void()> func_{};
+  rusty::Function<void()> func_{};
   // Interface method - inherits @unsafe from Job
   bool Ready() override {
     return ready_;
@@ -131,14 +133,18 @@ class OneTimeJob : public Job {
     return done_;
   }
   // Interface method - inherits @unsafe from Job
-  // Calls std::function::operator() (external unsafe)
+  // Calls rusty::Function::operator() (external unsafe)
   // SAFETY: Executes user-provided function, caller ensures validity
   void Work() override {
     ready_ = false;
     func_();
     done_ = true;
   }
-  virtual ~OneTimeJob(){};
+  // No user-declared destructor: Job's `virtual ~Job() = default;`
+  // covers polymorphic deletion, and omitting our own destructor
+  // allows the implicit move constructor / move assignment to be
+  // synthesized — required since `func_` is move-only
+  // (`rusty::Function` is non-copyable).
 };
 
 // @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug workaround)
