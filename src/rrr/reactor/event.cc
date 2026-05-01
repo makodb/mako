@@ -28,7 +28,6 @@
 #include "../rrr.hpp"
 
 namespace rrr {
-using std::function;
 
 uint64_t Event::get_fiber_id(){
   auto fiber_opt = Fiber::current_fiber();

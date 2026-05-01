@@ -27,7 +27,6 @@
 using rrr::Event;
 using rrr::IntEvent;
 using rrr::verify;
-using std::function;
 using std::shared_ptr;
 
 namespace janus {

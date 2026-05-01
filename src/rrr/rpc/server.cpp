@@ -490,15 +490,14 @@ Server::~Server() noexcept {
     // the job sees a live listener even though the original Box has
     // been moved into the lambda.
     if (channel_listener_.is_some()) {
-        // Box is move-only and pro::proxy<F> is move-only, so wrap
-        // in std::shared_ptr to make the lambda copyable (required
-        // by std::function inside OneTimeJob).
-        auto listener_sp = std::make_shared<rusty::Box<ChannelListenerProxy>>(
-            std::move(channel_listener_).unwrap());
+        // Move the Box directly into the lambda — OneTimeJob now
+        // uses rusty::Function (move-only) under the hood (see
+        // L5g), so move-only captures are fine and the prior
+        // std::shared_ptr wrap that existed only to satisfy
+        // std::function's copyable requirement is no longer needed.
         auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
-            [listener_sp]() mutable {
-                auto* listener = listener_sp->get();
-                (*listener)->close();
+            [listener_box = std::move(channel_listener_).unwrap()]() mutable {
+                (*listener_box)->close();
             }));
         auto close_job_base = rusty::Arc<Job>(close_job);
         poll_thread_.as_ref().unwrap()->add(std::move(close_job_base));

@@ -49,7 +49,6 @@
 #include "../base/all.hpp"
 
 namespace rrr {
-using std::function;
 
 class Reactor;
 class Fiber;
