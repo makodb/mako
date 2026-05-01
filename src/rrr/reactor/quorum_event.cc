@@ -37,12 +37,15 @@ QuorumEvent::QuorumEvent(int n_total, int quorum)
 
 void QuorumEvent::finalize(
     uint64_t timeout,
-    function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
-  
-  
-  Fiber::create_run([timeout, finalize_func, this]() {
+    rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
+
+
+  // rusty::Function is move-only, so capture the callback by move
+  // into the background fiber's lambda.  The lambda must also be
+  // `mutable` so the captured (non-const) Function can be invoked.
+  Fiber::create_run([timeout, finalize_func = std::move(finalize_func), this]() mutable {
     bool ret = false;
-    
+
     auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)
     rusty::Vec<std::pair<uint16_t, rrr::i64> > dangling_rpc;
     for (auto it : xids_)
@@ -57,6 +60,7 @@ void QuorumEvent::finalize(
       // Log_info("finalized timeout");
       ret = finalize_func(dangling_rpc);
     }
+    (void)ret;
   }, __FILE__, __LINE__);
 }
 

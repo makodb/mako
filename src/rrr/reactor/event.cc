@@ -240,13 +240,13 @@ bool SharedIntEvent::wait_until_gte(int x, int timeout) {
   return if_timeout;
 }
 
-void SharedIntEvent::wait(function<bool(int v)> f) {
+void SharedIntEvent::wait(rusty::Function<bool(int v)> f) {
   if (f(value_)) {
     return;
   }
   auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
-  ev->test_ = f;
+  ev->test_ = std::move(f);
   events_.push(ev);
 //  ev->wait(1000*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
