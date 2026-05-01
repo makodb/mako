@@ -992,53 +992,9 @@ The test framework runs all servers in a single process using a coroutine-based 
 - **Log replication test**: Verifies that entries submitted to the preferred leader are correctly replicated to all followers and that follower callbacks are invoked with the correct data.
 - **No-op test**: Verifies that no-operation entries for epoch synchronisation are correctly replicated and applied, with callbacks reporting the expected epoch markers.
 
-## Continuous Integration Test Suite
+## End-to-End Validation
 
-While the standalone tests validate Raft's correctness in an idealised single-process environment, the CI test suite validates the complete Mako system with Raft replication in realistic multi-process configurations. This distinction is important: bugs that don't manifest in the standalone tests — such as RPC serialisation errors, process startup race conditions, port conflicts, and shutdown hangs — can appear when real processes communicate over real TCP/IP connections.
-
-The CI test suite serves as the ultimate acceptance test for the Raft integration: if all CI tests pass, the Raft path is ready for production use. The suite includes tests at every level of system complexity:
-
-- **Simple replication**: Basic Raft consensus without transactions, validating that log entries are correctly replicated.
-- **Single-shard TPC-C**: Full transaction processing with Raft replication, validating throughput and correctness for single-shard workloads.
-- **Multi-shard TPC-C**: Cross-shard transactions with Raft replication, validating 2PC coordination with Raft and correctness under cross-shard abort/retry.
-- **Simple transactions with integrity verification**: End-to-end data integrity checks, verifying that all replicas have identical committed state.
-
-**Script architecture.** The CI script follows a five-phase pattern for each test:
-
-1. **Setup**: Clean the environment (kill stale processes from previous runs, remove old data directories and log files), configure ports for each replica, and prepare log directories. This cleanup is critical for test isolation — a stale process from a failed test that still holds a port will cause the next test to fail at startup.
-2. **Launch**: Start replica processes (followers first, then leader) with the appropriate configuration files. The startup order matters because the leader needs followers to be listening before it can establish RPC connections. A brief stabilisation delay after startup allows leader election to complete.
-3. **Monitor**: Wait for the test to complete by polling for expected output in log files, rather than using fixed sleep durations. Polling is more robust than sleeping because it adapts to the actual system speed — a fast machine finishes sooner, while a slow machine gets more time. The polling checks for specific keywords in the log output that indicate completion.
-4. **Analyse**: Extract metrics from log files and check pass/fail criteria. Each test has specific thresholds: throughput must be above a minimum, abort ratios must be below a maximum, and verification keywords must be present.
-5. **Report**: Output results (PASS or FAIL with details) and clean up all processes to leave a clean environment for the next test.
-
-**Process management.** Multi-process tests require robust process lifecycle management. The CI infrastructure uses a three-layer cleanup approach:
-
-1. **Process-specific termination**: Kill specific processes by name and port, targeting known process types.
-2. **Pattern-based cleanup**: Kill any remaining processes matching broader patterns, catching processes that weren't cleanly terminated.
-3. **Port availability verification**: Before each test, verify that the required ports are free. This catches cases where a process from a previous test is still lingering.
-
-This aggressive approach was necessary because lingering processes from failed tests could occupy ports and interfere with subsequent tests. In early development, this was one of the most common sources of test failures — a test that should have passed would fail because a zombie process from a previous failed test was still holding a port.
-
-**Known issues and workarounds.** The CI suite includes workarounds for several known issues:
-
-- **Leader shutdown hang**: In some configurations, the leader process hangs during shutdown after the benchmark completes. This is handled by using a timeout-based kill mechanism rather than waiting for graceful shutdown.
-- **Port range separation**: Raft tests use different port ranges than Paxos tests to avoid conflicts when both test suites run on the same machine.
-
-## Test Scenarios and Pass Criteria
-
-The CI test suite includes the following scenarios:
-
-**Simple Raft replication.** Launches a 3-replica cluster, submits key-value entries through the Mako replication API, and verifies that all followers receive all entries. Pass criterion: each follower reports at least 300 committed entry callbacks.
-
-**1-shard TPC-C with Raft replication.** Launches a 1-shard, 3-replica configuration, runs the TPC-C benchmark, and verifies that throughput is above a minimum threshold and that followers successfully replay committed entries. Pass criterion: positive throughput reported and followers report replay_batch values greater than a threshold.
-
-**2-shard TPC-C with Raft replication.** Launches a 2-shard, 3-replicas-per-shard configuration, runs TPC-C, and verifies that both shards achieve positive throughput with abort ratios below 40%. This tests cross-shard transaction handling with Raft. Pass criterion: both shards report positive throughput and acceptable abort ratios.
-
-**1-shard simple transaction with Raft.** Runs the simple transaction workload with replication and verifies data integrity across all replicas. Pass criterion: ALL VERIFICATIONS PASSED on all replicas.
-
-**2-shard simple transaction with Raft.** Same as above but with 2 shards, testing cross-shard simple transactions with Raft. Pass criterion: ALL VERIFICATIONS PASSED on all replicas in both shards.
-
-All test scenarios are also run with Paxos for comparison, ensuring that the Raft tests achieve comparable correctness to the established Paxos tests.
+Beyond the standalone unit tests, the integrated system is exercised end-to-end under both Raft and Paxos using the same multi-process workloads — simple key-value replication, 1- and 2-shard TPC-C, and 1- and 2-shard simple-transaction with cross-replica integrity verification. Each scenario has thresholded pass criteria (positive throughput, abort ratio below 40 % for 2-shard, identical committed state across replicas), and Raft passes every scenario that Paxos passes. This confirms that the integration of Raft into the Mako stack reaches Paxos-equivalent correctness at the workload level, not only at the protocol level covered by the standalone tests.
 
 ---
 

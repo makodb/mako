@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <ctime>
 #include <cstring>
+#include "fake_disk.h"
 #include "../deptran/s_main.h"
 
 #include <unordered_map>  
@@ -321,6 +322,21 @@ uint64_t RocksDBPersistence::getNextSequenceNumber(uint32_t partition_id) {
 std::future<bool> RocksDBPersistence::persistAsync(const char* data, size_t size,
                                                    uint32_t shard_id, uint32_t partition_id,
                                                    std::function<void(bool)> callback) {
+    // Fake-disk short-circuit: bypass the entire RocksDB pipeline. Sleep
+    // synchronously on this (foreground) thread so the txn commit pays the
+    // disk-class cost. Callback runs inline so disk_timestamp advances
+    // immediately, just as it would after a real durable ack.
+    if (fake_disk().enabled()) {
+        fake_disk().write(data, size);
+        if (callback) {
+            callback(true);
+        }
+        std::promise<bool> p;
+        auto f = p.get_future();
+        p.set_value(true);
+        return f;
+    }
+
     if (!initialized_) {
         // Not initialized - this is normal for followers/learners
         // Return success without doing anything

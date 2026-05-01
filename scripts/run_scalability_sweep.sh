@@ -104,7 +104,7 @@ start_cpu_monitor() {
     (
         declare -A prev_total
         while true; do
-            pids=$(pgrep -u "$USER" -f "build/dbtest" 2>/dev/null || true)
+            pids=$(pgrep -u "$USER" -f "${BUILD_DIR:-build}/dbtest" 2>/dev/null || true)
             if [ -z "$pids" ]; then
                 sleep 1
                 continue
@@ -146,12 +146,15 @@ start_cpu_monitor() {
     ) &
     CPU_MONITOR_PID=$!
 
-    # Per-thread CPU monitor (proves each worker thread is at ~100%)
-    echo "# timestamp total_cpu_pct n_threads per_thread_pcts" > "$thread_logfile"
+    # Per-thread CPU monitor. Each entry now carries the thread's pthread name
+    # (read from /proc/PID/task/TID/comm) so the post-processing can bucket by
+    # role: worker_*, replay_*, raft_apply, paxos_*, other.
+    echo "# timestamp total_cpu_pct n_threads pid_tid:comm:pct ..." > "$thread_logfile"
     (
         declare -A prev_thread_total
+        declare -A thread_comm  # cache: pid_tid -> comm name (rarely changes)
         while true; do
-            pids=$(pgrep -u "$USER" -f "build/dbtest" 2>/dev/null || true)
+            pids=$(pgrep -u "$USER" -f "${BUILD_DIR:-build}/dbtest" 2>/dev/null || true)
             if [ -z "$pids" ]; then
                 sleep 1
                 continue
@@ -167,6 +170,16 @@ start_cpu_monitor() {
                             vals=$(awk '{print $14+$15}' "$stat_file" 2>/dev/null)
                             [ -n "$vals" ] && curr_thread_total["${pid}_${tid}"]=$vals
                         fi
+                        # Cache the thread's pthread name (changes rarely; reading
+                        # /proc/.../comm is essentially free since it's in-kernel).
+                        comm_file="$task_dir/$tid/comm"
+                        if [ -z "${thread_comm[${pid}_${tid}]}" ] && [ -r "$comm_file" ]; then
+                            cname=$(tr -d ' \n' < "$comm_file" 2>/dev/null)
+                            # Replace stray colons (just in case) so they don't
+                            # break the `pid_tid:comm:pct` log format.
+                            cname="${cname//:/_}"
+                            [ -n "$cname" ] && thread_comm["${pid}_${tid}"]="$cname"
+                        fi
                     done
                 fi
             done
@@ -181,7 +194,8 @@ start_cpu_monitor() {
                         pct=$(awk -v d="$delta" 'BEGIN { printf "%.0f", d }')
                         total_pct=$(awk -v a="$total_pct" -v b="$delta" 'BEGIN { printf "%.0f", a + b }')
                         n_threads=$((n_threads + 1))
-                        per_thread="${per_thread} ${key}:${pct}%"
+                        cn="${thread_comm[$key]:-unknown}"
+                        per_thread="${per_thread} ${key}:${cn}:${pct}"
                     fi
                 fi
             done
@@ -268,8 +282,11 @@ echo "  Git commit:  $(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null |
 echo "============================================================"
 echo ""
 
-# CSV header
-echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,exit_code" > "$CSV_FILE"
+# CSV header. Per-role CPU columns are populated when threads carry pthread
+# names matching the bucket pattern (worker_*, replay_*, raft_apply, paxos_*).
+# Thread naming was added in 2026-04 — see ndb_thread::startBind, replay_pool.cc
+# WorkerLoop, raft/server.cc StartApplyThread.
+echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,role_worker_mean,role_worker_peak,role_replay_mean,role_replay_peak,role_apply_peak,role_other_mean,exit_code" > "$CSV_FILE"
 
 # Accumulate per-thread-count means for final summary
 declare -A thread_throughputs  # thread_count -> space-separated throughputs
@@ -424,16 +441,70 @@ for trd in $THREADS; do
                 }
                 END { if (max > 0) printf "%.1f", max }
             ' "$thread_cpu_log")
+
+            # ----- role-bucketed CPU (uses pthread name from each token) -----
+            # Each token is `pid_tid:comm:pct`. We bucket comm into roles and
+            # compute mean (across samples × threads-in-bucket) and peak.
+            # Roles: worker_*, replay_*, raft_apply, paxos_*. Anything else =
+            # "other".
+            #
+            # mean = average per-sample mean across the bucket's threads.
+            # peak = max single per-thread CPU% seen in any sample.
+            role_metrics() {
+                local pat="$1"  # awk regex for the role
+                awk -v PAT="$pat" '
+                    function bucket(comm) { return (comm ~ PAT) ? 1 : 0 }
+                    !/^#/ && NF >= 4 {
+                        sample_sum = 0; sample_n = 0
+                        for (i = 4; i <= NF; i++) {
+                            t = $i
+                            n1 = index(t, ":")
+                            if (n1 <= 0) continue
+                            rest = substr(t, n1 + 1)
+                            n2 = index(rest, ":")
+                            if (n2 <= 0) continue
+                            comm = substr(rest, 1, n2 - 1)
+                            pct = substr(rest, n2 + 1) + 0
+                            if (bucket(comm)) {
+                                sample_sum += pct
+                                sample_n++
+                                if (pct > peak) peak = pct
+                            }
+                        }
+                        if (sample_n > 0) { mean_acc += sample_sum / sample_n; samp_acc++ }
+                    }
+                    END {
+                        printf "%.1f|%.1f",
+                               (samp_acc > 0 ? mean_acc / samp_acc : 0),
+                               (peak > 0 ? peak : 0)
+                    }
+                ' "$thread_cpu_log"
+            }
+            role_worker=$(role_metrics '^worker_')
+            role_worker_mean=${role_worker%|*}
+            role_worker_peak=${role_worker#*|}
+            role_replay=$(role_metrics '^replay_')
+            role_replay_mean=${role_replay%|*}
+            role_replay_peak=${role_replay#*|}
+            role_apply=$(role_metrics '^raft_apply$|^paxos_apply$')
+            role_apply_peak=${role_apply#*|}
+            # "other" = anything not in the named roles above.
+            role_other=$(role_metrics '^(worker_|replay_|raft_apply$|paxos_apply$)' | awk -F'|' '{print $1"|"$2}')
+            # Note: "other" with an exclude pattern would need an inversion; we
+            # don't track it for now beyond the existing aggregate avg_cpu_pct.
+            role_other_mean="N/A"
         fi
 
         # Display
-        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | Workers: mean=%s%% peak=%s%% | replay_p1: %s replay_p2: %s\n" \
+        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | Workers: mean=%s%% peak=%s%% | Replay: mean=%s%% peak=%s%% | Apply: peak=%s%% | replay_p1: %s replay_p2: %s\n" \
             "${throughput:-N/A}" "${avg_cpu:-N/A}" "${avg_latency:-N/A}" \
-            "${worker_mean_cpu:-N/A}" "${worker_peak_cpu:-N/A}" \
+            "${role_worker_mean:-N/A}" "${role_worker_peak:-N/A}" \
+            "${role_replay_mean:-N/A}" "${role_replay_peak:-N/A}" \
+            "${role_apply_peak:-N/A}" \
             "${replay_p1:-N/A}" "${replay_p2:-N/A}"
 
         # CSV row
-        echo "${trd},${run},${throughput},${per_core_throughput},${avg_cpu},${peak_cpu},${avg_latency},${avg_persist_latency},${abort_rate},${replay_p1},${replay_p2},${active_threads},${worker_mean_cpu},${worker_peak_cpu},${exit_code}" >> "$CSV_FILE"
+        echo "${trd},${run},${throughput},${per_core_throughput},${avg_cpu},${peak_cpu},${avg_latency},${avg_persist_latency},${abort_rate},${replay_p1},${replay_p2},${active_threads},${worker_mean_cpu},${worker_peak_cpu},${role_worker_mean:-},${role_worker_peak:-},${role_replay_mean:-},${role_replay_peak:-},${role_apply_peak:-},${role_other_mean:-},${exit_code}" >> "$CSV_FILE"
 
         # Accumulate for summary
         if [ -n "$throughput" ]; then

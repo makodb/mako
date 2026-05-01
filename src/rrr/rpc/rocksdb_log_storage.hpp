@@ -24,6 +24,7 @@
 #include "log_storage.hpp"
 #include "misc/marshal.hpp"
 #include "base/logging.hpp"
+#include "../../mako/fake_disk.h"
 
 namespace rrr {
 
@@ -242,6 +243,14 @@ public:
             take_rocksdb_error(&err);
             return false;
         }
+
+        // FakeDisk hook: rocksdb_put() with sync=1 fsyncs the WAL — that is
+        // the per-entry durability barrier. Model one fsync's worth of disk
+        // latency for it.
+        // @unsafe - reads global fake_disk() singleton, calls nanosleep
+        if (mako::fake_disk().enabled()) {
+            mako::fake_disk().sleep_for(key.size() + value.size());
+        }
         return true;
     }
 
@@ -348,6 +357,19 @@ public:
         if (err != nullptr) {
             take_rocksdb_error(&err);
             return false;
+        }
+
+        // FakeDisk hook: same rationale as put(). The batch write fsyncs the
+        // WAL once for the whole batch under sync=1, so we charge one fsync
+        // per put_batch invocation.
+        // @unsafe - reads global fake_disk() singleton, calls nanosleep
+        if (mako::fake_disk().enabled()) {
+            size_t total = 0;
+            for (const auto& e : entries) {
+                total += sizeof(slotid_t);
+                if (e.command) total += 64;  // approx serialized size per entry
+            }
+            mako::fake_disk().sleep_for(total);
         }
         return true;
     }
@@ -548,6 +570,13 @@ public:
             take_rocksdb_error(&err);
             return false;
         }
+
+        // FakeDisk hook: term/vote metadata updates are durability-critical
+        // for Raft safety. Charge one fsync.
+        // @unsafe - reads global fake_disk() singleton, calls nanosleep
+        if (mako::fake_disk().enabled()) {
+            mako::fake_disk().sleep_for(meta_key.size() + value.size());
+        }
         return true;
     }
 
@@ -600,6 +629,11 @@ public:
             take_rocksdb_error(&err);
             return false;
         }
+        // No FakeDisk hook here. The fsync latency is charged at the
+        // durability-causing call sites: put(), put_batch(), set_metadata().
+        // The Raft impl explicitly calls sync() after each, but with sync=1
+        // already in write_options the WAL is durable when those returned;
+        // sync() is just a memtable flush we treat as in-RAM.
         return true;
     }
 

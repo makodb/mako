@@ -5,6 +5,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <pthread.h>
 
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/sto/ReplayDB.h"
@@ -94,6 +95,14 @@ void ReplayPool::Enqueue(uint32_t par_id, char* log_copy, int len,
 }
 
 void ReplayPool::WorkerLoop(int idx) {
+  // Name this thread so the per-thread CPU monitor can bucket us under the
+  // "replay" role. pthread name limit is 15 chars + NUL.
+  {
+    char tname[16];
+    std::snprintf(tname, sizeof(tname), "replay_%d", idx);
+    pthread_setname_np(pthread_self(), tname);
+  }
+
   auto& benchConfig = BenchmarkConfig::getInstance();
   const int nshards = benchConfig.getNthreads();
 

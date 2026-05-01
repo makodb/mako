@@ -64,7 +64,12 @@ struct RecoveryConfig {
     } else {
       username = "unknown";  // @unsafe
     }
-    config.storage_path = "/tmp/" + username + "_mako_log_shard" +
+    // Allow MAKO_PERSIST_ROOT to redirect persistence to a tmpfs/dm-delay
+    // backend for the simulated-fast-disk experiments. Default /tmp/.
+    auto persist_root_env = std::getenv("MAKO_PERSIST_ROOT");  // @unsafe
+    std::string persist_root = persist_root_env ? persist_root_env : "/tmp";
+    if (!persist_root.empty() && persist_root.back() == '/') persist_root.pop_back();
+    config.storage_path = persist_root + "/" + username + "_mako_log_shard" +
                          std::to_string(partition_id) + "_replica" +
                          std::to_string(locale_id);
     return config;  // @unsafe

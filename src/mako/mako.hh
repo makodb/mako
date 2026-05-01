@@ -517,10 +517,22 @@ static void setup_paxos_follower_callbacks(TSharedThreadPoolMbta& replicated_db)
   // Initialize the ReplayPool once, before callbacks are registered. The pool
   // lets us move the heavy Masstree replay work off the Raft apply thread and
   // run it on N worker threads in parallel (sharded by par_id). N is read from
-  // env var MAKO_REPLAY_THREADS (default 1 = previous synchronous behaviour).
+  // env var MAKO_REPLAY_THREADS (default 1).
+  // Sentinel: MAKO_REPLAY_THREADS=0 disables the pool entirely, restoring the
+  // pre-pool synchronous behaviour where replay runs inline on the apply
+  // thread. This is the baseline used to reproduce the single-apply-thread
+  // flatline for the Step 1 ablation.
   if (!mako::g_replay_pool) {
-    mako::g_replay_pool.reset(new mako::ReplayPool(&replicated_db));
-    mako::g_replay_pool->Start(/*n=*/-1);  // -1 → read MAKO_REPLAY_THREADS env
+    const char* rt_env = std::getenv("MAKO_REPLAY_THREADS");
+    int rt_n = (rt_env && *rt_env) ? std::atoi(rt_env) : 1;
+    if (rt_n > 0) {
+      mako::g_replay_pool.reset(new mako::ReplayPool(&replicated_db));
+      mako::g_replay_pool->Start(/*n=*/-1);  // -1 → re-read MAKO_REPLAY_THREADS
+    } else {
+      fprintf(stderr,
+              "[replay_pool] MAKO_REPLAY_THREADS=0 → pool disabled; replay "
+              "runs synchronously on the Raft apply thread.\n");
+    }
   }
 
   for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
@@ -948,7 +960,12 @@ static abstract_db * init_env() {
       auto& persistence = mako::RocksDBPersistence::getInstance();
       // Add username prefix to avoid conflicts when multiple users run on the same server
       std::string username = util::get_current_username();
-      std::string db_path = "/tmp/" + username + "_mako_rocksdb_shard" + std::to_string(benchConfig.getShardIndex())
+      // Allow MAKO_PERSIST_ROOT to redirect persistence to a tmpfs/dm-delay
+      // backend for the simulated-fast-disk experiments. Default /tmp/.
+      const char* persist_root_env = std::getenv("MAKO_PERSIST_ROOT");
+      std::string persist_root = persist_root_env ? persist_root_env : "/tmp";
+      if (!persist_root.empty() && persist_root.back() == '/') persist_root.pop_back();
+      std::string db_path = persist_root + "/" + username + "_mako_rocksdb_shard" + std::to_string(benchConfig.getShardIndex())
                             + "_leader_pid" + std::to_string(getpid());
       size_t num_partitions = benchConfig.getNthreads();
       size_t num_threads = num_partitions;

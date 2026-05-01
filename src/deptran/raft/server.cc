@@ -4,6 +4,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
+#include <pthread.h>
 
 // @external: {
 //   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]
@@ -499,6 +500,9 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
 void RaftServer::StartApplyThread() {
   apply_thread_running_.store(true);
   apply_thread_ = std::thread([this]() {
+    // Name this thread so the per-thread CPU monitor can bucket us under the
+    // "raft_apply" role. pthread name limit is 15 chars + NUL.
+    pthread_setname_np(pthread_self(), "raft_apply");
     Log_info("[APPLY-THREAD] Site %d: Started background apply thread", site_id_);
     uint64_t apply_count = 0;
     auto last_log_time = std::chrono::steady_clock::now();
