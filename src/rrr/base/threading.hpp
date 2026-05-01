@@ -15,6 +15,7 @@
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
+#include <rusty/fn.hpp>
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
@@ -559,7 +560,7 @@ class ThreadPool: public NoCopy {
     // Queue owns pthread primitives (mutex/cond) with stable addresses, so it
     // is not move-constructible. rusty::Vec needs a moveable T for push(),
     // so use std::vector here (resize() constructs in place).
-    std::vector<Queue<rusty::Box<std::function<void()>>>> q_;
+    std::vector<Queue<rusty::Box<rusty::Function<void()>>>> q_;
     bool should_stop_{false};
 
     static void* start_thread_pool(void*);
@@ -573,8 +574,10 @@ public:
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
 
-    // return 0 when queuing ok, otherwise EPERM
-    int run_async(const std::function<void()>&);
+    // return 0 when queuing ok, otherwise EPERM. Takes ownership of the
+    // callable; rusty::Function is move-only so callers pass a lambda
+    // (which converts implicitly) or std::move an existing Function.
+    int run_async(rusty::Function<void()> f);
 
     // @unsafe - Factory uses rusty::Arc::make (non-borrow-checked)
     template<typename... Args>
