@@ -572,7 +572,16 @@ class TimeoutALock: public ALock {
 
   uint64_t id_locked_ = 0;
 
-  std::mutex lock_;
+  // L7-alock (2026-05-01): the prior `std::mutex lock_;` field never
+  // had any uncommented lock/unlock site — every reference to `lock_`
+  // in alock.{hpp,cpp} was inside `//`-prefixed dead code (see git
+  // blame for the commented-out `lock_.lock()` / `lock_.unlock()`
+  // pairs that used to wrap `requests_` mutations in an earlier
+  // version).  Field removed; no consumer (test_alock or otherwise)
+  // accessed it directly.  If concurrency over `requests_` is ever
+  // re-introduced, follow the L7-request_queue / L7-inmemory_*
+  // pattern: wrap the protected fields in `SpinMutex<Inner>` rather
+  // than re-adding a separate std::mutex.
   std::list<ALockReq> requests_;
   //    uint64_t tm_last_ = 0;
   uint64_t tm_wait_;
@@ -622,7 +631,14 @@ class ALockGroup {
 
   enum status_t { INIT, WAIT, LOCK, TIMEOUT, UNLOCK };
 
-  std::recursive_mutex mtx_locks_;
+  // L7-alock (2026-05-01): both `std::recursive_mutex mtx_locks_` and
+  // `std::mutex mtx_` were dead — every uncommented use site of
+  // either was already inside `//` comments (see git blame for the
+  // historical `mtx_locks_.lock()` and `mtx_.lock_guard` blocks that
+  // were commented out before this point).  Removed.  Same forward-
+  // looking guidance as TimeoutALock above: future re-introduction
+  // of concurrency should use SpinMutex<Inner>, not a separate
+  // std::mutex.
 
   rusty::BTreeMap<ALock *, uint64_t> locked_;
   rusty::BTreeMap<ALock *, ALock::type_t> tolock_;
@@ -636,7 +652,6 @@ class ALockGroup {
   // TODO: LOCK->WAIT->LOCK->WAIT->LOCK
   // TODO: LOCK->WAIT->TIMEOUT
   status_t status_;
-  std::mutex mtx_;
 
   ALockNotifyCallback yes_callback_;
   ALockNotifyCallback no_callback_;
