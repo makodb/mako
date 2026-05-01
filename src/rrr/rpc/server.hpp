@@ -116,8 +116,11 @@ inline const char* shutdown_phase_to_string(ShutdownPhase phase) {
     }
 }
 
-// Shutdown hook callback type
-using ShutdownHook = std::function<void()>;
+// Shutdown hook callback type. rusty::Function is move-only; the
+// hooks are stored in `Vec<ShutdownHook>` (no clone()), pushed via
+// move in `add_shutdown_hook`, and invoked by reference inside the
+// graceful-shutdown loop — see server.cpp.
+using ShutdownHook = rusty::Function<void()>;
 
 /**
  * The raw packet sent from client will be like this:
@@ -487,7 +490,7 @@ public:
 
     // @safe - Delegates to thread pool (currently a no-op stub)
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
-    int run_async(std::function<void()> f);
+    int run_async(rusty::Function<void()> f);
 
     // @safe - 5g2: ServerConnection no longer owns an fd. Always
     // returns -1; retained only for ABI compatibility with the
@@ -603,7 +606,7 @@ public:
 
     // @safe - Executes callback inline; returns error on empty callback.
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
-    int run_async(std::function<void()> f);
+    int run_async(rusty::Function<void()> f);
 
     // @safe - Sends reply using callback-based API
     // Can only be called once (checked by replied_ flag)

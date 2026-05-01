@@ -341,7 +341,7 @@ void ServerConnection::dispatch_response_frame_via_channel(
 }
 
 // @unsafe - Executes callback inline for API compatibility.
-int ServerConnection::run_async(std::function<void()> f) {
+int ServerConnection::run_async(rusty::Function<void()> f) {
   if (!f) {
     Log_warn("rrr::ServerConnection::run_async called with empty callback");
     return EINVAL;
@@ -424,7 +424,7 @@ int ServerConnection::poll_mode() const {
 }
 
 // @unsafe - Executes callback inline for API compatibility.
-int DeferredReply::run_async(std::function<void()> f) {
+int DeferredReply::run_async(rusty::Function<void()> f) {
     if (!f) {
         Log_warn("rrr::DeferredReply::run_async called with empty callback");
         return EINVAL;
