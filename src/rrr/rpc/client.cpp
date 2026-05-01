@@ -757,7 +757,7 @@ void ClientConnection::bind_channel_via_poll_thread(
   // its own reactor, so the resulting fiber's IntEvent waits and
   // the `on_frame` callback's signal both land on the same
   // thread.
-  // @unsafe { Arc::new_ + std::function + cross-thread queue }
+  // @unsafe { Arc::new_ + rusty::Function + cross-thread queue }
   auto recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([weak_self]() {
     auto conn_opt = weak_self.upgrade();
     if (conn_opt.is_none()) return;

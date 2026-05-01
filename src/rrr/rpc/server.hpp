@@ -54,7 +54,6 @@
 //   std::vector::push_back: [safe, (&'a mut, const T&) -> void]
 //   std::vector::empty: [safe, (&'a) -> bool]
 //   std::vector::size: [safe, (&'a) -> size_t]
-//   std::function::operator(): [safe]
 //   const_cast: [unsafe]
 //   rrr::Counter::next: [safe, (&'a mut) -> i64]
 //   Log_error: [safe]
