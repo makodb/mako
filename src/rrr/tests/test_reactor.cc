@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <rusty/arc.hpp>
+#include <rusty/function.hpp>
 #include <rusty/mutex.hpp>
 #include "../rrr.hpp"
 
@@ -22,12 +23,16 @@ class TestPollable : public Pollable {
 private:
     int fd_;
     mutable int mode_;  // mutable to allow modification through const methods
-    mutable std::function<void()> read_handler_;  // mutable handler
-    mutable std::function<void()> write_handler_;  // mutable handler
-    mutable std::function<void()> error_handler_;  // mutable handler
+    mutable rusty::Function<void()> read_handler_;  // mutable handler
+    mutable rusty::Function<void()> write_handler_;  // mutable handler
+    mutable rusty::Function<void()> error_handler_;  // mutable handler
 
 public:
-    ~TestPollable() override = default;
+    // No user-declared destructor: Pollable's `virtual ~Pollable() = default;`
+    // covers polymorphic deletion, and omitting our own destructor keeps
+    // the implicit move constructor / move assignment available — required
+    // since `read_handler_` / `write_handler_` / `error_handler_` are
+    // move-only (`rusty::Function` is non-copyable).
     explicit TestPollable(int fd, int mode = PollMode::READ)
         : fd_(fd), mode_(mode) {}
 
@@ -101,24 +106,25 @@ public:
         return false;
     }
 
-    // @unsafe - Modifies mutable field
-    void set_read_handler(std::function<void()> handler) const {  // const method
+    // @unsafe - Modifies mutable field. rusty::Function is move-only so
+    // the setter takes by value-with-move.
+    void set_read_handler(rusty::Function<void()> handler) const {  // const method
         // @unsafe {
-        read_handler_ = handler;
+        read_handler_ = std::move(handler);
         // }
     }
 
     // @unsafe - Modifies mutable field
-    void set_write_handler(std::function<void()> handler) const {  // const method
+    void set_write_handler(rusty::Function<void()> handler) const {  // const method
         // @unsafe {
-        write_handler_ = handler;
+        write_handler_ = std::move(handler);
         // }
     }
 
     // @unsafe - Modifies mutable field
-    void set_error_handler(std::function<void()> handler) const {  // const method
+    void set_error_handler(rusty::Function<void()> handler) const {  // const method
         // @unsafe {
-        error_handler_ = handler;
+        error_handler_ = std::move(handler);
         // }
     }
 };
