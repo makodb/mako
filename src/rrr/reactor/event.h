@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <string.h>
 //#include "../../deptran/client_worker.h"
+#include <rusty/fn.hpp>
 #include <rusty/rusty.hpp>
 
 // External safety annotations for std::shared_ptr and Event operations
@@ -69,7 +70,7 @@ class Event {
   rusty::Cell<EventStatus> status_{INIT};
   void* _dbg_p_scheduler_{nullptr};  // Jetpack: for debugging
   uint64_t type_{0};
-  function<bool(int)> test_{};
+  rusty::Function<bool(int)> test_{};
 	bool needs_finalize_{false};
   uint64_t wakeup_time_; // calculated by timeout, unit: microsecond
   bool rcd_wait_ = false;
@@ -86,8 +87,8 @@ class Event {
   // @unsafe
   virtual void wait(uint64_t timeout=0) final;
 
-  void wait(function<bool(int)> f) {
-    test_ = f;
+  void wait(rusty::Function<bool(int)> f) {
+    test_ = std::move(f);
     wait();
   }
 
@@ -178,7 +179,7 @@ class SharedIntEvent {
   // Declaration only - definition in event.cc
   int set(const int& v);
 
-  void wait(function<bool(int)> f);
+  void wait(rusty::Function<bool(int)> f);
   bool wait_until_gte(int x, int timeout=0);
 };
 

@@ -11,6 +11,7 @@
 #include <cstring>
 #include <ctime>
 
+#include <rusty/fn.hpp>
 #include <rusty/rusty.hpp>
 
 
@@ -85,7 +86,8 @@ class QuorumEvent : public Event {
    * @param timeout time to wait after event-ready to do finalize
    * @param finalize_func what to do in finalization, take a list of dangling RPC
    */
-  void finalize(uint64_t timeout, function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
+  void finalize(uint64_t timeout,
+                rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
 
   virtual bool yes() {
     return n_voted_yes_ >= quorum_;
