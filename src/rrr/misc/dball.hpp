@@ -24,6 +24,8 @@
 
 
 
+#include <rusty/fn.hpp>
+
 #include "../base/debugging.hpp"
 
 namespace rrr {
@@ -35,7 +37,7 @@ class DragonBall {
   int64_t n_wait_ = -1;
   int64_t n_ready_ = 0;
   bool called_ = false;
-  std::function<void(void)> wish_{}; // this is your wish!
+  rusty::Function<void(void)> wish_{}; // this is your wish!
 
   bool th_safe_ = false;
   bool auto_trigger = true;
@@ -43,11 +45,12 @@ class DragonBall {
   DragonBall(bool th_safe = false)
       : th_safe_(th_safe), n_wait_() { }
 
+  // Takes ownership of the wish callback; rusty::Function is move-only.
   DragonBall(const int32_t n_wait,
-             const std::function<void(void)> &wish,
+             rusty::Function<void(void)> wish,
              bool th_safe = false)
       : n_wait_(n_wait),
-        wish_(wish),
+        wish_(std::move(wish)),
         th_safe_(th_safe) { };
 
   DragonBall(const DragonBall&) = delete;
