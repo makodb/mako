@@ -588,7 +588,11 @@ public:
 };
 
 class RunLater: public NoCopy {
-    typedef std::pair<double, std::function<void()>*> job_t;
+    // The Option<Box<Function>> payload is None for the death-pill
+    // (former `nullptr`) and Some(box) for real jobs. Box owns the
+    // heap-allocated rusty::Function (former `new std::function(f)`).
+    typedef std::pair<double,
+                      rusty::Option<rusty::Box<rusty::Function<void()>>>> job_t;
 
     pthread_t th_;
     pthread_mutex_t m_;
@@ -607,8 +611,10 @@ public:
     RunLater();
     ~RunLater() noexcept;
 
-    // return 0 when queuing ok, otherwise EPERM
-    int run_later(double sec, const std::function<void()>&);
+    // return 0 when queuing ok, otherwise EPERM. Takes ownership of the
+    // callable; rusty::Function is move-only so callers pass a lambda
+    // (which converts implicitly) or std::move an existing Function.
+    int run_later(double sec, rusty::Function<void()> f);
 
     double max_wait() const;
 
