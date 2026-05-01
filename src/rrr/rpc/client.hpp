@@ -14,6 +14,7 @@
 #include <rusty/result.hpp>
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/function.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/async.hpp>
 
@@ -776,9 +777,11 @@ class ClientConnection {
     // 0 means no ID received yet (initial state)
     rusty::Cell<uint64_t> server_instance_id_{0};
 
-    // Callback invoked when server restart is detected (ID changes)
-    // Parameters: (old_id, new_id)
-    mutable std::function<void(uint64_t, uint64_t)> on_server_restart_;
+    // Callback invoked when server restart is detected (ID changes).
+    // Parameters: (old_id, new_id).  rusty::Function is move-only;
+    // the setter takes the callback by value-with-move and the
+    // callsite below invokes it by reference (no copy).
+    mutable rusty::Function<void(uint64_t, uint64_t)> on_server_restart_;
 
     // TCP Keepalive configuration for connection health monitoring (Cell for interior mutability)
     rusty::Cell<KeepaliveConfig> keepalive_config_;
@@ -1147,8 +1150,8 @@ public:
      *
      * @param callback Function to call on restart detection
      */
-    // @unsafe - std::function assignment through const (interior mutability via mutable)
-    void set_on_server_restart(std::function<void(uint64_t, uint64_t)> callback) const {
+    // @unsafe - rusty::Function assignment through const (interior mutability via mutable)
+    void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
         on_server_restart_ = std::move(callback);
     }
 
@@ -1160,7 +1163,7 @@ public:
      * @param new_id The new server instance ID
      * @return true if server restart was detected, false otherwise
      */
-    // @unsafe - Updates Cell and may call callback (std::function operations)
+    // @unsafe - Updates Cell and may call callback (rusty::Function operations)
     bool check_server_instance(uint64_t new_id) const {
         uint64_t old_id = server_instance_id_.get();
 
@@ -1170,7 +1173,7 @@ public:
         // Detect restart: old ID was set (non-zero) and differs from new ID
         if (old_id != 0 && old_id != new_id) {
             Log_info("Server restart detected: old_id=%lu new_id=%lu", old_id, new_id);
-            // @unsafe { std::function::operator bool and callback execution }
+            // @unsafe { rusty::Function::operator bool and callback execution }
             if (on_server_restart_) {
                 on_server_restart_(old_id, new_id);
             }
@@ -2188,7 +2191,7 @@ public:
      * @param callback Function to call on restart detection
      */
     // @unsafe - Delegates to @unsafe ClientConnection::set_on_server_restart
-    void set_on_server_restart(std::function<void(uint64_t, uint64_t)> callback) const {
+    void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
