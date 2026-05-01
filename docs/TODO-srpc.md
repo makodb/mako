@@ -1454,9 +1454,9 @@ Per CLAUDE.md: when touching any rrr file outside this workstream, *also* migrat
   Full RPC suite green: 103/107 passing under `./docker_build.sh ci rrrTests`, same 4 pre-existing failures (`test_rpc_timeout_retry`, `test_rpc_validation`, `test_rpc_metrics`, `rpcbench` path issue).  CLAUDE.md mandate (`Always keep the third-party/rusty-cpp submodule on the main branch with the latest commit`) satisfied.
 
 ### DoD
-- [ ] All quick-win leaves (L1a + L1b + L1c) landed; rrr has zero `std::weak_ptr` / `std::unique_ptr` / `std::optional` in prod code.
-- [ ] All targeted-migration leaves (L2 + L3) landed; rrr has zero `std::list` / `std::set` / `std::unordered_set` in prod code.
-- [ ] All bigger-migration workstreams (L4 + L5 + L6 + L7 + L8) landed; rrr has zero `std::map` / `std::unordered_map` / `std::function` / `std::shared_ptr` / `std::mutex` / `std::thread` in prod code.
+- [ ] All quick-win leaves (L1a + L1b + L1c) landed; rrr has zero `std::weak_ptr` / `std::unique_ptr` / `std::optional` in prod code.  **PARTIAL** — L1b ✅ + L1c ✅; L1a still deferred (low priority, coupled to event-subsystem migration).
+- [x] All targeted-migration leaves (L2 + L3) landed; rrr has zero non-carve-out `std::list` / `std::set` / `std::unordered_set` in prod code.  ✅ **LANDED 2026-05-01** — L2 (5 sub-leaves: L2a/b/c/d/e) and L3 both closed.  Carve-outs documented under L2 (marshal API, idempotency.hpp/completion_tracker.hpp LRU caches, alock's wait-die queue) and L3 (marshal API set/unordered_set serialization).
+- [ ] All bigger-migration workstreams (L4 + L5 + L6 + L7 + L8) landed; rrr has zero `std::map` / `std::unordered_map` / `std::function` / `std::shared_ptr` / `std::mutex` / `std::thread` in prod code.  **PARTIAL** — L4 ✅ + L5 ✅ + L7 ✅ + L8 ✅; L6 still deferred (two-island shared_ptr blocked).
 - [ ] Carve-out documentation in CLAUDE.md remains accurate: `std::string`, `std::atomic`, `std::condition_variable`, `std::pair`, `std::tuple`, `std::array` stay std with documented rationale.
 - [ ] Borrow-check coverage extended over the migrated files (where the corresponding `make borrow_check_*` target exists).
 - [x] Survey baseline counts updated in this doc to reflect the post-migration state. ✅ **REFRESHED 2026-05-01** post-L1c-tests + L5b–L5t. The std::function row dropped from 137 to 82 prod sites; std::optional fully retired; std::list down to 34. Most remaining sites are documented carve-outs or design-decision-pending sub-leaves.
