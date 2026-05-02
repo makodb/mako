@@ -729,6 +729,13 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
 `RaftServer` wrapped via `RaftServerDispatcher`. Each node uses
 `ChannelTransportAdapter` pointing at a shared `ChannelSwitchboard`.
 
+- [x] 8.5.a contract-stabilization leaf [26:05:02]:
+  - Added Phase 8.5 decomposition doc:
+    `docs/dev/raft_phase8_5_breakdown.md`.
+  - Updated `DummyDispatcher` to satisfy expanded `DispatcherFacade`
+    (`handle_add_server`, `handle_remove_server`) so the skeleton
+    `TestCluster` path keeps compiling after Phase 8.3.
+  - Added `RaftTestClusterTest.DummyDispatcherSupportsMembershipHandlers`.
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.

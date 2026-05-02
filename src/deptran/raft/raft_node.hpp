@@ -82,6 +82,20 @@ class DummyDispatcher {
   InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) {
     InstallSnapshotReply r{}; r.term_out = 0; return r;
   }
+  AddServerReply handle_add_server(AddServerReq) {
+    AddServerReply r{};
+    r.success = true;
+    r.error_msg = "";
+    r.leader_hint = self_;
+    return r;
+  }
+  RemoveServerReply handle_remove_server(RemoveServerReq) {
+    RemoveServerReply r{};
+    r.success = true;
+    r.error_msg = "";
+    r.leader_hint = self_;
+    return r;
+  }
 
   siteid_t self_site_id() const { return self_; }
 

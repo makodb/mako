@@ -107,3 +107,25 @@ TEST(RaftTestClusterTest, InspectionAccessors) {
   EXPECT_EQ(c->node(1).commit_index(), 10u);
   EXPECT_FALSE(c->node(2).is_leader());
 }
+
+TEST(RaftTestClusterTest, DummyDispatcherSupportsMembershipHandlers) {
+  auto c = TestCluster::with_in_memory_transport(3);
+  auto disp = c->node(1).take_dispatcher();
+
+  AddServerReq add_req{};
+  add_req.term = 3;
+  add_req.new_server_id = 7;
+  add_req.new_server_addr = "n7:9007";
+  auto add_resp = disp->handle_add_server(add_req);
+  EXPECT_TRUE(add_resp.success);
+  EXPECT_TRUE(add_resp.error_msg.empty());
+  EXPECT_EQ(add_resp.leader_hint, 1u);
+
+  RemoveServerReq rem_req{};
+  rem_req.term = 3;
+  rem_req.server_id = 7;
+  auto rem_resp = disp->handle_remove_server(rem_req);
+  EXPECT_TRUE(rem_resp.success);
+  EXPECT_TRUE(rem_resp.error_msg.empty());
+  EXPECT_EQ(rem_resp.leader_hint, 1u);
+}

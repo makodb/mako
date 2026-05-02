@@ -961,6 +961,14 @@ Reconnect(server_id)  // Restore connectivity
 | Speculative | `testSpeculativeLeaderElection`, `testSpecCommitIndexAdvances`, `testSpeculativeInvariantsHold` |
 | Preferred leader | `testPreferredReplicaStartup`, `testPreferredReplicaLogReplication` |
 
+### In-process TestCluster Skeleton
+
+`test_raft_test_cluster` validates the in-memory harness path
+(`TestCluster` + `RaftNode` + `DummyDispatcher`) independent of socket RPC.
+The skeleton dispatcher intentionally implements every current
+`DispatcherFacade` method, including membership handlers, so facade
+evolution does not silently break the test harness compile path.
+
 ### Speculative State Queries (for tests)
 
 ```cpp
