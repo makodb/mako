@@ -23,7 +23,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
         TxnOutput output;
         MarshallDeputy md;
         fu->get_reply() >> res >> output >> md;
-        if (md.kind_ == MarshallDeputy::EMPTY_GRAPH) {
+        if (md.kind_ == EmptyGraph::static_kind()) {
           RccGraph rgraph;
           auto v = rgraph.CreateV(tid);
           RccTx& info = *v;

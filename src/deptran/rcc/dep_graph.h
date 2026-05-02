@@ -6,6 +6,9 @@
 #include "command.h"
 #include "command_marshaler.h"
 #include "__dep__.h"
+// L6-pivot auto-kind POC: pull in `rrr::Serializable<Derived>` CRTP
+// base + `rrr::type_kind<T>()` for the EmptyGraph migration below.
+#include "rrr/misc/marshal_serializable_bridge.hpp"
 
 /**
  * This is NOT thread safe!!!
@@ -16,18 +19,16 @@ namespace janus {
 typedef vector<RccTx*> RccScc;
 
 // Workstream N Phase 4d-1: migrated from Marshallable to Serializable.
-// Stateless tag — no fields, save/load are no-ops. Construction
-// continues to use the existing MarshallDeputy(shared_ptr<T>) ctor
-// and set_marshallable<T> templates (Phase 4d-prep relaxed their
-// requires clauses to dispatch via wrap_typed_marshallable's bridge
-// overload for any non-Marshallable T).
-class EmptyGraph {
+// L6-pivot auto-kind POC (2026-05-01): no manual kind value or
+// registration line — `kind()`, `static_kind()`, and the static-init
+// SerializableRegistry registration are all provided by the
+// `rrr::Serializable<EmptyGraph>` CRTP base via `type_kind<T>()`
+// (FNV-1a hash of `typeid(T).name()`).  Stateless tag — no fields,
+// save/load are no-ops.
+class EmptyGraph : public rrr::Serializable<EmptyGraph> {
  public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::EMPTY_GRAPH;
-
   EmptyGraph() = default;
 
-  int32_t kind() const { return kMarshallKind; }
   void save(BinaryWriteArchive&) const {}
   void load(BinaryReadArchive&) {}
 };

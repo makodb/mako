@@ -504,14 +504,19 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesTypedAdapter) {
   // longer satisfy; route through wrap_typed_marshallable's bridge
   // overload (Phase 4a-prep) instead.
   MarshallDeputy outgoing(wrap_typed_marshallable(payload));
-  EXPECT_EQ(outgoing.kind_, MarshallDeputy::EMPTY_GRAPH);
+  // L6-pivot auto-kind POC: EmptyGraph's kind is now FNV-1a hashed
+  // from typeid(EmptyGraph).name() at runtime — no longer the manual
+  // `MarshallDeputy::EMPTY_GRAPH = 1` enum value.  Compare against
+  // `EmptyGraph::static_kind()` (provided by the
+  // `Serializable<EmptyGraph>` CRTP base).
+  EXPECT_EQ(outgoing.kind_, janus::EmptyGraph::static_kind());
 
   Marshal m;
   m << outgoing;
 
   MarshallDeputy incoming;
   m >> incoming;
-  EXPECT_EQ(incoming.kind_, MarshallDeputy::EMPTY_GRAPH);
+  EXPECT_EQ(incoming.kind_, janus::EmptyGraph::static_kind());
   ASSERT_NE(marshallable_cast<janus::EmptyGraph>(incoming), nullptr);
 }
 
