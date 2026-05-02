@@ -33,6 +33,10 @@
 namespace janus {
 namespace raft {
 
+namespace {
+constexpr uint64_t kAppendEntriesRpcTimeoutUs = 300'000;  // 300ms
+}
+
 class RrrTransportAdapter {
  public:
   // @unsafe { non-owning raw pointer; caller must ensure commo outlives this }
@@ -84,7 +88,9 @@ class RrrTransportAdapter {
           *slot = std::move(r);
           ready->set(1);
         });
-    ready->wait();  // yields fiber until reply arrives or timeout
+    // Bound wait so heartbeat sub-fibers do not pile up during restart/
+    // disconnect churn when a reply callback never arrives.
+    ready->wait(kAppendEntriesRpcTimeoutUs);
     return *slot;
   }
 
@@ -104,7 +110,8 @@ class RrrTransportAdapter {
           *slot = std::move(r);
           ready->set(1);
         });
-    ready->wait();
+    // Bound wait for the same reason as send_append_entries().
+    ready->wait(kAppendEntriesRpcTimeoutUs);
     EmptyAppendEntriesReply out{};
     out.follower_append_ok = slot->follower_append_ok;
     out.follower_current_term = slot->follower_current_term;

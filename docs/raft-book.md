@@ -241,14 +241,20 @@ If any fail:
 
 ### Parallel Replication
 
-AppendEntries RPCs are sent to all followers in parallel using async callbacks:
+AppendEntries RPCs are sent through per-peer transport facade calls with
+bounded waits:
 
 ```cpp
 // In HeartbeatLoop (server.cc)
 for (each follower) {
-    commo->SendAppendEntries2(follower, cmd, prevLogIndex, prevLogTerm, ...);
-    // Non-blocking: callback processes response
+    if (has_log_entry) {
+        transport_->send_append_entries(follower, req);
+    } else {
+        transport_->send_empty_append_entries(follower, hb_req);
+    }
 }
+// Bounded transport waits keep the loop from blocking forever and
+// preserve the same next_index_/match_index_ reconciliation rules.
 ```
 
 ### Commit Index Calculation
@@ -463,7 +469,7 @@ Step 3: RaftWorker submits to RaftServer
   -> Signals ready_for_replication_ event
 
 Step 4: Leader replicates via HeartbeatLoop
-  SendAppendEntries2() to all followers (parallel)
+  transport_->send_append_entries()/send_empty_append_entries() to each follower (bounded per-peer call)
 
 Step 5: Followers receive and apply
   OnAppendEntries() -> append to log -> applyLogs()
@@ -695,9 +701,10 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 
 | Method | Purpose |
 |--------|---------|
-| `SendAppendEntries2()` | Async log replication to a follower |
+| `SendAppendEntriesCb()` | rrr callback bridge used by the rrr transport adapter |
 | `BroadcastVote()` | Legacy vote helper kept for transition; election path no longer depends on its term/spec-voter helpers |
 | `send_vote()` via `TransportProxy` | Per-peer RequestVote used by `RaftServer::RequestVote()` |
+| `send_append_entries()` / `send_empty_append_entries()` via `TransportProxy` | Per-peer replication/heartbeat path used by `RaftServer::HeartbeatLoop()` |
 | `SendVoteDurable()` | Notify leader of persisted vote |
 | `SendAppendEntriesDurable()` | Notify leader of persisted entries |
 | `SendInstallSnapshot()` | Send full snapshot to lagging follower |
@@ -711,15 +718,16 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1c): `RequestVote()` election fan-out is migrated to
-  per-peer `transport_->send_vote(...)` with `RaftQuorum<VoteReply>`.
+- Current state (Phase 8.1d leaf 2): `RequestVote()` election fan-out and
+  `HeartbeatLoop()` append fan-out are migrated to per-peer transport facade
+  calls (`send_vote`, `send_append_entries`, `send_empty_append_entries`).
 - Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
   transitional paths; term/spec-voter helper accessors were removed.
 - Append callback bridge hardening (Phase 8.1d leaf 1): on append RPC error,
   `RaftCommo::SendAppendEntriesCb` now emits a default `AppendEntriesReply{}`
   so transport-facing callers never wait on a silently dropped callback.
-- Remaining phases (8.1d-8.1e): migrate replication/snapshot durable paths to
-  `transport().send_*` and delete the remaining legacy result/event wrappers.
+- Remaining phases (8.1d leaf 3/4 + 8.1e): migrate leadership-transfer append
+  trigger and durable/snapshot paths, then delete remaining legacy wrappers.
 
 ### Restart Notification
 

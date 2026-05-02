@@ -21,7 +21,7 @@ API deletion in a way that is hard to verify and rollback.
    Migrate `RaftServer::HeartbeatLoop()` append fan-out from
    `commo()->SendAppendEntries2(...)` to per-peer
    `transport_->send_append_entries(...)` / `send_empty_append_entries(...)`
-   sub-fibers and preserve current next/match/spec-ack behavior.
+   calls with bounded waits and preserve current next/match/spec-ack behavior.
 
 3. **Leaf 3 (leadership-transfer migration)**  
    Replace `commo()->SendAppendEntries(... trigger_election_now=true)` in
@@ -30,6 +30,18 @@ API deletion in a way that is hard to verify and rollback.
 4. **Leaf 4 (legacy cleanup)**  
    Delete `SendAppendEntries2`, `SendAppendEntriesResults`, and
    `RaftCommo::SendAppendEntries(...)` only after no call sites remain.
+
+## Leaf 2 Sizing Analysis (2026-05-02)
+
+Leaf 2 is still a reasonable single-commit change because it is contained to:
+
+- one fan-out site (`RaftServer::HeartbeatLoop` send path),
+- no wire-format/schema changes,
+- no commit-index algorithm rewrite (response handling stays the same), and
+- one focused test expansion that validates both append transport variants.
+
+No additional nested split is required for Leaf 2 beyond the existing 1/2/3/4
+leaf partition above.
 
 ## User/Developer Notes
 

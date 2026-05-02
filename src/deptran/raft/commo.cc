@@ -810,6 +810,10 @@ void RaftCommo::SendAppendEntriesCb(
     }
     return;
   }
+
+  // Keep callback-shaped callers from waiting forever when the target
+  // proxy is absent (e.g., during restart/reconnect windows).
+  on_reply(site_id, raft::AppendEntriesReply{});
 }
 
 // @unsafe - C-style casts, std::function captures

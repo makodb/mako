@@ -51,6 +51,51 @@ TEST(RaftTestClusterTest, PartitionIsolatesGroups) {
   EXPECT_TRUE(intra.success);
 }
 
+TEST(RaftTestClusterTest, AppendEntriesTransportRoundTrip) {
+  auto c = TestCluster::with_in_memory_transport(3);
+
+  AppendEntriesReq append_req{};
+  append_req.leader_site_id = 1;
+  append_req.leader_current_term = 7;
+  auto append_reply = c->node(1).transport()->send_append_entries(2, append_req);
+  EXPECT_EQ(append_reply.follower_append_ok, 1u);
+
+  EmptyAppendEntriesReq hb_req{};
+  hb_req.leader_site_id = 1;
+  hb_req.leader_current_term = 7;
+  hb_req.trigger_election_now = true;
+  auto hb_reply = c->node(1).transport()->send_empty_append_entries(2, hb_req);
+  EXPECT_EQ(hb_reply.follower_append_ok, 1u);
+}
+
+TEST(RaftTestClusterTest, AppendEntriesTransportDropFallback) {
+  auto c = TestCluster::with_in_memory_transport(3);
+
+  c->disconnect(2);
+
+  AppendEntriesReq append_req{};
+  append_req.leader_site_id = 1;
+  append_req.leader_current_term = 8;
+  auto append_reply = c->node(1).transport()->send_append_entries(2, append_req);
+  EXPECT_EQ(append_reply.follower_append_ok, 0u);
+  EXPECT_EQ(append_reply.follower_current_term, 0u);
+  EXPECT_EQ(append_reply.follower_last_log_index, 0u);
+  EXPECT_EQ(append_reply.follower_ack_type, 0u);
+
+  EmptyAppendEntriesReq hb_req{};
+  hb_req.leader_site_id = 1;
+  hb_req.leader_current_term = 8;
+  auto hb_reply = c->node(1).transport()->send_empty_append_entries(2, hb_req);
+  EXPECT_EQ(hb_reply.follower_append_ok, 0u);
+  EXPECT_EQ(hb_reply.follower_current_term, 0u);
+  EXPECT_EQ(hb_reply.follower_last_log_index, 0u);
+  EXPECT_EQ(hb_reply.follower_ack_type, 0u);
+
+  // 1->3 remains connected and should still receive successful replies.
+  auto append_ok3 = c->node(1).transport()->send_append_entries(3, append_req);
+  EXPECT_EQ(append_ok3.follower_append_ok, 1u);
+}
+
 TEST(RaftTestClusterTest, InspectionAccessors) {
   auto c = TestCluster::with_in_memory_transport(3);
   c->node(1).force_leader(true);

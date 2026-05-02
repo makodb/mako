@@ -473,7 +473,7 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
 `res->ok`, `res->followerTerm`, `res->followerLastLogIndex`,
 `res->followerAckType` after `res->event->wait()`.
 
-- [ ] Breakdown doc: `docs/dev/raft_phase8_1d_appendentries_breakdown.md`
+- [x] Breakdown doc: `docs/dev/raft_phase8_1d_appendentries_breakdown.md`
 - [x] **Leaf 1**: Harden append callback transport path so
   `RaftCommo::SendAppendEntriesCb` always emits a reply object on RPC
   errors (default error reply), preventing silent callback drop.
@@ -482,11 +482,15 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   pass (10/10). Full lab run remains flaky around TEST 63 (`RC=139` in
   some runs, `RC=0` in rerun), matching the long-standing speculative
   restart instability tracked under preexisting bug P2.
-- [ ] **Leaf 2**: Convert HeartbeatLoop append fan-out to per-peer
+- [x] **Leaf 2**: Convert HeartbeatLoop append fan-out to per-peer
   `transport_->send_append_entries(peer, req)` /
-  `transport_->send_empty_append_entries(peer, req)` in sub-fibers,
+  `transport_->send_empty_append_entries(peer, req)` with bounded waits,
   preserving current `next_index_` / `match_index_` / speculative ack
-  semantics.
+  semantics. [26:05:02, 06:55] Implemented transport-based append/heartbeat
+  sends in `HeartbeatLoop` with bounded transport waits and unchanged
+  response reconciliation logic. Added `test_raft_test_cluster` coverage
+  for append/non-empty and heartbeat append transport success +
+  dropped-link fallback.
 - [ ] **Leaf 3**: Migrate leadership-transfer heartbeat trigger path in
   `InitiateLeadershipTransfer()` from `commo()->SendAppendEntries(...)`
   to transport facade calls.
@@ -523,11 +527,10 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
 
 ### 8.1 risks
 
-- **mtx_ re-entry**: reply handlers currently fire on rrr's callback
-  thread; after 8.1 they fire on the sub-fiber's thread. Every reply
-  handler that modifies `next_index_` / `match_index_` / `durableAcks_`
-  / `memoryAcks_` must take `mtx_` explicitly. Use `std::lock_guard<
-  std::recursive_mutex>`.
+- **mtx_ re-entry**: every append reply handler that modifies
+  `next_index_` / `match_index_` / `durableAcks_` / `memoryAcks_` must
+  take `mtx_` explicitly. Use
+  `std::lock_guard<std::recursive_mutex>`.
 - **Speculative voting state**: `specVoters_` / `durableVoters_` /
   `specCommitIndex_` / `securedLogIndex_` have subtle invariants — see
   `VerifySpeculativeInvariants`. Run `testSpeculativeLeaderElection`
