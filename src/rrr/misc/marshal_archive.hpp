@@ -954,4 +954,39 @@ class SerializableRegistry {
   static void register_factory(int32_t kind, Factory factory);
 };
 
+// ---------------------------------------------------------------------------
+// Layer 5 (POC): auto-derived kind tags.
+//
+// `type_kind<T>()` lives here so any layer (including the bridge
+// header) can reference it.  The CRTP `Serializable<Derived>` helper
+// that *uses* `type_kind<T>()` to auto-register lives in
+// `marshal_serializable_bridge.hpp` because registration goes through
+// `reg_serializable_in_deputy<T>` (which threads the wire-decode path
+// via `MarshallDeputy::reg_initializer` + `SerializableMarshallableAdapter`).
+// ---------------------------------------------------------------------------
+
+// FNV-1a 32-bit hash of `typeid(T).name()`, cached as a static
+// per-instantiation.  Returns the same value for every call within a
+// process, but the value is implementation-dependent (mangled type
+// name) — fine for in-process / same-build wire framing, NOT for
+// stable cross-platform identifiers.
+template<typename T>
+inline int32_t type_kind() noexcept {
+  static const int32_t cached = []() {
+    const char* name = typeid(T).name();
+    constexpr uint32_t kFnvOffset = 2166136261u;
+    constexpr uint32_t kFnvPrime  = 16777619u;
+    uint32_t h = kFnvOffset;
+    for (const char* p = name; *p != '\0'; ++p) {
+      h ^= static_cast<uint8_t>(*p);
+      h *= kFnvPrime;
+    }
+    // Reserve 0 for "UNKNOWN" / unset; if the hash collides with 0,
+    // mix in 1.  (Vanishingly unlikely but worth the one branch.)
+    if (h == 0u) h = 1u;
+    return static_cast<int32_t>(h);
+  }();
+  return cached;
+}
+
 }  // namespace rrr

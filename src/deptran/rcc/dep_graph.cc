@@ -13,10 +13,16 @@ namespace janus {
 static int volatile gx =
   rrr::reg_serializable_in_deputy<RccGraph>(
       MarshallDeputy::RCC_GRAPH);
-// Workstream N Phase 4d-1: EmptyGraph migrated to Serializable.
+// L6-pivot auto-kind POC (2026-05-01): EmptyGraph still has an
+// explicit registration line, but the kind value is now auto-derived
+// via `rrr::type_kind<EmptyGraph>()` (FNV-1a of typeid name).  No
+// manual `MarshallDeputy::EMPTY_GRAPH = 1` enum entry, no manual
+// `kMarshallKind` constant on the class.  The line stays here in a
+// non-template TU because [basic.start.dynamic]/4 lets the
+// implementation defer init of `static inline` template members
+// (which a CRTP-based auto-register would rely on).
 static int volatile gxx =
-  rrr::reg_serializable_in_deputy<EmptyGraph>(
-      MarshallDeputy::EMPTY_GRAPH);
+  rrr::reg_serializable_in_deputy<EmptyGraph>();
 
 shared_ptr<RccTx> RccGraph::FindOrCreateRccVertex(txnid_t txn_id,
                                                   RccServer *sched) {
