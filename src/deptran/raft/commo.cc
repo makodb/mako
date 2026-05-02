@@ -26,6 +26,20 @@ RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(
 //  verify(poll != nullptr);
 }
 
+// @safe
+std::vector<siteid_t> RaftCommo::GetPartitionProxySiteIds(parid_t par_id) const {
+  auto it = rpc_par_proxies_.find(par_id);
+  if (it == rpc_par_proxies_.end()) {
+    return {};
+  }
+  std::vector<siteid_t> site_ids;
+  site_ids.reserve(it->second.size());
+  for (const auto& proxy : it->second) {
+    site_ids.push_back(proxy.first);
+  }
+  return site_ids;
+}
+
 // @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 shared_ptr<RaftVoteQuorumEvent>
 RaftCommo::BroadcastVote(parid_t par_id,

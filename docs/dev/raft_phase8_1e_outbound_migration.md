@@ -120,3 +120,22 @@ leaf with dedicated tests.
   - marker presence, and
   - exactly one direct `commo()->UpdatePartitionView(...)` call in
     `server.cc`.
+
+## Leaf 6 (`rpc_par_proxies_` boundary) Design Rationale
+
+- Goal: remove direct `commo()->rpc_par_proxies_[par_id]` reads from
+  `RaftServer` leader-init code paths.
+- Decision: add a narrow read-only helper on `RaftCommo` instead of exposing
+  map internals at call sites.
+- Why:
+  - `RaftServer` only needs peer site IDs, not the proxy container itself,
+  - this keeps `rpc_par_proxies_` usage localized to communicator code.
+
+## Leaf 6 User/Developer Notes
+
+- Added `RaftCommo::GetPartitionProxySiteIds(parid_t)` and migrated:
+  - `setIsLeader()` leader volatile-state init path, and
+  - `HeartbeatLoop()` startup peer-table init path.
+- Added guard test `test_raft_rpc_par_proxies_boundary_guard` to enforce:
+  - helper API presence, and
+  - no `commo()->rpc_par_proxies_[...]` direct lookup in `server.cc`.

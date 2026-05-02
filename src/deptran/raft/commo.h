@@ -92,6 +92,9 @@ friend class RaftProxy;
   // @safe
   RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
 
+  // @safe - read-only accessor used to keep rpc_par_proxies_ encapsulated.
+  std::vector<siteid_t> GetPartitionProxySiteIds(parid_t par_id) const;
+
   // @unsafe - C-style cast
   shared_ptr<RaftVoteQuorumEvent>
   BroadcastVote(parid_t par_id,

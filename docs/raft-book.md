@@ -730,7 +730,7 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1e leaf 5): `RequestVote()` election fan-out,
+- Current state (Phase 8.1e leaf 6): `RequestVote()` election fan-out,
   `HeartbeatLoop()` append fan-out, leadership-transfer append trigger,
   lagging-follower snapshot send path, follower durable-ack send path, and
   follower durable-vote ack send path are migrated to per-peer transport
@@ -743,6 +743,10 @@ initialized in `RaftServer::Setup()` via
 - `UpdatePartitionView` is intentionally retained as an explicit direct
   `commo()` boundary (`PHASE8_BOUNDARY_UPDATE_PARTITION_VIEW`) and guarded by
   `test_raft_update_partition_view_boundary_guard`.
+- `RaftServer` peer-discovery read paths no longer index
+  `commo()->rpc_par_proxies_` directly; they use
+  `RaftCommo::GetPartitionProxySiteIds(...)`, guarded by
+  `test_raft_rpc_par_proxies_boundary_guard`.
 - Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
   transitional paths; term/spec-voter helper accessors were removed.
 - Append callback bridge hardening (Phase 8.1d leaf 1): on append RPC error,
@@ -751,8 +755,8 @@ initialized in `RaftServer::Setup()` via
 - Legacy append wrapper APIs (`SendAppendEntriesResults`,
   `SendAppendEntries2`, `SendAppendEntries`) are now deleted from
   `RaftCommo`; only callback bridge entry points remain on that path.
-- Remaining phase (8.1e): handle the remaining documented non-facaded
-  `rpc_par_proxies_` access boundary and delete the transitional vote helper.
+- Remaining phase (8.1e): delete the transitional vote helper
+  (`RaftVoteQuorumEvent`).
 
 ### Restart Notification
 
@@ -770,7 +774,7 @@ PENDING notifications are retried every few heartbeat cycles.
 
 ### Proxy Management
 
-RaftCommo maintains `rpc_par_proxies_[partition_id][replica_id]` for each peer. During tests, proxies can be swapped with backup maps to simulate network partitions.
+RaftCommo maintains `rpc_par_proxies_[partition_id][replica_id]` for each peer. `RaftServer` reads peer identities through `GetPartitionProxySiteIds(...)`; during tests, proxies can still be swapped with backup maps to simulate network partitions.
 
 ---
 

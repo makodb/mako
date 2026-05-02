@@ -1126,21 +1126,21 @@ void RaftServer::setIsLeader(bool isLeader) {
       Log_info("commo_ is null, skipping leader initialization");
     } else {
       // Reset leader volatile state
-      vector<SiteProxyPair> proxies;
+      vector<siteid_t> peer_site_ids;
       // @unsafe
       {
       RaftCommo *c = (RaftCommo*) commo();
       verify(c != nullptr);
-      proxies = c->rpc_par_proxies_[partition_id_];
+      peer_site_ids = c->GetPartitionProxySiteIds(partition_id_);
       }
       if(failover_) {
-        for (auto& p : proxies) {
-          if (p.first != site_id_) {
+        for (const auto peer_site_id : peer_site_ids) {
+          if (peer_site_id != site_id_) {
             // set matchIndex = 0
-            match_index_[p.first] = 0;
+            match_index_[peer_site_id] = 0;
             // set nextIndex = lastLogIndex + 1
-            next_index_[p.first] = lastLogIndex + 1;
-            Log_debug("loc_id_=%d match_index_[%d]=%d, next_index_[%d]=%d", loc_id_, p.first, match_index_[p.first], p.first, next_index_[p.first]);
+            next_index_[peer_site_id] = lastLogIndex + 1;
+            Log_debug("loc_id_=%d match_index_[%d]=%d, next_index_[%d]=%d", loc_id_, peer_site_id, match_index_[peer_site_id], peer_site_id, next_index_[peer_site_id]);
           }
         }
         // matchedIndex and nextIndex should have indices for all servers + learners except self
@@ -1410,19 +1410,21 @@ void RaftServer::HeartbeatLoop() {
   parid_t partition_id = partition_id_;
   // Log_info("!!!!!!! if (!failover_)");
   // if (!failover_) {
-    vector<SiteProxyPair> proxies;
+    vector<siteid_t> peer_site_ids;
     // @unsafe
     {
-    proxies = commo()->rpc_par_proxies_[partition_id];
+    RaftCommo *c = (RaftCommo*) commo();
+    verify(c != nullptr);
+    peer_site_ids = c->GetPartitionProxySiteIds(partition_id);
     }
-    for (auto& p : proxies) {
-      if (p.first == site_id_) {
+    for (const auto peer_site_id : peer_site_ids) {
+      if (peer_site_id == site_id_) {
         continue;  // skip self
       }
       // set matchIndex = 0
-      match_index_[p.first] = 0;
+      match_index_[peer_site_id] = 0;
       // set nextIndex = 1
-      next_index_[p.first] = 1;
+      next_index_[peer_site_id] = 1;
     }
     // matchedIndex and nextIndex should have indices for all servers + learners except self
     verify(match_index_.size() == current_config_.size() + learners_.size() - 1);

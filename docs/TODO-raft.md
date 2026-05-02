@@ -559,9 +559,15 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   `setIsLeader` (out of scope for consensus transport migration) and
   added `test_raft_update_partition_view_boundary_guard` to enforce
   marker presence + single call site.
-- [ ] Line 1408 `commo()->rpc_par_proxies_[par_id]` — this reaches
+- [x] Line 1408 `commo()->rpc_par_proxies_[par_id]` — this reaches
   into rrr internals. Either wrap with a helper on `RaftCommo` that
   RaftServer consumes, or leave as a documented `@unsafe` boundary.
+  [26:05:02, 10:18] Added `RaftCommo::GetPartitionProxySiteIds(parid_t)`
+  and migrated `RaftServer` leader-init read paths (`setIsLeader`,
+  `HeartbeatLoop`) to consume the helper instead of direct
+  `commo()->rpc_par_proxies_[...]` indexing. Added
+  `test_raft_rpc_par_proxies_boundary_guard` to enforce helper presence and
+  prevent reintroduction of the direct lookup pattern.
 - [ ] Delete `RaftVoteQuorumEvent` from `commo.h` + `commo.cc` now
   that no one calls `BroadcastVote`.
 - [ ] Gate: full lab test + `shard1ReplicationRaft` throughput
