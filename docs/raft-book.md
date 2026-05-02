@@ -729,7 +729,7 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1e leaf 7): `RequestVote()` election fan-out,
+- Current state (Phase 8.1e leaf 8): `RequestVote()` election fan-out,
   `HeartbeatLoop()` append fan-out, leadership-transfer append trigger,
   lagging-follower snapshot send path, follower durable-ack send path, and
   follower durable-vote ack send path are migrated to per-peer transport
@@ -756,8 +756,9 @@ initialized in `RaftServer::Setup()` via
 - Legacy append wrapper APIs (`SendAppendEntriesResults`,
   `SendAppendEntries2`, `SendAppendEntries`) are now deleted from
   `RaftCommo`; only callback bridge entry points remain on that path.
-- Remaining phase (8.1e): final gate verification / commit bundling noted in
-  `docs/TODO-raft.md`.
+- Phase 8.1e validation gate is closed: lab suite run and shard1 throughput
+  verification are recorded in `docs/TODO-raft.md` and
+  `docs/dev/raft_phase8_1e_outbound_migration.md`.
 
 ### Restart Notification
 

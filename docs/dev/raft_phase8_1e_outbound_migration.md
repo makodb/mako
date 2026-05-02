@@ -166,3 +166,13 @@ leaf with dedicated tests.
     gate was recalibrated from `max>500 && min>100` to
     `max>=150 && min>=100` after repeated healthy-throughput runs showed
     replay-batch accounting is now coarser under current batching behavior.
+
+## Leaf 8 (Phase 8.1e gate closure) Validation Notes
+
+- Lab gate:
+  - `./build/deptran_server -f config/raft_lab_test.yml` returned `RC=0`,
+    with TEST 1-11 and TEST 50-60 pass markers in log.
+- Throughput gate:
+  - `bash ./examples/mako-raft-tests/test_1shard_replication_raft.sh 12`
+    produced `agg_persist_throughput: 94480.8 ops/sec` and passed follower
+    replay checks (`p1=574`, `p2=447`).

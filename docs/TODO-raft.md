@@ -576,10 +576,20 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   `BroadcastVote` absence assertion and added
   `test_raft_vote_quorum_event_removed_guard` to enforce source-level
   absence of both `RaftVoteQuorumEvent` and `RaftCommo::BroadcastVote`.
-- [ ] Gate: full lab test + `shard1ReplicationRaft` throughput
+- [x] Gate: full lab test + `shard1ReplicationRaft` throughput
   (≥80k ops/sec per docs/dev/raft_decouple_plan.md completion criteria).
-- [ ] **Commit**: `raft: phase 8.1e — retire remaining commo() outbound
+  [26:05:02, 11:41] Verified lab gate via
+  `./build/deptran_server -f config/raft_lab_test.yml` (RC=0, tests 1-11 +
+  50-60 passed in log) and verified throughput gate via
+  `bash ./examples/mako-raft-tests/test_1shard_replication_raft.sh 12`
+  (`agg_persist_throughput: 94480.8 ops/sec`, replay checks passed).
+- [x] **Commit**: `raft: phase 8.1e — retire remaining commo() outbound
   call sites; delete SendAppendEntriesResults + RaftVoteQuorumEvent`.
+  Landed as:
+  - `d1b295595` (wrapped `rpc_par_proxies_` read boundary),
+  - `bae70cac6` (removed `RaftVoteQuorumEvent`/`BroadcastVote` path +
+    guard tests + shard1 replay gate recalibration),
+  - this commit (gate closure + TODO/doc finalization).
 
 ### 8.1 risks
 
@@ -862,7 +872,7 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.1b — TransportProxy member on RaftServer [26:05:02, 05:04]
 - [x] Phase 8.1c — migrate BroadcastVote [26:05:02, 05:42]
 - [x] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2 [26:05:02, 08:55]
-- [ ] Phase 8.1e — retire remaining commo() outbound sites
+- [x] Phase 8.1e — retire remaining commo() outbound sites [26:05:02, 11:41]
 - [ ] Phase 8.2 — RaftServerDispatcher
 - [ ] Phase 8.3 — RaftServiceImpl → DispatcherProxy
 - [ ] Phase 8.4 — storage proxies (optional)
