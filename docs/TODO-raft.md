@@ -750,6 +750,15 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
   - Removed hard `frame_->site_info_` dereferences from the election
     path (`RequestVote`) and leader-transition debug log fallback.
   - Added `test_raft_server_test_mode_ctor`.
+- [x] 8.5.c2 real-server ownership + dispatcher swap (no timer startup) [26:05:02, 13:34]:
+  - `RaftNode` now always owns a real frame-less `RaftServer`.
+  - Wired `InMemoryLogStorage` and `MemorySnapshotManager` into each node's
+    server via non-owning shared_ptr aliases.
+  - Switched `RaftNode::take_dispatcher()` from `DummyDispatcher` to
+    `RaftServerDispatcher`.
+  - Updated `raft_test_cluster` and `raft_lab_standalone` to assert transport
+    and fault behavior using `Vote` round-trips (avoids `TimeoutNow`-triggered
+    full election path before Phase 8.5 timer/fiber startup leaf).
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.

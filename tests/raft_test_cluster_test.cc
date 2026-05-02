@@ -17,7 +17,7 @@ TEST(RaftTestClusterTest, BuildAndSendAVote) {
   EXPECT_EQ(c->size(), 3u);
   EXPECT_EQ(c->site_ids().size(), 3u);
 
-  // Node 1 votes peer 2; DummyDispatcher replies vote_granted=true.
+  // Node 1 votes peer 2; RaftServer-backed dispatcher grants vote.
   auto r = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
   EXPECT_TRUE(r.vote_granted);
 }
@@ -27,16 +27,16 @@ TEST(RaftTestClusterTest, DisconnectStopsTraffic) {
   c->disconnect(2);
 
   // 1→2 is dropped at the switchboard; reply channel closes, adapter
-  // falls back to default TimeoutNowReply (success=false).
-  auto dropped = c->node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_FALSE(dropped.success);
+  // falls back to default VoteReply (vote_granted=false).
+  auto dropped = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
+  EXPECT_FALSE(dropped.vote_granted);
   // 1→3 still works (not on the drop list).
-  auto ok3 = c->node(1).transport()->send_timeout_now(3, TimeoutNowReq{});
-  EXPECT_TRUE(ok3.success);
+  auto ok3 = c->node(1).transport()->send_vote(3, VoteReq{1, 0, 1, 1});
+  EXPECT_TRUE(ok3.vote_granted);
 
   c->reset_faults();
-  auto ok2 = c->node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_TRUE(ok2.success);
+  auto ok2 = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
+  EXPECT_TRUE(ok2.vote_granted);
 }
 
 TEST(RaftTestClusterTest, PartitionIsolatesGroups) {
@@ -44,11 +44,11 @@ TEST(RaftTestClusterTest, PartitionIsolatesGroups) {
   c->partition({1, 2}, {3, 4, 5});
 
   // 1→3: across partition, dropped.
-  auto cross = c->node(1).transport()->send_timeout_now(3, TimeoutNowReq{});
-  EXPECT_FALSE(cross.success);
+  auto cross = c->node(1).transport()->send_vote(3, VoteReq{1, 0, 1, 1});
+  EXPECT_FALSE(cross.vote_granted);
   // 1→2: same partition, delivered.
-  auto intra = c->node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  EXPECT_TRUE(intra.success);
+  auto intra = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
+  EXPECT_TRUE(intra.vote_granted);
 }
 
 TEST(RaftTestClusterTest, AppendEntriesTransportRoundTrip) {
@@ -108,7 +108,7 @@ TEST(RaftTestClusterTest, InspectionAccessors) {
   EXPECT_FALSE(c->node(2).is_leader());
 }
 
-TEST(RaftTestClusterTest, DummyDispatcherSupportsMembershipHandlers) {
+TEST(RaftTestClusterTest, ServerDispatcherRoutesMembershipHandlers) {
   auto c = TestCluster::with_in_memory_transport(3);
   auto disp = c->node(1).take_dispatcher();
 
@@ -117,26 +117,28 @@ TEST(RaftTestClusterTest, DummyDispatcherSupportsMembershipHandlers) {
   add_req.new_server_id = 7;
   add_req.new_server_addr = "n7:9007";
   auto add_resp = disp->handle_add_server(add_req);
-  EXPECT_TRUE(add_resp.success);
-  EXPECT_TRUE(add_resp.error_msg.empty());
-  EXPECT_EQ(add_resp.leader_hint, 1u);
+  EXPECT_FALSE(add_resp.success);
+  EXPECT_FALSE(add_resp.error_msg.empty());
+  EXPECT_EQ(add_resp.leader_hint, 0u);
 
   RemoveServerReq rem_req{};
   rem_req.term = 3;
   rem_req.server_id = 7;
   auto rem_resp = disp->handle_remove_server(rem_req);
-  EXPECT_TRUE(rem_resp.success);
-  EXPECT_TRUE(rem_resp.error_msg.empty());
-  EXPECT_EQ(rem_resp.leader_hint, 1u);
+  EXPECT_FALSE(rem_resp.success);
+  EXPECT_FALSE(rem_resp.error_msg.empty());
+  EXPECT_EQ(rem_resp.leader_hint, 0u);
 }
 
-TEST(RaftTestClusterTest, ServerOwnershipScaffoldStartsEmpty) {
+TEST(RaftTestClusterTest, ServerOwnershipIsBackedByRealRaftServer) {
   auto c = TestCluster::with_in_memory_transport(3);
 
-  EXPECT_FALSE(c->node(1).has_server());
-  EXPECT_EQ(c->node(1).server(), nullptr);
-  EXPECT_FALSE(c->node(2).has_server());
-  EXPECT_EQ(c->node(2).server(), nullptr);
-  EXPECT_FALSE(c->node(3).has_server());
-  EXPECT_EQ(c->node(3).server(), nullptr);
+  ASSERT_TRUE(c->node(1).has_server());
+  ASSERT_NE(c->node(1).server(), nullptr);
+
+  ASSERT_TRUE(c->node(2).has_server());
+  ASSERT_NE(c->node(2).server(), nullptr);
+
+  ASSERT_TRUE(c->node(3).has_server());
+  ASSERT_NE(c->node(3).server(), nullptr);
 }

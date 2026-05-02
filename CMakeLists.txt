@@ -2091,13 +2091,20 @@ if(BUILD_TESTS)
     add_test(NAME test_raft_memory_snapshot_manager COMMAND test_raft_memory_snapshot_manager)
 
     add_executable(test_raft_test_cluster tests/raft_test_cluster_test.cc)
-    target_include_directories(test_raft_test_cluster PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_include_directories(test_raft_test_cluster PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
     target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr txlog_core)
     add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
 
     add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)
-    target_include_directories(raft_lab_standalone PRIVATE ${TEST_INCLUDE_DIRS})
+    target_include_directories(raft_lab_standalone PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
     target_compile_options(raft_lab_standalone PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)

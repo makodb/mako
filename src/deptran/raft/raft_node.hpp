@@ -13,13 +13,12 @@
  * What this file provides right now:
  *   - RaftNode type holding:
  *       siteid_t id, TransportProxy, LogStorage&, SnapshotManager&,
- *       a simple DispatcherProxy produced by the node itself.
+ *       and a RaftServer-backed DispatcherProxy produced by the node.
  *   - Inspection accessors (is_leader, current_term, commit_index) —
  *     placeholder implementations backed by in-node fields so tests
  *     can exercise the cluster plumbing end-to-end.
- *   - A `DummyDispatcher` inner type that satisfies DispatcherFacade
- *     by accepting every RPC and firing a vacuous reply. Phase 6.5
- *     replaces it with a real RaftServer-backed dispatcher.
+ *   - A `DummyDispatcher` compatibility type kept while Phase 8.5
+ *     migration is in progress.
  *
  * The point of keeping this skeleton now is to let Phase 7 wire up
  * raft_lab_standalone without a circular dependency on the RaftServer
@@ -27,6 +26,7 @@
  */
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -38,6 +38,7 @@
 #include "dispatcher.hpp"
 #include "log_storage.hpp"
 #include "messages.hpp"
+#include "raft_server_dispatcher.hpp"
 #include "snapshot_manager.hpp"
 #include "transport.hpp"
 
@@ -119,29 +120,46 @@ class RaftNode {
   RaftNode(siteid_t id,
            TransportProxy transport,
            LogStorage* log_storage,
-           SnapshotManager* snap_manager)
+           SnapshotManager* snap_manager,
+           ChannelSwitchboard* transport_sw,
+           parid_t partition_id)
       : id_(id),
+        partition_id_(partition_id),
         transport_(std::move(transport)),
         log_storage_(log_storage),
         snap_manager_(snap_manager),
         server_(rusty::None),
-        dispatcher_impl_(rusty::Arc<DummyDispatcher>::make(id)),
-        dispatcher_(pro::make_proxy<DispatcherFacade, DummyDispatcher>(
-            *dispatcher_impl_)) {}
+        dispatcher_(make_raft_server_dispatcher(nullptr)) {
+    // @unsafe { test harness owns storage/snapshot; server stores
+    //           non-owning shared_ptr aliases. }
+    auto* raw_server = new ::janus::RaftServer(
+        id_, partition_id_, static_cast<locid_t>(id_));
+    server_ = rusty::Some(rusty::Box<::janus::RaftServer>(raw_server));
+
+    if (log_storage_ != nullptr) {
+      raw_server->SetLogStorage(
+          std::shared_ptr<LogStorage>(log_storage_, [](LogStorage*) {}));
+    }
+    if (snap_manager_ != nullptr) {
+      raw_server->SetSnapshotManager(std::shared_ptr<SnapshotManager>(
+          snap_manager_, [](SnapshotManager*) {}));
+    }
+    if (transport_sw != nullptr) {
+      raw_server->transport() =
+          make_channel_transport(transport_sw, id_, partition_id_);
+    }
+    dispatcher_ = make_raft_server_dispatcher(raw_server);
+  }
 
   // @safe
   siteid_t id() const { return id_; }
 
   // DispatcherProxy is move-only; callers that want to hold onto the
   // dispatcher should take it once and stash it (e.g. in
-  // ChannelNodeWorker). Phase 6.5 replaces DummyDispatcher with a
-  // real impl.
+  // ChannelNodeWorker).
   // @safe
   DispatcherProxy take_dispatcher() {
-    // Build a fresh proxy from the shared adapter handle so the node
-    // can still keep its own view after handing one out.
-    return pro::make_proxy<DispatcherFacade, DummyDispatcher>(
-        *dispatcher_impl_);
+    return make_raft_server_dispatcher(server());
   }
 
   // Inspection accessors. These are placeholders backed by simple
@@ -160,8 +178,6 @@ class RaftNode {
   // @safe - borrow the transport for sending RPCs
   TransportProxy& transport() { return transport_; }
 
-  // 8.5.b scaffolding: this stays nullptr until the real-RaftServer
-  // integration leaf wires construction/ownership.
   // @safe
   ::janus::RaftServer* server() {
     if (server_.is_none()) return nullptr;
@@ -181,11 +197,11 @@ class RaftNode {
 
  private:
   siteid_t                      id_{0};
+  parid_t                       partition_id_{0};
   TransportProxy                transport_;
   LogStorage*                   log_storage_{nullptr};
   SnapshotManager*              snap_manager_{nullptr};
   rusty::Option<rusty::Box<::janus::RaftServer>> server_;
-  rusty::Arc<DummyDispatcher>   dispatcher_impl_;
   DispatcherProxy               dispatcher_;
 
   bool     is_leader_{false};

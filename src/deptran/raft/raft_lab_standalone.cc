@@ -64,19 +64,19 @@ bool case_three_node_votes_each_peer(TestCluster& c) {
 bool case_disconnect_blocks_one_node(TestCluster& c) {
   c.reset_faults();
   c.disconnect(2);
-  auto dropped = c.node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  auto ok3 = c.node(1).transport()->send_timeout_now(3, TimeoutNowReq{});
+  auto dropped = c.node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
+  auto ok3 = c.node(1).transport()->send_vote(3, VoteReq{1, 0, 1, 1});
   c.reset_faults();
-  return !dropped.success && ok3.success;
+  return !dropped.vote_granted && ok3.vote_granted;
 }
 
 // @safe
 bool case_partition_isolates_groups() {
   auto c = TestCluster::with_in_memory_transport(5);
   c->partition({1, 2}, {3, 4, 5});
-  auto cross = c->node(1).transport()->send_timeout_now(3, TimeoutNowReq{});
-  auto intra = c->node(1).transport()->send_timeout_now(2, TimeoutNowReq{});
-  return !cross.success && intra.success;
+  auto cross = c->node(1).transport()->send_vote(3, VoteReq{1, 0, 1, 1});
+  auto intra = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
+  return !cross.vote_granted && intra.vote_granted;
 }
 
 // @safe

@@ -963,18 +963,18 @@ Reconnect(server_id)  // Restore connectivity
 
 ### In-process TestCluster Skeleton
 
-`test_raft_test_cluster` validates the in-memory harness path
-(`TestCluster` + `RaftNode` + `DummyDispatcher`) independent of socket RPC.
-The skeleton dispatcher intentionally implements every current
-`DispatcherFacade` method, including membership handlers, so facade
-evolution does not silently break the test harness compile path.
-`RaftNode` now also carries an explicit `server_` ownership scaffold
-(`Option<Box<RaftServer>>`) with `has_server()/server()` accessors; in
-the current stage this remains empty by design until the real-server
-bootstrap leaves are completed.
-As part of the bootstrap prep, `RaftServer` now exposes a frame-less
-test constructor (`site_id, partition_id, loc_id`) and no longer
-hard-requires `frame_->site_info_` inside `RequestVote`.
+`test_raft_test_cluster` now validates an in-memory harness path where
+each `RaftNode` owns a real frame-less `RaftServer` and exposes
+`RaftServerDispatcher` through `take_dispatcher()`. This keeps the
+harness independent of socket RPC while exercising real `On*` handlers.
+`RaftNode::has_server()/server()` now report live ownership instead of
+an empty scaffold.
+As part of bootstrap prep, `RaftServer` exposes a frame-less test
+constructor (`site_id, partition_id, loc_id`) and no longer hard-requires
+`frame_->site_info_` inside `RequestVote`.
+Current harness checks for disconnect/partition use `Vote` round-trips
+rather than `TimeoutNow`, because full election timer/fiber startup is
+still deferred to later Phase 8.5 leaves.
 
 ### Speculative State Queries (for tests)
 

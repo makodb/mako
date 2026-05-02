@@ -144,7 +144,8 @@ class TestCluster {
 
       TransportProxy tr = make_channel_transport(&sw_, id, /*par=*/0);
       rusty::Box<RaftNode> node(new RaftNode(
-          id, std::move(tr), logs_.back().get(), snaps_.back().get()));
+          id, std::move(tr), logs_.back().get(), snaps_.back().get(),
+          &sw_, /*partition_id=*/0));
 
       rusty::Box<ChannelNodeWorker> worker(new ChannelNodeWorker(
           std::move(receivers[i]), node->take_dispatcher()));

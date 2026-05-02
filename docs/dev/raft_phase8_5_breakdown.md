@@ -54,6 +54,15 @@ Status (c1):
 - Added `test_raft_server_test_mode_ctor` to verify identity initialization
   with `frame_ == nullptr`.
 
+Status (c2):
+- `RaftNode` now owns a real frame-less `RaftServer` at construction time.
+- In-memory storage/snapshot backends are wired into the server via
+  non-owning shared_ptr aliases.
+- `take_dispatcher()` now returns `RaftServerDispatcher` backed by the node's
+  server.
+- Timer/fiber startup remains deferred; this leaf intentionally keeps the
+  behavior change limited to ownership + dispatcher routing.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with
