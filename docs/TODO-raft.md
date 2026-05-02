@@ -615,7 +615,12 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
 calls the existing `RaftServer::OnX(...)` with output-pointer args,
 and returns the filled `Reply`.
 
-- [ ] Create `src/deptran/raft/raft_server_dispatcher.hpp`:
+- [x] Create `src/deptran/raft/raft_server_dispatcher.hpp`: [26:05:02]
+  Added `RaftServerDispatcher` adapter + factory
+  `make_raft_server_dispatcher(RaftServer*)`. Adapter implements all 8
+  `handle_*` methods, preserves null/disconnected defaults used by
+  `RaftServiceImpl`, and bridges `RaftServer` `bool_t*` out-params to
+  value-returning reply structs.
   - `class RaftServerDispatcher { RaftServer* svr_; public: 8 handle_*
     methods }`.
   - Each `handle_*`:
@@ -627,12 +632,21 @@ and returns the filled `Reply`.
       pack locals into `Reply`, return it.
   - Factory:
     `inline DispatcherProxy make_raft_server_dispatcher(RaftServer*)`.
-- [ ] Unit test `tests/raft_server_dispatcher_test.cc`: construct a
+- [x] Unit test `tests/raft_server_dispatcher_test.cc`: [26:05:02]
+  Added gtest coverage for all 8 handlers on `nullptr` server defaults
+  and for `make_raft_server_dispatcher(...)` factory return/type/use.
+  CMake adds `test_raft_server_dispatcher` with the same transitive
+  include handling used by other raft compile-boundary tests.
+  Test target links `txlog_core` so adapter calls to real `RaftServer`
+  symbols resolve at link time.
+  construct a
   minimal RaftServer (or mock), wrap in dispatcher, exercise each
   handle_*.
-- [ ] Gate: `test_raft_server_dispatcher` + all existing
-  `test_raft_*` green.
-- [ ] **Commit**: `raft: phase 8.2 — RaftServerDispatcher + factory`.
+- [x] Gate: `test_raft_server_dispatcher` + all existing
+  `test_raft_*` green. [26:05:02] Verified with
+  `ctest --test-dir build --output-on-failure -R '(test_raft_.*|raft_lab_standalone)'`
+  (includes `raft_lab_standalone`).
+- [x] **Commit**: `raft: phase 8.2 — RaftServerDispatcher + factory`.
 
 ### 8.2 risks
 
@@ -873,7 +887,7 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.1c — migrate BroadcastVote [26:05:02, 05:42]
 - [x] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2 [26:05:02, 08:55]
 - [x] Phase 8.1e — retire remaining commo() outbound sites [26:05:02, 11:41]
-- [ ] Phase 8.2 — RaftServerDispatcher
+- [x] Phase 8.2 — RaftServerDispatcher [26:05:02]
 - [ ] Phase 8.3 — RaftServiceImpl → DispatcherProxy
 - [ ] Phase 8.4 — storage proxies (optional)
 - [ ] Phase 8.5 — TestCluster with real RaftServer

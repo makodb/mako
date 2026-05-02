@@ -63,6 +63,8 @@ Mako worker threads call a **local function** (`add_log_to_nc()`) to submit tran
 | `src/deptran/raft/commo.{h,cc}` | RPC communication for Raft messages | |
 | `src/deptran/raft/frame.{h,cc}` | Protocol frame registration | |
 | `src/deptran/raft/service.{h,cc}` | Incoming RPC handlers | |
+| `src/deptran/raft/dispatcher.hpp` | Inbound dispatcher facade/proxy contract | |
+| `src/deptran/raft/raft_server_dispatcher.hpp` | Adapter from `RaftServer::OnX(...)` to `handle_*` replies | |
 | `src/deptran/raft/coordinator.{h,cc}` | Client submission bridge | |
 | `src/deptran/raft/test.{h,cc}` | Lab-style test framework | |
 | `src/deptran/raft/testconf.{h,cc}` | Test configuration and helpers | |
@@ -759,6 +761,21 @@ initialized in `RaftServer::Setup()` via
 - Phase 8.1e validation gate is closed: lab suite run and shard1 throughput
   verification are recorded in `docs/TODO-raft.md` and
   `docs/dev/raft_phase8_1e_outbound_migration.md`.
+
+### Inbound Dispatcher Adapter (Phase 8.2)
+
+Inbound RPC handling now has an explicit dispatcher boundary:
+
+- `RaftServerDispatcher` wraps a `RaftServer*` and implements all
+  `DispatcherFacade` `handle_*` methods.
+- `make_raft_server_dispatcher(RaftServer*)` returns a `DispatcherProxy`
+  used by higher layers to invoke handlers without direct `OnX(...)`
+  coupling.
+- For null or disconnected servers, handler replies use the same
+  failure-default values as `RaftServiceImpl`'s disconnected path.
+- Current validation gate includes
+  `test_raft_server_dispatcher`, all `test_raft_*`, and
+  `raft_lab_standalone`.
 
 ### Restart Notification
 
