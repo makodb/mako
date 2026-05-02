@@ -30,6 +30,7 @@
 #include "../misc/marshal.hpp"
 #include "../misc/marshal_archive.hpp"
 #include "../misc/marshal_serializable_bridge.hpp"
+#include "../misc/serializable_envelope.hpp"
 
 namespace rrr {
 namespace {
@@ -2476,6 +2477,156 @@ TEST(TypeListFactory, CreateAtReturnsCorrectTypeForEachPosition) {
     auto* gamma = proxy_cast<TypeListFactoryGamma>(&*proxy);
     EXPECT_NE(gamma, nullptr);
   }
+}
+
+// ---------------------------------------------------------------------------
+// L10b: SerializableEnvelope<TypeList> — closed-set polymorphic carrier.
+//
+// Replaces MarshallDeputy for closed-set polymorphism. Wire format
+// [v32 kind][payload bytes] — byte-for-byte identical to MarshallDeputy
+// post-L9.
+// ---------------------------------------------------------------------------
+
+using EnvelopeTestList = TypeList<TypeListFactoryAlpha,
+                                  TypeListFactoryBeta,
+                                  TypeListFactoryGamma>;
+
+TEST(SerializableEnvelope, DefaultConstructedIsEmpty) {
+  SerializableEnvelope<EnvelopeTestList> env;
+  EXPECT_FALSE(env.has_value());
+  EXPECT_FALSE(static_cast<bool>(env));
+  EXPECT_EQ(env.kind(), 0);
+  // unpack on empty returns nullptr.
+  EXPECT_EQ(env.unpack<TypeListFactoryAlpha>(), nullptr);
+  EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
+}
+
+TEST(SerializableEnvelope, PackValueSemanticHoldsCopy) {
+  TypeListFactoryBeta beta;
+  beta.b = "value-semantic";
+
+  auto env = SerializableEnvelope<EnvelopeTestList>::pack(beta);
+  EXPECT_TRUE(env.has_value());
+  EXPECT_EQ(env.kind(), 2);  // beta is at TypeList position 2
+  EXPECT_TRUE(env.is_a<TypeListFactoryBeta>());
+  EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
+
+  auto* recovered = env.unpack<TypeListFactoryBeta>();
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered->b, "value-semantic");
+
+  // Mutating the original after pack does NOT reflect (value semantics).
+  beta.b = "mutated";
+  EXPECT_EQ(recovered->b, "value-semantic");
+}
+
+TEST(SerializableEnvelope, PackAliasedSharesPayload) {
+  auto sp = std::make_shared<TypeListFactoryAlpha>();
+  sp->a = 7;
+
+  auto env = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  EXPECT_TRUE(env.has_value());
+  EXPECT_EQ(env.kind(), 1);  // alpha is at position 1
+
+  auto* recovered = env.unpack<TypeListFactoryAlpha>();
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered, sp.get());  // aliased — same object
+  EXPECT_EQ(recovered->a, 7);
+
+  // Mutating through the original IS visible.
+  sp->a = 99;
+  EXPECT_EQ(recovered->a, 99);
+}
+
+TEST(SerializableEnvelope, UnpackWrongTypeReturnsNullptr) {
+  auto env = SerializableEnvelope<EnvelopeTestList>::pack(
+      TypeListFactoryGamma{});
+  EXPECT_TRUE(env.is_a<TypeListFactoryGamma>());
+  EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
+  EXPECT_EQ(env.unpack<TypeListFactoryAlpha>(), nullptr);
+}
+
+TEST(SerializableEnvelope, RoundTripValueSemanticViaArchive) {
+  TypeListFactoryBeta beta;
+  beta.b = "wire round-trip";
+
+  // Encode.
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  auto outgoing = SerializableEnvelope<EnvelopeTestList>::pack(beta);
+  outgoing.save(writer);
+
+  // Decode.
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
+  BinaryReadArchive reader(&source);
+  SerializableEnvelope<EnvelopeTestList> incoming;
+  incoming.load(reader);
+
+  EXPECT_TRUE(incoming.has_value());
+  EXPECT_EQ(incoming.kind(), 2);
+  auto* recovered = incoming.unpack<TypeListFactoryBeta>();
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered->b, "wire round-trip");
+}
+
+TEST(SerializableEnvelope, RoundTripAliasedViaArchive) {
+  auto sp = std::make_shared<TypeListFactoryGamma>();
+  sp->c = 0xDEADBEEFCAFEBABEll;
+
+  // Encode aliased pack.
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  auto outgoing = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+  outgoing.save(writer);
+
+  // Decode.
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
+  BinaryReadArchive reader(&source);
+  SerializableEnvelope<EnvelopeTestList> incoming;
+  incoming.load(reader);
+
+  EXPECT_EQ(incoming.kind(), 3);
+  auto* recovered = incoming.unpack<TypeListFactoryGamma>();
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered->c, 0xDEADBEEFCAFEBABEll);
+}
+
+TEST(SerializableEnvelope, WireSizeFor1ByteKind) {
+  // Kind 1 (alpha) fits in 1 byte v32; alpha's `a` field is i32 (4 bytes).
+  // Total wire size: 1 (v32 kind) + 4 (i32 a) = 5 bytes.
+  TypeListFactoryAlpha alpha;
+  alpha.a = 0;
+
+  BufferSink sink;
+  BinaryWriteArchive writer(&sink);
+  auto env = SerializableEnvelope<EnvelopeTestList>::pack(alpha);
+  env.save(writer);
+
+  EXPECT_EQ(sink.bytes.len(), 1u + sizeof(int32_t));
+  EXPECT_EQ(sink.bytes[0], 1u);  // v32 kind=1, 1-byte single-byte encoding
+}
+
+TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {
+  // SerializableEnvelope copy semantics mirror MarshallDeputy:
+  // copies share the underlying proxy (and payload). This matches
+  // the existing `req.cmd = some_md;` pattern where two MarshallDeputy
+  // instances refer to the same payload.
+  auto sp = std::make_shared<TypeListFactoryAlpha>();
+  sp->a = 100;
+  auto env_a = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
+
+  // Copy.
+  auto env_b = env_a;
+
+  // Both should see the same payload.
+  EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>(),
+            env_b.unpack<TypeListFactoryAlpha>());
+
+  // Mutation through one envelope is visible to the other (because
+  // both share the same shared_ptr<SerializableProxy> internally).
+  sp->a = 200;
+  EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>()->a, 200);
+  EXPECT_EQ(env_b.unpack<TypeListFactoryAlpha>()->a, 200);
 }
 
 TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
