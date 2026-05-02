@@ -24,16 +24,17 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
         TxnOutput output;
         MarshallDeputy md;
         fu->get_reply() >> res >> output >> md;
-        if (md.kind_ == EmptyGraph::static_kind()) {
+        // Workstream N L7: AnyMessage-based dispatch. See janus/commo.cc.
+        auto am = rrr::AnyMessage::try_cast(md);
+        verify(am);
+        if (am->is_a<EmptyGraph>()) {
           RccGraph rgraph;
           auto v = rgraph.CreateV(tid);
           RccTx& info = *v;
 //          info.partition_.insert(par_id);
           verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
-        } else if (md.kind_ == MarshallDeputy::RCC_GRAPH) {
-          auto sp_graph = marshallable_cast<RccGraph>(md);
-          verify(sp_graph);
+        } else if (auto sp_graph = am->unpack<RccGraph>()) {
           callback(res, output, *sp_graph);
         } else {
           verify(0);
@@ -73,9 +74,9 @@ void RccCommo::SendFinish(parid_t pid,
   };
   fuattr.callback = cb;
   auto proxy = NearestProxyForPartition(pid).second;
-  // Use shared_ptr directly for MarshallDeputy
+  // Workstream N L7: AnyMessage envelope for graph payload.
   auto sp_graph = std::make_shared<RccGraph>(*graph);
-  MarshallDeputy md(sp_graph);
+  MarshallDeputy md(rrr::AnyMessage::pack(sp_graph));
   ClassicProxy::RpcRccFinishRequest req;
   req.id = tid;
   req.md_graph = md;
@@ -123,7 +124,9 @@ void RccCommo::SendInquire(parid_t pid,
     }
     MarshallDeputy md;
     fu->get_reply() >> md;
-    auto sp_graph = marshallable_cast<RccGraph>(md);
+    auto am = rrr::AnyMessage::try_cast(md);
+    verify(am);
+    auto sp_graph = am->unpack<RccGraph>();
     verify(sp_graph);
     callback(*sp_graph);
   };
@@ -168,9 +171,9 @@ void RccCommo::BroadcastCommit(parid_t par_id,
       auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Use shared_ptr directly for MarshallDeputy
+      // Workstream N L7: AnyMessage envelope for graph payload.
       auto sp_graph = std::make_shared<RccGraph>(*graph);
-      MarshallDeputy md(sp_graph);
+      MarshallDeputy md(rrr::AnyMessage::pack(sp_graph));
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;
       req.rank = RANK_UNDEFINED;

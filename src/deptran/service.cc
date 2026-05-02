@@ -607,8 +607,10 @@ void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,
                                      rrr::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(this->mtx_);
   RccServer* sched = (RccServer*) dtxn_sched_;
-  p_md_graph->set_marshallable(std::make_shared<RccGraph>());
-  auto p = marshallable_cast<RccGraph>(p_md_graph);
+  auto p = std::make_shared<RccGraph>();
+  // Workstream N L7: graph payload now flows through the open-set
+  // AnyMessage envelope instead of a kind-tagged Serializable.
+  p_md_graph->set_marshallable(rrr::AnyMessage::pack(p));
   *res = sched->OnDispatch(cmd, output, p);
   defer.reply();
 }
@@ -617,7 +619,10 @@ void ClassicServiceImpl::RccFinish(const cmdid_t& cmd_id,
                                    const MarshallDeputy& md_graph,
                                    TxnOutput* output,
                                    rrr::DeferredReply defer) {
-  auto sp_graph = marshallable_cast<RccGraph>(md_graph);
+  // Workstream N L7: receiver-side dispatch via AnyMessage envelope.
+  auto am = rrr::AnyMessage::try_cast(md_graph);
+  verify(am);
+  auto sp_graph = am->unpack<RccGraph>();
   verify(sp_graph);
   const RccGraph& graph = *sp_graph;
   verify(graph.size() > 0);
@@ -682,15 +687,12 @@ void ClassicServiceImpl::JanusDispatch(const vector<SimpleCommand>& cmd,
     auto* sched = (SchedulerJanus*) dtxn_sched_;
     *p_res = sched->OnDispatch(cmd, p_output, sp_graph);
     if (sp_graph->size() <= 1) {
-      // Phase 4d-1: EmptyGraph migrated to Serializable. Route
-      // through wrap_typed_marshallable's bridge overload (Phase
-      // 4a-prep) — the legacy `set_marshallable<T>` template path
-      // requires `kHasTypedMarshallableAdapter<T>` which migrated
-      // types no longer have.
+      // Workstream N L7: empty case packs an EmptyGraph payload into
+      // an AnyMessage envelope; receiver dispatches by name.
       p_md_res_graph->set_marshallable(
-          rrr::wrap_typed_marshallable(std::make_shared<EmptyGraph>()));
+          rrr::AnyMessage::pack(std::make_shared<EmptyGraph>()));
     } else {
-      p_md_res_graph->set_marshallable(sp_graph);
+      p_md_res_graph->set_marshallable(rrr::AnyMessage::pack(sp_graph));
     }
     verify(p_md_res_graph->kind_ != MarshallDeputy::UNKNOWN);
     defer.reply();
@@ -705,7 +707,9 @@ void ClassicServiceImpl::JanusCommit(const cmdid_t& cmd_id,
                                      rrr::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
   verify(0);
-  auto sp_graph = marshallable_cast<RccGraph>(graph);
+  auto am = rrr::AnyMessage::try_cast(graph);
+  verify(am);
+  auto sp_graph = am->unpack<RccGraph>();
   auto p_sched = (RccServer*) dtxn_sched_;
   *res = p_sched->OnCommit(cmd_id, rank, need_validation, sp_graph, output);
   defer.reply();
@@ -771,9 +775,11 @@ void ClassicServiceImpl::JanusPreAccept(const cmdid_t& txnid,
                                         MarshallDeputy* p_md_res_graph,
                                         rrr::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
-  p_md_res_graph->set_marshallable(std::make_shared<RccGraph>());
-  auto sp_graph = marshallable_cast<RccGraph>(md_graph);
-  auto ret_sp_graph = marshallable_cast<RccGraph>(p_md_res_graph);
+  auto ret_sp_graph = std::make_shared<RccGraph>();
+  p_md_res_graph->set_marshallable(rrr::AnyMessage::pack(ret_sp_graph));
+  auto am_in = rrr::AnyMessage::try_cast(md_graph);
+  verify(am_in);
+  auto sp_graph = am_in->unpack<RccGraph>();
   verify(sp_graph);
   verify(ret_sp_graph);
   auto sched = (SchedulerJanus*) dtxn_sched_;
@@ -788,9 +794,9 @@ void ClassicServiceImpl::JanusPreAcceptWoGraph(const cmdid_t& txnid,
                                                MarshallDeputy* res_graph,
                                                rrr::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
-  res_graph->set_marshallable(std::make_shared<RccGraph>());
+  auto sp_ret_graph = std::make_shared<RccGraph>();
+  res_graph->set_marshallable(rrr::AnyMessage::pack(sp_ret_graph));
   auto* p_sched = (SchedulerJanus*) dtxn_sched_;
-  auto sp_ret_graph = marshallable_cast<RccGraph>(res_graph);
   *res = p_sched->OnPreAccept(txnid, rank, cmds, nullptr, sp_ret_graph);
   defer.reply();
 }
@@ -812,9 +818,12 @@ void ClassicServiceImpl::JanusAccept(const cmdid_t& txnid,
                                      const MarshallDeputy& md_graph,
                                      int32_t* res,
                                      rrr::DeferredReply defer) {
-  auto graph = marshallable_cast<RccGraph>(md_graph);
+  // Workstream N L7: graph payloads now flow via the AnyMessage envelope
+  // — kind == MarshallDeputy::ANY_MESSAGE for every graph type.
+  auto am = rrr::AnyMessage::try_cast(md_graph);
+  verify(am);
+  auto graph = am->unpack<RccGraph>();
   verify(graph);
-  verify(md_graph.kind_ == MarshallDeputy::RCC_GRAPH);
   auto sched = (SchedulerJanus*) dtxn_sched_;
   sched->OnAccept(txnid, rank, ballot, graph, res);
   defer.reply();

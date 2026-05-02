@@ -1,28 +1,20 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "dep_graph.h"
-#include "rrr/misc/marshal_serializable_bridge.hpp"
+#include "rrr/misc/any_message.hpp"
 #include "server.h"
 
 namespace janus {
 
-// Workstream N Phase 4d-5: RccGraph migrated to Serializable.
-// Only empty graphs ever round-trip on the wire (RccTx's operator<<
-// and operator>> are `verify(0)` stubs); the new save/load preserve
-// that contract with byte-identical encoding (`uint64_t n=0`).
-static int volatile gx =
-  rrr::reg_serializable_in_deputy<RccGraph>(
-      MarshallDeputy::RCC_GRAPH);
-// L6-pivot auto-kind POC (2026-05-01): EmptyGraph still has an
-// explicit registration line, but the kind value is now auto-derived
-// via `rrr::type_kind<EmptyGraph>()` (FNV-1a of typeid name).  No
-// manual `MarshallDeputy::EMPTY_GRAPH = 1` enum entry, no manual
-// `kMarshallKind` constant on the class.  The line stays here in a
-// non-template TU because [basic.start.dynamic]/4 lets the
-// implementation defer init of `static inline` template members
-// (which a CRTP-based auto-register would rely on).
-static int volatile gxx =
-  rrr::reg_serializable_in_deputy<EmptyGraph>();
+// Workstream N L7: register the two graph types under the open-set
+// `AnyMessage` envelope.  Names use the canonical fully-qualified
+// `janus.<Type>` shape so receivers across multiple registries can
+// tell them apart.  Aborts loud if name collides — see
+// `AnyMessageRegistry::register_type` for the policy.
+static int volatile g_reg_rcc_graph =
+    rrr::reg_any_message_as<RccGraph>("janus.RccGraph");
+static int volatile g_reg_empty_graph =
+    rrr::reg_any_message_as<EmptyGraph>("janus.EmptyGraph");
 
 shared_ptr<RccTx> RccGraph::FindOrCreateRccVertex(txnid_t txn_id,
                                                   RccServer *sched) {

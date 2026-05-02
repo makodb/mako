@@ -1844,6 +1844,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_marshal_archive ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_rpc_marshal_archive COMMAND test_rpc_marshal_archive)
 
+    # AnyMessage open-set polymorphic envelope tests (Workstream N L7)
+    add_executable(test_rpc_any_message src/rrr/tests/rpc_any_message_test.cc)
+    target_include_directories(test_rpc_any_message PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_any_message PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_any_message ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_rpc_any_message COMMAND test_rpc_any_message)
+
     # SRPC TCP channel backend tests (Workstream K, Phase 1 leaf 3a — TcpConnection)
     add_executable(test_rpc_tcp_channel src/rrr/tests/rpc_tcp_channel_test.cc)
     target_include_directories(test_rpc_tcp_channel PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

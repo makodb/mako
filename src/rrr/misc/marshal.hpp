@@ -264,8 +264,12 @@ class MarshallDeputy {
     mutable std::shared_ptr<rrr::SerializableProxy> serializable_;
     enum Kind {
       UNKNOWN=0,
-      EMPTY_GRAPH=1,
-      RCC_GRAPH=2,
+      // Workstream N L7: EMPTY_GRAPH=1 and RCC_GRAPH=2 retired —
+      // graph payloads now flow through the open-set AnyMessage
+      // envelope (see ANY_MESSAGE below + misc/any_message.hpp).
+      // The numeric values are intentionally left as gaps; assigning
+      // them to new types would shift downstream values and break
+      // wire compat with hosts that have not been redeployed.
       CONTAINER_CMD=3,
       CMD_TPC_PREPARE=4,
       CMD_TPC_COMMIT=5,
@@ -285,7 +289,13 @@ class MarshallDeputy {
       CMD_VIEW_DATA=20,
       CMD_KV=21,
       CMD_KEY_CMD_BATCH=22,
-      CMD_REPLICATED_DB=23
+      CMD_REPLICATED_DB=23,
+      // Workstream N L7: open-set polymorphic envelope. Every
+      // `AnyMessage` payload — regardless of carried inner type —
+      // serializes under this fixed kind. The actual type
+      // discriminator is the carried `type_name` string inside the
+      // AnyMessage's bytes (see misc/any_message.hpp).
+      ANY_MESSAGE=24
     };
     /**
      * This should be called by the rpc layer.

@@ -494,47 +494,47 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(decoded->value_, "v1");
 }
 
-TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesTypedAdapter) {
+TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
   auto payload = std::make_shared<janus::EmptyGraph>();
   ASSERT_NE(payload, nullptr);
 
-  // Phase 4d-1: EmptyGraph migrated to Serializable. The
-  // `MarshallDeputy(shared_ptr<T>)` ctor's requires clause checks
-  // `kHasTypedMarshallableAdapter<T>` which migrated types no
-  // longer satisfy; route through wrap_typed_marshallable's bridge
-  // overload (Phase 4a-prep) instead.
-  MarshallDeputy outgoing(wrap_typed_marshallable(payload));
-  // L6-pivot auto-kind POC: EmptyGraph's kind is now FNV-1a hashed
-  // from typeid(EmptyGraph).name() at runtime — no longer the manual
-  // `MarshallDeputy::EMPTY_GRAPH = 1` enum value.  Compare against
-  // `EmptyGraph::static_kind()` (provided by the
-  // `Serializable<EmptyGraph>` CRTP base).
-  EXPECT_EQ(outgoing.kind_, janus::EmptyGraph::static_kind());
+  // Workstream N L7: graph payloads moved from kind-tagged Serializable
+  // to the open-set `AnyMessage` envelope.  All graph types now serialize
+  // under MarshallDeputy::ANY_MESSAGE; the type identity ("janus.EmptyGraph"
+  // vs "janus.RccGraph") is a string inside the envelope.
+  MarshallDeputy outgoing(rrr::AnyMessage::pack(payload));
+  EXPECT_EQ(outgoing.kind_, MarshallDeputy::ANY_MESSAGE);
 
   Marshal m;
   m << outgoing;
 
   MarshallDeputy incoming;
   m >> incoming;
-  EXPECT_EQ(incoming.kind_, janus::EmptyGraph::static_kind());
-  ASSERT_NE(marshallable_cast<janus::EmptyGraph>(incoming), nullptr);
+  EXPECT_EQ(incoming.kind_, MarshallDeputy::ANY_MESSAGE);
+  auto am = rrr::AnyMessage::try_cast(incoming);
+  ASSERT_NE(am, nullptr);
+  EXPECT_TRUE(am->is_a<janus::EmptyGraph>());
+  ASSERT_NE(am->unpack<janus::EmptyGraph>(), nullptr);
 }
 
-TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesTypedAdapter) {
+TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
   auto payload = std::make_shared<janus::RccGraph>();
   ASSERT_NE(payload, nullptr);
 
-  MarshallDeputy outgoing(payload);
-  EXPECT_EQ(outgoing.kind_, MarshallDeputy::RCC_GRAPH);
+  MarshallDeputy outgoing(rrr::AnyMessage::pack(payload));
+  EXPECT_EQ(outgoing.kind_, MarshallDeputy::ANY_MESSAGE);
 
   Marshal m;
   m << outgoing;
 
   MarshallDeputy incoming;
   m >> incoming;
-  EXPECT_EQ(incoming.kind_, MarshallDeputy::RCC_GRAPH);
+  EXPECT_EQ(incoming.kind_, MarshallDeputy::ANY_MESSAGE);
 
-  auto decoded = marshallable_cast<janus::RccGraph>(incoming);
+  auto am = rrr::AnyMessage::try_cast(incoming);
+  ASSERT_NE(am, nullptr);
+  EXPECT_TRUE(am->is_a<janus::RccGraph>());
+  auto decoded = am->unpack<janus::RccGraph>();
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded->size(), 0u);
 }

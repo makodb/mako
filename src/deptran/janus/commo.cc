@@ -23,16 +23,19 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
         TxnOutput output;
         MarshallDeputy md;
         fu->get_reply() >> res >> output >> md;
-        if (md.kind_ == EmptyGraph::static_kind()) {
+        // Workstream N L7: graph reply now flows through the AnyMessage
+        // envelope — kind is always ANY_MESSAGE regardless of carried
+        // type; the type identity is inside the envelope's name.
+        auto am = rrr::AnyMessage::try_cast(md);
+        verify(am);
+        if (am->is_a<EmptyGraph>()) {
           RccGraph rgraph;
           auto v = rgraph.CreateV(tid);
           RccTx& info = *v;
 //          info.partition_.insert(par_id);
           verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
-        } else if (md.kind_ == MarshallDeputy::RCC_GRAPH) {
-          auto sp_graph = marshallable_cast<RccGraph>(md);
-          verify(sp_graph);
+        } else if (auto sp_graph = am->unpack<RccGraph>()) {
           callback(res, output, *sp_graph);
         } else {
           verify(0);
@@ -69,7 +72,9 @@ void JanusCommo::SendInquire(parid_t pid,
     }
     MarshallDeputy md;
     fu->get_reply() >> md;
-    auto sp_graph = marshallable_cast<RccGraph>(md);
+    auto am = rrr::AnyMessage::try_cast(md);
+    verify(am);
+    auto sp_graph = am->unpack<RccGraph>();
     verify(sp_graph);
     callback(*sp_graph);
   };
@@ -107,7 +112,9 @@ void JanusCommo::BroadcastPreAccept(
       int32_t res;
       MarshallDeputy md;
       fu->get_reply() >> res >> md;
-      auto sp_graph = marshallable_cast<RccGraph>(md);
+      auto am = rrr::AnyMessage::try_cast(md);
+      verify(am);
+      auto sp_graph = am->unpack<RccGraph>();
       verify(sp_graph);
       callback(res, std::make_shared<RccGraph>(*sp_graph));
     };
@@ -120,9 +127,9 @@ void JanusCommo::BroadcastPreAccept(
       auto fu_result = proxy->async_JanusPreAcceptWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Use shared_ptr directly for MarshallDeputy
+      // Workstream N L7: AnyMessage envelope for graph payload.
       auto sp_graph_copy = std::make_shared<RccGraph>(*sp_graph);
-      MarshallDeputy md(sp_graph_copy);
+      MarshallDeputy md(rrr::AnyMessage::pack(sp_graph_copy));
       ClassicProxy::RpcJanusPreAcceptRequest req;
       req.txn_id = txn_id;
       req.rank = RANK_UNDEFINED;
@@ -155,9 +162,9 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
       callback(res);
     };
     verify(cmd_id > 0);
-    // Use shared_ptr directly for MarshallDeputy
+    // Workstream N L7: AnyMessage envelope for graph payload.
     auto sp_graph = std::make_shared<RccGraph>(*graph);
-    MarshallDeputy md(sp_graph);
+    MarshallDeputy md(rrr::AnyMessage::pack(sp_graph));
     rank_t rank = RANK_D;
     ClassicProxy::RpcJanusAcceptRequest req;
     req.txn_id = cmd_id;
@@ -202,9 +209,9 @@ void JanusCommo::BroadcastCommit(
       auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Use shared_ptr directly for MarshallDeputy
+      // Workstream N L7: AnyMessage envelope for graph payload.
       auto sp_graph = std::make_shared<RccGraph>(*graph);
-      MarshallDeputy md(sp_graph);
+      MarshallDeputy md(rrr::AnyMessage::pack(sp_graph));
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;
       req.rank = 0;

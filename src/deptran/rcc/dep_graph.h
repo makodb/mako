@@ -6,9 +6,12 @@
 #include "command.h"
 #include "command_marshaler.h"
 #include "__dep__.h"
-// L6-pivot auto-kind POC: pull in `rrr::Serializable<Derived>` CRTP
-// base + `rrr::type_kind<T>()` for the EmptyGraph migration below.
+// Workstream N L7: migrated from closed-set TypeList discriminants to
+// open-set `AnyMessage` envelope. Pull in the bridge header (for
+// `wrap_serializable_aliased`, `marshallable_cast<T>` overloads) and
+// `any_message.hpp` for the envelope type.
 #include "rrr/misc/marshal_serializable_bridge.hpp"
+#include "rrr/misc/any_message.hpp"
 
 /**
  * This is NOT thread safe!!!
@@ -18,65 +21,41 @@ namespace janus {
 //typedef RccDTxn RccDTxn;
 typedef vector<RccTx*> RccScc;
 
-// Forward declarations for the central polymorphic-payload TypeList
-// declared just below — TypeList<...> only needs forward decls of its
-// element types; the bodies are picked up later via #include of the
-// declaring headers.
-class EmptyGraph;
-// (Other migrated payload types will be added here as they migrate.)
+// Workstream N L7: graph payloads (`EmptyGraph`, `RccGraph`) moved
+// from the closed-set TypeList discriminant pattern to the open-set
+// `AnyMessage` envelope.  No central TypeList — each type registers
+// under a stable string name and the envelope dispatches by that
+// name on the wire.  The Rust analogue is `typetag` (open set,
+// versioned string tags) rather than `enum Foo + bincode` (closed
+// set, declaration-order discriminants), and the protobuf analogue
+// is `google.protobuf.Any` (type-URL) rather than `oneof` (field
+// numbers).  See `docs/dev/srpc-book.md` for the design rationale.
 
-// Workstream N Phase 4d-1 + L6-pivot TypeList POC (2026-05-02):
-// `AllPayloads` is the central declaration-order list of every
-// polymorphic Serializable payload type (i.e., types that flow through
-// `MarshallDeputy` as the wire envelope).  Each type's wire kind = its
-// position in this list, derived via
-// `rrr::TypeList<...>::index_of<T>()`.  Mirrors Rust's
-// `enum Foo { ... }` + bincode discriminant pattern — declaration order
-// in source determines the wire tag, no hashing, no per-type kind
-// constants, no central int enum.
-//
-// Adding a new polymorphic payload type:
-//   1. Add a forward declaration above.
-//   2. Add the type name as a new entry at the END of `AllPayloads`
-//      (appending preserves existing types' kind values; reordering
-//      or inserting is a wire-format break).
-//   3. Define `class T : public rrr::Serializable<T, AllPayloads>`.
-//   4. Add the registration line in T's .cc:
-//      `static int _reg = rrr::reg_serializable_in_deputy<T>();`
-using AllPayloads = rrr::TypeList<
-    EmptyGraph
-    // Other migrated types will join this list as they migrate.
->;
-
-// Workstream N Phase 4d-1: migrated from Marshallable to Serializable.
-// L6-pivot TypeList POC (2026-05-02): no manual kind constant; `kind()`
-// and `static_kind()` are provided by `rrr::Serializable<EmptyGraph,
-// AllPayloads>` and resolve to `AllPayloads::index_of<EmptyGraph>()` =
-// 0 (its position in the list above).  Stateless tag — no fields,
-// save/load are no-ops.
-class EmptyGraph : public rrr::Serializable<EmptyGraph, AllPayloads> {
+// AnyMessage-wrapped Serializable. No `kind()` discriminant —
+// AnyMessage's `type_name_` string carries the type identity on the
+// wire.  The `kind()` method below is a stub required by the
+// `SerializableFacade` proxy contract; its return value is never
+// used because the surrounding AnyMessage's kind always wins.
+class EmptyGraph {
  public:
   EmptyGraph() = default;
 
   void save(BinaryWriteArchive&) const {}
   void load(BinaryReadArchive&) {}
+  int32_t kind() const noexcept { return 0; }
 };
 
 class RccServer;
-// Workstream N Phase 4d-5: migrated from Marshallable to Serializable.
-// The base `Graph<RccTx>` carries a `to_marshal`/`from_marshal` pair
-// (graph.h:966) that emits `uint64_t size` followed by per-vertex
-// (id, *vertex) pairs. RccTx's `operator<<`/`operator>>` are
-// `verify(0)` stubs (tx.h:353-365), so in practice only the empty
-// graph (size==0) ever round-trips on the wire — confirmed by
-// `RccGraphRoundTripUsesTypedAdapter` in
-// `rpc_marshallable_proxy_test.cc`. Migration preserves that
-// behavior: `save`/`load` write `uint64_t 0` and `verify(n == 0)` on
-// read, byte-for-byte identical to the legacy encoding for the
-// only inputs that ever worked.
+// Workstream N L7: AnyMessage-wrapped Serializable.  `Graph<RccTx>`
+// carries a `to_marshal`/`from_marshal` pair (graph.h:966) that emits
+// `uint64_t size` followed by per-vertex (id, *vertex) pairs. RccTx's
+// `operator<<`/`operator>>` are `verify(0)` stubs (tx.h:353-365), so
+// in practice only the empty graph (size==0) ever round-trips on the
+// wire.  Migration preserves that behavior: `save`/`load` write
+// `uint64_t 0` and `verify(n == 0)` on read, byte-for-byte identical
+// to the legacy encoding for the only inputs that ever worked.
 class RccGraph : public Graph<RccTx> {
  public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::RCC_GRAPH;
 //    Graph<PieInfo> pie_gra_;
 //  Graph <TxnInfo> txn_gra_;
   RccServer* sched_{nullptr};
@@ -92,7 +71,9 @@ class RccGraph : public Graph<RccTx> {
     // XXX hopefully some memory leak here does not hurt. :(
   }
 
-  int32_t kind() const { return kMarshallKind; }
+  // Stub for the SerializableFacade proxy contract; AnyMessage carries
+  // the type identity on the wire, so this value is never consulted.
+  int32_t kind() const noexcept { return 0; }
 
   void save(BinaryWriteArchive& ar) const {
     uint64_t n = size();

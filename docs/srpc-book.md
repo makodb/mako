@@ -1047,8 +1047,11 @@ For typed payloads stored behind `shared_ptr<Marshallable>` (for example
 `marshallable_cast<T>(...)` instead of raw `dynamic_pointer_cast<T>(...)`.
 The helper also accepts `Marshallable&` / `Marshallable*` for callback paths
 that receive only base-class references.
-The same pattern applies to RCC graph envelopes (`RccGraph` via
-`MarshallDeputy::RCC_GRAPH`).
+For RCC graph envelopes (`RccGraph`, `EmptyGraph`) the access pattern
+moved to the open-set `AnyMessage` envelope (Workstream N L7) — see
+the §10 AnyMessage subsection below. Sender packs with
+`rrr::AnyMessage::pack(graph)`; receiver pulls with
+`rrr::AnyMessage::try_cast(md)->unpack<RccGraph>()`.
 
 ### Bookmarks
 
@@ -1147,6 +1150,58 @@ proxy->load(reader);
 prefix); the kind tag is framed by the next-higher layer
 (`MarshallDeputy` in the existing codebase, which Phase 3 will
 rewrite atop `SerializableProxy`).
+
+#### Open-set polymorphism — `AnyMessage` (Workstream N L7)
+
+For payload types where the universe of values is open (callers may
+not know about every possible carried type at compile time, or the
+type set evolves independently of a central registry), the open-set
+counterpart to the closed-set TypeList pattern lives in
+`misc/any_message.hpp`:
+
+```cpp srpc-no-compile
+struct GraphPayload {
+  int32_t node_count;
+  std::string label;
+  void save(rrr::BinaryWriteArchive& ar) const { ar << node_count << label; }
+  void load(rrr::BinaryReadArchive& ar) { ar >> node_count >> label; }
+  int32_t kind() const { return 0; }  // unused — AnyMessage owns the tag
+};
+
+// Register under a stable string name (anywhere, at static init).
+static int _reg = rrr::reg_any_message_as<GraphPayload>("my.GraphPayload");
+
+// Sender: pack typed value into envelope, embed in MarshallDeputy.
+auto val = std::make_shared<GraphPayload>();
+val->node_count = 42;
+val->label = "x";
+MarshallDeputy outgoing(rrr::AnyMessage::pack(val));
+
+// Receiver: pull envelope, dispatch by carried type.
+auto am = rrr::AnyMessage::try_cast(incoming);
+verify(am);
+if (am->is_a<GraphPayload>()) {
+  auto p = am->unpack<GraphPayload>();
+  // ... use p ...
+}
+```
+
+Wire layout: `[int32: ANY_MESSAGE] [v64-prefixed string: type_name]
+[payload bytes]`. The `MarshallDeputy::ANY_MESSAGE` kind value is
+fixed; `type_name` is the runtime discriminator. Aliasing semantics:
+mutations on the caller's `shared_ptr<T>` after `pack` remain visible
+to the encoded payload, matching `wrap_serializable_aliased`.
+
+When to choose AnyMessage vs. closed-set TypeList:
+- **AnyMessage** for graph / data payloads (`RccGraph`, `EmptyGraph`),
+  versioned schemas, or any case where a service that doesn't know
+  about a new type can still receive and dispatch the envelope. The
+  Rust analogue is `typetag` (string tags via the `inventory` pattern);
+  the protobuf analogue is `google.protobuf.Any` (type-URL).
+- **Closed-set TypeList** for command types where the full set is
+  known up-front and wire compactness matters. The Rust analogue is
+  `enum Foo { ... }` + bincode (declaration-order discriminants); the
+  protobuf analogue is `oneof` (field numbers).
 
 #### Marshal ↔ Archive bridges (transitional)
 
