@@ -18,14 +18,43 @@ namespace janus {
 //typedef RccDTxn RccDTxn;
 typedef vector<RccTx*> RccScc;
 
+// Forward declarations for the central polymorphic-payload TypeList
+// declared just below — TypeList<...> only needs forward decls of its
+// element types; the bodies are picked up later via #include of the
+// declaring headers.
+class EmptyGraph;
+// (Other migrated payload types will be added here as they migrate.)
+
+// Workstream N Phase 4d-1 + L6-pivot TypeList POC (2026-05-02):
+// `AllPayloads` is the central declaration-order list of every
+// polymorphic Serializable payload type (i.e., types that flow through
+// `MarshallDeputy` as the wire envelope).  Each type's wire kind = its
+// position in this list, derived via
+// `rrr::TypeList<...>::index_of<T>()`.  Mirrors Rust's
+// `enum Foo { ... }` + bincode discriminant pattern — declaration order
+// in source determines the wire tag, no hashing, no per-type kind
+// constants, no central int enum.
+//
+// Adding a new polymorphic payload type:
+//   1. Add a forward declaration above.
+//   2. Add the type name as a new entry at the END of `AllPayloads`
+//      (appending preserves existing types' kind values; reordering
+//      or inserting is a wire-format break).
+//   3. Define `class T : public rrr::Serializable<T, AllPayloads>`.
+//   4. Add the registration line in T's .cc:
+//      `static int _reg = rrr::reg_serializable_in_deputy<T>();`
+using AllPayloads = rrr::TypeList<
+    EmptyGraph
+    // Other migrated types will join this list as they migrate.
+>;
+
 // Workstream N Phase 4d-1: migrated from Marshallable to Serializable.
-// L6-pivot auto-kind POC (2026-05-01): no manual kind value or
-// registration line — `kind()`, `static_kind()`, and the static-init
-// SerializableRegistry registration are all provided by the
-// `rrr::Serializable<EmptyGraph>` CRTP base via `type_kind<T>()`
-// (FNV-1a hash of `typeid(T).name()`).  Stateless tag — no fields,
+// L6-pivot TypeList POC (2026-05-02): no manual kind constant; `kind()`
+// and `static_kind()` are provided by `rrr::Serializable<EmptyGraph,
+// AllPayloads>` and resolve to `AllPayloads::index_of<EmptyGraph>()` =
+// 0 (its position in the list above).  Stateless tag — no fields,
 // save/load are no-ops.
-class EmptyGraph : public rrr::Serializable<EmptyGraph> {
+class EmptyGraph : public rrr::Serializable<EmptyGraph, AllPayloads> {
  public:
   EmptyGraph() = default;
 

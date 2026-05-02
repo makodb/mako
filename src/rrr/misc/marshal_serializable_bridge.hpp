@@ -284,92 +284,83 @@ inline int reg_serializable_in_deputy(int32_t kind) {
   });
 }
 
-// L6-pivot auto-kind POC (2026-05-01): no-arg overload that
-// auto-derives the kind via `rrr::type_kind<T>()` (FNV-1a hash of
-// `typeid(T).name()`).  Use this in the user's .cc TU to register
-// without picking a manual int32 kind:
+// ---------------------------------------------------------------------------
+// L6-pivot TypeList POC (2026-05-02): central-list-with-declaration-
+// order discriminants, mirroring Rust's `enum Foo { ... }` + bincode
+// idiom.
 //
-//   class MyCmd : public rrr::Serializable<MyCmd> { ... };
-//   static int _reg = rrr::reg_serializable_in_deputy<MyCmd>();
+// User types inherit from `rrr::Serializable<MyType, AllPayloads>`,
+// where `AllPayloads = rrr::TypeList<MyType, OtherType, ...>` is a
+// central forward-declared list of every polymorphic payload type.
+// Each type's wire kind = its index in the list (constexpr int32_t).
 //
-// The static-init trigger has to live in a non-template (function-
-// scope) location to be reliable — `static inline` template member
-// initializers are deferable per [basic.start.dynamic]/4, so the CRTP
-// alone can't carry the registration call.  This pattern keeps the
-// registration line explicit but eliminates the manual kind value.
+// Properties:
+//   * Cross-compiler / cross-machine deterministic — kinds depend
+//     only on TypeList declaration order, which is in source.
+//   * Zero collision risk — distinct types get distinct indices.
+//   * Rename-stable — renaming a type doesn't change its position
+//     in the list, so its kind is unchanged.
+//   * Backward-compat by appending — adding a new type at the END of
+//     the TypeList assigns it the next available kind; existing types
+//     keep theirs.  Reordering or removing is a wire-break.
+//
+// Replaces:
+//   * Manual `static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_X`
+//     (per-type constant + central int enum) — collapses into the
+//     single TypeList declaration.
+//   * The earlier FNV-1a-of-typeid POC — replaced because hashing is
+//     implementation-dependent (mangled name format) and rename-fragile.
+//
+// Usage:
+//
+//   namespace janus {
+//   class EmptyGraph;          // forward decls
+//   class TpcCommitCommand;
+//
+//   using AllPayloads = rrr::TypeList<EmptyGraph, TpcCommitCommand>;
+//
+//   class EmptyGraph : public rrr::Serializable<EmptyGraph, AllPayloads> {
+//    public:
+//     void save(BinaryWriteArchive&) const {}
+//     void load(BinaryReadArchive&) {}
+//     // kind() and static_kind() inherited; auto-derived from list index.
+//   };
+//   }
+//
+//   // In .cc:
+//   static int _reg = rrr::reg_serializable_in_deputy<EmptyGraph>();
+//
+// The no-arg `reg_serializable_in_deputy<T>()` overload picks up T's
+// kind from `T::static_kind()` (which delegates to the TypeList).
 template<typename T>
 inline int reg_serializable_in_deputy() {
-  return reg_serializable_in_deputy<T>(type_kind<T>());
+  return reg_serializable_in_deputy<T>(T::static_kind());
 }
 
-// ---------------------------------------------------------------------------
-// L6-pivot auto-kind POC (2026-05-01): typetag-style CRTP base.
-//
-// Inspired by Rust's `typetag` crate.  User types inherit from
-// `rrr::Serializable<MyType>` and the framework auto-handles two
-// pieces of plumbing that previously required hand-maintenance:
-//
-//   1. `kind()` and `static_kind()` return a stable int32 derived from
-//      `typeid(MyType).name()` via FNV-1a (`rrr::type_kind<T>()`).  No
-//      manual `static constexpr int32_t kMarshallKind = ...` constant
-//      and no central `MarshallDeputy::Kind` enum entry.
-//
-//   2. `pro::make_proxy<SerializableFacade, MyType>` finds `kind()`
-//      via the standard `SerializableMemKind` member-dispatch
-//      (the inherited `kind()` method satisfies the proxy library's
-//      shape requirements).
-//
-// What this does NOT do (and why): static-init auto-registration via
-// a `static inline` template member is unreliable — per
-// [basic.start.dynamic]/4 the implementation may defer initialization
-// of an implicitly-instantiated specialization's variable until ODR-
-// use of any inline static or non-inline function in the same TU.
-// Empirically, gcc/clang DO defer, so the registrar's ctor never
-// runs unless explicitly forced.  Forcing ODR-use from a non-inline
-// non-template TU defeats the auto-magic.  So registration stays
-// explicit — but the kind value is now auto-derived:
-//
-//   class MyCommand : public rrr::Serializable<MyCommand> {
-//    public:
-//     void save(BinaryWriteArchive& w) const { ... }
-//     void load(BinaryReadArchive& r) { ... }
-//     // kind() and static_kind() inherited.
-//   };
-//   // In MyCommand.cc (or any single non-inline TU):
-//   static int _reg_my_command = rrr::reg_serializable_in_deputy<MyCommand>();
-//   //                                                                ^^
-//   //                              no-arg overload uses type_kind<T>()
-//
-// Compared to the old pattern, this removes:
-//   * the manual `static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_XYZ;` constant
-//   * the central `MarshallDeputy::Kind` enum entry (CMD_XYZ = 5)
-//   * the explicit `kind()` method definition on each type
-//   * the manual `kind` argument on `reg_serializable_in_deputy<T>(K)`
-//
-// What stays: one explicit `static int _reg = reg_serializable_in_deputy<T>();`
-// line per type, in a non-template non-inline TU.  This is the closest
-// reliable C++ analogue of Rust's `typetag` `inventory` pattern (which
-// uses linker-section magic that C++ doesn't have a portable equivalent
-// for).
-//
-// Wire-format note: this REPLACES the manual int32 kind values
-// (1, 2, ..., 23) with hashed values.  Persisted Raft logs / cross-
-// version peers using the manual scheme are NOT compatible after a
-// type migrates here.  Within a single build, the hash is stable
-// (FNV-1a is deterministic; typeid name is stable per compiler /
-// platform).  Renaming a Serializable type changes its kind hash
-// (matches `typetag`'s behavior with type-path keys).
-template<typename Derived>
+// Empty-default payload list — types that inherit
+// `Serializable<T>` without an explicit list resolve `index_of<T>()`
+// to 0 (= MarshallDeputy::UNKNOWN), which surfaces as a `verify(0)`
+// at `set_marshallable` time rather than a silent wrong kind.
+struct DefaultPayloadList {
+  template<typename T>
+  static constexpr int32_t index_of() noexcept { return 0; }
+};
+
+template<typename Derived, typename PayloadList = DefaultPayloadList>
 struct Serializable {
   // Instance-level `kind()` — picked up by `SerializableMemKind` in
-  // the proxy's facade dispatch.  Required by the (informal) Serializable
-  // contract: `save(BinaryWriteArchive&) const`,
-  // `load(BinaryReadArchive&)`, `kind() const -> int32_t`.
-  int32_t kind() const noexcept { return type_kind<Derived>(); }
+  // the proxy's facade dispatch.  Required by the Serializable contract:
+  //   `save(BinaryWriteArchive&) const`, `load(BinaryReadArchive&)`,
+  //   `kind() const -> int32_t`.
+  int32_t kind() const noexcept {
+    return PayloadList::template index_of<Derived>();
+  }
 
   // Class-level kind for `md.kind_ == MyType::static_kind()`
   // comparisons in user code without needing an instance.
-  static int32_t static_kind() noexcept { return type_kind<Derived>(); }
+  static int32_t static_kind() noexcept {
+    return PayloadList::template index_of<Derived>();
+  }
 };
 
 // Cast a `shared_ptr<Marshallable>` (typically from
