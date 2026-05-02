@@ -114,6 +114,22 @@ Status (c7):
 - Added a runtime smoke test (`RuntimeStartupElectsSingleLeader`) to verify
   election convergence once timers/fibers are running in-process.
 
+Status (c8a):
+- Added `RaftTestClusterTest.AgreementAdvancesCommitIndexOnAllNodes` as the
+  `DoAgreement`-equivalent leaf: submit one leader log entry and wait until
+  every node reports `commit_index() >= log_index`.
+- `TestCluster` now registers a default no-op learner callback so frame-less
+  apply threads can execute committed entries without full scheduler wiring.
+- Hardened frame-less test mode by guarding rule-witness `Config::GetConfig()`
+  dependencies (`RuleWitnessGC` and original-path placeholder) when global
+  `Config::config_s` is absent.
+- Fixed a teardown race in leadership-transfer monitor threads:
+  `StopLeadershipTransferMonitoring()` now requests stop and joins (with
+  self-join guard), and the monitor loop checks the stop flag before locking
+  `mtx_` to avoid post-destruction `recursive_mutex` lock failures.
+- Gate run for this leaf: `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`
+  passes.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with
@@ -134,5 +150,5 @@ Status (c7):
 
 ## Remaining split for the large 8.5 node-startup bullet
 
-1. c8: remaining behavioral gtests (`agreement`,
-   `disconnect` catch-up) plus full gate run.
+1. c8b: remaining behavioral gtest (`disconnect` catch-up), then phase 8.5
+   gate + commit.

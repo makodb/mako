@@ -430,7 +430,9 @@ void TxLogServer::OnRuleSpeculativeExecute(const shared_ptr<Marshallable>& cmd,
 }
 
 void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<Marshallable>& cmd) {
-  if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd)) {
+  auto* config = Config::config_s;
+  if (config != nullptr && config->tx_proto_ == MODE_RULE &&
+      SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd)) {
     // Log_info("[JETPACK-Witness] loc_id %d about to push_back", loc_id_);
     rep_sched_->witness_.push_back(cmd);
   }
@@ -438,7 +440,8 @@ void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<
 
 
 void TxLogServer::RuleWitnessGC(const shared_ptr<Marshallable>& cmd) {
-  if (Config::GetConfig()->tx_proto_ == MODE_RULE)
+  auto* config = Config::config_s;
+  if (config != nullptr && config->tx_proto_ == MODE_RULE)
     witness_.remove(cmd);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);

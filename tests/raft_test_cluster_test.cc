@@ -11,9 +11,43 @@
 #include <chrono>
 #include <thread>
 
+#include "deptran/classic/tpc_command.h"
 #include "deptran/raft/test_cluster.hpp"
 
 using namespace janus::raft;
+
+namespace {
+
+siteid_t WaitForSingleLeader(TestCluster& c, std::chrono::milliseconds timeout) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    siteid_t leader = 0;
+    int leaders = 0;
+    for (auto site_id : c.site_ids()) {
+      if (c.node(site_id).is_leader()) {
+        leaders++;
+        leader = site_id;
+      }
+    }
+    if (leaders == 1) {
+      return leader;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return 0;
+}
+
+shared_ptr<Marshallable> MakeTestCommitCommand(int tx_id) {
+  auto cmd = std::make_shared<janus::TpcCommitCommand>();
+  auto pieces = std::make_shared<janus::VecPieceData>();
+  pieces->sp_vec_piece_data_ =
+      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
+  cmd->tx_id_ = tx_id;
+  cmd->cmd_ = wrap_typed_marshallable(pieces);
+  return wrap_typed_marshallable(cmd);
+}
+
+}  // namespace
 
 TEST(RaftTestClusterTest, BuildAndSendAVote) {
   auto c = TestCluster::with_in_memory_transport(3);
@@ -193,6 +227,40 @@ TEST(RaftTestClusterTest, RuntimeStartupElectsSingleLeader) {
   }
 
   EXPECT_GE(stable_samples, 5);
+}
+
+TEST(RaftTestClusterTest, AgreementAdvancesCommitIndexOnAllNodes) {
+  auto c = TestCluster::with_in_memory_transport(3);
+  auto leader_id = WaitForSingleLeader(*c, std::chrono::seconds(6));
+  ASSERT_NE(leader_id, 0u);
+  ASSERT_NE(c->node(leader_id).server(), nullptr);
+
+  auto cmd = MakeTestCommitCommand(/*tx_id=*/9001);
+  uint64_t log_index = 0;
+  uint64_t term = 0;
+  ASSERT_TRUE(c->node(leader_id).server()->Start(cmd, &log_index, &term));
+  ASSERT_GT(log_index, 0u);
+
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+  bool all_committed = false;
+  while (std::chrono::steady_clock::now() < deadline) {
+    all_committed = true;
+    for (auto site_id : c->site_ids()) {
+      if (c->node(site_id).commit_index() < log_index) {
+        all_committed = false;
+        break;
+      }
+    }
+    if (all_committed) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  EXPECT_TRUE(all_committed);
+  for (auto site_id : c->site_ids()) {
+    EXPECT_GE(c->node(site_id).commit_index(), log_index);
+  }
 }
 
 TEST(RaftTestClusterTest, RealServerConfigIsBootstrappedFromClusterSites) {

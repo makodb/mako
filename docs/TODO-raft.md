@@ -812,8 +812,10 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
 - [ ] New gtest cases in `tests/raft_test_cluster_test.cc`:
   - [x] Election converges: construct 3-node cluster, step until
     exactly one `node(i).is_leader()` is true.
-  - [ ] `DoAgreement` equivalent: the leader appends a log entry, every
+  - [x] `DoAgreement` equivalent: the leader appends a log entry, every
     node observes the entry's `commit_index()` advance.
+    [26:05:02, 15:01] Added
+    `RaftTestClusterTest.AgreementAdvancesCommitIndexOnAllNodes`.
   - [ ] `disconnect(follower)` prevents the follower from catching up
     until `reset_faults`.
 - [ ] Gate: the above gtests + `raft_lab_standalone` still runs its

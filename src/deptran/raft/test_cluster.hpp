@@ -154,6 +154,10 @@ class TestCluster {
           id, std::move(tr), logs_.back().get(), snaps_.back().get(),
           &sw_, /*partition_id=*/0, site_ids_));
       if (node->server() != nullptr) {
+        // TestCluster uses a no-op learner action so apply threads can run
+        // safely without full deptran scheduler wiring.
+        node->server()->RegLearnerAction(
+            [](int /*slot*/, MarshallDeputy /*md*/) -> int { return 0; });
         node->server()->BootstrapReplicationStateForTest();
       }
       auto poll_thread = rrr::PollThread::create();

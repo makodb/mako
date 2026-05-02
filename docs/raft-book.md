@@ -984,9 +984,15 @@ peer discovery falls back to `current_config_`/`learners_` when `commo()`
 is absent.
 `TestCluster` now also starts per-node runtime loops
 (`HeartbeatLoop`/`StartElectionTimer`/apply runtime) on dedicated poll
-threads via `OneTimeJob`. Election convergence is validated in-cluster;
-remaining in-process behavior work is agreement/commit-index and
-disconnect/catch-up coverage.
+threads via `OneTimeJob`, and registers a default no-op learner callback so
+frame-less apply threads can safely execute committed entries.
+`AgreementAdvancesCommitIndexOnAllNodes` now covers the in-process
+`DoAgreement`-equivalent path (leader append + cluster-wide commit-index
+advance). The remaining in-process behavior gap is
+disconnect/reconnect catch-up coverage.
+Leadership-transfer monitoring teardown was also hardened to join monitor
+threads on shutdown (with self-join guard), preventing test teardown races
+against `mtx_` destruction.
 
 ### Speculative State Queries (for tests)
 

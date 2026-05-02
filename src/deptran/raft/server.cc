@@ -3057,14 +3057,19 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
 
 // @unsafe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)
 void RaftServer::StopLeadershipTransferMonitoring() {
-  leadership_monitor_stop_ = true;
+  leadership_monitor_stop_.store(true, std::memory_order_release);
 
-  // Detach the monitor thread so it can exit gracefully without deadlock
-  // The thread will see leadership_monitor_stop_ and exit on its own
-  if (leadership_monitor_thread_.joinable()) {
-    Log_debug("[LEADERSHIP-TRANSFER] Site %d: Detaching monitor thread (will exit on its own)", site_id_);
-    leadership_monitor_thread_.detach();
+  if (!leadership_monitor_thread_.joinable()) {
+    return;
   }
+
+  // If we're running inside the monitor thread itself, we cannot join here.
+  // Leave the handle joinable; a later caller (or destructor) will join it.
+  if (leadership_monitor_thread_.get_id() == std::this_thread::get_id()) {
+    return;
+  }
+
+  leadership_monitor_thread_.join();
 }
 
 // @unsafe - Starts monitor thread (threading and mutex operations marked safe via @external)
@@ -3075,8 +3080,10 @@ void RaftServer::StartLeadershipTransferMonitoring() {
 
   // Stop any existing monitor thread
   if (leadership_monitor_thread_.joinable()) {
-    leadership_monitor_stop_ = true;
-    leadership_monitor_thread_.join();
+    leadership_monitor_stop_.store(true, std::memory_order_release);
+    if (leadership_monitor_thread_.get_id() != std::this_thread::get_id()) {
+      leadership_monitor_thread_.join();
+    }
     leadership_monitor_stop_ = false;
   }
 
@@ -3096,6 +3103,13 @@ void RaftServer::StartLeadershipTransferMonitoring() {
     while (true) {
       std::this_thread::sleep_for(std::chrono::milliseconds(CHECK_INTERVAL_MS));
 
+      // Fast-path stop check before touching server mutex. This prevents
+      // locking a destroyed mutex during teardown races.
+      if (leadership_monitor_stop_.load(std::memory_order_acquire)) {
+        Log_info("[LEADERSHIP-TRANSFER] Site %d: Monitor stop requested, exiting", site_id_);
+        break;
+      }
+
       bool should_transfer = false;
 
       // Critical section: check shared state with proper locking
@@ -3103,7 +3117,7 @@ void RaftServer::StartLeadershipTransferMonitoring() {
         std::lock_guard<std::recursive_mutex> lock(mtx_);
 
         // Check if we should stop monitoring
-        if (leadership_monitor_stop_) {
+        if (leadership_monitor_stop_.load(std::memory_order_acquire)) {
           Log_info("[LEADERSHIP-TRANSFER] Site %d: Monitor stop requested, exiting", site_id_);
           break;
         }
