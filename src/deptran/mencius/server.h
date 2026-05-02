@@ -13,7 +13,6 @@
 #include <unordered_map>
 
 namespace janus {
-class Command;
 class CmdData;
 
 struct MenciusData {

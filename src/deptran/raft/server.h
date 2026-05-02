@@ -40,7 +40,6 @@
 // }
 
 namespace janus {
-class Command;
 class CmdData;
 class ReplicatedDB;
 

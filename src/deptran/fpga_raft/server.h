@@ -6,7 +6,6 @@
 #include "../classic/tpc_command.h"
 
 namespace janus {
-class Command;
 class CmdData;
 
 #define INVALID_PARID  ((parid_t)-1)

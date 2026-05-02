@@ -27,6 +27,7 @@
 // time), use `rrr::AnyMessage` instead — see `rrr/misc/any_message.hpp`.
 
 #include "rrr/misc/marshal_serializable_bridge.hpp"
+#include "rrr/misc/serializable_envelope.hpp"
 
 namespace janus {
 
@@ -81,5 +82,21 @@ using MakoCommands = rrr::TypeList<
     KeyCmdBatchData,      // pos 18 (was CMD_KEY_CMD_BATCH=22)
     ReplicatedDBCommand   // pos 19 (was CMD_REPLICATED_DB=23)
 >;
+
+// Workstream N L10c: `Command` is the user-facing closed-set
+// polymorphic carrier — the user's "Command type" that wraps any of
+// the MakoCommands variants on the wire.  Replaces `MarshallDeputy`
+// for closed-set fields:
+//
+//   // Before (legacy):
+//   void Foo(MarshallDeputy md) { auto cmd = marshallable_cast<T>(md); }
+//   // After (L10c+):
+//   void Foo(janus::Command cmd) { auto* p = cmd.unpack<T>(); }
+//
+// Wire format is byte-for-byte identical to post-L9 MarshallDeputy
+// (`[v32 kind][payload bytes]`), so call-site migrations from
+// MarshallDeputy → Command are pure C++ API changes with no on-the-
+// wire impact for matched kind→type mappings.
+using Command = rrr::SerializableEnvelope<MakoCommands>;
 
 }  // namespace janus

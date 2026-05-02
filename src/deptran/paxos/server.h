@@ -8,7 +8,6 @@
 #include "deptran/raft/snapshot_manager.hpp"
 
 namespace janus {
-class Command;
 class CmdData;
 
 struct PaxosData {
