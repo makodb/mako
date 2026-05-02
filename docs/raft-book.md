@@ -786,6 +786,19 @@ Inbound RPC handling now has an explicit dispatcher boundary:
   `test_raft_server_dispatcher`, all `test_raft_*`, and
   `raft_lab_standalone`.
 
+### Storage Facade Scaffold (Phase 8.4 Leaf 1)
+
+- Added `src/deptran/raft/log_storage_facade.hpp` with
+  `LogStorageFacade`/`LogStorageProxy`.
+- The facade mirrors every `LogStorage` API method (`get`, `put`,
+  `get_range`, `put_batch`, `remove`, `remove_range`, index queries,
+  metadata, lifecycle).
+- Conformance is guarded by `test_raft_log_storage_facade`, which wraps a
+  recording adapter in `LogStorageProxy` and exercises every method.
+- This leaf is a boundary scaffold only; `RaftServer` still uses the existing
+  virtual `LogStorage` pointer until later Phase 8.4 leaves migrate runtime
+  wiring.
+
 ### Restart Notification
 
 When a server restarts, it broadcasts a restart notification to all peers. Peers reconnect their RPC proxies to avoid stale connections:

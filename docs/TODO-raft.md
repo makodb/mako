@@ -705,10 +705,13 @@ and returns the filled `Reply`.
 the virtual `LogStorage` / `SnapshotManager` interfaces at
 `RaftServer`'s boundary.
 
-- [ ] Create `src/deptran/raft/log_storage_facade.hpp` mirroring every
+- [x] Create `src/deptran/raft/log_storage_facade.hpp` mirroring every
   method of `LogStorage` (get / put / get_range / put_batch /
   remove / remove_range / first_index / last_index / get_term / size /
   empty / get_metadata / set_metadata / sync / close / is_open / clear).
+  [26:05:02, 17:03] Added `log_storage_facade.hpp` with full
+  `LogStorageFacade` + `LogStorageProxy` conventions, plus
+  `test_raft_log_storage_facade` adapter conformance coverage.
 - [ ] Same for `src/deptran/raft/snapshot_manager_facade.hpp`
   (BeginSnapshot / TakeSnapshot / BeginLoad / LoadLatestSnapshot /
   GetLatestSnapshot / ListSnapshots / HasSnapshotAtOrAfter /
