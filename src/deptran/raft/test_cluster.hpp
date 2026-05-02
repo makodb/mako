@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -49,17 +50,36 @@ class TestCluster {
 
   // @safe - accessors
   size_t size() const { return nodes_.size(); }
-  RaftNode& node(siteid_t id) {
+  RaftNode* node_or_null(siteid_t id) {
     for (auto& n : nodes_) {
-      if (n->id() == id) return *n;
+      if (n->id() == id) return n.get();
     }
-    // @unsafe { bogus id — abort via out-of-range dereference }
-    return *nodes_.at(nodes_.size());  // throws std::out_of_range
+    return nullptr;
+  }
+  const RaftNode* node_or_null(siteid_t id) const {
+    for (const auto& n : nodes_) {
+      if (n->id() == id) return n.get();
+    }
+    return nullptr;
+  }
+  RaftNode& node(siteid_t id) {
+    auto* n = node_or_null(id);
+    verify(n != nullptr);
+    return *n;
+  }
+  const RaftNode& node(siteid_t id) const {
+    auto* n = node_or_null(id);
+    verify(n != nullptr);
+    return *n;
   }
   ChannelSwitchboard& switchboard() { return sw_; }
 
   // @safe - returns the full site-id list.
   const std::vector<siteid_t>& site_ids() const { return site_ids_; }
+
+  // @safe - expose switchboard RPC attempt counters for Raft test harnesses.
+  uint64_t rpc_count(siteid_t s) const { return sw_.rpc_count(s); }
+  uint64_t rpc_total() const { return sw_.rpc_total(); }
 
   // ------------------------------------------------------------------
   // Fault injection
@@ -123,7 +143,7 @@ class TestCluster {
     // detached members (workers_/receivers) aren't destroyed while a
     // worker is mid-recv on them.
     stop_.store(true, std::memory_order_release);
-    sw_ = ChannelSwitchboard{};  // move-assign empty; drops all senders
+    sw_.clear();  // drops all senders
     for (auto& t : worker_threads_) {
       if (t.joinable()) t.join();
     }
@@ -132,6 +152,12 @@ class TestCluster {
  private:
   // @safe - builds the cluster
   void build(size_t n) {
+    // TestCluster does not wire the full production communicator path used by
+    // Jetpack recovery RPCs.
+    ::setenv("MAKO_DISABLE_JETPACK", "1", 1);
+    // Align test-cluster runs with the Raft lab heartbeat cadence.
+    ::setenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US", "100000", 1);
+
     site_ids_.reserve(n);
     for (size_t i = 0; i < n; ++i) site_ids_.push_back(static_cast<siteid_t>(i + 1));
 
@@ -160,6 +186,9 @@ class TestCluster {
         // safely without full deptran scheduler wiring.
         node->server()->RegLearnerAction(
             [](int /*slot*/, MarshallDeputy /*md*/) -> int { return 0; });
+        // Raft lab tests expect plain Raft elections, without automatic
+        // preferred-leader transfer churn.
+        node->server()->SetPreferredLeader(INVALID_SITEID);
         node->server()->BootstrapReplicationStateForTest();
       }
       auto poll_thread = rrr::PollThread::create();

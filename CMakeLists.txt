@@ -913,6 +913,14 @@ foreach(_SRC IN LISTS TXLOG_HELPER_SRC DEPTRAN_CORE_SRC RRR_SRC MEMDB_SRC)
     set_property(SOURCE "${_SRC_ABS}" APPEND PROPERTY COMPILE_OPTIONS ${MASSTREE_FORCE_INCLUDE_FLAG})
 endforeach()
 target_compile_definitions(txlog_core_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
+# Raft lab harness implementations are guarded by `#ifdef RAFT_TEST_CORO` in
+# source; compile just these files with the define so test targets can link
+# without requiring global RAFT_TEST=ON.
+set_source_files_properties(
+    src/deptran/raft/test.cc
+    src/deptran/raft/testconf.cc
+    PROPERTIES COMPILE_DEFINITIONS "RAFT_TEST_CORO=1"
+)
 
 add_library(txlog_bench_obj OBJECT ${TXLOG_BENCH_SRC})
 add_dependencies(txlog_bench_obj rcc_rpc_gen)
@@ -2163,6 +2171,7 @@ if(BUILD_TESTS)
         ${TEST_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
+    target_compile_definitions(raft_lab_standalone PRIVATE RAFT_TEST_CORO=1)
     target_compile_options(raft_lab_standalone PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)

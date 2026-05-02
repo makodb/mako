@@ -84,6 +84,9 @@ class RaftNode {
     }
     raw_server->BootstrapCurrentConfigForTest(
         std::set<siteid_t>(cluster_sites.begin(), cluster_sites.end()));
+    // Keep in-process harness timing aligned with RaftLab defaults even when
+    // core objects are compiled in non-RAFT_TEST_CORO mode.
+    raw_server->SetHeartbeatInterval(100000);
   }
 
   // @safe

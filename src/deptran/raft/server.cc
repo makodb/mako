@@ -1039,42 +1039,47 @@ void RaftServer::Setup() {
     Log_warn("[RAFT-TRANSPORT] commo_ is null during Setup() at site %d", site_id_);
   }
 
+  // Frame-less test-mode servers (used by TestCluster) start runtime explicitly
+  // via StartInProcessTestRuntimeForTest() on the target PollThread. Starting
+  // here would create duplicate heartbeat/election/apply loops.
+  const bool defer_runtime_to_inproc_test_start = (frame_ == nullptr);
+
 #ifdef RAFT_TEST_CORO
-  if (heartbeat_) {
-		Log_debug("starting heartbeat loop at site %d", site_id_);
-    Fiber::create_run([this](){
+  if (!defer_runtime_to_inproc_test_start && heartbeat_) {
+    Log_debug("starting heartbeat loop at site %d", site_id_);
+    Fiber::create_run([this]() {
       this->HeartbeatLoop();
     });
-    // Start election timeout loop
     if (failover_) {
-      Fiber::create_run([this](){
+      Fiber::create_run([this]() {
         StartElectionTimer();
       });
     }
-	}
+  }
 #endif
 
 #ifndef RAFT_TEST_CORO
-  if (heartbeat_) {
-		Log_debug("starting heartbeat loop at site %d", site_id_);
-    Fiber::create_run([this](){
+  if (!defer_runtime_to_inproc_test_start && heartbeat_) {
+    Log_debug("starting heartbeat loop at site %d", site_id_);
+    Fiber::create_run([this]() {
       this->HeartbeatLoop();
     });
-    // Start election timeout loop
     if (failover_) {
-      Fiber::create_run([this](){
+      Fiber::create_run([this]() {
         StartElectionTimer();
       });
     }
-	}
+  }
 #endif
 
-  // Start apply infrastructure.
-  StartApplyFiber();
-  if (commitIndex > executeIndex) {
-    EnqueueCommittedEntries(executeIndex, commitIndex);
+  if (!defer_runtime_to_inproc_test_start) {
+    // Start apply infrastructure.
+    StartApplyFiber();
+    if (commitIndex > executeIndex) {
+      EnqueueCommittedEntries(executeIndex, commitIndex);
+    }
+    StartApplyThread();
   }
-  StartApplyThread();
 
   // Election timer will be started in Start() method when first command is submitted
 }

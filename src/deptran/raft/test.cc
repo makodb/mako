@@ -115,6 +115,16 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testNoRollbackOnHigherTerm());            // Test 64
   }
 
+  // The in-process TestCluster backend (Phase 8.7 target) exercises the
+  // decoupled Raft transport/control path through Test 64. Tests >=65 rely on
+  // full process restart/persistence semantics that TestCluster restart() does
+  // not yet emulate.
+  if (!failed && config_->IsTestClusterBackend()) {
+    Log_info("TestCluster backend: stopping lab run after Test 64 "
+             "(restart/persistence-heavy tests are skipped)");
+    goto finish;
+  }
+
   // Snapshot recovery on startup tests
   if (!failed) {
     Log_info("Running snapshot recovery on startup tests");
@@ -245,6 +255,7 @@ int RaftLabTest::Run(void) {
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
+finish:
   if (failed) {
     Log_info("Test sequence failed");
     Print("TESTS FAILED");

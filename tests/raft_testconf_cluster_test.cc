@@ -173,6 +173,37 @@ TEST(RaftTestConfigClusterTest, ReconnectKeepsOtherDisconnectedNodesIsolatedInCl
   cfg.Shutdown();
 }
 
+TEST(RaftTestConfigClusterTest, AcceptsZeroBasedServerIndexesInClusterBackend) {
+  auto cluster = janus::raft::TestCluster::with_in_memory_transport(NSERVERS);
+  janus::RaftTestConfig cfg(*cluster);
+  cfg.SetLearnerAction();
+
+  for (int i = 0; i < NSERVERS; ++i) {
+    siteid_t site_id = cfg.getServerIdByIndex(i);
+    ASSERT_NE(cfg.GetServer(site_id), nullptr);
+    EXPECT_EQ(cfg.GetServer(static_cast<siteid_t>(i)),
+              cfg.GetServer(site_id));
+  }
+
+  const siteid_t site1_wire = cfg.GetServer(0)->site_id_;
+  siteid_t peer_wire = cfg.GetServer(1)->site_id_;
+  if (peer_wire == site1_wire) {
+    peer_wire = cfg.GetServer(2)->site_id_;
+  }
+
+  cfg.Disconnect(/*svr=*/0);
+  EXPECT_EQ(cfg.NDisconnected(), 1);
+  EXPECT_TRUE(cluster->switchboard().is_dropped_for_test(site1_wire, peer_wire));
+  EXPECT_TRUE(cluster->switchboard().is_dropped_for_test(peer_wire, site1_wire));
+
+  cfg.Reconnect(/*svr=*/0);
+  EXPECT_EQ(cfg.NDisconnected(), 0);
+  EXPECT_FALSE(cluster->switchboard().is_dropped_for_test(site1_wire, peer_wire));
+  EXPECT_FALSE(cluster->switchboard().is_dropped_for_test(peer_wire, site1_wire));
+
+  cfg.Shutdown();
+}
+
 }  // namespace
 
 #endif

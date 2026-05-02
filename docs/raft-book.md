@@ -786,6 +786,23 @@ Inbound RPC handling now has an explicit dispatcher boundary:
   `test_raft_server_dispatcher`, all `test_raft_*`, and
   `raft_lab_standalone`.
 
+### TestCluster Lab Driver (Phase 8.7)
+
+- `raft_lab_standalone` now boots a 5-node in-process `TestCluster`,
+  constructs `RaftTestConfig(TestCluster&)`, and runs the Raft lab flow via
+  `RaftLabTest`.
+- For the TestCluster backend, `RaftTestConfig` test-control server IDs are
+  normalized to 0-based indexes (`0..N-1`) and resolved internally to
+  TestCluster site IDs (`1..N`) at call boundaries.
+- `TestCluster` exposes `node_or_null(siteid_t)` so cluster-backed harness code
+  can safely probe missing nodes without throwing.
+- The cluster-backed lab run currently executes through Test 64; tests 65+
+  (restart/persistence-heavy recovery paths) are explicitly skipped in this
+  backend because `TestCluster::restart()` does not emulate full process restart
+  semantics yet.
+- Validation gate: `ctest --output-on-failure -R '^(test_raft_.*|raft_lab_standalone)$'`
+  passes, and `raft_lab_standalone` exits non-zero on executed test failures.
+
 ### Storage Facade Scaffold (Phase 8.4 Leaf 1)
 
 - Added `src/deptran/raft/log_storage_facade.hpp` with

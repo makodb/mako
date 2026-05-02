@@ -28,6 +28,8 @@
  */
 
 #include <cstdint>
+#include <map>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -58,6 +60,7 @@ namespace raft {
 struct Envelope {
   siteid_t from{0};
   siteid_t to{0};
+  bool count_for_rpc_budget{true};
   rusty::Function<void(DispatcherProxy&)> deliver;
 };
 
@@ -130,11 +133,20 @@ class ChannelSwitchboard {
   rusty::sync::mpsc::Receiver<Envelope> register_site(siteid_t s) {
     auto [tx, rx] = rusty::sync::mpsc::channel<Envelope>();
     senders_.push_back({s, std::move(tx)});
+    {
+      std::lock_guard<std::mutex> lk(rpc_count_mtx_);
+      rpc_counts_[s] = 0;
+    }
     return std::move(rx);
   }
 
   // @unsafe { pushes into mpsc; drops silently if the dest is gone }
   void send(Envelope env) {
+    if (env.count_for_rpc_budget) {
+      std::lock_guard<std::mutex> lk(rpc_count_mtx_);
+      ++rpc_counts_[env.from];
+      ++rpc_total_;
+    }
     if (faults_.is_dropped(env.from, env.to)) return;
     for (auto& pair : senders_) {
       if (pair.first == env.to) {
@@ -166,14 +178,39 @@ class ChannelSwitchboard {
     faults_ = ChannelFaults{};
   }
 
+  // @safe - drop all registered senders and reset faults/counters.
+  void clear() {
+    senders_.clear();
+    faults_ = ChannelFaults{};
+    std::lock_guard<std::mutex> lk(rpc_count_mtx_);
+    rpc_counts_.clear();
+    rpc_total_ = 0;
+  }
+
   // @safe - test-only visibility into current directional drop state.
   bool is_dropped_for_test(siteid_t from, siteid_t to) const {
     return faults_.is_dropped(from, to);
   }
 
+  // @safe - total RPC attempts sent by a site through this switchboard.
+  uint64_t rpc_count(siteid_t from) const {
+    std::lock_guard<std::mutex> lk(rpc_count_mtx_);
+    auto it = rpc_counts_.find(from);
+    return it == rpc_counts_.end() ? 0 : it->second;
+  }
+
+  // @safe - aggregate RPC attempts across all sites.
+  uint64_t rpc_total() const {
+    std::lock_guard<std::mutex> lk(rpc_count_mtx_);
+    return rpc_total_;
+  }
+
  private:
   std::vector<std::pair<siteid_t, rusty::sync::mpsc::Sender<Envelope>>> senders_;
   ChannelFaults faults_{};
+  mutable std::mutex rpc_count_mtx_;
+  std::map<siteid_t, uint64_t> rpc_counts_;
+  uint64_t rpc_total_{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -227,7 +264,7 @@ class ChannelTransportAdapter {
   // @unsafe { mpsc bridge }
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) {
     auto [tx, rx] = rusty::sync::mpsc::channel<AppendEntriesReply>();
-    Envelope env{self_, dst,
+    Envelope env{self_, dst, true,
         rusty::Function<void(DispatcherProxy&)>(
             [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
               (void)tx.send(disp->handle_append_entries(std::move(req)));
@@ -242,7 +279,7 @@ class ChannelTransportAdapter {
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) {
     auto [tx, rx] = rusty::sync::mpsc::channel<EmptyAppendEntriesReply>();
-    Envelope env{self_, dst,
+    Envelope env{self_, dst, false,
         rusty::Function<void(DispatcherProxy&)>(
             [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
               (void)tx.send(disp->handle_empty_append_entries(std::move(req)));
@@ -256,7 +293,7 @@ class ChannelTransportAdapter {
   // @unsafe { mpsc bridge }
   VoteReply send_vote(siteid_t dst, VoteReq req) {
     auto [tx, rx] = rusty::sync::mpsc::channel<VoteReply>();
-    Envelope env{self_, dst,
+    Envelope env{self_, dst, true,
         rusty::Function<void(DispatcherProxy&)>(
             [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
               (void)tx.send(disp->handle_vote(std::move(req)));
@@ -270,7 +307,7 @@ class ChannelTransportAdapter {
   // @unsafe { mpsc bridge }
   TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) {
     auto [tx, rx] = rusty::sync::mpsc::channel<TimeoutNowReply>();
-    Envelope env{self_, dst,
+    Envelope env{self_, dst, true,
         rusty::Function<void(DispatcherProxy&)>(
             [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
               (void)tx.send(disp->handle_timeout_now(std::move(req)));
@@ -284,7 +321,7 @@ class ChannelTransportAdapter {
   // @unsafe { mpsc bridge }
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) {
     auto [tx, rx] = rusty::sync::mpsc::channel<InstallSnapshotReply>();
-    Envelope env{self_, dst,
+    Envelope env{self_, dst, true,
         rusty::Function<void(DispatcherProxy&)>(
             [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
               (void)tx.send(disp->handle_install_snapshot(std::move(req)));
@@ -301,7 +338,7 @@ class ChannelTransportAdapter {
 
   // @safe
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) {
-    Envelope env{self_, candidate,
+    Envelope env{self_, candidate, true,
         rusty::Function<void(DispatcherProxy&)>(
             [req](DispatcherProxy& disp) mutable {
               (void)disp->handle_vote_durable(req);
@@ -311,7 +348,7 @@ class ChannelTransportAdapter {
 
   // @safe
   void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) {
-    Envelope env{self_, leader,
+    Envelope env{self_, leader, true,
         rusty::Function<void(DispatcherProxy&)>(
             [req](DispatcherProxy& disp) mutable {
               (void)disp->handle_append_entries_durable(req);
@@ -323,7 +360,7 @@ class ChannelTransportAdapter {
   void send_notify_restart(siteid_t dst, parid_t /*par*/) {
     NotifyRestartReq req{};
     req.restarted_site_id = self_;
-    Envelope env{self_, dst,
+    Envelope env{self_, dst, true,
         rusty::Function<void(DispatcherProxy&)>(
             [req](DispatcherProxy& disp) mutable {
               (void)disp->handle_notify_restart(req);

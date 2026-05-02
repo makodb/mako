@@ -51,6 +51,28 @@ RaftTestConfig::RaftTestConfig(raft::TestCluster& cluster) {
   }
 }
 
+bool RaftTestConfig::resolveTestClusterServerId(siteid_t server_or_index,
+                                                siteid_t* server_id) const {
+  if (!use_test_cluster_) {
+    *server_id = server_or_index;
+    return true;
+  }
+
+  if (static_cast<size_t>(server_or_index) < server_ids_.size()) {
+    *server_id = server_ids_[server_or_index];
+    return true;
+  }
+
+  for (auto sid : server_ids_) {
+    if (sid == server_or_index) {
+      *server_id = sid;
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void RaftTestConfig::SetLearnerAction(void) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
@@ -106,7 +128,8 @@ int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
       usleep(ELECTIONTIMEOUT / 10);
       uint64_t most_recent_term = 0;
       int leader = -1;
-      for (auto svr : server_ids_) {
+      for (size_t idx = 0; idx < server_ids_.size(); ++idx) {
+        auto svr = server_ids_[idx];
         if (disconnected_[svr]) {
           continue;
         }
@@ -122,7 +145,7 @@ int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
             Failed("multiple leaders elected in term %ld", term);
             return -2;
           } else if (term > most_recent_term) {
-            leader = static_cast<int>(svr);
+            leader = static_cast<int>(idx);
             most_recent_term = term;
           }
         }
@@ -265,16 +288,30 @@ uint64_t RaftTestConfig::OneTerm(void) {
 }
 
 int RaftTestConfig::NCommitted(uint64_t index) {
-  int cmd,n = 0;
+  int cmd = -1;
+  int n = 0;
   if (use_test_cluster_) {
+    bool have_cmd = false;
     for (auto svr : server_ids_) {
       if (committed_cmds[svr].size() > index) {
         auto curcmd = committed_cmds[svr][index];
-        if (n == 0) {
+        if (!have_cmd) {
           cmd = curcmd;
+          have_cmd = true;
         } else if (curcmd != cmd) {
           return -1;
         }
+        n++;
+        continue;
+      }
+
+      // Snapshot installs can advance commitIndex/executeIndex on a follower
+      // without replaying historical learner callbacks, so committed_cmds may
+      // not have an entry for indices covered by the snapshot.
+      auto* server = test_cluster_->node(svr).server();
+      if (server != nullptr &&
+          server->GetSnapshotIndex() >= index &&
+          server->commitIndex >= index) {
         n++;
       }
     }
@@ -313,7 +350,7 @@ void RaftTestConfig::reapplyTestClusterDisconnects(siteid_t except_svr) {
 bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *term) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
-    auto* server = test_cluster_->node(svr).server();
+    auto* server = GetServer(svr);
     if (server == nullptr) {
       return false;
     }
@@ -413,8 +450,9 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
     uint64_t index, term;
     // Log_info("DoAgreement: Trying to find leader for command %d", cmd);
     if (use_test_cluster_) {
-      for (auto svr : server_ids_) {
-        if (disconnected_[svr]) {
+      for (size_t i = 0; i < server_ids_.size(); ++i) {
+        siteid_t svr = static_cast<siteid_t>(i);
+        if (isDisconnected(svr)) {
           continue;
         }
         if (Start(svr, cmd, &index, &term)) {
@@ -534,6 +572,20 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
 // definition.  Header declaration also went away in the same commit.
 
 void RaftTestConfig::Disconnect(siteid_t svr) {
+  if (use_test_cluster_) {
+    std::lock_guard<std::mutex> lk(disconnect_mtx_);
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      Log_warn("[RAFT-TEST] Disconnect(%u): unknown server/index", svr);
+      return;
+    }
+    verify(test_cluster_ != nullptr);
+    verify(!disconnected_[resolved]);
+    test_cluster_->disconnect(resolved);
+    disconnected_[resolved] = true;
+    return;
+  }
+
   std::lock_guard<std::mutex> lk(disconnect_mtx_);
   verify(!disconnected_[svr]);
   disconnect(svr);
@@ -541,6 +593,21 @@ void RaftTestConfig::Disconnect(siteid_t svr) {
 }
 
 void RaftTestConfig::Reconnect(siteid_t svr) {
+  if (use_test_cluster_) {
+    std::lock_guard<std::mutex> lk(disconnect_mtx_);
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      Log_warn("[RAFT-TEST] Reconnect(%u): unknown server/index", svr);
+      return;
+    }
+    verify(test_cluster_ != nullptr);
+    verify(disconnected_[resolved]);
+    test_cluster_->reconnect(resolved);
+    reapplyTestClusterDisconnects(resolved);
+    disconnected_[resolved] = false;
+    return;
+  }
+
   std::lock_guard<std::mutex> lk(disconnect_mtx_);
   verify(disconnected_[svr]);
   reconnect(svr);
@@ -625,9 +692,18 @@ void RaftTestConfig::Shutdown(void) {
 
 uint64_t RaftTestConfig::RpcCount(siteid_t svr, bool reset) {
   if (use_test_cluster_) {
-    (void)svr;
-    (void)reset;
-    return 0;
+    verify(test_cluster_ != nullptr);
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      return 0;
+    }
+    uint64_t count = test_cluster_->rpc_count(resolved);
+    uint64_t count_last = RaftTestConfig::rpc_count_last[resolved];
+    if (reset) {
+      RaftTestConfig::rpc_count_last[resolved] = count;
+    }
+    verify(count >= count_last);
+    return count - count_last;
   }
 
   std::lock_guard<std::recursive_mutex> lk(
@@ -643,7 +719,8 @@ uint64_t RaftTestConfig::RpcCount(siteid_t svr, bool reset) {
 
 uint64_t RaftTestConfig::RpcTotal(void) {
   if (use_test_cluster_) {
-    return 0;
+    verify(test_cluster_ != nullptr);
+    return test_cluster_->rpc_total();
   }
 
   uint64_t total = 0;
@@ -654,9 +731,14 @@ uint64_t RaftTestConfig::RpcTotal(void) {
 }
 
 bool RaftTestConfig::ServerCommitted(siteid_t svr, uint64_t index, int cmd) {
-  if (committed_cmds[svr].size() <= index)
+  siteid_t resolved = svr;
+  if (use_test_cluster_ &&
+      !resolveTestClusterServerId(svr, &resolved)) {
     return false;
-  return committed_cmds[svr][index] == cmd;
+  }
+  if (committed_cmds[resolved].size() <= index)
+    return false;
+  return committed_cmds[resolved][index] == cmd;
 }
 
 void RaftTestConfig::netctlLoop(void) {
@@ -730,7 +812,11 @@ void RaftTestConfig::netctlLoop(void) {
 
 bool RaftTestConfig::isDisconnected(siteid_t svr) {
   if (use_test_cluster_) {
-    auto it = disconnected_.find(svr);
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      return true;
+    }
+    auto it = disconnected_.find(resolved);
     if (it == disconnected_.end()) {
       return true;
     }
@@ -749,7 +835,14 @@ bool RaftTestConfig::isDisconnected(siteid_t svr) {
 void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
-    test_cluster_->disconnect(svr);
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      if (!ignore) {
+        Log_warn("[RAFT-TEST] disconnect(%u): unknown server/index", svr);
+      }
+      return;
+    }
+    test_cluster_->disconnect(resolved);
     return;
   }
 
@@ -772,8 +865,15 @@ void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
 void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
-    test_cluster_->reconnect(svr);
-    reapplyTestClusterDisconnects(svr);
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      if (!ignore) {
+        Log_warn("[RAFT-TEST] reconnect(%u): unknown server/index", svr);
+      }
+      return;
+    }
+    test_cluster_->reconnect(resolved);
+    reapplyTestClusterDisconnects(resolved);
     return;
   }
 
@@ -804,7 +904,15 @@ RaftServer *RaftTestConfig::GetServer(siteid_t svr) {
     if (test_cluster_ == nullptr) {
       return nullptr;
     }
-    return test_cluster_->node(svr).server();
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      return nullptr;
+    }
+    auto* node = test_cluster_->node_or_null(resolved);
+    if (node == nullptr) {
+      return nullptr;
+    }
+    return node->server();
   }
   return RaftTestConfig::replicas[svr]->svr_.get();
 }
@@ -813,8 +921,13 @@ void RaftTestConfig::Kill(siteid_t svr) {
   if (use_test_cluster_) {
     std::lock_guard<std::mutex> lk(disconnect_mtx_);
     verify(test_cluster_ != nullptr);
-    test_cluster_->kill(svr);
-    disconnected_[svr] = true;
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      Log_warn("[RAFT-TEST] Kill(%u): unknown server/index", svr);
+      return;
+    }
+    test_cluster_->kill(resolved);
+    disconnected_[resolved] = true;
     return;
   }
 
@@ -867,9 +980,14 @@ void RaftTestConfig::Restart(siteid_t svr) {
   if (use_test_cluster_) {
     std::lock_guard<std::mutex> lk(disconnect_mtx_);
     verify(test_cluster_ != nullptr);
-    test_cluster_->restart(svr);
-    reapplyTestClusterDisconnects(svr);
-    disconnected_[svr] = false;
+    siteid_t resolved = svr;
+    if (!resolveTestClusterServerId(svr, &resolved)) {
+      Log_warn("[RAFT-TEST] Restart(%u): unknown server/index", svr);
+      return;
+    }
+    test_cluster_->restart(resolved);
+    reapplyTestClusterDisconnects(resolved);
+    disconnected_[resolved] = false;
     return;
   }
 
@@ -1075,6 +1193,9 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
 siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
   if (use_test_cluster_) {
+    if (static_cast<size_t>(server_id) < server_ids_.size()) {
+      return server_id;
+    }
     for (size_t i = 0; i < server_ids_.size(); ++i) {
       if (server_ids_[i] == server_id) {
         return static_cast<siteid_t>(i);
@@ -1097,10 +1218,19 @@ siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
 
 siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
   if (use_test_cluster_) {
-    if (index < 0 || static_cast<size_t>(index) >= server_ids_.size()) {
-      return -1;
+    if (index < 0) {
+      return static_cast<siteid_t>(-1);
     }
-    return server_ids_[index];
+    if (static_cast<size_t>(index) < server_ids_.size()) {
+      return static_cast<siteid_t>(index);
+    }
+    siteid_t maybe_site = static_cast<siteid_t>(index);
+    for (size_t i = 0; i < server_ids_.size(); ++i) {
+      if (server_ids_[i] == maybe_site) {
+        return static_cast<siteid_t>(i);
+      }
+    }
+    return static_cast<siteid_t>(-1);
   }
 
   // Get server ID by its position in the replicas map (0-4)
@@ -1123,14 +1253,21 @@ siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
 
 siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset) const {
   if (use_test_cluster_) {
+    if (server_ids_.empty()) {
+      return current_server_id;
+    }
     int current_index = -1;
-    for (size_t i = 0; i < server_ids_.size(); ++i) {
-      if (server_ids_[i] == current_server_id) {
-        current_index = static_cast<int>(i);
-        break;
+    if (static_cast<size_t>(current_server_id) < server_ids_.size()) {
+      current_index = static_cast<int>(current_server_id);
+    } else {
+      for (size_t i = 0; i < server_ids_.size(); ++i) {
+        if (server_ids_[i] == current_server_id) {
+          current_index = static_cast<int>(i);
+          break;
+        }
       }
     }
-    if (current_index == -1 || server_ids_.empty()) {
+    if (current_index == -1) {
       return current_server_id;
     }
     int nservers = static_cast<int>(server_ids_.size());
@@ -1138,7 +1275,7 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
     if (new_index < 0) {
       new_index += nservers;
     }
-    return server_ids_[new_index];
+    return static_cast<siteid_t>(new_index);
   }
 
   // Find current server's index and add offset, wrapping around

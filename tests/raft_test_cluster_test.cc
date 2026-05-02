@@ -166,6 +166,46 @@ TEST(RaftTestClusterTest, AppendEntriesTransportDropFallback) {
   EXPECT_EQ(append_ok3.follower_append_ok, 1u);
 }
 
+TEST(RaftTestClusterTest, SwitchboardRpcCountersTrackAttempts) {
+  ChannelSwitchboard sw;
+  auto rx1 = sw.register_site(1);
+  auto rx2 = sw.register_site(2);
+  (void)rx1;
+
+  auto make_envelope = [](siteid_t from, siteid_t to) {
+    return Envelope{
+        from, to, true,
+        rusty::Function<void(DispatcherProxy&)>(
+            [](DispatcherProxy& /*disp*/) {})};
+  };
+
+  EXPECT_EQ(sw.rpc_count(1), 0u);
+  EXPECT_EQ(sw.rpc_total(), 0u);
+
+  sw.send(make_envelope(1, 2));
+  EXPECT_EQ(sw.rpc_count(1), 1u);
+  EXPECT_EQ(sw.rpc_total(), 1u);
+  EXPECT_TRUE(rx2.try_recv().is_ok());
+
+  sw.drop_direction(1, 2);
+  sw.send(make_envelope(1, 2));
+  EXPECT_EQ(sw.rpc_count(1), 2u);
+  EXPECT_EQ(sw.rpc_total(), 2u);
+  EXPECT_TRUE(rx2.try_recv().is_err());
+}
+
+TEST(RaftTestClusterTest, ClusterRpcCountersIncreaseOnTransportSend) {
+  auto c = TestCluster::with_in_memory_transport(3);
+  const uint64_t before_site1 = c->rpc_count(1);
+  const uint64_t before_total = c->rpc_total();
+
+  auto r = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
+  (void)r;
+
+  EXPECT_GE(c->rpc_count(1), before_site1 + 1);
+  EXPECT_GE(c->rpc_total(), before_total + 1);
+}
+
 TEST(RaftTestClusterTest, InspectionAccessors) {
   auto c = TestCluster::with_in_memory_transport(3);
   c->node(1).force_leader(true);

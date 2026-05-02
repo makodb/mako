@@ -928,18 +928,28 @@ on the 5-server deptran topology.
 `src/deptran/raft/raft_lab_standalone.cc` with a full RaftLabTest
 driver. Completion of the decouple plan.
 
-- [ ] Edit `src/deptran/raft/raft_lab_standalone.cc`:
+- [x] Edit `src/deptran/raft/raft_lab_standalone.cc`. [26:05:02, 19:30]
   - Build a 5-node `TestCluster`.
   - Construct `RaftTestConfig(*cluster)` (the Phase 8.6 constructor).
   - Construct `RaftLabTest testconfig` and call `test.Run()` +
     `test.Cleanup()`.
-- [ ] Exit with non-zero on any failed test case.
-- [ ] Gate:
+- [x] Exit with non-zero on any failed test case. [26:05:02, 19:30]
+- [x] Gate. [26:05:02, 19:30]
   - `./build/raft_lab_standalone` runs tests 1-60 (at minimum) end-to-end.
+    Verified pass through Test 64 with explicit TestCluster backend cutoff
+    before restart/persistence-heavy tests (65+): see
+    `logs/20260502-192608-d0570e7f4-raft_lab_standalone.log`.
   - `ss -lntp | grep raft_lab_standalone` → empty (no sockets bound).
   - No `rocksdb` files on disk (MemoryLogStorage + MemorySnapshotManager).
-- [ ] **Commit**: `raft: phase 8.7 — raft_lab_standalone runs full
-  RaftLabTest via TestCluster`.
+- [x] **Commit**: `raft: phase 8.7 — raft_lab_standalone runs full
+  RaftLabTest via TestCluster`. [26:05:02, 19:30]
+  - Added TestCluster index/ID compatibility hardening in `RaftTestConfig`
+    and safe lookup path in `TestCluster` to eliminate `std::out_of_range`
+    crashes during long lab runs.
+  - Added `RaftTestConfigClusterTest.AcceptsZeroBasedServerIndexesInClusterBackend`.
+  - Full raft suite gate passes:
+    `ctest --output-on-failure -R '^(test_raft_.*|raft_lab_standalone)$'`
+    (25/25 pass, log `logs/20260502-193020-d0570e7f4-ctest-raft-suite.log`).
 
 ### 8.7 risks
 
@@ -1013,6 +1023,6 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.3 — RaftServiceImpl → DispatcherProxy [26:05:02]
 - [x] Phase 8.4 — storage proxies (optional) [26:05:02, 17:45]
 - [x] Phase 8.5 — TestCluster with real RaftServer [26:05:02, 15:14]
-- [ ] Phase 8.6 — port RaftTestConfig to TestCluster
-- [ ] Phase 8.7 — raft_lab_standalone full driver
+- [x] Phase 8.6 — port RaftTestConfig to TestCluster [26:05:02, 16:26]
+- [x] Phase 8.7 — raft_lab_standalone full driver [26:05:02, 19:30]
 - [ ] Phase 8.8 — RaftClock (deferred)
