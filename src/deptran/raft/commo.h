@@ -41,11 +41,6 @@ enum class NotifyRestartStatus {
 
 // @unsafe - inherits from non-@interface base QuorumEvent
 class RaftVoteQuorumEvent: public QuorumEvent {
- private:
-  // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
-  std::set<siteid_t> spec_voters_;
-  std::mutex voters_mtx_;
-
  public:
   using QuorumEvent::QuorumEvent;
   // @safe
@@ -53,39 +48,14 @@ class RaftVoteQuorumEvent: public QuorumEvent {
     return false;
   }
 
-  // @safe - Extended to track voter site IDs for speculative voting
-  void FeedResponse(bool y, ballot_t term, siteid_t voter_id = 0) {
+  // @safe
+  void FeedResponse(bool y) {
     if (y) {
       // @unsafe
       { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
-      // Track the voter for speculative voting
-      if (voter_id != 0) {
-        std::lock_guard<std::mutex> lock(voters_mtx_);
-        spec_voters_.insert(voter_id);
-      }
     } else {
       vote_no();
-      if(term > highest_term_)
-      {
-        highest_term_ = term ;
-      }
     }
-  }
-
-  // Legacy overload for backward compatibility
-  void FeedResponse(bool y, ballot_t term) {
-    FeedResponse(y, term, 0);
-  }
-
-  // @safe
-  int64_t Term() {
-    return highest_term_;
-  }
-
-  // @unsafe - Get the set of sites that voted yes (memory votes)
-  std::set<siteid_t> GetSpecVoters() {
-    std::lock_guard<std::mutex> lock(voters_mtx_);
-    return spec_voters_;
   }
 };
 

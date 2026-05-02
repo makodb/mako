@@ -448,17 +448,20 @@ else if (sp_quorum->no()) { ... }
       `vote_granted == true` (replaces `GetSpecVoters()`)
     - highest-term tracking across all replies (replaces
       `sp_quorum->Term()`)
-- [ ] Delete the helper branches (`yes()`, `no()`, `n_voted_yes_`,
+- [x] Delete the helper branches (`yes()`, `no()`, `n_voted_yes_`,
   `n_voted_no_`, `Term()`, `timeouted_`, `GetSpecVoters()`) now that
-  nothing calls them on the election path.
+  nothing calls them on the election path. [26:05:02, 05:42] Reduced
+  `RaftVoteQuorumEvent` to a minimal yes/no feed (`FeedResponse(bool)`),
+  removed term/spec-voter helper state and accessors, and updated
+  `BroadcastVote` callback to feed only yes/no.
 - [x] Gate: lab test tests 1-11 still pass (these exercise initial
   election + re-election). [26:05:02, 05:26] Verified by:
   `ctest -R '^(test_raft_.*|raft_lab_standalone)$` (10/10 pass, including
   expanded `test_raft_quorum`) and
   `./build/deptran_server -f config/raft_lab_test.yml` (RC=0, TEST 1-11 passed,
   no `verify failed` / `TEST * Failed`, progresses into TEST 63 and exits cleanly).
-- [ ] **Commit**: `raft: phase 8.1c — migrate BroadcastVote to
-  per-peer send_vote via RaftQuorum`.
+- [x] **Commit**: `raft: phase 8.1c — migrate BroadcastVote to
+  per-peer send_vote via RaftQuorum`. [26:05:02, 05:42]
 
 ### 8.1.d — Migrate `SendAppendEntries` (hot replication path)
 
@@ -793,7 +796,7 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.0 — fiber-sync facades (cf5db3fef)
 - [x] Phase 8.1a — RaftQuorum primitive [26:04:25, 12:30]
 - [x] Phase 8.1b — TransportProxy member on RaftServer [26:05:02, 05:04]
-- [ ] Phase 8.1c — migrate BroadcastVote
+- [x] Phase 8.1c — migrate BroadcastVote [26:05:02, 05:42]
 - [ ] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2
 - [ ] Phase 8.1e — retire remaining commo() outbound sites
 - [ ] Phase 8.2 — RaftServerDispatcher

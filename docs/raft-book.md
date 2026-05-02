@@ -104,8 +104,8 @@ Mako worker threads call a **local function** (`add_log_to_nc()`) to submit tran
 +------------------------------+--------------------------------+
                                |  Raft RPCs
 +------------------------------v--------------------------------+
-|                    RaftCommo                                    |
-|  (SendAppendEntries, BroadcastVote, SendTimeoutNow, etc.)     |
+|                    RaftCommo / TransportProxy                  |
+|  (SendAppendEntries, send_vote fan-out, SendTimeoutNow, etc.) |
 +---------------------------------------------------------------+
 ```
 
@@ -696,7 +696,7 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 | Method | Purpose |
 |--------|---------|
 | `SendAppendEntries2()` | Async log replication to a follower |
-| `BroadcastVote()` | Legacy quorum-event vote helper (kept for transition) |
+| `BroadcastVote()` | Legacy vote helper kept for transition; election path no longer depends on its term/spec-voter helpers |
 | `send_vote()` via `TransportProxy` | Per-peer RequestVote used by `RaftServer::RequestVote()` |
 | `SendVoteDurable()` | Notify leader of persisted vote |
 | `SendAppendEntriesDurable()` | Notify leader of persisted entries |
@@ -711,11 +711,12 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1b): this is plumbing only; existing outbound
-  call sites still invoke `RaftCommo` directly.
-- Next phases (8.1c-8.1e): migrate election/replication/snapshot outbound
-  paths to `transport().send_*` and delete the legacy helper result/event
-  wrappers in `RaftCommo`.
+- Current state (Phase 8.1c): `RequestVote()` election fan-out is migrated to
+  per-peer `transport_->send_vote(...)` with `RaftQuorum<VoteReply>`.
+- Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
+  transitional paths; term/spec-voter helper accessors were removed.
+- Remaining phases (8.1d-8.1e): migrate replication/snapshot durable paths to
+  `transport().send_*` and delete the remaining legacy result/event wrappers.
 
 ### Restart Notification
 

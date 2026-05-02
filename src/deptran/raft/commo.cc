@@ -242,8 +242,10 @@ RaftCommo::BroadcastVote(parid_t par_id,
       bool_t vote = false ;
       fu->get_reply() >> term;
       fu->get_reply() >> vote ;
-      // SPECULATIVE VOTING: Track which site voted yes
-      e->FeedResponse(vote, term, site_id);
+      // Legacy BroadcastVote path now only tracks yes/no counts.
+      (void)term;
+      (void)site_id;
+      e->FeedResponse(vote);
     };
     RaftProxy::RpcVoteRequest req{};
     req.lst_log_idx = lst_log_idx;
