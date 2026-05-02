@@ -449,7 +449,11 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
                                       const MarshallDeputy& md) {
   verify(md.kind_ != MarshallDeputy::UNKNOWN);
   verify(md.has_marshallable());
-  ar << md.kind_;
+  // Workstream N L9: kind serialized as v32 (1 byte for values 0-63,
+  // up to 5 bytes for full int32 range) instead of raw 4-byte int32.
+  // Matches the legacy `operator<<(Marshal&, MarshallDeputy&)` after
+  // its L9 migration (see marshal.hpp).
+  ar << rrr::v32(md.kind_);
   // Drive save through the M→S adapter chain. Bytes are byte-for-byte
   // identical to `inner()->to_marshal(...)` (which is what the legacy
   // `operator<<(Marshal&, MarshallDeputy)` does after writing the

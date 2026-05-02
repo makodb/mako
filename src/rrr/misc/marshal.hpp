@@ -1491,8 +1491,19 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
 
 // @unsafe
 // @lifetime: (&'a, MarshallDeputy&) -> &'a
+//
+// Workstream N L9: kind serializes as `v32` (variable-length, 1 byte
+// for values 0-63 — SparseInt's first-byte encoding has a 6-bit
+// signed payload — up to 5 bytes for the full int32 range) instead
+// of raw 4-byte int32. After L8's TypeList migration every closed-set
+// kind is in [1, 19] and ANY_MESSAGE=24, all comfortably within the
+// 1-byte v32 range — saves 3 bytes per polymorphic envelope on every
+// hot-path message (LogEntry, TpcCommit, TpcEmpty heartbeats, etc.).
+// Wire-format break: peers running pre-L9 vs post-L9 cannot interop.
 inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
-  m >> rhs.kind_;
+  rrr::v32 kind_v;
+  m >> kind_v;
+  rhs.kind_ = kind_v.get();
   rhs.create_actual_object_from(m);
   return m;
 }
@@ -1506,7 +1517,8 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) 
   // Workstream N Phase 5b-3: removed the dead `bypass_to_socket_`
   // fast path that called `m.bypass_copying(rhs, rhs.entity_size())`.
   // No production type ever set bypass_to_socket_=true.
-  m << rhs.kind_;
+  // L9: kind written as v32, see read-side comment above.
+  m << rrr::v32(rhs.kind_);
   rhs.inner()->to_marshal(m);
   return m;
 }

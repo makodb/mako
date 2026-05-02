@@ -2315,5 +2315,88 @@ TEST(MarshallDeputySerializableField,
   EXPECT_EQ(decoded.name, "aliased + short-circuit");
 }
 
+// ---------------------------------------------------------------------------
+// L9 wire compaction: kind serializes as v32 (1 byte for values 0-63 —
+// SparseInt's first-byte encoding has a 6-bit signed payload, so values
+// in the [-64, 63] range fit in 1 byte; larger values use up to 5
+// bytes) instead of fixed 4-byte int32. Saves 3 bytes per polymorphic
+// envelope for every closed-set kind (TypeList positions 1-19) and for
+// ANY_MESSAGE=24 — i.e., every production payload.
+// ---------------------------------------------------------------------------
+
+struct V32CanaryCommand {
+  // Small kind in the v32 single-byte range (0-63), outside the
+  // closed-set MakoCommands range (1-19) and outside ANY_MESSAGE=24.
+  static constexpr int32_t kKind = 50;
+  int32_t value{0};
+
+  int32_t kind() const { return kKind; }
+  void save(BinaryWriteArchive& ar) const { ar << value; }
+  void load(BinaryReadArchive& ar) { ar >> value; }
+};
+
+static int _reg_v32_canary =
+    reg_serializable_in_deputy<V32CanaryCommand>(V32CanaryCommand::kKind);
+
+TEST(MarshallDeputyKindEncoding, V32SingleByteForSmallKindsViaMarshal) {
+  // Pre-L9: kind serialized as raw 4-byte int32 → wire size = 4 + payload.
+  // Post-L9: kind serialized as v32 → wire size = 1 + payload (for kind <= 127).
+  auto val = std::make_shared<V32CanaryCommand>();
+  val->value = 0x12345678;
+
+  Marshal m;
+  MarshallDeputy out(wrap_typed_marshallable(val));
+  ASSERT_EQ(out.kind_, V32CanaryCommand::kKind);
+  m << out;
+
+  auto bytes = drain_marshal(m);
+
+  // Wire layout: [v32 kind = 100 (1 byte)] [int32 value 0x12345678 (4 bytes)]
+  ASSERT_EQ(bytes.size(), 1u + sizeof(int32_t));
+  EXPECT_EQ(bytes[0], static_cast<uint8_t>(V32CanaryCommand::kKind));
+
+  // Round-trip: bytes encoded with v32 kind decode correctly.
+  Marshal m2;
+  m2.write(bytes.data(), bytes.size());
+  MarshallDeputy in;
+  m2 >> in;
+  EXPECT_EQ(in.kind_, V32CanaryCommand::kKind);
+  auto recovered = marshallable_cast<V32CanaryCommand>(in);
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered->value, 0x12345678);
+}
+
+TEST(MarshallDeputyKindEncoding, V32SingleByteForSmallKindsViaArchive) {
+  // Same wire-size assertion, but through the BinaryWriteArchive +
+  // MarshalSink path that the rpcgen-emitted RPC plumbing uses.
+  auto val = std::make_shared<V32CanaryCommand>();
+  val->value = 0x77;
+
+  Marshal m;
+  MarshallDeputy out(wrap_typed_marshallable(val));
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive ar(&sink);
+    ar << out;
+  }
+
+  auto bytes = drain_marshal(m);
+  ASSERT_EQ(bytes.size(), 1u + sizeof(int32_t));
+  EXPECT_EQ(bytes[0], static_cast<uint8_t>(V32CanaryCommand::kKind));
+
+  // Decode via the BinaryReadArchive path (which delegates to legacy
+  // operator>> via the MarshalSource adapter).
+  Marshal m2;
+  m2.write(bytes.data(), bytes.size());
+  MarshalSource source(&m2);
+  BinaryReadArchive reader(&source);
+  MarshallDeputy in;
+  reader >> in;
+  EXPECT_EQ(in.kind_, V32CanaryCommand::kKind);
+  auto recovered = marshallable_cast<V32CanaryCommand>(in);
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered->value, 0x77);
+}
+
 }  // namespace
 }  // namespace rrr
