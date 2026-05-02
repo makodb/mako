@@ -848,35 +848,19 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
 **Goal**: `RaftTestConfig` can operate on a `TestCluster` instead of
 on the 5-server deptran topology.
 
-- [ ] `src/deptran/raft/testconf.h`: add a new constructor
-  `RaftTestConfig(TestCluster& cluster)` alongside the existing
-  `RaftTestConfig(std::vector<Frame*>)`.
-- [ ] `src/deptran/raft/testconf.cc`: when constructed from a
-  TestCluster, route every operation:
-  - `Kill(i)` → destroy `nodes_[i]`'s RaftServer, switchboard drops
-    its outbound by default.
-  - `Restart(i)` → rebuild the server in place, re-register its
-    dispatcher.
-  - `Disconnect(i)` → `sw_.drop_direction(i, *)` +
-    `sw_.drop_direction(*, i)`.
-  - `Reconnect(i)` → per-direction undrop (small switchboard API
-    addition: `undrop_direction(from, to)` or rebuild faults minus
-    this one).
-  - `Partition(a, b)` → `sw_.partition({a, b})`.
-  - `DoAgreement(cmd, n, wait)` → call the leader's log-append path
-    (see `RaftServer::Submit` or equivalent), poll `commit_index()`
-    across nodes.
-  - `OneLeader()` → scan nodes for `is_leader()`.
-- [ ] Keep the existing rrr-based `RaftTestConfig(std::vector<Frame*>)`
-  constructor intact so `deptran_server -f raft_lab_test.yml` keeps
-  working.
-- [ ] Switchboard API additions (likely in
-  `src/deptran/raft/channel_transport.hpp`):
-  - `undrop_direction(siteid_t from, siteid_t to)`: remove from
-    `ChannelFaults::dropped`.
-- [ ] Gate: subset of `RaftLabTest` runs against the new
-  constructor (see 8.7 for the full driver). Minimally: `testInitialElection`,
-  `testReElection`, `testBasicAgree`, `testFailAgree`.
+- [x] 8.6.a dual-backend scaffold + core cluster ops. [26:05:02, 15:37]
+  - Added `RaftTestConfig(TestCluster&)` and retained the existing frame-based
+    constructor path.
+  - Routed core operations for cluster mode: `SetLearnerAction`, leader/term
+    queries, `Start`/`Wait`/`DoAgreement`/`NCommitted`, disconnect/reconnect,
+    shutdown, kill/restart passthrough, and server-id mapping helpers.
+  - Added focused regression tests in `tests/raft_testconf_cluster_test.cc`
+    and wired `test_raft_testconf_cluster` into CMake.
+  - Verified gate with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
+  - Breakdown doc: `docs/dev/raft_phase8_6_breakdown.md`.
+- [ ] 8.6.b kill/restart parity and reconnect semantics hardening.
+- [ ] 8.6.c switchboard per-direction undrop support (`undrop_direction`).
+- [ ] 8.6.d run/enable the planned RaftLab subset against `RaftTestConfig(TestCluster&)`.
 - [ ] **Commit**: `raft: phase 8.6 — port RaftTestConfig to TestCluster`.
 
 ## Phase 8.7 — `raft_lab_standalone` runs the full `RaftLabTest::Run()`

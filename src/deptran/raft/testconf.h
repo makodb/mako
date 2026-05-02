@@ -3,8 +3,12 @@
 #include "frame.h"
 #include "coordinator.h"
 #include <map>
+#include <vector>
 
 namespace janus {
+namespace raft {
+class TestCluster;
+}
 
 #ifdef RAFT_TEST_CORO
 
@@ -71,6 +75,7 @@ class RaftTestConfig {
   siteid_t getNextServerId(siteid_t current_server_id, int offset = 1) const;
 
   RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas);
+  RaftTestConfig(raft::TestCluster& cluster);
 
   // sets up learner action functions for the servers
   // so that each committed command on each server is
@@ -170,6 +175,10 @@ class RaftTestConfig {
                          std::function<void(CommitStatus)> callback);
 
  private:
+  bool use_test_cluster_ = false;
+  raft::TestCluster* test_cluster_ = nullptr;
+  std::vector<siteid_t> server_ids_;
+
   // vars & subroutine for unreliable network setting
   std::thread th_;
   std::mutex cv_m_; // guards cv_, unreliable_, finished_

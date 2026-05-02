@@ -4,6 +4,7 @@
 #include "service.h"
 #include "commo.h"
 #include "recovery_manager.hpp"
+#include "test_cluster.hpp"
 #include <cstring>
 
 #include "rrr/rrr.hpp"
@@ -23,6 +24,8 @@ std::map<siteid_t, uint64_t> RaftTestConfig::rpc_count_last;
 RaftTestConfig::RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas) {
   verify(RaftTestConfig::replicas.empty());
   RaftTestConfig::replicas = replicas;
+  use_test_cluster_ = false;
+  test_cluster_ = nullptr;
   for (auto& pair : replicas) {
     auto svr = pair.first;
     auto frame = pair.second;
@@ -30,11 +33,45 @@ RaftTestConfig::RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas) {
     RaftTestConfig::committed_cmds[svr].push_back(-1);
     RaftTestConfig::rpc_count_last[svr] = 0;
     disconnected_[svr] = false;
+    server_ids_.push_back(svr);
   }
   th_ = std::thread([this](){ netctlLoop(); });
 }
 
+RaftTestConfig::RaftTestConfig(raft::TestCluster& cluster) {
+  verify(RaftTestConfig::replicas.empty());
+  use_test_cluster_ = true;
+  test_cluster_ = &cluster;
+  server_ids_ = cluster.site_ids();
+  for (auto svr : server_ids_) {
+    RaftTestConfig::committed_cmds[svr].clear();
+    RaftTestConfig::committed_cmds[svr].push_back(-1);
+    RaftTestConfig::rpc_count_last[svr] = 0;
+    disconnected_[svr] = false;
+  }
+}
+
 void RaftTestConfig::SetLearnerAction(void) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    for (auto svr : server_ids_) {
+      RaftTestConfig::commit_callbacks[svr] =
+          [svr](int slot, MarshallDeputy md) -> int {
+            verify(md.kind_ == MarshallDeputy::CMD_TPC_COMMIT);
+            auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
+            verify(commit_cmd != nullptr);
+            Log_debug("server %d committed value %d at slot %d",
+                      svr, commit_cmd->tx_id_, slot);
+            RaftTestConfig::committed_cmds[svr].push_back(commit_cmd->tx_id_);
+            return 0;
+          };
+      auto* server = test_cluster_->node(svr).server();
+      verify(server != nullptr);
+      server->RegLearnerAction(RaftTestConfig::commit_callbacks[svr]);
+    }
+    return;
+  }
+
   for (auto& pair : replicas) {
     auto svr = pair.first;
     auto frame = pair.second;
@@ -63,6 +100,49 @@ bool RaftTestConfig::NoLeader(void) {
 }
 
 int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    for (int retry = 0; retry < 10; retry++) {
+      usleep(ELECTIONTIMEOUT / 10);
+      uint64_t most_recent_term = 0;
+      int leader = -1;
+      for (auto svr : server_ids_) {
+        if (disconnected_[svr]) {
+          continue;
+        }
+        auto* server = test_cluster_->node(svr).server();
+        if (server == nullptr) {
+          continue;
+        }
+        bool is_leader = false;
+        uint64_t term = 0;
+        server->GetState(&is_leader, &term);
+        if (is_leader) {
+          if (term == most_recent_term) {
+            Failed("multiple leaders elected in term %ld", term);
+            return -2;
+          } else if (term > most_recent_term) {
+            leader = static_cast<int>(svr);
+            most_recent_term = term;
+          }
+        }
+      }
+      if (leader != -1) {
+        if (!want_leader) {
+          Failed("leader elected despite lack of quorum");
+        } else if (expected >= 0 && leader != expected) {
+          Failed("unexpected leader change, expecting %d, got %d", expected, leader);
+          return -3;
+        }
+        return leader;
+      }
+    }
+    if (want_leader) {
+      Failed("waited too long for leader election");
+    }
+    return -1;
+  }
+
   uint64_t mostRecentTerm = 0, term;
   int leader = -1;  // Use int instead of siteid_t to avoid unsigned conversion
   bool isleader;
@@ -108,6 +188,26 @@ int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
 }
 
 bool RaftTestConfig::TermMovedOn(uint64_t term) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    for (auto svr : server_ids_) {
+      if (disconnected_[svr]) {
+        continue;
+      }
+      auto* server = test_cluster_->node(svr).server();
+      if (server == nullptr) {
+        continue;
+      }
+      uint64_t cur_term = 0;
+      bool is_leader = false;
+      server->GetState(&is_leader, &cur_term);
+      if (cur_term > term) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   for (auto& pair : replicas) {
     auto frame = pair.second;
     uint64_t curTerm;
@@ -121,6 +221,32 @@ bool RaftTestConfig::TermMovedOn(uint64_t term) {
 }
 
 uint64_t RaftTestConfig::OneTerm(void) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    if (server_ids_.empty()) {
+      return static_cast<uint64_t>(-1);
+    }
+    auto* first_server = test_cluster_->node(server_ids_[0]).server();
+    if (first_server == nullptr) {
+      return static_cast<uint64_t>(-1);
+    }
+    bool is_leader = false;
+    uint64_t term = 0;
+    first_server->GetState(&is_leader, &term);
+    for (size_t i = 1; i < server_ids_.size(); ++i) {
+      auto* server = test_cluster_->node(server_ids_[i]).server();
+      if (server == nullptr) {
+        return static_cast<uint64_t>(-1);
+      }
+      uint64_t cur_term = 0;
+      server->GetState(&is_leader, &cur_term);
+      if (cur_term != term) {
+        return static_cast<uint64_t>(-1);
+      }
+    }
+    return term;
+  }
+
   if (replicas.empty()) return -1;
   
   uint64_t term, curTerm;
@@ -140,6 +266,21 @@ uint64_t RaftTestConfig::OneTerm(void) {
 
 int RaftTestConfig::NCommitted(uint64_t index) {
   int cmd,n = 0;
+  if (use_test_cluster_) {
+    for (auto svr : server_ids_) {
+      if (committed_cmds[svr].size() > index) {
+        auto curcmd = committed_cmds[svr][index];
+        if (n == 0) {
+          cmd = curcmd;
+        } else if (curcmd != cmd) {
+          return -1;
+        }
+        n++;
+      }
+    }
+    return n;
+  }
+
   for (auto& pair : replicas) {
     auto svr = pair.first;
     if (committed_cmds[svr].size() > index) {
@@ -158,6 +299,21 @@ int RaftTestConfig::NCommitted(uint64_t index) {
 }
 
 bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *term) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    auto* server = test_cluster_->node(svr).server();
+    if (server == nullptr) {
+      return false;
+    }
+    auto cmdptr = std::make_shared<TpcCommitCommand>();
+    auto vpd_p = std::make_shared<VecPieceData>();
+    vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
+    cmdptr->tx_id_ = cmd;
+    cmdptr->cmd_ = wrap_typed_marshallable(vpd_p);
+    auto cmdptr_m = wrap_typed_marshallable(cmdptr);
+    return server->Start(cmdptr_m, index, term);
+  }
+
   auto it = replicas.find(svr);
   if (it == replicas.end())
   {
@@ -189,9 +345,8 @@ bool RaftTestConfig::StartWithCallback(siteid_t svr, int cmd, uint64_t *index, u
   }
 
   // If successful, register the callback for commit notifications
-  auto it = replicas.find(svr);
-  if (it != replicas.end()) {
-    it->second->svr_->RegisterCommitCallback(*index, std::move(callback));
+  if (auto* server = GetServer(svr); server != nullptr) {
+    server->RegisterCommitCallback(*index, std::move(callback));
   }
 
   return result;
@@ -218,10 +373,18 @@ int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
   if (i == 30) {
     return -1; // timeout
   }
-  for (auto& pair : replicas) {
-    auto svr = pair.first;
-    if (committed_cmds[svr].size() > index) {
-      return committed_cmds[svr][index];
+  if (use_test_cluster_) {
+    for (auto svr : server_ids_) {
+      if (committed_cmds[svr].size() > index) {
+        return committed_cmds[svr][index];
+      }
+    }
+  } else {
+    for (auto& pair : replicas) {
+      auto svr = pair.first;
+      if (committed_cmds[svr].size() > index) {
+        return committed_cmds[svr][index];
+      }
     }
   }
   verify(0);
@@ -237,21 +400,34 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
     siteid_t ldr = -1;
     uint64_t index, term;
     // Log_info("DoAgreement: Trying to find leader for command %d", cmd);
-    for (auto& pair : replicas) {
-      auto svr = pair.first;
-      auto frame = pair.second;
-      // skip disconnected servers
-      if (frame->svr_->IsDisconnected()) {
-        // Log_info("DoAgreement: Skipping disconnected server %d for command %d", svr, cmd);
-        continue;
+    if (use_test_cluster_) {
+      for (auto svr : server_ids_) {
+        if (disconnected_[svr]) {
+          continue;
+        }
+        if (Start(svr, cmd, &index, &term)) {
+          Log_info("DoAgreement: SUCCESS - found leader %d for command %d, index=%ld, term=%ld", svr, cmd, index, term);
+          ldr = svr;
+          break;
+        }
       }
-      Log_info("DoAgreement: Attempting Start() on server %d for command %d", svr, cmd);
-      if (Start(svr, cmd, &index, &term)) {
-        Log_info("DoAgreement: SUCCESS - found leader %d for command %d, index=%ld, term=%ld", svr, cmd, index, term);
-        ldr = svr;
-        break;
-      } else {
-        // Log_info("DoAgreement: FAILED - server %d rejected Start() for command %d", svr, cmd);
+    } else {
+      for (auto& pair : replicas) {
+        auto svr = pair.first;
+        auto frame = pair.second;
+        // skip disconnected servers
+        if (frame->svr_->IsDisconnected()) {
+          // Log_info("DoAgreement: Skipping disconnected server %d for command %d", svr, cmd);
+          continue;
+        }
+        Log_info("DoAgreement: Attempting Start() on server %d for command %d", svr, cmd);
+        if (Start(svr, cmd, &index, &term)) {
+          Log_info("DoAgreement: SUCCESS - found leader %d for command %d, index=%ld, term=%ld", svr, cmd, index, term);
+          ldr = svr;
+          break;
+        } else {
+          // Log_info("DoAgreement: FAILED - server %d rejected Start() for command %d", svr, cmd);
+        }
       }
     }
     if (ldr != -1) {
@@ -270,12 +446,12 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
 
           bool isLeader = false;
           uint64_t curTerm = 0;
-          auto ldr_it = replicas.find(ldr);
-          if (ldr_it == replicas.end() || ldr_it->second == nullptr || ldr_it->second->svr_ == nullptr) {
+          auto* leader_server = GetServer(ldr);
+          if (leader_server == nullptr) {
             Log_info("DoAgreement: Leader %d disappeared while waiting for command %d at index %ld, retrying Start()", ldr, cmd, index);
             break;
           }
-          ldr_it->second->svr_->GetState(&isLeader, &curTerm);
+          leader_server->GetState(&isLeader, &curTerm);
           if (!isLeader || curTerm != term) {
             Log_info("DoAgreement: Leader changed (server=%d isLeader=%d term=%ld expected_term=%ld) while waiting for command %d at index %ld, retrying Start()",
                      ldr, isLeader ? 1 : 0, curTerm, term, cmd, index);
@@ -290,18 +466,27 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
           break;
         } else if (nc >= n) {
           // Log_info("DoAgreement: SUCCESS - %d servers committed index %ld for command %d", nc, index, cmd);
-          for (auto& pair : replicas) {
-            auto svr = pair.first;
-            if (committed_cmds[svr].size() > index) {
-              // Log_info("DoAgreement: Found commit log on server %d at index %ld", svr, index);
-              auto cmd2 = committed_cmds[svr][index];
-              // Log_info("DoAgreement: Server %d committed command %d at index %ld (expected %d)", svr, cmd2, index, cmd);
-              if (cmd == cmd2) {
-                // Log_info("DoAgreement: AGREEMENT REACHED - command %d successfully committed at index %ld", cmd, index);
-                return index;
-              } else {
-                // Log_info("DoAgreement: COMMAND MISMATCH - expected %d, got %d at index %ld", cmd, cmd2, index);
-                break;
+          if (use_test_cluster_) {
+            for (auto svr : server_ids_) {
+              if (committed_cmds[svr].size() > index) {
+                auto cmd2 = committed_cmds[svr][index];
+                if (cmd == cmd2) {
+                  return index;
+                } else {
+                  break;
+                }
+              }
+            }
+          } else {
+            for (auto& pair : replicas) {
+              auto svr = pair.first;
+              if (committed_cmds[svr].size() > index) {
+                auto cmd2 = committed_cmds[svr][index];
+                if (cmd == cmd2) {
+                  return index;
+                } else {
+                  break;
+                }
               }
             }
           }
@@ -360,6 +545,13 @@ int RaftTestConfig::NDisconnected(void) {
 }
 
 void RaftTestConfig::SetUnreliable(bool unreliable) {
+  if (use_test_cluster_) {
+    // In-process TestCluster unreliability injection is not wired through
+    // netctlLoop yet; keep state bookkeeping but leave transport unchanged.
+    unreliable_ = unreliable;
+    return;
+  }
+
   std::unique_lock<std::mutex> lk(cv_m_);
   verify(!finished_);
   if (unreliable) {
@@ -385,6 +577,20 @@ bool RaftTestConfig::IsUnreliable(void) {
 }
 
 void RaftTestConfig::Shutdown(void) {
+  if (use_test_cluster_) {
+    if (th_.joinable()) {
+      th_.join();
+    }
+    disconnected_.clear();
+    for (auto svr : server_ids_) {
+      disconnected_[svr] = false;
+    }
+    if (test_cluster_ != nullptr) {
+      test_cluster_->reset_faults();
+    }
+    return;
+  }
+
   // trigger netctlLoop shutdown
   {
     std::unique_lock<std::mutex> lk(cv_m_);
@@ -406,6 +612,12 @@ void RaftTestConfig::Shutdown(void) {
 }
 
 uint64_t RaftTestConfig::RpcCount(siteid_t svr, bool reset) {
+  if (use_test_cluster_) {
+    (void)svr;
+    (void)reset;
+    return 0;
+  }
+
   std::lock_guard<std::recursive_mutex> lk(
     RaftTestConfig::replicas[svr]->commo_->rpc_mtx_);
   uint64_t count = RaftTestConfig::replicas[svr]->commo_->rpc_count_;
@@ -418,6 +630,10 @@ uint64_t RaftTestConfig::RpcCount(siteid_t svr, bool reset) {
 }
 
 uint64_t RaftTestConfig::RpcTotal(void) {
+  if (use_test_cluster_) {
+    return 0;
+  }
+
   uint64_t total = 0;
   for (auto& pair : replicas) {
     total += RaftTestConfig::replicas[pair.first]->commo_->rpc_count_;
@@ -501,6 +717,14 @@ void RaftTestConfig::netctlLoop(void) {
 }
 
 bool RaftTestConfig::isDisconnected(siteid_t svr) {
+  if (use_test_cluster_) {
+    auto it = disconnected_.find(svr);
+    if (it == disconnected_.end()) {
+      return true;
+    }
+    return it->second;
+  }
+
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   auto it = RaftTestConfig::replicas.find(svr);
   if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
@@ -511,6 +735,12 @@ bool RaftTestConfig::isDisconnected(siteid_t svr) {
 }
 
 void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    test_cluster_->disconnect(svr);
+    return;
+  }
+
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   auto it = RaftTestConfig::replicas.find(svr);
   if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
@@ -528,6 +758,17 @@ void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
 }
 
 void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    test_cluster_->reset_faults();
+    for (const auto& pair : disconnected_) {
+      if (pair.first != svr && pair.second) {
+        test_cluster_->disconnect(pair.first);
+      }
+    }
+    return;
+  }
+
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   auto it = RaftTestConfig::replicas.find(svr);
   if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
@@ -551,10 +792,23 @@ void RaftTestConfig::slow(siteid_t svr, uint32_t msec) {
 }
 
 RaftServer *RaftTestConfig::GetServer(siteid_t svr) {
+  if (use_test_cluster_) {
+    if (test_cluster_ == nullptr) {
+      return nullptr;
+    }
+    return test_cluster_->node(svr).server();
+  }
   return RaftTestConfig::replicas[svr]->svr_.get();
 }
 
 void RaftTestConfig::Kill(siteid_t svr) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    test_cluster_->kill(svr);
+    disconnected_[svr] = true;
+    return;
+  }
+
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   std::lock_guard<std::mutex> lk2(disconnect_mtx_);
 
@@ -601,6 +855,13 @@ void RaftTestConfig::Kill(siteid_t svr) {
 }
 
 void RaftTestConfig::Restart(siteid_t svr) {
+  if (use_test_cluster_) {
+    verify(test_cluster_ != nullptr);
+    test_cluster_->restart(svr);
+    disconnected_[svr] = false;
+    return;
+  }
+
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   std::lock_guard<std::mutex> lk2(disconnect_mtx_);
 
@@ -802,6 +1063,15 @@ void RaftTestConfig::Restart(siteid_t svr) {
 }
 
 siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
+  if (use_test_cluster_) {
+    for (size_t i = 0; i < server_ids_.size(); ++i) {
+      if (server_ids_[i] == server_id) {
+        return static_cast<siteid_t>(i);
+      }
+    }
+    return server_id;
+  }
+
   // Find the server_id in the replicas map and return its position (0-4)
   int index = 0;
   for (const auto& pair : replicas) {
@@ -815,6 +1085,13 @@ siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
 }
 
 siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
+  if (use_test_cluster_) {
+    if (index < 0 || static_cast<size_t>(index) >= server_ids_.size()) {
+      return -1;
+    }
+    return server_ids_[index];
+  }
+
   // Get server ID by its position in the replicas map (0-4)
   if (index < 0 || index >= NSERVERS) {
     // Index out of range, return -1
@@ -834,6 +1111,25 @@ siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
 }
 
 siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset) const {
+  if (use_test_cluster_) {
+    int current_index = -1;
+    for (size_t i = 0; i < server_ids_.size(); ++i) {
+      if (server_ids_[i] == current_server_id) {
+        current_index = static_cast<int>(i);
+        break;
+      }
+    }
+    if (current_index == -1 || server_ids_.empty()) {
+      return current_server_id;
+    }
+    int nservers = static_cast<int>(server_ids_.size());
+    int new_index = (current_index + offset) % nservers;
+    if (new_index < 0) {
+      new_index += nservers;
+    }
+    return server_ids_[new_index];
+  }
+
   // Find current server's index and add offset, wrapping around
   int current_index = -1;
   int i = 0;

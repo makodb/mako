@@ -961,7 +961,7 @@ Reconnect(server_id)  // Restore connectivity
 | Speculative | `testSpeculativeLeaderElection`, `testSpecCommitIndexAdvances`, `testSpeculativeInvariantsHold` |
 | Preferred leader | `testPreferredReplicaStartup`, `testPreferredReplicaLogReplication` |
 
-### In-process TestCluster Skeleton
+### In-process TestCluster + RaftTestConfig Backend
 
 `test_raft_test_cluster` now validates an in-memory harness path where
 each `RaftNode` owns a real frame-less `RaftServer` and exposes
@@ -993,6 +993,14 @@ disconnect/reconnect catch-up semantics end-to-end.
 Leadership-transfer monitoring teardown was also hardened to join monitor
 threads on shutdown (with self-join guard), preventing test teardown races
 against `mtx_` destruction.
+
+`RaftTestConfig` now also supports this in-process backend directly via
+`RaftTestConfig(TestCluster&)` while keeping the original frame-based
+constructor for legacy lab/deptran flows. Core helpers (`OneLeader`,
+`DoAgreement`, `NCommitted`, `Disconnect`/`Reconnect`, `Kill`/`Restart`,
+`Shutdown`) route to `TestCluster` nodes when that constructor is used.
+`test_raft_testconf_cluster` validates this path with agreement and
+disconnect/reconnect quorum-control cases.
 
 ### Speculative State Queries (for tests)
 

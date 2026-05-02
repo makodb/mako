@@ -2100,6 +2100,16 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr txlog_core)
     add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
 
+    add_executable(test_raft_testconf_cluster tests/raft_testconf_cluster_test.cc)
+    target_include_directories(test_raft_testconf_cluster PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
+    target_compile_options(test_raft_testconf_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_testconf_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr txlog_core)
+    add_test(NAME test_raft_testconf_cluster COMMAND test_raft_testconf_cluster)
+
     add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)
     target_include_directories(raft_lab_standalone PRIVATE
         ${TEST_INCLUDE_DIRS}

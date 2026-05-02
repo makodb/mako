@@ -1,0 +1,51 @@
+# Raft Phase 8.6 Breakdown (Port RaftTestConfig to TestCluster)
+
+## Why this breakdown exists
+
+Phase 8.6 spans multiple concerns in one TODO bullet:
+
+1. API expansion (`RaftTestConfig(TestCluster&)`)
+2. behavioral routing of many test-control operations
+3. compatibility with existing frame-based lab flow
+4. gating via RaftLab subset execution
+
+This is too large for one safe commit, so split into smaller leaves.
+
+## Decomposed leaves
+
+### 8.6.a Dual-backend RaftTestConfig scaffold + core cluster ops (this commit)
+
+- Add `RaftTestConfig(TestCluster&)` alongside existing frame-based constructor.
+- Keep existing frame-based constructor and behavior intact.
+- Add backend routing for core methods used by early lab scenarios:
+  - `SetLearnerAction`, `OneLeader`, `NoLeader`, `TermMovedOn`, `OneTerm`
+  - `Start`, `Wait`, `DoAgreement`, `NCommitted`
+  - `Disconnect`, `Reconnect`, `NDisconnected`, `Shutdown`
+  - `GetServer`, ID mapping helpers.
+- For cluster mode `SetUnreliable`/RPC counters are bookkeeping-only (no random
+  fault-injection control loop yet).
+- Add focused tests validating constructor + core behavior on `TestCluster`.
+
+### 8.6.b Kill/Restart parity and reconnect semantics hardening
+
+- Ensure cluster backend `Kill`/`Restart` semantics match frame backend
+  expectations in relevant lab tests.
+- Remove any cluster-mode reconnect corner cases that require full-fault reset
+  as a blunt instrument.
+
+### 8.6.c ChannelSwitchboard undrop primitive
+
+- Add `undrop_direction(from, to)` (or equivalent) to avoid reset-all behavior
+  when reconnecting one server while preserving unrelated injected faults.
+- Wire cluster backend `Reconnect` to targeted undrop calls.
+
+### 8.6.d Lab subset gate with TestCluster-backed RaftTestConfig
+
+- Add/enable a subset runner against the new constructor:
+  `testInitialElection`, `testReElection`, `testBasicAgree`, `testFailAgree`.
+- Keep existing frame-based path operational.
+
+## Notes
+
+- Phase 8.6.a intentionally avoids jumping straight to full `RaftLabTest::Run()`.
+  Full-driver work belongs to Phase 8.7.
