@@ -545,7 +545,12 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   Expanded `test_raft_channel_transport` fault-injection assertions to verify
   vote-durable delivery in healthy direction and drop behavior under
   directional partition.
-- [ ] `TimeoutNow` call sites → `transport_->send_timeout_now`.
+- [x] `TimeoutNow` call sites → `transport_->send_timeout_now`.
+  [26:05:02, 09:41] Audited `RaftServer` outbound paths: no direct
+  `SendTimeoutNow` call sites remain (leadership transfer path is
+  piggybacked on `send_empty_append_entries`). Added regression guard
+  `test_raft_timeoutnow_callsite_guard` to assert `server.h` and
+  `server.cc` do not reintroduce direct `SendTimeoutNow` usage.
 - [ ] Line 1194 `UpdatePartitionView` — this is gossip; either drop
   it from the facade or leave the direct `commo()->UpdatePartitionView`
   call (annotate `@unsafe` and note it's out of scope for 8.x).

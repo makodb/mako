@@ -730,7 +730,7 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1e leaf 3): `RequestVote()` election fan-out,
+- Current state (Phase 8.1e leaf 4): `RequestVote()` election fan-out,
   `HeartbeatLoop()` append fan-out, leadership-transfer append trigger,
   lagging-follower snapshot send path, follower durable-ack send path, and
   follower durable-vote ack send path are migrated to per-peer transport
@@ -738,6 +738,8 @@ initialized in `RaftServer::Setup()` via
   `send_append_entries`, `send_empty_append_entries`,
   `send_install_snapshot`, `send_append_entries_durable`,
   `send_vote_durable`).
+- `RaftServer` has no direct outbound `SendTimeoutNow` call sites; this is
+  guarded by `test_raft_timeoutnow_callsite_guard`.
 - Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
   transitional paths; term/spec-voter helper accessors were removed.
 - Append callback bridge hardening (Phase 8.1d leaf 1): on append RPC error,
@@ -746,8 +748,9 @@ initialized in `RaftServer::Setup()` via
 - Legacy append wrapper APIs (`SendAppendEntriesResults`,
   `SendAppendEntries2`, `SendAppendEntries`) are now deleted from
   `RaftCommo`; only callback bridge entry points remain on that path.
-- Remaining phase (8.1e): migrate TimeoutNow outbound calls and
-  delete the remaining vote transitional helper.
+- Remaining phase (8.1e): handle the two documented non-facaded boundaries
+  (`UpdatePartitionView`, `rpc_par_proxies_` access) and delete the remaining
+  transitional vote helper.
 
 ### Restart Notification
 

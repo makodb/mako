@@ -2008,6 +2008,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_commo_legacy_api_removed ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_commo_legacy_api_removed COMMAND test_raft_commo_legacy_api_removed)
 
+    add_executable(test_raft_timeoutnow_callsite_guard tests/raft_timeoutnow_callsite_guard_test.cc)
+    target_include_directories(test_raft_timeoutnow_callsite_guard PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_definitions(test_raft_timeoutnow_callsite_guard PRIVATE MAKO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_options(test_raft_timeoutnow_callsite_guard PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_timeoutnow_callsite_guard ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_raft_timeoutnow_callsite_guard COMMAND test_raft_timeoutnow_callsite_guard)
+
     # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
     # Bootstraps an rrr::Reactor on the test thread to exercise the
     # IntEvent-backed wait_until_quorum path; no heavy raft state needed.

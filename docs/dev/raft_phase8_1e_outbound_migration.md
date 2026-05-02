@@ -82,3 +82,20 @@ leaf with dedicated tests.
 - `tests/raft_channel_transport_test.cc` now asserts vote-durable
   delivery/drop behavior under the same directional fault injection used for
   other fire-and-forget transport methods.
+
+## Leaf 4 (TimeoutNow) Design Rationale
+
+- Goal: ensure `RaftServer` no longer performs direct outbound
+  `SendTimeoutNow` calls and keep timeout-now transport usage behind the
+  transport facade boundary.
+- Result of audit: no direct `SendTimeoutNow` call sites remain in
+  `RaftServer` (`server.h` / `server.cc`). Leadership transfer currently uses
+  piggybacked `send_empty_append_entries(... trigger_election_now=true)`.
+
+## Leaf 4 User/Developer Notes
+
+- Added regression guard test `test_raft_timeoutnow_callsite_guard` that reads
+  `server.h` and `server.cc` and fails if `SendTimeoutNow` is reintroduced in
+  RaftServer source.
+- `RrrTransportAdapter::send_timeout_now` remains available as the facade
+  implementation for any future outbound timeout-now path.
