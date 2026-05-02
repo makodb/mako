@@ -744,6 +744,12 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     in-memory harness behavior.
   - Added `RaftTestClusterTest.ServerOwnershipScaffoldStartsEmpty`
     baseline test.
+- [x] 8.5.c1 minimal frame-less RaftServer bootstrap prep [26:05:02]:
+  - Added frame-less constructor
+    `RaftServer(site_id, partition_id, loc_id)` for test-mode ownership.
+  - Removed hard `frame_->site_info_` dereferences from the election
+    path (`RequestVote`) and leader-transition debug log fallback.
+  - Added `test_raft_server_test_mode_ctor`.
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.

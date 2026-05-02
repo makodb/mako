@@ -47,6 +47,13 @@ Status:
   `TestCluster` without full deptran-server scaffolding.
 - Wire transport/storage/snapshot dependencies explicitly.
 
+Status (c1):
+- Added frame-less `RaftServer(site_id, partition_id, loc_id)` constructor.
+- Removed hard `frame_->site_info_` dereferences from election paths that
+  block frame-less construction (`RequestVote`, debug log site lookup).
+- Added `test_raft_server_test_mode_ctor` to verify identity initialization
+  with `frame_ == nullptr`.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with

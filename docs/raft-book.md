@@ -972,6 +972,9 @@ evolution does not silently break the test harness compile path.
 (`Option<Box<RaftServer>>`) with `has_server()/server()` accessors; in
 the current stage this remains empty by design until the real-server
 bootstrap leaves are completed.
+As part of the bootstrap prep, `RaftServer` now exposes a frame-less
+test constructor (`site_id, partition_id, loc_id`) and no longer
+hard-requires `frame_->site_info_` inside `RequestVote`.
 
 ### Speculative State Queries (for tests)
 

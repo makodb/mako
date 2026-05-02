@@ -698,10 +698,27 @@ RaftServer::RaftServer(Frame * frame)
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
+  if (frame_ != nullptr && frame_->site_info_ != nullptr) {
+    partition_id_ = frame_->site_info_->partition_id_;
+    loc_id_ = frame_->site_info_->locale_id;
+    site_id_ = frame_->site_info_->id;
+  }
 #ifdef RAFT_TEST_CORO
   setIsLeader(false);
 #endif
   stop_ = false ;
+}
+
+RaftServer::RaftServer(siteid_t site_id, parid_t partition_id, locid_t loc_id)
+  : timer_(rusty::Box<Timer>::make(Timer())) {
+  frame_ = nullptr;
+  site_id_ = site_id;
+  partition_id_ = partition_id;
+  loc_id_ = loc_id;
+#ifdef RAFT_TEST_CORO
+  setIsLeader(false);
+#endif
+  stop_ = false;
 }
 
 // @unsafe - raw pointer output params from base class virtual interface
@@ -1115,8 +1132,12 @@ siteid_t RaftServer::GetLeaderHint() const {
 void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
+  locid_t debug_loc_id = loc_id_;
+  if (frame_ != nullptr && frame_->site_info_ != nullptr) {
+    debug_loc_id = frame_->site_info_->locale_id;
+  }
   Log_info("[RAFT_STATE] setIsLeader invoked site %d (loc %d) term %lu: prev_is_leader=%d new_is_leader=%d",
-           site_id_, frame_->site_info_->locale_id, currentTerm, prev_is_leader, isLeader);
+           site_id_, debug_loc_id, currentTerm, prev_is_leader, isLeader);
 #endif
 
 
@@ -1979,13 +2000,8 @@ bool RaftServer::RequestVote() {
 
   // for(int i = 0; i < 1000; i++) Log_info("not calling the wrong method");
 
-  parid_t par_id = 0;
-  parid_t loc_id = 0;
-  // @unsafe
-  {
-  par_id = this->frame_->site_info_->partition_id_ ;
-  loc_id = this->frame_->site_info_->locale_id ;
-  }
+  parid_t par_id = partition_id_;
+  parid_t loc_id = loc_id_;
 
   uint32_t lstoff = 0  ;
   slotid_t lst_idx = 0 ;

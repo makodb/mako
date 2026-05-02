@@ -710,6 +710,8 @@ class RaftServer : public TxLogServer {
 
   // @safe - raw pointer parameter is bounded (frame outlives server)
   RaftServer(Frame *frame) ;
+  // @safe - frame-less test bootstrap constructor (Phase 8.5.c).
+  RaftServer(siteid_t site_id, parid_t partition_id, locid_t loc_id);
   // @unsafe - thread join and timer cleanup require manual resource management
   ~RaftServer() ;
 
