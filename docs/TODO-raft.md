@@ -876,8 +876,17 @@ on the 5-server deptran topology.
     `UndropDirectionRestoresOneDirectionOnly`,
     `ReconnectPreservesPartitionFaultsInClusterBackend`.
   - Verified gate with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
-- [ ] 8.6.d run/enable the planned RaftLab subset against `RaftTestConfig(TestCluster&)`.
-- [ ] **Commit**: `raft: phase 8.6 — port RaftTestConfig to TestCluster`.
+- [x] 8.6.d run/enable the planned RaftLab subset against `RaftTestConfig(TestCluster&)`. [26:05:02, 16:24]
+  - Added `RaftLabTest::RunBasicSubset()` (tests 1-4) and wired
+    `test_raft_lab_subset_testcluster` in CMake.
+  - Added a dedicated gtest runner that executes the subset inside a
+    reactor fiber (required because the lab tests use `Fiber::sleep`).
+  - Fixed a cluster reconnect isolation bug in `RaftTestConfig`:
+    reconnect/restart now re-apply other active disconnects so partially
+    restored topologies do not livelock elections.
+  - Added regression coverage:
+    `ReconnectKeepsOtherDisconnectedNodesIsolatedInClusterBackend`.
+- [x] **Commit**: `raft: phase 8.6 — port RaftTestConfig to TestCluster`. [26:05:02, 16:26]
 
 ## Phase 8.7 — `raft_lab_standalone` runs the full `RaftLabTest::Run()`
 

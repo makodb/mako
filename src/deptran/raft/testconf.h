@@ -196,6 +196,7 @@ class RaftTestConfig {
 
   // other internal helpers
   int waitOneLeader(bool want_leader, int expected);
+  void reapplyTestClusterDisconnects(siteid_t except_svr);
 
  public:
   RaftServer *GetServer(siteid_t svr);

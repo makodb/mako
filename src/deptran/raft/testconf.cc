@@ -298,6 +298,18 @@ int RaftTestConfig::NCommitted(uint64_t index) {
   return n;
 }
 
+void RaftTestConfig::reapplyTestClusterDisconnects(siteid_t except_svr) {
+  if (!use_test_cluster_ || test_cluster_ == nullptr) {
+    return;
+  }
+  for (const auto& entry : disconnected_) {
+    if (!entry.second || entry.first == except_svr) {
+      continue;
+    }
+    test_cluster_->disconnect(entry.first);
+  }
+}
+
 bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *term) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
@@ -761,6 +773,7 @@ void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
     test_cluster_->reconnect(svr);
+    reapplyTestClusterDisconnects(svr);
     return;
   }
 
@@ -855,6 +868,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
     std::lock_guard<std::mutex> lk(disconnect_mtx_);
     verify(test_cluster_ != nullptr);
     test_cluster_->restart(svr);
+    reapplyTestClusterDisconnects(svr);
     disconnected_[svr] = false;
     return;
   }

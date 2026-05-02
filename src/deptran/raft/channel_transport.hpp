@@ -166,6 +166,11 @@ class ChannelSwitchboard {
     faults_ = ChannelFaults{};
   }
 
+  // @safe - test-only visibility into current directional drop state.
+  bool is_dropped_for_test(siteid_t from, siteid_t to) const {
+    return faults_.is_dropped(from, to);
+  }
+
  private:
   std::vector<std::pair<siteid_t, rusty::sync::mpsc::Sender<Envelope>>> senders_;
   ChannelFaults faults_{};

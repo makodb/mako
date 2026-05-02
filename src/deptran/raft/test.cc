@@ -257,6 +257,27 @@ int RaftLabTest::Run(void) {
   return 0;
 }
 
+int RaftLabTest::RunBasicSubset(void) {
+  Log_info("Starting Raft lab basic subset tests (1-4)");
+  config_->SetLearnerAction();
+  uint64_t start_rpc = config_->RpcTotal();
+
+  bool failed =
+      testInitialElection()            // Test 1
+      || TEST_EXPAND(testReElection()) // Test 2
+      || TEST_EXPAND(testBasicAgree()) // Test 3
+      || TEST_EXPAND(testFailAgree()); // Test 4
+
+  if (failed) {
+    Print("BASIC SUBSET TESTS FAILED");
+    return 1;
+  }
+
+  Print("BASIC SUBSET TESTS PASSED");
+  Print("Total RPC count: %ld", config_->RpcTotal() - start_rpc);
+  return 0;
+}
+
 void RaftLabTest::Cleanup(void) {
   config_->Shutdown();
 }

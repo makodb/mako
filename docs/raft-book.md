@@ -1005,6 +1005,14 @@ disconnect/reconnect quorum-control cases.
 `TestCluster` reconnect/restart uses this to restore one node's edges without
 clearing unrelated faults (including active partitions), and regression tests
 cover both directional undrop and partition preservation across reconnect.
+Cluster reconnect/restart now also re-apply all other active disconnects in
+`RaftTestConfig` so reconnecting one node does not partially restore links for
+nodes that are still intentionally isolated.
+
+For the Phase 8.6 gate, `RaftLabTest` includes `RunBasicSubset()` (tests 1-4),
+and `test_raft_lab_subset_testcluster` runs that subset against
+`RaftTestConfig(TestCluster&)`. The runner executes inside a reactor fiber and
+pumps `Reactor::loop(false)`, because these lab tests use `Fiber::sleep`.
 
 ### Speculative State Queries (for tests)
 

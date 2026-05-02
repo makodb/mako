@@ -51,11 +51,28 @@ This is too large for one safe commit, so split into smaller leaves.
   `UndropDirectionRestoresOneDirectionOnly` and
   `ReconnectPreservesPartitionFaultsInClusterBackend`.
 
-### 8.6.d Lab subset gate with TestCluster-backed RaftTestConfig
+### 8.6.d Lab subset gate with TestCluster-backed RaftTestConfig (completed 26:05:02, 16:24)
 
-- Add/enable a subset runner against the new constructor:
+- Added `RaftLabTest::RunBasicSubset()` in `src/deptran/raft/test.{h,cc}`:
   `testInitialElection`, `testReElection`, `testBasicAgree`, `testFailAgree`.
-- Keep existing frame-based path operational.
+- Added gtest target `test_raft_lab_subset_testcluster` that constructs
+  `TestCluster` + `RaftTestConfig(TestCluster&)` and runs the subset.
+- The subset is executed inside a reactor fiber and the test pumps
+  `Reactor::loop(false)` until completion. This is required because these
+  lab tests call `Fiber::sleep`.
+- Closed an election-liveness gap found by this gate: in cluster mode,
+  reconnect/restart could partially restore links to nodes still marked
+  disconnected. Fix: after cluster `reconnect`/`restart`, re-apply all other
+  active disconnects.
+- Added regression test
+  `ReconnectKeepsOtherDisconnectedNodesIsolatedInClusterBackend`.
+
+#### Operator notes
+
+- Run targeted gate:
+  `ctest --test-dir build --output-on-failure -R '^(test_raft_testconf_cluster|test_raft_lab_subset_testcluster)$'`
+- Run full Raft gate:
+  `ctest --test-dir build --output-on-failure -R '^(test_raft_.*|raft_lab_standalone)$'`
 
 ## Notes
 

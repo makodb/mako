@@ -16,6 +16,7 @@ class RaftLabTest {
  public:
   RaftLabTest(RaftTestConfig *config) : config_(config), index_(1) {}
   int Run(void);
+  int RunBasicSubset(void);
   void Cleanup(void);
 
  private:
