@@ -1007,6 +1007,14 @@ class SerializableRegistry {
 // the list has `index_of<...>() == 1`.  Types not in the list resolve
 // to 0 (UNKNOWN), which surfaces as a `verify(0)`-grade error at
 // registration / set_marshallable time.
+//
+// Workstream N L10a: `create_at(pos)` adds compile-time-driven factory
+// dispatch — given a 1-indexed wire kind, returns a fresh
+// `SerializableProxy` for the corresponding type. This is the
+// closed-set counterpart of `MarshallDeputy::create_initializer(kind)`,
+// but with zero runtime registry state: the dispatch is a switch over
+// declaration-order `Ts...`, decided at compile time. Used by the
+// L10b `SerializableEnvelope<TypeList>` carrier on its read path.
 template<typename... Ts>
 struct TypeList {
   static constexpr std::size_t size = sizeof...(Ts);
@@ -1024,6 +1032,16 @@ struct TypeList {
     return index_of<T>() != 0;
   }
 
+  // Construct a fresh SerializableProxy for the type at 1-indexed
+  // position `pos`. Aborts via `verify` if `pos` is 0 (UNKNOWN
+  // sentinel) or out of range — invalid wire kind on the read side
+  // is a hard deserialization error, consistent with how
+  // `MarshallDeputy::create_initializer` handles unknown kinds.
+  static SerializableProxy create_at(int32_t pos) {
+    verify(pos >= 1 && pos <= static_cast<int32_t>(sizeof...(Ts)));
+    return create_at_impl<Ts...>(pos - 1);
+  }
+
  private:
   template<typename T, int32_t I>
   static constexpr int32_t index_of_impl() noexcept {
@@ -1037,6 +1055,22 @@ struct TypeList {
     } else {
       return index_of_impl<T, I + 1, Rest...>();
     }
+  }
+
+  // Recursive variadic walk to locate the type at index `idx` (0-based
+  // within the implementation; the public API takes 1-indexed `pos`).
+  // The compiler instantiates one branch per type in the list; the
+  // resulting code is equivalent to a flat switch.
+  template<typename Head, typename... Rest>
+  static SerializableProxy create_at_impl(int32_t idx) {
+    if (idx == 0) {
+      return make_serializable_proxy<Head>();
+    }
+    if constexpr (sizeof...(Rest) > 0) {
+      return create_at_impl<Rest...>(idx - 1);
+    }
+    // Unreachable — public `create_at` already verified the bound.
+    verify(false);
   }
 };
 

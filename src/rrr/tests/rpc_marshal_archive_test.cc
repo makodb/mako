@@ -2398,5 +2398,110 @@ TEST(MarshallDeputyKindEncoding, V32SingleByteForSmallKindsViaArchive) {
   EXPECT_EQ(recovered->value, 0x77);
 }
 
+// ---------------------------------------------------------------------------
+// L10a: TypeList::create_at(pos) compile-time-dispatched factory.
+//
+// Replaces the runtime `MarshallDeputy::reg_initializer(kind, factory)`
+// registry for the closed-set polymorphic path: the TypeList knows its
+// types at compile time, so wire-kind → fresh SerializableProxy is a
+// switch over `Ts...` with no static-init registration step. Used by
+// the L10b `SerializableEnvelope<TypeList>` carrier on its read path.
+// ---------------------------------------------------------------------------
+
+// Three small Serializable types for the TypeList factory tests. They
+// have distinct save/load shapes so an out-of-position dispatch
+// produces a recognizable type mismatch.
+struct TypeListFactoryAlpha {
+  int32_t a{0};
+  void save(BinaryWriteArchive& ar) const { ar << a; }
+  void load(BinaryReadArchive& ar) { ar >> a; }
+  int32_t kind() const { return 1; }  // = position in factory test list
+};
+
+struct TypeListFactoryBeta {
+  std::string b;
+  void save(BinaryWriteArchive& ar) const { ar << b; }
+  void load(BinaryReadArchive& ar) { ar >> b; }
+  int32_t kind() const { return 2; }
+};
+
+struct TypeListFactoryGamma {
+  int64_t c{0};
+  void save(BinaryWriteArchive& ar) const { ar << c; }
+  void load(BinaryReadArchive& ar) { ar >> c; }
+  int32_t kind() const { return 3; }
+};
+
+using TypeListFactoryList = TypeList<TypeListFactoryAlpha,
+                                     TypeListFactoryBeta,
+                                     TypeListFactoryGamma>;
+
+TEST(TypeListFactory, IndexOfReturns1IndexedPosition) {
+  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryAlpha>(), 1);
+  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryBeta>(), 2);
+  EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryGamma>(), 3);
+  // Type not in list resolves to 0 (UNKNOWN sentinel).
+  EXPECT_EQ(TypeListFactoryList::index_of<int>(), 0);
+}
+
+TEST(TypeListFactory, ContainsTracksIndexOf) {
+  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryAlpha>());
+  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryBeta>());
+  EXPECT_TRUE(TypeListFactoryList::contains<TypeListFactoryGamma>());
+  EXPECT_FALSE(TypeListFactoryList::contains<int>());
+}
+
+TEST(TypeListFactory, CreateAtReturnsCorrectTypeForEachPosition) {
+  // pos=1 → Alpha
+  {
+    auto proxy = TypeListFactoryList::create_at(1);
+    auto* alpha = proxy_cast<TypeListFactoryAlpha>(&*proxy);
+    EXPECT_NE(alpha, nullptr);
+    EXPECT_EQ(proxy_cast<TypeListFactoryBeta>(&*proxy), nullptr);
+    EXPECT_EQ(proxy_cast<TypeListFactoryGamma>(&*proxy), nullptr);
+  }
+  // pos=2 → Beta
+  {
+    auto proxy = TypeListFactoryList::create_at(2);
+    EXPECT_EQ(proxy_cast<TypeListFactoryAlpha>(&*proxy), nullptr);
+    auto* beta = proxy_cast<TypeListFactoryBeta>(&*proxy);
+    EXPECT_NE(beta, nullptr);
+    EXPECT_EQ(proxy_cast<TypeListFactoryGamma>(&*proxy), nullptr);
+  }
+  // pos=3 → Gamma
+  {
+    auto proxy = TypeListFactoryList::create_at(3);
+    EXPECT_EQ(proxy_cast<TypeListFactoryAlpha>(&*proxy), nullptr);
+    EXPECT_EQ(proxy_cast<TypeListFactoryBeta>(&*proxy), nullptr);
+    auto* gamma = proxy_cast<TypeListFactoryGamma>(&*proxy);
+    EXPECT_NE(gamma, nullptr);
+  }
+}
+
+TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
+  // Pack a Beta via create_at(2), save + load through a proxy, verify
+  // the value survives. Demonstrates the L10b read-path shape:
+  //   1) Read v32 kind from wire.
+  //   2) create_at(kind) → fresh SerializableProxy for that type.
+  //   3) proxy->load(reader) — populates the typed value.
+  //   4) Caller dispatches via proxy_cast<T>.
+  {
+    BufferSink sink;
+    BinaryWriteArchive writer(&sink);
+    TypeListFactoryBeta beta;
+    beta.b = "round-trip canary";
+    beta.save(writer);
+
+    BufferSource source(sink.bytes.data(), sink.bytes.len());
+    BinaryReadArchive reader(&source);
+    auto proxy = TypeListFactoryList::create_at(2);
+    proxy->load(reader);
+
+    auto* recovered = proxy_cast<TypeListFactoryBeta>(&*proxy);
+    ASSERT_NE(recovered, nullptr);
+    EXPECT_EQ(recovered->b, "round-trip canary");
+  }
+}
+
 }  // namespace
 }  // namespace rrr
