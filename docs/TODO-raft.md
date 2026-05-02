@@ -765,6 +765,13 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
   - `TestCluster` now passes the full site-id list into each `RaftNode`,
     and `RaftNode` seeds the owned server's `current_config_` at construction.
   - Added `RaftTestClusterTest.RealServerConfigIsBootstrappedFromClusterSites`.
+- [x] 8.5.c4 remove obsolete DummyDispatcher path [26:05:02, 13:54]:
+  - Removed unused `DummyDispatcher` implementation from `raft_node.hpp`.
+  - Added `RaftTestClusterTest.VoteRejectsDifferentCandidateInSameTerm`
+    to lock in real-Raft vote semantics (regression guard against the
+    former always-true dummy vote behavior).
+  - Updated in-process harness comments/docs to reflect
+    `RaftServerDispatcher` as the active dispatch path.
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.
@@ -777,7 +784,7 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     `server_->StartElectionTimer()`, `server_->HeartbeatLoop()`,
     `server_->StartApplyThread()` / `StartApplyFiber()` — exactly as
     `deptran_server` does today but without a `deptran_server` binary.
-- [ ] Delete `DummyDispatcher` once nothing references it.
+- [x] Delete `DummyDispatcher` once nothing references it. [26:05:02, 13:54]
 - [ ] `TestCluster::with_in_memory_transport(n)`: keep the existing
   wiring but ensure each node's RaftServer is in a state ready to
   accept the first `HeartbeatLoop` tick.

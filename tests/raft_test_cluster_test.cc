@@ -22,6 +22,18 @@ TEST(RaftTestClusterTest, BuildAndSendAVote) {
   EXPECT_TRUE(r.vote_granted);
 }
 
+TEST(RaftTestClusterTest, VoteRejectsDifferentCandidateInSameTerm) {
+  auto c = TestCluster::with_in_memory_transport(3);
+
+  auto first = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 1, 1});
+  EXPECT_TRUE(first.vote_granted);
+
+  // Real Raft behavior: node 2 should reject a different candidate (3)
+  // in the same term after voting for candidate 1.
+  auto second = c->node(1).transport()->send_vote(2, VoteReq{1, 0, 3, 1});
+  EXPECT_FALSE(second.vote_granted);
+}
+
 TEST(RaftTestClusterTest, DisconnectStopsTraffic) {
   auto c = TestCluster::with_in_memory_transport(3);
   c->disconnect(2);

@@ -967,6 +967,7 @@ Reconnect(server_id)  // Restore connectivity
 each `RaftNode` owns a real frame-less `RaftServer` and exposes
 `RaftServerDispatcher` through `take_dispatcher()`. This keeps the
 harness independent of socket RPC while exercising real `On*` handlers.
+The old `DummyDispatcher` compatibility path has been removed.
 `RaftNode::has_server()/server()` now report live ownership instead of
 an empty scaffold.
 As part of bootstrap prep, `RaftServer` exposes a frame-less test

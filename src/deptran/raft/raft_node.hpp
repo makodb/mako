@@ -17,8 +17,6 @@
  *   - Inspection accessors (is_leader, current_term, commit_index) —
  *     placeholder implementations backed by in-node fields so tests
  *     can exercise the cluster plumbing end-to-end.
- *   - A `DummyDispatcher` compatibility type kept while Phase 8.5
- *     migration is in progress.
  *
  * The point of keeping this skeleton now is to let Phase 7 wire up
  * raft_lab_standalone without a circular dependency on the RaftServer
@@ -31,7 +29,6 @@
 #include <utility>
 #include <vector>
 
-#include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
 
@@ -50,64 +47,6 @@ namespace janus {
 class RaftServer;
 
 namespace raft {
-
-// ---------------------------------------------------------------------------
-// DummyDispatcher — placeholder that accepts every RPC and responds.
-// Phase 6.5 will swap this for a RaftServer-backed dispatcher.
-// ---------------------------------------------------------------------------
-
-class DummyDispatcher {
- public:
-  // @safe
-  DummyDispatcher(siteid_t self) : self_(self) {}
-
-  VoteReply handle_vote(VoteReq req) {
-    VoteReply r{};
-    r.max_ballot   = req.current_term;
-    r.vote_granted = true;
-    return r;
-  }
-  VoteDurableReply handle_vote_durable(VoteDurableReq) {
-    VoteDurableReply r{}; r.acknowledged = true; return r;
-  }
-  AppendEntriesReply handle_append_entries(AppendEntriesReq) {
-    AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
-  }
-  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) {
-    EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
-  }
-  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) {
-    AppendEntriesDurableReply r{}; r.acknowledged = true; return r;
-  }
-  TimeoutNowReply handle_timeout_now(TimeoutNowReq) {
-    TimeoutNowReply r{}; r.success = true; return r;
-  }
-  NotifyRestartReply handle_notify_restart(NotifyRestartReq) {
-    NotifyRestartReply r{}; r.acknowledged = true; return r;
-  }
-  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) {
-    InstallSnapshotReply r{}; r.term_out = 0; return r;
-  }
-  AddServerReply handle_add_server(AddServerReq) {
-    AddServerReply r{};
-    r.success = true;
-    r.error_msg = "";
-    r.leader_hint = self_;
-    return r;
-  }
-  RemoveServerReply handle_remove_server(RemoveServerReq) {
-    RemoveServerReply r{};
-    r.success = true;
-    r.error_msg = "";
-    r.leader_hint = self_;
-    return r;
-  }
-
-  siteid_t self_site_id() const { return self_; }
-
- private:
-  siteid_t self_{0};
-};
 
 // ---------------------------------------------------------------------------
 // RaftNode — owns transport + storage + dispatcher for one site.
@@ -130,8 +69,7 @@ class RaftNode {
         transport_(std::move(transport)),
         log_storage_(log_storage),
         snap_manager_(snap_manager),
-        server_(rusty::None),
-        dispatcher_(make_raft_server_dispatcher(nullptr)) {
+        server_(rusty::None) {
     // @unsafe { test harness owns storage/snapshot; server stores
     //           non-owning shared_ptr aliases. }
     auto* raw_server = new ::janus::RaftServer(
@@ -152,7 +90,6 @@ class RaftNode {
     }
     raw_server->BootstrapCurrentConfigForTest(
         std::set<siteid_t>(cluster_sites.begin(), cluster_sites.end()));
-    dispatcher_ = make_raft_server_dispatcher(raw_server);
   }
 
   // @safe
@@ -217,7 +154,6 @@ class RaftNode {
   LogStorage*                   log_storage_{nullptr};
   SnapshotManager*              snap_manager_{nullptr};
   rusty::Option<rusty::Box<::janus::RaftServer>> server_;
-  DispatcherProxy               dispatcher_;
 
   bool     is_leader_{false};
   slotid_t commit_index_{0};

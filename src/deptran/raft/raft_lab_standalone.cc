@@ -8,13 +8,13 @@
  * What this binary DOES prove today:
  *   - ChannelSwitchboard + TestCluster build a valid N-node topology.
  *   - Transport RPCs (send_*) round-trip through the in-memory
- *     switchboard to every peer's DummyDispatcher.
+ *     switchboard to every peer's RaftServerDispatcher.
  *   - disconnect / partition / reset_faults silence and restore
  *     traffic as expected.
  *   - It runs without binding a socket (verify with
  *     `ss -lntp | grep raft_lab_standalone` — no rows).
  *
- * Phase 8.7 replaces the DummyDispatcher harness here with a real
+ * Phase 8.7 replaces the current harness here with a full
  * RaftServer + RaftLabTest driver.
  */
 

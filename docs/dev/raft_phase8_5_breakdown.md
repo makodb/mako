@@ -74,6 +74,14 @@ Status (c3):
   `server_config_contains`) and a focused test asserting membership is
   bootstrapped on all nodes.
 
+Status (c4):
+- Removed obsolete `DummyDispatcher` implementation from `raft_node.hpp`
+  (no remaining runtime references after c2/c3).
+- Updated harness comments/docs to consistently describe
+  RaftServerDispatcher-backed in-process dispatch.
+- Added a behavior test (`VoteRejectsDifferentCandidateInSameTerm`) that
+  would fail under the old dummy "always grant vote" semantics.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with

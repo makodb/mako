@@ -10,8 +10,8 @@
  * Current scope (matches raft_node.hpp): this is a SKELETON. The
  * cluster plumbing — per-node worker threads, transport fan-out, peer
  * discovery — is complete enough for Phase 7 to stand up a test
- * binary. Actual Raft state-machine semantics come online once Phase
- * 6.5 swaps DummyDispatcher for a RaftServer-backed impl.
+ * binary. The in-process path now dispatches directly to real
+ * RaftServer handlers via RaftServerDispatcher.
  */
 
 #include <atomic>
