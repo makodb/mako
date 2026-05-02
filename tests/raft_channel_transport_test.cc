@@ -64,6 +64,16 @@ struct RecordingDispatcher {
     counts->n_install.fetch_add(1);
     InstallSnapshotReply r{}; r.term_out = 7; return r;
   }
+  AddServerReply handle_add_server(AddServerReq) {
+    AddServerReply r{};
+    r.success = true;
+    return r;
+  }
+  RemoveServerReply handle_remove_server(RemoveServerReq) {
+    RemoveServerReply r{};
+    r.success = true;
+    return r;
+  }
 };
 
 // Spins a std::thread running step_blocking() until a stop flag is set.
@@ -180,4 +190,38 @@ TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
   EXPECT_EQ(disp_b_impl->counts->n_vote_durable.load(), 1);
   EXPECT_EQ(disp_b_impl->counts->n_append_durable.load(), 1);
   EXPECT_EQ(disp_b_impl->counts->n_install.load(), 1);
+}
+
+TEST(RaftChannelTransportTest, UndropDirectionRestoresOneDirectionOnly) {
+  ChannelSwitchboard sw;
+  auto rx_a = sw.register_site(1);
+  auto rx_b = sw.register_site(2);
+
+  auto disp_a_impl = rusty::Arc<RecordingDispatcher>::make();
+  auto disp_b_impl = rusty::Arc<RecordingDispatcher>::make();
+  DispatcherProxy disp_a =
+      pro::make_proxy<DispatcherFacade, RecordingDispatcher>(*disp_a_impl);
+  DispatcherProxy disp_b =
+      pro::make_proxy<DispatcherFacade, RecordingDispatcher>(*disp_b_impl);
+
+  TransportProxy tr_a = make_channel_transport(&sw, 1, 0);
+  TransportProxy tr_b = make_channel_transport(&sw, 2, 0);
+
+  ChannelNodeWorker w_a{std::move(rx_a), std::move(disp_a)};
+  ChannelNodeWorker w_b{std::move(rx_b), std::move(disp_b)};
+
+  WorkerHarness ha{&w_a};
+  WorkerHarness hb{&w_b};
+
+  sw.drop_direction(/*from=*/1, /*to=*/2);
+  sw.drop_direction(/*from=*/2, /*to=*/1);
+  EXPECT_FALSE(tr_a->send_timeout_now(2, TimeoutNowReq{}).success);
+  EXPECT_FALSE(tr_b->send_timeout_now(1, TimeoutNowReq{}).success);
+
+  sw.undrop_direction(/*from=*/1, /*to=*/2);
+  EXPECT_TRUE(tr_a->send_timeout_now(2, TimeoutNowReq{}).success);
+  EXPECT_FALSE(tr_b->send_timeout_now(1, TimeoutNowReq{}).success);
+
+  sw.undrop_direction(/*from=*/2, /*to=*/1);
+  EXPECT_TRUE(tr_b->send_timeout_now(1, TimeoutNowReq{}).success);
 }

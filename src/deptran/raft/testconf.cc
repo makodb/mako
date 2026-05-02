@@ -760,7 +760,7 @@ void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
 void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
-    reapplyClusterDisconnectFaults(svr, true);
+    test_cluster_->reconnect(svr);
     return;
   }
 
@@ -777,23 +777,6 @@ void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
     it->second->svr_->Reconnect();
   } else if (!ignore) {
     verify(0);
-  }
-}
-
-void RaftTestConfig::reapplyClusterDisconnectFaults(siteid_t keep_connected_svr,
-                                                    bool has_keep_connected) {
-  verify(use_test_cluster_);
-  verify(test_cluster_ != nullptr);
-
-  test_cluster_->reset_faults();
-  for (const auto& pair : disconnected_) {
-    if (!pair.second) {
-      continue;
-    }
-    if (has_keep_connected && pair.first == keep_connected_svr) {
-      continue;
-    }
-    test_cluster_->disconnect(pair.first);
   }
 }
 
@@ -873,7 +856,6 @@ void RaftTestConfig::Restart(siteid_t svr) {
     verify(test_cluster_ != nullptr);
     test_cluster_->restart(svr);
     disconnected_[svr] = false;
-    reapplyClusterDisconnectFaults(svr, true);
     return;
   }
 

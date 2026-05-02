@@ -192,8 +192,6 @@ class RaftTestConfig {
   bool isDisconnected(siteid_t svr);
   void disconnect(siteid_t svr, bool ignore = false);
   void reconnect(siteid_t svr, bool ignore = false);
-  void reapplyClusterDisconnectFaults(siteid_t keep_connected_svr,
-                                      bool has_keep_connected);
   void slow(siteid_t svr, uint32_t msec);
 
   // other internal helpers

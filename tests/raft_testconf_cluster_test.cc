@@ -129,6 +129,30 @@ TEST(RaftTestConfigClusterTest, KillRestartPreservesOtherDisconnectsInClusterBac
   cfg.Shutdown();
 }
 
+TEST(RaftTestConfigClusterTest, ReconnectPreservesPartitionFaultsInClusterBackend) {
+  auto cluster = janus::raft::TestCluster::with_in_memory_transport(NSERVERS);
+  janus::RaftTestConfig cfg(*cluster);
+
+  cluster->partition({1, 2}, {3, 4, 5});
+
+  auto dropped_before =
+      cluster->node(1).transport()->send_vote(
+          3, janus::raft::VoteReq{1000, 1000, 1, 1});
+  EXPECT_FALSE(dropped_before.vote_granted);
+
+  cfg.Disconnect(/*svr=*/2);
+  EXPECT_EQ(cfg.NDisconnected(), 1);
+  cfg.Reconnect(/*svr=*/2);
+  EXPECT_EQ(cfg.NDisconnected(), 0);
+
+  auto dropped_after =
+      cluster->node(1).transport()->send_vote(
+          3, janus::raft::VoteReq{1001, 1000, 2, 1});
+  EXPECT_FALSE(dropped_after.vote_granted);
+
+  cfg.Shutdown();
+}
+
 }  // namespace
 
 #endif

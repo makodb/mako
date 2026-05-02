@@ -148,6 +148,17 @@ class ChannelSwitchboard {
   void drop_direction(siteid_t from, siteid_t to) {
     faults_.dropped.emplace_back(from, to);
   }
+  void undrop_direction(siteid_t from, siteid_t to) {
+    std::vector<std::pair<siteid_t, siteid_t>> kept;
+    kept.reserve(faults_.dropped.size());
+    for (const auto& p : faults_.dropped) {
+      if (p.first == from && p.second == to) {
+        continue;
+      }
+      kept.push_back(p);
+    }
+    faults_.dropped = std::move(kept);
+  }
   void partition(std::vector<std::vector<siteid_t>> groups) {
     faults_.partitions = std::move(groups);
   }

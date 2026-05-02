@@ -39,11 +39,17 @@ This is too large for one safe commit, so split into smaller leaves.
   `ReconnectPreservesOtherDisconnectsInClusterBackend` and
   `KillRestartPreservesOtherDisconnectsInClusterBackend`.
 
-### 8.6.c ChannelSwitchboard undrop primitive
+### 8.6.c ChannelSwitchboard undrop primitive (completed 26:05:02, 15:59)
 
 - Add `undrop_direction(from, to)` (or equivalent) to avoid reset-all behavior
   when reconnecting one server while preserving unrelated injected faults.
 - Wire cluster backend `Reconnect` to targeted undrop calls.
+- Implemented by adding `ChannelSwitchboard::undrop_direction` and wiring
+  `TestCluster::reconnect/restart` and cluster-mode `RaftTestConfig::Reconnect`
+  through targeted undrop calls.
+- Covered by:
+  `UndropDirectionRestoresOneDirectionOnly` and
+  `ReconnectPreservesPartitionFaultsInClusterBackend`.
 
 ### 8.6.d Lab subset gate with TestCluster-backed RaftTestConfig
 

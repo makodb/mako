@@ -74,6 +74,16 @@ class TestCluster {
     }
   }
 
+  // @safe - restores traffic between `s` and every peer, preserving all
+  // unrelated fault injections (other drops, partitions).
+  void reconnect(siteid_t s) {
+    for (auto peer : site_ids_) {
+      if (peer == s) continue;
+      sw_.undrop_direction(s, peer);
+      sw_.undrop_direction(peer, s);
+    }
+  }
+
   // @safe - splits sites into two groups that cannot exchange
   // messages across the boundary. Sites outside both groups remain
   // fully connected (via current switchboard semantics).
@@ -93,15 +103,7 @@ class TestCluster {
 
   // @safe - re-attaches a node that was previously killed.
   void restart(siteid_t s) {
-    for (auto peer : site_ids_) {
-      if (peer == s) continue;
-      // A full impl would rebuild the node in place; the MVP just
-      // clears its direction from the fault list. Since ChannelFaults
-      // lacks a per-direction remove, we reset and re-apply — the
-      // MVP cluster only supports one site being down at a time.
-      (void)peer;
-    }
-    sw_.reset_faults();
+    reconnect(s);
   }
 
   // ------------------------------------------------------------------

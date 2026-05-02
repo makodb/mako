@@ -859,16 +859,23 @@ on the 5-server deptran topology.
   - Verified gate with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
   - Breakdown doc: `docs/dev/raft_phase8_6_breakdown.md`.
 - [x] 8.6.b kill/restart parity and reconnect semantics hardening. [26:05:02, 15:43]
-  - Cluster-mode `Reconnect`/`Restart` now re-apply intended disconnected nodes
-    after switchboard fault reset, so one reconnect/restart cannot silently heal
-    unrelated disconnect faults.
-  - Cluster-mode `Kill`/`Restart` now synchronize on `disconnect_mtx_` for
+  - Cluster-mode `Kill`/`Restart` synchronize on `disconnect_mtx_` for
     consistent fault-state bookkeeping.
+  - (Later refined by 8.6.c) reconnect/restart fault restoration now uses
+    targeted undrop instead of reset-all reapply.
   - Added regression tests:
     `ReconnectPreservesOtherDisconnectsInClusterBackend`,
     `KillRestartPreservesOtherDisconnectsInClusterBackend`.
   - Verified gate with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
-- [ ] 8.6.c switchboard per-direction undrop support (`undrop_direction`).
+- [x] 8.6.c switchboard per-direction undrop support (`undrop_direction`). [26:05:02, 15:59]
+  - Added `ChannelSwitchboard::undrop_direction(from, to)` and wired
+    `TestCluster::reconnect/restart` to use targeted undrop calls.
+  - Cluster-mode `Kill`/`Restart` now synchronize on `disconnect_mtx_` for
+    consistent test-control state while preserving unrelated switchboard faults.
+  - Added regression tests:
+    `UndropDirectionRestoresOneDirectionOnly`,
+    `ReconnectPreservesPartitionFaultsInClusterBackend`.
+  - Verified gate with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
 - [ ] 8.6.d run/enable the planned RaftLab subset against `RaftTestConfig(TestCluster&)`.
 - [ ] **Commit**: `raft: phase 8.6 — port RaftTestConfig to TestCluster`.
 
