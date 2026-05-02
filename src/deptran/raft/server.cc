@@ -3654,6 +3654,27 @@ bool RaftServer::ReplicationStateReadyForHeartbeatTickForTest() {
   return true;
 }
 
+void RaftServer::StartInProcessTestRuntimeForTest() {
+  bool expected = false;
+  if (!inproc_test_runtime_started_.compare_exchange_strong(expected, true)) {
+    return;
+  }
+
+  heartbeat_setup_ = true;
+  if (heartbeat_) {
+    Fiber::create_run([this]() { this->HeartbeatLoop(); });
+    if (failover_) {
+      Fiber::create_run([this]() { this->StartElectionTimer(); });
+    }
+  }
+
+  StartApplyFiber();
+  if (commitIndex > executeIndex) {
+    EnqueueCommittedEntries(executeIndex, commitIndex);
+  }
+  StartApplyThread();
+}
+
 // @unsafe - Modifies config state
 void RaftServer::OnAddServer(const uint64_t term,
                              const uint64_t new_server_id,

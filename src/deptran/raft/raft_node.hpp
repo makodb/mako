@@ -2,25 +2,19 @@
 
 /**
  * @file raft_node.hpp
- * @brief Phase 6 of the decouple plan — single-node facade that owns a
- *        transport, storage, and snapshot-manager and exposes a
- *        DispatcherProxy to the cluster. Intentionally a SKELETON: it
- *        holds the wiring but does not yet drive the full RaftServer
- *        state machine, because RaftServer is still coupled to
- *        rrr::PollThread / rrr::Fiber. That integration is the
- *        remaining Phase 6.5 (deferred in the same spirit as Phase 2.5).
+ * @brief In-process single-node facade used by TestCluster. Owns transport,
+ *        storage/snapshot backends, and a real frame-less RaftServer and
+ *        exposes a DispatcherProxy for in-memory RPC routing.
  *
  * What this file provides right now:
  *   - RaftNode type holding:
  *       siteid_t id, TransportProxy, LogStorage&, SnapshotManager&,
  *       and a RaftServer-backed DispatcherProxy produced by the node.
- *   - Inspection accessors (is_leader, current_term, commit_index) —
- *     placeholder implementations backed by in-node fields so tests
- *     can exercise the cluster plumbing end-to-end.
+ *   - Inspection accessors delegated directly to owned server state.
+ *   - Test-only mutators for harness control.
  *
- * The point of keeping this skeleton now is to let Phase 7 wire up
- * raft_lab_standalone without a circular dependency on the RaftServer
- * refactor.
+ * Runtime loops (heartbeat/election/apply) are started by TestCluster on
+ * per-node poll threads via RaftServer test-runtime entrypoints.
  */
 
 #include <cstdint>

@@ -982,9 +982,11 @@ In the same frame-less path, `BootstrapReplicationStateForTest()` now
 pre-initializes `next_index_`/`match_index_` from membership state, and
 peer discovery falls back to `current_config_`/`learners_` when `commo()`
 is absent.
-Current harness checks for disconnect/partition use `Vote` round-trips
-rather than `TimeoutNow`, because full election timer/fiber startup is
-still deferred to later Phase 8.5 leaves.
+`TestCluster` now also starts per-node runtime loops
+(`HeartbeatLoop`/`StartElectionTimer`/apply runtime) on dedicated poll
+threads via `OneTimeJob`. Election convergence is validated in-cluster;
+remaining in-process behavior work is agreement/commit-index and
+disconnect/catch-up coverage.
 
 ### Speculative State Queries (for tests)
 

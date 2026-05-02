@@ -7,11 +7,12 @@
  *        injection controls the lab tests need (kill / restart /
  *        disconnect / partition).
  *
- * Current scope (matches raft_node.hpp): this is a SKELETON. The
- * cluster plumbing — per-node worker threads, transport fan-out, peer
- * discovery — is complete enough for Phase 7 to stand up a test
- * binary. The in-process path now dispatches directly to real
- * RaftServer handlers via RaftServerDispatcher.
+ * Current scope: full in-process wiring for real frame-less RaftServer
+ * nodes:
+ *   - in-memory transport + per-node dispatcher workers
+ *   - per-node poll thread runtime startup for heartbeat/election/apply
+ *   - fault injection controls (disconnect/partition/reset)
+ * Behavioral coverage continues to expand in Phase 8.5 test leaves.
  */
 
 #include <atomic>
@@ -23,6 +24,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
+#include "rrr/rrr.hpp"
 #include "channel_transport.hpp"
 #include "memory_log_storage.hpp"
 #include "memory_snapshot_manager.hpp"
@@ -109,6 +111,11 @@ class TestCluster {
   // ------------------------------------------------------------------
 
   ~TestCluster() {
+    for (auto& poll : poll_threads_) {
+      poll->shutdown();
+    }
+    poll_threads_.clear();
+
     // Drop all senders FIRST so every worker's step_blocking() recv()
     // returns Err and the loop exits. Then join the threads so the
     // detached members (workers_/receivers) aren't destroyed while a
@@ -149,12 +156,22 @@ class TestCluster {
       if (node->server() != nullptr) {
         node->server()->BootstrapReplicationStateForTest();
       }
+      auto poll_thread = rrr::PollThread::create();
+      if (node->server() != nullptr) {
+        auto* server = node->server();
+        auto start_runtime_job = rusty::Arc<rrr::OneTimeJob>::new_(
+            rrr::OneTimeJob([server]() {
+              server->StartInProcessTestRuntimeForTest();
+            }));
+        poll_thread->add(rusty::Arc<rrr::Job>(start_runtime_job));
+      }
 
       rusty::Box<ChannelNodeWorker> worker(new ChannelNodeWorker(
           std::move(receivers[i]), node->take_dispatcher()));
 
       nodes_.push_back(std::move(node));
       workers_.push_back(std::move(worker));
+      poll_threads_.push_back(std::move(poll_thread));
     }
 
     // Spawn one background drainer per node.
@@ -175,6 +192,7 @@ class TestCluster {
   std::atomic<bool>                              stop_{false};
   std::vector<std::thread>                       worker_threads_;
   std::vector<rusty::Box<ChannelNodeWorker>>     workers_;
+  std::vector<rusty::Arc<rrr::PollThread>>       poll_threads_;
   std::vector<rusty::Box<RaftNode>>              nodes_;
   std::vector<rusty::Box<MemorySnapshotManager>> snaps_;
   std::vector<rusty::Box<InMemoryLogStorage>>    logs_;

@@ -8,6 +8,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+
 #include "deptran/raft/test_cluster.hpp"
 
 using namespace janus::raft;
@@ -167,6 +170,29 @@ TEST(RaftTestClusterTest, ServersStartHeartbeatReady) {
                     .server()
                     ->ReplicationStateReadyForHeartbeatTickForTest());
   }
+}
+
+TEST(RaftTestClusterTest, RuntimeStartupElectsSingleLeader) {
+  auto c = TestCluster::with_in_memory_transport(3);
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+  int stable_samples = 0;
+
+  while (std::chrono::steady_clock::now() < deadline && stable_samples < 5) {
+    int leaders = 0;
+    for (auto site_id : c->site_ids()) {
+      if (c->node(site_id).is_leader()) {
+        leaders++;
+      }
+    }
+    if (leaders == 1) {
+      stable_samples++;
+    } else {
+      stable_samples = 0;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  EXPECT_GE(stable_samples, 5);
 }
 
 TEST(RaftTestClusterTest, RealServerConfigIsBootstrappedFromClusterSites) {

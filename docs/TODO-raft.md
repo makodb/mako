@@ -786,7 +786,13 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     `ReplicationStateReadyForHeartbeatTickForTest()`.
   - `TestCluster::with_in_memory_transport(n)` now pre-initializes each
     owned server's replication maps; added readiness gtests.
-- [ ] `src/deptran/raft/raft_node.hpp`:
+- [x] 8.5.c7 start in-process poll-thread Raft runtime per TestCluster node [26:05:02, 14:43]:
+  - Added `RaftServer::StartInProcessTestRuntimeForTest()` (idempotent) to
+    start heartbeat/election/apply runtime in frame-less mode.
+  - `TestCluster` now creates a `PollThread` per node and schedules runtime
+    startup via `OneTimeJob`, matching poll-thread affinity requirements.
+  - Added `RaftTestClusterTest.RuntimeStartupElectsSingleLeader`.
+- [x] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.
   - Constructor: build a `RaftServer` with `transport_ =
@@ -798,16 +804,17 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     `server_->StartElectionTimer()`, `server_->HeartbeatLoop()`,
     `server_->StartApplyThread()` / `StartApplyFiber()` — exactly as
     `deptran_server` does today but without a `deptran_server` binary.
+    [26:05:02, 14:43]
 - [x] Delete `DummyDispatcher` once nothing references it. [26:05:02, 13:54]
 - [x] `TestCluster::with_in_memory_transport(n)`: keep the existing
   wiring but ensure each node's RaftServer is in a state ready to
   accept the first `HeartbeatLoop` tick. [26:05:02, 14:31]
 - [ ] New gtest cases in `tests/raft_test_cluster_test.cc`:
-  - Election converges: construct 3-node cluster, step until
+  - [x] Election converges: construct 3-node cluster, step until
     exactly one `node(i).is_leader()` is true.
-  - `DoAgreement` equivalent: the leader appends a log entry, every
+  - [ ] `DoAgreement` equivalent: the leader appends a log entry, every
     node observes the entry's `commit_index()` advance.
-  - `disconnect(follower)` prevents the follower from catching up
+  - [ ] `disconnect(follower)` prevents the follower from catching up
     until `reset_faults`.
 - [ ] Gate: the above gtests + `raft_lab_standalone` still runs its
   4 legacy cases.

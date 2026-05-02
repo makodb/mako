@@ -185,6 +185,7 @@ class RaftServer : public TxLogServer {
   bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
+  std::atomic<bool> inproc_test_runtime_started_{false};
 #ifdef RAFT_TEST_CORO
   bool failover_{true} ;
 #else
@@ -1013,6 +1014,14 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - reads replication maps and config state
   bool ReplicationStateReadyForHeartbeatTickForTest();
+
+  /**
+   * Starts heartbeat/election/apply runtime for in-process TestCluster mode.
+   * This is intended to run on a poll-thread fiber via OneTimeJob.
+   * Idempotent: repeated calls are ignored after the first successful start.
+   */
+  // @unsafe - starts background fibers/threads and mutates runtime flags
+  void StartInProcessTestRuntimeForTest();
 
   /**
    * Check if a server is a learner (being caught up, not yet in quorum).

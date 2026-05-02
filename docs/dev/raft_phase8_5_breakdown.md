@@ -104,6 +104,16 @@ Status (c6):
 - Added focused tests in `raft_server_test_mode_ctor_test` and
   `raft_test_cluster_test` to lock this readiness contract.
 
+Status (c7):
+- Added `RaftServer::StartInProcessTestRuntimeForTest()` as an idempotent
+  test-harness entrypoint that starts heartbeat/election fibers and apply
+  runtime without going through full deptran `Setup()`.
+- `TestCluster` now creates one `PollThread` per node and schedules that
+  runtime startup via `OneTimeJob`, preserving the poll-thread affinity used
+  by production Raft startup paths.
+- Added a runtime smoke test (`RuntimeStartupElectsSingleLeader`) to verify
+  election convergence once timers/fibers are running in-process.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with
@@ -124,7 +134,5 @@ Status (c6):
 
 ## Remaining split for the large 8.5 node-startup bullet
 
-1. c7: test-mode timer/fiber startup scaffolding (`HeartbeatLoop` /
-   election timer / apply thread lifecycle in TestCluster mode).
-2. c8: behavioral gtests (`election converges`, `agreement`,
-   `disconnect` catch-up) plus gate run.
+1. c8: remaining behavioral gtests (`agreement`,
+   `disconnect` catch-up) plus full gate run.
