@@ -171,7 +171,7 @@ class ClassicServiceImpl : public ClassicService {
   void RccDispatch(const vector<SimpleCommand>& cmd,
                    int32_t* res,
                    TxnOutput* output,
-                   MarshallDeputy* p_md_graph,
+                   rrr::AnyMessage* p_md_graph,
                    rrr::DeferredReply done);
 
   void RccPreAccept(const txid_t& txnid,
@@ -197,7 +197,7 @@ class ClassicServiceImpl : public ClassicService {
                  rrr::DeferredReply done);
 
   void RccFinish(const txid_t& cmd_id,
-                 const MarshallDeputy& md_graph,
+                 const rrr::AnyMessage& md_graph,
                  TxnOutput* output,
                  rrr::DeferredReply done);
 
@@ -216,13 +216,13 @@ class ClassicServiceImpl : public ClassicService {
   void JanusDispatch(const vector<SimpleCommand>& cmd,
                      int32_t* p_res,
                      TxnOutput* p_output,
-                     MarshallDeputy* p_md_res_graph,
+                     rrr::AnyMessage* p_md_res_graph,
                      rrr::DeferredReply done);
 
   void JanusCommit(const txid_t& cmd_id,
                    const rank_t& rank,
                    const int32_t& need_validation,
-                   const MarshallDeputy& graph,
+                   const rrr::AnyMessage& graph,
                    int32_t* res,
                    TxnOutput* output,
                    rrr::DeferredReply done);
@@ -236,28 +236,28 @@ class ClassicServiceImpl : public ClassicService {
 
   void JanusInquire(const epoch_t& epoch,
                     const txid_t& tid,
-                    MarshallDeputy* p_md_graph,
+                    rrr::AnyMessage* p_md_graph,
                     rrr::DeferredReply done);
 
   void JanusPreAccept(const txid_t& txnid,
                       const rank_t& rank,
                       const vector<SimpleCommand>& cmd,
-                      const MarshallDeputy& md_graph,
+                      const rrr::AnyMessage& md_graph,
                       int32_t* res,
-                      MarshallDeputy* p_md_res_graph,
+                      rrr::AnyMessage* p_md_res_graph,
                       rrr::DeferredReply done);
 
   void JanusPreAcceptWoGraph(const txid_t& txnid,
                              const rank_t& rank,
                              const vector<SimpleCommand>& cmd,
                              int32_t* res,
-                             MarshallDeputy* res_graph,
+                             rrr::AnyMessage* res_graph,
                              rrr::DeferredReply done);
 
   void JanusAccept(const txid_t& txnid,
                    const rank_t& rank,
                    const ballot_t& ballot,
-                   const MarshallDeputy& md_graph,
+                   const rrr::AnyMessage& md_graph,
                    int32_t* res,
                    rrr::DeferredReply done);
 

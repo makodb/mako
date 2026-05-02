@@ -22,19 +22,17 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
         }
         int res;
         TxnOutput output;
-        MarshallDeputy md;
-        fu->get_reply() >> res >> output >> md;
-        // Workstream N L7: AnyMessage-based dispatch. See janus/commo.cc.
-        auto am = rrr::AnyMessage::try_cast(md);
-        verify(am);
-        if (am->is_a<EmptyGraph>()) {
+        rrr::AnyMessage am;
+        fu->get_reply() >> res >> output >> am;
+        // Workstream N L10c-graphs: graph field rides directly as AnyMessage.
+        if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
           auto v = rgraph.CreateV(tid);
           RccTx& info = *v;
 //          info.partition_.insert(par_id);
           verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
-        } else if (auto sp_graph = am->unpack<RccGraph>()) {
+        } else if (auto sp_graph = am.unpack<RccGraph>()) {
           callback(res, output, *sp_graph);
         } else {
           verify(0);
@@ -74,12 +72,11 @@ void RccCommo::SendFinish(parid_t pid,
   };
   fuattr.callback = cb;
   auto proxy = NearestProxyForPartition(pid).second;
-  // Workstream N L7: AnyMessage envelope for graph payload.
+  // Workstream N L10c-graphs: graph field is `AnyMessage` directly.
   auto sp_graph = std::make_shared<RccGraph>(*graph);
-  MarshallDeputy md(rrr::AnyMessage::pack(sp_graph));
   ClassicProxy::RpcRccFinishRequest req;
   req.id = tid;
-  req.md_graph = md;
+  req.md_graph = *rrr::AnyMessage::pack(sp_graph);
   auto fu_result = proxy->async_RccFinish(req, fuattr);
   // Arc auto-released
 }
@@ -122,11 +119,9 @@ void RccCommo::SendInquire(parid_t pid,
       Log_info("Get a error message in reply");
       return;
     }
-    MarshallDeputy md;
-    fu->get_reply() >> md;
-    auto am = rrr::AnyMessage::try_cast(md);
-    verify(am);
-    auto sp_graph = am->unpack<RccGraph>();
+    rrr::AnyMessage am;
+    fu->get_reply() >> am;
+    auto sp_graph = am.unpack<RccGraph>();
     verify(sp_graph);
     callback(*sp_graph);
   };
@@ -171,14 +166,13 @@ void RccCommo::BroadcastCommit(parid_t par_id,
       auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Workstream N L7: AnyMessage envelope for graph payload.
+      // Workstream N L10c-graphs: graph field is `AnyMessage` directly.
       auto sp_graph = std::make_shared<RccGraph>(*graph);
-      MarshallDeputy md(rrr::AnyMessage::pack(sp_graph));
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;
       req.rank = RANK_UNDEFINED;
       req.need_validation = need_validation;
-      req.graph = md;
+      req.graph = *rrr::AnyMessage::pack(sp_graph);
       auto fu_result = proxy->async_JanusCommit(req, fuattr);
       // Arc auto-released
     }

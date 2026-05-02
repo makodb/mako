@@ -11,6 +11,7 @@
 
 #include "procedure.h"
 #include "rcc/tx.h"
+#include "rrr/misc/any_message.hpp"  // L10c-graphs: graph fields are AnyMessage
 namespace janus {
 
 struct ValueTimesPair {
@@ -4958,7 +4959,7 @@ public:
     struct RpcRccDispatchResponse {
         rrr::i32 res;
         TxnOutput output;
-        MarshallDeputy md_graph;
+        AnyMessage md_graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccDispatchResponse& o) {
         ar << o.res;
@@ -4975,7 +4976,7 @@ public:
 
     struct RpcRccFinishRequest {
         cmdid_t id;
-        MarshallDeputy md_graph;
+        AnyMessage md_graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRccFinishRequest& o) {
         ar << o.id;
@@ -5120,7 +5121,7 @@ public:
     struct RpcJanusDispatchResponse {
         rrr::i32 res;
         TxnOutput output;
-        MarshallDeputy ret_graph;
+        AnyMessage ret_graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusDispatchResponse& o) {
         ar << o.res;
@@ -5175,7 +5176,7 @@ public:
         cmdid_t id;
         rank_t rank;
         int32_t need_validation;
-        MarshallDeputy graph;
+        AnyMessage graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusCommitRequest& o) {
         ar << o.id;
@@ -5256,7 +5257,7 @@ public:
     }
 
     struct RpcJanusInquireResponse {
-        MarshallDeputy ret_graph;
+        AnyMessage ret_graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusInquireResponse& o) {
         ar << o.ret_graph;
@@ -5304,7 +5305,7 @@ public:
         cmdid_t txn_id;
         rank_t rank;
         std::vector<SimpleCommand> cmd;
-        MarshallDeputy graph;
+        AnyMessage graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusPreAcceptRequest& o) {
         ar << o.txn_id;
@@ -5323,7 +5324,7 @@ public:
 
     struct RpcJanusPreAcceptResponse {
         rrr::i32 res;
-        MarshallDeputy ret_graph;
+        AnyMessage ret_graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusPreAcceptResponse& o) {
         ar << o.res;
@@ -5356,7 +5357,7 @@ public:
 
     struct RpcJanusPreAcceptWoGraphResponse {
         rrr::i32 res;
-        MarshallDeputy ret_graph;
+        AnyMessage ret_graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusPreAcceptWoGraphResponse& o) {
         ar << o.res;
@@ -5406,7 +5407,7 @@ public:
         cmdid_t txn_id;
         rrr::i32 rank;
         ballot_t ballot;
-        MarshallDeputy graph;
+        AnyMessage graph;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcJanusAcceptRequest& o) {
         ar << o.txn_id;
