@@ -2610,7 +2610,6 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       ballot_t term_copy = currentTerm;
       siteid_t follower_id_copy = site_id_;
       siteid_t leader_id_copy = leaderSiteId;
-      parid_t par_id_copy = partition_id_;
       uint64_t commit_index_copy = commitIndex;
 
       // Release mutex before persistence work.
@@ -2641,7 +2640,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
             async_threads_.emplace_back(
               std::thread([this, entries = std::move(entries_to_persist),
                          log_index_for_durable_ack, term_copy, follower_id_copy,
-                         leader_id_copy, par_id_copy, commit_index_copy, done]() {
+                         leader_id_copy, commit_index_copy, done]() {
               // Persist all log entries
               for (const auto& entry : entries) {
                 PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
@@ -2650,12 +2649,12 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
               // Also persist commit index (async is fine for commit index)
               PersistCommitIndex(commit_index_copy, "OnAppendEntries: async follower commit");
 
-              // Send AppendEntriesDurable RPC to leader
-              auto c = commo();
-              if (c != nullptr) {
-                c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
-                                            follower_id_copy, log_index_for_durable_ack);
-              }
+              // Send durable-ack via transport facade (Phase 8.1e).
+              janus::raft::AppendEntriesDurableReq durable_req{};
+              durable_req.term = term_copy;
+              durable_req.follower_id = follower_id_copy;
+              durable_req.last_log_index = log_index_for_durable_ack;
+              transport_->send_append_entries_durable(leader_id_copy, std::move(durable_req));
               done->set(true);
             }), done);
           }

@@ -40,3 +40,25 @@ leaf with dedicated tests.
   - `tests/raft_channel_transport_test.cc` now validates
     `send_install_snapshot` round-trip success.
   - Same test validates default fallback reply when the direction is dropped.
+
+## Leaf 2 (AppendEntriesDurable) Design Rationale
+
+- Goal: remove direct `commo()->SendAppendEntriesDurable(...)` usage from the
+  follower async-persistence path in `RaftServer::OnAppendEntries`.
+- The durable-ack shape maps directly to transport message types:
+  `AppendEntriesDurableReq{term, follower_id, last_log_index}`.
+- This leaf is behavior-preserving:
+  - async persistence thread still persists entries + commit index first,
+  - durable ack is still fire-and-forget,
+  - leader-side speculative durability bookkeeping is unchanged.
+
+## Leaf 2 User/Developer Notes
+
+- `OnAppendEntries` now calls
+  `transport_->send_append_entries_durable(leader_id, req)` from the async
+  persistence thread, instead of reaching into `RaftCommo` directly.
+- Additional test coverage in `tests/raft_channel_transport_test.cc` now
+  asserts:
+  - append-durable RPC is delivered in the healthy direction, and
+  - append-durable RPC is dropped (no receiver-side count increment) when the
+    direction is fault-injected.

@@ -529,8 +529,14 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   fallback in `test_raft_channel_transport`. Also bounded
   `RrrTransportAdapter::send_install_snapshot` wait to 1s to avoid
   indefinite stalls in this synchronous call path.
-- [ ] Line 2589 `SendAppendEntriesDurable` → `transport_->send_append_entries_durable`
-  (fire-and-forget).
+- [x] Line 2589 `SendAppendEntriesDurable` → `transport_->send_append_entries_durable`
+  (fire-and-forget). [26:05:02, 09:20] Follower async-persistence path in
+  `OnAppendEntries` now sends durable-ack through
+  `transport_->send_append_entries_durable(...)` with
+  `AppendEntriesDurableReq{term,follower_id,last_log_index}`, removing the
+  direct `commo()->SendAppendEntriesDurable(...)` call from `RaftServer`.
+  Extended `test_raft_channel_transport` to explicitly assert
+  append-durable delivery and dropped-direction behavior.
 - [ ] `server.h:408` `SendVoteDurable` → `transport_->send_vote_durable`
   (fire-and-forget).
 - [ ] `TimeoutNow` call sites → `transport_->send_timeout_now`.
