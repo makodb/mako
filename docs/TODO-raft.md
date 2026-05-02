@@ -858,7 +858,16 @@ on the 5-server deptran topology.
     and wired `test_raft_testconf_cluster` into CMake.
   - Verified gate with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
   - Breakdown doc: `docs/dev/raft_phase8_6_breakdown.md`.
-- [ ] 8.6.b kill/restart parity and reconnect semantics hardening.
+- [x] 8.6.b kill/restart parity and reconnect semantics hardening. [26:05:02, 15:43]
+  - Cluster-mode `Reconnect`/`Restart` now re-apply intended disconnected nodes
+    after switchboard fault reset, so one reconnect/restart cannot silently heal
+    unrelated disconnect faults.
+  - Cluster-mode `Kill`/`Restart` now synchronize on `disconnect_mtx_` for
+    consistent fault-state bookkeeping.
+  - Added regression tests:
+    `ReconnectPreservesOtherDisconnectsInClusterBackend`,
+    `KillRestartPreservesOtherDisconnectsInClusterBackend`.
+  - Verified gate with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
 - [ ] 8.6.c switchboard per-direction undrop support (`undrop_direction`).
 - [ ] 8.6.d run/enable the planned RaftLab subset against `RaftTestConfig(TestCluster&)`.
 - [ ] **Commit**: `raft: phase 8.6 — port RaftTestConfig to TestCluster`.

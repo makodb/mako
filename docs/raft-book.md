@@ -1001,6 +1001,9 @@ constructor for legacy lab/deptran flows. Core helpers (`OneLeader`,
 `Shutdown`) route to `TestCluster` nodes when that constructor is used.
 `test_raft_testconf_cluster` validates this path with agreement and
 disconnect/reconnect quorum-control cases.
+Restart/reconnect paths also preserve unrelated disconnected peers by
+re-applying fault intents after switchboard resets, with dedicated regression
+coverage for reconnect and kill/restart parity.
 
 ### Speculative State Queries (for tests)
 

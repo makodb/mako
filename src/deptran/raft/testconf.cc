@@ -760,12 +760,7 @@ void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
 void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
   if (use_test_cluster_) {
     verify(test_cluster_ != nullptr);
-    test_cluster_->reset_faults();
-    for (const auto& pair : disconnected_) {
-      if (pair.first != svr && pair.second) {
-        test_cluster_->disconnect(pair.first);
-      }
-    }
+    reapplyClusterDisconnectFaults(svr, true);
     return;
   }
 
@@ -782,6 +777,23 @@ void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
     it->second->svr_->Reconnect();
   } else if (!ignore) {
     verify(0);
+  }
+}
+
+void RaftTestConfig::reapplyClusterDisconnectFaults(siteid_t keep_connected_svr,
+                                                    bool has_keep_connected) {
+  verify(use_test_cluster_);
+  verify(test_cluster_ != nullptr);
+
+  test_cluster_->reset_faults();
+  for (const auto& pair : disconnected_) {
+    if (!pair.second) {
+      continue;
+    }
+    if (has_keep_connected && pair.first == keep_connected_svr) {
+      continue;
+    }
+    test_cluster_->disconnect(pair.first);
   }
 }
 
@@ -803,6 +815,7 @@ RaftServer *RaftTestConfig::GetServer(siteid_t svr) {
 
 void RaftTestConfig::Kill(siteid_t svr) {
   if (use_test_cluster_) {
+    std::lock_guard<std::mutex> lk(disconnect_mtx_);
     verify(test_cluster_ != nullptr);
     test_cluster_->kill(svr);
     disconnected_[svr] = true;
@@ -856,9 +869,11 @@ void RaftTestConfig::Kill(siteid_t svr) {
 
 void RaftTestConfig::Restart(siteid_t svr) {
   if (use_test_cluster_) {
+    std::lock_guard<std::mutex> lk(disconnect_mtx_);
     verify(test_cluster_ != nullptr);
     test_cluster_->restart(svr);
     disconnected_[svr] = false;
+    reapplyClusterDisconnectFaults(svr, true);
     return;
   }
 
