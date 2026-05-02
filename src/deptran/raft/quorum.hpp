@@ -3,8 +3,7 @@
 /**
  * @file quorum.hpp
  * @brief `RaftQuorum<Reply>` — N-replies-with-timeout aggregator used by
- *        phase-8.1+ raft outbound paths in place of the legacy
- *        `RaftVoteQuorumEvent` / `SendAppendEntriesResults` machinery.
+ *        phase-8.1+ raft outbound paths in place of legacy quorum wrappers.
  *
  * Threading model:
  *  - `on_reply` is called from sub-fibers that completed their per-peer

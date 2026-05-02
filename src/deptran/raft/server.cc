@@ -70,7 +70,6 @@
 //   janus::View::View: [safe, (...) -> owned]
 //   janus::View::operator=: [safe, (&'a mut, const &'a) -> &'a mut]
 //   janus::TxLogServer::DestroyTx: [safe, (&'a mut, uint64_t) -> void]
-//   janus::RaftCommo::SendAppendEntries2: [safe, (...) -> owned]
 //   janus::RaftCommo::BroadcastVote: [safe, (...) -> owned]
 // }
 

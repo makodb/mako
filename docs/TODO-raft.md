@@ -498,15 +498,24 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   under lock and sends via `transport_->send_empty_append_entries(...)`
   outside `mtx_`; added lab regression `testLeadershipTransferPiggybackTransport`
   covering transfer with a disconnected non-target follower.
-- [ ] **Leaf 4**: Delete `SendAppendEntriesResults` from `commo.h` +
+- [x] **Leaf 4**: Delete `SendAppendEntriesResults` from `commo.h` +
   `commo.cc` + every include site. Delete `SendAppendEntries2` /
   `SendAppendEntries` member definitions from RaftCommo (the
-  `*Cb` variants stay as the rrr-side callback entry).
-- [ ] Gate: lab test tests 1-60 all pass. Watch TEST 3 (Basic
+  `*Cb` variants stay as the rrr-side callback entry). [26:05:02, 08:55]
+  Removed `SendAppendEntriesResults`, `AppendEntriesResponse`,
+  `RaftCommo::SendAppendEntries2`, and `RaftCommo::SendAppendEntries`
+  from commo headers/implementation. Added compile-time guard test
+  `test_raft_commo_legacy_api_removed` to assert the two legacy member
+  functions are no longer exposed.
+- [x] Gate: lab test tests 1-60 all pass. Watch TEST 3 (Basic
   agreement), TEST 7 (Concurrent starts), TEST 11 (Figure 8),
-  TEST 60 (HeartbeatLoop triggers InstallSnapshot).
-- [ ] **Commit**: `raft: phase 8.1d — migrate SendAppendEntries /
-  SendAppendEntries2 to per-peer transport_->send_append_entries`.
+  TEST 60 (HeartbeatLoop triggers InstallSnapshot). [26:05:02, 08:55]
+  Verified with `ctest -R '^(test_raft_.*|raft_lab_standalone)$'` (11/11 pass).
+  Full lab driver `./build/deptran_server -f config/raft_lab_test.yml` reached
+  `RC=0` on rerun (log `/tmp/raft_lab_full_20260502_085204.log`); one prior run
+  hit known preexisting intermittent `RC=139` around TEST 63.
+- [x] **Commit**: `raft: phase 8.1d — migrate SendAppendEntries /
+  SendAppendEntries2 to per-peer transport_->send_append_entries`. [26:05:02, 08:55]
 
 ### 8.1.e — Migrate the remaining outbound sites
 
@@ -809,7 +818,7 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.1a — RaftQuorum primitive [26:04:25, 12:30]
 - [x] Phase 8.1b — TransportProxy member on RaftServer [26:05:02, 05:04]
 - [x] Phase 8.1c — migrate BroadcastVote [26:05:02, 05:42]
-- [ ] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2
+- [x] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2 [26:05:02, 08:55]
 - [ ] Phase 8.1e — retire remaining commo() outbound sites
 - [ ] Phase 8.2 — RaftServerDispatcher
 - [ ] Phase 8.3 — RaftServiceImpl → DispatcherProxy

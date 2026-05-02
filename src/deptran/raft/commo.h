@@ -59,18 +59,6 @@ class RaftVoteQuorumEvent: public QuorumEvent {
   }
 };
 
-// @unsafe - contains std::recursive_mutex (non-borrow-checked type)
-class SendAppendEntriesResults {
- public:
-  std::recursive_mutex mtx;
-  bool done = false;
-  uint64_t ok = 0;
-  uint64_t followerTerm = 0;
-  uint64_t followerLastLogIndex = 0;
-  uint64_t followerAckType = 0;  // 0=Memory, 1=Durable
-  bool empty = true;
-};
-
 /**
  * AckType - Speculative Replication acknowledgment type
  *
@@ -80,16 +68,6 @@ class SendAppendEntriesResults {
 enum class AckType : uint64_t {
   Memory = 0,
   Durable = 1
-};
-
-// Response data for async AppendEntries RPC
-// Uses shared_ptr semantics to ensure memory validity when callback fires
-struct AppendEntriesResponse {
-  shared_ptr<IntEvent> event;
-  uint64_t status = 0;
-  uint64_t term = 0;
-  uint64_t last_log_index = 0;
-  uint64_t ack_type = 0;  // 0=Memory, 1=Durable (see AckType enum)
 };
 
 
@@ -114,38 +92,6 @@ friend class RaftProxy;
   // @safe
   RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
 
-  // @safe
-  // Returns shared_ptr to response data - callback captures this to ensure memory validity
-  shared_ptr<AppendEntriesResponse>
-  SendAppendEntries2(siteid_t site_id,
-                    parid_t par_id,
-                    slotid_t slot_id,
-                    ballot_t ballot,
-                    bool isLeader,
-                    siteid_t leader_site_id,
-                    uint64_t currentTerm,
-                    uint64_t prevLogIndex,
-                    uint64_t prevLogTerm,
-                    uint64_t commitIndex,
-                    shared_ptr<Marshallable> cmd,
-                    uint64_t cmdLogTerm
-                    );
-
-  // @unsafe - C-style cast, raw pointers
-  shared_ptr<SendAppendEntriesResults>
-  SendAppendEntries(siteid_t site_id,
-                    parid_t par_id,
-                    slotid_t slot_id,
-                    ballot_t ballot,
-                    bool isLeader,
-                    siteid_t leader_site_id,
-                    uint64_t currentTerm,
-                    uint64_t prevLogIndex,
-                    uint64_t prevLogTerm,
-                    uint64_t commitIndex,
-                    shared_ptr<Marshallable> cmd,
-                    uint64_t cmdLogTerm,
-                    bool trigger_election_now = false);
   // @unsafe - C-style cast
   shared_ptr<RaftVoteQuorumEvent>
   BroadcastVote(parid_t par_id,
@@ -277,12 +223,9 @@ friend class RaftProxy;
   // ==========================================================================
   // Phase 2.5 — callback-shaped variants of the quorum RPCs.
   //
-  // The existing SendAppendEntries / BroadcastVote methods return
-  // shared_ptr<QuorumEvent> shapes that fit the fiber-based wait path in
-  // RaftServer. The new *Cb variants deliver each peer's reply via a plain
-  // callback, which is the shape the proxy::TransportFacade expects. Both
-  // variants share the same underlying rrr async_* call site; the *Cb
-  // variants are merely a different projection of the reply.
+  // BroadcastVote returns a quorum-event shape for the legacy election path.
+  // The newer *Cb variants deliver each peer's reply via a plain callback,
+  // which is the shape the proxy::TransportFacade expects.
   // ==========================================================================
 
   // @unsafe - C-style cast, std::function

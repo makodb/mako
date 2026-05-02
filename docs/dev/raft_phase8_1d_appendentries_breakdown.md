@@ -62,3 +62,16 @@ leaf partition above.
   3. Sends each request via `transport_->send_empty_append_entries(...)`.
 - This preserves behavior while removing the last leadership-transfer
   dependency on the legacy append-results wrapper.
+
+## Leaf 4 Implementation Note (2026-05-02)
+
+- Removed legacy append wrapper APIs from `RaftCommo`:
+  - deleted `SendAppendEntriesResults` helper class,
+  - deleted `AppendEntriesResponse` helper struct,
+  - deleted `RaftCommo::SendAppendEntries2(...)`,
+  - deleted `RaftCommo::SendAppendEntries(...)`.
+- Kept callback-based entry points (`SendAppendEntriesCb`) intact for the
+  rrr transport adapter path.
+- Added compile-time regression test
+  `tests/raft_commo_legacy_api_removed_test.cc` that statically asserts
+  `RaftCommo` no longer exposes `SendAppendEntries2` or `SendAppendEntries`.
