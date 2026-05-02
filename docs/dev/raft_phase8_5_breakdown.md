@@ -130,6 +130,15 @@ Status (c8a):
 - Gate run for this leaf: `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`
   passes.
 
+Status (c8b):
+- Added `RaftTestClusterTest.DisconnectFollowerBlocksCatchupUntilResetFaults`
+  to cover the remaining fault-injection behavior leaf:
+  disconnect one follower, append entries on the leader, verify majority
+  commits while the disconnected follower stays behind, then verify the
+  follower catches up only after `reset_faults()`.
+- Re-ran the full Raft gate (`ctest -R '^(test_raft_.*|raft_lab_standalone)$'`)
+  and confirmed no regressions.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with
@@ -150,5 +159,5 @@ Status (c8a):
 
 ## Remaining split for the large 8.5 node-startup bullet
 
-1. c8b: remaining behavioral gtest (`disconnect` catch-up), then phase 8.5
-   gate + commit.
+1. All c8 behavioral leaves are complete; remaining work is Phase 8.5 commit
+   bookkeeping in `docs/TODO-raft.md`.

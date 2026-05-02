@@ -988,8 +988,8 @@ threads via `OneTimeJob`, and registers a default no-op learner callback so
 frame-less apply threads can safely execute committed entries.
 `AgreementAdvancesCommitIndexOnAllNodes` now covers the in-process
 `DoAgreement`-equivalent path (leader append + cluster-wide commit-index
-advance). The remaining in-process behavior gap is
-disconnect/reconnect catch-up coverage.
+advance). `DisconnectFollowerBlocksCatchupUntilResetFaults` now covers
+disconnect/reconnect catch-up semantics end-to-end.
 Leadership-transfer monitoring teardown was also hardened to join monitor
 threads on shutdown (with self-join guard), preventing test teardown races
 against `mtx_` destruction.

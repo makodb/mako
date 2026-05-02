@@ -816,11 +816,16 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     node observes the entry's `commit_index()` advance.
     [26:05:02, 15:01] Added
     `RaftTestClusterTest.AgreementAdvancesCommitIndexOnAllNodes`.
-  - [ ] `disconnect(follower)` prevents the follower from catching up
+  - [x] `disconnect(follower)` prevents the follower from catching up
     until `reset_faults`.
-- [ ] Gate: the above gtests + `raft_lab_standalone` still runs its
+    [26:05:02, 15:12] Added
+    `RaftTestClusterTest.DisconnectFollowerBlocksCatchupUntilResetFaults`.
+- [x] Gate: the above gtests + `raft_lab_standalone` still runs its
   4 legacy cases.
-- [ ] **Commit**: `raft: phase 8.5 — TestCluster runs real RaftServers`.
+  [26:05:02, 15:13] Verified with
+  `ctest -R '^(test_raft_.*|raft_lab_standalone)$'`.
+- [x] **Commit**: `raft: phase 8.5 — TestCluster runs real RaftServers`.
+  [26:05:02, 15:14] Closed with disconnect/catch-up leaf + full gate run.
 
 ### 8.5 risks
 
@@ -964,7 +969,7 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.2 — RaftServerDispatcher [26:05:02]
 - [x] Phase 8.3 — RaftServiceImpl → DispatcherProxy [26:05:02]
 - [ ] Phase 8.4 — storage proxies (optional)
-- [ ] Phase 8.5 — TestCluster with real RaftServer
+- [x] Phase 8.5 — TestCluster with real RaftServer [26:05:02, 15:14]
 - [ ] Phase 8.6 — port RaftTestConfig to TestCluster
 - [ ] Phase 8.7 — raft_lab_standalone full driver
 - [ ] Phase 8.8 — RaftClock (deferred)

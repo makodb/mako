@@ -37,6 +37,27 @@ siteid_t WaitForSingleLeader(TestCluster& c, std::chrono::milliseconds timeout) 
   return 0;
 }
 
+bool WaitForCommitIndexAtLeast(TestCluster& c,
+                               const std::vector<siteid_t>& sites,
+                               uint64_t target_index,
+                               std::chrono::milliseconds timeout) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    bool all_reached = true;
+    for (auto site_id : sites) {
+      if (c.node(site_id).commit_index() < target_index) {
+        all_reached = false;
+        break;
+      }
+    }
+    if (all_reached) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
+
 shared_ptr<Marshallable> MakeTestCommitCommand(int tx_id) {
   auto cmd = std::make_shared<janus::TpcCommitCommand>();
   auto pieces = std::make_shared<janus::VecPieceData>();
@@ -261,6 +282,57 @@ TEST(RaftTestClusterTest, AgreementAdvancesCommitIndexOnAllNodes) {
   for (auto site_id : c->site_ids()) {
     EXPECT_GE(c->node(site_id).commit_index(), log_index);
   }
+}
+
+TEST(RaftTestClusterTest, DisconnectFollowerBlocksCatchupUntilResetFaults) {
+  auto c = TestCluster::with_in_memory_transport(3);
+  auto leader_id = WaitForSingleLeader(*c, std::chrono::seconds(6));
+  ASSERT_NE(leader_id, 0u);
+  ASSERT_NE(c->node(leader_id).server(), nullptr);
+
+  siteid_t disconnected_follower = 0;
+  siteid_t connected_follower = 0;
+  for (auto site_id : c->site_ids()) {
+    if (site_id == leader_id) {
+      continue;
+    }
+    if (disconnected_follower == 0) {
+      disconnected_follower = site_id;
+    } else {
+      connected_follower = site_id;
+    }
+  }
+  ASSERT_NE(disconnected_follower, 0u);
+  ASSERT_NE(connected_follower, 0u);
+
+  c->disconnect(disconnected_follower);
+
+  uint64_t last_log_index = 0;
+  for (int i = 0; i < 3; ++i) {
+    auto cmd = MakeTestCommitCommand(/*tx_id=*/9100 + i);
+    uint64_t log_index = 0;
+    uint64_t term = 0;
+    ASSERT_TRUE(c->node(leader_id).server()->Start(cmd, &log_index, &term));
+    ASSERT_GT(log_index, 0u);
+    last_log_index = log_index;
+  }
+
+  ASSERT_GT(last_log_index, 0u);
+  ASSERT_TRUE(WaitForCommitIndexAtLeast(
+      *c, {leader_id, connected_follower}, last_log_index,
+      std::chrono::seconds(6)));
+
+  auto behind_deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(1200);
+  while (std::chrono::steady_clock::now() < behind_deadline) {
+    EXPECT_LT(c->node(disconnected_follower).commit_index(), last_log_index);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  c->reset_faults();
+  ASSERT_TRUE(WaitForCommitIndexAtLeast(
+      *c, {disconnected_follower}, last_log_index, std::chrono::seconds(6)));
+  EXPECT_GE(c->node(disconnected_follower).commit_index(), last_log_index);
 }
 
 TEST(RaftTestClusterTest, RealServerConfigIsBootstrappedFromClusterSites) {
