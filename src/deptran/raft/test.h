@@ -227,6 +227,9 @@ class RaftLabTest {
   // Test leadership transfer timeout (preferred replica crashes before winning)
   int testLeadershipTransferTimeout(void);
 
+  // Test piggybacked leadership transfer path with a disconnected replica
+  int testLeadershipTransferPiggybackTransport(void);
+
   // Test durable ack loss: specCommitIndex advances but securedLogIndex doesn't
   int testDurableAckLoss(void);
 

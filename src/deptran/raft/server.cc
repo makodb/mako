@@ -3182,8 +3182,7 @@ void RaftServer::InitiateLeadershipTransfer() {
   }
 
   siteid_t target_site_id;
-  parid_t par_id;
-  uint64_t current_term_snapshot;
+  std::vector<std::pair<siteid_t, janus::raft::EmptyAppendEntriesReq>> transfer_heartbeats;
 
   // ============================================================================
   // PIGGYBACKED LEADERSHIP TRANSFER (Approach 2)
@@ -3193,9 +3192,6 @@ void RaftServer::InitiateLeadershipTransfer() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
     target_site_id = preferred_leader_site_id_;
-    par_id = partition_id_;
-    current_term_snapshot = currentTerm;
-
     // Mark transfer as in progress - this will suppress elections on non-preferred replicas
     transferring_leadership_ = true;
     leadership_transfer_start_time_ = Time::now();
@@ -3225,25 +3221,25 @@ void RaftServer::InitiateLeadershipTransfer() {
       // - Non-preferred replicas: Will activate election suppression
       bool trigger_election = true;  // Signal transfer to ALL replicas
 
-      // @unsafe
-      {
-      commo()->SendAppendEntries(
-        peer_site_id,
-        partition_id_,
-        slot,
-        ballot,
-        true,
-        site_id_,
-        currentTerm,
-        prevLogIndex,
-        prevLogTerm,
-        commitIndex,
-        nullptr,
-        0,
-        trigger_election
-      );
-      }
+      janus::raft::EmptyAppendEntriesReq req{};
+      req.slot = slot;
+      req.ballot = ballot;
+      req.leader_current_term = currentTerm;
+      req.leader_site_id = site_id_;
+      req.leader_prev_log_index = prevLogIndex;
+      req.leader_prev_log_term = prevLogTerm;
+      req.leader_commit_index = commitIndex;
+      req.trigger_election_now = trigger_election;
+      transfer_heartbeats.emplace_back(peer_site_id, std::move(req));
     }
+  }
+
+  // Send transfer-trigger heartbeats outside mtx_ so we never block leader
+  // state transitions while waiting on transport RPC timeouts.
+  for (auto& peer_req : transfer_heartbeats) {
+    (void)transport_->send_empty_append_entries(
+        peer_req.first,
+        std::move(peer_req.second));
   }
 
   // Sleep briefly to ensure the RPC library has time to send the packets.

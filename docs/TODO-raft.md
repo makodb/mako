@@ -491,9 +491,13 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   response reconciliation logic. Added `test_raft_test_cluster` coverage
   for append/non-empty and heartbeat append transport success +
   dropped-link fallback.
-- [ ] **Leaf 3**: Migrate leadership-transfer heartbeat trigger path in
+- [x] **Leaf 3**: Migrate leadership-transfer heartbeat trigger path in
   `InitiateLeadershipTransfer()` from `commo()->SendAppendEntries(...)`
-  to transport facade calls.
+  to transport facade calls. [2026-05-02] `InitiateLeadershipTransfer()`
+  now builds per-peer `EmptyAppendEntriesReq{trigger_election_now=true}`
+  under lock and sends via `transport_->send_empty_append_entries(...)`
+  outside `mtx_`; added lab regression `testLeadershipTransferPiggybackTransport`
+  covering transfer with a disconnected non-target follower.
 - [ ] **Leaf 4**: Delete `SendAppendEntriesResults` from `commo.h` +
   `commo.cc` + every include site. Delete `SendAppendEntries2` /
   `SendAppendEntries` member definitions from RaftCommo (the

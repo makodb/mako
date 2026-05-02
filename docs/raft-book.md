@@ -412,14 +412,22 @@ This eliminates leadership churn under load while still allowing fast failover w
 
 ## 9. Leadership Transfer
 
-### TimeoutNow Protocol
+### Piggybacked Transfer Protocol
 
 When a non-preferred leader detects that the preferred replica has caught up:
 
-1. **Monitor**: Non-preferred leader checks `match_index_[preferred] == lastLogIndex`
-2. **Transfer**: Send `TimeoutNow` RPC to preferred replica
-3. **Immediate election**: Preferred replica bypasses election timeout, calls `RequestVote()` immediately
-4. **Win**: Preferred replica wins due to election timeout bias (<1 second total)
+1. **Monitor**: Non-preferred leader checks transfer readiness (`preferred` present in
+   `match_index_` and caught up to committed state).
+2. **Transfer signal fan-out**: `InitiateLeadershipTransfer()` sends
+   `EmptyAppendEntriesReq` with `trigger_election_now=true` to all peers via
+   `transport_->send_empty_append_entries(...)`.
+3. **Preferred election start**: Preferred replica receives the signal, waits
+   ~30ms (to reduce storms), then calls `RequestVote()`.
+4. **Leader step-down**: Old leader steps down immediately after sending transfer
+   heartbeats, allowing the preferred replica to take over.
+
+`TimeoutNow` RPC remains implemented and tested, but the main transfer path now
+uses piggybacked trigger signals on empty AppendEntries.
 
 ### Safety
 

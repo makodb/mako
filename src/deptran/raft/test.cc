@@ -148,7 +148,8 @@ int RaftLabTest::Run(void) {
   if (!failed) {
     Log_info("Running leadership transfer timeout test");
     failed =
-        TEST_EXPAND(testLeadershipTransferTimeout());          // Test 70
+        TEST_EXPAND(testLeadershipTransferTimeout())           // Test 70
+        || TEST_EXPAND(testLeadershipTransferPiggybackTransport()); // Test 70.1
   }
 
   // Durable ack loss test
@@ -6340,6 +6341,109 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
   Log_info("TEST 70: Full cluster agreement at index %lu", final_idx);
 
   Log_info("TEST 70: Leadership transfer timeout PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 70.1: testLeadershipTransferPiggybackTransport
+// Execute InitiateLeadershipTransfer() while one non-target follower is
+// disconnected; verify leader steps down, preferred replica wins election, and
+// the cluster still makes progress.
+// ============================================================================
+// @unsafe - Uses test infrastructure, direct Raft state access, and disconnect/reconnect
+int RaftLabTest::testLeadershipTransferPiggybackTransport(void) {
+  Init2(701, "Leadership transfer piggyback path with disconnected follower");
+
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  // Establish a stable replicated prefix before transfer.
+  for (int i = 1; i <= 3; ++i) {
+    uint64_t idx = config_->DoAgreement(7050 + i, NSERVERS, true);
+    Assert2(idx > 0, "Failed to commit baseline entry %d", i);
+  }
+
+  // Re-check leader after baseline commits.
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  siteid_t preferred = config_->getNextServerId(leader, 1);
+  siteid_t dropped = preferred;
+  bool found_dropped = false;
+  for (int offset = 2; offset < NSERVERS; ++offset) {
+    siteid_t candidate = config_->getNextServerId(leader, offset);
+    if (candidate != leader && candidate != preferred) {
+      dropped = candidate;
+      found_dropped = true;
+      break;
+    }
+  }
+
+  Assert2(preferred != leader, "Preferred replica must differ from leader");
+  Assert2(found_dropped, "Failed to choose a non-target follower to disconnect");
+
+  auto leader_server = config_->GetServer(leader);
+  Assert2(leader_server != nullptr, "Leader server should not be null");
+
+  // Configure a consistent preferred leader view across replicas without
+  // starting background transfer threads from SetPreferredLeader().
+  for (int i = 0; i < NSERVERS; ++i) {
+    siteid_t sid = config_->getServerIdByIndex(i);
+    auto server = config_->GetServer(sid);
+    Assert2(server != nullptr, "Server %d should not be null", sid);
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->preferred_leader_site_id_ = preferred;
+    server->transferring_leadership_ = false;
+  }
+
+  // Wait until the preferred replica is caught up on the current leader.
+  bool preferred_caught_up = false;
+  for (int retry = 0; retry < 40; ++retry) {
+    {
+      std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
+      auto it = leader_server->match_index_.find(preferred);
+      preferred_caught_up =
+          leader_server->IsLeader() &&
+          it != leader_server->match_index_.end() &&
+          it->second >= leader_server->commitIndex;
+    }
+    if (preferred_caught_up) break;
+    Fiber::sleep(HEARTBEAT_INTERVAL);
+  }
+  Assert2(preferred_caught_up,
+          "Preferred replica %d never caught up before transfer", preferred);
+
+  // Drop one non-target follower. Transfer should still complete with quorum.
+  config_->Disconnect(dropped);
+
+  uint64_t transfer_start_us = Time::now();
+  leader_server->InitiateLeadershipTransfer();
+  uint64_t transfer_elapsed_us = Time::now() - transfer_start_us;
+  Assert2(transfer_elapsed_us < ELECTIONTIMEOUT,
+          "InitiateLeadershipTransfer took too long: %lu us", transfer_elapsed_us);
+
+  Assert2(!leader_server->IsLeader(),
+          "Old leader %d should step down immediately after transfer", leader);
+
+  int new_leader = config_->OneLeader(preferred);
+  Assert2(new_leader == preferred,
+          "Preferred replica %d should win transfer election, got %d",
+          preferred, new_leader);
+
+  // Cluster must still progress while one follower remains disconnected.
+  uint64_t idx_partial = config_->DoAgreement(7060, NSERVERS - 1, true);
+  Assert2(idx_partial > 0,
+          "Cluster failed to commit with one disconnected follower");
+
+  config_->Reconnect(dropped);
+  Fiber::sleep(HEARTBEAT_INTERVAL * 3);
+
+  // After healing the partition, full-cluster agreement should still work.
+  uint64_t idx_full = config_->DoAgreement(7061, NSERVERS, true);
+  Assert2(idx_full > 0, "Cluster failed to commit after reconnect");
+
+  Log_info("TEST 70.1: Piggyback leadership transfer path PASSED!");
   Passed2();
 }
 

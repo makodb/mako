@@ -50,3 +50,15 @@ leaf partition above.
 - Full raft gates (`test_raft_*`, `raft_lab_standalone`, and
   `deptran_server -f config/raft_lab_test.yml`) remain mandatory after each
   leaf.
+
+## Leaf 3 Implementation Note (2026-05-02)
+
+- `RaftServer::InitiateLeadershipTransfer()` no longer calls
+  `commo()->SendAppendEntries(...)` for transfer-trigger heartbeats.
+- The method now:
+  1. Builds `EmptyAppendEntriesReq` objects (`trigger_election_now=true`)
+     for each peer while holding `mtx_`.
+  2. Releases `mtx_`.
+  3. Sends each request via `transport_->send_empty_append_entries(...)`.
+- This preserves behavior while removing the last leadership-transfer
+  dependency on the legacy append-results wrapper.
