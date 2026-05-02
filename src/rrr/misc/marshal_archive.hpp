@@ -955,38 +955,89 @@ class SerializableRegistry {
 };
 
 // ---------------------------------------------------------------------------
-// Layer 5 (POC): auto-derived kind tags.
+// Layer 5: declaration-order kind tags via a central TypeList.
 //
-// `type_kind<T>()` lives here so any layer (including the bridge
-// header) can reference it.  The CRTP `Serializable<Derived>` helper
-// that *uses* `type_kind<T>()` to auto-register lives in
-// `marshal_serializable_bridge.hpp` because registration goes through
-// `reg_serializable_in_deputy<T>` (which threads the wire-decode path
-// via `MarshallDeputy::reg_initializer` + `SerializableMarshallableAdapter`).
-// ---------------------------------------------------------------------------
+// Mirrors Rust's `enum Foo { A(...), B(...), ... }` + bincode pattern,
+// where each variant's wire discriminant is derived from declaration
+// order in the enum.  In C++, the "central enum" is a `TypeList<...>`
+// at namespace scope:
+//
+//   namespace janus {
+//   class EmptyGraph;
+//   class RccGraph;
+//   class TpcCommitCommand;
+//   // ...all forward-declared
+//
+//   using AllPayloads = rrr::TypeList<
+//       EmptyGraph,
+//       RccGraph,
+//       TpcCommitCommand,
+//       // ...
+//   >;
+//   }
+//
+// `TypeList<Ts...>::index_of<T>()` returns T's position in the list as
+// a constexpr int32_t.  Each Serializable type's kind is its position.
+//
+// Properties:
+//   * Cross-compiler / cross-machine deterministic — index is purely
+//     a property of declaration order in source.
+//   * Zero collision risk — distinct types get distinct indices.
+//   * Rename-stable — renaming `TpcCommitCommand` doesn't change its
+//     position in the list, so its kind is unchanged.
+//   * Backward-compat by appending — adding a new type at the END of
+//     the list assigns it the next available kind; existing types keep
+//     theirs.  Reordering or removing is a wire-break.
+//
+// This replaces the prior approaches:
+//   * Manual `static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_X`
+//     (per-type constant + central int enum) — the per-type constant
+//     and the central enum collapse into the single TypeList.
+//   * FNV-1a hash of `typeid(T).name()` (the previous POC) — replaced
+//     because hashing is implementation-dependent (mangled name format)
+//     and rename-fragile.
 
-// FNV-1a 32-bit hash of `typeid(T).name()`, cached as a static
-// per-instantiation.  Returns the same value for every call within a
-// process, but the value is implementation-dependent (mangled type
-// name) — fine for in-process / same-build wire framing, NOT for
-// stable cross-platform identifiers.
-template<typename T>
-inline int32_t type_kind() noexcept {
-  static const int32_t cached = []() {
-    const char* name = typeid(T).name();
-    constexpr uint32_t kFnvOffset = 2166136261u;
-    constexpr uint32_t kFnvPrime  = 16777619u;
-    uint32_t h = kFnvOffset;
-    for (const char* p = name; *p != '\0'; ++p) {
-      h ^= static_cast<uint8_t>(*p);
-      h *= kFnvPrime;
+// `TypeList<Ts...>` — variadic compile-time type list with index lookup.
+// Follows the standard `std::tuple`-style variadic pattern but exposes
+// only the operations we need.
+//
+// Indices start at 1 (not 0) — position 0 is reserved for
+// `MarshallDeputy::UNKNOWN`, which `MarshallDeputy::set_marshallable`
+// rejects as a sentinel "kind unset" value.  So the first element of
+// the list has `index_of<...>() == 1`.  Types not in the list resolve
+// to 0 (UNKNOWN), which surfaces as a `verify(0)`-grade error at
+// registration / set_marshallable time.
+template<typename... Ts>
+struct TypeList {
+  static constexpr std::size_t size = sizeof...(Ts);
+
+  // Returns T's 1-indexed position in `Ts...`, or 0 if T is not in
+  // the list.  Constexpr so `kind()` etc. inline to a literal.
+  template<typename T>
+  static constexpr int32_t index_of() noexcept {
+    return index_of_impl<T, 1, Ts...>();
+  }
+
+  // Returns true iff `T` appears in `Ts...`.
+  template<typename T>
+  static constexpr bool contains() noexcept {
+    return index_of<T>() != 0;
+  }
+
+ private:
+  template<typename T, int32_t I>
+  static constexpr int32_t index_of_impl() noexcept {
+    return 0;  // T not in list — surfaces as UNKNOWN sentinel
+  }
+
+  template<typename T, int32_t I, typename Head, typename... Rest>
+  static constexpr int32_t index_of_impl() noexcept {
+    if constexpr (std::is_same_v<T, Head>) {
+      return I;
+    } else {
+      return index_of_impl<T, I + 1, Rest...>();
     }
-    // Reserve 0 for "UNKNOWN" / unset; if the hash collides with 0,
-    // mix in 1.  (Vanishingly unlikely but worth the one branch.)
-    if (h == 0u) h = 1u;
-    return static_cast<int32_t>(h);
-  }();
-  return cached;
-}
+  }
+};
 
 }  // namespace rrr
