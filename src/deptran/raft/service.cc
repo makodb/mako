@@ -38,50 +38,65 @@ using rusty::Result;
 Result<RaftService::RpcVoteResponse, rrr::i32>
 RaftServiceImpl::Vote(const RpcVoteRequest& req) {
   RpcVoteResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.max_ballot = req.cur_term;
     resp.vote_granted = false;
     return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnRequestVote(req.lst_log_idx, req.lst_log_term,
-                     req.site_id, req.cur_term,
-                     &resp.max_ballot, &resp.vote_granted);
+
+  raft::VoteReq dreq{};
+  dreq.last_log_idx = req.lst_log_idx;
+  dreq.last_log_term = req.lst_log_term;
+  dreq.candidate_site_id = req.site_id;
+  dreq.current_term = req.cur_term;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_vote(dreq);
+  resp.max_ballot = dresp.max_ballot;
+  resp.vote_granted = dresp.vote_granted;
   return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcVoteDurableResponse, rrr::i32>
 RaftServiceImpl::VoteDurable(const RpcVoteDurableRequest& req) {
   RpcVoteDurableResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.acknowledged = false;
     return Result<RpcVoteDurableResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnVoteDurable(req.term, req.voter_id, &resp.acknowledged);
+
+  raft::VoteDurableReq dreq{};
+  dreq.term = req.term;
+  dreq.voter_id = req.voter_id;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_vote_durable(dreq);
+  resp.acknowledged = dresp.acknowledged;
   return Result<RpcVoteDurableResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcAppendEntriesResponse, rrr::i32>
 RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
   RpcAppendEntriesResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
     resp.followerAckType = 0;  // Memory
     return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
   }
-  resp.followerAckType = 0;  // Memory — response precedes fsync
-  // @unsafe { MarshallDeputy::inner() returns a std::shared_ptr<Marshallable> }
-  auto cmd = const_cast<MarshallDeputy&>(req.cmd).inner();
-  svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
-                       req.leaderSiteId, req.leaderPrevLogIndex,
-                       req.leaderPrevLogTerm, req.leaderCommitIndex,
-                       cmd, req.leaderNextLogTerm,
-                       &resp.followerAppendOK, &resp.followerCurrentTerm,
-                       &resp.followerLastLogIndex);
+
+  raft::AppendEntriesReq dreq{};
+  dreq.slot = req.slot;
+  dreq.ballot = req.ballot;
+  dreq.leader_current_term = req.leaderCurrentTerm;
+  dreq.leader_site_id = req.leaderSiteId;
+  dreq.leader_prev_log_index = req.leaderPrevLogIndex;
+  dreq.leader_prev_log_term = req.leaderPrevLogTerm;
+  dreq.leader_commit_index = req.leaderCommitIndex;
+  dreq.cmd = req.cmd;
+  dreq.leader_next_log_term = req.leaderNextLogTerm;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_append_entries(dreq);
+  resp.followerAppendOK = dresp.follower_append_ok;
+  resp.followerCurrentTerm = dresp.follower_current_term;
+  resp.followerLastLogIndex = dresp.follower_last_log_index;
+  resp.followerAckType = dresp.follower_ack_type;
   return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
 }
 
@@ -89,54 +104,63 @@ Result<RaftService::RpcEmptyAppendEntriesResponse, rrr::i32>
 RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
   Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader %d", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
     resp.followerAckType = 0;
     return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
   }
-  resp.followerAckType = 0;
-  std::shared_ptr<Marshallable> cmd = nullptr;
-  // OnAppendEntries uses the same fields as the non-empty variant with
-  // cmd == nullptr and leaderNextLogTerm == 0 (heartbeat path).
-  // followerAppendOK/Term/LastLogIndex are shared layout with the non-empty
-  // response, so we can pass pointers directly into our resp struct.
-  svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
-                       req.leaderSiteId, req.leaderPrevLogIndex,
-                       req.leaderPrevLogTerm, req.leaderCommitIndex,
-                       cmd, 0,
-                       &resp.followerAppendOK, &resp.followerCurrentTerm,
-                       &resp.followerLastLogIndex,
-                       req.trigger_election_now);
+
+  raft::EmptyAppendEntriesReq dreq{};
+  dreq.slot = req.slot;
+  dreq.ballot = req.ballot;
+  dreq.leader_current_term = req.leaderCurrentTerm;
+  dreq.leader_site_id = req.leaderSiteId;
+  dreq.leader_prev_log_index = req.leaderPrevLogIndex;
+  dreq.leader_prev_log_term = req.leaderPrevLogTerm;
+  dreq.leader_commit_index = req.leaderCommitIndex;
+  dreq.trigger_election_now = req.trigger_election_now;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_empty_append_entries(dreq);
+  resp.followerAppendOK = dresp.follower_append_ok;
+  resp.followerCurrentTerm = dresp.follower_current_term;
+  resp.followerLastLogIndex = dresp.follower_last_log_index;
+  resp.followerAckType = dresp.follower_ack_type;
   return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcAppendEntriesDurableResponse, rrr::i32>
 RaftServiceImpl::AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) {
   RpcAppendEntriesDurableResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.acknowledged = false;
     return Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnAppendEntriesDurable(req.term, req.follower_id,
-                              req.lastLogIndex, &resp.acknowledged);
+
+  raft::AppendEntriesDurableReq dreq{};
+  dreq.term = req.term;
+  dreq.follower_id = req.follower_id;
+  dreq.last_log_index = req.lastLogIndex;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_append_entries_durable(dreq);
+  resp.acknowledged = dresp.acknowledged;
   return Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcTimeoutNowResponse, rrr::i32>
 RaftServiceImpl::TimeoutNow(const RpcTimeoutNowRequest& req) {
   RpcTimeoutNowResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.followerTerm = 0;
     resp.success = false;
     return Result<RpcTimeoutNowResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnTimeoutNow(req.leaderTerm, req.leaderSiteId,
-                    &resp.followerTerm, &resp.success);
+
+  raft::TimeoutNowReq dreq{};
+  dreq.leader_term = req.leaderTerm;
+  dreq.leader_site_id = req.leaderSiteId;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_timeout_now(dreq);
+  resp.followerTerm = dresp.follower_term;
+  resp.success = dresp.success;
   return Result<RpcTimeoutNowResponse, rrr::i32>::Ok(resp);
 }
 
@@ -145,69 +169,77 @@ RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
   Log_info("[NOTIFY-RESTART] Received restart notification from site %d",
            req.restartedSiteId);
   RpcNotifyRestartResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.acknowledged = false;
     return Result<RpcNotifyRestartResponse, rrr::i32>::Ok(resp);
   }
-  auto commo = svr->commo();
-  if (commo != nullptr) {
-    bool success = commo->ReconnectToSite(req.restartedSiteId,
-                                          svr->partition_id_);
-    resp.acknowledged = success;
-    Log_info("[NOTIFY-RESTART] Reconnected to site %d: %s",
-             req.restartedSiteId, success ? "success" : "failed");
-  } else {
-    resp.acknowledged = false;
-    Log_warn("[NOTIFY-RESTART] commo is null, cannot reconnect to site %d",
-             req.restartedSiteId);
-  }
-  // Invalidate speculative state for the peer that just restarted.
-  svr->OnPeerRestart(req.restartedSiteId);
+
+  raft::NotifyRestartReq dreq{};
+  dreq.restarted_site_id = req.restartedSiteId;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_notify_restart(dreq);
+  resp.acknowledged = dresp.acknowledged;
+  Log_info("[NOTIFY-RESTART] Reconnected to site %d: %s",
+           req.restartedSiteId, dresp.acknowledged ? "success" : "failed");
   return Result<RpcNotifyRestartResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcInstallSnapshotResponse, rrr::i32>
 RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
   RpcInstallSnapshotResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.term_out = 0;
     return Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnInstallSnapshot(req.term, req.leader_id,
-                         req.last_included_index, req.last_included_term,
-                         req.data, &resp.term_out);
+
+  raft::InstallSnapshotReq dreq{};
+  dreq.term = req.term;
+  dreq.leader_id = req.leader_id;
+  dreq.last_included_index = req.last_included_index;
+  dreq.last_included_term = req.last_included_term;
+  dreq.data = req.data;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_install_snapshot(dreq);
+  resp.term_out = dresp.term_out;
   return Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcAddServerResponse, rrr::i32>
 RaftServiceImpl::AddServer(const RpcAddServerRequest& req) {
   RpcAddServerResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.success = false;
     resp.error_msg = "server down";
     resp.leader_hint = 0;
     return Result<RpcAddServerResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnAddServer(req.term, req.new_server_id, req.new_server_addr,
-                   &resp.success, &resp.error_msg, &resp.leader_hint);
+
+  raft::AddServerReq dreq{};
+  dreq.term = req.term;
+  dreq.new_server_id = req.new_server_id;
+  dreq.new_server_addr = req.new_server_addr;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_add_server(dreq);
+  resp.success = dresp.success;
+  resp.error_msg = dresp.error_msg;
+  resp.leader_hint = dresp.leader_hint;
   return Result<RpcAddServerResponse, rrr::i32>::Ok(resp);
 }
 
 Result<RaftService::RpcRemoveServerResponse, rrr::i32>
 RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
   RpcRemoveServerResponse resp{};
-  RaftServer* svr = GetServer();
-  if (svr == nullptr || svr->IsDisconnected()) {
+  if (dispatcher_.is_none()) {
     resp.success = false;
     resp.error_msg = "server down";
     resp.leader_hint = 0;
     return Result<RpcRemoveServerResponse, rrr::i32>::Ok(resp);
   }
-  svr->OnRemoveServer(req.term, req.server_id,
-                      &resp.success, &resp.error_msg, &resp.leader_hint);
+
+  raft::RemoveServerReq dreq{};
+  dreq.term = req.term;
+  dreq.server_id = req.server_id;
+  auto dresp = dispatcher_.as_ref().unwrap()->handle_remove_server(dreq);
+  resp.success = dresp.success;
+  resp.error_msg = dresp.error_msg;
+  resp.leader_hint = dresp.leader_hint;
   return Result<RpcRemoveServerResponse, rrr::i32>::Ok(resp);
 }
 

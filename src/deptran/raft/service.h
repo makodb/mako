@@ -8,7 +8,6 @@
 #include "deptran/procedure.h"
 #include "../command_marshaler.h"
 #include "../rcc_rpc.h"
-#include "server.h"
 #include "dispatcher.hpp"
 #include <atomic>
 #include <mutex>

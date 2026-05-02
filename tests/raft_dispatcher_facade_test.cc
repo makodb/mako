@@ -23,6 +23,8 @@ struct Counts {
   AtomicInt n_timeout{0};
   AtomicInt n_notify_restart{0};
   AtomicInt n_install_snap{0};
+  AtomicInt n_add_server{0};
+  AtomicInt n_remove_server{0};
 };
 
 struct RecordingDispatcher {
@@ -60,6 +62,14 @@ struct RecordingDispatcher {
     counts->n_install_snap.fetch_add(1);
     InstallSnapshotReply r{}; r.term_out = 42; return r;
   }
+  AddServerReply handle_add_server(AddServerReq) {
+    counts->n_add_server.fetch_add(1);
+    AddServerReply r{}; r.success = true; r.leader_hint = 7; return r;
+  }
+  RemoveServerReply handle_remove_server(RemoveServerReq) {
+    counts->n_remove_server.fetch_add(1);
+    RemoveServerReply r{}; r.success = true; r.leader_hint = 9; return r;
+  }
 };
 
 }  // namespace
@@ -85,6 +95,12 @@ TEST(RaftDispatcherFacadeTest, AdapterConformsToFacade) {
   EXPECT_TRUE(nr.acknowledged);
   auto is = proxy->handle_install_snapshot(InstallSnapshotReq{});
   EXPECT_EQ(is.term_out, 42u);
+  auto add = proxy->handle_add_server(AddServerReq{});
+  EXPECT_TRUE(add.success);
+  EXPECT_EQ(add.leader_hint, 7u);
+  auto rem = proxy->handle_remove_server(RemoveServerReq{});
+  EXPECT_TRUE(rem.success);
+  EXPECT_EQ(rem.leader_hint, 9u);
 
   EXPECT_EQ(adapter->counts->n_vote.load(),            1);
   EXPECT_EQ(adapter->counts->n_vote_durable.load(),    1);
@@ -94,4 +110,6 @@ TEST(RaftDispatcherFacadeTest, AdapterConformsToFacade) {
   EXPECT_EQ(adapter->counts->n_timeout.load(),         1);
   EXPECT_EQ(adapter->counts->n_notify_restart.load(),  1);
   EXPECT_EQ(adapter->counts->n_install_snap.load(),    1);
+  EXPECT_EQ(adapter->counts->n_add_server.load(),      1);
+  EXPECT_EQ(adapter->counts->n_remove_server.load(),   1);
 }

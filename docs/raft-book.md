@@ -767,7 +767,8 @@ initialized in `RaftServer::Setup()` via
 Inbound RPC handling now has an explicit dispatcher boundary:
 
 - `RaftServerDispatcher` wraps a `RaftServer*` and implements all
-  `DispatcherFacade` `handle_*` methods.
+  `DispatcherFacade` `handle_*` methods, including membership RPCs
+  (`handle_add_server`, `handle_remove_server`).
 - `make_raft_server_dispatcher(RaftServer*)` returns a `DispatcherProxy`
   used by higher layers to invoke handlers without direct `OnX(...)`
   coupling.
@@ -775,6 +776,10 @@ Inbound RPC handling now has an explicit dispatcher boundary:
   `rusty::Option<raft::DispatcherProxy> dispatcher_` and wires it in
   constructor/restart paths (`UpdateServer`) so dispatcher lifecycle
   tracks server pointer lifecycle.
+- All RaftService fiber-RPC handlers (`Vote`, `AppendEntries`,
+  `NotifyRestart`, `InstallSnapshot`, `AddServer`, `RemoveServer`, etc.)
+  now translate request/response payloads through dispatcher
+  `handle_*` calls instead of invoking `RaftServer::OnX` directly.
 - For null or disconnected servers, handler replies use the same
   failure-default values as `RaftServiceImpl`'s disconnected path.
 - Current validation gate includes

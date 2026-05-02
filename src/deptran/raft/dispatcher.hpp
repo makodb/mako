@@ -58,6 +58,10 @@ struct NotifyRestartReq;
 struct NotifyRestartReply;
 struct InstallSnapshotReq;
 struct InstallSnapshotReply;
+struct AddServerReq;
+struct AddServerReply;
+struct RemoveServerReq;
+struct RemoveServerReply;
 
 // ---------------------------------------------------------------------------
 // Per-method dispatch tags.
@@ -71,6 +75,8 @@ PRO_DEF_MEM_DISPATCH(DpHandleAppendEntriesDurable,  handle_append_entries_durabl
 PRO_DEF_MEM_DISPATCH(DpHandleTimeoutNow,            handle_timeout_now);
 PRO_DEF_MEM_DISPATCH(DpHandleNotifyRestart,         handle_notify_restart);
 PRO_DEF_MEM_DISPATCH(DpHandleInstallSnapshot,       handle_install_snapshot);
+PRO_DEF_MEM_DISPATCH(DpHandleAddServer,             handle_add_server);
+PRO_DEF_MEM_DISPATCH(DpHandleRemoveServer,          handle_remove_server);
 
 // ---------------------------------------------------------------------------
 // DispatcherFacade / DispatcherProxy
@@ -93,6 +99,10 @@ struct DispatcherFacade : pro::facade_builder
         NotifyRestartReply(NotifyRestartReq)>
     ::add_convention<DpHandleInstallSnapshot,
         InstallSnapshotReply(InstallSnapshotReq)>
+    ::add_convention<DpHandleAddServer,
+        AddServerReply(AddServerReq)>
+    ::add_convention<DpHandleRemoveServer,
+        RemoveServerReply(RemoveServerReq)>
     ::build {};
 
 using DispatcherProxy = pro::proxy<DispatcherFacade>;

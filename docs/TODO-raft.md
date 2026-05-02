@@ -666,25 +666,29 @@ and returns the filled `Reply`.
   dispatcher is set after the server is registered). Also included
   `dispatcher.hpp` and added source guard
   `test_raft_service_dispatcher_boundary_guard`.
-- [ ] `src/deptran/raft/service.cc`:
+- [x] `src/deptran/raft/service.cc`: [26:05:02]
   - [x] In the constructor or `UpdateServer()`: call [26:05:02]
     `dispatcher_ = rusty::Some(make_raft_server_dispatcher(svr))`
     when svr is set.
     `service.cc` now also clears the option (`rusty::None`) when
     `new_svr == nullptr`.
-  - Each override method (`Vote`, `VoteDurable`, `AppendEntries`,
+  - [x] Each override method (`Vote`, `VoteDurable`, `AppendEntries`,
     `EmptyAppendEntries`, `AppendEntriesDurable`, `TimeoutNow`,
     `NotifyRestart`, `InstallSnapshot`, `AddServer`, `RemoveServer`):
-    replace the body's `svr->OnX(...)` calls with
-    `return Result<Resp, i32>::Ok(dispatcher_->handle_x(req))`.
-  - The null/disconnected guard stays — if `dispatcher_.is_none()`,
+    replaced direct `svr->OnX(...)` calls with typed
+    `dispatcher_->handle_x(...)` forwarding. This required extending
+    `DispatcherFacade` + `RaftServerDispatcher` to include
+    `AddServer/RemoveServer`.
+  - [x] The null/disconnected guard stays — if `dispatcher_.is_none()`,
     return `Ok(default_reply)` with the same shape current code uses.
-- [ ] Delete the `#include "server.h"` header if no longer needed
+- [x] Delete the `#include "server.h"` header if no longer needed
+  (removed from `service.h`; forward declaration is sufficient).
   (the dispatcher adapter references RaftServer internally).
-- [ ] Gate: lab test tests 1-60 all pass. Pay attention to
+- [x] Gate: lab test tests 1-60 all pass. Pay attention to
   `NotifyRestart` — it has side effects (calls `commo->ReconnectToSite`
-  + `svr->OnPeerRestart`).
-- [ ] **Commit**: `raft: phase 8.3 — RaftServiceImpl forwards to
+  + `svr->OnPeerRestart`). [26:05:02] Verified with
+  `ctest --test-dir build --output-on-failure -R '(test_raft_.*|raft_lab_standalone)'`.
+- [x] **Commit**: `raft: phase 8.3 — RaftServiceImpl forwards to
   DispatcherProxy`.
 
 ### 8.3 risks
@@ -892,7 +896,7 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2 [26:05:02, 08:55]
 - [x] Phase 8.1e — retire remaining commo() outbound sites [26:05:02, 11:41]
 - [x] Phase 8.2 — RaftServerDispatcher [26:05:02]
-- [ ] Phase 8.3 — RaftServiceImpl → DispatcherProxy
+- [x] Phase 8.3 — RaftServiceImpl → DispatcherProxy [26:05:02]
 - [ ] Phase 8.4 — storage proxies (optional)
 - [ ] Phase 8.5 — TestCluster with real RaftServer
 - [ ] Phase 8.6 — port RaftTestConfig to TestCluster

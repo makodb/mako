@@ -44,6 +44,16 @@ TEST(RaftServerDispatcherTest, NullServerReturnsServiceCompatibleDefaults) {
 
   auto snapshot = disp.handle_install_snapshot(InstallSnapshotReq{});
   EXPECT_EQ(snapshot.term_out, 0u);
+
+  auto add = disp.handle_add_server(AddServerReq{});
+  EXPECT_FALSE(add.success);
+  EXPECT_EQ(add.error_msg, "server down");
+  EXPECT_EQ(add.leader_hint, 0u);
+
+  auto rem = disp.handle_remove_server(RemoveServerReq{});
+  EXPECT_FALSE(rem.success);
+  EXPECT_EQ(rem.error_msg, "server down");
+  EXPECT_EQ(rem.leader_hint, 0u);
 }
 
 TEST(RaftServerDispatcherTest, FactoryBuildsDispatcherProxy) {
@@ -60,4 +70,14 @@ TEST(RaftServerDispatcherTest, FactoryBuildsDispatcherProxy) {
 
   auto install = proxy->handle_install_snapshot(InstallSnapshotReq{});
   EXPECT_EQ(install.term_out, 0u);
+
+  auto add = proxy->handle_add_server(AddServerReq{});
+  EXPECT_FALSE(add.success);
+  EXPECT_EQ(add.error_msg, "server down");
+  EXPECT_EQ(add.leader_hint, 0u);
+
+  auto rem = proxy->handle_remove_server(RemoveServerReq{});
+  EXPECT_FALSE(rem.success);
+  EXPECT_EQ(rem.error_msg, "server down");
+  EXPECT_EQ(rem.leader_hint, 0u);
 }

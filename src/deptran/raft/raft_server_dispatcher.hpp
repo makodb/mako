@@ -143,6 +143,38 @@ class RaftServerDispatcher {
     return resp;
   }
 
+  AddServerReply handle_add_server(AddServerReq req) {
+    AddServerReply resp{};
+    if (ServerUnavailable()) {
+      resp.success = false;
+      resp.error_msg = "server down";
+      resp.leader_hint = 0;
+      return resp;
+    }
+
+    bool_t success = false;
+    svr_->OnAddServer(req.term, req.new_server_id, req.new_server_addr,
+                      &success, &resp.error_msg, &resp.leader_hint);
+    resp.success = success;
+    return resp;
+  }
+
+  RemoveServerReply handle_remove_server(RemoveServerReq req) {
+    RemoveServerReply resp{};
+    if (ServerUnavailable()) {
+      resp.success = false;
+      resp.error_msg = "server down";
+      resp.leader_hint = 0;
+      return resp;
+    }
+
+    bool_t success = false;
+    svr_->OnRemoveServer(req.term, req.server_id,
+                         &success, &resp.error_msg, &resp.leader_hint);
+    resp.success = success;
+    return resp;
+  }
+
  private:
   bool ServerUnavailable() const {
     return svr_ == nullptr || svr_->IsDisconnected();

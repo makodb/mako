@@ -36,10 +36,33 @@ TEST(RaftServiceDispatcherBoundaryGuardTest, ServiceOwnsAndWiresDispatcherProxy)
 
   EXPECT_NE(service_h.find("rusty::Option<raft::DispatcherProxy> dispatcher_;"),
             std::string::npos);
+  EXPECT_EQ(service_h.find("#include \"server.h\""), std::string::npos);
   EXPECT_NE(service_cc.find("#include \"raft_server_dispatcher.hpp\""),
             std::string::npos);
   EXPECT_EQ(CountOccurrences(service_cc, "make_raft_server_dispatcher("), 2u);
   EXPECT_EQ(CountOccurrences(service_cc, "dispatcher_ = rusty::Some("), 2u);
   EXPECT_EQ(CountOccurrences(service_cc, "dispatcher_ = rusty::None;"), 2u);
+  EXPECT_EQ(CountOccurrences(service_cc, "dispatcher_.is_none()"), 10u);
+
+  EXPECT_NE(service_cc.find("handle_vote("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_vote_durable("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_append_entries("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_empty_append_entries("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_append_entries_durable("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_timeout_now("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_notify_restart("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_install_snapshot("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_add_server("), std::string::npos);
+  EXPECT_NE(service_cc.find("handle_remove_server("), std::string::npos);
+
+  EXPECT_EQ(service_cc.find("svr->OnRequestVote("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnVoteDurable("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnAppendEntries("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnAppendEntriesDurable("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnTimeoutNow("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnPeerRestart("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnInstallSnapshot("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnAddServer("), std::string::npos);
+  EXPECT_EQ(service_cc.find("svr->OnRemoveServer("), std::string::npos);
 #endif
 }
