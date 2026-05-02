@@ -1,5 +1,6 @@
 #include "service.h"
 #include "server.h"
+#include "raft_server_dispatcher.hpp"
 
 #include "rrr/rrr.hpp"
 
@@ -223,7 +224,12 @@ RaftServiceImpl::RaftServiceImpl(TxLogServer *sched, rusty::Arc<rrr::PollThread>
   // @unsafe
   RaftServer* svr = (RaftServer*)sched;
   svr_.store(svr, std::memory_order_release);
-  site_id_ = svr->site_id_;
+  if (svr != nullptr) {
+    dispatcher_ = rusty::Some(raft::make_raft_server_dispatcher(svr));
+  } else {
+    dispatcher_ = rusty::None;
+  }
+  site_id_ = (svr != nullptr) ? svr->site_id_ : 0;
   {
     std::lock_guard<std::mutex> lock(registry_mutex_);
     service_registry_[site_id_] = this;
@@ -238,6 +244,11 @@ void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
   auto it = service_registry_.find(site_id);
   if (it != service_registry_.end()) {
     it->second->svr_.store(new_svr, std::memory_order_release);
+    if (new_svr != nullptr) {
+      it->second->dispatcher_ = rusty::Some(raft::make_raft_server_dispatcher(new_svr));
+    } else {
+      it->second->dispatcher_ = rusty::None;
+    }
     Log_info("[RAFT-SERVICE] UpdateServer: site %d -> %p", site_id, new_svr);
   } else {
     Log_warn("[RAFT-SERVICE] UpdateServer: site %d not found in registry", site_id);

@@ -771,6 +771,10 @@ Inbound RPC handling now has an explicit dispatcher boundary:
 - `make_raft_server_dispatcher(RaftServer*)` returns a `DispatcherProxy`
   used by higher layers to invoke handlers without direct `OnX(...)`
   coupling.
+- `RaftServiceImpl` now owns an optional
+  `rusty::Option<raft::DispatcherProxy> dispatcher_` and wires it in
+  constructor/restart paths (`UpdateServer`) so dispatcher lifecycle
+  tracks server pointer lifecycle.
 - For null or disconnected servers, handler replies use the same
   failure-default values as `RaftServiceImpl`'s disconnected path.
 - Current validation gate includes

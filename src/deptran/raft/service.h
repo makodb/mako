@@ -9,6 +9,7 @@
 #include "../command_marshaler.h"
 #include "../rcc_rpc.h"
 #include "server.h"
+#include "dispatcher.hpp"
 #include <atomic>
 #include <mutex>
 #include <map>
@@ -39,6 +40,7 @@ class RaftServiceImpl : public RaftService {
   // Store the poll thread so Restart() can reuse the original, ensuring
   // inbound and outbound RPCs share a thread.
   rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_;
+  rusty::Option<raft::DispatcherProxy> dispatcher_;
 
   RaftServiceImpl(TxLogServer* sched, rusty::Arc<rrr::PollThread> poll_thread);
 

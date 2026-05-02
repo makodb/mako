@@ -2029,6 +2029,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_rpc_par_proxies_boundary_guard ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_rpc_par_proxies_boundary_guard COMMAND test_raft_rpc_par_proxies_boundary_guard)
 
+    add_executable(test_raft_service_dispatcher_boundary_guard tests/raft_service_dispatcher_boundary_guard_test.cc)
+    target_include_directories(test_raft_service_dispatcher_boundary_guard PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_definitions(test_raft_service_dispatcher_boundary_guard PRIVATE MAKO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_options(test_raft_service_dispatcher_boundary_guard PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_service_dispatcher_boundary_guard ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_raft_service_dispatcher_boundary_guard COMMAND test_raft_service_dispatcher_boundary_guard)
+
     add_executable(test_raft_vote_quorum_event_removed_guard tests/raft_vote_quorum_event_removed_guard_test.cc)
     target_include_directories(test_raft_vote_quorum_event_removed_guard PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_definitions(test_raft_vote_quorum_event_removed_guard PRIVATE MAKO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

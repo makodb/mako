@@ -661,13 +661,17 @@ and returns the filled `Reply`.
 `svr->OnX` directly and instead call
 `dispatcher_->handle_x(req)`.
 
-- [ ] `src/deptran/raft/service.h`: add member
+- [x] `src/deptran/raft/service.h`: add member [26:05:02]
   `rusty::Option<DispatcherProxy> dispatcher_;` (Option because the
-  dispatcher is set after the server is registered).
+  dispatcher is set after the server is registered). Also included
+  `dispatcher.hpp` and added source guard
+  `test_raft_service_dispatcher_boundary_guard`.
 - [ ] `src/deptran/raft/service.cc`:
-  - In the constructor or `UpdateServer()`: call
+  - [x] In the constructor or `UpdateServer()`: call [26:05:02]
     `dispatcher_ = rusty::Some(make_raft_server_dispatcher(svr))`
     when svr is set.
+    `service.cc` now also clears the option (`rusty::None`) when
+    `new_svr == nullptr`.
   - Each override method (`Vote`, `VoteDurable`, `AppendEntries`,
     `EmptyAppendEntries`, `AppendEntriesDurable`, `TimeoutNow`,
     `NotifyRestart`, `InstallSnapshot`, `AddServer`, `RemoveServer`):
