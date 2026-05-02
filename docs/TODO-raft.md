@@ -427,7 +427,13 @@ if (sp_quorum->yes()) { ... specVoters_ = sp_quorum->GetSpecVoters(); ... }
 else if (sp_quorum->no()) { ... }
 ```
 
-- [ ] Replace with:
+- [x] Replace with: [26:05:02, 05:26] `RaftServer::RequestVote()` now uses
+  `RaftQuorum<VoteReply>` + per-peer `transport_->send_vote(...)` sub-fibers.
+  Added explicit yes/no/highest-term aggregation from `quorum.collect()` and
+  wired `specVoters_` from `vote_granted` replies. Stability follow-ups included:
+  `RrrTransportAdapter::send_vote()` now waits with 1s timeout, and
+  `RaftCommo::BroadcastVoteCb()` emits a default reply on RPC error so
+  per-peer vote fibers terminate during restart/partition scenarios.
   - Build a `RaftQuorum<VoteReply>` with `n_total` = peers-1,
     `n_needed` = majority count (quorum size – 1 for self-vote).
   - For each peer in the partition (skip self), spawn
@@ -445,8 +451,12 @@ else if (sp_quorum->no()) { ... }
 - [ ] Delete the helper branches (`yes()`, `no()`, `n_voted_yes_`,
   `n_voted_no_`, `Term()`, `timeouted_`, `GetSpecVoters()`) now that
   nothing calls them on the election path.
-- [ ] Gate: lab test tests 1-11 still pass (these exercise initial
-  election + re-election). Watch TEST 1 + TEST 2 carefully.
+- [x] Gate: lab test tests 1-11 still pass (these exercise initial
+  election + re-election). [26:05:02, 05:26] Verified by:
+  `ctest -R '^(test_raft_.*|raft_lab_standalone)$` (10/10 pass, including
+  expanded `test_raft_quorum`) and
+  `./build/deptran_server -f config/raft_lab_test.yml` (RC=0, TEST 1-11 passed,
+  no `verify failed` / `TEST * Failed`, progresses into TEST 63 and exits cleanly).
 - [ ] **Commit**: `raft: phase 8.1c — migrate BroadcastVote to
   per-peer send_vote via RaftQuorum`.
 

@@ -129,7 +129,9 @@ class RrrTransportAdapter {
             ready->set(1);
           }
         });
-    ready->wait();
+    // Bound wait to preserve election timeout behavior even if one peer
+    // never replies (e.g., dropped connection / down server).
+    ready->wait(1'000'000);
     return *slot;
   }
 

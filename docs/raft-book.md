@@ -181,8 +181,8 @@ struct RaftData {
 1. **Timeout detection**: Follower's election timer expires (150ms-2s depending on role)
 2. **Become candidate**: Increment `currentTerm`, vote for self
 3. **Persist**: Write `currentTerm` and `vote_for_` to disk (critical for safety)
-4. **Broadcast**: Send `RequestVote` RPC to all peers with `(lastLogIndex, lastLogTerm, candidateTerm)`
-5. **Collect votes**: Wait for majority response (with 1-second timeout)
+4. **Fan-out votes**: For each peer, call `transport_->send_vote(...)` in a sub-fiber
+5. **Collect votes**: Aggregate with `RaftQuorum<VoteReply>` and wait up to 1 second
 6. **Win or lose**: If majority grants vote, become leader and begin heartbeats
 
 ### Vote Decision (OnRequestVote)
@@ -696,7 +696,8 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 | Method | Purpose |
 |--------|---------|
 | `SendAppendEntries2()` | Async log replication to a follower |
-| `BroadcastVote()` | Parallel RequestVote to all replicas |
+| `BroadcastVote()` | Legacy quorum-event vote helper (kept for transition) |
+| `send_vote()` via `TransportProxy` | Per-peer RequestVote used by `RaftServer::RequestVote()` |
 | `SendVoteDurable()` | Notify leader of persisted vote |
 | `SendAppendEntriesDurable()` | Notify leader of persisted entries |
 | `SendInstallSnapshot()` | Send full snapshot to lagging follower |

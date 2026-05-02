@@ -830,6 +830,7 @@ void RaftCommo::BroadcastVoteCb(
       if (fu->get_error_code() != 0) {
         Log_debug("[VOTE_RPC_CB] Error from site %d code=%d",
                   site_id, fu->get_error_code());
+        on_reply(site_id, raft::VoteReply{});
         return;
       }
       raft::VoteReply r{};

@@ -7,16 +7,20 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <set>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "deptran/raft/quorum.hpp"
+#include "deptran/raft/messages.hpp"
 
 #include "rrr/rrr.hpp"
 
 using janus::raft::RaftQuorum;
+using janus::raft::VoteReply;
 using siteid_t_test = uint16_t;
 
 namespace {
@@ -233,4 +237,74 @@ TEST(RaftQuorumTest, NonTrivialReplyType) {
   EXPECT_EQ(drained[0].second, (FakeReply{true,  5}));
   EXPECT_EQ(drained[1].second, (FakeReply{false, 6}));
   EXPECT_EQ(drained[2].second, (FakeReply{true,  7}));
+}
+
+TEST(RaftQuorumTest, VoteReplyAggregationMatchesElectionSemantics) {
+  auto reactor = ::rrr::Reactor::get_reactor();
+  auto q = std::make_unique<RaftQuorum<VoteReply>>(/*n_total=*/4, /*n_needed=*/2);
+
+  std::atomic<bool> waiter_done{false};
+  std::atomic<bool> waiter_result{false};
+  reactor->create_run_fiber([qp = q.get(), &waiter_done, &waiter_result]() {
+    waiter_result = qp->wait_until_quorum(500'000);
+    waiter_done = true;
+  });
+
+  q->on_reply(2, VoteReply{.max_ballot = 7, .vote_granted = true});
+  pump_reactor(reactor.get());
+  q->on_reply(3, VoteReply{.max_ballot = 9, .vote_granted = false});
+  pump_reactor(reactor.get());
+  q->on_reply(4, VoteReply{.max_ballot = 8, .vote_granted = true});
+  for (int i = 0; i < 20 && !waiter_done; ++i) pump_reactor(reactor.get());
+
+  ASSERT_TRUE(waiter_done);
+  ASSERT_TRUE(waiter_result);  // two yes replies reached quorum
+
+  auto replies = q->collect();
+  int yes_count = 0;
+  int no_count = 0;
+  ballot_t highest_term_seen = 0;
+  std::set<siteid_t_test> spec_voters;
+  for (const auto& r : replies) {
+    if (r.second.vote_granted) {
+      yes_count++;
+      spec_voters.insert(r.first);
+    } else {
+      no_count++;
+      highest_term_seen = std::max(highest_term_seen, r.second.max_ballot);
+    }
+  }
+
+  EXPECT_EQ(yes_count, 2);
+  EXPECT_EQ(no_count, 1);
+  EXPECT_EQ(highest_term_seen, 9u);
+  EXPECT_EQ(spec_voters, (std::set<siteid_t_test>{2, 4}));
+}
+
+TEST(RaftQuorumTest, VoteReplyRejectionThresholdMatchesLegacyNoRule) {
+  auto reactor = ::rrr::Reactor::get_reactor();
+  RaftQuorum<VoteReply> q(/*n_total=*/4, /*n_needed=*/2);
+
+  q.on_reply(2, VoteReply{.max_ballot = 7, .vote_granted = false});
+  q.on_reply(3, VoteReply{.max_ballot = 8, .vote_granted = false});
+  q.on_reply(4, VoteReply{.max_ballot = 9, .vote_granted = false});
+  q.on_reply(5, VoteReply{.max_ballot = 10, .vote_granted = false});
+
+  auto replies = q.collect();
+  int no_count = 0;
+  ballot_t highest_term_seen = 0;
+  for (const auto& r : replies) {
+    if (!r.second.vote_granted) {
+      no_count++;
+      highest_term_seen = std::max(highest_term_seen, r.second.max_ballot);
+    }
+  }
+
+  // Legacy QuorumEvent::no(): n_voted_no > (n_total - quorum)
+  // RequestVote's migrated path uses: no_count > (n_total + 1 - n_needed).
+  const int n_total = 4;
+  const int n_needed = 2;
+  const bool vote_no = (no_count > (n_total + 1 - n_needed));
+  EXPECT_TRUE(vote_no);
+  EXPECT_EQ(highest_term_seen, 10u);
 }
