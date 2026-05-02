@@ -712,10 +712,13 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
   [26:05:02, 17:03] Added `log_storage_facade.hpp` with full
   `LogStorageFacade` + `LogStorageProxy` conventions, plus
   `test_raft_log_storage_facade` adapter conformance coverage.
-- [ ] Same for `src/deptran/raft/snapshot_manager_facade.hpp`
+- [x] Same for `src/deptran/raft/snapshot_manager_facade.hpp`
   (BeginSnapshot / TakeSnapshot / BeginLoad / LoadLatestSnapshot /
   GetLatestSnapshot / ListSnapshots / HasSnapshotAtOrAfter /
   PruneSnapshots / DeleteAllSnapshots / GetStoragePath).
+  [26:05:02, 16:48] Added `snapshot_manager_facade.hpp` with full
+  `SnapshotManagerFacade` + `SnapshotManagerProxy` conventions and
+  `test_raft_snapshot_manager_facade` adapter conformance coverage.
 - [ ] Switch `RaftServer::log_storage_` to `LogStorageProxy` and
   `RaftServer::snapshot_manager_` to `SnapshotManagerProxy`. Existing
   virtual impls (`RocksDBLogStorage`, `InMemoryLogStorage`,

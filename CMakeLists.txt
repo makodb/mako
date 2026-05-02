@@ -2064,6 +2064,12 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_log_storage_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_log_storage_facade COMMAND test_raft_log_storage_facade)
 
+    add_executable(test_raft_snapshot_manager_facade tests/raft_snapshot_manager_facade_test.cc)
+    target_include_directories(test_raft_snapshot_manager_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_raft_snapshot_manager_facade PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_snapshot_manager_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_raft_snapshot_manager_facade COMMAND test_raft_snapshot_manager_facade)
+
     add_executable(test_raft_server_dispatcher tests/raft_server_dispatcher_test.cc)
     target_include_directories(test_raft_server_dispatcher PRIVATE
         ${TEST_INCLUDE_DIRS}

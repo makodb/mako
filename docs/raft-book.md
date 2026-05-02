@@ -799,6 +799,19 @@ Inbound RPC handling now has an explicit dispatcher boundary:
   virtual `LogStorage` pointer until later Phase 8.4 leaves migrate runtime
   wiring.
 
+### Storage Facade Scaffold (Phase 8.4 Leaf 2)
+
+- Added `src/deptran/raft/snapshot_manager_facade.hpp` with
+  `SnapshotManagerFacade`/`SnapshotManagerProxy`.
+- The facade mirrors every `SnapshotManager` API method
+  (`BeginSnapshot`, `TakeSnapshot`, `BeginLoad`, `LoadLatestSnapshot`,
+  `GetLatestSnapshot`, `ListSnapshots`, `HasSnapshotAtOrAfter`,
+  `PruneSnapshots`, `DeleteAllSnapshots`, `GetStoragePath`).
+- Conformance is guarded by `test_raft_snapshot_manager_facade`, which wraps a
+  recording adapter in `SnapshotManagerProxy` and exercises every facade path.
+- This is still scaffold-only: runtime storage member migration in `RaftServer`
+  remains for later Phase 8.4 leaves.
+
 ### Restart Notification
 
 When a server restarts, it broadcasts a restart notification to all peers. Peers reconnect their RPC proxies to avoid stale connections:
