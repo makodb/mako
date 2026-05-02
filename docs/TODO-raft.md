@@ -400,18 +400,18 @@ documented inline + in the design doc.
 
 ### 8.1.b — Give `RaftServer` a `TransportProxy transport_`
 
-- [ ] `src/deptran/raft/server.h`: add private member
+- [x] `src/deptran/raft/server.h`: add private member
   `janus::raft::TransportProxy transport_;` and an accessor
   `TransportProxy& transport()`. Include `transport.hpp` at the top.
-- [ ] `src/deptran/raft/server.cc` (or wherever `RaftServer` is
+- [x] `src/deptran/raft/server.cc` (or wherever `RaftServer` is
   initialized — likely in `Setup()` or the constructor):
   construct `transport_ = make_rrr_transport(commo_, site_id_,
   partition_id_);` once `commo_` is non-null. `commo_` stays live —
   `RrrTransportAdapter` holds a non-owning pointer into it.
-- [ ] No outbound call-site changes yet; this step just plumbs the
+- [x] No outbound call-site changes yet; this step just plumbs the
   member so the rest of 8.1 can reference it.
-- [ ] Gate: deptran_server links, lab test passes tests 1-60.
-- [ ] **Commit**: `raft: phase 8.1b — wire TransportProxy onto RaftServer`.
+- [x] Gate: deptran_server links, lab test passes tests 1-60. [26:05:02, 05:04] Verified `ctest -R '^(test_raft_.*|raft_lab_standalone)$` (10/10 pass) and `./build/deptran_server -f config/raft_lab_test.yml` (RC=0, no `verify failed` / `TEST * Failed`, reaches TEST 63 start). Also fixed restart parity gaps in `RaftTestConfig::Restart()` (snapshot manager + config seed + apply infrastructure) and a snapshot-unaware vote invariant in `OnRequestVote` uncovered by lab run.
+- [x] **Commit**: `raft: phase 8.1b — wire TransportProxy onto RaftServer`.
 
 ### 8.1.c — Migrate `BroadcastVote` (election path)
 
@@ -782,7 +782,7 @@ verification. Listed here so they don't get lost.
 
 - [x] Phase 8.0 — fiber-sync facades (cf5db3fef)
 - [x] Phase 8.1a — RaftQuorum primitive [26:04:25, 12:30]
-- [ ] Phase 8.1b — TransportProxy member on RaftServer
+- [x] Phase 8.1b — TransportProxy member on RaftServer [26:05:02, 05:04]
 - [ ] Phase 8.1c — migrate BroadcastVote
 - [ ] Phase 8.1d — migrate SendAppendEntries / SendAppendEntries2
 - [ ] Phase 8.1e — retire remaining commo() outbound sites

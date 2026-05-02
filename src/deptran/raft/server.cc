@@ -5,6 +5,7 @@
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
 #include "file_snapshot_manager.hpp"
+#include "rrr_transport.hpp"
 #include "replicated_db.h"
 #include <limits>
 
@@ -1008,6 +1009,13 @@ void RaftServer::Setup() {
     }
     Log_info("[RAFT-CONFIG] Initialized current_config_ for site %d partition %d with %zu replicas",
              site_id_, partition_id_, current_config_.size());
+  }
+
+  // Initialize transport facade for outbound RPC routing (Phase 8.1b).
+  if (commo_ != nullptr) {
+    transport_ = janus::raft::make_rrr_transport(commo(), site_id_, partition_id_);
+  } else {
+    Log_warn("[RAFT-TRANSPORT] commo_ is null during Setup() at site %d", site_id_);
   }
 
 #ifdef RAFT_TEST_CORO
@@ -2180,8 +2188,9 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   Log_debug("vote for lstoff %d, curlstterm %d, curlstidx %d", lstoff, curlstterm, curlstidx  );
 
 
-  // TODO del only for test
-  verify(lstoff == lastLogIndex ) ;
+  // Snapshot-aware offset invariant.
+  verify(lastLogIndex >= snapidx_);
+  verify(lstoff + snapidx_ == lastLogIndex);
 
   if( lst_log_term > curlstterm || (lst_log_term == curlstterm && lst_log_idx >= curlstidx) )
   {

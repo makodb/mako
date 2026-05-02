@@ -5,6 +5,7 @@
 #include "../scheduler.h"
 #include "../classic/tpc_command.h"
 #include "commo.h"
+#include "transport.hpp"
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
@@ -116,6 +117,7 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
+  janus::raft::TransportProxy transport_;
   std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
   bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
@@ -529,6 +531,8 @@ class RaftServer : public TxLogServer {
   RaftCommo* commo() {
     return (RaftCommo*) commo_;
   }
+  // @safe - returns transport proxy reference
+  janus::raft::TransportProxy& transport() { return transport_; }
 
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;

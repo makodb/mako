@@ -704,6 +704,18 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 | `SendNotifyRestart()` | Notify peers of server restart |
 | `RetryPendingNotifyRestart()` | Retry notifications to PENDING peers |
 
+### Transport Facade Transition (Phase 8.1)
+
+`RaftServer` now owns a `janus::raft::TransportProxy transport_` member
+initialized in `RaftServer::Setup()` via
+`make_rrr_transport(commo(), site_id_, partition_id_)`.
+
+- Current state (Phase 8.1b): this is plumbing only; existing outbound
+  call sites still invoke `RaftCommo` directly.
+- Next phases (8.1c-8.1e): migrate election/replication/snapshot outbound
+  paths to `transport().send_*` and delete the legacy helper result/event
+  wrappers in `RaftCommo`.
+
 ### Restart Notification
 
 When a server restarts, it broadcasts a restart notification to all peers. Peers reconnect their RPC proxies to avoid stale connections:

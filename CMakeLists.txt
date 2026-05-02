@@ -1988,6 +1988,16 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_rrr_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_rrr_transport_compile COMMAND test_raft_rrr_transport_compile)
 
+    add_executable(test_raft_server_transport_accessor tests/raft_server_transport_accessor_test.cc)
+    target_include_directories(test_raft_server_transport_accessor PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
+    target_compile_options(test_raft_server_transport_accessor PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_server_transport_accessor ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_raft_server_transport_accessor COMMAND test_raft_server_transport_accessor)
+
     # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
     # Bootstraps an rrr::Reactor on the test thread to exercise the
     # IntEvent-backed wait_until_quorum path; no heavy raft state needed.

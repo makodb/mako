@@ -703,6 +703,19 @@ void RaftTestConfig::Restart(siteid_t svr) {
     }
   }
 
+  // Restart() bypasses Setup(), so restore snapshot manager wiring explicitly.
+  frame->svr_->InitializeSnapshotManager();
+
+  // Setup() normally seeds current_config_ from static partition metadata.
+  // Keep Restart() behavior consistent to avoid empty-config underflow paths.
+  if (frame->svr_->current_config_.empty()) {
+    auto replicas_for_partition =
+        Config::GetConfig()->SitesByPartitionId(frame->svr_->partition_id_);
+    for (const auto& site : replicas_for_partition) {
+      frame->svr_->current_config_.insert(site.id);
+    }
+  }
+
   // Record startup timestamp for grace period logic (same as Setup())
   frame->svr_->startup_timestamp_ = Time::now();
 
@@ -751,6 +764,15 @@ void RaftTestConfig::Restart(siteid_t svr) {
         return 0;
       };
   frame->svr_->RegLearnerAction(commit_callbacks[svr]);
+
+  // Restart() skips Setup(); start apply path explicitly so committed entries
+  // continue to flow through learner callbacks after a restart.
+  frame->svr_->StartApplyFiber();
+  if (frame->svr_->commitIndex > frame->svr_->executeIndex) {
+    frame->svr_->EnqueueCommittedEntries(frame->svr_->executeIndex,
+                                         frame->svr_->commitIndex);
+  }
+  frame->svr_->StartApplyThread();
 
   // Update atomic pointer in RaftServiceImpl to point to the new server
   // This allows the existing RPC service to forward requests to the new server
