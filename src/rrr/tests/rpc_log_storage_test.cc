@@ -20,15 +20,23 @@ using namespace janus::raft;
 // Test Marshallable Command for testing
 // ============================================================================
 
+// L8: TestCommand was previously tagged with `MarshallDeputy::CMD_NOOP`
+// (kind=15) — sharing the kind with `janus::TpcNoopCommand`. After the
+// L8 TypeList migration, `TpcNoopCommand`'s kind is its position in
+// `janus::MakoCommands` (not visible from this rrr-side test, and
+// shouldn't be — TestCommand is its own type). Use a test-local
+// constant well outside the closed-set range.
+static constexpr int32_t kTestCommandKind = 0xC0DE;
+
 class TestCommand : public Marshallable {
 public:
     std::string data;
     int32_t value{0};
 
-    TestCommand() : Marshallable(MarshallDeputy::CMD_NOOP) {}
+    TestCommand() : Marshallable(kTestCommandKind) {}
 
     TestCommand(const std::string& d, int32_t v)
-        : Marshallable(MarshallDeputy::CMD_NOOP), data(d), value(v) {}
+        : Marshallable(kTestCommandKind), data(d), value(v) {}
 
     Marshal& to_marshal(Marshal& m) const override {
         m << data;

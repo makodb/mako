@@ -225,7 +225,7 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataUsesTypedAdapterPath) {
 
   auto wrapped = wrap_typed_marshallable(payload);
   ASSERT_NE(wrapped, nullptr);
-  EXPECT_EQ(wrapped->kind(), MarshallDeputy::CMD_VEC_PIECE);
+  EXPECT_EQ(wrapped->kind(), janus::VecPieceData::static_kind());
 
   // Phase 4d-6: VecPieceData migrated to Serializable via the
   // value-semantic `wrap_serializable` path (no aliased adapter — the
@@ -235,7 +235,7 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataUsesTypedAdapterPath) {
   // Use `wrap_serializable_aliased` here to keep the in-memory
   // identity check that this regression test guards.
   MarshallDeputy deputy(wrap_serializable_aliased(payload));
-  EXPECT_EQ(deputy.kind_, MarshallDeputy::CMD_VEC_PIECE);
+  EXPECT_EQ(deputy.kind_, janus::VecPieceData::static_kind());
   auto decoded = marshallable_cast<janus::VecPieceData>(deputy);
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded, payload);
@@ -367,7 +367,7 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   vec_rec->key_data_->push_back(12);
 
   MarshallDeputy vec_rec_deputy(vec_rec);
-  EXPECT_EQ(vec_rec_deputy.kind_, MarshallDeputy::CMD_REC_VEC);
+  EXPECT_EQ(vec_rec_deputy.kind_, janus::VecRecData::static_kind());
   auto decoded_vec_rec = marshallable_cast<janus::VecRecData>(vec_rec_deputy);
   ASSERT_NE(decoded_vec_rec, nullptr);
   ASSERT_NE(decoded_vec_rec->key_data_, nullptr);
@@ -380,7 +380,7 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   batch->AddEntry(1001, nested);
 
   MarshallDeputy batch_deputy(batch);
-  EXPECT_EQ(batch_deputy.kind_, MarshallDeputy::CMD_KEY_CMD_BATCH);
+  EXPECT_EQ(batch_deputy.kind_, janus::KeyCmdBatchData::static_kind());
   auto decoded_batch = marshallable_cast<janus::KeyCmdBatchData>(batch_deputy);
   ASSERT_NE(decoded_batch, nullptr);
   ASSERT_EQ(decoded_batch->Size(), 1u);
@@ -401,14 +401,14 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   // migrated types). Explicitly route through wrap_typed_marshallable
   // — its bridge overload (Phase 4a-prep) handles Serializable T's.
   MarshallDeputy outgoing(wrap_typed_marshallable(src));
-  EXPECT_EQ(outgoing.kind_, MarshallDeputy::CMD_TPC_COMMIT);
+  EXPECT_EQ(outgoing.kind_, janus::TpcCommitCommand::static_kind());
 
   Marshal m;
   m << outgoing;
 
   MarshallDeputy incoming;
   m >> incoming;
-  EXPECT_EQ(incoming.kind_, MarshallDeputy::CMD_TPC_COMMIT);
+  EXPECT_EQ(incoming.kind_, janus::TpcCommitCommand::static_kind());
 
   auto decoded = marshallable_cast<janus::TpcCommitCommand>(incoming);
   ASSERT_NE(decoded, nullptr);
@@ -437,7 +437,7 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   // Phase 4a-3c: TpcBatchCommand migrated to Serializable; route
   // through wrap_typed_marshallable as in the Commit case above.
   MarshallDeputy batch_outgoing(wrap_typed_marshallable(batch));
-  EXPECT_EQ(batch_outgoing.kind_, MarshallDeputy::CMD_TPC_BATCH);
+  EXPECT_EQ(batch_outgoing.kind_, janus::TpcBatchCommand::static_kind());
   Marshal batch_marshaled;
   batch_marshaled << batch_outgoing;
 
@@ -454,7 +454,7 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   // event-member aliasing); recovery uses `serializable_cast<T>`.
   auto empty_cmd = std::make_shared<janus::TpcEmptyCommand>();
   MarshallDeputy empty_deputy(wrap_serializable_aliased(empty_cmd));
-  EXPECT_EQ(empty_deputy.kind_, MarshallDeputy::CMD_TPC_EMPTY);
+  EXPECT_EQ(empty_deputy.kind_, janus::TpcEmptyCommand::static_kind());
   ASSERT_NE(serializable_cast<janus::TpcEmptyCommand>(empty_deputy),
             nullptr);
   EXPECT_EQ(serializable_cast<janus::TpcEmptyCommand>(empty_deputy),
@@ -468,7 +468,7 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   // uses `serializable_cast<T>` instead of `marshallable_cast<T>`.
   auto noop_cmd = std::make_shared<janus::TpcNoopCommand>();
   MarshallDeputy noop_deputy(wrap_serializable(noop_cmd));
-  EXPECT_EQ(noop_deputy.kind_, MarshallDeputy::CMD_NOOP);
+  EXPECT_EQ(noop_deputy.kind_, janus::TpcNoopCommand::static_kind());
   ASSERT_NE(serializable_cast<janus::TpcNoopCommand>(noop_deputy), nullptr);
 }
 
@@ -478,14 +478,14 @@ TEST(MarshallableProxyFacadeTest,
   ASSERT_NE(put_cmd, nullptr);
 
   MarshallDeputy outgoing(put_cmd);
-  EXPECT_EQ(outgoing.kind_, MarshallDeputy::CMD_REPLICATED_DB);
+  EXPECT_EQ(outgoing.kind_, janus::ReplicatedDBCommand::static_kind());
 
   Marshal m;
   m << outgoing;
 
   MarshallDeputy incoming;
   m >> incoming;
-  EXPECT_EQ(incoming.kind_, MarshallDeputy::CMD_REPLICATED_DB);
+  EXPECT_EQ(incoming.kind_, janus::ReplicatedDBCommand::static_kind());
 
   auto decoded = marshallable_cast<janus::ReplicatedDBCommand>(incoming);
   ASSERT_NE(decoded, nullptr);
@@ -549,17 +549,17 @@ TEST(MarshallableProxyFacadeTest,
   auto sync_noop = std::make_shared<janus::SyncNoOpRequest>();
 
   EXPECT_EQ(wrap_typed_marshallable(bulk_prepare)->kind(),
-            MarshallDeputy::CMD_BLK_PREP_PXS);
+            janus::BulkPrepareLog::static_kind());
   EXPECT_EQ(wrap_typed_marshallable(prep_cmd)->kind(),
-            MarshallDeputy::CMD_PREP_PXS);
+            janus::PaxosPrepCmd::static_kind());
   EXPECT_EQ(wrap_typed_marshallable(heartbeat)->kind(),
-            MarshallDeputy::CMD_HRTBT_PXS);
+            janus::HeartBeatLog::static_kind());
   EXPECT_EQ(wrap_typed_marshallable(sync_req)->kind(),
-            MarshallDeputy::CMD_SYNCREQ_PXS);
+            janus::SyncLogRequest::static_kind());
   EXPECT_EQ(wrap_typed_marshallable(sync_resp)->kind(),
-            MarshallDeputy::CMD_SYNCRESP_PXS);
+            janus::SyncLogResponse::static_kind());
   EXPECT_EQ(wrap_typed_marshallable(sync_noop)->kind(),
-            MarshallDeputy::CMD_SYNCNOOP_PXS);
+            janus::SyncNoOpRequest::static_kind());
 }
 
 TEST(MarshallableProxyFacadeTest,

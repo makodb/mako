@@ -7,6 +7,7 @@
 #include <rusty/function.hpp>
 #include "rcc/graph.h"
 #include "command_marshaler.h"
+#include "mako_commands.h"
 #include "txn_reg.h"
 #include "view.h"
 
@@ -181,16 +182,13 @@ typedef map<parid_t, vector<shared_ptr<SimpleCommand>>> ReadyPiecesData;
 // The nested SimpleCommand serialization uses the Phase 4d-6
 // archive operators in `command_marshaler.cc`, which mirror the
 // existing Marshal-based ones byte-for-byte.
-class VecPieceData {
+class VecPieceData : public rrr::Serializable<VecPieceData, MakoCommands> {
  public:
   // TODO move shared_ptr into the vector.
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_VEC_PIECE;
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece_data_{};
   double time_sent_from_client_ = -1e9; // <0 means null, unit is ms
   bool_t is_recovery_command_ = false; // Flag to indicate this is a recovery command
   VecPieceData() = default;
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
     verify(sp_vec_piece_data_);
@@ -217,15 +215,12 @@ class VecPieceData {
   }
 };
 
-// Workstream N Phase 4d-3: migrated from Marshallable to Serializable.
-class VecRecData {
+// Workstream N L8: TypeList-derived kind.
+class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<key_t>> key_data_{};
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_REC_VEC;
   VecRecData() = default;
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
     verify(key_data_);
@@ -248,12 +243,11 @@ class VecRecData {
   }
 };
 
-// Workstream N Phase 4d-3: migrated from Marshallable to Serializable.
-class ViewData {
+// Workstream N L8: TypeList-derived kind.
+class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
  public:
   View view_;
   parid_t partition_id_ = 0; // partition id for which this view applies
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_VIEW_DATA;
 
   ViewData() = default;
 
@@ -264,8 +258,6 @@ class ViewData {
   // Get the embedded View
   const View& GetView() const { return view_; }
   View& GetView() { return view_; }
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
     ar << view_.n_;
@@ -300,14 +292,14 @@ class ViewData {
   }
 };
 
-// Workstream N Phase 4d-3: migrated from Marshallable to Serializable.
-// Uses Phase 3f-prep nested-MarshallDeputy archive operators for the
-// per-entry command payloads.
-class KeyCmdBatchData {
+// Workstream N L8: TypeList-derived kind. Uses Phase 3f-prep
+// nested-MarshallDeputy archive operators for the per-entry command
+// payloads.
+class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
+                                                 MakoCommands> {
  public:
   std::vector<key_t> keys_;
   std::vector<shared_ptr<Marshallable>> commands_;
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_KEY_CMD_BATCH;
 
   KeyCmdBatchData() = default;
 
@@ -333,8 +325,6 @@ class KeyCmdBatchData {
     verify(idx < commands_.size());
     return commands_[idx];
   }
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
     verify(keys_.size() == commands_.size());

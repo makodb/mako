@@ -366,13 +366,13 @@ int32_t TxLogServer::OnUpgradeEpoch(uint32_t old_epoch) {
 
 UniqueCmdID TxLogServer::GetUniqueCmdID(shared_ptr<Marshallable> cmd) {
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
     verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-  } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
+  } else if (cmd->kind_ == VecPieceData::static_kind()) {
     shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
     verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
@@ -548,7 +548,7 @@ bool Witness::push_back(const shared_ptr<Marshallable>& cmd) {
 }
 
 int Witness::remove(const shared_ptr<Marshallable>& cmd) {
-  if (cmd->kind_ != MarshallDeputy::CMD_TPC_BATCH) {
+  if (cmd->kind_ != TpcBatchCommand::static_kind()) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
     bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
     if (removed) {
@@ -583,7 +583,7 @@ int Witness::remove(const shared_ptr<Marshallable>& cmd) {
 
 bool Witness::has_appeared(const shared_ptr<Marshallable>& cmd) {
   // For a batched command, return whether all of them have appeared
-  if (cmd->kind_ != MarshallDeputy::CMD_TPC_BATCH) {
+  if (cmd->kind_ != TpcBatchCommand::static_kind()) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
     uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
     return candidates_[parsed_cmd.key_].has_appeared(cmd_id);
@@ -1022,7 +1022,7 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
   
   // Extract the inner command if this is a TpcCommitCommand
   shared_ptr<Marshallable> inner_cmd = cmd;
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
     auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     if (tpc_cmd && tpc_cmd->cmd_) {
@@ -1034,7 +1034,7 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
   }
   
   // Check if the inner command is VecPieceData
-  if (inner_cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
+  if (inner_cmd->kind_ == VecPieceData::static_kind()) {
     auto vec_piece_data = marshallable_cast<VecPieceData>(inner_cmd);
     if (vec_piece_data && vec_piece_data->sp_vec_piece_data_) {
       // Mark this as a recovery command

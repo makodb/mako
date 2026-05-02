@@ -41,7 +41,7 @@ void RaftTestConfig::SetLearnerAction(void) {
     // rep_frame_ is already set in constructor, no need to set it here
     RaftTestConfig::commit_callbacks[svr] =
         [svr](int slot, MarshallDeputy md) -> int {
-          verify(md.kind_ == MarshallDeputy::CMD_TPC_COMMIT);
+          verify(md.kind_ == TpcCommitCommand::static_kind());
           auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
           verify(commit_cmd != nullptr);
           Log_debug("server %d committed value %d at slot %d",
@@ -742,7 +742,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Re-register learner action BEFORE adding to replicas map
   commit_callbacks[svr] =
       [svr](int slot, MarshallDeputy md) -> int {
-        verify(md.kind_ == MarshallDeputy::CMD_TPC_COMMIT);
+        verify(md.kind_ == TpcCommitCommand::static_kind());
         auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
         verify(commit_cmd != nullptr);
         Log_debug("server %d committed value %d at slot %d",

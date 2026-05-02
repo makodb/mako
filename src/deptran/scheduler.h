@@ -274,11 +274,11 @@ struct ResponseData {
   bool done_{false};
   pair<int, int> append_response(const shared_ptr<Marshallable>& cmd) {
     shared_ptr<VecPieceData> vec_piece;
-    if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) { // original through tx svr
+    if (cmd->kind_ == TpcCommitCommand::static_kind()) { // original through tx svr
       shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
       verify(tpc_cmd != nullptr);
       vec_piece = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) { // jetpack broadcast
+    } else if (cmd->kind_ == VecPieceData::static_kind()) { // jetpack broadcast
       vec_piece = marshallable_cast<VecPieceData>(cmd);
     } else {
       verify(0);

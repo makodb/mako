@@ -104,7 +104,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
     return true;
   }
-  if (likely(cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH)) {
+  if (likely(cmd->kind_ == TpcBatchCommand::static_kind())) {
     // check if cmd committed in tx scheduler, which virtually means cmd is executed
     if (allCmdComitted(cmd)) {
       Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
@@ -117,7 +117,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     } else {
       return false;
     }
-  } else if (cmd->kind_ == MarshallDeputy::CMD_NOOP) {
+  } else if (cmd->kind_ == TpcNoopCommand::static_kind()) {
     // I don't think this case is possible
     Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
      ins->status = Status::EXECUTED;
@@ -503,7 +503,7 @@ void CopilotServer::Print(std::string log) {
         auto const& data_ptr = entry.second;
         // Log_info("555 %d", key);
         // if (data_ptr->cmd != nullptr) {
-        //   Log_info("cmd_type %d", data_ptr->cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH);
+        //   Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
         //   SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
         // } else {
         //   Log_info("nullptr");
@@ -517,7 +517,7 @@ void CopilotServer::Print(std::string log) {
           << " slot_id=" << data_ptr->slot_id;
 
         if (data_ptr->cmd != nullptr) {
-          // Log_info("cmd_type %d", data_ptr->cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH);
+          // Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
           SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
           oss << " cmd_id=<" << parsed_cmd.cmd_id_.first << ", " << parsed_cmd.cmd_id_.second << "> ";
         } else {
@@ -594,10 +594,10 @@ void CopilotServer::updateMaxCmtdSlot(CopilotLogInfo& log_info, slotid_t slot) {
 
 void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
   auto cmd = log_info.logs[slot]->cmd;
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
     auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     tx_sched_->DestroyTx(tpc_cmd->tx_id_);
-  } else if (cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH) {
+  } else if (cmd->kind_ == TpcBatchCommand::static_kind()) {
     auto batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
     for (auto& c : batch_cmd->cmds_)
       tx_sched_->DestroyTx(c->tx_id_);
@@ -607,7 +607,7 @@ void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
 
 bool CopilotServer::executeCmd(shared_ptr<CopilotData>& ins) {
   if (likely((bool)(ins->cmd))) {
-    if (likely(ins->cmd->kind_ != MarshallDeputy::CMD_NOOP)) {
+    if (likely(ins->cmd->kind_ != TpcNoopCommand::static_kind())) {
       // WAN_WAIT
       // Log_info("loc_id %d execute cmd <%d, %d>", loc_id_, SimpleRWCommand::GetCmdID(ins->cmd).first, SimpleRWCommand::GetCmdID(ins->cmd).second);
       RuleWitnessGC(ins->cmd);
@@ -629,7 +629,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
   if (ins->status == Status::EXECUTED)
     return true;
   
-  if (unlikely(ins->dep_id == 0 || ins->cmd->kind_ == MarshallDeputy::CMD_NOOP)) {
+  if (unlikely(ins->dep_id == 0 || ins->cmd->kind_ == TpcNoopCommand::static_kind())) {
     return executeCmd(ins);
   } else {
 #ifdef DEBUG
@@ -668,7 +668,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
 
     // case 1: no dependency, no-op, or dependency has been executed
     if (unlikely(w->dep_id == 0 ||
-        w->cmd->kind_ == MarshallDeputy::CMD_NOOP) ||
+        w->cmd->kind_ == TpcNoopCommand::static_kind()) ||
         GET_STATUS(dep->status) == Status::EXECUTED) {
       executeCmd(w);
       continue;
@@ -698,7 +698,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
       if (GET_STATUS(d->status) >= Status::EXECUTED)
         // case 2.1: d already executed else where
         continue;
-      else if (d->dep_id == 0 || d->cmd->kind_ == MarshallDeputy::CMD_NOOP) {
+      else if (d->dep_id == 0 || d->cmd->kind_ == TpcNoopCommand::static_kind()) {
         // case 2.2: d has no dep or d is no-op
         executeCmd(d);
       } else if (d->dep_id >= i) {
@@ -980,7 +980,7 @@ bool CopilotServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshalla
     shared_ptr<CopilotData> ins = GetInstance(id, isPilot_);
     if (ins && ins->cmd) {
       // Copilots use batch cmds in copilot instance
-      verify(ins->cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH);
+      verify(ins->cmd->kind_ == TpcBatchCommand::static_kind());
       shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
       for (int i = 0; i < batch_cmd->Size(); i++)
         if (SimpleRWCommand::Conflict(batch_cmd->cmds_[i], cmd))

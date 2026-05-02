@@ -86,7 +86,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   instance->committed_cmd_ = cmd;
   instance->is_skip = true;
   if (instance->is_skip){
-    instance->committed_cmd_->kind_ = MarshallDeputy::CMD_TPC_COMMIT;
+    instance->committed_cmd_->kind_ = TpcCommitCommand::static_kind();
   }
   if (slot_id > max_committed_slot_) {
     max_committed_slot_ = slot_id;

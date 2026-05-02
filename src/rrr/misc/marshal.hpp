@@ -270,26 +270,17 @@ class MarshallDeputy {
       // The numeric values are intentionally left as gaps; assigning
       // them to new types would shift downstream values and break
       // wire compat with hosts that have not been redeployed.
+      //
+      // Workstream N L8: CMD_TPC_PREPARE..CMD_REPLICATED_DB (values
+      // 4-23 with a gap at 17) retired — closed-set Command types
+      // now derive their kind from their position in the
+      // `janus::MakoCommands` TypeList (see deptran/mako_commands.h).
+      // CONTAINER_CMD=3 stays because the legacy `CmdData` Marshallable
+      // base class (deptran/command.h) still uses it as a sentinel kind
+      // value; CmdData is never registered with MarshallDeputy and
+      // never round-trips on the wire, so the value is just a local
+      // tag for branch-to-detect-CmdData dispatch sites.
       CONTAINER_CMD=3,
-      CMD_TPC_PREPARE=4,
-      CMD_TPC_COMMIT=5,
-      CMD_VEC_PIECE=6,
-      CMD_BLK_PXS=7,
-      CMD_BLK_PREP_PXS=8,
-      CMD_HRTBT_PXS=9,
-      CMD_SYNCREQ_PXS=10,
-      CMD_SYNCRESP_PXS=11,
-      CMD_SYNCNOOP_PXS=12,
-      CMD_PREP_PXS=13,
-      CMD_TPC_EMPTY=14,
-      CMD_NOOP=15,
-      CMD_TPC_BATCH=16,
-      CMD_MULTI_STRING=18,
-      CMD_REC_VEC=19,
-      CMD_VIEW_DATA=20,
-      CMD_KV=21,
-      CMD_KEY_CMD_BATCH=22,
-      CMD_REPLICATED_DB=23,
       // Workstream N L7: open-set polymorphic envelope. Every
       // `AnyMessage` payload — regardless of carried inner type —
       // serializes under this fixed kind. The actual type

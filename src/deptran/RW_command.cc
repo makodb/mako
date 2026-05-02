@@ -8,12 +8,9 @@
 
 namespace janus {
 
-// Workstream N Phase 4d-8: SimpleRWCommand migrated to Serializable.
-// Wire format byte-for-byte identical to the previous Marshallable
-// encoding (int32_t type_ | key_t key_ | int32_t value_).
-static int volatile x =
-    rrr::reg_serializable_in_deputy<SimpleRWCommand>(
-        MarshallDeputy::CMD_KV);
+// Workstream N L8: registration switched to no-arg form — kind
+// auto-derived from `Serializable<T, MakoCommands>` CRTP base.
+static int volatile x = rrr::reg_serializable_in_deputy<SimpleRWCommand>();
 
 SimpleRWCommand::SimpleRWCommand() {
   //Log_info("[copilot+] SimpleRWCommand Empty created");
@@ -27,7 +24,7 @@ SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd) {
   //Log_info("[copilot+] SimpleRWCommand created");
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
   shared_ptr<TxPieceData> vector0;
-  if (unlikely(cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH)) {
+  if (unlikely(cmd->kind_ == TpcBatchCommand::static_kind())) {
     shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
     verify(batch_cmd != nullptr);
     verify(batch_cmd->Size() == 1);
@@ -37,7 +34,7 @@ SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd) {
     is_recovery_command_ = cmd_cast->is_recovery_command_;
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
-  } else if (likely(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT)) {
+  } else if (likely(cmd->kind_ == TpcCommitCommand::static_kind())) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
@@ -45,7 +42,7 @@ SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd) {
     is_recovery_command_ = cmd_cast->is_recovery_command_;
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
-  } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
+  } else if (cmd->kind_ == VecPieceData::static_kind()) {
     shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
     verify(cmd_cast != nullptr);
     is_recovery_command_ = cmd_cast->is_recovery_command_;
@@ -181,11 +178,11 @@ double SimpleRWCommand::GetMsTimeElaps() {
 
 double SimpleRWCommand::GetCommandMsTime(shared_ptr<Marshallable> cmd) {
   shared_ptr<VecPieceData> cmd_cast{nullptr};
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-  } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
+  } else if (cmd->kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
     verify(0);
@@ -206,14 +203,14 @@ key_t SimpleRWCommand::GetKey(shared_ptr<Marshallable> cmd) {
 bool SimpleRWCommand::NeedRecordConflictInOriginalPath(shared_ptr<Marshallable> cmd) {
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
   shared_ptr<TxPieceData> vector0;
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
     verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;
     vector0 = *(sp_vec_piece->begin());
-  } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
+  } else if (cmd->kind_ == VecPieceData::static_kind()) {
     shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
     verify(cmd_cast != nullptr);
     sp_vec_piece = cmd_cast->sp_vec_piece_data_;

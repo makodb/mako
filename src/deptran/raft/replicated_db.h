@@ -1,6 +1,7 @@
 #pragma once
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
+#include "../mako_commands.h"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -26,8 +27,8 @@ struct KVOperation {
     std::string value;  // empty for DELETE
 };
 
-// Workstream N Phase 4c-1: migrated from TypedMarshallableAdapter to
-// Serializable. Wire payload preserved byte-for-byte:
+// Workstream N L8: TypeList-derived kind. Wire payload preserved
+// byte-for-byte:
 //   uint8_t op | std::string key | std::string value
 //   [if op == BATCH] uint32_t count
 //   for each batch op: uint8_t op | std::string key | std::string value
@@ -38,9 +39,9 @@ struct KVOperation {
 // thin wrappers that build a BinaryWriteArchive/BinaryReadArchive on
 // top of a MarshalSink/MarshalSource and delegate to save/load — this
 // keeps the existing test.cc round-trip sites compiling unchanged.
-class ReplicatedDBCommand {
+class ReplicatedDBCommand : public rrr::Serializable<ReplicatedDBCommand,
+                                                     MakoCommands> {
 public:
-    static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_REPLICATED_DB;
     ReplicatedDBOp op_ = ReplicatedDBOp::PUT;
     std::string key_;
     std::string value_;
@@ -56,7 +57,6 @@ public:
     static shared_ptr<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
 
     // Serializable interface (Phase 4c-1).
-    int32_t kind() const { return kMarshallKind; }
     void save(BinaryWriteArchive& ar) const;
     void load(BinaryReadArchive& ar);
 

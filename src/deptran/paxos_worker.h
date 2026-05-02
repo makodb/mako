@@ -11,6 +11,7 @@
 #include "config.h"
 #include "./paxos/coordinator.h"
 #include "concurrentqueue.h"
+#include "mako_commands.h"
 
 namespace janus {
 
@@ -32,17 +33,15 @@ namespace janus {
 	// pthread-based job-queue thread pool; nothing in the rest of the
 	// codebase referenced it.
 
-// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
-class BulkPrepareLog {
+// Workstream N L8: TypeList-derived kind.
+class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
+                                                MakoCommands> {
   public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_BLK_PREP_PXS;
   vector<pair<uint32_t,slotid_t>> min_prepared_slots;
   uint32_t leader_id;
   int epoch;
 
   BulkPrepareLog() = default;
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
     ar << static_cast<int32_t>(min_prepared_slots.size());
@@ -64,17 +63,14 @@ class BulkPrepareLog {
   }
 };
 
-// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
-class PaxosPrepCmd {
+// Workstream N L8: TypeList-derived kind.
+class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
   public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_PREP_PXS;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   int leader_id;
 
   PaxosPrepCmd() = default;
-
-  int32_t kind() const { return kMarshallKind; }
 
   // NOTE: preserves the legacy bug-or-feature where the second size
   // prefix is `slots.size()` instead of `ballots.size()` — wire
@@ -105,16 +101,13 @@ class PaxosPrepCmd {
   }
 };
 
-// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
-class HeartBeatLog {
+// Workstream N L8: TypeList-derived kind.
+class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
   public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_HRTBT_PXS;
   uint32_t leader_id;
   int epoch;
 
   HeartBeatLog() = default;
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
     ar << leader_id;
@@ -127,16 +120,14 @@ class HeartBeatLog {
   }
 };
 
-// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
-class SyncLogRequest {
+// Workstream N L8: TypeList-derived kind.
+class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
+                                                MakoCommands> {
   public:
-    static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCREQ_PXS;
     int leader_id;
     ballot_t epoch;
     vector<slotid_t> sync_commit_slot;
     SyncLogRequest() = default;
-
-    int32_t kind() const { return kMarshallKind; }
 
     void save(BinaryWriteArchive& ar) const {
       ar << leader_id;
@@ -169,14 +160,12 @@ class SyncLogRequest {
 // Phase 3f-prep `operator<<` / `operator>>` overloads for
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
 // layout as the legacy `m << *sync_data[i]` / `m >> *x`.
-class SyncLogResponse {
+class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
+                                                 MakoCommands> {
   public:
-    static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCRESP_PXS;
     vector<shared_ptr<MarshallDeputy>> sync_data;
     vector<vector<slotid_t>> missing_slots;
     SyncLogResponse() = default;
-
-    int32_t kind() const { return kMarshallKind; }
 
     void save(BinaryWriteArchive& ar) const {
       ar << static_cast<int32_t>(sync_data.size());
@@ -215,16 +204,14 @@ class SyncLogResponse {
     }
 };
 
-// Workstream N Phase 4d-2: migrated from Marshallable to Serializable.
-class SyncNoOpRequest {
+// Workstream N L8: TypeList-derived kind.
+class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
+                                                 MakoCommands> {
   public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_SYNCNOOP_PXS;
   int leader_id;
   ballot_t epoch;
   vector<slotid_t> sync_slots;
   SyncNoOpRequest() = default;
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
     ar << leader_id;
@@ -261,9 +248,8 @@ class SyncNoOpRequest {
 // `len_v64` members. They were a zero-copy fast path that no caller
 // ever enabled; only `length`, `log_entry`, and `operation_test` are
 // actually used by save/load.
-class LogEntry {
+class LogEntry : public rrr::Serializable<LogEntry, MakoCommands> {
 public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CONTAINER_CMD;
   int length = 0;
   std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
   shared_ptr<char> operation_test;
@@ -273,7 +259,6 @@ public:
   // Serializable interface (Phase 4d-7). Implementations live in
   // paxos_worker.cc — they reference the file-static `shared_ptr_apprch`
   // flag that gates the operation_test-vs-log_entry encoding choice.
-  int32_t kind() const { return kMarshallKind; }
   void save(BinaryWriteArchive& ar) const;
   void load(BinaryReadArchive& ar);
 };
@@ -291,9 +276,8 @@ public:
 // `entity_size` / `serialize_slots_ballots` / `write_to_fd` /
 // `serialized_slots` members. They were a zero-copy fast path that
 // no caller ever enabled.
-class BulkPaxosCmd {
+class BulkPaxosCmd : public rrr::Serializable<BulkPaxosCmd, MakoCommands> {
 public:
-  static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_BLK_PXS;
   int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
@@ -305,8 +289,6 @@ public:
       ballots.clear();
       cmds.clear();
   }
-
-  int32_t kind() const { return kMarshallKind; }
 
   void save(BinaryWriteArchive& ar) const {
       ar << static_cast<int32_t>(leader_id);

@@ -8,28 +8,14 @@
 
 namespace janus {
 
-// Workstream N Phase 4d-6: VecPieceData migrated to Serializable.
-// The nested vector<shared_ptr<SimpleCommand>> field uses Phase 4d-6
-// archive operators (free functions in command_marshaler.cc) which
-// mirror the existing Marshal-based pair byte-for-byte. Wire format
-// byte-for-byte identical to the previous Marshallable encoding.
-static int volatile x1 =
-    rrr::reg_serializable_in_deputy<VecPieceData>(
-        MarshallDeputy::CMD_VEC_PIECE);
-
-// Workstream N Phase 4d-3: VecRecData, ViewData, KeyCmdBatchData
-// migrated to Serializable. Wire format byte-for-byte identical.
-static int volatile x2 =
-    rrr::reg_serializable_in_deputy<VecRecData>(
-        MarshallDeputy::CMD_REC_VEC);
-
-static int volatile x3 =
-    rrr::reg_serializable_in_deputy<ViewData>(
-        MarshallDeputy::CMD_VIEW_DATA);
-
-static int volatile x4 =
-    rrr::reg_serializable_in_deputy<KeyCmdBatchData>(
-        MarshallDeputy::CMD_KEY_CMD_BATCH);
+// Workstream N L8: registrations switched to no-arg
+// `reg_serializable_in_deputy<T>()` — kind auto-derived from each
+// type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
+// base returns the type's 1-indexed position in `MakoCommands`).
+static int volatile x1 = rrr::reg_serializable_in_deputy<VecPieceData>();
+static int volatile x2 = rrr::reg_serializable_in_deputy<VecRecData>();
+static int volatile x3 = rrr::reg_serializable_in_deputy<ViewData>();
+static int volatile x4 = rrr::reg_serializable_in_deputy<KeyCmdBatchData>();
 
 TxWorkspace::TxWorkspace() {
   values_ = std::make_shared<map<int32_t, Value>>();

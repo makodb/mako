@@ -67,7 +67,7 @@ class MongodbServer : public TxLogServer {
     Log_info("%.2f Submit <%d, %d> loc_id %d", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
 #endif
     WAN_WAIT
-    verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
+    verify(cmd->kind_ == TpcCommitCommand::static_kind());
     auto commit_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(commit_cmd != nullptr);
     auto vec_piece_data = marshallable_cast<VecPieceData>(commit_cmd->cmd_);

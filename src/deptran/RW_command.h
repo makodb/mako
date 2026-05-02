@@ -3,16 +3,17 @@
 #include "__dep__.h"
 
 #include "rrr/rrr.hpp"
+#include "mako_commands.h"
 
 namespace janus {
 
-// Workstream N Phase 4d-8: migrated from Marshallable to Serializable.
-// Wire format byte-for-byte preserved: int32_t type_ | key_t key_ |
-// int32_t value_ (the cmd_id_, rule_mode_*, is_recovery_command_,
-// zero_time_ fields are local state, never serialized).
-class SimpleRWCommand {
+// Workstream N L8: TypeList-derived kind. Wire payload preserved:
+// int32_t type_ | key_t key_ | int32_t value_ (the cmd_id_,
+// rule_mode_*, is_recovery_command_, zero_time_ fields are local
+// state, never serialized).
+class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
+                                                 MakoCommands> {
  public:
-  static constexpr int32_t kMarshallKind = rrr::MarshallDeputy::CMD_KV;
   int32_t type_;
   key_t key_;
   int32_t value_;
@@ -26,7 +27,6 @@ class SimpleRWCommand {
   std::string cmd_to_string();
   bool same_as(SimpleRWCommand &other);
 
-  int32_t kind() const { return kMarshallKind; }
   void save(rrr::BinaryWriteArchive& ar) const;
   void load(rrr::BinaryReadArchive& ar);
 

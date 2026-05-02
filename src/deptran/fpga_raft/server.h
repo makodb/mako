@@ -184,7 +184,7 @@ class FpgaRaftServer : public TxLogServer {
 		instance->ballot = ballot;
     maxIndex = std::max(maxIndex, slot_id);
 
-    if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
+    if (cmd->kind_ == TpcCommitCommand::static_kind()){
       auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
       auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
       verify(vec_piece_data != nullptr);

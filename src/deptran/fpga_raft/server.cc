@@ -249,7 +249,8 @@ bool FpgaRaftServer::RequestVote() {
 
     auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
+    // L8: dropped tautological `kMarshallKind == static_kind()` verify
+    // (the kMarshallKind constant retired with the L8 TypeList migration).
     // Phase 4a-2: aliased wrap. (This site's empty_cmd is fire-and-
     // forget — no Wait() is called — but using the aliased wrap is
     // consistent with the migration pattern and preserves the option
@@ -444,7 +445,7 @@ void FpgaRaftServer::StartTimer()
             *followerCurrentTerm = this->currentTerm;
             *followerLastLogIndex = this->lastLogIndex;
             
-						if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
+						if (cmd->kind_ == TpcCommitCommand::static_kind()){
               auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
               auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
               verify(vec_piece_data != nullptr);

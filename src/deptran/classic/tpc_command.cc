@@ -5,51 +5,16 @@
 
 using namespace janus;
 
-// Workstream N Phase 4a-3a: TpcPrepareCommand migrated to Serializable.
-// Wire payload: tx_id (i64) | ret (i32) | nested MarshallDeputy
-// (kind | inner save bytes). Byte-for-byte identical to the previous
-// Marshallable encoding, since the nested-deputy archive operators
-// (Phase 3f-prep) match the legacy `m << md` byte layout.
-static int volatile x1 =
-    rrr::reg_serializable_in_deputy<TpcPrepareCommand>(
-        MarshallDeputy::CMD_TPC_PREPARE);
-
-// Workstream N Phase 4a-3b: TpcCommitCommand migrated to Serializable.
-// Wire payload: tx_id (i64) | ret (i32) | term (ballot_t) | nested
-// MarshallDeputy<cmd_> | bool_t has_view_data | optional nested
-// MarshallDeputy<sp_view_data_>. Byte-for-byte identical to the
-// previous Marshallable encoding.
-static int volatile x2 =
-    rrr::reg_serializable_in_deputy<TpcCommitCommand>(
-        MarshallDeputy::CMD_TPC_COMMIT);
-
-// Workstream N Phase 4a-2: TpcEmptyCommand migrated to Serializable.
-// Wire payload is empty (no fields); on the wire this is byte-for-byte
-// identical to the previous Marshallable encoding. Construction sites
-// use `wrap_serializable_aliased<T>` to preserve `event` member
-// aliasing for the leader-local sender↔apply sync. The read-side
-// factory uses value semantics (creates a fresh TpcEmptyCommand with
-// its own BoxEvent — nothing's waiting on it on the receiver).
-static int volatile x3 =
-    rrr::reg_serializable_in_deputy<TpcEmptyCommand>(
-        MarshallDeputy::CMD_TPC_EMPTY);
-
-// Workstream N Phase 4a-1: TpcNoopCommand migrated from Marshallable
-// to Serializable. Uses the new `reg_serializable_in_deputy`
-// registration path; on the wire it produces zero payload bytes (just
-// the kind prefix that the MarshallDeputy framing layer prepends),
-// byte-for-byte identical to the previous Marshallable encoding.
-static int volatile x4 =
-    rrr::reg_serializable_in_deputy<TpcNoopCommand>(
-        MarshallDeputy::CMD_NOOP);
-
-// Workstream N Phase 4a-3c: TpcBatchCommand migrated to Serializable.
-// Wire payload: uint32_t size prefix + concatenated commit bytes
-// (each commit's save). Byte-for-byte identical to the previous
-// Marshallable encoding.
-static int volatile x5 =
-    rrr::reg_serializable_in_deputy<TpcBatchCommand>(
-        MarshallDeputy::CMD_TPC_BATCH);
+// Workstream N L8: registrations switched to the no-arg
+// `reg_serializable_in_deputy<T>()` overload — kind is auto-derived
+// from each type's `static_kind()` method (provided by the
+// `Serializable<T, MakoCommands>` CRTP base, which returns the type's
+// 1-indexed position in the `MakoCommands` TypeList).
+static int volatile x1 = rrr::reg_serializable_in_deputy<TpcPrepareCommand>();
+static int volatile x2 = rrr::reg_serializable_in_deputy<TpcCommitCommand>();
+static int volatile x3 = rrr::reg_serializable_in_deputy<TpcEmptyCommand>();
+static int volatile x4 = rrr::reg_serializable_in_deputy<TpcNoopCommand>();
+static int volatile x5 = rrr::reg_serializable_in_deputy<TpcBatchCommand>();
 
 
 // Workstream N Phase 4a-3a: TpcPrepareCommand serialization via

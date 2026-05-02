@@ -294,7 +294,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   
   // Check if this is a recovery command
   bool is_recovery = false;
-  if (sp && sp->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
+  if (sp && sp->kind_ == VecPieceData::static_kind()) {
     auto vec_piece_data = marshallable_cast<VecPieceData>(sp);
     if (vec_piece_data && vec_piece_data->is_recovery_command_) {
       is_recovery = true;
@@ -401,7 +401,7 @@ void ClassicServiceImpl::SimpleCmd(
     const SimpleCommand& cmd, rrr::i32* res, rrr::DeferredReply defer) {
   Fiber::create_run([res, defer = std::move(defer), this]() mutable {
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
+    // L8: dropped tautological `kMarshallKind == static_kind()` verify.
     // Phase 4a-2: aliased wrap preserves event-member aliasing — the
     // apply path's Done() must wake this empty_cmd's Wait() below.
     auto sp_m = rrr::wrap_serializable_aliased(empty_cmd);

@@ -67,7 +67,7 @@ void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
     }
 
     // Handle WRONG_LEADER case
-    if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+    if (cmd->kind_ == TpcCommitCommand::static_kind()) {
       auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
       if (tpc_cmd) {
         // Set WRONG_LEADER error code

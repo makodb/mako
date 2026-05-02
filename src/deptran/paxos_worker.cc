@@ -19,47 +19,18 @@ moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
-// Workstream N Phase 4d-7: LogEntry and BulkPaxosCmd migrated to
-// Serializable. Wire format byte-for-byte identical (LogEntry uses
-// int length + std::string bytes; BulkPaxosCmd uses leader_id +
-// slots vec + ballots vec + cmds via Phase 3f-prep MarshallDeputy
-// archive operators). The bypass_to_socket_/entity_size/write_to_fd
-// fast path is dead code in production (no caller enables it) — see
-// the class comments and the Phase 5 cleanup TODO.
-static int volatile xx =
-    rrr::reg_serializable_in_deputy<LogEntry>(
-        MarshallDeputy::CONTAINER_CMD);
-static int volatile xxx =
-      rrr::reg_serializable_in_deputy<BulkPaxosCmd>(
-          MarshallDeputy::CMD_BLK_PXS);
-// Workstream N Phase 4d-2: 5 simple paxos types migrated to
-// Serializable. Wire format byte-for-byte identical to the previous
-// Marshallable encoding.
-static int volatile x4 =
-      rrr::reg_serializable_in_deputy<BulkPrepareLog>(
-          MarshallDeputy::CMD_BLK_PREP_PXS);
-static int volatile x5 =
-      rrr::reg_serializable_in_deputy<HeartBeatLog>(
-          MarshallDeputy::CMD_HRTBT_PXS);
-
-static int volatile x6 =
-      rrr::reg_serializable_in_deputy<SyncLogRequest>(
-          MarshallDeputy::CMD_SYNCREQ_PXS);
-
-// Workstream N Phase 4d-4: SyncLogResponse migrated to Serializable.
-// The nested `vector<shared_ptr<MarshallDeputy>>` field uses the
-// Phase 3f-prep MarshallDeputy archive operators on
-// BinaryWriteArchive / BinaryReadArchive — wire format byte-for-byte
-// identical to the previous Marshallable encoding.
-static int volatile x7 =
-      rrr::reg_serializable_in_deputy<SyncLogResponse>(
-          MarshallDeputy::CMD_SYNCRESP_PXS);
-static int volatile x8 =
-      rrr::reg_serializable_in_deputy<SyncNoOpRequest>(
-          MarshallDeputy::CMD_SYNCNOOP_PXS);
-static int volatile x9 =
-      rrr::reg_serializable_in_deputy<PaxosPrepCmd>(
-          MarshallDeputy::CMD_PREP_PXS);
+// Workstream N L8: registrations switched to no-arg
+// `reg_serializable_in_deputy<T>()` — kind auto-derived from each
+// type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
+// base returns the type's 1-indexed position in `MakoCommands`).
+static int volatile xx  = rrr::reg_serializable_in_deputy<LogEntry>();
+static int volatile xxx = rrr::reg_serializable_in_deputy<BulkPaxosCmd>();
+static int volatile x4  = rrr::reg_serializable_in_deputy<BulkPrepareLog>();
+static int volatile x5  = rrr::reg_serializable_in_deputy<HeartBeatLog>();
+static int volatile x6  = rrr::reg_serializable_in_deputy<SyncLogRequest>();
+static int volatile x7  = rrr::reg_serializable_in_deputy<SyncLogResponse>();
+static int volatile x8  = rrr::reg_serializable_in_deputy<SyncNoOpRequest>();
+static int volatile x9  = rrr::reg_serializable_in_deputy<PaxosPrepCmd>();
 
 static int shared_ptr_apprch = 1;
 
@@ -109,7 +80,7 @@ int PaxosWorker::Next(int slot_id, MarshallDeputy md) {
   int len = sp_log_entry->length;
 
   //Log_info("apply a log, par_id:%d, epoch:%d, slot_id:%d, len:%d,",site_info_->partition_id_, cur_epoch, slot_id, len);
-  if (md.kind_== MarshallDeputy::CONTAINER_CMD) {
+  if (md.kind_ == LogEntry::static_kind()) {
     if (this->callback_par_id_return_ != nullptr) {
       // forward the cmd to the learner
       // we use p1 to forward requests to save leader's bandwidth

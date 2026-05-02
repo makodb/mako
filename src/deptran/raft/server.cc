@@ -2070,7 +2070,7 @@ bool RaftServer::RequestVote() {
 
     // auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
     // auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    // verify(TpcEmptyCommand::kMarshallKind == MarshallDeputy::CMD_TPC_EMPTY);
+    // verify(TpcEmptyCommand::kMarshallKind == TpcEmptyCommand::static_kind());
     // auto sp_m = wrap_typed_marshallable(empty_cmd);
     // ((CoordinatorRaft*)co)->Submit(sp_m);
     
@@ -2609,7 +2609,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
 #ifndef RAFT_TEST_CORO
       if (cmd != nullptr) {
-        if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
+        if (cmd->kind_ == TpcCommitCommand::static_kind()){
           auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
           auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
           verify(vec_piece_data != nullptr);

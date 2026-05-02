@@ -165,7 +165,7 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
                 PRIx64, __FUNCTION__, this->site_id_, tx_id);
   if (Config::GetConfig()->IsReplicated()) {
     auto sp_prepare_cmd = std::make_shared<TpcPrepareCommand>();
-    verify(TpcPrepareCommand::kMarshallKind == MarshallDeputy::CMD_TPC_PREPARE);
+    // L8: dropped tautological `kMarshallKind == static_kind()` verify.
     sp_prepare_cmd->tx_id_ = tx_id;
     sp_prepare_cmd->cmd_ = sp_tx->cmd_;
     // Phase 4a-3a: TpcPrepareCommand is now a Serializable; wrap via
@@ -392,16 +392,16 @@ bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
 }
 
 int SchedulerClassic::Next(int slot, MarshallDeputy md) {
-  if (md.kind_ == MarshallDeputy::CMD_TPC_PREPARE) {
+  if (md.kind_ == TpcPrepareCommand::static_kind()) {
     // Phase 4a-3a: TpcPrepareCommand migrated to Serializable.
     auto* c = serializable_cast<TpcPrepareCommand>(md.inner());
     verify(c != nullptr);
     PrepareReplicated(*c);
-  } else if (md.kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+  } else if (md.kind_ == TpcCommitCommand::static_kind()) {
     auto c = marshallable_cast<TpcCommitCommand>(md);
     verify(c != nullptr);
     CommitReplicated(*c);
-  } else if (md.kind_ == MarshallDeputy::CMD_TPC_EMPTY) {
+  } else if (md.kind_ == TpcEmptyCommand::static_kind()) {
     // Phase 4a-2: TpcEmptyCommand is now a Serializable; the apply
     // path's Done() must wake the original sender's Wait() — possible
     // because construction sites use `wrap_serializable_aliased`,
@@ -410,7 +410,7 @@ int SchedulerClassic::Next(int slot, MarshallDeputy md) {
     auto* c = serializable_cast<TpcEmptyCommand>(md.inner());
     verify(c != nullptr);
     c->Done();
-  } else if (md.kind_ == MarshallDeputy::CMD_TPC_BATCH) {
+  } else if (md.kind_ == TpcBatchCommand::static_kind()) {
     auto c = marshallable_cast<TpcBatchCommand>(md);
     verify(c != nullptr);
     for (auto& cc : c->cmds_)

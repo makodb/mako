@@ -17,10 +17,10 @@ using namespace janus;
 // delegate to save/load via a MarshalSink/MarshalSource bridge, and
 // bridge-dispatched `wrap_typed_marshallable` / `marshallable_cast<T>`
 // keep the legacy call sites working unchanged.
-// @unsafe - Static registration with MarshallDeputy factory
+// Workstream N L8: registration switched to no-arg form — kind
+// auto-derived from `Serializable<T, MakoCommands>` CRTP base.
 static int volatile x_replicated_db =
-    rrr::reg_serializable_in_deputy<ReplicatedDBCommand>(
-        MarshallDeputy::CMD_REPLICATED_DB);
+    rrr::reg_serializable_in_deputy<ReplicatedDBCommand>();
 
 // ===========================================================================
 // ReplicatedDBCommand factory methods and serialization
@@ -332,7 +332,7 @@ void ReplicatedDB::ApplyEntry(int slot, shared_ptr<Marshallable> cmd) {
   }
 
   // Only process ReplicatedDBCommand entries
-  if (cmd->kind_ != MarshallDeputy::CMD_REPLICATED_DB) {
+  if (cmd->kind_ != ReplicatedDBCommand::static_kind()) {
     // Not our command type; still advance the index to avoid re-processing
     last_applied_index_ = index;
     PersistLastAppliedIndex();
