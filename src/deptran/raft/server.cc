@@ -1198,6 +1198,10 @@ void RaftServer::setIsLeader(bool isLeader) {
       // IMPORTANT: Update the communicator's view so it knows this server is the leader
       if (commo_) {
         auto view_data = std::make_shared<ViewData>(new_view_, partition_id_);
+        // PHASE8_BOUNDARY_UPDATE_PARTITION_VIEW:
+        // Gossip-only communicator view update is intentionally kept as a
+        // direct commo boundary in Phase 8.1e (out of scope for transport
+        // facade migration of consensus-critical RPC paths).
         // @unsafe
         { commo()->UpdatePartitionView(partition_id_, view_data); }
         Log_info("[RAFT_VIEW] Updated communicator view for partition %d with new leader %d",

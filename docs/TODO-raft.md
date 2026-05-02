@@ -551,9 +551,14 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   piggybacked on `send_empty_append_entries`). Added regression guard
   `test_raft_timeoutnow_callsite_guard` to assert `server.h` and
   `server.cc` do not reintroduce direct `SendTimeoutNow` usage.
-- [ ] Line 1194 `UpdatePartitionView` — this is gossip; either drop
+- [x] Line 1194 `UpdatePartitionView` — this is gossip; either drop
   it from the facade or leave the direct `commo()->UpdatePartitionView`
   call (annotate `@unsafe` and note it's out of scope for 8.x).
+  [26:05:02, 10:05] Kept `UpdatePartitionView` as an explicit
+  `PHASE8_BOUNDARY_UPDATE_PARTITION_VIEW` direct `commo()` boundary in
+  `setIsLeader` (out of scope for consensus transport migration) and
+  added `test_raft_update_partition_view_boundary_guard` to enforce
+  marker presence + single call site.
 - [ ] Line 1408 `commo()->rpc_par_proxies_[par_id]` — this reaches
   into rrr internals. Either wrap with a helper on `RaftCommo` that
   RaftServer consumes, or leave as a documented `@unsafe` boundary.

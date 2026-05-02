@@ -99,3 +99,24 @@ leaf with dedicated tests.
   RaftServer source.
 - `RrrTransportAdapter::send_timeout_now` remains available as the facade
   implementation for any future outbound timeout-now path.
+
+## Leaf 5 (UpdatePartitionView boundary) Design Rationale
+
+- Goal: resolve the `UpdatePartitionView` migration decision for Phase 8.1e.
+- Decision: keep `commo()->UpdatePartitionView(...)` as an explicit direct
+  boundary for now.
+- Why:
+  - this call is communicator gossip/view bookkeeping, not consensus-critical
+    Raft RPC replication,
+  - moving it into the transport facade now would mix concerns and increase
+    surface area of Phase 8.1e without improving Raft safety semantics.
+
+## Leaf 5 User/Developer Notes
+
+- Added explicit source marker:
+  `PHASE8_BOUNDARY_UPDATE_PARTITION_VIEW` at the `setIsLeader` call site.
+- Added regression guard test
+  `test_raft_update_partition_view_boundary_guard` to enforce:
+  - marker presence, and
+  - exactly one direct `commo()->UpdatePartitionView(...)` call in
+    `server.cc`.
