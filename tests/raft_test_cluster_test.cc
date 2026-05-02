@@ -142,3 +142,14 @@ TEST(RaftTestClusterTest, ServerOwnershipIsBackedByRealRaftServer) {
   ASSERT_TRUE(c->node(3).has_server());
   ASSERT_NE(c->node(3).server(), nullptr);
 }
+
+TEST(RaftTestClusterTest, RealServerConfigIsBootstrappedFromClusterSites) {
+  auto c = TestCluster::with_in_memory_transport(5);
+
+  EXPECT_EQ(c->node(1).server_config_size(), 5u);
+  EXPECT_EQ(c->node(3).server_config_size(), 5u);
+  EXPECT_TRUE(c->node(1).server_config_contains(1));
+  EXPECT_TRUE(c->node(1).server_config_contains(5));
+  EXPECT_TRUE(c->node(5).server_config_contains(1));
+  EXPECT_TRUE(c->node(5).server_config_contains(5));
+}

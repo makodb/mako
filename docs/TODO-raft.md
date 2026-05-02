@@ -759,6 +759,12 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
   - Updated `raft_test_cluster` and `raft_lab_standalone` to assert transport
     and fault behavior using `Vote` round-trips (avoids `TimeoutNow`-triggered
     full election path before Phase 8.5 timer/fiber startup leaf).
+- [x] 8.5.c3 bootstrap in-process membership config for frame-less servers [26:05:02, 13:44]:
+  - Added `RaftServer::BootstrapCurrentConfigForTest(...)` so test-mode
+    `RequestVote` paths do not fall back to global `Config::GetConfig()`.
+  - `TestCluster` now passes the full site-id list into each `RaftNode`,
+    and `RaftNode` seeds the owned server's `current_config_` at construction.
+  - Added `RaftTestClusterTest.RealServerConfigIsBootstrappedFromClusterSites`.
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.

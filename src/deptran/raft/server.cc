@@ -3605,6 +3605,15 @@ const std::set<siteid_t>& RaftServer::GetCurrentConfig() const {
   return current_config_;
 }
 
+// @unsafe - mutates membership state under lock
+void RaftServer::BootstrapCurrentConfigForTest(const std::set<siteid_t>& config) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  current_config_ = config;
+  if (current_config_.count(site_id_) == 0) {
+    current_config_.insert(site_id_);
+  }
+}
+
 // @unsafe - Modifies config state
 void RaftServer::OnAddServer(const uint64_t term,
                              const uint64_t new_server_id,

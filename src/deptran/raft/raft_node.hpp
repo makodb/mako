@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -122,7 +123,8 @@ class RaftNode {
            LogStorage* log_storage,
            SnapshotManager* snap_manager,
            ChannelSwitchboard* transport_sw,
-           parid_t partition_id)
+           parid_t partition_id,
+           const std::vector<siteid_t>& cluster_sites)
       : id_(id),
         partition_id_(partition_id),
         transport_(std::move(transport)),
@@ -148,6 +150,8 @@ class RaftNode {
       raw_server->transport() =
           make_channel_transport(transport_sw, id_, partition_id_);
     }
+    raw_server->BootstrapCurrentConfigForTest(
+        std::set<siteid_t>(cluster_sites.begin(), cluster_sites.end()));
     dispatcher_ = make_raft_server_dispatcher(raw_server);
   }
 
@@ -194,6 +198,17 @@ class RaftNode {
   // @safe
   LogStorage*      log_storage()     { return log_storage_; }
   SnapshotManager* snapshot_manager(){ return snap_manager_; }
+  // @safe
+  size_t server_config_size() const {
+    if (server_.is_none()) return 0;
+    return server_.as_ref().unwrap().get()->GetCurrentConfig().size();
+  }
+  // @safe
+  bool server_config_contains(siteid_t site) const {
+    if (server_.is_none()) return false;
+    const auto& cfg = server_.as_ref().unwrap().get()->GetCurrentConfig();
+    return cfg.count(site) > 0;
+  }
 
  private:
   siteid_t                      id_{0};

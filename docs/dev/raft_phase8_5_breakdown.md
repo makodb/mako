@@ -63,6 +63,17 @@ Status (c2):
 - Timer/fiber startup remains deferred; this leaf intentionally keeps the
   behavior change limited to ownership + dispatcher routing.
 
+Status (c3):
+- Added `RaftServer::BootstrapCurrentConfigForTest(...)` so frame-less
+  in-process servers can populate `current_config_` without `Setup()` /
+  `Config::GetConfig()`.
+- `TestCluster` now passes full site-id membership into each `RaftNode`
+  constructor, and `RaftNode` seeds the owned server's membership during
+  construction.
+- Added `RaftNode` accessors (`server_config_size`,
+  `server_config_contains`) and a focused test asserting membership is
+  bootstrapped on all nodes.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with

@@ -984,6 +984,14 @@ class RaftServer : public TxLogServer {
   const std::set<siteid_t>& GetCurrentConfig() const;
 
   /**
+   * Test-mode bootstrap for frame-less servers.
+   * Seeds current_config_ without requiring Setup()/Config::GetConfig().
+   * Intended for in-process TestCluster harness leaves.
+   */
+  // @unsafe - mutates membership state under lock
+  void BootstrapCurrentConfigForTest(const std::set<siteid_t>& config);
+
+  /**
    * Check if a server is a learner (being caught up, not yet in quorum).
    */
   // @unsafe - Read-only lookup on std::set

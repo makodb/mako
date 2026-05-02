@@ -972,6 +972,9 @@ an empty scaffold.
 As part of bootstrap prep, `RaftServer` exposes a frame-less test
 constructor (`site_id, partition_id, loc_id`) and no longer hard-requires
 `frame_->site_info_` inside `RequestVote`.
+`TestCluster` also seeds each owned server's membership config explicitly
+via `BootstrapCurrentConfigForTest(...)`, so in-process vote/election
+paths do not depend on global YAML `Config::GetConfig()` initialization.
 Current harness checks for disconnect/partition use `Vote` round-trips
 rather than `TimeoutNow`, because full election timer/fiber startup is
 still deferred to later Phase 8.5 leaves.
