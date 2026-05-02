@@ -17,3 +17,11 @@ TEST(RaftServerTestModeCtorTest, InitializesIdentityWithoutFrame) {
   EXPECT_FALSE(server.IsLeader());
   EXPECT_EQ(server.GetLeaderHint(), INVALID_SITEID);
 }
+
+TEST(RaftServerTestModeCtorTest, BootstrapsReplicationStateWithoutCommo) {
+  janus::RaftServer server(/*site_id=*/11, /*partition_id=*/2, /*loc_id=*/7);
+  server.BootstrapCurrentConfigForTest({11, 12, 13});
+  server.BootstrapReplicationStateForTest();
+
+  EXPECT_TRUE(server.ReplicationStateReadyForHeartbeatTickForTest());
+}

@@ -37,7 +37,8 @@ TEST(RaftRpcParProxiesBoundaryGuardTest, ServerUsesCommoHelperInsteadOfDirectLoo
 
   EXPECT_NE(commo_h.find("GetPartitionProxySiteIds("), std::string::npos);
   EXPECT_NE(commo_cc.find("RaftCommo::GetPartitionProxySiteIds("), std::string::npos);
-  EXPECT_EQ(CountOccurrences(server_cc, "GetPartitionProxySiteIds("), 2u);
+  // Centralized through RaftServer::GetReplicationPeerSiteIds().
+  EXPECT_EQ(CountOccurrences(server_cc, "GetPartitionProxySiteIds("), 1u);
 
   EXPECT_EQ(server_cc.find("commo()->rpc_par_proxies_["), std::string::npos);
   EXPECT_EQ(server_cc.find("proxies = c->rpc_par_proxies_[partition_id_]"), std::string::npos);

@@ -319,6 +319,14 @@ class RaftServer : public TxLogServer {
   // @safe - external calls marked @external, mutex/pointer ops in @unsafe blocks
 	bool RequestVote() ;
 
+  // @safe - gathers replication peers from commo() when present and falls
+  // back to current_config_/learners_ in frame-less test mode.
+  std::vector<siteid_t> GetReplicationPeerSiteIds() const;
+
+  // @safe - reinitializes per-peer replication progress maps.
+  void InitializeReplicationStateForPeers(
+      const std::vector<siteid_t>& peer_site_ids, uint64_t next_index_seed);
+
   // @safe - server setup (threading via @unsafe blocks)
 	void Setup();
   // @safe - external calls marked @external, core replication loop
@@ -990,6 +998,21 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - mutates membership state under lock
   void BootstrapCurrentConfigForTest(const std::set<siteid_t>& config);
+
+  /**
+   * Test-mode replication bootstrap for frame-less servers.
+   * Initializes next_index_/match_index_ from current_config_/learners_
+   * so the first HeartbeatLoop tick can run without commo() wiring.
+   */
+  // @unsafe - mutates replication maps under lock
+  void BootstrapReplicationStateForTest();
+
+  /**
+   * Test helper for validating in-process cluster bootstrap.
+   * Returns true if replication maps contain exactly the current peers.
+   */
+  // @unsafe - reads replication maps and config state
+  bool ReplicationStateReadyForHeartbeatTickForTest();
 
   /**
    * Check if a server is a learner (being caught up, not yet in quorum).

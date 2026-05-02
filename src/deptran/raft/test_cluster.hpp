@@ -146,6 +146,9 @@ class TestCluster {
       rusty::Box<RaftNode> node(new RaftNode(
           id, std::move(tr), logs_.back().get(), snaps_.back().get(),
           &sw_, /*partition_id=*/0, site_ids_));
+      if (node->server() != nullptr) {
+        node->server()->BootstrapReplicationStateForTest();
+      }
 
       rusty::Box<ChannelNodeWorker> worker(new ChannelNodeWorker(
           std::move(receivers[i]), node->take_dispatcher()));

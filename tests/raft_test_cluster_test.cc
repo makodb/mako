@@ -159,6 +159,16 @@ TEST(RaftTestClusterTest, ServerOwnershipIsBackedByRealRaftServer) {
   ASSERT_NE(c->node(3).server(), nullptr);
 }
 
+TEST(RaftTestClusterTest, ServersStartHeartbeatReady) {
+  auto c = TestCluster::with_in_memory_transport(5);
+  for (auto site_id : c->site_ids()) {
+    ASSERT_NE(c->node(site_id).server(), nullptr);
+    EXPECT_TRUE(c->node(site_id)
+                    .server()
+                    ->ReplicationStateReadyForHeartbeatTickForTest());
+  }
+}
+
 TEST(RaftTestClusterTest, RealServerConfigIsBootstrappedFromClusterSites) {
   auto c = TestCluster::with_in_memory_transport(5);
 

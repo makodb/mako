@@ -91,6 +91,19 @@ Status (c5):
 - Frame-less `RaftServer` constructor marks `looping_ = true` in test mode
   so `IsLeader()` can reflect `setIsLeader()` without running fibers.
 
+Status (c6):
+- Added `RaftServer` replication-peer discovery fallback for frame-less
+  mode: when `commo()` is absent, peer lists come from
+  `current_config_` + `learners_`.
+- Added test bootstrap/readiness helpers:
+  `BootstrapReplicationStateForTest()` and
+  `ReplicationStateReadyForHeartbeatTickForTest()`.
+- `TestCluster::with_in_memory_transport(n)` now pre-initializes each
+  node's `next_index_` / `match_index_` maps so servers are ready for the
+  first heartbeat tick before timer/fiber bring-up.
+- Added focused tests in `raft_server_test_mode_ctor_test` and
+  `raft_test_cluster_test` to lock this readiness contract.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with
@@ -108,3 +121,10 @@ Status (c5):
 
 - Remove `DummyDispatcher` and stale skeleton-only paths once no references
   remain.
+
+## Remaining split for the large 8.5 node-startup bullet
+
+1. c7: test-mode timer/fiber startup scaffolding (`HeartbeatLoop` /
+   election timer / apply thread lifecycle in TestCluster mode).
+2. c8: behavioral gtests (`election converges`, `agreement`,
+   `disconnect` catch-up) plus gate run.

@@ -1132,6 +1132,45 @@ siteid_t RaftServer::GetLeaderHint() const {
   return current_leader_id_;
 }
 
+std::vector<siteid_t> RaftServer::GetReplicationPeerSiteIds() const {
+  std::set<siteid_t> peer_ids;
+  if (commo_ != nullptr) {
+    auto* c = (RaftCommo*) commo_;
+    if (c != nullptr) {
+      auto commo_peers = c->GetPartitionProxySiteIds(partition_id_);
+      for (auto peer_site_id : commo_peers) {
+        if (peer_site_id != site_id_) {
+          peer_ids.insert(peer_site_id);
+        }
+      }
+    }
+  }
+  for (auto peer_site_id : current_config_) {
+    if (peer_site_id != site_id_) {
+      peer_ids.insert(peer_site_id);
+    }
+  }
+  for (auto peer_site_id : learners_) {
+    if (peer_site_id != site_id_) {
+      peer_ids.insert(peer_site_id);
+    }
+  }
+  return std::vector<siteid_t>(peer_ids.begin(), peer_ids.end());
+}
+
+void RaftServer::InitializeReplicationStateForPeers(
+    const std::vector<siteid_t>& peer_site_ids, uint64_t next_index_seed) {
+  match_index_.clear();
+  next_index_.clear();
+  for (auto peer_site_id : peer_site_ids) {
+    if (peer_site_id == site_id_) {
+      continue;
+    }
+    match_index_[peer_site_id] = 0;
+    next_index_[peer_site_id] = next_index_seed;
+  }
+}
+
 // @unsafe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
 void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
@@ -1146,32 +1185,20 @@ void RaftServer::setIsLeader(bool isLeader) {
 
 
   if (isLeader) {  // [Jetpack] This need to be done before new leader realized it is a leader, otherwise new leader will use incorrect next_index_ balabala
-    // Add null check for communicator
-    if (commo_ == nullptr) {
-      Log_info("commo_ is null, skipping leader initialization");
-    } else {
-      // Reset leader volatile state
-      vector<siteid_t> peer_site_ids;
-      // @unsafe
-      {
-      RaftCommo *c = (RaftCommo*) commo();
-      verify(c != nullptr);
-      peer_site_ids = c->GetPartitionProxySiteIds(partition_id_);
+    if (failover_) {
+      auto peer_site_ids = GetReplicationPeerSiteIds();
+      InitializeReplicationStateForPeers(peer_site_ids, lastLogIndex + 1);
+      for (const auto peer_site_id : peer_site_ids) {
+        Log_debug("loc_id_=%d match_index_[%d]=%d, next_index_[%d]=%d",
+                  loc_id_, peer_site_id, match_index_[peer_site_id], peer_site_id,
+                  next_index_[peer_site_id]);
       }
-      if(failover_) {
-        for (const auto peer_site_id : peer_site_ids) {
-          if (peer_site_id != site_id_) {
-            // set matchIndex = 0
-            match_index_[peer_site_id] = 0;
-            // set nextIndex = lastLogIndex + 1
-            next_index_[peer_site_id] = lastLogIndex + 1;
-            Log_debug("loc_id_=%d match_index_[%d]=%d, next_index_[%d]=%d", loc_id_, peer_site_id, match_index_[peer_site_id], peer_site_id, next_index_[peer_site_id]);
-          }
-        }
-        // matchedIndex and nextIndex should have indices for all servers + learners except self
-        verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-        verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
+      size_t expected_peers = 0;
+      if (current_config_.size() + learners_.size() > 0) {
+        expected_peers = current_config_.size() + learners_.size() - 1;
       }
+      verify(match_index_.size() == expected_peers);
+      verify(next_index_.size() == expected_peers);
     }
   }
 
@@ -1432,29 +1459,14 @@ void RaftServer::HeartbeatLoop() {
   hb_timer->start();
   }
 
-  parid_t partition_id = partition_id_;
-  // Log_info("!!!!!!! if (!failover_)");
-  // if (!failover_) {
-    vector<siteid_t> peer_site_ids;
-    // @unsafe
-    {
-    RaftCommo *c = (RaftCommo*) commo();
-    verify(c != nullptr);
-    peer_site_ids = c->GetPartitionProxySiteIds(partition_id);
-    }
-    for (const auto peer_site_id : peer_site_ids) {
-      if (peer_site_id == site_id_) {
-        continue;  // skip self
-      }
-      // set matchIndex = 0
-      match_index_[peer_site_id] = 0;
-      // set nextIndex = 1
-      next_index_[peer_site_id] = 1;
-    }
-    // matchedIndex and nextIndex should have indices for all servers + learners except self
-    verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-    verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
-  // }
+  auto peer_site_ids = GetReplicationPeerSiteIds();
+  InitializeReplicationStateForPeers(peer_site_ids, /*next_index_seed=*/1);
+  size_t expected_peers = 0;
+  if (current_config_.size() + learners_.size() > 0) {
+    expected_peers = current_config_.size() + learners_.size() - 1;
+  }
+  verify(match_index_.size() == expected_peers);
+  verify(next_index_.size() == expected_peers);
 
   Log_debug("heartbeat loop init from site: %d", site_id_);
   looping_ = true;
@@ -3616,6 +3628,30 @@ void RaftServer::BootstrapCurrentConfigForTest(const std::set<siteid_t>& config)
   if (current_config_.count(site_id_) == 0) {
     current_config_.insert(site_id_);
   }
+}
+
+void RaftServer::BootstrapReplicationStateForTest() {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  auto peer_site_ids = GetReplicationPeerSiteIds();
+  InitializeReplicationStateForPeers(peer_site_ids, /*next_index_seed=*/1);
+}
+
+bool RaftServer::ReplicationStateReadyForHeartbeatTickForTest() {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  auto peer_site_ids = GetReplicationPeerSiteIds();
+  std::set<siteid_t> peers(peer_site_ids.begin(), peer_site_ids.end());
+  if (match_index_.size() != peers.size() || next_index_.size() != peers.size()) {
+    return false;
+  }
+  for (auto peer_site_id : peers) {
+    if (match_index_.count(peer_site_id) == 0) {
+      return false;
+    }
+    if (next_index_.count(peer_site_id) == 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // @unsafe - Modifies config state

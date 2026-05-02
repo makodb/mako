@@ -779,6 +779,13 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     now update owned server state.
   - Frame-less `RaftServer` constructor sets `looping_=true` so
     `IsLeader()` can reflect test-mode `setIsLeader()` calls.
+- [x] 8.5.c6 bootstrap frame-less replication state for first heartbeat tick [26:05:02, 14:31]:
+  - Added `RaftServer` peer-discovery fallback (`current_config_`/`learners_`)
+    when `commo()` is absent in in-process test mode.
+  - Added `BootstrapReplicationStateForTest()` and
+    `ReplicationStateReadyForHeartbeatTickForTest()`.
+  - `TestCluster::with_in_memory_transport(n)` now pre-initializes each
+    owned server's replication maps; added readiness gtests.
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.
@@ -792,9 +799,9 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     `server_->StartApplyThread()` / `StartApplyFiber()` — exactly as
     `deptran_server` does today but without a `deptran_server` binary.
 - [x] Delete `DummyDispatcher` once nothing references it. [26:05:02, 13:54]
-- [ ] `TestCluster::with_in_memory_transport(n)`: keep the existing
+- [x] `TestCluster::with_in_memory_transport(n)`: keep the existing
   wiring but ensure each node's RaftServer is in a state ready to
-  accept the first `HeartbeatLoop` tick.
+  accept the first `HeartbeatLoop` tick. [26:05:02, 14:31]
 - [ ] New gtest cases in `tests/raft_test_cluster_test.cc`:
   - Election converges: construct 3-node cluster, step until
     exactly one `node(i).is_leader()` is true.
