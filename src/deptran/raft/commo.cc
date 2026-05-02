@@ -14,8 +14,6 @@
 //   Log_debug: [safe, (...) -> void]
 //   Log_warn: [safe, (...) -> void]
 //   verify: [safe, (...) -> void]
-//   Config::GetConfig: [safe, () -> *]
-//   Reactor::create_sp_event: [safe, (...) -> owned]
 //   operator bool: [safe, (&'a) -> bool]
 // }
 
@@ -38,57 +36,6 @@ std::vector<siteid_t> RaftCommo::GetPartitionProxySiteIds(parid_t par_id) const 
     site_ids.push_back(proxy.first);
   }
   return site_ids;
-}
-
-// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
-shared_ptr<RaftVoteQuorumEvent>
-RaftCommo::BroadcastVote(parid_t par_id,
-                         slotid_t lst_log_idx,
-                         ballot_t lst_log_term,
-                         siteid_t self_id,
-                         ballot_t cur_term ) {
-  int n = 0;
-  // @unsafe
-  { n = Config::GetConfig()->GetPartitionSize(par_id); }
-  auto e = Reactor::create_sp_event<RaftVoteQuorumEvent>(n, n/2);
-  auto proxies = rpc_par_proxies_[par_id];
-  WAN_WAIT;
-  for (auto& p : proxies) {
-    auto site_id = p.first;
-    if (site_id == self_id) {
-      continue;
-    }
-    RaftProxy* proxy;
-    // @unsafe
-    { proxy = (RaftProxy*) p.second; }
-    FutureAttr fuattr;
-    fuattr.callback = [e,site_id](rusty::Arc<Future> fu) {
-      if (fu->get_error_code() != 0) {
-        // Don't reconnect here - rely on NotifyRestart mechanism instead
-        Log_debug("[VOTE_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
-        return;
-      }
-      ballot_t term = 0;
-      bool_t vote = false ;
-      fu->get_reply() >> term;
-      fu->get_reply() >> vote ;
-      // Legacy BroadcastVote path now only tracks yes/no counts.
-      (void)term;
-      (void)site_id;
-      e->FeedResponse(vote);
-    };
-    RaftProxy::RpcVoteRequest req{};
-    req.lst_log_idx = lst_log_idx;
-    req.lst_log_term = lst_log_term;
-    req.site_id = self_id;
-    req.cur_term = cur_term;
-    auto f = proxy->async_Vote(req, fuattr);
-    _RPC_COUNT();
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-  return std::move(e);
 }
 
 // ============================================================================

@@ -568,8 +568,14 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   `commo()->rpc_par_proxies_[...]` indexing. Added
   `test_raft_rpc_par_proxies_boundary_guard` to enforce helper presence and
   prevent reintroduction of the direct lookup pattern.
-- [ ] Delete `RaftVoteQuorumEvent` from `commo.h` + `commo.cc` now
+- [x] Delete `RaftVoteQuorumEvent` from `commo.h` + `commo.cc` now
   that no one calls `BroadcastVote`.
+  [26:05:02, 10:53] Removed `RaftVoteQuorumEvent` and the dead
+  `RaftCommo::BroadcastVote(...)` API/implementation from raft commo.
+  Expanded `test_raft_commo_legacy_api_removed` with a compile-time
+  `BroadcastVote` absence assertion and added
+  `test_raft_vote_quorum_event_removed_guard` to enforce source-level
+  absence of both `RaftVoteQuorumEvent` and `RaftCommo::BroadcastVote`.
 - [ ] Gate: full lab test + `shard1ReplicationRaft` throughput
   (≥80k ops/sec per docs/dev/raft_decouple_plan.md completion criteria).
 - [ ] **Commit**: `raft: phase 8.1e — retire remaining commo() outbound

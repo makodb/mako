@@ -714,7 +714,6 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 | Method | Purpose |
 |--------|---------|
 | `SendAppendEntriesCb()` | rrr callback bridge used by the rrr transport adapter |
-| `BroadcastVote()` | Legacy vote helper kept for transition; election path no longer depends on its term/spec-voter helpers |
 | `send_vote()` via `TransportProxy` | Per-peer RequestVote used by `RaftServer::RequestVote()` |
 | `send_append_entries()` / `send_empty_append_entries()` via `TransportProxy` | Per-peer replication/heartbeat path used by `RaftServer::HeartbeatLoop()` |
 | `SendVoteDurable()` | Notify leader of persisted vote |
@@ -730,7 +729,7 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1e leaf 6): `RequestVote()` election fan-out,
+- Current state (Phase 8.1e leaf 7): `RequestVote()` election fan-out,
   `HeartbeatLoop()` append fan-out, leadership-transfer append trigger,
   lagging-follower snapshot send path, follower durable-ack send path, and
   follower durable-vote ack send path are migrated to per-peer transport
@@ -747,16 +746,18 @@ initialized in `RaftServer::Setup()` via
   `commo()->rpc_par_proxies_` directly; they use
   `RaftCommo::GetPartitionProxySiteIds(...)`, guarded by
   `test_raft_rpc_par_proxies_boundary_guard`.
-- Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
-  transitional paths; term/spec-voter helper accessors were removed.
+- Legacy vote fan-out transition artifacts are removed:
+  `RaftVoteQuorumEvent` and `RaftCommo::BroadcastVote(...)` no longer exist,
+  guarded by `test_raft_commo_legacy_api_removed` and
+  `test_raft_vote_quorum_event_removed_guard`.
 - Append callback bridge hardening (Phase 8.1d leaf 1): on append RPC error,
   `RaftCommo::SendAppendEntriesCb` now emits a default `AppendEntriesReply{}`
   so transport-facing callers never wait on a silently dropped callback.
 - Legacy append wrapper APIs (`SendAppendEntriesResults`,
   `SendAppendEntries2`, `SendAppendEntries`) are now deleted from
   `RaftCommo`; only callback bridge entry points remain on that path.
-- Remaining phase (8.1e): delete the transitional vote helper
-  (`RaftVoteQuorumEvent`).
+- Remaining phase (8.1e): final gate verification / commit bundling noted in
+  `docs/TODO-raft.md`.
 
 ### Restart Notification
 

@@ -21,6 +21,13 @@ template <class T>
 struct has_send_append_entries<T, std::void_t<decltype(&T::SendAppendEntries)>>
     : std::true_type {};
 
+template <class T, class = void>
+struct has_broadcast_vote : std::false_type {};
+
+template <class T>
+struct has_broadcast_vote<T, std::void_t<decltype(&T::BroadcastVote)>>
+    : std::true_type {};
+
 }  // namespace
 
 TEST(RaftCommoLegacyApiRemovedTest, LegacyAppendEntriesApiIsNotExposed) {
@@ -28,5 +35,7 @@ TEST(RaftCommoLegacyApiRemovedTest, LegacyAppendEntriesApiIsNotExposed) {
                 "RaftCommo::SendAppendEntries2 must stay removed");
   static_assert(!has_send_append_entries<janus::RaftCommo>::value,
                 "RaftCommo::SendAppendEntries must stay removed");
+  static_assert(!has_broadcast_vote<janus::RaftCommo>::value,
+                "RaftCommo::BroadcastVote must stay removed");
   SUCCEED();
 }

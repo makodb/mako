@@ -13,12 +13,8 @@
 //   Log_warn: [safe, (...) -> void],
 //   Log_error: [safe, (...) -> void],
 //   verify: [safe, (bool) -> void],
-//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
-//   Config::GetConfig: [safe, () -> Config*],
 //   MarshallDeputy: [safe, (...) -> MarshallDeputy],
-//   Future::safe_release: [safe, (Future*) -> void],
-//   vote_yes: [safe, () -> void],
-//   vote_no: [safe, () -> void]
+//   Future::safe_release: [safe, (Future*) -> void]
 // }
 
 namespace janus {
@@ -37,26 +33,6 @@ enum class NotifyRestartStatus {
   ACKNOWLEDGED,  // Peer reconnected to us
   DOWN,          // Peer told us it's down (no retry needed, will reconnect when it restarts)
   PENDING        // Need to send/retry NotifyRestart
-};
-
-// @unsafe - inherits from non-@interface base QuorumEvent
-class RaftVoteQuorumEvent: public QuorumEvent {
- public:
-  using QuorumEvent::QuorumEvent;
-  // @safe
-  bool HasAcceptedValue() {
-    return false;
-  }
-
-  // @safe
-  void FeedResponse(bool y) {
-    if (y) {
-      // @unsafe
-      { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
-    } else {
-      vote_no();
-    }
-  }
 };
 
 /**
@@ -94,14 +70,6 @@ friend class RaftProxy;
 
   // @safe - read-only accessor used to keep rpc_par_proxies_ encapsulated.
   std::vector<siteid_t> GetPartitionProxySiteIds(parid_t par_id) const;
-
-  // @unsafe - C-style cast
-  shared_ptr<RaftVoteQuorumEvent>
-  BroadcastVote(parid_t par_id,
-                        slotid_t lst_log_idx,
-                        ballot_t lst_log_term,
-                        siteid_t self_id,
-                        ballot_t cur_term );
 
   /**
    * SendTimeoutNow - Send TimeoutNow RPC to target replica

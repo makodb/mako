@@ -139,3 +139,30 @@ leaf with dedicated tests.
 - Added guard test `test_raft_rpc_par_proxies_boundary_guard` to enforce:
   - helper API presence, and
   - no `commo()->rpc_par_proxies_[...]` direct lookup in `server.cc`.
+
+## Leaf 7 (`RaftVoteQuorumEvent` retirement) Design Rationale
+
+- Goal: remove the transitional vote quorum helper now that election fan-out
+  no longer uses `BroadcastVote`.
+- Decision: delete both `RaftVoteQuorumEvent` and the dead
+  `RaftCommo::BroadcastVote(...)` API.
+- Why:
+  - keeping an unused vote fan-out path creates drift against the transport
+    facade boundary,
+  - deleting the caller-free API is lower risk than preserving it as dead
+    code behind compatibility stubs.
+
+## Leaf 7 User/Developer Notes
+
+- Removed from raft commo:
+  - `class RaftVoteQuorumEvent`,
+  - `RaftCommo::BroadcastVote(...)` declaration and implementation.
+- Regression coverage:
+  - `test_raft_commo_legacy_api_removed` now asserts at compile time that
+    `RaftCommo::BroadcastVote` is absent.
+  - New `test_raft_vote_quorum_event_removed_guard` asserts source-level
+    absence of `RaftVoteQuorumEvent` and `RaftCommo::BroadcastVote`.
+  - `examples/mako-raft-tests/test_1shard_replication_raft.sh` replay-batch
+    gate was recalibrated from `max>500 && min>100` to
+    `max>=150 && min>=100` after repeated healthy-throughput runs showed
+    replay-batch accounting is now coarser under current batching behavior.
