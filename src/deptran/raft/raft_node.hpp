@@ -104,17 +104,41 @@ class RaftNode {
   }
 
   // Inspection accessors. These are placeholders backed by simple
-  // in-node fields so test-cluster plumbing can be exercised; they
-  // will be replaced by delegation to a real RaftServer in Phase 6.5.
+  // delegated reads from the owned RaftServer.
   // @safe
-  bool      is_leader()      const { return is_leader_; }
-  slotid_t  commit_index()   const { return commit_index_; }
-  ballot_t  current_term()   const { return current_term_; }
+  bool      is_leader() {
+    auto* s = server();
+    if (s == nullptr) return false;
+    return s->IsLeader();
+  }
+  // @safe
+  slotid_t  commit_index() const {
+    auto* s = server();
+    if (s == nullptr) return 0;
+    return s->commitIndex;
+  }
+  // @safe
+  ballot_t  current_term() const {
+    auto* s = server();
+    if (s == nullptr) return 0;
+    return s->currentTerm;
+  }
 
-  // @safe - manual state injection used by the Phase 6 tests
-  void force_leader(bool b)             { is_leader_ = b; }
-  void set_commit_index(slotid_t s)     { commit_index_ = s; }
-  void set_current_term(ballot_t t)     { current_term_ = t; }
+  // @safe - test-only state injection for harness checks
+  void force_leader(bool b) {
+    auto* s = server();
+    if (s != nullptr) s->setIsLeader(b);
+  }
+  // @safe
+  void set_commit_index(slotid_t s) {
+    auto* svr = server();
+    if (svr != nullptr) svr->commitIndex = s;
+  }
+  // @safe
+  void set_current_term(ballot_t t) {
+    auto* svr = server();
+    if (svr != nullptr) svr->currentTerm = t;
+  }
 
   // @safe - borrow the transport for sending RPCs
   TransportProxy& transport() { return transport_; }
@@ -154,10 +178,6 @@ class RaftNode {
   LogStorage*                   log_storage_{nullptr};
   SnapshotManager*              snap_manager_{nullptr};
   rusty::Option<rusty::Box<::janus::RaftServer>> server_;
-
-  bool     is_leader_{false};
-  slotid_t commit_index_{0};
-  ballot_t current_term_{0};
 };
 
 }  // namespace raft

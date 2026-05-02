@@ -118,6 +118,10 @@ TEST(RaftTestClusterTest, InspectionAccessors) {
   EXPECT_EQ(c->node(1).current_term(), 42u);
   EXPECT_EQ(c->node(1).commit_index(), 10u);
   EXPECT_FALSE(c->node(2).is_leader());
+
+  ASSERT_NE(c->node(1).server(), nullptr);
+  EXPECT_EQ(c->node(1).server()->currentTerm, 42u);
+  EXPECT_EQ(c->node(1).server()->commitIndex, 10u);
 }
 
 TEST(RaftTestClusterTest, ServerDispatcherRoutesMembershipHandlers) {

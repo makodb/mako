@@ -82,6 +82,15 @@ Status (c4):
 - Added a behavior test (`VoteRejectsDifferentCandidateInSameTerm`) that
   would fail under the old dummy "always grant vote" semantics.
 
+Status (c5):
+- `RaftNode` inspection accessors (`is_leader`, `current_term`,
+  `commit_index`) now read directly from the owned `RaftServer` instead of
+  local shadow fields.
+- Test helper mutators (`force_leader`, `set_current_term`,
+  `set_commit_index`) now write into owned server state.
+- Frame-less `RaftServer` constructor marks `looping_ = true` in test mode
+  so `IsLeader()` can reflect `setIsLeader()` without running fibers.
+
 ### 8.5.d Switch RaftNode dispatcher from Dummy to RaftServerDispatcher
 
 - Replace `DummyDispatcher` dispatching path with

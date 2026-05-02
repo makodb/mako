@@ -970,6 +970,8 @@ harness independent of socket RPC while exercising real `On*` handlers.
 The old `DummyDispatcher` compatibility path has been removed.
 `RaftNode::has_server()/server()` now report live ownership instead of
 an empty scaffold.
+`RaftNode` inspection APIs (`is_leader/current_term/commit_index`) now
+read directly from the owned server state.
 As part of bootstrap prep, `RaftServer` exposes a frame-less test
 constructor (`site_id, partition_id, loc_id`) and no longer hard-requires
 `frame_->site_info_` inside `RequestVote`.

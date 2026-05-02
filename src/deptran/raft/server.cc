@@ -715,6 +715,10 @@ RaftServer::RaftServer(siteid_t site_id, parid_t partition_id, locid_t loc_id)
   site_id_ = site_id;
   partition_id_ = partition_id;
   loc_id_ = loc_id;
+  // Frame-less constructor is test-mode bootstrap: keep looping_ true so
+  // IsLeader() reflects setIsLeader() in in-process harness tests even
+  // without running HeartbeatLoop fibers yet.
+  looping_ = true;
 #ifdef RAFT_TEST_CORO
   setIsLeader(false);
 #endif

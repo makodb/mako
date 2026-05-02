@@ -772,6 +772,13 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     former always-true dummy vote behavior).
   - Updated in-process harness comments/docs to reflect
     `RaftServerDispatcher` as the active dispatch path.
+- [x] 8.5.c5 bind RaftNode inspection accessors to real server state [26:05:02, 14:03]:
+  - `RaftNode::{is_leader,current_term,commit_index}` now delegate to the
+    owned `RaftServer` fields/methods instead of local placeholder fields.
+  - Test mutators (`force_leader`, `set_current_term`, `set_commit_index`)
+    now update owned server state.
+  - Frame-less `RaftServer` constructor sets `looping_=true` so
+    `IsLeader()` can reflect test-mode `setIsLeader()` calls.
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.
