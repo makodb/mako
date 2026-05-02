@@ -812,6 +812,21 @@ Inbound RPC handling now has an explicit dispatcher boundary:
 - This is still scaffold-only: runtime storage member migration in `RaftServer`
   remains for later Phase 8.4 leaves.
 
+### Storage Boundary Migration (Phase 8.4 Leaf 3a)
+
+- `RaftServer::log_storage_` is now a `LogStorageProxy` instead of a direct
+  virtual-interface pointer.
+- API compatibility is preserved:
+  - `SetLogStorage(shared_ptr<LogStorage>)` still accepts existing callsites.
+  - `GetLogStorage()` still returns the original shared pointer.
+  - Internally, the server wraps storage behind a forwarding
+    `LogStorageProxyAdapter` so all server persistence/recovery logic runs
+    through the proxy boundary.
+- Conformance/regression coverage is provided by
+  `test_raft_server_log_storage_proxy`:
+  - verifies Set/Get compatibility
+  - verifies `RecoverFromStorage()` behavior with proxy-backed storage.
+
 ### Restart Notification
 
 When a server restarts, it broadcasts a restart notification to all peers. Peers reconnect their RPC proxies to avoid stale connections:

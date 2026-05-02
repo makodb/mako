@@ -11,6 +11,7 @@
 #include <rusty/arc.hpp>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
+#include "log_storage_facade.hpp"
 #include "snapshot_manager.hpp"
 
 // @external: {
@@ -114,11 +115,68 @@ class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
   friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
+  struct LogStorageProxyAdapter {
+    std::shared_ptr<janus::raft::LogStorage> impl;
+
+    rusty::Option<janus::raft::LogEntry> get(slotid_t slot_id) const {
+      return impl->get(slot_id);
+    }
+    bool put(const janus::raft::LogEntry& entry) {
+      return impl->put(entry);
+    }
+    bool remove(slotid_t slot_id) {
+      return impl->remove(slot_id);
+    }
+    std::vector<janus::raft::LogEntry> get_range(slotid_t start, slotid_t end) const {
+      return impl->get_range(start, end);
+    }
+    bool put_batch(const std::vector<janus::raft::LogEntry>& entries) {
+      return impl->put_batch(entries);
+    }
+    bool remove_range(slotid_t start, slotid_t end) {
+      return impl->remove_range(start, end);
+    }
+    slotid_t get_first_index() const {
+      return impl->get_first_index();
+    }
+    slotid_t get_last_index() const {
+      return impl->get_last_index();
+    }
+    rusty::Option<ballot_t> get_term(slotid_t slot_id) const {
+      return impl->get_term(slot_id);
+    }
+    size_t size() const {
+      return impl->size();
+    }
+    bool empty() const {
+      return impl->empty();
+    }
+    bool set_metadata(const std::string& key, const std::string& value) {
+      return impl->set_metadata(key, value);
+    }
+    rusty::Option<std::string> get_metadata(const std::string& key) const {
+      return impl->get_metadata(key);
+    }
+    bool sync() {
+      return impl->sync();
+    }
+    bool close() {
+      return impl->close();
+    }
+    bool is_open() const {
+      return impl->is_open();
+    }
+    bool clear() {
+      return impl->clear();
+    }
+  };
+
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
   janus::raft::TransportProxy transport_;
-  std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
+  janus::raft::LogStorageProxy log_storage_;  // Optional persistent storage proxy
+  std::shared_ptr<janus::raft::LogStorage> log_storage_owner_;  // Compatibility handle + lifetime owner
   bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
@@ -735,7 +793,14 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - moves shared_ptr into member field
   void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) {
-    log_storage_ = std::move(storage);
+    log_storage_owner_ = std::move(storage);
+    if (log_storage_owner_) {
+      log_storage_ = pro::make_proxy<janus::raft::LogStorageFacade,
+                                     LogStorageProxyAdapter>(
+          LogStorageProxyAdapter{log_storage_owner_});
+    } else {
+      log_storage_ = janus::raft::LogStorageProxy{};
+    }
   }
 
   /**
@@ -744,7 +809,7 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - returns copy of shared_ptr
   std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const {
-    return log_storage_;
+    return log_storage_owner_;
   }
 
   /**

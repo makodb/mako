@@ -719,11 +719,21 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
   [26:05:02, 16:48] Added `snapshot_manager_facade.hpp` with full
   `SnapshotManagerFacade` + `SnapshotManagerProxy` conventions and
   `test_raft_snapshot_manager_facade` adapter conformance coverage.
-- [ ] Switch `RaftServer::log_storage_` to `LogStorageProxy` and
-  `RaftServer::snapshot_manager_` to `SnapshotManagerProxy`. Existing
-  virtual impls (`RocksDBLogStorage`, `InMemoryLogStorage`,
-  `FileSnapshotManager`, `MemorySnapshotManager`) wrap in proxies via
-  factory functions.
+- [ ] Switch `RaftServer` storage boundaries to proxy members:
+  - [x] 8.4.c1 Switch `RaftServer::log_storage_` to `LogStorageProxy`
+    while preserving `SetLogStorage/GetLogStorage` shared-pointer
+    compatibility via an ownership handle.
+    [26:05:02, 17:01] `server.h` now stores `LogStorageProxy` plus
+    `log_storage_owner_`; `SetLogStorage()` wraps shared storage with
+    `pro::make_proxy<LogStorageFacade, LogStorageProxyAdapter>`. Added
+    `test_raft_server_log_storage_proxy` coverage for Set/Get
+    compatibility and `RecoverFromStorage()` behavior through the proxy
+    boundary.
+  - [ ] 8.4.c2 Switch `RaftServer::snapshot_manager_` to
+    `SnapshotManagerProxy` with the same compatibility pattern.
+  - [ ] 8.4.c3 Reconcile factory/wiring callsites (`RecoveryManager`,
+    `RaftNode`, snapshot initialization path) and finish boundary
+    cleanup.
 - [ ] Gate: lab test tests 1-60 + all snapshot tests pass.
 - [ ] **Commit**: `raft: phase 8.4 — proxy LogStorage/SnapshotManager`.
 - [ ] Skip if time is short; the existing virtual interfaces work
