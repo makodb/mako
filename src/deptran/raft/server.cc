@@ -433,11 +433,11 @@ void RaftServer::InitializeSnapshotManager() {
   }
 
   // Create the FileSnapshotManager
-  auto manager = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
-  SetSnapshotManager(manager);
+  SetSnapshotManager(std::make_shared<janus::raft::FileSnapshotManager>(
+      snap_config));
 
   // If a snapshot exists, load its metadata into snapidx_/snapterm_
-  auto latest = manager->GetLatestSnapshot();
+  auto latest = snapshot_manager_->GetLatestSnapshot();
   if (latest.is_some()) {
     auto meta = latest.unwrap();
     snapidx_ = meta.last_included_index;
@@ -947,7 +947,7 @@ void RaftServer::Setup() {
     } else {
       // Use RecoveryManager to orchestrate recovery
       auto result = manager.recover(
-        [this](std::shared_ptr<janus::raft::LogStorage> s) { SetLogStorage(s); },
+        [this](std::shared_ptr<janus::raft::LogStorage> s) { SetLogStorage(std::move(s)); },
         [this]() { return RecoverFromStorage(); },
         [this](raft::RecoveryResult& r) {
           r.recovered_term = currentTerm;

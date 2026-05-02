@@ -11,9 +11,8 @@
 #include <rusty/arc.hpp>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
-#include "log_storage_facade.hpp"
 #include "snapshot_manager.hpp"
-#include "snapshot_manager_facade.hpp"
+#include "storage_proxy_wiring.hpp"
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -116,101 +115,6 @@ class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
   friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
-  struct LogStorageProxyAdapter {
-    std::shared_ptr<janus::raft::LogStorage> impl;
-
-    rusty::Option<janus::raft::LogEntry> get(slotid_t slot_id) const {
-      return impl->get(slot_id);
-    }
-    bool put(const janus::raft::LogEntry& entry) {
-      return impl->put(entry);
-    }
-    bool remove(slotid_t slot_id) {
-      return impl->remove(slot_id);
-    }
-    std::vector<janus::raft::LogEntry> get_range(slotid_t start, slotid_t end) const {
-      return impl->get_range(start, end);
-    }
-    bool put_batch(const std::vector<janus::raft::LogEntry>& entries) {
-      return impl->put_batch(entries);
-    }
-    bool remove_range(slotid_t start, slotid_t end) {
-      return impl->remove_range(start, end);
-    }
-    slotid_t get_first_index() const {
-      return impl->get_first_index();
-    }
-    slotid_t get_last_index() const {
-      return impl->get_last_index();
-    }
-    rusty::Option<ballot_t> get_term(slotid_t slot_id) const {
-      return impl->get_term(slot_id);
-    }
-    size_t size() const {
-      return impl->size();
-    }
-    bool empty() const {
-      return impl->empty();
-    }
-    bool set_metadata(const std::string& key, const std::string& value) {
-      return impl->set_metadata(key, value);
-    }
-    rusty::Option<std::string> get_metadata(const std::string& key) const {
-      return impl->get_metadata(key);
-    }
-    bool sync() {
-      return impl->sync();
-    }
-    bool close() {
-      return impl->close();
-    }
-    bool is_open() const {
-      return impl->is_open();
-    }
-    bool clear() {
-      return impl->clear();
-    }
-  };
-
-  struct SnapshotManagerProxyAdapter {
-    std::shared_ptr<janus::raft::SnapshotManager> impl;
-
-    std::unique_ptr<janus::raft::SnapshotWriter> BeginSnapshot(
-        slotid_t last_index, ballot_t last_term) {
-      return impl->BeginSnapshot(last_index, last_term);
-    }
-    bool TakeSnapshot(slotid_t last_index, ballot_t last_term,
-                      const char* data, size_t size) {
-      return impl->TakeSnapshot(last_index, last_term, data, size);
-    }
-    std::unique_ptr<janus::raft::SnapshotReader> BeginLoad(
-        const janus::raft::SnapshotMetadata& metadata) {
-      return impl->BeginLoad(metadata);
-    }
-    bool LoadLatestSnapshot(janus::raft::SnapshotMetadata* metadata_out,
-                            std::string* data_out) {
-      return impl->LoadLatestSnapshot(metadata_out, data_out);
-    }
-    rusty::Option<janus::raft::SnapshotMetadata> GetLatestSnapshot() const {
-      return impl->GetLatestSnapshot();
-    }
-    std::vector<janus::raft::SnapshotMetadata> ListSnapshots() const {
-      return impl->ListSnapshots();
-    }
-    bool HasSnapshotAtOrAfter(slotid_t min_index) const {
-      return impl->HasSnapshotAtOrAfter(min_index);
-    }
-    size_t PruneSnapshots(slotid_t keep_after_index) {
-      return impl->PruneSnapshots(keep_after_index);
-    }
-    size_t DeleteAllSnapshots() {
-      return impl->DeleteAllSnapshots();
-    }
-    const std::string& GetStoragePath() const {
-      return impl->GetStoragePath();
-    }
-  };
-
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
@@ -835,13 +739,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - moves shared_ptr into member field
   void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) {
     log_storage_owner_ = std::move(storage);
-    if (log_storage_owner_) {
-      log_storage_ = pro::make_proxy<janus::raft::LogStorageFacade,
-                                     LogStorageProxyAdapter>(
-          LogStorageProxyAdapter{log_storage_owner_});
-    } else {
-      log_storage_ = janus::raft::LogStorageProxy{};
-    }
+    log_storage_ = janus::raft::make_log_storage_proxy(log_storage_owner_);
   }
 
   /**
@@ -890,13 +788,8 @@ class RaftServer : public TxLogServer {
   // @unsafe - moves shared_ptr into member field
   void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
     snapshot_manager_owner_ = std::move(manager);
-    if (snapshot_manager_owner_) {
-      snapshot_manager_ = pro::make_proxy<janus::raft::SnapshotManagerFacade,
-                                          SnapshotManagerProxyAdapter>(
-          SnapshotManagerProxyAdapter{snapshot_manager_owner_});
-    } else {
-      snapshot_manager_ = janus::raft::SnapshotManagerProxy{};
-    }
+    snapshot_manager_ = janus::raft::make_snapshot_manager_proxy(
+        snapshot_manager_owner_);
   }
 
   /**

@@ -32,6 +32,7 @@
 #include "messages.hpp"
 #include "raft_server_dispatcher.hpp"
 #include "snapshot_manager.hpp"
+#include "storage_proxy_wiring.hpp"
 #include "transport.hpp"
 
 #include "../constants.h"
@@ -71,12 +72,11 @@ class RaftNode {
     server_ = rusty::Some(rusty::Box<::janus::RaftServer>(raw_server));
 
     if (log_storage_ != nullptr) {
-      raw_server->SetLogStorage(
-          std::shared_ptr<LogStorage>(log_storage_, [](LogStorage*) {}));
+      raw_server->SetLogStorage(make_non_owning_log_storage(log_storage_));
     }
     if (snap_manager_ != nullptr) {
-      raw_server->SetSnapshotManager(std::shared_ptr<SnapshotManager>(
-          snap_manager_, [](SnapshotManager*) {}));
+      raw_server->SetSnapshotManager(
+          make_non_owning_snapshot_manager(snap_manager_));
     }
     if (transport_sw != nullptr) {
       raw_server->transport() =

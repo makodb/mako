@@ -719,7 +719,7 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
   [26:05:02, 16:48] Added `snapshot_manager_facade.hpp` with full
   `SnapshotManagerFacade` + `SnapshotManagerProxy` conventions and
   `test_raft_snapshot_manager_facade` adapter conformance coverage.
-- [ ] Switch `RaftServer` storage boundaries to proxy members:
+- [x] Switch `RaftServer` storage boundaries to proxy members:
   - [x] 8.4.c1 Switch `RaftServer::log_storage_` to `LogStorageProxy`
     while preserving `SetLogStorage/GetLogStorage` shared-pointer
     compatibility via an ownership handle.
@@ -738,13 +738,24 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     `test_raft_server_snapshot_manager_proxy` coverage for Set/Get
     compatibility and `HasSnapshot()` behavior through the proxy
     boundary.
-  - [ ] 8.4.c3 Reconcile factory/wiring callsites (`RecoveryManager`,
+  - [x] 8.4.c3 Reconcile factory/wiring callsites (`RecoveryManager`,
     `RaftNode`, snapshot initialization path) and finish boundary
     cleanup.
-- [ ] Gate: lab test tests 1-60 + all snapshot tests pass.
-- [ ] **Commit**: `raft: phase 8.4 — proxy LogStorage/SnapshotManager`.
-- [ ] Skip if time is short; the existing virtual interfaces work
+    [26:05:02, 17:39] Added shared wiring helpers in
+    `storage_proxy_wiring.hpp` (`make_log_storage_proxy`,
+    `make_snapshot_manager_proxy`, non-owning shared alias helpers),
+    migrated `RaftServer::SetLogStorage/SetSnapshotManager` to use those
+    helpers, switched `RaftNode` raw-pointer alias wiring to helper APIs,
+    and updated `InitializeSnapshotManager()` metadata load to go through
+    `snapshot_manager_` proxy path. Added
+    `test_raft_storage_proxy_wiring`.
+- [x] Gate: lab test tests 1-60 + all snapshot tests pass.
+  [26:05:02, 17:45] Verified with
+  `ctest --test-dir build --output-on-failure -R '^(test_raft_.*|raft_lab_standalone)$'`.
+- [x] **Commit**: `raft: phase 8.4 — proxy LogStorage/SnapshotManager`.
+- [x] Skip if time is short; the existing virtual interfaces work
   fine.
+  [26:05:02, 17:45] Not skipped; phase completed.
 
 ## Phase 8.5 — `TestCluster` with real `RaftServer`s
 
@@ -1000,7 +1011,7 @@ verification. Listed here so they don't get lost.
 - [x] Phase 8.1e — retire remaining commo() outbound sites [26:05:02, 11:41]
 - [x] Phase 8.2 — RaftServerDispatcher [26:05:02]
 - [x] Phase 8.3 — RaftServiceImpl → DispatcherProxy [26:05:02]
-- [ ] Phase 8.4 — storage proxies (optional)
+- [x] Phase 8.4 — storage proxies (optional) [26:05:02, 17:45]
 - [x] Phase 8.5 — TestCluster with real RaftServer [26:05:02, 15:14]
 - [ ] Phase 8.6 — port RaftTestConfig to TestCluster
 - [ ] Phase 8.7 — raft_lab_standalone full driver

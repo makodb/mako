@@ -2070,6 +2070,12 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_snapshot_manager_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
     add_test(NAME test_raft_snapshot_manager_facade COMMAND test_raft_snapshot_manager_facade)
 
+    add_executable(test_raft_storage_proxy_wiring tests/raft_storage_proxy_wiring_test.cc)
+    target_include_directories(test_raft_storage_proxy_wiring PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_raft_storage_proxy_wiring PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_storage_proxy_wiring ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread rrr)
+    add_test(NAME test_raft_storage_proxy_wiring COMMAND test_raft_storage_proxy_wiring)
+
     add_executable(test_raft_server_dispatcher tests/raft_server_dispatcher_test.cc)
     target_include_directories(test_raft_server_dispatcher PRIVATE
         ${TEST_INCLUDE_DIRS}

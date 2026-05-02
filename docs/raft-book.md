@@ -843,6 +843,25 @@ Inbound RPC handling now has an explicit dispatcher boundary:
   - verifies Set/Get compatibility and ownership behavior
   - verifies `HasSnapshot()` behavior through proxy-backed manager state.
 
+### Storage Boundary Cleanup (Phase 8.4 Leaf 3c)
+
+- Added `src/deptran/raft/storage_proxy_wiring.hpp` as the shared storage
+  proxy wiring utility surface.
+- `RaftServer` no longer carries duplicated inline adapter implementations for
+  log/snapshot storage; both `SetLogStorage` and `SetSnapshotManager` now route
+  through common helper factories:
+  - `make_log_storage_proxy`
+  - `make_snapshot_manager_proxy`
+- Wiring callsites were reconciled:
+  - `RaftNode` now uses helper non-owning alias factories for test-harness raw
+    pointers (`make_non_owning_log_storage`,
+    `make_non_owning_snapshot_manager`).
+  - `InitializeSnapshotManager()` now loads snapshot metadata through the
+    server’s proxy-backed `snapshot_manager_` boundary, not a direct local
+    concrete-manager handle.
+- Conformance/regression coverage is provided by
+  `test_raft_storage_proxy_wiring`, plus the server-level proxy tests.
+
 ### Restart Notification
 
 When a server restarts, it broadcasts a restart notification to all peers. Peers reconnect their RPC proxies to avoid stale connections:

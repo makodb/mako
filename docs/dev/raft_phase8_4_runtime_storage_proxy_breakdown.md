@@ -16,8 +16,8 @@ from either storage boundary.
    a proxy.
 2. **8.4.c2 (this commit)**: apply the same pattern to `snapshot_manager_`
    with `SnapshotManagerProxy` and a compatibility owner handle.
-3. **8.4.c3**: finalize callsite cleanup and factory/wiring consistency across
-   recovery/bootstrap/test harness paths.
+3. **8.4.c3 (this commit)**: finalize callsite cleanup and factory/wiring
+   consistency across recovery/bootstrap/test harness paths.
 
 ## Design rationale for 8.4.c1
 
@@ -42,3 +42,29 @@ from either storage boundary.
 - Add focused test coverage for:
   - compatibility and lifetime behavior of `Set/GetSnapshotManager`
   - `HasSnapshot()` correctness with proxy-backed manager state.
+
+## Design rationale for 8.4.c3
+
+- Remove adapter duplication from `RaftServer` internals:
+  - extracted shared proxy wiring logic into `storage_proxy_wiring.hpp`.
+  - both storage boundaries now use the same factory helpers:
+    - `make_log_storage_proxy`
+    - `make_snapshot_manager_proxy`
+- Normalize wiring callsites:
+  - `RaftNode` raw pointer aliases now use shared helper functions
+    (`make_non_owning_log_storage`, `make_non_owning_snapshot_manager`)
+    instead of reimplementing alias deleters inline.
+  - `InitializeSnapshotManager()` metadata load path now reads through
+    `snapshot_manager_` proxy after `SetSnapshotManager(...)`, so bootstrap
+    path uses the same boundary as runtime snapshot operations.
+  - recovery path in `Setup()` keeps using `SetLogStorage(...)`; the setter is
+    now the single conversion point for proxy wiring.
+
+## Validation
+
+- Focused tests:
+  - `test_raft_storage_proxy_wiring`
+  - `test_raft_server_log_storage_proxy`
+  - `test_raft_server_snapshot_manager_proxy`
+- Full raft gate:
+  - `ctest --test-dir build --output-on-failure -R '^(test_raft_.*|raft_lab_standalone)$'`
