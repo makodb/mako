@@ -1186,11 +1186,14 @@ if (am->is_a<GraphPayload>()) {
 }
 ```
 
-Wire layout: `[int32: ANY_MESSAGE] [v64-prefixed string: type_name]
+Wire layout: `[v32: ANY_MESSAGE=24] [v64-prefixed string: type_name]
 [payload bytes]`. The `MarshallDeputy::ANY_MESSAGE` kind value is
-fixed; `type_name` is the runtime discriminator. Aliasing semantics:
-mutations on the caller's `shared_ptr<T>` after `pack` remain visible
-to the encoded payload, matching `wrap_serializable_aliased`.
+fixed; `type_name` is the runtime discriminator. After Workstream N L9,
+the kind itself rides in 1 byte (v32 single-byte range covers values
+0-63), so the envelope's framing overhead is 1 byte (v32 kind) +
+length-prefixed type_name string. Aliasing semantics: mutations on
+the caller's `shared_ptr<T>` after `pack` remain visible to the
+encoded payload, matching `wrap_serializable_aliased`.
 
 When to choose AnyMessage vs. closed-set TypeList:
 - **AnyMessage** for graph / data payloads (`RccGraph`, `EmptyGraph`),
@@ -1202,6 +1205,54 @@ When to choose AnyMessage vs. closed-set TypeList:
   known up-front and wire compactness matters. The Rust analogue is
   `enum Foo { ... }` + bincode (declaration-order discriminants); the
   protobuf analogue is `oneof` (field numbers).
+
+#### Closed-set polymorphism — TypeList + MakoCommands (Workstream N L8/L9)
+
+Command types where the universe is closed (the receiver knows the
+full set at compile time, and wire compactness matters more than
+extensibility) live in the `janus::MakoCommands` TypeList in
+`src/deptran/mako_commands.h`. Each type's wire kind = its 1-indexed
+position in the list, derived via the `Serializable<T, MakoCommands>`
+CRTP base — no per-type kind constant, no central int enum, no
+hashing.
+
+```cpp srpc-no-compile
+// Inherit Serializable<T, MakoCommands> for kind() / static_kind()
+// from the TypeList position. Drop the legacy
+// `static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_X`
+// constant and the matching `int32_t kind() const` method.
+class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
+                                                  janus::MakoCommands> {
+ public:
+  txnid_t tx_id_ = 0;
+  shared_ptr<Marshallable> cmd_{nullptr};
+
+  void save(rrr::BinaryWriteArchive& ar) const;
+  void load(rrr::BinaryReadArchive& ar);
+};
+
+// Register at static init — the no-arg overload picks up the kind
+// from `T::static_kind()` (the TypeList position).
+static int _reg = rrr::reg_serializable_in_deputy<TpcCommitCommand>();
+```
+
+Adding a new closed-set Command type:
+1. Add a forward declaration to `src/deptran/mako_commands.h`.
+2. Append the type at the END of the `MakoCommands` TypeList there
+   (appending preserves existing types' kind values; reordering or
+   inserting in the middle is a wire-format break).
+3. Define `class T : public rrr::Serializable<T, janus::MakoCommands>`.
+4. Add `static int _reg = rrr::reg_serializable_in_deputy<T>();` in
+   T's .cc.
+
+After Workstream N L9, the `MarshallDeputy::kind_` field serializes
+as `rrr::v32` (variable-length SparseInt) on the wire instead of raw
+4-byte int32. SparseInt's first-byte encoding has a 6-bit signed
+payload, so values in [-64, 63] fit in 1 byte. With closed-set kinds
+in [1, 19] and ANY_MESSAGE=24, every production polymorphic envelope
+saves 3 bytes for the kind prefix vs. the pre-L9 4-byte encoding —
+non-trivial savings on the Paxos LogEntry / TpcCommit / heartbeat
+hot path.
 
 #### Marshal ↔ Archive bridges (transitional)
 
