@@ -519,7 +519,16 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
 
 ### 8.1.e — Migrate the remaining outbound sites
 
-- [ ] Line 1530 `SendInstallSnapshot` → `transport_->send_install_snapshot`.
+- [x] Breakdown doc: `docs/dev/raft_phase8_1e_outbound_migration.md`.
+- [x] Line 1530 `SendInstallSnapshot` → `transport_->send_install_snapshot`.
+  [26:05:02, 09:07] `HeartbeatLoop` lagging-follower snapshot path now
+  builds `InstallSnapshotReq` under `mtx_`, calls
+  `transport_->send_install_snapshot(...)` outside the lock, then applies
+  the same higher-term step-down / next-index reconciliation under `mtx_`.
+  Added channel-transport coverage for InstallSnapshot success + dropped-link
+  fallback in `test_raft_channel_transport`. Also bounded
+  `RrrTransportAdapter::send_install_snapshot` wait to 1s to avoid
+  indefinite stalls in this synchronous call path.
 - [ ] Line 2589 `SendAppendEntriesDurable` → `transport_->send_append_entries_durable`
   (fire-and-forget).
 - [ ] `server.h:408` `SendVoteDurable` → `transport_->send_vote_durable`

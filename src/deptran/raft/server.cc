@@ -1506,6 +1506,10 @@ void RaftServer::HeartbeatLoop() {
         shared_ptr<Marshallable> cmd = nullptr;
         uint64_t cmdLogTerm = 0;
         bool skip_follower = false;
+        bool send_install_snapshot = false;
+        uint64_t snapshot_last_idx = 0;
+        uint64_t snapshot_send_term = 0;
+        janus::raft::InstallSnapshotReq snapshot_req{};
         {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
           prevLogIndex = it->second - 1;
@@ -1521,40 +1525,20 @@ void RaftServer::HeartbeatLoop() {
             it->second = 1;
             skip_follower = true;
           } else if (it->second < min_active_slot_ && snapshot_manager_) {
-            // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
+            // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot.
             Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d next_index=%lu < min_active_slot_=%lu, sending InstallSnapshot",
                      site_id_, site_id, it->second, min_active_slot_);
             janus::raft::SnapshotMetadata snap_meta;
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
-              uint64_t snap_last_idx = snap_meta.last_included_index;
-              uint64_t snap_last_term = snap_meta.last_included_term;
-              uint64_t send_term = currentTerm;
-              commo()->SendInstallSnapshot(
-                  site_id, partition_id_,
-                  send_term, site_id_,
-                  snap_last_idx, snap_last_term,
-                  snap_data,
-                  [this, site_id, snap_last_idx, send_term](uint64_t follower_term) {
-                    // @unsafe - callback modifies shared state under lock
-                    std::lock_guard<std::recursive_mutex> lock(mtx_);
-                    if (follower_term > currentTerm) {
-                      Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d has higher term %lu > %lu, stepping down",
-                               site_id_, site_id, follower_term, currentTerm);
-                      currentTerm = follower_term;
-                      stepDown(StepDownReason::HigherTerm);
-                      return;
-                    }
-                    if (currentTerm != send_term) {
-                      Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Term changed since snapshot send, ignoring response",
-                               site_id_);
-                      return;
-                    }
-                    next_index_[site_id] = snap_last_idx + 1;
-                    match_index_[site_id] = snap_last_idx;
-                    Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Updated follower %d: next_index=%lu match_index=%lu",
-                             site_id_, site_id, snap_last_idx + 1, snap_last_idx);
-                  });
+              snapshot_last_idx = snap_meta.last_included_index;
+              snapshot_send_term = currentTerm;
+              snapshot_req.term = snapshot_send_term;
+              snapshot_req.leader_id = site_id_;
+              snapshot_req.last_included_index = snap_meta.last_included_index;
+              snapshot_req.last_included_term = snap_meta.last_included_term;
+              snapshot_req.data = std::move(snap_data);
+              send_install_snapshot = true;
               skip_follower = true;  // Skip normal AppendEntries for this follower
             } else {
               Log_warn("[HEARTBEAT-SNAPSHOT] Site %d: Failed to load snapshot for follower %d, skipping",
@@ -1633,6 +1617,24 @@ void RaftServer::HeartbeatLoop() {
               }
 #endif
             }
+          }
+        }
+        if (send_install_snapshot) {
+          auto snap_resp = transport_->send_install_snapshot(site_id, std::move(snapshot_req));
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          if (snap_resp.term_out > currentTerm) {
+            Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d has higher term %lu > %lu, stepping down",
+                     site_id_, site_id, snap_resp.term_out, currentTerm);
+            currentTerm = snap_resp.term_out;
+            stepDown(StepDownReason::HigherTerm);
+          } else if (currentTerm != snapshot_send_term) {
+            Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Term changed since snapshot send, ignoring response",
+                     site_id_);
+          } else {
+            next_index_[site_id] = snapshot_last_idx + 1;
+            match_index_[site_id] = snapshot_last_idx;
+            Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Updated follower %d: next_index=%lu match_index=%lu",
+                     site_id_, site_id, snapshot_last_idx + 1, snapshot_last_idx);
           }
         }
         if (skip_follower) {

@@ -35,6 +35,7 @@ namespace raft {
 
 namespace {
 constexpr uint64_t kAppendEntriesRpcTimeoutUs = 300'000;  // 300ms
+constexpr uint64_t kInstallSnapshotRpcTimeoutUs = 1'000'000;  // 1s
 }
 
 class RrrTransportAdapter {
@@ -169,7 +170,9 @@ class RrrTransportAdapter {
           slot->term_out = follower_term;
           ready->set(1);
         });
-    ready->wait();
+    // Bound wait so snapshot catch-up paths do not stall heartbeat
+    // progress indefinitely during disconnect/restart churn.
+    ready->wait(kInstallSnapshotRpcTimeoutUs);
     return *slot;
   }
 

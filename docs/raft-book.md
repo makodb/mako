@@ -671,9 +671,12 @@ When a follower is too far behind (its `next_index_` points to compacted log ent
 5. Updates `snapidx_`/`snapterm_`, discards old log entries
 6. Advances `commitIndex`/`executeIndex`/`lastLogIndex`
 
-**Leader sender** (`SendInstallSnapshot()` in `commo.cc`):
-- Sends full snapshot in one RPC (no chunking)
-- Callback receives follower's current term
+**Leader sender path**:
+- `RaftServer::HeartbeatLoop()` now routes snapshot sends through
+  `transport_->send_install_snapshot(...)`.
+- In production, `RrrTransportAdapter::send_install_snapshot(...)`
+  bridges this to `RaftCommo::SendInstallSnapshot(...)` and returns the
+  follower term reply.
 
 ### HeartbeatLoop Integration
 
@@ -681,8 +684,9 @@ The leader's `HeartbeatLoop()` detects when a follower has fallen too far behind
 
 1. For each follower, the leader checks if `next_index_[follower] < min_active_slot_` and `snapshot_manager_` is set
 2. If so, loads the latest snapshot via `snapshot_manager_->LoadLatestSnapshot()`
-3. Sends `InstallSnapshot` RPC via `commo()->SendInstallSnapshot()`
-4. The callback handles three cases:
+3. Sends `InstallSnapshot` RPC via
+   `transport_->send_install_snapshot(...)`
+4. The reply reconciliation handles three cases:
    - **Follower has higher term**: leader steps down (same as AppendEntries rejection)
    - **Term changed since send**: stale response, ignored
    - **Success**: updates `next_index_[follower] = snap_index + 1` and `match_index_[follower] = snap_index`
@@ -726,10 +730,11 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1d complete): `RequestVote()` election fan-out,
-  `HeartbeatLoop()` append fan-out, and leadership-transfer append trigger
-  are migrated to per-peer transport facade calls (`send_vote`,
-  `send_append_entries`, `send_empty_append_entries`).
+- Current state (Phase 8.1e leaf 1): `RequestVote()` election fan-out,
+  `HeartbeatLoop()` append fan-out, leadership-transfer append trigger, and
+  lagging-follower snapshot send path are migrated to per-peer transport
+  facade calls (`send_vote`, `send_append_entries`,
+  `send_empty_append_entries`, `send_install_snapshot`).
 - Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
   transitional paths; term/spec-voter helper accessors were removed.
 - Append callback bridge hardening (Phase 8.1d leaf 1): on append RPC error,
@@ -738,8 +743,8 @@ initialized in `RaftServer::Setup()` via
 - Legacy append wrapper APIs (`SendAppendEntriesResults`,
   `SendAppendEntries2`, `SendAppendEntries`) are now deleted from
   `RaftCommo`; only callback bridge entry points remain on that path.
-- Remaining phase (8.1e): migrate durable/snapshot/TimeoutNow outbound calls
-  and delete the remaining vote transitional helper.
+- Remaining phase (8.1e): migrate durable/TimeoutNow outbound calls and
+  delete the remaining vote transitional helper.
 
 ### Restart Notification
 

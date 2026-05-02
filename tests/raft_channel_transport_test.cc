@@ -116,6 +116,9 @@ TEST(RaftChannelTransportTest, RoundTripBetweenTwoSites) {
   auto v = tr_a->send_vote(2, VoteReq{});
   EXPECT_TRUE(v.vote_granted);
 
+  auto snap = tr_a->send_install_snapshot(2, InstallSnapshotReq{});
+  EXPECT_EQ(snap.term_out, 7u);
+
   tr_a->send_vote_durable(2, VoteDurableReq{});
   tr_a->send_append_entries_durable(2, AppendEntriesDurableReq{});
   // Give the durables a moment to be consumed before we tear down.
@@ -125,6 +128,7 @@ TEST(RaftChannelTransportTest, RoundTripBetweenTwoSites) {
   EXPECT_EQ(disp_b_impl->counts->n_append.load(),  1);
   EXPECT_EQ(disp_b_impl->counts->n_vote.load(),    1);
   EXPECT_EQ(disp_b_impl->counts->n_vote_durable.load(), 1);
+  EXPECT_EQ(disp_b_impl->counts->n_install.load(), 1);
 }
 
 TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
@@ -153,9 +157,14 @@ TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
   sw.drop_direction(/*from=*/1, /*to=*/2);
   auto dropped = tr_a->send_timeout_now(2, TimeoutNowReq{});
   EXPECT_FALSE(dropped.success);
+  auto dropped_snapshot = tr_a->send_install_snapshot(2, InstallSnapshotReq{});
+  EXPECT_EQ(dropped_snapshot.term_out, 0u);
 
   sw.reset_faults();
   auto ok = tr_a->send_timeout_now(2, TimeoutNowReq{});
   EXPECT_TRUE(ok.success);
+  auto snapshot_ok = tr_a->send_install_snapshot(2, InstallSnapshotReq{});
+  EXPECT_EQ(snapshot_ok.term_out, 7u);
   EXPECT_EQ(disp_b_impl->counts->n_timeout.load(), 1);
+  EXPECT_EQ(disp_b_impl->counts->n_install.load(), 1);
 }
