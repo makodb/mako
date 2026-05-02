@@ -736,6 +736,14 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     (`handle_add_server`, `handle_remove_server`) so the skeleton
     `TestCluster` path keeps compiling after Phase 8.3.
   - Added `RaftTestClusterTest.DummyDispatcherSupportsMembershipHandlers`.
+- [x] 8.5.b RaftNode server-ownership scaffolding leaf [26:05:02]:
+  - Added `RaftNode::server_` scaffold as
+    `rusty::Option<rusty::Box<RaftServer>>` plus accessors
+    (`server()`, `has_server()`).
+  - Kept `DummyDispatcher` as active backend to preserve current
+    in-memory harness behavior.
+  - Added `RaftTestClusterTest.ServerOwnershipScaffoldStartsEmpty`
+    baseline test.
 - [ ] `src/deptran/raft/raft_node.hpp`:
   - Replace `rusty::Arc<DummyDispatcher> dispatcher_impl_` with
     `rusty::Box<RaftServer> server_`.

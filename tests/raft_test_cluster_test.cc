@@ -129,3 +129,14 @@ TEST(RaftTestClusterTest, DummyDispatcherSupportsMembershipHandlers) {
   EXPECT_TRUE(rem_resp.error_msg.empty());
   EXPECT_EQ(rem_resp.leader_hint, 1u);
 }
+
+TEST(RaftTestClusterTest, ServerOwnershipScaffoldStartsEmpty) {
+  auto c = TestCluster::with_in_memory_transport(3);
+
+  EXPECT_FALSE(c->node(1).has_server());
+  EXPECT_EQ(c->node(1).server(), nullptr);
+  EXPECT_FALSE(c->node(2).has_server());
+  EXPECT_EQ(c->node(2).server(), nullptr);
+  EXPECT_FALSE(c->node(3).has_server());
+  EXPECT_EQ(c->node(3).server(), nullptr);
+}

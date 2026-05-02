@@ -968,6 +968,10 @@ Reconnect(server_id)  // Restore connectivity
 The skeleton dispatcher intentionally implements every current
 `DispatcherFacade` method, including membership handlers, so facade
 evolution does not silently break the test harness compile path.
+`RaftNode` now also carries an explicit `server_` ownership scaffold
+(`Option<Box<RaftServer>>`) with `has_server()/server()` accessors; in
+the current stage this remains empty by design until the real-server
+bootstrap leaves are completed.
 
 ### Speculative State Queries (for tests)
 

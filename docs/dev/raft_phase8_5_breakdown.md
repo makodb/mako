@@ -33,6 +33,14 @@ Rationale:
   but do not start election/heartbeat/apply loops yet.
 - Preserve existing cluster tests by keeping a fallback dispatcher path.
 
+Status:
+- Added `RaftNode::server_` ownership scaffold as
+  `rusty::Option<rusty::Box<RaftServer>>` with read-only accessors
+  (`server()`, `has_server()`).
+- Kept `DummyDispatcher` as the active dispatcher backend for now.
+- Added `RaftTestClusterTest.ServerOwnershipScaffoldStartsEmpty` to lock
+  in the baseline (`has_server()==false`) until 8.5.c/8.5.d wire a real server.
+
 ### 8.5.c Minimal RaftServer-for-tests bootstrap
 
 - Add a narrowly scoped test bootstrap path for `RaftServer` that can run in
@@ -56,4 +64,3 @@ Rationale:
 
 - Remove `DummyDispatcher` and stale skeleton-only paths once no references
   remain.
-

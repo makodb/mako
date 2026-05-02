@@ -32,6 +32,7 @@
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
+#include <rusty/option.hpp>
 
 #include "channel_transport.hpp"
 #include "dispatcher.hpp"
@@ -43,6 +44,9 @@
 #include "../constants.h"
 
 namespace janus {
+
+class RaftServer;
+
 namespace raft {
 
 // ---------------------------------------------------------------------------
@@ -120,6 +124,7 @@ class RaftNode {
         transport_(std::move(transport)),
         log_storage_(log_storage),
         snap_manager_(snap_manager),
+        server_(rusty::None),
         dispatcher_impl_(rusty::Arc<DummyDispatcher>::make(id)),
         dispatcher_(pro::make_proxy<DispatcherFacade, DummyDispatcher>(
             *dispatcher_impl_)) {}
@@ -155,6 +160,21 @@ class RaftNode {
   // @safe - borrow the transport for sending RPCs
   TransportProxy& transport() { return transport_; }
 
+  // 8.5.b scaffolding: this stays nullptr until the real-RaftServer
+  // integration leaf wires construction/ownership.
+  // @safe
+  ::janus::RaftServer* server() {
+    if (server_.is_none()) return nullptr;
+    return server_.as_ref().unwrap().get();
+  }
+  // @safe
+  const ::janus::RaftServer* server() const {
+    if (server_.is_none()) return nullptr;
+    return server_.as_ref().unwrap().get();
+  }
+  // @safe
+  bool has_server() const { return server_.is_some(); }
+
   // @safe
   LogStorage*      log_storage()     { return log_storage_; }
   SnapshotManager* snapshot_manager(){ return snap_manager_; }
@@ -164,6 +184,7 @@ class RaftNode {
   TransportProxy                transport_;
   LogStorage*                   log_storage_{nullptr};
   SnapshotManager*              snap_manager_{nullptr};
+  rusty::Option<rusty::Box<::janus::RaftServer>> server_;
   rusty::Arc<DummyDispatcher>   dispatcher_impl_;
   DispatcherProxy               dispatcher_;
 
