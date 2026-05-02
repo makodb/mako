@@ -13,6 +13,7 @@
 #include "recovery_manager.hpp"
 #include "log_storage_facade.hpp"
 #include "snapshot_manager.hpp"
+#include "snapshot_manager_facade.hpp"
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -171,6 +172,45 @@ class RaftServer : public TxLogServer {
     }
   };
 
+  struct SnapshotManagerProxyAdapter {
+    std::shared_ptr<janus::raft::SnapshotManager> impl;
+
+    std::unique_ptr<janus::raft::SnapshotWriter> BeginSnapshot(
+        slotid_t last_index, ballot_t last_term) {
+      return impl->BeginSnapshot(last_index, last_term);
+    }
+    bool TakeSnapshot(slotid_t last_index, ballot_t last_term,
+                      const char* data, size_t size) {
+      return impl->TakeSnapshot(last_index, last_term, data, size);
+    }
+    std::unique_ptr<janus::raft::SnapshotReader> BeginLoad(
+        const janus::raft::SnapshotMetadata& metadata) {
+      return impl->BeginLoad(metadata);
+    }
+    bool LoadLatestSnapshot(janus::raft::SnapshotMetadata* metadata_out,
+                            std::string* data_out) {
+      return impl->LoadLatestSnapshot(metadata_out, data_out);
+    }
+    rusty::Option<janus::raft::SnapshotMetadata> GetLatestSnapshot() const {
+      return impl->GetLatestSnapshot();
+    }
+    std::vector<janus::raft::SnapshotMetadata> ListSnapshots() const {
+      return impl->ListSnapshots();
+    }
+    bool HasSnapshotAtOrAfter(slotid_t min_index) const {
+      return impl->HasSnapshotAtOrAfter(min_index);
+    }
+    size_t PruneSnapshots(slotid_t keep_after_index) {
+      return impl->PruneSnapshots(keep_after_index);
+    }
+    size_t DeleteAllSnapshots() {
+      return impl->DeleteAllSnapshots();
+    }
+    const std::string& GetStoragePath() const {
+      return impl->GetStoragePath();
+    }
+  };
+
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
@@ -182,7 +222,8 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   // SNAPSHOT SUPPORT (Phase 3.1)
   // ============================================================================
-  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
+  janus::raft::SnapshotManagerProxy snapshot_manager_;  // Optional snapshot manager proxy
+  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_owner_;  // Compatibility handle + lifetime owner
   uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
 
   // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
@@ -848,7 +889,14 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - moves shared_ptr into member field
   void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
-    snapshot_manager_ = std::move(manager);
+    snapshot_manager_owner_ = std::move(manager);
+    if (snapshot_manager_owner_) {
+      snapshot_manager_ = pro::make_proxy<janus::raft::SnapshotManagerFacade,
+                                          SnapshotManagerProxyAdapter>(
+          SnapshotManagerProxyAdapter{snapshot_manager_owner_});
+    } else {
+      snapshot_manager_ = janus::raft::SnapshotManagerProxy{};
+    }
   }
 
   /**
@@ -857,7 +905,7 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - returns copy of shared_ptr
   std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() const {
-    return snapshot_manager_;
+    return snapshot_manager_owner_;
   }
 
   /**

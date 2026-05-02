@@ -827,6 +827,22 @@ Inbound RPC handling now has an explicit dispatcher boundary:
   - verifies Set/Get compatibility
   - verifies `RecoverFromStorage()` behavior with proxy-backed storage.
 
+### Storage Boundary Migration (Phase 8.4 Leaf 3b)
+
+- `RaftServer::snapshot_manager_` is now a `SnapshotManagerProxy` instead of a
+  direct virtual-interface pointer.
+- API compatibility is preserved:
+  - `SetSnapshotManager(shared_ptr<SnapshotManager>)` remains unchanged for
+    callers.
+  - `GetSnapshotManager()` still returns the original shared pointer.
+  - Internally, snapshot operations run through a forwarding
+    `SnapshotManagerProxyAdapter`, so server-side snapshot paths now use the
+    proxy boundary.
+- Conformance/regression coverage is provided by
+  `test_raft_server_snapshot_manager_proxy`:
+  - verifies Set/Get compatibility and ownership behavior
+  - verifies `HasSnapshot()` behavior through proxy-backed manager state.
+
 ### Restart Notification
 
 When a server restarts, it broadcasts a restart notification to all peers. Peers reconnect their RPC proxies to avoid stale connections:

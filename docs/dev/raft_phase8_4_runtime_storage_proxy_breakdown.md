@@ -14,8 +14,8 @@ from either storage boundary.
    `LogStorageProxy`, but keep `SetLogStorage/GetLogStorage` API stable by
    storing a shared ownership handle (`log_storage_owner_`) and wrapping it into
    a proxy.
-2. **8.4.c2**: apply the same pattern to `snapshot_manager_` with
-   `SnapshotManagerProxy` and a compatibility owner handle.
+2. **8.4.c2 (this commit)**: apply the same pattern to `snapshot_manager_`
+   with `SnapshotManagerProxy` and a compatibility owner handle.
 3. **8.4.c3**: finalize callsite cleanup and factory/wiring consistency across
    recovery/bootstrap/test harness paths.
 
@@ -28,3 +28,17 @@ from either storage boundary.
 - Add focused test coverage for:
   - compatibility of `SetLogStorage/GetLogStorage`
   - successful recovery path through proxy-backed `log_storage_`.
+
+## Design rationale for 8.4.c2
+
+- Keep snapshot wiring semantics unchanged while enforcing the proxy boundary
+  internally:
+  - `SetSnapshotManager(shared_ptr<SnapshotManager>)` still accepts all
+    existing callsites.
+  - `GetSnapshotManager()` still returns the original shared pointer.
+- Use a forwarding `SnapshotManagerProxyAdapter` so all server-side snapshot
+  operations (`HasSnapshot`, `CreateSnapshot`, install-snapshot paths) call
+  through `SnapshotManagerProxy`.
+- Add focused test coverage for:
+  - compatibility and lifetime behavior of `Set/GetSnapshotManager`
+  - `HasSnapshot()` correctness with proxy-backed manager state.

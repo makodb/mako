@@ -729,8 +729,15 @@ the virtual `LogStorage` / `SnapshotManager` interfaces at
     `test_raft_server_log_storage_proxy` coverage for Set/Get
     compatibility and `RecoverFromStorage()` behavior through the proxy
     boundary.
-  - [ ] 8.4.c2 Switch `RaftServer::snapshot_manager_` to
+  - [x] 8.4.c2 Switch `RaftServer::snapshot_manager_` to
     `SnapshotManagerProxy` with the same compatibility pattern.
+    [26:05:02, 17:22] `server.h` now stores `SnapshotManagerProxy` plus
+    `snapshot_manager_owner_`; `SetSnapshotManager()` wraps shared manager
+    with `pro::make_proxy<SnapshotManagerFacade,
+    SnapshotManagerProxyAdapter>`. Added
+    `test_raft_server_snapshot_manager_proxy` coverage for Set/Get
+    compatibility and `HasSnapshot()` behavior through the proxy
+    boundary.
   - [ ] 8.4.c3 Reconcile factory/wiring callsites (`RecoveryManager`,
     `RaftNode`, snapshot initialization path) and finish boundary
     cleanup.

@@ -2100,6 +2100,16 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_server_log_storage_proxy ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core)
     add_test(NAME test_raft_server_log_storage_proxy COMMAND test_raft_server_log_storage_proxy)
 
+    add_executable(test_raft_server_snapshot_manager_proxy tests/raft_server_snapshot_manager_proxy_test.cc)
+    target_include_directories(test_raft_server_snapshot_manager_proxy PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
+    target_compile_options(test_raft_server_snapshot_manager_proxy PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_raft_server_snapshot_manager_proxy ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core)
+    add_test(NAME test_raft_server_snapshot_manager_proxy COMMAND test_raft_server_snapshot_manager_proxy)
+
     add_executable(test_raft_channel_transport tests/raft_channel_transport_test.cc)
     target_include_directories(test_raft_channel_transport PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_raft_channel_transport PRIVATE ${TEST_COMPILE_OPTIONS})
