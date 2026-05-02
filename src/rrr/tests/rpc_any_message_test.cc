@@ -207,5 +207,104 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   EXPECT_EQ(recovered->value, 0xDEADBEEFCAFEBABEull);
 }
 
+// ---------------------------------------------------------------------------
+// L10c-anymsg: Serializable interface (save / load + free archive
+// operators).  Lets `AnyMessage` ride an RPC struct field directly,
+// without the surrounding `MarshallDeputy` wrapper.
+// ---------------------------------------------------------------------------
+
+TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
+  EnsureRegistered();
+
+  auto val = std::make_shared<GraphPayload>();
+  val->node_count = 7;
+  val->label = "save/load roundtrip";
+
+  // Build an AnyMessage and save through the BinaryWriteArchive +
+  // MarshalSink path (the path rpcgen-generated code uses for fields
+  // typed as `AnyMessage` directly).
+  AnyMessage outgoing(*AnyMessage::pack(val));
+  Marshal m;
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive ar(&sink);
+    ar << outgoing;
+  }
+
+  // Decode through the BinaryReadArchive + MarshalSource path.
+  AnyMessage incoming;
+  {
+    MarshalSource source(&m);
+    BinaryReadArchive ar(&source);
+    ar >> incoming;
+  }
+
+  EXPECT_EQ(incoming.type_name(), kGraphName);
+  EXPECT_TRUE(incoming.is_a<GraphPayload>());
+  auto recovered = incoming.unpack<GraphPayload>();
+  ASSERT_NE(recovered, nullptr);
+  EXPECT_EQ(recovered->node_count, 7);
+  EXPECT_EQ(recovered->label, "save/load roundtrip");
+}
+
+TEST(AnyMessageTest, SerializableWireOmitsLeadingKindByte) {
+  // Wire format under direct embedding: [v64-prefixed string]
+  // [payload bytes].  Compared to the deputy-wrapped form, the leading
+  // [v32 ANY_MESSAGE=24] byte is gone.  Saves 1 byte per envelope on
+  // the wire when the field is statically typed as AnyMessage.
+  EnsureRegistered();
+
+  auto val = std::make_shared<OtherPayload>();
+  val->value = 0xCAFE;
+
+  // Serializable path bytes.
+  Marshal m_direct;
+  {
+    AnyMessage outgoing(*AnyMessage::pack(val));
+    MarshalSink sink(&m_direct);
+    BinaryWriteArchive ar(&sink);
+    ar << outgoing;
+  }
+  size_t direct_bytes = m_direct.content_size();
+
+  // Deputy-wrapped path bytes.
+  Marshal m_deputy;
+  {
+    MarshallDeputy outgoing(AnyMessage::pack(val));
+    m_deputy << outgoing;
+  }
+  size_t deputy_bytes = m_deputy.content_size();
+
+  // Deputy adds a v32 ANY_MESSAGE=24 prefix; ANY_MESSAGE=24 fits in 1
+  // byte (24 < 64) so the deputy path is exactly 1 byte longer.
+  EXPECT_EQ(deputy_bytes, direct_bytes + 1);
+}
+
+TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
+  EnsureRegistered();
+
+  auto val = std::make_shared<GraphPayload>();
+  val->node_count = 1;
+
+  AnyMessage outgoing(*AnyMessage::pack(val));
+  Marshal m;
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive ar(&sink);
+    ar << outgoing;
+  }
+
+  AnyMessage incoming;
+  {
+    MarshalSource source(&m);
+    BinaryReadArchive ar(&source);
+    ar >> incoming;
+  }
+
+  EXPECT_TRUE(incoming.is_a<GraphPayload>());
+  EXPECT_FALSE(incoming.is_a<OtherPayload>());
+  EXPECT_EQ(incoming.unpack<OtherPayload>(), nullptr);
+}
+
 }  // namespace
 }  // namespace rrr

@@ -73,20 +73,53 @@
 
 namespace rrr {
 
-// `AnyMessage` is a Marshallable envelope. It registers itself once
-// with MarshallDeputy under the fixed kind `MarshallDeputy::ANY_MESSAGE`
-// — every AnyMessage payload, regardless of carried type, hits this
-// kind on the wire. The actual type discriminator is the carried
-// `type_name_` string inside the AnyMessage's bytes.
+// `AnyMessage` is a polymorphic envelope.  Two interfaces coexist
+// during the L10 migration:
+//
+// * Marshallable interface (legacy path): `AnyMessage` inherits
+//   `Marshallable` and registers with `MarshallDeputy::reg_initializer`
+//   under the fixed kind `MarshallDeputy::ANY_MESSAGE=24`.  Any deputy
+//   carrying an AnyMessage hits this kind on the wire; the actual type
+//   discriminator is the carried `type_name_` string inside the
+//   AnyMessage's bytes.  Wire format under deputy:
+//     `[v32 ANY_MESSAGE] [v64-prefixed string: type_name] [payload bytes]`.
+//
+// * Serializable interface (L10c-anymsg, additive): `save` /
+//   `load` methods plus free `operator<<` / `operator>>` overloads on
+//   `BinaryWriteArchive` / `BinaryReadArchive` let callers embed an
+//   `AnyMessage` directly in an RPC struct field — no MarshallDeputy
+//   wrapping needed.  Wire format when embedded directly:
+//     `[v64-prefixed string: type_name] [payload bytes]` (no leading
+//   kind byte, since the C++ field type already discriminates).
+//
+// The two paths produce different wire bytes for the same logical
+// payload (the leading `[v32 ANY_MESSAGE=24]` is absent in the direct
+// path), so a field migrating from `MarshallDeputy graph_` to
+// `AnyMessage graph_` is a 1-byte wire change.  This is intentional:
+// once a field is statically typed as `AnyMessage`, the runtime kind
+// discriminator is dead weight.
 class AnyMessage : public Marshallable {
  public:
   AnyMessage();
   AnyMessage(std::string type_name, std::shared_ptr<Marshallable> payload);
 
   // Marshallable contract — the bytes flow through here when the
-  // surrounding MarshallDeputy serializes / deserializes.
+  // surrounding MarshallDeputy serializes / deserializes (legacy path).
   Marshal& to_marshal(Marshal& m) const override;
   Marshal& from_marshal(Marshal& m) override;
+
+  // Workstream N L10c-anymsg: Serializable interface.  Lets an
+  // `AnyMessage` field be embedded directly in an RPC struct without
+  // going through MarshallDeputy.  Wire format inside save/load is
+  // identical to the bytes inside `to_marshal` / `from_marshal` (i.e.,
+  // the AnyMessage's own type_name + payload bytes); the difference vs
+  // the deputy path is only the absence of the surrounding kind tag.
+  //
+  // Implementation routes through a temporary `Marshal` so the inner
+  // payload's `to_marshal` / `from_marshal` methods can stay unchanged
+  // until L10f drops `Marshallable` entirely.
+  void save(BinaryWriteArchive& ar) const;
+  void load(BinaryReadArchive& ar);
 
   // Discriminator accessors.
   const std::string& type_name() const noexcept { return type_name_; }
@@ -238,6 +271,24 @@ inline std::shared_ptr<AnyMessage> AnyMessage::pack(std::shared_ptr<T> val) {
          "AnyMessage::pack<T>: T not registered. "
          "Call reg_any_message_as<T>(\"name\") at static init.");
   return pack_as<T>(*name, std::move(val));
+}
+
+// ---- Workstream N L10c-anymsg: free archive operators ---------------
+//
+// Lets `AnyMessage` ride an RPC struct field directly without the
+// surrounding `MarshallDeputy` wrapper.  rpcgen emits `ar << field`
+// for `AnyMessage` fields the same way it does for any other type.
+
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
+                                      const AnyMessage& am) {
+  am.save(ar);
+  return ar;
+}
+
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
+                                     AnyMessage& am) {
+  am.load(ar);
+  return ar;
 }
 
 }  // namespace rrr
