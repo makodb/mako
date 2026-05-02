@@ -715,6 +715,9 @@ initialized in `RaftServer::Setup()` via
   per-peer `transport_->send_vote(...)` with `RaftQuorum<VoteReply>`.
 - Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
   transitional paths; term/spec-voter helper accessors were removed.
+- Append callback bridge hardening (Phase 8.1d leaf 1): on append RPC error,
+  `RaftCommo::SendAppendEntriesCb` now emits a default `AppendEntriesReply{}`
+  so transport-facing callers never wait on a silently dropped callback.
 - Remaining phases (8.1d-8.1e): migrate replication/snapshot durable paths to
   `transport().send_*` and delete the remaining legacy result/event wrappers.
 

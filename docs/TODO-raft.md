@@ -473,19 +473,24 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
 `res->ok`, `res->followerTerm`, `res->followerLastLogIndex`,
 `res->followerAckType` after `res->event->wait()`.
 
-- [ ] Convert to per-peer `transport_->send_append_entries(peer, req)`
-  returning `AppendEntriesReply` directly. Build an
-  `AppendEntriesReq` from the same fields.
-- [ ] In HeartbeatLoop: each peer's replication sub-fiber
-  (`Fiber::create_run`) calls `send_append_entries` synchronously,
-  consumes the reply, updates `next_index_[peer]` / `match_index_[peer]`
-  under `mtx_`.
-- [ ] For the speculative path at 1647 (`SendAppendEntries2`): if the
-  semantics are identical to the standard path (just a different
-  result shape), consolidate. Otherwise add a
-  `transport_->send_append_entries_spec` variant — but first confirm
-  the spec path is actually distinguishable on the wire.
-- [ ] Delete `SendAppendEntriesResults` from `commo.h` +
+- [ ] Breakdown doc: `docs/dev/raft_phase8_1d_appendentries_breakdown.md`
+- [x] **Leaf 1**: Harden append callback transport path so
+  `RaftCommo::SendAppendEntriesCb` always emits a reply object on RPC
+  errors (default error reply), preventing silent callback drop.
+  [26:05:02, 06:44] Implemented default `AppendEntriesReply{}` callback
+  on RPC error in `SendAppendEntriesCb`. Gate runs: raft ctest targets
+  pass (10/10). Full lab run remains flaky around TEST 63 (`RC=139` in
+  some runs, `RC=0` in rerun), matching the long-standing speculative
+  restart instability tracked under preexisting bug P2.
+- [ ] **Leaf 2**: Convert HeartbeatLoop append fan-out to per-peer
+  `transport_->send_append_entries(peer, req)` /
+  `transport_->send_empty_append_entries(peer, req)` in sub-fibers,
+  preserving current `next_index_` / `match_index_` / speculative ack
+  semantics.
+- [ ] **Leaf 3**: Migrate leadership-transfer heartbeat trigger path in
+  `InitiateLeadershipTransfer()` from `commo()->SendAppendEntries(...)`
+  to transport facade calls.
+- [ ] **Leaf 4**: Delete `SendAppendEntriesResults` from `commo.h` +
   `commo.cc` + every include site. Delete `SendAppendEntries2` /
   `SendAppendEntries` member definitions from RaftCommo (the
   `*Cb` variants stay as the rrr-side callback entry).

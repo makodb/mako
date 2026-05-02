@@ -763,6 +763,7 @@ void RaftCommo::SendAppendEntriesCb(
       if (fu->get_error_code() != 0) {
         Log_debug("[APPEND_RPC_CB] Error from site %d code=%d",
                   follower_id, fu->get_error_code());
+        on_reply(follower_id, raft::AppendEntriesReply{});
         return;
       }
       raft::AppendEntriesReply r{};
