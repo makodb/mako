@@ -537,8 +537,14 @@ returns `shared_ptr<SendAppendEntriesResults>`. Callers read `res->done`,
   direct `commo()->SendAppendEntriesDurable(...)` call from `RaftServer`.
   Extended `test_raft_channel_transport` to explicitly assert
   append-durable delivery and dropped-direction behavior.
-- [ ] `server.h:408` `SendVoteDurable` → `transport_->send_vote_durable`
-  (fire-and-forget).
+- [x] `server.h:408` `SendVoteDurable` → `transport_->send_vote_durable`
+  (fire-and-forget). [26:05:02, 09:41] `doVote` async persistence path now
+  sends durable vote acknowledgements through
+  `transport_->send_vote_durable(...)` with `VoteDurableReq{term,voter_id}`,
+  removing the direct `commo()->SendVoteDurable(...)` call from `RaftServer`.
+  Expanded `test_raft_channel_transport` fault-injection assertions to verify
+  vote-durable delivery in healthy direction and drop behavior under
+  directional partition.
 - [ ] `TimeoutNow` call sites → `transport_->send_timeout_now`.
 - [ ] Line 1194 `UpdatePartitionView` — this is gossip; either drop
   it from the facade or leave the direct `commo()->UpdatePartitionView`

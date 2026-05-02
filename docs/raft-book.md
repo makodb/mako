@@ -730,12 +730,14 @@ See `docs/dev/raft_snapshot_design.md` for the full design document.
 initialized in `RaftServer::Setup()` via
 `make_rrr_transport(commo(), site_id_, partition_id_)`.
 
-- Current state (Phase 8.1e leaf 2): `RequestVote()` election fan-out,
+- Current state (Phase 8.1e leaf 3): `RequestVote()` election fan-out,
   `HeartbeatLoop()` append fan-out, leadership-transfer append trigger,
-  lagging-follower snapshot send path, and follower durable-ack send path are
-  migrated to per-peer transport facade calls (`send_vote`,
+  lagging-follower snapshot send path, follower durable-ack send path, and
+  follower durable-vote ack send path are migrated to per-peer transport
+  facade calls (`send_vote`,
   `send_append_entries`, `send_empty_append_entries`,
-  `send_install_snapshot`, `send_append_entries_durable`).
+  `send_install_snapshot`, `send_append_entries_durable`,
+  `send_vote_durable`).
 - Legacy `RaftVoteQuorumEvent` remains only as a minimal yes/no helper for
   transitional paths; term/spec-voter helper accessors were removed.
 - Append callback bridge hardening (Phase 8.1d leaf 1): on append RPC error,
@@ -744,7 +746,7 @@ initialized in `RaftServer::Setup()` via
 - Legacy append wrapper APIs (`SendAppendEntriesResults`,
   `SendAppendEntries2`, `SendAppendEntries`) are now deleted from
   `RaftCommo`; only callback bridge entry points remain on that path.
-- Remaining phase (8.1e): migrate vote-durable/TimeoutNow outbound calls and
+- Remaining phase (8.1e): migrate TimeoutNow outbound calls and
   delete the remaining vote transitional helper.
 
 ### Restart Notification

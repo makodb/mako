@@ -382,7 +382,6 @@ class RaftServer : public TxLogServer {
             ballot_t term_copy = currentTerm;
             siteid_t voter_copy = site_id_;
             siteid_t can_id_copy = can_id;
-            parid_t par_id_copy = partition_id_;
 
             // Track async persistence thread (joined in destructor to prevent UAF)
             {
@@ -400,15 +399,15 @@ class RaftServer : public TxLogServer {
                 async_threads_.end());
               auto done = rusty::Arc<AtomicFlag>::make(false);
               async_threads_.emplace_back(
-                std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy, done]() {
+                std::thread([this, term_copy, voter_copy, can_id_copy, done]() {
                   // Persist the vote durably
                   PersistState(term_copy, can_id_copy, "doVote: async vote persist");
 
-                  // Send VoteDurable RPC to candidate
-                  auto c = commo();
-                  if (c != nullptr) {
-                      c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
-                  }
+                  // Send VoteDurable via transport facade (Phase 8.1e).
+                  janus::raft::VoteDurableReq durable_req{};
+                  durable_req.term = term_copy;
+                  durable_req.voter_id = voter_copy;
+                  transport_->send_vote_durable(can_id_copy, std::move(durable_req));
                   done->set(true);
               }), done);
             }

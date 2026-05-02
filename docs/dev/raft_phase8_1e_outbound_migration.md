@@ -62,3 +62,23 @@ leaf with dedicated tests.
   - append-durable RPC is delivered in the healthy direction, and
   - append-durable RPC is dropped (no receiver-side count increment) when the
     direction is fault-injected.
+
+## Leaf 3 (VoteDurable) Design Rationale
+
+- Goal: remove direct `commo()->SendVoteDurable(...)` usage from the follower
+  async-vote-persistence path in `RaftServer::doVote`.
+- The durable vote-ack shape maps directly to transport message types:
+  `VoteDurableReq{term, voter_id}`.
+- This leaf is behavior-preserving:
+  - follower still replies memory-vote immediately,
+  - vote is still persisted asynchronously in background thread,
+  - durable-voter quorum semantics on the leader are unchanged.
+
+## Leaf 3 User/Developer Notes
+
+- `doVote` now calls
+  `transport_->send_vote_durable(candidate_id, VoteDurableReq{...})`
+  after async vote persistence completes.
+- `tests/raft_channel_transport_test.cc` now asserts vote-durable
+  delivery/drop behavior under the same directional fault injection used for
+  other fire-and-forget transport methods.

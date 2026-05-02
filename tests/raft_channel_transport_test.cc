@@ -160,20 +160,24 @@ TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
   sw.drop_direction(/*from=*/1, /*to=*/2);
   auto dropped = tr_a->send_timeout_now(2, TimeoutNowReq{});
   EXPECT_FALSE(dropped.success);
+  tr_a->send_vote_durable(2, VoteDurableReq{});
   tr_a->send_append_entries_durable(2, AppendEntriesDurableReq{});
   auto dropped_snapshot = tr_a->send_install_snapshot(2, InstallSnapshotReq{});
   EXPECT_EQ(dropped_snapshot.term_out, 0u);
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  EXPECT_EQ(disp_b_impl->counts->n_vote_durable.load(), 0);
   EXPECT_EQ(disp_b_impl->counts->n_append_durable.load(), 0);
 
   sw.reset_faults();
   auto ok = tr_a->send_timeout_now(2, TimeoutNowReq{});
   EXPECT_TRUE(ok.success);
+  tr_a->send_vote_durable(2, VoteDurableReq{});
   tr_a->send_append_entries_durable(2, AppendEntriesDurableReq{});
   auto snapshot_ok = tr_a->send_install_snapshot(2, InstallSnapshotReq{});
   EXPECT_EQ(snapshot_ok.term_out, 7u);
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   EXPECT_EQ(disp_b_impl->counts->n_timeout.load(), 1);
+  EXPECT_EQ(disp_b_impl->counts->n_vote_durable.load(), 1);
   EXPECT_EQ(disp_b_impl->counts->n_append_durable.load(), 1);
   EXPECT_EQ(disp_b_impl->counts->n_install.load(), 1);
 }
