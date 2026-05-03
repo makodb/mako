@@ -112,9 +112,11 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
 //  }
 //  verify(b1 == b2);
   verify(cmd) ;
-  if (!tx->cmd_) {
+  // L10f-prep6: tx->cmd_ is Command; cmd here is shared_ptr<Marshallable>.
+  // Compare via inner shared_ptr for identity check.
+  if (!tx->cmd_.has_value()) {
     tx->cmd_ = cmd;
-  } else if (tx->cmd_ != cmd) {
+  } else if (tx->cmd_.inner_marshallable() != cmd) {
     auto present_cmd =
         marshallable_cast<VecPieceData>(tx->cmd_)->sp_vec_piece_data_;
     verify(present_cmd);
@@ -245,8 +247,9 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 //
   //always true
 #ifdef FULL_LOG_DEBUG
+  // L10f-prep6: GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("cmd<%d, %d> entered SchedulerClassic::OnCommit, Config::GetConfig()->IsReplicated()=%d",
-    SimpleRWCommand::GetCmdID(sp_tx->cmd_).first, SimpleRWCommand::GetCmdID(sp_tx->cmd_).second, Config::GetConfig()->IsReplicated());
+    SimpleRWCommand::GetCmdID(sp_tx->cmd_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(sp_tx->cmd_.inner_marshallable()).second, Config::GetConfig()->IsReplicated());
 #endif
   if (Config::GetConfig()->IsReplicated()) {
     auto cmd = std::make_shared<TpcCommitCommand>();
@@ -294,7 +297,9 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 
 void SchedulerClassic::DoCommit(Tx& tx_box) {
 #ifdef DB_CHECKSUM
-  ApplyToDatabase(tx_box.cmd_);
+  // L10f-prep6: tx_box.cmd_ is Command; ApplyToDatabase still takes
+  // shared_ptr<Marshallable>.
+  ApplyToDatabase(tx_box.cmd_.inner_marshallable());
 #endif
   auto mdb_txn = RemoveMTxn(tx_box.tid_);
   verify(mdb_txn == tx_box.mdb_txn_);
@@ -331,10 +336,11 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
       sp_tx->commit_result->set(1);
       return 0;
     } else {
-      verify(sp_tx->cmd_);
+      verify(sp_tx->cmd_.has_value());
       unique_ptr<TxnOutput> out = std::make_unique<TxnOutput>();
 			DepId di = { "dep", 0 };
-      SchedulerClassic::Dispatch(sp_tx->tid_, di, sp_tx->cmd_, *out);
+      // L10f-prep6: Dispatch still takes shared_ptr<Marshallable>.
+      SchedulerClassic::Dispatch(sp_tx->tid_, di, sp_tx->cmd_.inner_marshallable(), *out);
       DoPrepare(sp_tx->tid_);
     }
   }

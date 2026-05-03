@@ -494,8 +494,10 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
     Log_info("[WRONG_LEADER] ServiceImpl::Commit returning WRONG_LEADER for tx_id: %lu", tid);
     // Get view data from the transaction or command
     auto sp_tx = dynamic_pointer_cast<TxClassic>(sched->GetTx(tid));
-    if (sp_tx && sp_tx->cmd_) {
-      auto tx_data = dynamic_cast<TxData*>(sp_tx->cmd_.get());
+    // L10f-prep6: sp_tx->cmd_ is Command; unwrap to legacy
+    // shared_ptr<Marshallable> for the .get()→TxData* dynamic_cast.
+    if (sp_tx && sp_tx->cmd_.has_value()) {
+      auto tx_data = dynamic_cast<TxData*>(sp_tx->cmd_.inner_marshallable().get());
       if (tx_data && tx_data->reply_.sp_view_data_) {
         view_data->set_marshallable(tx_data->reply_.sp_view_data_);
         Log_info("[WRONG_LEADER] ServiceImpl::Commit attached view data: %s",

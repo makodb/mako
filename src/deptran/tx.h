@@ -56,7 +56,11 @@ class Tx: public enable_shared_from_this<Tx> {
   TxWorkspace ws_{};
   // TODO at most one active coroutine runnable for a tx at a time
 //  IntEvent running_{};
-  shared_ptr<Marshallable> cmd_{};
+  // Workstream N L10f-prep6 (2026-05-03): polymorphic command field
+  // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
+  // Boundary calls into APIs still taking `shared_ptr<Marshallable>`
+  // use `cmd_.inner_marshallable()`.
+  Command cmd_{};
   shared_ptr<ViewData> sp_view_data_ = nullptr;
 
 
