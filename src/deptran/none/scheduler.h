@@ -28,7 +28,7 @@ class SchedulerNone: public SchedulerClassic {
   }
 
   virtual int32_t Dispatch(cmdid_t cmd_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         TxnOutput& ret_output,
                         std::shared_ptr<ViewData>& view_data) override;
 

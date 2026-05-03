@@ -291,7 +291,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
 #ifndef ZERO_OVERHEAD
   dtxn_sched()->OriginalPathUnexecutedCmdConflictPlaceHolder(sp);
 #endif
-  
+
   // Check if this is a recovery command
   bool is_recovery = false;
   if (sp && sp->kind_ == VecPieceData::static_kind()) {
@@ -300,9 +300,11 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
       is_recovery = true;
     }
   }
-  
+
   std::shared_ptr<ViewData> view;
-  *res = dtxn_sched()->Dispatch(cmd_id, sp, *output, view);
+  // L10f-prep6n: TxLogServer::Dispatch now takes janus::Command;
+  // pass `md` (RPC param) directly.
+  *res = dtxn_sched()->Dispatch(cmd_id, md, *output, view);
   
   // Set the view data in the output parameter
   if (view) {

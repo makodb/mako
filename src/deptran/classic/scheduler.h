@@ -24,8 +24,11 @@ class SchedulerClassic: public TxLogServer {
   ~SchedulerClassic() {
   }
 
+  // Workstream N L10f-prep6n (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   void MergeCommands(vector<shared_ptr<TxPieceData>>&,
-                     shared_ptr<Marshallable>);
+                     const janus::Command&);
 
   bool ExecutePiece(Tx& tx, TxPieceData& piece_data, TxnOutput& ret_output);
 
@@ -35,7 +38,7 @@ class SchedulerClassic: public TxLogServer {
 
   virtual bool Dispatch(cmdid_t cmd_id,
 												struct DepId dep_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         TxnOutput& ret_output);
 
   /**

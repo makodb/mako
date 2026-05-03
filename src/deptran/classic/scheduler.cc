@@ -12,7 +12,7 @@
 namespace janus {
 
 void SchedulerClassic::MergeCommands(vector<shared_ptr<TxPieceData>>& ops,
-                                     shared_ptr<Marshallable> cmd2) {
+                                     const janus::Command& cmd2) {
 
   verify(0);
 //  auto& sp_v2 = marshallable_cast<VecPieceData>(cmd2)->sp_vec_piece_data_;
@@ -85,12 +85,15 @@ bool SchedulerClassic::DispatchPiece(Tx& tx,
 
 bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
                                 struct DepId dep_id,
-                                shared_ptr<Marshallable> cmd,
+                                const janus::Command& cmd_env,
                                 TxnOutput& ret_output) {
+  // L10f-prep6n: take Command at the boundary; downstream uses
+  // shared_ptr<Marshallable> via .inner_marshallable() once.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
 #ifdef FULL_LOG_DEBUG
   Log_info("cmd<%d, %d> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
 #endif
-  
+
   auto vec_piece_data = marshallable_cast<VecPieceData>(cmd);
   verify(vec_piece_data != nullptr);
   auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
@@ -338,8 +341,8 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
       verify(sp_tx->cmd_.has_value());
       unique_ptr<TxnOutput> out = std::make_unique<TxnOutput>();
 			DepId di = { "dep", 0 };
-      // L10f-prep6: Dispatch still takes shared_ptr<Marshallable>.
-      SchedulerClassic::Dispatch(sp_tx->tid_, di, sp_tx->cmd_.inner_marshallable(), *out);
+      // L10f-prep6n: Dispatch now takes janus::Command directly.
+      SchedulerClassic::Dispatch(sp_tx->tid_, di, sp_tx->cmd_, *out);
       DoPrepare(sp_tx->tid_);
     }
   }

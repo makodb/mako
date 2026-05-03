@@ -521,8 +521,11 @@ class TxLogServer {
                  mdb::Table *tbl
   );
 
+  // Workstream N L10f-prep6n (2026-05-03): takes janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   virtual int32_t Dispatch(cmdid_t cmd_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         TxnOutput& ret_output,
                         std::shared_ptr<ViewData>& view_data) {
     verify(0);
