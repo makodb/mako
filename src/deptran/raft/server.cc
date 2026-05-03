@@ -316,10 +316,10 @@ bool RaftServer::RecoverFromStorage() {
     for (const auto& entry : entries) {
       auto data = std::make_shared<RaftData>();
       data->term = entry.term;
-      // L10f-prep1: LogEntry::command is now janus::Command; raft's
-      // RaftData::log_ is still shared_ptr<Marshallable> (migrating
-      // it is L10f-prep2), so unwrap at the boundary.
-      data->log_ = entry.command.inner_marshallable();
+      // L10f-prep1/2: both LogEntry::command and RaftData::log_ are
+      // janus::Command — direct copy (Command is cheap to copy via
+      // its inner shared_ptr).
+      data->log_ = entry.command;
       data->max_ballot_seen_ = entry.max_ballot_seen;
       data->max_ballot_accepted_ = entry.max_ballot_accepted;
       raft_logs_[entry.slot_id] = data;
@@ -370,7 +370,7 @@ void RaftServer::ReplayCommittedEntries() {
   size_t replayed = 0;
   for (slotid_t id = start; id <= end; id++) {
     auto instance = GetRaftInstance(id);
-    if (instance && instance->log_) {
+    if (instance && instance->log_.has_value()) {
       // @unsafe
       {
       app_next_(id, instance->log_);
@@ -768,8 +768,10 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
   slotid_t first_missing = 0;
   for (slotid_t id = old_commit + 1; id <= new_commit; id++) {
     auto it = raft_logs_.find(id);
-    if (it != raft_logs_.end() && it->second && it->second->log_) {
-      batch.emplace_back(id, it->second->log_);
+    if (it != raft_logs_.end() && it->second && it->second->log_.has_value()) {
+      // L10f-prep2: RaftData::log_ is Command; apply_queue_ still
+      // holds shared_ptr<Marshallable>, so unwrap at the boundary.
+      batch.emplace_back(id, it->second->log_.inner_marshallable());
     } else {
       first_missing = id;
       break;  // Gap in log — stop here
@@ -1334,10 +1336,13 @@ void RaftServer::applyLogs() {
     // Apply all committed logs
     for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
       auto next_instance = GetRaftInstance(id);
-      if (next_instance && next_instance->log_) {
+      if (next_instance && next_instance->log_.has_value()) {
         // @unsafe
         {
-        RuleWitnessGC(next_instance->log_);
+        // L10f-prep2: RuleWitnessGC takes shared_ptr<Marshallable>;
+        // app_next_ takes Command — Command's auto-conversion +
+        // explicit unwrap meet at the boundary.
+        RuleWitnessGC(next_instance->log_.inner_marshallable());
         Log_info("[APPLY-LOGS] site=%d applying index=%ld", site_id_, id);
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;
@@ -1588,7 +1593,9 @@ void RaftServer::HeartbeatLoop() {
                 if (!curInstance) {
                   Log_error("[HEARTBEAT-SEND] GetRaftInstance(%lu) returned NULL, skipping", it->second);
                 } else {
-                  cmd = curInstance->log_;
+                  // L10f-prep2: curInstance->log_ is Command;
+                  // local `cmd` here is shared_ptr<Marshallable>.
+                  cmd = curInstance->log_.inner_marshallable();
                   cmdLogTerm = curInstance->term;
                   Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd=%p",
                       site_id_, it->second, site_id, cmd.get());
@@ -1610,11 +1617,15 @@ void RaftServer::HeartbeatLoop() {
                   Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%lu) returned NULL, skipping", idx);
                   continue;
                 }
+                // L10f-prep2: curInstance->log_ is Command; the
+                // `marshallable_cast<T>(SerializableEnvelope&)`
+                // overload (in serializable_envelope.hpp) handles
+                // this directly.
                 shared_ptr<TpcCommitCommand> curCmd = marshallable_cast<TpcCommitCommand>(curInstance->log_);
                 if (!curCmd) {
                   Log_info("[BATCH_SKIP] site=%d idx=%lu: log entry is not TpcCommitCommand (kind=%d), using raw log",
-                           site_id_, idx, curInstance->log_ ? curInstance->log_->kind_ : -1);
-                  cmd = curInstance->log_;
+                           site_id_, idx, curInstance->log_.has_value() ? curInstance->log_.kind_ : -1);
+                  cmd = curInstance->log_.inner_marshallable();
                   break;
                 }
                 curCmd->term = curInstance->term;

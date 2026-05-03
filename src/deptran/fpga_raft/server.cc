@@ -55,7 +55,11 @@ void* FpgaRaftServer::HeartbeatLoop(void* args) {
 		auto prevTerm = instance->prevTerm;
 		auto ballot = instance->ballot;
 		auto slot = instance->slot_id;
-		shared_ptr<Marshallable> cmd = instance->log_;
+		// L10f-prep2: instance->log_ is now Command; unwrap to legacy
+		// shared_ptr<Marshallable> for the local cmd binding (the
+		// dead-or-near-dead `cmd` is unused below — see the
+		// commented-out app_next_ call at line ~441).
+		shared_ptr<Marshallable> cmd = instance->log_.inner_marshallable();
 		
 		
 		parid_t partition_id = hb_loop_args->sch->partition_id_;
@@ -509,12 +513,15 @@ void FpgaRaftServer::StartTimer()
     
     for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
         auto next_instance = GetFpgaRaftInstance(id);
-        if (next_instance->log_) {
+        // L10f-prep2: next_instance->log_ is Command; unwrap at the
+        // boundary for RuleWitnessGC + GetCmdID (still take
+        // shared_ptr<Marshallable>).  app_next_ takes Command.
+        if (next_instance->log_.has_value()) {
             Log_debug("fpga-raft par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
             // WAN_WAIT
-            RuleWitnessGC(next_instance->log_);
+            RuleWitnessGC(next_instance->log_.inner_marshallable());
 #ifdef LATENCY_LOG_DEBUG
-            Log_info("Time of cmd <%d, %d> arrive svr %d app_next: %.2fms", SimpleRWCommand::GetCmdID(next_instance->log_).first, SimpleRWCommand::GetCmdID(next_instance->log_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+            Log_info("Time of cmd <%d, %d> arrive svr %d app_next: %.2fms", SimpleRWCommand::GetCmdID(next_instance->log_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(next_instance->log_.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
             app_next_(id, next_instance->log_);
             executeIndex++;
@@ -546,9 +553,11 @@ void FpgaRaftServer::StartTimer()
 
       for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
           auto next_instance = GetFpgaRaftInstance(id);
-          if (next_instance->log_) {
+          // L10f-prep2: same Command-boundary pattern as the apply
+          // loop above.
+          if (next_instance->log_.has_value()) {
               // WAN_WAIT
-              RuleWitnessGC(next_instance->log_);
+              RuleWitnessGC(next_instance->log_.inner_marshallable());
               app_next_(id, next_instance->log_);
               Log_debug("fpga-raft par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
               executeIndex++;
@@ -571,7 +580,10 @@ void FpgaRaftServer::StartTimer()
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     for (slotid_t id = executeIndex + 1; id <= maxIndex; id++) {
       auto next_instance = GetFpgaRaftInstance(id);
-      if (next_instance->log_ && SimpleRWCommand::Conflict(next_instance->log_, cmd))
+      // L10f-prep2: SimpleRWCommand::Conflict takes
+      // shared_ptr<Marshallable>; unwrap from Command.
+      if (next_instance->log_.has_value() &&
+          SimpleRWCommand::Conflict(next_instance->log_.inner_marshallable(), cmd))
         return true;
     }
     return false;

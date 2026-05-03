@@ -12,14 +12,18 @@ class CmdData;
 #define NUM_BATCH_TIMER_RESET  (100)
 #define SEC_BATCH_TIMER_RESET  (1)
 
+// Workstream N L10f-prep2 (2026-05-03): polymorphic command fields
+// (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
+// `shared_ptr<Marshallable>` to `janus::Command`.  See
+// `docs/dev/l10-unblock-plan.md`.
 struct FpgaRaftData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
-  shared_ptr<Marshallable> accepted_cmd_{nullptr};
-  shared_ptr<Marshallable> committed_cmd_{nullptr};
+  Command accepted_cmd_{};
+  Command committed_cmd_{};
 
   ballot_t term;
-  shared_ptr<Marshallable> log_{nullptr};
+  Command log_{};
 
 	//for retries
 	ballot_t prevTerm;
