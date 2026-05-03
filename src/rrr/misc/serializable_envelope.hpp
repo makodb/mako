@@ -77,6 +77,25 @@ class SerializableEnvelope {
  public:
   SerializableEnvelope() = default;
 
+  // -- Migration compat: implicit conversion from MarshallDeputy ---------
+  // Lets `req.cmd = md;` patterns continue to compile after a field
+  // migrates from `MarshallDeputy` to `SerializableEnvelope<MyList>`.
+  // The deputy must hold a Serializable payload (SerializableMarshallableAdapter
+  // wrapping a SerializableProxy); pure legacy `Marshallable` payloads
+  // are not supported here (those types should already have migrated
+  // to Serializable in Phase 4).
+  //
+  // Aliases the adapter via shared_ptr so the resulting envelope shares
+  // ownership with any other deputy/envelope referring to the same
+  // adapter — same lifetime semantics as `MarshallDeputy`'s
+  // `inner_sp_data_` shared_ptr.
+  SerializableEnvelope(const MarshallDeputy& md) { assign_from(md); }
+
+  SerializableEnvelope& operator=(const MarshallDeputy& md) {
+    assign_from(md);
+    return *this;
+  }
+
   // -- Factories ---------------------------------------------------------
   // VALUE-SEMANTIC: proxy owns a copy of `value`.
   template<typename T>
@@ -125,6 +144,32 @@ class SerializableEnvelope {
                   "SerializableEnvelope::unpack<T>: T is not in TypeList.");
     if (!has_value()) return nullptr;
     return const_cast<SerializableEnvelope*>(this)->unpack_impl<T>();
+  }
+
+  // Recover the carried payload as a `shared_ptr<T>` aliasing the
+  // proxy's owned T.  The aliasing constructor keeps the underlying
+  // proxy (and its payload) alive for the lifetime of the returned
+  // shared_ptr.  Drop-in for the legacy `marshallable_cast<T>(md)`
+  // shared_ptr-returning pattern; most call sites use this when they
+  // need to outlive the Command/envelope.
+  template<typename T>
+  std::shared_ptr<T> unpack_shared() {
+    static_assert(TypeList::template contains<T>(),
+                  "SerializableEnvelope::unpack_shared<T>: T is not in TypeList.");
+    T* raw = unpack<T>();
+    if (raw == nullptr) return nullptr;
+    // Aliasing ctor: keeps the proxy_ shared_ptr alive while the
+    // returned pointer aliases the T inside the proxy.
+    return std::shared_ptr<T>(proxy_, raw);
+  }
+
+  template<typename T>
+  std::shared_ptr<const T> unpack_shared() const {
+    static_assert(TypeList::template contains<T>(),
+                  "SerializableEnvelope::unpack_shared<T>: T is not in TypeList.");
+    const T* raw = unpack<T>();
+    if (raw == nullptr) return nullptr;
+    return std::shared_ptr<const T>(proxy_, raw);
   }
 
   // True iff the carried payload is a T.
@@ -183,6 +228,25 @@ class SerializableEnvelope {
   }
 
  private:
+  // Migration compat helper: extract the adapter from a deputy.
+  void assign_from(const MarshallDeputy& md) {
+    if (!md.has_marshallable()) {
+      proxy_.reset();
+      return;
+    }
+    auto adapter = std::dynamic_pointer_cast<SerializableMarshallableAdapter>(
+        md.inner());
+    verify(adapter != nullptr &&
+           "SerializableEnvelope::assign_from(MarshallDeputy): deputy "
+           "holds a non-Serializable Marshallable.  Migrate the payload "
+           "type to Serializable (Phase 4) before passing through Command.");
+    // Aliasing ctor: the resulting shared_ptr keeps the adapter alive
+    // and points at its proxy member.  Mutations through this proxy
+    // are visible to any other shared_ptr aliasing the same adapter.
+    proxy_ = std::shared_ptr<SerializableProxy>(adapter,
+                                                &adapter->proxy_mut());
+  }
+
   template<typename T>
   T* unpack_impl() {
     // Try value-semantic shape first (pack(value) — proxy holds T directly).
@@ -203,5 +267,43 @@ class SerializableEnvelope {
   // and therefore the same payload value.
   std::shared_ptr<SerializableProxy> proxy_;
 };
+
+// Migration compat: `marshallable_cast<T>` overload for envelopes.
+// Lets existing `marshallable_cast<T>(req.cmd)` call sites keep
+// compiling after `req.cmd` migrates from `MarshallDeputy` to
+// `SerializableEnvelope<MyList>`.  Returns `shared_ptr<T>` aliasing
+// the proxy's owned T; same semantics as the legacy
+// `marshallable_cast<T>(MarshallDeputy&)` path that this replaces.
+template<typename T, typename TypeList>
+inline std::shared_ptr<T> marshallable_cast(
+    SerializableEnvelope<TypeList>& env) {
+  return env.template unpack_shared<T>();
+}
+
+template<typename T, typename TypeList>
+inline std::shared_ptr<T> marshallable_cast(
+    const SerializableEnvelope<TypeList>& env) {
+  // unpack on a const env — aliases via const proxy access.
+  // We need a non-const T* because shared_ptr<T> aliasing.
+  return const_cast<SerializableEnvelope<TypeList>&>(env)
+      .template unpack_shared<T>();
+}
+
+// Free archive operators — let SerializableEnvelope ride directly in
+// rpcgen-emitted RPC struct fields the same way any other Serializable
+// type does.
+template<typename TypeList>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
+                                      const SerializableEnvelope<TypeList>& env) {
+  env.save(ar);
+  return ar;
+}
+
+template<typename TypeList>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
+                                     SerializableEnvelope<TypeList>& env) {
+  env.load(ar);
+  return ar;
+}
 
 }  // namespace rrr
