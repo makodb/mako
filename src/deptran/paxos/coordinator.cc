@@ -81,9 +81,9 @@ void CoordinatorMultiPaxos::Accept() {
 #ifdef LATENCY_DEBUG
   // L10f-prep3a: GetCommandMsTimeElaps + Broadcast* still take
   // shared_ptr<Marshallable>; unwrap from Command.
-  client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_.inner_marshallable()));
+  client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_));
 #endif
-  auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_.inner_marshallable());
+  auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
   WAN_WAIT;
   if (sp_quorum->yes()) {
     committed_ = true;
@@ -107,7 +107,7 @@ void CoordinatorMultiPaxos::Commit() {
   commit_callback_();
   Log_debug("multi-paxos broadcast commit for partition: %d, slot %d",
             (int) par_id_, (int) slot_id_);
-  commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_.inner_marshallable());
+  commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_);
   verify(phase_ == Phase::COMMIT);
   GotoNextPhase();
 }
@@ -202,7 +202,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
       return;
     }
     auto ess_cc = es_cc;
-    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_.inner_marshallable(), [this, ess_cc](ballot_t ballot, int valid){
+    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_accept)
 	       return;
       // if(!valid){

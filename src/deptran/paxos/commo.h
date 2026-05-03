@@ -43,19 +43,19 @@ class MultiPaxosCommo : public Communicator {
   BroadcastAccept(parid_t par_id,
                   slotid_t slot_id,
                   ballot_t ballot,
-                  shared_ptr<Marshallable> cmd);
+                  const janus::Command& cmd);
   // Workstream N Phase 4e-12: removed deprecated callback-style
   // `void BroadcastAccept(parid_t, slotid_t, ballot_t, cmd,
   // callback)` — same shape as the deprecated BroadcastPrepare.
   void ForwardToLearner(parid_t par_id,
                         uint64_t slot,
                         ballot_t ballot,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         const std::function<void(uint64_t, ballot_t)>& cb);
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
                        const ballot_t ballot,
-                       const shared_ptr<Marshallable> cmd);
+                       const janus::Command& cmd);
   // Workstream N Phase 4e-26: removed `BroadcastBulkPrepare`,
   // `BroadcastHeartBeat`, `BroadcastSyncNoOps` — became dead in
   // Phase 4e-25 when the matching `PaxosWorker::SendHeartBeat` /
@@ -63,22 +63,22 @@ class MultiPaxosCommo : public Communicator {
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb) override;
 
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncCommit(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         const std::function<void(ballot_t, int)>& cb) override;
 
   shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkAccept(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         const std::function<void(ballot_t, int)>& cb);
   shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkDecide(parid_t par_id,
-                           const shared_ptr<Marshallable> cmd,
+                           const janus::Command& cmd,
                            const std::function<void(ballot_t, int)>& cb);
 
   // Workstream N Phase 4e-27: removed `BroadcastPrepare2` declaration

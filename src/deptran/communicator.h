@@ -570,24 +570,26 @@ class Communicator {
   // matching `MultiPaxosCommo` overrides + `PaxosWorker::Send*`
   // senders were deleted in Phases 4e-25/4e-26.
 
+    // Workstream N L10f-prep6t: take janus::Command;
+    // shared_ptr<Marshallable> callers auto-convert.
     virtual void ForwardToLearner(parid_t par_id,
                                   uint64_t slot,
                                   ballot_t ballot,
-                                  shared_ptr<Marshallable> cmd,
+                                  const janus::Command& cmd,
                                   const std::function<void(uint64_t, ballot_t)>& cb) {
       verify(0);
     }
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
-                      shared_ptr<Marshallable> cmd,
+                      const janus::Command& cmd,
                       const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb){
       verify(0);
     }
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncCommit(parid_t par_id,
-                      shared_ptr<Marshallable> cmd,
+                      const janus::Command& cmd,
                       const std::function<void(ballot_t, int)>& cb){
       verify(0);
     }

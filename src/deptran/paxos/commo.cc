@@ -33,8 +33,8 @@ shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastAccept(parid_t par_id,
                                  slotid_t slot_id,
                                  ballot_t ballot,
-                                 shared_ptr<Marshallable> cmd) {
-  verify(0);                               
+                                 const janus::Command& cmd) {
+  verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
 //  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
   auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, n);
@@ -71,7 +71,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
 void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
                                        uint64_t slot,
                                        ballot_t ballot,
-                                       shared_ptr<Marshallable> cmd,
+                                       const janus::Command& cmd,
                                        const std::function<void(uint64_t, ballot_t)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   auto proxies = rpc_par_proxies_[par_id];
@@ -130,7 +130,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
 void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,
                                       const ballot_t ballot,
-                                      const shared_ptr<Marshallable> cmd) {
+                                      const janus::Command& cmd) {
   verify(0);
   // int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   // auto proxies = rpc_par_proxies_[par_id];
@@ -166,7 +166,7 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
 // Distant data centers
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
-                                  shared_ptr<Marshallable> cmd,
+                                  const janus::Command& cmd,
                                   const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb) {
   is_broadcast_syncLog = true;
   Log_info("invoke BroadcastSyncLog to prepare for the failover");
@@ -196,7 +196,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
     };
-    verify(cmd != nullptr);
+    verify(cmd.has_value());
     janus::Command md(cmd);
     MultiPaxosProxy::RpcSyncLogRequest req;
     req.cmd = md;
@@ -214,7 +214,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
 
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
-                                  shared_ptr<Marshallable> cmd,
+                                  const janus::Command& cmd,
                                   const std::function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
@@ -248,7 +248,7 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
 // Distant data center
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
-                                 shared_ptr<Marshallable> cmd,
+                                 const janus::Command& cmd,
                                  const function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
@@ -278,7 +278,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       cb(ballot, valid);
       e->FeedResponse(valid);
     };
-    verify(cmd != nullptr);
+    verify(cmd.has_value());
     janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkAcceptRequest req;
     req.cmd = md;
@@ -293,7 +293,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
 // Distant data center
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
-                                     shared_ptr<Marshallable> cmd,
+                                     const janus::Command& cmd,
                                      const function<void(ballot_t, int)>& cb){
   auto proxies = rpc_par_proxies_[par_id];
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
