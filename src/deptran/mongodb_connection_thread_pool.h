@@ -12,23 +12,29 @@ namespace janus {
 
 class MongodbConnectionThreadPool {
 
+  // Workstream N L10f-prep6k (2026-05-03): internal storage migrated
+  // from `queue<shared_ptr<Marshallable>>` to `queue<Command>`.
+  // External API (push / pop) keeps the legacy shape for caller
+  // compatibility.  `close()` enqueues an empty Command (default-
+  // constructed) as the sentinel; the consumer detects it via
+  // has_value() == false.
   class CommandQueue {
    private:
-    std::queue<shared_ptr<Marshallable>> queue;
+    std::queue<Command> queue;
     std::mutex mutex;
     std::condition_variable cond_var;
    public:
     void push(const shared_ptr<Marshallable>& cmd) {
       std::lock_guard<std::mutex> lock(mutex);
-      queue.push(cmd);
+      queue.emplace(cmd);  // Command(shared_ptr<Marshallable>) ctor.
       cond_var.notify_one();
     }
     shared_ptr<Marshallable> pop() {
       std::unique_lock<std::mutex> lock(mutex);
       cond_var.wait(lock, [this]{ return !queue.empty(); });
-      shared_ptr<Marshallable> cmd = queue.front();
+      Command cmd = queue.front();
       queue.pop();
-      return cmd;
+      return cmd.inner_marshallable();
     }
     bool empty() {
       return queue.empty();
