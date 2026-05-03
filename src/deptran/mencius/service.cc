@@ -59,7 +59,8 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
   for (auto x: skip_commits) {
     auto cmd_ptr = std::make_shared<TpcCommitCommand>();
     janus::Command md(wrap_typed_marshallable(cmd_ptr));
-    sched_->OnCommit(x, 100, md.inner(), true);
+    // L10f-prep6q: OnCommit takes janus::Command directly.
+    sched_->OnCommit(x, 100, md, true);
   }
   sched_->g_mutex.unlock();
 
@@ -81,7 +82,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
         sender,
         skip_commits,
         skip_potentials,
-        const_cast<janus::Command&>(cmd).inner(),
+        cmd,
         max_ballot,
         coro_id,
         [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -93,14 +94,14 @@ void MenciusServiceImpl::Decide(const uint64_t& slot,
                                 const janus::Command& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  auto x = cmd.inner();
 
+  // L10f-prep6q: OnCommit takes janus::Command directly.
   SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd.inner());
   sched_->c_mutex.lock();
   sched_->unexecuted_keys_[parsed_cmd.key_] += 1;
   sched_->c_mutex.unlock();
 
-  sched_->OnCommit(slot, ballot, x);
+  sched_->OnCommit(slot, ballot, cmd);
   defer.reply();
 }
 

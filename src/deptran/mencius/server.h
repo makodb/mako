@@ -81,20 +81,23 @@ class MenciusServer : public TxLogServer {
                  uint64_t* coro_id,
                  rusty::Function<void()> cb);
 
+  // Workstream N L10f-prep6q (2026-05-03): handlers take
+  // const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
   void OnSuggest(const slotid_t slot_id,
 		            const uint64_t time,
                 const ballot_t ballot,
                 const uint64_t sender,
-                const std::vector<uint64_t>& skip_commits, 
+                const std::vector<uint64_t>& skip_commits,
                 const std::vector<uint64_t>& skip_potentials,
-                shared_ptr<Marshallable> &cmd,
+                const janus::Command& cmd,
                 ballot_t *max_ballot,
                 uint64_t* coro_id,
                 rusty::Function<void()> cb);
 
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd,
+                const janus::Command& cmd,
                 bool is_skip=false);
 
   void Setup();

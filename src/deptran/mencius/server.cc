@@ -41,7 +41,7 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
                            const uint64_t sender,
                            const std::vector<uint64_t>& skip_commits, 
                            const std::vector<uint64_t>& skip_potentials,
-                           shared_ptr<Marshallable> &cmd,
+                           const janus::Command& cmd,
                            ballot_t *max_ballot,
                            uint64_t* coro_id,
                            rusty::Function<void()> cb) {
@@ -76,7 +76,7 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
 
 void MenciusServer::OnCommit(const slotid_t slot_id,
                            const ballot_t ballot,
-                           shared_ptr<Marshallable> &cmd,
+                           const janus::Command& cmd,
                            bool is_skip) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   //Log_info("mencius scheduler decide for slot: %d on loc_id_:%d", slot_id, this->loc_id_);
