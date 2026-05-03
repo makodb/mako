@@ -83,10 +83,15 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Log_info("OnCommit loc_id_=%d cmd_id=<%d, %d>", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
   auto instance = GetInstance(slot_id);
+  // L10f-prep3b: MenciusData::committed_cmd_ is now Command;
+  // assignment from shared_ptr<Marshallable>& works via the
+  // Command operator=(shared_ptr<Marshallable>) overload.
   instance->committed_cmd_ = cmd;
   instance->is_skip = true;
   if (instance->is_skip){
-    instance->committed_cmd_->kind_ = TpcCommitCommand::static_kind();
+    // Command's `kind_` is a public field mirror of MarshallDeputy's;
+    // the legacy `committed_cmd_->kind_` write is preserved.
+    instance->committed_cmd_.kind_ = TpcCommitCommand::static_kind();
   }
   if (slot_id > max_committed_slot_) {
     max_committed_slot_ = slot_id;
@@ -103,9 +108,11 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   
 #ifdef JETPACK_DEDUPLICATE_OPTIMIZATION
   // deduplicate optimization: Accepted duplicated cmd can be ignored
+  // L10f-prep3b: cmd_ is Command; witness_.has_appeared still takes
+  // shared_ptr<Marshallable>.
   for (slotid_t id = max_committed_slot_; id < max_active_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->cmd_ && witness_.has_appeared(next_instance->cmd_)) {
+    if (next_instance->cmd_.has_value() && witness_.has_appeared(next_instance->cmd_.inner_marshallable())) {
       max_committed_slot_++;
     }
   }
@@ -114,13 +121,16 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   slotid_t tmp_max_executed_slot_ = max_executed_slot_;
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->committed_cmd_) {
+    // L10f-prep3b: committed_cmd_ is Command; RuleWitnessGC and
+    // SimpleRWCommand still take shared_ptr<Marshallable>; app_next_
+    // takes Command directly.
+    if (next_instance->committed_cmd_.has_value()) {
       if (!next_instance->executed_){
-        RuleWitnessGC(next_instance->committed_cmd_);
+        RuleWitnessGC(next_instance->committed_cmd_.inner_marshallable());
         app_next_(id, next_instance->committed_cmd_);
         next_instance->executed_ = true;
 
-        SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_);
+        SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_.inner_marshallable());
         c_mutex.lock();
         unexecuted_keys_[parsed_cmd.key_] -= 1;
         // Log_info("[-1] cmd %d %d cnt %d", parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, unexecuted_keys_[parsed_cmd.key_].load());
@@ -138,10 +148,10 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   //apply the entry out of order if there is no conflict
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->committed_cmd_) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_);
+    if (next_instance->committed_cmd_.has_value()) {
+      SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_.inner_marshallable());
       if ((!next_instance->executed_) && (unexecuted_keys_[parsed_cmd.key_]==1)){
-        RuleWitnessGC(next_instance->committed_cmd_);
+        RuleWitnessGC(next_instance->committed_cmd_.inner_marshallable());
         app_next_(id, next_instance->committed_cmd_);
         next_instance->executed_ = true;
         
@@ -186,7 +196,10 @@ bool MenciusServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshalla
   for (slotid_t id = max_executed_slot_ + 1; id <= max_active_slot_; id++) {
     auto next_instance = GetInstance(id);
     // check next_instance->executed_ since Mencius have out-of-order execution
-    if (next_instance->committed_cmd_ && !next_instance->executed_ && SimpleRWCommand::Conflict(next_instance->committed_cmd_, cmd))
+    // L10f-prep3b: committed_cmd_ is Command; Conflict still takes
+    // shared_ptr<Marshallable>.
+    if (next_instance->committed_cmd_.has_value() && !next_instance->executed_ &&
+        SimpleRWCommand::Conflict(next_instance->committed_cmd_.inner_marshallable(), cmd))
       return true;
   }
   return false;

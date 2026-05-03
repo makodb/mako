@@ -24,7 +24,8 @@ class CoordinatorMencius : public Coordinator {
   bool in_suggest = false; // debug
   // Workstream N Phase 4e-14: removed `bool in_forward = false;` —
   // declared but never written or read.
-  shared_ptr<Marshallable> cmd_{nullptr};
+  // Workstream N L10f-prep3b: cmd_ migrated to janus::Command.
+  Command cmd_{};
   CoordinatorMencius(uint32_t coo_id,
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,

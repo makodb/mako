@@ -29,11 +29,12 @@ void CoordinatorMencius::Submit(shared_ptr<Marshallable>& cmd,
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  verify(cmd_ == nullptr);
+  // L10f-prep3b: cmd_ is now janus::Command.
+  verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
   cmd_ = cmd;
-  verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_.kind_ != MarshallDeputy::UNKNOWN);
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
@@ -56,7 +57,8 @@ void CoordinatorMencius::Suggest() {
   //           par_id_, slot_id_);
   auto start = chrono::system_clock::now();
   commo()->svr_workers_g = svr_workers_g;
-  auto sp_quorum = commo()->BroadcastSuggest(par_id_, slot_id_, curr_ballot_, cmd_);
+  // L10f-prep3b: BroadcastSuggest still takes shared_ptr<Marshallable>.
+  auto sp_quorum = commo()->BroadcastSuggest(par_id_, slot_id_, curr_ballot_, cmd_.inner_marshallable());
   sp_quorum->id_ = dep_id_;
 	//Log_info("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
   //Log_info("Suggest(): dep_id:%d, slot_id:%d, site: %d", dep_id_, slot_id_, frame_->site_info_->id);
@@ -88,7 +90,7 @@ void CoordinatorMencius::Commit() {
   commit_callback_();
   Log_debug("mencius broadcast commit for partition: %d, slot %d",
             (int) par_id_, (int) slot_id_);
-  commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_);
+  commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_.inner_marshallable());
   verify(phase_ == Phase::COMMIT);
   GotoNextPhase();
 }
