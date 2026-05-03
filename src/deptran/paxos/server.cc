@@ -48,7 +48,7 @@ void PaxosServer::OnPrepare(slotid_t slot_id,
 void PaxosServer::OnAccept(const slotid_t slot_id,
 		           const uint64_t time,
                            const ballot_t ballot,
-                           shared_ptr<Marshallable> &cmd,
+                           const janus::Command& cmd,
                            ballot_t *max_ballot,
                            uint64_t* coro_id,
                            rusty::Function<void()> cb) {
@@ -80,10 +80,12 @@ void PaxosServer::OnAccept(const slotid_t slot_id,
 
 void PaxosServer::OnCommit(const slotid_t slot_id,
                            const ballot_t ballot,
-                           shared_ptr<Marshallable> &cmd) {
+                           const janus::Command& cmd) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
   auto instance = GetInstance(slot_id);
+  // L10f-prep6p: cmd is Command; PaxosData::committed_cmd_ is Command;
+  // direct copy.
   instance->committed_cmd_ = cmd;
   bool slot_advanced = false;
   if (slot_id > max_committed_slot_) {
@@ -125,11 +127,14 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
 // (~85 LOC) — only caller was the now-deleted
 // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
-void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
+void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                shared_ptr<SyncLogResponse> ret_cmd,
                                rusty::Function<void()> cb){
+  // L10f-prep6p: take Command at boundary; downstream uses
+  // shared_ptr<Marshallable> via .inner_marshallable() once.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   // auto xx = (int32_t)ret_cmd->missing_slots.size();
   // Log_info("received a OnSyncLog,xxx: %d",xx);
   // for(int i = 0; i < ret_cmd->missing_slots.size(); i++){
@@ -189,10 +194,12 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
   //cb();
 }
 
-void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
+void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
+  // L10f-prep6p: take Command at boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd);
   verify(bcmd != nullptr);
   *valid = 1;
@@ -265,10 +272,12 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   cb();
 }
 
-void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
+void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
+  // L10f-prep6p: take Command at boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   //mtx_.lock();
   //Log_info("here");
@@ -377,10 +386,12 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
   cb();
 }
 
-void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
+void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
+  // L10f-prep6p: take Command at boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd);
   verify(bcmd != nullptr);
   *valid = 1;
@@ -479,11 +490,12 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
 void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
                                     const uint64_t& slot,
                                     const ballot_t& ballot,
-                                    shared_ptr<Marshallable> &cmd,
+                                    const janus::Command& cmd,
                                     rusty::Function<void()> cb) {
   //Log_info("received slot:%d",slot);
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
+  // L10f-prep6p: app_next_ takes janus::Command directly.
   int status=app_next_(slot,cmd);
   cb();
   if (status==janus::PaxosStatus::STATUS_NOOPS){// if noops

@@ -158,28 +158,31 @@ class PaxosServer : public TxLogServer {
                  uint64_t* coro_id,
                  rusty::Function<void()> cb);
 
+  // Workstream N L10f-prep6p (2026-05-03): handler parameters take
+  // const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
   void OnAccept(const slotid_t slot_id,
 		const uint64_t time,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd,
+                const janus::Command& cmd,
                 ballot_t *max_ballot,
                 uint64_t* coro_id,
                 rusty::Function<void()> cb);
 
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd);
+                const janus::Command& cmd);
 
   // Workstream N Phase 4e-26: removed `OnBulkPrepare`, `OnHeartbeat`
   // declarations — only callers were the now-deleted
   // `MultiPaxosServiceImpl::BulkPrepare` / `Heartbeat` handlers.
 
-  void OnBulkAccept(shared_ptr<Marshallable> &cmd,
+  void OnBulkAccept(const janus::Command& cmd,
                     i32* ballot,
                     i32 *valid,
                     rusty::Function<void()> cb);
 
-  void OnBulkCommit(shared_ptr<Marshallable> &cmd,
+  void OnBulkCommit(const janus::Command& cmd,
                     i32* ballot,
                     i32 *valid,
                     rusty::Function<void()> cb);
@@ -188,13 +191,13 @@ class PaxosServer : public TxLogServer {
   // only caller was the now-deleted
   // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
-  void OnSyncLog(shared_ptr<Marshallable> &cmd,
+  void OnSyncLog(const janus::Command& cmd,
                       i32* ballot,
                       i32 *valid,
                       shared_ptr<SyncLogResponse> ret_cmd,
                       rusty::Function<void()> cb);
 
-  void OnSyncCommit(shared_ptr<Marshallable> &cmd,
+  void OnSyncCommit(const janus::Command& cmd,
                       i32* ballot,
                       i32 *valid,
                       rusty::Function<void()> cb);
@@ -205,9 +208,9 @@ class PaxosServer : public TxLogServer {
   // handler.
 
   void OnForwardToLearner(const rrr::i32& par_id,
-                        const uint64_t& slot, 
+                        const uint64_t& slot,
                         const ballot_t& ballot,
-                        shared_ptr<Marshallable> &cmd,
+                        const janus::Command& cmd,
                         rusty::Function<void()> cb);
 
   int get_open_slot(){

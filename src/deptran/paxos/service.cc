@@ -99,7 +99,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
     sched_->OnAccept(slot,
 		     time,
                      ballot,
-                     const_cast<janus::Command&>(md_cmd).inner(),
+                     md_cmd,
                      max_ballot,
                      coro_id,
                      [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -117,8 +117,8 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
                                    const janus::Command& md_cmd,
                                    rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  auto x = md_cmd.inner();
-  sched_->OnCommit(slot, ballot,x);
+  // L10f-prep6p: OnCommit takes janus::Command directly.
+  sched_->OnCommit(slot, ballot, md_cmd);
   defer.reply();
 }
 
@@ -138,7 +138,7 @@ void MultiPaxosServiceImpl::BulkAccept(const janus::Command& md_cmd,
                                        rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnBulkAccept(const_cast<janus::Command&>(md_cmd).inner(),
+    sched_->OnBulkAccept(md_cmd,
                          ballot,
                          valid,
                         [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -153,7 +153,7 @@ void MultiPaxosServiceImpl::BulkDecide(const janus::Command& md_cmd,
   // Log_info("BulkDecide RPC handler called");
   Fiber::create_run([&] () {
     // Log_info("BulkDecide coroutine executing, calling OnBulkCommit");
-    sched_->OnBulkCommit(const_cast<janus::Command&>(md_cmd).inner(),
+    sched_->OnBulkCommit(md_cmd,
                          ballot,
                          valid,
                          [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -172,7 +172,7 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
   ret->set_marshallable(std::make_shared<SyncLogResponse>());
   auto response = marshallable_cast<SyncLogResponse>(ret);
   Fiber::create_run([&] () {
-    sched_->OnSyncLog(const_cast<janus::Command&>(md_cmd).inner(),
+    sched_->OnSyncLog(md_cmd,
                       ballot,
                       valid,
                       response,
@@ -197,7 +197,7 @@ void MultiPaxosServiceImpl::SyncCommit(const janus::Command& md_cmd,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnSyncCommit(const_cast<janus::Command&>(md_cmd).inner(),
+    sched_->OnSyncCommit(md_cmd,
                          ballot,
                          valid,
                          [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -217,7 +217,7 @@ void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
     *ret_slot = slot;
     *ret_ballot = ballot;
     Fiber::create_run([&] () {
-      sched_->OnForwardToLearner(par_id, slot, ballot, const_cast<janus::Command&>(cmd).inner(),
+      sched_->OnForwardToLearner(par_id, slot, ballot, cmd,
                                [defer = std::move(defer)]() mutable { defer.reply(); });
     });
 }
