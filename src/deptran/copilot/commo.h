@@ -55,10 +55,12 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
       vote_no();
   }
 
+  // Workstream N L10f-prep6s: takes janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   void FeedRetCmd(ballot_t ballot,
                   uint64_t dep,
                   uint8_t is_pilot, slotid_t slot,
-                  shared_ptr<Marshallable> cmd,
+                  const janus::Command& cmd,
                   enum Status status);
   size_t GetCount(enum Status status);
   vector<CopilotData>& GetCmds(enum Status status);
@@ -102,7 +104,7 @@ friend class CopilotProxy;
                       slotid_t slot_id,
                       ballot_t ballot,
                       uint64_t dep,
-                      shared_ptr<Marshallable> cmd);
+                      const janus::Command& cmd);
 
   shared_ptr<CopilotAcceptQuorumEvent>
   BroadcastAccept(parid_t par_id,
@@ -110,14 +112,14 @@ friend class CopilotProxy;
                   slotid_t slot_id,
                   ballot_t ballot,
                   uint64_t dep,
-                  shared_ptr<Marshallable> cmd);
+                  const janus::Command& cmd);
   
   shared_ptr<CopilotFakeQuorumEvent>
   BroadcastCommit(parid_t par_id,
                        uint8_t is_pilot,
                        slotid_t slot_id,
                        uint64_t dep,
-                       shared_ptr<Marshallable> cmd);
+                       const janus::Command& cmd);
 
 };
 

@@ -41,7 +41,7 @@ bool CopilotFastAcceptQuorumEvent::FastNo() {
 inline void CopilotPrepareQuorumEvent::FeedRetCmd(ballot_t ballot,
                                                   uint64_t dep,
                                                   uint8_t is_pilot, slotid_t slot,
-                                                  shared_ptr<Marshallable> cmd,
+                                                  const janus::Command& cmd,
                                                   enum Status status) {
   uint32_t int_status = GET_STATUS(static_cast<uint32_t>(status));
   // int_status &= CLR_FLAG_TAKEOVER;
@@ -125,7 +125,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
         e->FeedRetCmd(ballot,
                       dep,
                       is_pilot, slot_id,
-                      const_cast<janus::Command&>(md).inner(),
+                      md,
                       static_cast<enum Status>(status));
       } // Feed command before feeding response, since if there is a committed command,
         // the prepare event will be ready in advance without waiting for a quorum.
@@ -155,7 +155,10 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
                                   slotid_t slot_id,
                                   ballot_t ballot,
                                   uint64_t dep,
-                                  shared_ptr<Marshallable> cmd) {
+                                  const janus::Command& cmd_env) {
+  // L10f-prep6s: take Command at boundary; downstream uses
+  // shared_ptr<Marshallable> via .inner_marshallable() once.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
@@ -233,7 +236,9 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
                               slotid_t slot_id,
                               ballot_t ballot,
                               uint64_t dep,
-                              shared_ptr<Marshallable> cmd) {
+                              const janus::Command& cmd_env) {
+  // L10f-prep6s: take Command at boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<CopilotAcceptQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
@@ -290,7 +295,9 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
                                    uint8_t is_pilot,
                                    slotid_t slot_id,
                                    uint64_t dep,
-                                   shared_ptr<Marshallable> cmd) {
+                                   const janus::Command& cmd_env) {
+  // L10f-prep6s: take Command at boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<CopilotFakeQuorumEvent>(n);
   auto proxies = rpc_par_proxies_[par_id];

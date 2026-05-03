@@ -184,12 +184,12 @@ void CoordinatorCopilot::FastAccept() {
   // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("FastAccept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
-  // L10f-prep3c: BroadcastFastAccept still takes shared_ptr<Marshallable>.
+  // L10f-prep6s: BroadcastFastAccept now takes janus::Command.
   auto sq_quorum = commo()->BroadcastFastAccept(par_id_,
                                                 is_pilot_, slot_id_,
                                                 curr_ballot_,
                                                 dep_,
-                                                cmd_now_.inner_marshallable());
+                                                cmd_now_);
   // sq_quorum->id_ = dep_id_;
   // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
 
@@ -267,7 +267,7 @@ void CoordinatorCopilot::Accept() {
                                             is_pilot_, slot_id_,
                                             curr_ballot_,
                                             dep_,
-                                            cmd_now_.inner_marshallable());
+                                            cmd_now_);
   // sp_quorum->id_ = dep_id_;
   // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
 
@@ -310,7 +310,7 @@ void CoordinatorCopilot::Commit() {
   auto sp_quorum = commo()->BroadcastCommit(par_id_,
                                             is_pilot_, slot_id_,
                                             dep_,
-                                            cmd_now_.inner_marshallable());
+                                            cmd_now_);
   sp_quorum->wait();  // in fact this doesn't wait since it's a fake quorum event
 #ifdef DO_FINALIZE
   sp_quorum->finalize(finalize_timeout_us,
