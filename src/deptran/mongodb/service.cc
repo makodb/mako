@@ -11,7 +11,8 @@ void MongodbServiceImpl::Commit(const MongodbService::RpcCommitRequest& rpc_req,
                                 MongodbService::RpcCommitResponse& rpc_resp,
                                 rrr::DeferredReply defer) {
   (void)rpc_resp;
-  sched_->RuleWitnessGC(const_cast<janus::Command&>(rpc_req.cmd).inner());
+  // L10f-prep6h: RuleWitnessGC now takes janus::Command directly.
+  sched_->RuleWitnessGC(rpc_req.cmd);
   defer.reply();
 }
 

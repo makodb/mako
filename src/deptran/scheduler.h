@@ -617,7 +617,10 @@ class TxLogServer {
   void OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<Marshallable>& cmd);
 
   // @unsafe
-  void RuleWitnessGC(const shared_ptr<Marshallable>& cmd);
+  // Workstream N L10f-prep6h (2026-05-03): takes janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void RuleWitnessGC(const janus::Command& cmd);
 
 #ifdef ZERO_OVERHEAD
   virtual bool ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) {

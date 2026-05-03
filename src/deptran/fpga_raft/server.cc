@@ -519,7 +519,7 @@ void FpgaRaftServer::StartTimer()
         if (next_instance->log_.has_value()) {
             Log_debug("fpga-raft par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
             // WAN_WAIT
-            RuleWitnessGC(next_instance->log_.inner_marshallable());
+            RuleWitnessGC(next_instance->log_);
 #ifdef LATENCY_LOG_DEBUG
             Log_info("Time of cmd <%d, %d> arrive svr %d app_next: %.2fms", SimpleRWCommand::GetCmdID(next_instance->log_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(next_instance->log_.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
@@ -557,7 +557,7 @@ void FpgaRaftServer::StartTimer()
           // loop above.
           if (next_instance->log_.has_value()) {
               // WAN_WAIT
-              RuleWitnessGC(next_instance->log_.inner_marshallable());
+              RuleWitnessGC(next_instance->log_);
               app_next_(id, next_instance->log_);
               Log_debug("fpga-raft par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
               executeIndex++;

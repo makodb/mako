@@ -836,7 +836,7 @@ void RaftServer::StartApplyThread() {
                    site_id_, id, queue_size);
         }
         // @unsafe - callback may have side effects
-        RuleWitnessGC(log_entry.inner_marshallable());
+        RuleWitnessGC(log_entry);
         app_next_(id, log_entry);
         if (id >= 470 && id <= 500) {
           Log_info("[APPLY-THREAD] Site %d: DONE APPLYING entry %lu", site_id_, id);
@@ -1346,7 +1346,7 @@ void RaftServer::applyLogs() {
         // L10f-prep2: RuleWitnessGC takes shared_ptr<Marshallable>;
         // app_next_ takes Command — Command's auto-conversion +
         // explicit unwrap meet at the boundary.
-        RuleWitnessGC(next_instance->log_.inner_marshallable());
+        RuleWitnessGC(next_instance->log_);
         Log_info("[APPLY-LOGS] site=%d applying index=%ld", site_id_, id);
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;

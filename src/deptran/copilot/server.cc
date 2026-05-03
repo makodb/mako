@@ -621,7 +621,7 @@ bool CopilotServer::executeCmd(shared_ptr<CopilotData>& ins) {
     if (likely(ins->cmd.kind_ != TpcNoopCommand::static_kind())) {
       // WAN_WAIT
       // Log_info("loc_id %d execute cmd <%d, %d>", loc_id_, SimpleRWCommand::GetCmdID(ins->cmd).first, SimpleRWCommand::GetCmdID(ins->cmd).second);
-      RuleWitnessGC(ins->cmd.inner_marshallable());
+      RuleWitnessGC(ins->cmd);
       app_next_(ins->slot_id, ins->cmd);
     }
     ins->status = Status::EXECUTED;

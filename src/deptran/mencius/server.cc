@@ -126,7 +126,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
     // takes Command directly.
     if (next_instance->committed_cmd_.has_value()) {
       if (!next_instance->executed_){
-        RuleWitnessGC(next_instance->committed_cmd_.inner_marshallable());
+        RuleWitnessGC(next_instance->committed_cmd_);
         app_next_(id, next_instance->committed_cmd_);
         next_instance->executed_ = true;
 
@@ -151,7 +151,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
     if (next_instance->committed_cmd_.has_value()) {
       SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_.inner_marshallable());
       if ((!next_instance->executed_) && (unexecuted_keys_[parsed_cmd.key_]==1)){
-        RuleWitnessGC(next_instance->committed_cmd_.inner_marshallable());
+        RuleWitnessGC(next_instance->committed_cmd_);
         app_next_(id, next_instance->committed_cmd_);
         next_instance->executed_ = true;
         
