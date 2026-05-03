@@ -440,7 +440,11 @@ class RaftServer : public TxLogServer {
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
   std::mutex apply_queue_mtx_;
-  std::deque<std::pair<slotid_t, shared_ptr<Marshallable>>> apply_queue_;
+  // Workstream N L10f-prep6c (2026-05-03): apply_queue_ holds Command
+  // instead of shared_ptr<Marshallable> — RaftData::log_ migrated in
+  // L10f-prep2; this drops the boundary unwrap that
+  // EnqueueCommittedEntries had to do.  Wire format unchanged.
+  std::deque<std::pair<slotid_t, Command>> apply_queue_;
 
   void StartApplyThread();
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);

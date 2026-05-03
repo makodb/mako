@@ -764,14 +764,14 @@ void RaftServer::StartApplyFiber() {
 // Enqueue newly committed entries for the background apply thread.
 // Called from OnAppendEntries (already under mtx_) when commitIndex advances.
 void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit) {
-  std::vector<std::pair<slotid_t, shared_ptr<Marshallable>>> batch;
+  // L10f-prep6c: apply_queue_ now holds Command — direct copy from
+  // RaftData::log_ (also Command after prep2).
+  std::vector<std::pair<slotid_t, Command>> batch;
   slotid_t first_missing = 0;
   for (slotid_t id = old_commit + 1; id <= new_commit; id++) {
     auto it = raft_logs_.find(id);
     if (it != raft_logs_.end() && it->second && it->second->log_.has_value()) {
-      // L10f-prep2: RaftData::log_ is Command; apply_queue_ still
-      // holds shared_ptr<Marshallable>, so unwrap at the boundary.
-      batch.emplace_back(id, it->second->log_.inner_marshallable());
+      batch.emplace_back(id, it->second->log_);
     } else {
       first_missing = id;
       break;  // Gap in log — stop here
@@ -810,7 +810,11 @@ void RaftServer::StartApplyThread() {
     auto last_log_time = std::chrono::steady_clock::now();
     while (!stop_ && apply_thread_running_.load()) {
       // Drain entries from the queue
-      std::pair<slotid_t, shared_ptr<Marshallable>> entry;
+      // L10f-prep6c: apply_queue_ holds Command; entry is
+      // pair<slotid_t, Command>.  RuleWitnessGC takes
+      // shared_ptr<Marshallable> so unwrap at the boundary; app_next_
+      // takes Command directly.
+      std::pair<slotid_t, Command> entry;
       bool got_entry = false;
       size_t queue_size = 0;
       {
@@ -832,7 +836,7 @@ void RaftServer::StartApplyThread() {
                    site_id_, id, queue_size);
         }
         // @unsafe - callback may have side effects
-        RuleWitnessGC(log_entry);
+        RuleWitnessGC(log_entry.inner_marshallable());
         app_next_(id, log_entry);
         if (id >= 470 && id <= 500) {
           Log_info("[APPLY-THREAD] Site %d: DONE APPLYING entry %lu", site_id_, id);
