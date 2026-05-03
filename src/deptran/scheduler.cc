@@ -419,9 +419,7 @@ void TxLogServer::RuleWitnessGC(const janus::Command& cmd) {
 }
 
 
-void RevoveryCandidates::push_back(uint64_t cmd_id, shared_ptr<Marshallable> cmd, bool is_write) {
-  // L10f-prep6f: candidates_ holds Command;
-  // operator=(shared_ptr<Marshallable>) handles the conversion.
+void RevoveryCandidates::push_back(uint64_t cmd_id, const janus::Command& cmd, bool is_write) {
   candidates_[cmd_id] = cmd;
   if (total_write_ == 0 && is_write) {
     verify(to_recover_id_ == (uint64_t)(-1));
@@ -467,18 +465,14 @@ bool RevoveryCandidates::has_cmd_to_recover() const {
   return to_recover_id_ != (uint64_t)(-1);
 }
 
-shared_ptr<Marshallable> RevoveryCandidates::cmd_to_recover() {
-  // L10f-prep6f: return the legacy shared_ptr<Marshallable> shape via
-  // .inner_marshallable() unwrap.
+janus::Command RevoveryCandidates::cmd_to_recover() {
   if (to_recover_id_ != (uint64_t)(-1)) {
-    if (candidates_.find(to_recover_id_) != candidates_.end()) {
-      return candidates_[to_recover_id_].inner_marshallable();
-    } else {
-      return nullptr;
+    auto it = candidates_.find(to_recover_id_);
+    if (it != candidates_.end()) {
+      return it->second;
     }
-  } else {
-    return nullptr;
   }
+  return janus::Command{};
 }
 
 bool Witness::push_back(const janus::Command& cmd_env) {
@@ -1280,8 +1274,8 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
       }
       if (rep_sched_->witness_.has_cmd_to_recover(key)) {
         auto cmd = rep_sched_->witness_.cmd_to_recover(key);
-        if (cmd) {
-          batch->AddEntry(key, cmd);
+        if (cmd.has_value()) {
+          batch->AddEntry(key, cmd.inner_marshallable());
         }
       }
     }

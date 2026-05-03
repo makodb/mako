@@ -143,8 +143,10 @@ class Frequency {
 };
 
 // Workstream N L10f-prep6f (2026-05-03): candidates_ migrated to
-// `unordered_map<uint64_t, janus::Command>`.  External API (push_back,
-// cmd_to_recover) keeps the legacy `shared_ptr<Marshallable>` shape.
+// `unordered_map<uint64_t, janus::Command>`.
+// L10f-prep6aa (2026-05-03): external API (push_back, cmd_to_recover)
+// also takes/returns Command; shared_ptr<Marshallable> callers
+// auto-convert via Command's implicit ctor.
 class RevoveryCandidates {
   // <cmd_id, cmd>
   unordered_map<uint64_t, janus::Command> candidates_;
@@ -153,13 +155,13 @@ class RevoveryCandidates {
   uint64_t to_recover_id_ = -1;
  public:
   RevoveryCandidates() {}
-  void push_back(uint64_t cmd_id, shared_ptr<Marshallable> cmd, bool is_write);
+  void push_back(uint64_t cmd_id, const janus::Command& cmd, bool is_write);
   bool remove(uint64_t cmd_id);
   bool has_appeared(uint64_t cmd_id);
   size_t size() const;
   int total_write();
   bool has_cmd_to_recover() const;
-  shared_ptr<Marshallable> cmd_to_recover();
+  janus::Command cmd_to_recover();
 };
 
 class Witness {
@@ -227,7 +229,9 @@ class Witness {
   bool has_cmd_to_recover(key_t key) {
     return candidates_[key].has_cmd_to_recover();
   }
-  shared_ptr<Marshallable> cmd_to_recover(key_t key) {
+  // Workstream N L10f-prep6aa (2026-05-03): returns Command;
+  // shared_ptr<Marshallable> callers auto-convert via implicit ctor.
+  janus::Command cmd_to_recover(key_t key) {
     return candidates_[key].cmd_to_recover();
   }
   shared_ptr<VecRecData> id_set();
