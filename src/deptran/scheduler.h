@@ -656,7 +656,10 @@ class TxLogServer {
   void JetpackCommit(int sid, int set_size);
 
   void JetpackResubmit(int sid, int set_size);
-  void DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_ptr<IntEvent> recovery_event = nullptr);
+  // Workstream N L10f-prep6y (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr<IntEvent> recovery_event = nullptr);
   
   void OnJetpackBeginRecovery(const janus::Command& old_view,
                               const janus::Command& new_view, 

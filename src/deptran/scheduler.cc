@@ -987,7 +987,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   Log_info("[JETPACK-RECOVERY] FinishRecovery broadcast completed, fast path restored");
 }
 
-void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_ptr<IntEvent> recovery_event) {
+void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr<IntEvent> recovery_event) {
   // Determine if this is tx_sched or rep_sched
   const char* sched_type = "UNKNOWN";
   if (rep_sched_ && this == rep_sched_) {
@@ -995,18 +995,16 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
   } else if (!rep_sched_ || rep_sched_ != this) {
     sched_type = "TX_SCHED";
   }
-  
-  // Log_info("[JETPACK-RECOVERY] DispatchRecoveredCommand called on %s TxLogServer %p (site_id=%d)", 
+
+  // Log_info("[JETPACK-RECOVERY] DispatchRecoveredCommand called on %s TxLogServer %p (site_id=%d)",
   //          sched_type, this, site_id_);
 #ifdef JETPACK_RECOVERY_DEBUG
-  Log_info("[JETPACK-RECOVERY] Dispatching recovered command, kind=%d", cmd->kind_);
+  Log_info("[JETPACK-RECOVERY] Dispatching recovered command, kind=%d", cmd.kind_);
 #endif
-  
+
   // Extract the inner command if this is a TpcCommitCommand
-  // L10f-prep4: tpc_cmd->cmd_ is Command; unwrap to legacy
-  // shared_ptr<Marshallable> for the local inner_cmd binding.
-  shared_ptr<Marshallable> inner_cmd = cmd;
-  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
+  shared_ptr<Marshallable> inner_cmd = cmd.inner_marshallable();
+  if (cmd.kind_ == TpcCommitCommand::static_kind()) {
     auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
