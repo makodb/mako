@@ -29,7 +29,9 @@ class CoordinatorFpgaRaft : public Coordinator {
   uint64_t minIndex = 0;
 
  public:
-  shared_ptr<Marshallable> cmd_{nullptr};
+  // Workstream N L10f-prep6g (2026-05-03): polymorphic command field
+  // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
+  Command cmd_{};
   CoordinatorFpgaRaft(uint32_t coo_id,
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
