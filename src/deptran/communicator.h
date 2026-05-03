@@ -235,13 +235,14 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
     }
   }
 
-  std::vector<std::pair<key_t, shared_ptr<Marshallable>>> GetRecoveredCommands() const {
-    std::vector<std::pair<key_t, shared_ptr<Marshallable>>> result;
+  // Workstream N L10f-prep6x (2026-05-03): return Commands directly
+  // (no inner_marshallable() unwrap).  JetpackBroadcastRecordCmd takes
+  // the same shape on input.
+  std::vector<std::pair<key_t, janus::Command>> GetRecoveredCommands() const {
+    std::vector<std::pair<key_t, janus::Command>> result;
     for (const auto& state : key_states_) {
-      // L10f-prep6e: state.max_cmd is Command; unwrap for the legacy
-      // shared_ptr<Marshallable> result shape.
       if (state.max_cmd.has_value() && state.max_count >= majority_threshold_) {
-        result.emplace_back(state.key, state.max_cmd.inner_marshallable());
+        result.emplace_back(state.key, state.max_cmd);
       }
     }
     return result;
@@ -609,10 +610,13 @@ class Communicator {
                                                                    epoch_t jepoch, epoch_t oepoch);
   shared_ptr<JetpackPullCmdQuorumEvent> JetpackBroadcastPullCmd(parid_t par_id, locid_t loc_id, 
                                                                const std::vector<key_t>& keys, epoch_t jepoch, epoch_t oepoch);
+  // Workstream N L10f-prep6x (2026-05-03): take Commands directly
+  // (was vector<pair<key_t, shared_ptr<Marshallable>>>).  Callers
+  // produce these from GetRecoveredCommands.
   shared_ptr<QuorumEvent> JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
-                                                    epoch_t jepoch, epoch_t oepoch, 
-                                                    int sid, int rid, 
-                                                    const std::vector<std::pair<key_t, shared_ptr<Marshallable>>>& cmds);
+                                                    epoch_t jepoch, epoch_t oepoch,
+                                                    int sid, int rid,
+                                                    const std::vector<std::pair<key_t, janus::Command>>& cmds);
   shared_ptr<JetpackPrepareQuorumEvent> JetpackBroadcastPrepare(parid_t par_id, locid_t loc_id, 
                                                                epoch_t jepoch, epoch_t oepoch, 
                                                                ballot_t max_seen_ballot);

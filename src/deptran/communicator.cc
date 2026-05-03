@@ -1601,12 +1601,12 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
 }
 
 shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
-                                                               epoch_t jepoch, epoch_t oepoch, 
-                                                               int sid, int rid, 
-                                                               const std::vector<std::pair<key_t, shared_ptr<Marshallable>>>& cmds) {
-  // Log_info("[JETPACK-DEBUG] JetpackBroadcastRecordCmd called: par_id=%d, loc_id=%d, sid=%d, rid=%d", 
+                                                               epoch_t jepoch, epoch_t oepoch,
+                                                               int sid, int rid,
+                                                               const std::vector<std::pair<key_t, janus::Command>>& cmds) {
+  // Log_info("[JETPACK-DEBUG] JetpackBroadcastRecordCmd called: par_id=%d, loc_id=%d, sid=%d, rid=%d",
   //          par_id, loc_id, sid, rid);
-  
+
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<QuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
@@ -1615,7 +1615,9 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
 
   auto batch_data = std::make_shared<KeyCmdBatchData>();
   for (const auto& entry : cmds) {
-    batch_data->AddEntry(entry.first, entry.second);
+    // KeyCmdBatchData::AddEntry still takes shared_ptr<Marshallable>;
+    // unwrap once at the boundary.
+    batch_data->AddEntry(entry.first, entry.second.inner_marshallable());
   }
   janus::Command cmd_deputy;
   cmd_deputy.set_marshallable(batch_data);
