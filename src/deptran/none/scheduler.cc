@@ -12,9 +12,8 @@ int32_t SchedulerNone::Dispatch(cmdid_t cmd_id, const janus::Command& cmd,
 	DepId di;
 	di.str = "dep";
 	di.id = 0;
-	// L10f-prep6n: SchedulerClassic::Dispatch still takes
-	// shared_ptr<Marshallable>; unwrap from Command at this boundary.
-	SchedulerClassic::Dispatch(cmd_id, di, cmd.inner_marshallable(), ret_output);
+	// L10f-prep6n: SchedulerClassic::Dispatch takes janus::Command.
+	SchedulerClassic::Dispatch(cmd_id, di, cmd, ret_output);
 	sp_tx->fully_dispatched_->wait();
 
 	int ret = OnCommit(cmd_id, di, SUCCESS);  // it waits for the command to be executed
