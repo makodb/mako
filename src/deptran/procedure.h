@@ -295,11 +295,17 @@ class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
 // Workstream N L8: TypeList-derived kind. Uses Phase 3f-prep
 // nested-MarshallDeputy archive operators for the per-entry command
 // payloads.
+//
+// Workstream N L10f-prep6b (2026-05-03): `commands_` migrated from
+// `vector<shared_ptr<Marshallable>>` to `vector<Command>`.  External
+// API (AddEntry / GetCommand) keeps the `shared_ptr<Marshallable>`
+// shape so callers don't need to change.  save/load drives Command
+// archive ops directly; wire format unchanged.
 class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
                                                  MakoCommands> {
  public:
   std::vector<key_t> keys_;
-  std::vector<shared_ptr<Marshallable>> commands_;
+  std::vector<Command> commands_;
 
   KeyCmdBatchData() = default;
 
@@ -308,7 +314,7 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
       return;
     }
     keys_.push_back(key);
-    commands_.push_back(cmd);
+    commands_.emplace_back(cmd);
   }
 
   size_t Size() const {
@@ -323,7 +329,7 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
 
   shared_ptr<Marshallable> GetCommand(size_t idx) const {
     verify(idx < commands_.size());
-    return commands_[idx];
+    return commands_[idx].inner_marshallable();
   }
 
   void save(BinaryWriteArchive& ar) const {
@@ -332,9 +338,9 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
     ar << sz;
     for (int32_t i = 0; i < sz; i++) {
       ar << keys_[i];
-      MarshallDeputy deputy;
-      deputy.set_marshallable(commands_[i]);
-      ar << deputy;
+      // L10f-prep6b: drive Command's archive op directly (same wire
+      // format as the previous `MarshallDeputy(commands_[i])` round-trip).
+      ar << commands_[i];
     }
   }
 
@@ -345,9 +351,7 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
     commands_.resize(sz);
     for (int32_t i = 0; i < sz; i++) {
       ar >> keys_[i];
-      MarshallDeputy deputy;
-      ar >> deputy;
-      commands_[i] = deputy.inner();
+      ar >> commands_[i];
     }
   }
 };
