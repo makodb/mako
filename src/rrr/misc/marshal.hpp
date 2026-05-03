@@ -232,36 +232,15 @@ class MarshallDeputy {
     // is preserved.
     std::shared_ptr<rrr::Marshallable> inner_sp_data_;
     int32_t kind_{0};
-    // Workstream N Phase 3f-2 (added field) / Phase 3f-3 (made lazy):
-    // SerializableProxy view of `inner_sp_data_`. Populated lazily on
-    // first call to `serializable()` rather than eagerly inside
-    // `set_marshallable`, so deputies that never go through the
-    // proxy-shaped accessor pay no proxy-construction cost — and the
-    // common SerializableMarshallableAdapter path (an inner that is
-    // already a SerializableProxy view) does not pay for stacked
-    // M→S→M→S adapter wrapping that nobody reads.
-    //
-    // For legacy Marshallable types `serializable()` wraps the
-    // underlying via `as_serializable(inner_sp_data_)` (the
-    // MarshallableSerializableAdapter — save-only). For
-    // already-Serializable types (entered via `as_marshallable(proxy)`
-    // → SerializableMarshallableAdapter), the same path applies; the
-    // resulting proxy is a save-only stacked view. Wire format is
-    // unchanged — `operator<<`/`operator>>` continue to drive
-    // `inner_sp_data_->to_marshal` / `from_marshal` directly.
-    //
-    // Stored as `mutable std::shared_ptr<SerializableProxy>` to allow
-    // const-qualified `serializable() const` to populate the cache.
-    // The shared_ptr indirection keeps MarshallDeputy copyable; ~25
-    // call sites do `req.cmd = md;` copy-assign that would otherwise
-    // need to be retrofitted with std::move. Copy semantics share the
-    // cache when both sides have already populated, or independently
-    // populate on first read otherwise; either way both copies wrap
-    // the same underlying `inner_sp_data_` so saves through the proxy
-    // produce identical bytes. SBO inside the proxy plus shared_ptr
-    // aliasing keeps the per-deputy overhead at one heap allocation,
-    // paid only on first proxy access.
-    mutable std::shared_ptr<rrr::SerializableProxy> serializable_;
+    // Workstream N L10d-prep: dropped the lazy `serializable_` field
+    // + `serializable()` accessor (Phase 3f-2/3 prep for the bridge
+    // operator<< fast path).  After L10c-cmds, production code uses
+    // `janus::Command` (SerializableEnvelope<MakoCommands>) which has
+    // its own save path that drives the proxy directly without going
+    // through MarshallDeputy.  The remaining bridge `operator<<` on
+    // MarshallDeputy is only used by tests; it now routes through the
+    // simpler `inner()->to_marshal` via temp Marshal — a small extra
+    // copy per write that doesn't matter on the test-only path.
     enum Kind {
       UNKNOWN=0,
       // Workstream N L7: EMPTY_GRAPH=1 and RCC_GRAPH=2 retired —
@@ -382,23 +361,11 @@ class MarshallDeputy {
       return inner_sp_data_;
     }
 
-    // @unsafe - Lazily constructs and caches a SerializableProxy view
-    // of the inner Marshallable on first call. Aborts if no
-    // marshallable is set.
+    // Workstream N L10d-prep: dropped `serializable()` accessor —
+    // production code uses `janus::Command` instead of MarshallDeputy
+    // for the proxy view; bridge `operator<<` no longer needs the
+    // cache.
     //
-    // Workstream N Phase 3f-3: defined out-of-line in marshal.cpp so
-    // the bridge helper `as_serializable(...)` is reachable (same
-    // header-cycle reasoning as `set_marshallable` — the bridge
-    // header depends on this header; marshal.cpp pulls in the bridge
-    // through `../rrr.hpp`).
-    //
-    // Returns by reference so callers can do
-    // `md.serializable()->save(ar)` directly; the underlying proxy
-    // is `mutable`-qualified inside SerializableProxy so the
-    // const-qualified accessor can dispatch through the proxy's
-    // non-const `operator->`.
-    rrr::SerializableProxy& serializable() const;
-
     // Workstream N Phase 5b-3: removed `entity_size`, `write_to_fd`,
     // `track_write_2`, and the private `data_proxy()` helper. They
     // were the deputy-side end of the dead bypass-to-socket fast

@@ -387,29 +387,10 @@ Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
 
 // @unsafe - Stores a shared_ptr<Marshallable> as the deputy's payload.
 //
-// Workstream N Phase 3f-2: defined out-of-line in marshal.cpp because
-// the original Phase 3f-2 implementation eagerly populated
-// `serializable_` here via `as_serializable(...)` from
-// `marshal_serializable_bridge.hpp`, which itself depends on
-// marshal.hpp.  The .cpp pulls in `../rrr.hpp` (line 33 above) so the
-// bridge is reachable here without inducing a header-include cycle.
-//
-// Workstream N Phase 3f-3: dropped the eager `serializable_`
-// population.  The field is now populated lazily on first call to
-// `serializable()` (defined below) — deputies that never go through
-// the proxy-shaped accessor pay no proxy-construction cost.  This
-// also avoids stacked `M→S→M→S` adapter wrapping for the
-// `as_marshallable(proxy)` entry path, since `serializable()` is
-// only consulted by callers that actually want a save-shaped view.
-//
-// Population semantics:
-//   - inner_sp_data_ owns the Marshallable (existing behavior).
-//   - serializable_ stays null until `serializable()` is called for
-//     the first time; first call wraps the underlying via
-//     `as_serializable(inner_sp_data_)` and caches the result.
-//
-// Wire format is unchanged — `operator<<` / `operator>>` continue
-// to drive `inner_sp_data_->to_marshal` / `from_marshal` directly.
+// Workstream N Phase 3f-2: defined out-of-line because the original
+// Phase 3f-2 implementation eagerly populated a since-dropped
+// `serializable_` cache via the bridge helpers.  The cache went away
+// in Workstream N L10d-prep; this setter is now trivial.
 void MarshallDeputy::set_marshallable(
     std::shared_ptr<rrr::Marshallable> m) {
   verify(inner_sp_data_ == nullptr);
@@ -417,54 +398,6 @@ void MarshallDeputy::set_marshallable(
   kind_ = m->kind();
   verify(kind_ != UNKNOWN);
   inner_sp_data_ = std::move(m);
-  // Phase 3f-3: leave `serializable_` null. It is populated lazily
-  // by `serializable()` on first proxy-shaped read.
-}
-
-// @unsafe - Lazily constructs the SerializableProxy cache on first
-// call. Subsequent calls return the cached proxy.
-//
-// Workstream N Phase 3f-3: implemented out-of-line so the bridge
-// helper `as_serializable(...)` is reachable (same header-cycle
-// reasoning as `set_marshallable`). The const qualifier means the
-// accessor is callable from const-qualified contexts; it mutates
-// `serializable_` through its `mutable` qualifier.
-//
-// Workstream N Phase 3f-5: short-circuit when `inner_sp_data_` is a
-// `SerializableMarshallableAdapter` — i.e. the deputy was entered
-// via `as_marshallable(proxy)` (the common production path; every
-// migrated Phase 4 / 4d type goes through this).  Without the
-// short-circuit, `as_serializable(inner_sp_data_)` would build a
-// `MarshallableSerializableAdapter` wrapping the SMA, producing a
-// stacked `M→S→M→S` proxy whose `save(ar)` drives bytes through a
-// temporary Marshal and drains them into `ar` (one extra copy per
-// payload byte plus a fresh proxy heap allocation per first read).
-// Aliasing into the SMA's inner `serializable_` member directly via
-// `shared_ptr`'s aliasing constructor avoids both costs while
-// keeping the SMA alive for the cache's lifetime.
-//
-// The fallback path (legacy Marshallable subclass not
-// SerializableMarshallableAdapter — only test fixtures and the
-// CmdData family hit this in practice) keeps the prior behavior:
-// build a `MarshallableSerializableAdapter` view via
-// `as_serializable(inner_sp_data_)` and cache it.
-rrr::SerializableProxy& MarshallDeputy::serializable() const {
-  verify(inner_sp_data_ != nullptr);
-  if (serializable_ == nullptr) {
-    if (auto sma = std::dynamic_pointer_cast<
-            SerializableMarshallableAdapter>(inner_sp_data_)) {
-      // Aliasing shared_ptr: shares ownership with `sma` (and
-      // therefore with `inner_sp_data_`) but points at the SMA's
-      // inner proxy member. The proxy stays alive as long as
-      // `serializable_` (or `inner_sp_data_`) keeps the SMA alive.
-      serializable_ = std::shared_ptr<SerializableProxy>(
-          sma, &sma->proxy_mut());
-    } else {
-      serializable_ = std::make_shared<SerializableProxy>(
-          as_serializable(inner_sp_data_));
-    }
-  }
-  return *serializable_;
 }
 
 } // namespace rrr

@@ -95,60 +95,7 @@ class SerializableMarshallableAdapter : public Marshallable {
   mutable SerializableProxy serializable_;
 };
 
-// ---- Marshallable → Serializable adapter (save-only) ---------------
-//
-// Wraps a shared_ptr<Marshallable> and exposes it as something that
-// satisfies SerializableFacade. SAVE works by encoding through a
-// temporary Marshal and draining bytes into the Archive. LOAD aborts
-// — the streaming Marshal model can't be inverted on demand without
-// a length prefix, and Phase 4 will flip Marshallable types to
-// Serializable directly rather than relying on this load path.
-class MarshallableSerializableAdapter {
- public:
-  explicit MarshallableSerializableAdapter(
-      std::shared_ptr<Marshallable> m)
-      : m_(std::move(m)) {}
-
-  int32_t kind() const { return m_->kind(); }
-
-  // @safe - drains a temporary Marshal produced by m_->to_marshal
-  // into the archive. The temp Marshal lives only on the stack of
-  // this call.
-  void save(BinaryWriteArchive& ar) const {
-    Marshal tmp;
-    m_->to_marshal(tmp);
-    char buf[4096];
-    while (true) {
-      size_t got = tmp.read(buf, sizeof(buf));
-      if (got == 0) break;
-      ar.write_bytes(buf, got);
-    }
-  }
-
-  // Load is intentionally unsupported. Phase 4 migrations replace
-  // Marshallable types with Serializable types directly; the
-  // bridge's read direction goes through `as_marshallable` instead.
-  void load(BinaryReadArchive& /*ar*/) {
-    verify(false &&
-           "MarshallableSerializableAdapter::load is unsupported. "
-           "Migrate the underlying type to Serializable (Phase 4) and use "
-           "SerializableRegistry::create + proxy->load directly.");
-  }
-
- private:
-  std::shared_ptr<Marshallable> m_;
-};
-
 // ---- Free helpers ----------------------------------------------------
-
-// Wrap a Marshallable as a save-only SerializableProxy.
-// Aborts if the Marshallable is null.
-inline SerializableProxy as_serializable(
-    std::shared_ptr<Marshallable> m) {
-  verify(m != nullptr);
-  return make_serializable_proxy<MarshallableSerializableAdapter>(
-      std::move(m));
-}
 
 // Wrap a SerializableProxy as a shared_ptr<Marshallable>.
 // Both save and load directions work via the Phase 3a bridges.
@@ -158,18 +105,12 @@ inline std::shared_ptr<Marshallable> as_marshallable(
       std::move(proxy));
 }
 
-// Workstream N Phase 5b-14: removed `as_serializable(const MarshallDeputy&)`
-// (the deputy-overload save-only view helper).  Phase 3f-2/3f-3
-// added `MarshallDeputy::serializable()` — a lazy cached accessor
-// that serves the same purpose; Phase 3f-4 routed the bridge
-// `operator<<(BinaryWriteArchive&, MarshallDeputy&)` through it,
-// retiring the only production caller.  The matching test
-// `AsSerializableMarshallDeputy.ViewSavesUnderlyingMarshallableBytes`
-// migrated to call `md.serializable()` directly and dropped the
-// MarshallDeputy-overload reference.  The remaining
-// `as_serializable(shared_ptr<Marshallable>)` overload above is the
-// underlying primitive that `MarshallDeputy::serializable()`
-// dispatches to internally.
+// Workstream N L10d-prep: dropped `MarshallableSerializableAdapter`
+// + `as_serializable(shared_ptr<Marshallable>)` — the only production
+// caller was `MarshallDeputy::serializable()` which itself went away
+// when production code switched to `janus::Command` (which has its
+// own proxy-shaped save path that avoids the M→S→M→S adapter stacking
+// this helper used to short-circuit).
 
 // Wrap a `shared_ptr<T>` typed payload as a `shared_ptr<Marshallable>`
 // via the Serializable adapter chain. Intended as the Phase 4
@@ -454,19 +395,21 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
   // Matches the legacy `operator<<(Marshal&, MarshallDeputy&)` after
   // its L9 migration (see marshal.hpp).
   ar << rrr::v32(md.kind_);
-  // Drive save through the M→S adapter chain. Bytes are byte-for-byte
-  // identical to `inner()->to_marshal(...)` (which is what the legacy
-  // `operator<<(Marshal&, MarshallDeputy)` does after writing the
-  // kind prefix).
-  //
-  // Workstream N Phase 3f-4: route through the deputy's lazy
-  // `serializable()` accessor instead of constructing a fresh
-  // `MarshallableSerializableAdapter` on every call. The first call
-  // populates `md.serializable_` (via `as_serializable(inner_sp_data_)`)
-  // and caches the proxy; subsequent serializations of the same
-  // deputy reuse the cache. Wire bytes are unchanged because the
-  // proxy still wraps the same `inner_sp_data_`.
-  md.serializable()->save(ar);
+  // Workstream N L10d-prep: drive payload bytes through inner's
+  // `to_marshal` via a temp Marshal — the lazy `md.serializable()`
+  // proxy cache went away with the rest of the bridge machinery
+  // production stopped using.  This path is now test-only (production
+  // uses `janus::Command` which has its own save path that drives the
+  // proxy directly with no temp Marshal allocation), so the extra
+  // copy is irrelevant.
+  Marshal tmp;
+  md.inner()->to_marshal(tmp);
+  char buf[4096];
+  while (true) {
+    size_t got = tmp.read(buf, sizeof(buf));
+    if (got == 0) break;
+    ar.write_bytes(buf, got);
+  }
   return ar;
 }
 
