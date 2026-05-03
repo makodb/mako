@@ -112,7 +112,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   // shared_ptr<Marshallable>.
   for (slotid_t id = max_committed_slot_; id < max_active_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->cmd_.has_value() && witness_.has_appeared(next_instance->cmd_.inner_marshallable())) {
+    if (next_instance->cmd_.has_value() && witness_.has_appeared(next_instance->cmd_)) {
       max_committed_slot_++;
     }
   }

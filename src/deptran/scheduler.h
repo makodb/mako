@@ -212,12 +212,15 @@ class Witness {
 
   Witness() {};
   ~Witness() {};
+  // Workstream N L10f-prep6L (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   // return whether meet conflict, but not whether push_back success
-  bool push_back(const shared_ptr<Marshallable>& cmd);
+  bool push_back(const janus::Command& cmd);
   // return how many cmd have been removed (cmd may be CMD_TPC_BATCH)
-  int remove(const shared_ptr<Marshallable>& cmd);
+  int remove(const janus::Command& cmd);
   // return whether all cmds appeared before
-  bool has_appeared(const shared_ptr<Marshallable>& cmd);
+  bool has_appeared(const janus::Command& cmd);
   // return 50pct, 90pct, 99pct, ave of the witness_size_distribution_
   std::vector<double> witness_size_distribution();
   /* Recover related begin */

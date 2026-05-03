@@ -438,10 +438,9 @@ void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<
 
 
 void TxLogServer::RuleWitnessGC(const janus::Command& cmd) {
-  // L10f-prep6h: Witness::remove still takes shared_ptr<Marshallable>;
-  // unwrap at the boundary.
+  // L10f-prep6L: Witness::remove now takes Command directly.
   if (Config::GetConfig()->tx_proto_ == MODE_RULE)
-    witness_.remove(cmd.inner_marshallable());
+    witness_.remove(cmd);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
   // Log_info("witness_.remove server %d remove cmd_id <%d, %d> %lld key %d success %d", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second,
@@ -513,7 +512,10 @@ shared_ptr<Marshallable> RevoveryCandidates::cmd_to_recover() {
   }
 }
 
-bool Witness::push_back(const shared_ptr<Marshallable>& cmd) {
+bool Witness::push_back(const janus::Command& cmd_env) {
+  // L10f-prep6L: take Command at the boundary; helpers below still
+  // use shared_ptr<Marshallable>.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   key_t key = parsed_cmd.key_;
   uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
@@ -554,7 +556,9 @@ bool Witness::push_back(const shared_ptr<Marshallable>& cmd) {
   }
 }
 
-int Witness::remove(const shared_ptr<Marshallable>& cmd) {
+int Witness::remove(const janus::Command& cmd_env) {
+  // L10f-prep6L: unwrap at the boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   if (cmd->kind_ != TpcBatchCommand::static_kind()) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
     bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
@@ -588,7 +592,9 @@ int Witness::remove(const shared_ptr<Marshallable>& cmd) {
   }
 }
 
-bool Witness::has_appeared(const shared_ptr<Marshallable>& cmd) {
+bool Witness::has_appeared(const janus::Command& cmd_env) {
+  // L10f-prep6L: unwrap at the boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   // For a batched command, return whether all of them have appeared
   if (cmd->kind_ != TpcBatchCommand::static_kind()) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
