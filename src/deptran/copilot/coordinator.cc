@@ -55,7 +55,8 @@ void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
 #ifdef FULL_LOG_DEBUG
   Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
 #endif
-  verify(!cmd_now_);
+  // L10f-prep3c: cmd_now_ is now janus::Command.
+  verify(!cmd_now_.has_value());
 
   // Workstream N Phase 4e-13: removed `begin = Time::now(true);` —
   // the `begin` field was used only to compute `fac` / `ac`, both
@@ -68,7 +69,7 @@ void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
   is_pilot_ = IsPilot() ? YES : NO;
   slot_id_ = slot_and_dep.first;
   dep_ = slot_and_dep.second;
-  verify(cmd_now_->kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_now_.kind_ != MarshallDeputy::UNKNOWN);
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
@@ -183,21 +184,24 @@ void CoordinatorCopilot::FastAccept() {
   // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("FastAccept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
+  // L10f-prep3c: BroadcastFastAccept still takes shared_ptr<Marshallable>.
   auto sq_quorum = commo()->BroadcastFastAccept(par_id_,
                                                 is_pilot_, slot_id_,
                                                 curr_ballot_,
                                                 dep_,
-                                                cmd_now_);
+                                                cmd_now_.inner_marshallable());
   // sq_quorum->id_ = dep_id_;
   // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
 
   sq_quorum->wait();
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
+  // L10f-prep3c: GetCmdID still takes shared_ptr<Marshallable>.
+  Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).second, loc_id_);
 #endif
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
+  // marshallable_cast<T>(Command&) overload handles cmd_now_ directly.
   Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", marshallable_cast<TpcBatchCommand>(cmd_now_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   // Workstream N Phase 4e-13: removed `fac = Time::now(true) - begin;`
@@ -224,7 +228,7 @@ void CoordinatorCopilot::FastAccept() {
   } else {
     if (sq_quorum->yes()) {
 #ifdef FULL_LOG_DEBUG
-      Log_info("cmd<%d, %d> site %d sq_quorum->yes()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
+      Log_info("cmd<%d, %d> site %d sq_quorum->yes()", SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).second, loc_id_);
 #endif
       /**
        * go to accept phase (regular-path):
@@ -263,7 +267,7 @@ void CoordinatorCopilot::Accept() {
                                             is_pilot_, slot_id_,
                                             curr_ballot_,
                                             dep_,
-                                            cmd_now_);
+                                            cmd_now_.inner_marshallable());
   // sp_quorum->id_ = dep_id_;
   // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
 
@@ -306,7 +310,7 @@ void CoordinatorCopilot::Commit() {
   auto sp_quorum = commo()->BroadcastCommit(par_id_,
                                             is_pilot_, slot_id_,
                                             dep_,
-                                            cmd_now_);
+                                            cmd_now_.inner_marshallable());
   sp_quorum->wait();  // in fact this doesn't wait since it's a fake quorum event
 #ifdef DO_FINALIZE
   sp_quorum->finalize(finalize_timeout_us,
@@ -431,7 +435,8 @@ inline void CoordinatorCopilot::clearStatus() {
     return;
   done_ = true;
   curr_ballot_ = 0;
-  cmd_now_ = nullptr;
+  // L10f-prep3c: Command's reset is via default-construction.
+  cmd_now_ = Command{};
   current_phase_ = INIT_END;
   fast_path_ = false;
   direct_commit_ = false;

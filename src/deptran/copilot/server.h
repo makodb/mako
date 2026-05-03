@@ -19,8 +19,10 @@ const status_t CLR_FLAG_TAKEOVER = (~FLAG_TAKEOVER);
 enum Status : status_t { NOT_ACCEPTED = 0, FAST_ACCEPTED, FAST_ACCEPTED_EQ, ACCEPTED, COMMITED, EXECUTED };
 const size_t n_status = 5;
 
+// Workstream N L10f-prep3c (2026-05-03): polymorphic command field
+// migrated from `shared_ptr<Marshallable>` to `janus::Command`.
 struct CopilotData {
-  shared_ptr<Marshallable>  cmd{nullptr};  // command
+  Command                   cmd{};   // command
   slotid_t                  dep_id;  // dependency
   uint8_t                   is_pilot;
   slotid_t                  slot_id;  // position

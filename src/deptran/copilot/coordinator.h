@@ -15,7 +15,9 @@ struct CopilotData;
 class CoordinatorCopilot : public Coordinator {
   ballot_t curr_ballot_ = 0;
 
-  shared_ptr<Marshallable> cmd_now_{nullptr};
+  // Workstream N L10f-prep3c (2026-05-03): cmd_now_ migrated to
+  // janus::Command.
+  Command cmd_now_{};
   int current_phase_ = 0;
 
   bool fast_path_ = false;

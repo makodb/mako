@@ -37,7 +37,8 @@ shared_ptr<CopilotData> CopilotServer::GetInstance(slotid_t slot, uint8_t is_pil
   auto& sp_instance = log_infos_[is_pilot].logs[slot];
   if (!sp_instance)
     sp_instance = std::make_shared<CopilotData>(
-      CopilotData{nullptr,
+      // L10f-prep3c: cmd field is now Command — default-construct.
+      CopilotData{Command{},
                   0,
                   is_pilot, slot,
                   0,
@@ -97,6 +98,9 @@ bool CopilotServer::allCmdComitted(shared_ptr<Marshallable> batch_cmd) {
 
 bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
   verify(ins);
+  // L10f-prep3c: ins->cmd is Command; the local `cmd` is held as a
+  // Command reference so kind_ uses the public field.  allCmdComitted
+  // still takes shared_ptr<Marshallable> so unwrap at the boundary.
   auto& cmd = ins->cmd;
   if (GET_STATUS(ins->status) < Status::FAST_ACCEPTED)
     return false;
@@ -104,9 +108,9 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
     return true;
   }
-  if (likely(cmd->kind_ == TpcBatchCommand::static_kind())) {
+  if (likely(cmd.kind_ == TpcBatchCommand::static_kind())) {
     // check if cmd committed in tx scheduler, which virtually means cmd is executed
-    if (allCmdComitted(cmd)) {
+    if (allCmdComitted(cmd.inner_marshallable())) {
       Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
        ins->status = Status::EXECUTED;
        if (ins->cmit_evt.value_ < 1)
@@ -117,7 +121,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     } else {
       return false;
     }
-  } else if (cmd->kind_ == TpcNoopCommand::static_kind()) {
+  } else if (cmd.kind_ == TpcNoopCommand::static_kind()) {
     // I don't think this case is possible
     Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
      ins->status = Status::EXECUTED;
@@ -237,8 +241,10 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
    * an id of the dependency's proposing pilot.
    */
   *max_ballot = ins->ballot;
-  if (ins->cmd)
-    ret_cmd->set_marshallable(ins->cmd);
+  // L10f-prep3c: ins->cmd is Command; set_marshallable still takes
+  // shared_ptr<Marshallable>.
+  if (ins->cmd.has_value())
+    ret_cmd->set_marshallable(ins->cmd.inner_marshallable());
   else
     ret_cmd->set_marshallable(rrr::wrap_serializable(make_shared<TpcNoopCommand>()));
   *dep = ins->dep_id;
@@ -516,9 +522,9 @@ void CopilotServer::Print(std::string log) {
           // << " key=" << key // key is the same as slot id
           << " slot_id=" << data_ptr->slot_id;
 
-        if (data_ptr->cmd != nullptr) {
+        if (data_ptr->cmd.has_value()) {
           // Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
-          SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
+          SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd.inner_marshallable());
           oss << " cmd_id=<" << parsed_cmd.cmd_id_.first << ", " << parsed_cmd.cmd_id_.second << "> ";
         } else {
           // Log_info("nullptr");
@@ -593,11 +599,13 @@ void CopilotServer::updateMaxCmtdSlot(CopilotLogInfo& log_info, slotid_t slot) {
 }
 
 void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
+  // L10f-prep3c: cmd deduces to Command; kind_ is the public field;
+  // marshallable_cast<T>(Command&) overload handles the cast.
   auto cmd = log_info.logs[slot]->cmd;
-  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
+  if (cmd.kind_ == TpcCommitCommand::static_kind()) {
     auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     tx_sched_->DestroyTx(tpc_cmd->tx_id_);
-  } else if (cmd->kind_ == TpcBatchCommand::static_kind()) {
+  } else if (cmd.kind_ == TpcBatchCommand::static_kind()) {
     auto batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
     for (auto& c : batch_cmd->cmds_)
       tx_sched_->DestroyTx(c->tx_id_);
@@ -606,11 +614,14 @@ void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
 }
 
 bool CopilotServer::executeCmd(shared_ptr<CopilotData>& ins) {
-  if (likely((bool)(ins->cmd))) {
-    if (likely(ins->cmd->kind_ != TpcNoopCommand::static_kind())) {
+  // L10f-prep3c: ins->cmd is Command; RuleWitnessGC still takes
+  // shared_ptr<Marshallable>; app_next_ takes Command directly;
+  // kind_ is Command's public field.
+  if (likely(ins->cmd.has_value())) {
+    if (likely(ins->cmd.kind_ != TpcNoopCommand::static_kind())) {
       // WAN_WAIT
       // Log_info("loc_id %d execute cmd <%d, %d>", loc_id_, SimpleRWCommand::GetCmdID(ins->cmd).first, SimpleRWCommand::GetCmdID(ins->cmd).second);
-      RuleWitnessGC(ins->cmd);
+      RuleWitnessGC(ins->cmd.inner_marshallable());
       app_next_(ins->slot_id, ins->cmd);
     }
     ins->status = Status::EXECUTED;
@@ -629,7 +640,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
   if (ins->status == Status::EXECUTED)
     return true;
   
-  if (unlikely(ins->dep_id == 0 || ins->cmd->kind_ == TpcNoopCommand::static_kind())) {
+  if (unlikely(ins->dep_id == 0 || ins->cmd.kind_ == TpcNoopCommand::static_kind())) {
     return executeCmd(ins);
   } else {
 #ifdef DEBUG
@@ -668,7 +679,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
 
     // case 1: no dependency, no-op, or dependency has been executed
     if (unlikely(w->dep_id == 0 ||
-        w->cmd->kind_ == TpcNoopCommand::static_kind()) ||
+        w->cmd.kind_ == TpcNoopCommand::static_kind()) ||
         GET_STATUS(dep->status) == Status::EXECUTED) {
       executeCmd(w);
       continue;
@@ -698,7 +709,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
       if (GET_STATUS(d->status) >= Status::EXECUTED)
         // case 2.1: d already executed else where
         continue;
-      else if (d->dep_id == 0 || d->cmd->kind_ == TpcNoopCommand::static_kind()) {
+      else if (d->dep_id == 0 || d->cmd.kind_ == TpcNoopCommand::static_kind()) {
         // case 2.2: d has no dep or d is no-op
         executeCmd(d);
       } else if (d->dep_id >= i) {
@@ -978,9 +989,11 @@ bool CopilotServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshalla
   for (slotid_t id = log_infos_[isPilot_].max_executed_slot + 1; id <= log_infos_[isPilot_].max_active_slot; id++) {
     // Log_info("id=%d", id);
     shared_ptr<CopilotData> ins = GetInstance(id, isPilot_);
-    if (ins && ins->cmd) {
+    // L10f-prep3c: ins->cmd is Command; marshallable_cast<T>(Command&)
+    // overload handles the cast.
+    if (ins && ins->cmd.has_value()) {
       // Copilots use batch cmds in copilot instance
-      verify(ins->cmd->kind_ == TpcBatchCommand::static_kind());
+      verify(ins->cmd.kind_ == TpcBatchCommand::static_kind());
       shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
       for (int i = 0; i < batch_cmd->Size(); i++)
         if (SimpleRWCommand::Conflict(batch_cmd->cmds_[i], cmd))
