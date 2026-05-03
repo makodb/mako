@@ -307,22 +307,23 @@ struct ResponseData {
 
 // Workstream N L10f-prep6e (2026-05-03): rec_set_ migrated from
 // `vector<shared_ptr<Marshallable>>` to `vector<janus::Command>`.
-// External API (insert / get) retains the legacy
-// shared_ptr<Marshallable> shape for caller-side compatibility.
+// L10f-prep6z (2026-05-03): external API now also uses Command;
+// shared_ptr<Marshallable> callers auto-convert via Command's
+// implicit ctor.
 class RecoverySet {
   std::unordered_map<int, std::vector<janus::Command>> rec_set_;
  public:
-  void insert(int sid, int rid, shared_ptr<Marshallable> cmd) {
+  void insert(int sid, int rid, const janus::Command& cmd) {
     if (rec_set_[sid].size() <= rid) {
         rec_set_[sid].resize(rid + 1);
     }
-    rec_set_[sid][rid] = cmd;  // Command::operator=(shared_ptr<Marshallable>)
+    rec_set_[sid][rid] = cmd;
   }
-  shared_ptr<Marshallable> get(int sid, int rid) {
+  const janus::Command& get(int sid, int rid) {
     if (rec_set_[sid].size() <= rid) {
         rec_set_[sid].resize(rid + 1);
     }
-    return rec_set_[sid][rid].inner_marshallable();
+    return rec_set_[sid][rid];
   }
 };
 

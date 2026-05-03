@@ -916,8 +916,8 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   
   // For committed (sid, set_size) pair, ensure all positions exist locally
   for (int rid = 0; rid < set_size; rid++) {
-    auto cmd = rec_set_.get(sid, rid);
-    if (!cmd) {
+    janus::Command cmd = rec_set_.get(sid, rid);
+    if (!cmd.has_value()) {
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] Missing command at sid=%d, rid=%d, pulling from replicas", sid, rid);
 #endif
@@ -928,7 +928,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
       Log_info("[JETPACK-RECOVERY] PullRecSetIns completed sid=%d rid=%d (site=%d) success=%d", sid, rid, site_id_, pull_e->yes());
       if (pull_e->yes()) {
         cmd = pull_e->GetRecoveredCmd();
-        if (cmd) {
+        if (cmd.has_value()) {
           rec_set_.insert(sid, rid, cmd);
 #ifdef JETPACK_RECOVERY_DEBUG
           Log_info("[JETPACK-RECOVERY] Successfully pulled missing command for sid=%d, rid=%d", sid, rid);
@@ -940,19 +940,19 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
         }
       } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-        Log_info("[JETPACK-RECOVERY] PullRecSetIns FAILED for sid=%d, rid=%d: got %d/%d responses", 
+        Log_info("[JETPACK-RECOVERY] PullRecSetIns FAILED for sid=%d, rid=%d: got %d/%d responses",
                  sid, rid, pull_e->n_voted_yes_, pull_e->n_total_);
 #endif
       }
     }
-    
+
     // Resubmit command via broadcast dispatch to find leader
-    verify(cmd != nullptr); // Command must exist after pull attempt
-    
+    verify(cmd.has_value()); // Command must exist after pull attempt
+
 #ifdef JETPACK_RECOVERY_DEBUG
     Log_info("[JETPACK-RECOVERY] Resubmitting command for sid=%d, rid=%d via broadcast dispatch", sid, rid);
 #endif
-    
+
     // Use the new dispatch method that will find the leader
     DispatchRecoveredCommand(cmd, recovery_event);
     if (((rid + 1) % 100) == 0 || rid + 1 == set_size) {
@@ -1406,7 +1406,7 @@ void TxLogServer::OnJetpackPullRecSetIns(const epoch_t& jepoch,
     *ok = 1;
     *reply_jepoch = rep_sched_->jepoch_;
     *reply_oepoch = rep_sched_->oepoch_;
-    cmd = rep_sched_->rec_set_.get(sid, rid);
+    cmd = rep_sched_->rec_set_.get(sid, rid).inner_marshallable();
   } else {
     *ok = 0;
     *reply_jepoch = rep_sched_->jepoch_;
