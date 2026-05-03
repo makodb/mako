@@ -576,8 +576,11 @@ class TxLogServer {
   unordered_map<key_t, value_t> database_;
   int database_operation_count_ = 0;
 
-  void ApplyToDatabase(shared_ptr<Marshallable> cmd) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
+  // Workstream N L10f-prep6i (2026-05-03): takes janus::Command;
+  // unwraps to shared_ptr<Marshallable> at the boundary into
+  // SimpleRWCommand which still takes the legacy shape.
+  void ApplyToDatabase(const janus::Command& cmd) {
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd.inner_marshallable());
     // Log_info("Apply Write %d key %d value %d", parsed_cmd.IsWrite(), parsed_cmd.key_, parsed_cmd.value_);
     if (parsed_cmd.IsWrite()) {
       database_[parsed_cmd.key_] = parsed_cmd.value_;

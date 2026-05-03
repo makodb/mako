@@ -297,9 +297,8 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 
 void SchedulerClassic::DoCommit(Tx& tx_box) {
 #ifdef DB_CHECKSUM
-  // L10f-prep6: tx_box.cmd_ is Command; ApplyToDatabase still takes
-  // shared_ptr<Marshallable>.
-  ApplyToDatabase(tx_box.cmd_.inner_marshallable());
+  // L10f-prep6i: ApplyToDatabase now takes Command directly.
+  ApplyToDatabase(tx_box.cmd_);
 #endif
   auto mdb_txn = RemoveMTxn(tx_box.tid_);
   verify(mdb_txn == tx_box.mdb_txn_);
