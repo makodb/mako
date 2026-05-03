@@ -12,24 +12,30 @@ class TxData;
 // Previously held a manual `kMarshallKind = MarshallDeputy::CMD_TPC_PREPARE`
 // constant; the position in `MakoCommands` (see mako_commands.h) now
 // supplies the kind via the `Serializable` CRTP base.
+//
+// Workstream N L10f-prep4 (2026-05-03): the nested polymorphic
+// command field `cmd_` migrated from `shared_ptr<Marshallable>` to
+// `janus::Command`.  Wire format unchanged; see
+// `docs/dev/l10-unblock-plan.md`.
 class TpcPrepareCommand : public rrr::Serializable<TpcPrepareCommand,
                                                    MakoCommands> {
  public:
   txnid_t tx_id_ = 0;
   int32_t ret_ = -1;
-  shared_ptr<Marshallable> cmd_{nullptr};
+  Command cmd_{};
 
   void save(BinaryWriteArchive& ar) const;
   void load(BinaryReadArchive& ar);
 };
 
 // Workstream N L8: TypeList-derived kind via `MakoCommands` position.
+// Workstream N L10f-prep4: nested `cmd_` migrated to janus::Command.
 class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
                                                   MakoCommands> {
  public:
   txnid_t tx_id_ = 0;
   int ret_ = -1;
-  shared_ptr<Marshallable> cmd_{nullptr};
+  Command cmd_{};
   ballot_t term;
   // Optional view data for WRONG_LEADER responses
   std::shared_ptr<ViewData> sp_view_data_ = nullptr;

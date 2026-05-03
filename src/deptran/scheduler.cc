@@ -1021,12 +1021,14 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
 #endif
   
   // Extract the inner command if this is a TpcCommitCommand
+  // L10f-prep4: tpc_cmd->cmd_ is Command; unwrap to legacy
+  // shared_ptr<Marshallable> for the local inner_cmd binding.
   shared_ptr<Marshallable> inner_cmd = cmd;
   if (cmd->kind_ == TpcCommitCommand::static_kind()) {
     auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
-    if (tpc_cmd && tpc_cmd->cmd_) {
-      inner_cmd = tpc_cmd->cmd_;
+    if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
+      inner_cmd = tpc_cmd->cmd_.inner_marshallable();
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] Extracted inner command from TpcCommitCommand, inner kind=%d", inner_cmd->kind_);
 #endif

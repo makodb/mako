@@ -605,7 +605,9 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
   auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
-  if (tpc_cmd && tpc_cmd->cmd_) {
+  // L10f-prep4: tpc_cmd->cmd_ is Command; has_value() for null
+  // check; marshallable_cast<T>(Command&) overload handles the cast.
+  if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
     // Extract VecPieceData that contains the raw bytes
     auto vpd = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
     verify(vpd != nullptr);
@@ -641,7 +643,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 
   // Extract par_id from the committed entry's SimpleCommand::partition_id_.
   uint32_t par_id = 0;
-  if (tpc_cmd && tpc_cmd->cmd_) {
+  if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
     auto vpd_inner = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
     verify(vpd_inner != nullptr);
     if (vpd_inner && vpd_inner->sp_vec_piece_data_ && !vpd_inner->sp_vec_piece_data_->empty()) {

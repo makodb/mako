@@ -27,19 +27,18 @@ static int volatile x5 = rrr::reg_serializable_in_deputy<TpcBatchCommand>();
 void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
   ar << tx_id_;
   ar << ret_;
-  MarshallDeputy md(cmd_);
-  ar << md;
+  // L10f-prep4: cmd_ is janus::Command — drive its archive op
+  // directly instead of wrapping it in a temporary MarshallDeputy.
+  // Wire format identical (`[v32 kind][payload]`).
+  ar << cmd_;
 }
 
 void TpcPrepareCommand::load(BinaryReadArchive& ar) {
   ar >> tx_id_;
   ar >> ret_;
-  MarshallDeputy md;
-  ar >> md;
-  if (!cmd_) {
-    if (md.inner() != nullptr) {
-      cmd_ = md.inner();
-    }
+  // L10f-prep4: cmd_ load through Command's archive op.
+  if (!cmd_.has_value()) {
+    ar >> cmd_;
   } else {
     verify(0);
   }
@@ -57,8 +56,8 @@ void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
   ar << tx_id_;
   ar << ret_;
   ar << term;
-  MarshallDeputy md(cmd_);
-  ar << md;
+  // L10f-prep4: drive cmd_ through Command's archive op directly.
+  ar << cmd_;
   bool_t has_view_data = (sp_view_data_ != nullptr) ? 1 : 0;
   ar << has_view_data;
   if (has_view_data) {
@@ -71,10 +70,9 @@ void TpcCommitCommand::load(BinaryReadArchive& ar) {
   ar >> tx_id_;
   ar >> ret_;
   ar >> term;
-  MarshallDeputy md;
-  ar >> md;
-  if (!cmd_)
-    cmd_ = md.inner();
+  // L10f-prep4: cmd_ load through Command's archive op.
+  if (!cmd_.has_value())
+    ar >> cmd_;
   else
     verify(0);
   bool_t has_view_data;

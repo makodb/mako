@@ -207,8 +207,10 @@ int SchedulerClassic::PrepareReplicated(TpcPrepareCommand& prepare_cmd) {
   // TODO and return the prepare callback here.
   auto tx_id = prepare_cmd.tx_id_;
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
+  // L10f-prep4: prepare_cmd.cmd_ is Command; sp_tx->cmd_ is still
+  // shared_ptr<Marshallable>; unwrap at the boundary.
   if (!sp_tx->cmd_)
-    sp_tx->cmd_ = prepare_cmd.cmd_;
+    sp_tx->cmd_ = prepare_cmd.cmd_.inner_marshallable();
   if (!sp_tx->is_leader_hint_) {
     return 0;
   }
@@ -321,8 +323,9 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   if (sp_tx->commit_result->is_ready())
     return 0;
   int commit_or_abort = tpc_commit_cmd.ret_;
+  // L10f-prep4: tpc_commit_cmd.cmd_ is Command; unwrap at boundary.
   if (!sp_tx->cmd_)
-    sp_tx->cmd_ = tpc_commit_cmd.cmd_;
+    sp_tx->cmd_ = tpc_commit_cmd.cmd_.inner_marshallable();
   if (!sp_tx->is_leader_hint_) {
     if (commit_or_abort == REJECT) {
       sp_tx->commit_result->set(1);
