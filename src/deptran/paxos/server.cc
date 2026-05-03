@@ -102,7 +102,9 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
   in_applying_logs_ = true;
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->committed_cmd_) {
+    // L10f-prep3a: PaxosData::committed_cmd_ is Command;
+    // app_next_ takes Command directly.
+    if (next_instance->committed_cmd_.has_value()) {
       app_next_(slot_id,next_instance->committed_cmd_);
       Log_info("apply multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
       max_executed_slot_++;
@@ -158,7 +160,10 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
 
     for(int j = bcmd->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
       auto inst = ps->GetInstance(j);
-      if(inst->committed_cmd_){
+      // L10f-prep3a: committed_cmd_ is Command; the temp_cmd
+      // copy + janus::Command(Command) wrapping below relies on
+      // Command's copy ctor.
+      if(inst->committed_cmd_.has_value()){
         bp_cmd->slots.push_back(j);
         bp_cmd->ballots.push_back(inst->max_ballot_accepted_);
         auto temp_cmd = inst->committed_cmd_;
@@ -170,7 +175,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
     //Log_info("The partition %d, sync commit is %d; max executed-committed slot is [%d-%d] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
     for(int j = ps->max_executed_slot_; j < bcmd->sync_commit_slot[i]; j++){
       auto inst = ps->GetInstance(j);
-      if(!inst->committed_cmd_){
+      if(!inst->committed_cmd_.has_value()){
         ret_cmd->missing_slots[i].push_back(j);
       }
     }
@@ -346,7 +351,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       //break;
       auto next_instance = GetInstance(id);
-      if (next_instance->committed_cmd_) {
+      if (next_instance->committed_cmd_.has_value()) {
           //app_next_(*next_instance->committed_cmd_);
 	        commit_exec.push_back(std::make_pair(id,next_instance));
 	        //Log_info("multi-paxos par:%d loc:%d executed slot %lld now", partition_id_, loc_id_, id);
@@ -355,7 +360,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
       } else {
           break;
       }
-   } 
+   }
   //mtx_.unlock();
   //Log_info("Committing %d", commit_exec.size());
   for(int i = 0; i < commit_exec.size(); i++){
@@ -450,7 +455,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   slotid_t tmpx = max_executed_slot_ + 1;
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       auto next_instance = GetInstance(id);
-      if (next_instance->committed_cmd_) {
+      if (next_instance->committed_cmd_.has_value()) {
           commit_exec.push_back(std::make_pair(id,next_instance));
           max_executed_slot_++;
           n_commit_++;
@@ -526,11 +531,13 @@ void PaxosServer::PersistLogEntry(slotid_t slot_id, const PaxosData& data) {
   entry.max_ballot_accepted = data.max_ballot_accepted_;
   entry.is_no_op = data.is_no_op;
 
-  // Prefer committed_cmd_ if available, otherwise accepted_cmd_
-  if (data.committed_cmd_) {
+  // Prefer committed_cmd_ if available, otherwise accepted_cmd_.
+  // L10f-prep3a: PaxosData::*_cmd_ are now Command; LogEntry::command
+  // is also Command — direct copy.
+  if (data.committed_cmd_.has_value()) {
     entry.command = data.committed_cmd_;
     entry.committed = true;
-  } else if (data.accepted_cmd_) {
+  } else if (data.accepted_cmd_.has_value()) {
     entry.command = data.accepted_cmd_;
     entry.committed = false;
   }
@@ -557,10 +564,10 @@ void PaxosServer::PersistLogEntries(
     entry.max_ballot_accepted = data->max_ballot_accepted_;
     entry.is_no_op = data->is_no_op;
 
-    if (data->committed_cmd_) {
+    if (data->committed_cmd_.has_value()) {
       entry.command = data->committed_cmd_;
       entry.committed = true;
-    } else if (data->accepted_cmd_) {
+    } else if (data->accepted_cmd_.has_value()) {
       entry.command = data->accepted_cmd_;
       entry.committed = false;
     }
@@ -618,13 +625,12 @@ bool PaxosServer::RecoverFromStorage() {
       paxos_data->max_ballot_accepted_ = entry.max_ballot_accepted;
       paxos_data->is_no_op = entry.is_no_op;
 
-      // L10f-prep1: LogEntry::command is now janus::Command; PaxosData
-      // still holds shared_ptr<Marshallable> (migrating it is
-      // L10f-prep3), so unwrap at the boundary.
+      // L10f-prep1+3a: both LogEntry::command and
+      // PaxosData::*_cmd_ are janus::Command — direct copy.
       if (entry.committed) {
-        paxos_data->committed_cmd_ = entry.command.inner_marshallable();
+        paxos_data->committed_cmd_ = entry.command;
       } else {
-        paxos_data->accepted_cmd_ = entry.command.inner_marshallable();
+        paxos_data->accepted_cmd_ = entry.command;
       }
     }
 
@@ -665,7 +671,7 @@ void PaxosServer::ReplayCommittedEntries() {
   size_t replayed = 0;
   for (slotid_t id = start; id <= end; id++) {
     auto it = logs_.find(id);
-    if (it != logs_.end() && it->second && it->second->committed_cmd_) {
+    if (it != logs_.end() && it->second && it->second->committed_cmd_.has_value()) {
       app_next_(id, it->second->committed_cmd_);
       max_executed_slot_ = id;
       replayed++;

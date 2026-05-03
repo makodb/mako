@@ -10,12 +10,16 @@
 namespace janus {
 class CmdData;
 
+// Workstream N L10f-prep3a (2026-05-03): polymorphic command fields
+// (`accepted_cmd_` / `committed_cmd_`) migrated from
+// `shared_ptr<Marshallable>` to `janus::Command`.  See
+// `docs/dev/l10-unblock-plan.md`.
 struct PaxosData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
   bool is_no_op = false;
-  shared_ptr<Marshallable> accepted_cmd_{nullptr};
-  shared_ptr<Marshallable> committed_cmd_{nullptr};
+  Command accepted_cmd_{};
+  Command committed_cmd_{};
 };
 
 struct BulkPrepare{

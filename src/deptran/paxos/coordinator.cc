@@ -39,11 +39,12 @@ void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  verify(cmd_ == nullptr);
+  // L10f-prep3a: cmd_ is now janus::Command; null check via has_value.
+  verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
   cmd_ = cmd;
-  verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_.kind_ != MarshallDeputy::UNKNOWN);
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
@@ -78,9 +79,11 @@ void CoordinatorMultiPaxos::Accept() {
             par_id_, slot_id_);
   auto start = chrono::system_clock::now();
 #ifdef LATENCY_DEBUG
-  client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_));
+  // L10f-prep3a: GetCommandMsTimeElaps + Broadcast* still take
+  // shared_ptr<Marshallable>; unwrap from Command.
+  client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_.inner_marshallable()));
 #endif
-  auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
+  auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_.inner_marshallable());
   WAN_WAIT;
   if (sp_quorum->yes()) {
     committed_ = true;
@@ -104,7 +107,7 @@ void CoordinatorMultiPaxos::Commit() {
   commit_callback_();
   Log_debug("multi-paxos broadcast commit for partition: %d, slot %d",
             (int) par_id_, (int) slot_id_);
-  commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_);
+  commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_.inner_marshallable());
   verify(phase_ == Phase::COMMIT);
   GotoNextPhase();
 }
@@ -190,13 +193,16 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
 
 void BulkCoordinatorMultiPaxos::Accept() {
     in_accept = true;
+    // L10f-prep3a: cmd_ is Command; marshallable_cast<T>(Command&)
+    // overload handles the cast.  BroadcastBulkAccept takes
+    // shared_ptr<Marshallable>; unwrap via inner_marshallable().
     auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
     verify(cmd_temp1 != nullptr);
     if(!in_submission_){
       return;
     }
     auto ess_cc = es_cc;
-    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, ess_cc](ballot_t ballot, int valid){
+    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_.inner_marshallable(), [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_accept)
 	       return;
       // if(!valid){
@@ -238,6 +244,8 @@ void BulkCoordinatorMultiPaxos::Commit() {
     }
     in_commit = true;
 
+    // L10f-prep3a: cmd_ is Command; marshallable_cast<T>(Command&)
+    // overload handles the cast.
     auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
     verify(cmd_temp1 != nullptr);
     auto commit_cmd = make_shared<PaxosPrepCmd>();

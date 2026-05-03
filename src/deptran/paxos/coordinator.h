@@ -26,7 +26,11 @@ class CoordinatorMultiPaxos : public Coordinator {
   bool in_commit = false;
   // Workstream N Phase 4e-14: removed `bool in_forward = false;` —
   // declared but never written or read.
-  shared_ptr<Marshallable> cmd_{nullptr};
+  // Workstream N L10f-prep3a (2026-05-03): polymorphic command field
+  // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
+  // Boundary calls into commo (which still takes
+  // `shared_ptr<Marshallable>`) use `cmd_.inner_marshallable()`.
+  Command cmd_{};
   vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md{};
   CoordinatorMultiPaxos(uint32_t coo_id,
                         int32_t benchmark,
@@ -100,7 +104,9 @@ class CoordinatorMultiPaxos : public Coordinator {
 
 class BulkCoordinatorMultiPaxos : public CoordinatorMultiPaxos {
 public:
-    shared_ptr<Marshallable> cmd_{nullptr};
+    // L10f-prep3a: shadow Command field (intentionally hides the
+    // base class's `cmd_` for the bulk coordinator's separate state).
+    Command cmd_{};
     // Workstream N Phase 4e-27: removed `Prepare()` declaration — the
     // method was dead (`GotoNextPhase` skips the prepare phase via a
     // `// Prepare();` comment, and no other caller exists).

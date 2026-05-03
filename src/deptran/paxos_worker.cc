@@ -276,7 +276,9 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
         sp_cmd->slots.push_back(mpc.get()->slot_id_);
         sp_cmd->ballots.push_back(send_epoch);
-        verify(mpc->cmd_ != nullptr);
+        // L10f-prep3a: CoordinatorMultiPaxos::cmd_ is now Command;
+        // null check via has_value, copy via Command's copy ctor.
+        verify(mpc->cmd_.has_value());
         janus::Command* md =  new janus::Command(mpc.get()->cmd_);
         sp_cmd->cmds.push_back(shared_ptr<janus::Command>(md));
     }
@@ -348,10 +350,11 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
         auto ps_j = dynamic_cast<PaxosServer*>(pxs_workers_g[j]->rep_sched_);
         for(int k = 0; k < responses[i]->missing_slots[j].size(); k++){
           auto inst = ps_j->GetInstance(responses[i]->missing_slots[j][k]);
-          if(inst->committed_cmd_){
+          // L10f-prep3a: PaxosData::committed_cmd_ is Command;
+          // direct copy via Command's copy ctor.
+          if(inst->committed_cmd_.has_value()){
 	    //Log_info("The slots are for partition %d slot %d", j, responses[i]->missing_slots[j][k]);
-            auto tmp = inst->committed_cmd_;
-            commited_slots[make_pair(j, responses[i]->missing_slots[j][k])] = make_shared<janus::Command>(MarshallDeputy(tmp));
+            commited_slots[make_pair(j, responses[i]->missing_slots[j][k])] = make_shared<janus::Command>(inst->committed_cmd_);
           }
         }
       }
