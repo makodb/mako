@@ -25,11 +25,11 @@ BulkCoordinatorMultiPaxos::BulkCoordinatorMultiPaxos(uint32_t coo_id,
   : CoordinatorMultiPaxos(coo_id, benchmark, std::move(client_status), thread_id) {
 }
 
-void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
+void CoordinatorMultiPaxos::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_DEBUG
-  client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
+  client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd.inner_marshallable()));
 #endif
   if (!IsLeader()) {
     //change back to fatal
@@ -49,7 +49,7 @@ void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
   GotoNextPhase();
 }
 
-void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
+void BulkCoordinatorMultiPaxos::BulkSubmit(const janus::Command& cmd,
                                        rusty::Function<void()> func,
                                        rusty::Function<void()> exe_callback) {
     verify(!in_submission_);

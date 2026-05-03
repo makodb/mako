@@ -39,11 +39,11 @@ bool CoordinatorFpgaRaft::IsFPGALeader() {
 // `FpgaRaftServer::OnForward`) are also gone in this phase.
 
 
-void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
+void CoordinatorFpgaRaft::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
-  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   // client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
   if (!IsLeader()) {

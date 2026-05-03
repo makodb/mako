@@ -52,9 +52,12 @@ bool CoordinatorRaft::IsFPGALeader() {
 }
 
 // @unsafe - external calls marked @external [safe], pointer ops in @unsafe blocks
-void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
+void CoordinatorRaft::Submit(const janus::Command& cmd_env,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
+  // L10f-prep6o: take Command at the boundary; downstream uses
+  // shared_ptr<Marshallable> via .inner_marshallable() once.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   if (!IsLeader()) {
     // verify(0);
     auto config = Config::GetConfig();

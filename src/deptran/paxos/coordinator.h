@@ -57,7 +57,7 @@ class CoordinatorMultiPaxos : public Coordinator {
     return this->loc_id_ == 0;
   }
 
-  void assignCmd(shared_ptr<Marshallable>& cmd){
+  void assignCmd(const janus::Command& cmd) override {
     cmd_ = cmd;
   }
 
@@ -73,7 +73,7 @@ class CoordinatorMultiPaxos : public Coordinator {
   }
 
   void DoTxAsync(TxRequest &req) override {}
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
@@ -117,9 +117,9 @@ public:
                           int32_t benchmark,
                           rusty::Option<rusty::Arc<ClientStatus>> client_status,
                           uint32_t thread_id);
-    void BulkSubmit(shared_ptr<Marshallable> &cmd,
+    void BulkSubmit(const janus::Command& cmd,
                     rusty::Function<void()> func = {},
-                    rusty::Function<void()> exe_callback = {});
+                    rusty::Function<void()> exe_callback = {}) override;
 };
 
 } //namespace janus

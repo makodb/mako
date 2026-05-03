@@ -24,7 +24,7 @@ class CoordinatorMongodb : public Coordinator {
     return (MongodbCommo *) commo_;
   }
   void DoTxAsync(TxRequest &req) override {}
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
   void Reset() override {}

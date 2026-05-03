@@ -89,7 +89,7 @@ class CoordinatorRaft : public Coordinator {
   void DoTxAsync(TxRequest &req) override {}
 
   // @unsafe - raw pointer dereferences, shared_ptr, complex logic
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 

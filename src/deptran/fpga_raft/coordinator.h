@@ -66,7 +66,7 @@ class CoordinatorFpgaRaft : public Coordinator {
   // Workstream N Phase 4e-39: removed `Forward(...)` declaration —
   // body had `verify(0); // TODO delete it` and was never called.
 
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 

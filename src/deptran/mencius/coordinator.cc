@@ -14,11 +14,11 @@ CoordinatorMencius::CoordinatorMencius(uint32_t coo_id,
     : Coordinator(coo_id, benchmark, std::move(client_status), thread_id) {
 }
 
-void CoordinatorMencius::Submit(shared_ptr<Marshallable>& cmd,
+void CoordinatorMencius::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
-  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   if (!IsLeader(slot_id_)) {
     //change back to fatal

@@ -46,14 +46,14 @@ inline ballot_t CoordinatorCopilot::pickGreaterBallot(ballot_t ballot) {
   return makeUniqueBallot((ballot >> 8) + 1);
 }
 
-void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
+void CoordinatorCopilot::Submit(const janus::Command& cmd,
                                 rusty::Function<void()> func,
                                 rusty::Function<void()> exe_callback) {
   verify(IsPilot() || IsCopilot());  // only pilot or copilot can initiate command submission
   done_ = false;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
+  Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_);
 #endif
   // L10f-prep3c: cmd_now_ is now janus::Command.
   verify(!cmd_now_.has_value());

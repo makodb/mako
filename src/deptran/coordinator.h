@@ -210,17 +210,20 @@ class Coordinator {
   virtual void SetNewLeader(parid_t, volatile locid_t*) { verify(0); };
   virtual void FailoverPauseSocketOut(parid_t, locid_t) { verify(0); };
   virtual void FailoverResumeSocketOut(parid_t, locid_t) { verify(0); };
-  virtual void Submit(shared_ptr<Marshallable>& cmd,
+  // Workstream N L10f-prep6o (2026-05-03): Submit/BulkSubmit/assignCmd
+  // take const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
+  virtual void Submit(const janus::Command& cmd,
                       rusty::Function<void()> commit_callback = {},
                       rusty::Function<void()> exe_callback = {}) {
     verify(0);
   }
 
-  virtual  void assignCmd(shared_ptr<Marshallable>& cmd){
+  virtual void assignCmd(const janus::Command& cmd){
     verify(0);
   }
 
-  virtual void BulkSubmit(shared_ptr<Marshallable>& cmd,
+  virtual void BulkSubmit(const janus::Command& cmd,
                            rusty::Function<void()> commit_callback = {},
                            rusty::Function<void()> exe_callback = {}){
     verify(0);
