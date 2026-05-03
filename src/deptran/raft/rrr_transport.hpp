@@ -68,17 +68,16 @@ class RrrTransportAdapter {
   // and sets the event, waking the fiber.
   // ------------------------------------------------------------------
 
-  // @unsafe { std::function + shared_ptr bridge at rrr boundary }
+  // @unsafe { std::function bridge at rrr boundary }
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) {
     auto slot  = std::make_shared<AppendEntriesReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
-    auto cmd   = req.cmd.inner();
     commo_->SendAppendEntriesCb(
         dst, par_, req.slot, req.ballot,
         /*isLeader=*/true,
         req.leader_site_id, req.leader_current_term,
         req.leader_prev_log_index, req.leader_prev_log_term,
-        req.leader_commit_index, cmd, req.leader_next_log_term,
+        req.leader_commit_index, req.cmd, req.leader_next_log_term,
         /*trigger_election_now=*/false,
         [slot, ready](siteid_t, AppendEntriesReply r) {
           *slot = std::move(r);
@@ -88,7 +87,7 @@ class RrrTransportAdapter {
     return *slot;
   }
 
-  // @unsafe { std::function + shared_ptr bridge at rrr boundary }
+  // @unsafe { std::function bridge at rrr boundary }
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) {
     auto slot  = std::make_shared<AppendEntriesReply>();
@@ -98,7 +97,7 @@ class RrrTransportAdapter {
         /*isLeader=*/true,
         req.leader_site_id, req.leader_current_term,
         req.leader_prev_log_index, req.leader_prev_log_term,
-        req.leader_commit_index, /*cmd=*/nullptr, /*cmdLogTerm=*/0,
+        req.leader_commit_index, janus::Command{}, /*cmdLogTerm=*/0,
         req.trigger_election_now,
         [slot, ready](siteid_t, AppendEntriesReply r) {
           *slot = std::move(r);

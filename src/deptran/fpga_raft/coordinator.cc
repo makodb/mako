@@ -86,10 +86,9 @@ void CoordinatorFpgaRaft::AppendEntries() {
 
     /* TODO: get prevLogTerm based on the logs */
     uint64_t prevLogTerm = this->sch_->currentTerm;
-    // L10f-prep6g: SetLocalAppend / BroadcastAppendEntries / GetCmdID
-    // still take shared_ptr<Marshallable>; unwrap from Command at the
-    // call boundary (SetLocalAppend takes by reference, so use a
-    // local).
+    // L10f-prep6u: BroadcastAppendEntries now takes const Command&;
+    // SetLocalAppend / GetCmdID still take shared_ptr<Marshallable>,
+    // so unwrap once for those.
     auto cmd_sp = cmd_.inner_marshallable();
     // client2test_point_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_sp));
 		this->sch_->SetLocalAppend(cmd_sp, &prevLogTerm, &prevLogIndex, slot_id_, curr_ballot_) ;
@@ -109,7 +108,7 @@ void CoordinatorFpgaRaft::AppendEntries() {
                                                      prevLogTerm,
                                                      /* ents, */
                                                      this->sch_->commitIndex,
-                                                     cmd_sp);
+                                                     cmd_);
 
 		struct timespec start_;
 		clock_gettime(CLOCK_MONOTONIC, &start_);
@@ -187,7 +186,7 @@ void CoordinatorFpgaRaft::Commit() {
   // L10f-prep6g: GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
-  commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_.inner_marshallable());
+  commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
   verify(phase_ == Phase::COMMIT);
   GotoNextPhase();
 }
@@ -209,7 +208,7 @@ void CoordinatorFpgaRaft::LeaderLearn() {
     // L10f-prep6g: GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
-    commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_.inner_marshallable());
+    commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
     verify(phase_ == Phase::COMMIT);
     GotoNextPhase();
 }

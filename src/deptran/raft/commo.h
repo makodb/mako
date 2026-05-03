@@ -146,6 +146,8 @@ friend class RaftProxy;
 
   // @safe
   // Returns shared_ptr to response data - callback captures this to ensure memory validity
+  // Workstream N L10f-prep6u: take janus::Command (was shared_ptr<Marshallable>);
+  // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
   shared_ptr<AppendEntriesResponse>
   SendAppendEntries2(siteid_t site_id,
                     parid_t par_id,
@@ -157,11 +159,13 @@ friend class RaftProxy;
                     uint64_t prevLogIndex,
                     uint64_t prevLogTerm,
                     uint64_t commitIndex,
-                    shared_ptr<Marshallable> cmd,
+                    const janus::Command& cmd,
                     uint64_t cmdLogTerm
                     );
 
   // @unsafe - C-style cast, raw pointers
+  // Workstream N L10f-prep6u: take janus::Command (was shared_ptr<Marshallable>);
+  // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
   shared_ptr<SendAppendEntriesResults>
   SendAppendEntries(siteid_t site_id,
                     parid_t par_id,
@@ -173,7 +177,7 @@ friend class RaftProxy;
                     uint64_t prevLogIndex,
                     uint64_t prevLogTerm,
                     uint64_t commitIndex,
-                    shared_ptr<Marshallable> cmd,
+                    const janus::Command& cmd,
                     uint64_t cmdLogTerm,
                     bool trigger_election_now = false);
   // @unsafe - C-style cast
@@ -319,6 +323,8 @@ friend class RaftProxy;
   // Called once per reply (for the single target site). `on_reply` fires
   // with the site_id that replied; on error, it does not fire at all, so
   // callers should treat absence of reply as a timeout.
+  // Workstream N L10f-prep6u: take janus::Command (was shared_ptr<Marshallable>);
+  // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
   void SendAppendEntriesCb(
       siteid_t site_id,
       parid_t par_id,
@@ -330,7 +336,7 @@ friend class RaftProxy;
       uint64_t prevLogIndex,
       uint64_t prevLogTerm,
       uint64_t commitIndex,
-      shared_ptr<Marshallable> cmd,
+      const janus::Command& cmd,
       uint64_t cmdLogTerm,
       bool trigger_election_now,
       std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply);

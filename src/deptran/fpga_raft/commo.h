@@ -129,6 +129,8 @@ friend class FpgaRaftProxy;
 										 siteid_t site_id,
 										 uint64_t logIndex);
 	//ONLY FOR SIMULATION
+  // Workstream N L10f-prep6u: take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   void SendAppendEntriesAgain(siteid_t site_id,
 															parid_t par_id,
 															slotid_t slot_id,
@@ -138,7 +140,7 @@ friend class FpgaRaftProxy;
 															uint64_t prevLogIndex,
 															uint64_t prevLogTerm,
 															uint64_t commitIndex,
-															shared_ptr<Marshallable> cmd);
+															const janus::Command& cmd);
   // Workstream N Phase 4e-11: removed dead `BroadcastPrepare` and
   // `BroadcastAccept` declarations (both shared_ptr-returning and
   // callback-style overloads).  Neither had any implementation in
@@ -164,6 +166,8 @@ friend class FpgaRaftProxy;
   // Workstream N Phase 4e-11: removed deprecated callback-style
   // `void BroadcastVote2FPGA(... callback)` — body had `verify(0);`
   // and no callers.
+  // Workstream N L10f-prep6u: take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   shared_ptr<FpgaRaftAppendQuorumEvent>
   BroadcastAppendEntries(parid_t par_id,
                          siteid_t leader_site_id,
@@ -175,15 +179,17 @@ friend class FpgaRaftProxy;
                          uint64_t prevLogIndex,
                          uint64_t prevLogTerm,
                          uint64_t commitIndex,
-                         shared_ptr<Marshallable> cmd);
+                         const janus::Command& cmd);
   // Workstream N Phase 4e-11: removed deprecated callback-style
   // `void BroadcastAppendEntries(... callback)` — body had
   // `verify(0);` and no callers.
+  // Workstream N L10f-prep6u: take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
 											 const i64 dep_id,
                        const ballot_t ballot,
-                       const shared_ptr<Marshallable> cmd);
+                       const janus::Command& cmd);
 };
 
 } // namespace janus

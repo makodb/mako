@@ -3190,7 +3190,7 @@ void RaftServer::InitiateLeadershipTransfer() {
         prevLogIndex,
         prevLogTerm,
         commitIndex,
-        nullptr,
+        janus::Command{},
         0,
         trigger_election
       );

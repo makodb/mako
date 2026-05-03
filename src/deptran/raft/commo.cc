@@ -40,7 +40,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
                              uint64_t prevLogIndex,
                              uint64_t prevLogTerm,
                              uint64_t commitIndex,
-                             shared_ptr<Marshallable> cmd,
+                             const janus::Command& cmd,
                              uint64_t cmdLogTerm
                              ) {
   // Allocate response data with shared_ptr - callback captures this to keep memory valid
@@ -72,7 +72,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
       response->event->set(1);
     };
 
-    if (cmd == nullptr) {
+    if (!cmd.has_value()) {
       // send a heartbeat AppendEntries
       Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld", site_id, prevLogIndex);
       RaftProxy::RpcEmptyAppendEntriesRequest req{};
@@ -91,8 +91,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
       }
     } else {
       // send a regular AppendEntries
-      janus::Command md(cmd);
-      verify(md.inner() != nullptr);
+      verify(cmd.has_value());
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
       RaftProxy::RpcAppendEntriesRequest req{};
@@ -103,7 +102,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
       req.leaderPrevLogIndex = prevLogIndex;
       req.leaderPrevLogTerm = prevLogTerm;
       req.leaderCommitIndex = commitIndex;
-      req.cmd = md;
+      req.cmd = cmd;
       req.leaderNextLogTerm = cmdLogTerm;
       auto f = proxy->async_AppendEntries(req, fuattr);
       _RPC_COUNT();
@@ -127,7 +126,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
                              uint64_t prevLogIndex,
                              uint64_t prevLogTerm,
                              uint64_t commitIndex,
-                             shared_ptr<Marshallable> cmd,
+                             const janus::Command& cmd,
                              uint64_t cmdLogTerm,
                              bool trigger_election_now) {
   // verify(par_id == 0);
@@ -156,7 +155,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       fu->get_reply() >> res->followerTerm;
       fu->get_reply() >> res->followerLastLogIndex;
       fu->get_reply() >> res->followerAckType;
-      res->empty = (cmd == nullptr);
+      res->empty = !cmd.has_value();
       // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
       // only set res->done if it's not a lost RPC
       if (res->ok == false && res->followerTerm == 0 && res->followerLastLogIndex == 0) {
@@ -166,7 +165,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       }
     };
 
-    if (cmd == nullptr) {
+    if (!cmd.has_value()) {
       // send a heartbeat AppendEntries
       Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld trigger_election=%d",
                 site_id, prevLogIndex, trigger_election_now);
@@ -186,8 +185,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       }
     } else {
       // send a regular AppendEntries
-      janus::Command md(cmd);
-      verify(md.inner() != nullptr);
+      verify(cmd.has_value());
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
       RaftProxy::RpcAppendEntriesRequest req{};
@@ -198,7 +196,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       req.leaderPrevLogIndex = prevLogIndex;
       req.leaderPrevLogTerm = prevLogTerm;
       req.leaderCommitIndex = commitIndex;
-      req.cmd = md;
+      req.cmd = cmd;
       req.leaderNextLogTerm = cmdLogTerm;
       auto f = proxy->async_AppendEntries(req, fuattr);
       _RPC_COUNT();
@@ -742,7 +740,7 @@ void RaftCommo::SendAppendEntriesCb(
     uint64_t prevLogIndex,
     uint64_t prevLogTerm,
     uint64_t commitIndex,
-    shared_ptr<Marshallable> cmd,
+    const janus::Command& cmd,
     uint64_t cmdLogTerm,
     bool trigger_election_now,
     std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply) {
@@ -771,7 +769,7 @@ void RaftCommo::SendAppendEntriesCb(
       on_reply(follower_id, r);
     };
 
-    if (cmd == nullptr) {
+    if (!cmd.has_value()) {
       RaftProxy::RpcEmptyAppendEntriesRequest req{};
       req.slot = slot_id;
       req.ballot = ballot;
@@ -787,8 +785,7 @@ void RaftCommo::SendAppendEntriesCb(
         Future::safe_release(f.unwrap().raw_future());
       }
     } else {
-      janus::Command md(cmd);
-      verify(md.inner() != nullptr);
+      verify(cmd.has_value());
       RaftProxy::RpcAppendEntriesRequest req{};
       req.slot = slot_id;
       req.ballot = ballot;
@@ -797,7 +794,7 @@ void RaftCommo::SendAppendEntriesCb(
       req.leaderPrevLogIndex = prevLogIndex;
       req.leaderPrevLogTerm = prevLogTerm;
       req.leaderCommitIndex = commitIndex;
-      req.cmd = md;
+      req.cmd = cmd;
       req.leaderNextLogTerm = cmdLogTerm;
       auto f = proxy->async_AppendEntries(req, fuattr);
       _RPC_COUNT();

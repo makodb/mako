@@ -55,19 +55,17 @@ void* FpgaRaftServer::HeartbeatLoop(void* args) {
 		auto prevTerm = instance->prevTerm;
 		auto ballot = instance->ballot;
 		auto slot = instance->slot_id;
-		// L10f-prep2: instance->log_ is now Command; unwrap to legacy
-		// shared_ptr<Marshallable> for the local cmd binding (the
-		// dead-or-near-dead `cmd` is unused below — see the
-		// commented-out app_next_ call at line ~441).
-		shared_ptr<Marshallable> cmd = instance->log_.inner_marshallable();
-		
-		
+		// L10f-prep6u: SendAppendEntriesAgain now takes const Command&;
+		// pass instance->log_ directly.
+		const auto& cmd = instance->log_;
+
+
 		parid_t partition_id = hb_loop_args->sch->partition_id_;
 		hb_loop_args->commo->BroadcastHeartbeat(partition_id, prevLogIndex);
 
 		auto matcheds = hb_loop_args->commo->matchedIndex;
 		for (auto it = matcheds.begin(); it != matcheds.end(); it++) {
-			if (prevLogIndex > it->second + 10000 && cmd) {
+			if (prevLogIndex > it->second + 10000 && cmd.has_value()) {
 				Log_info("leader_id: %d vs follower_id for %d: %d", prevLogIndex, it->first, it->second);
 				//hb_loop_args->commo->SendHeartbeat(partition_id, it->first, prevLogIndex);
 				hb_loop_args->commo->SendAppendEntriesAgain(it->first,
