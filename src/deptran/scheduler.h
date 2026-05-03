@@ -142,9 +142,12 @@ class Frequency {
   }
 };
 
+// Workstream N L10f-prep6f (2026-05-03): candidates_ migrated to
+// `unordered_map<uint64_t, janus::Command>`.  External API (push_back,
+// cmd_to_recover) keeps the legacy `shared_ptr<Marshallable>` shape.
 class RevoveryCandidates {
   // <cmd_id, cmd>
-  unordered_map<uint64_t, shared_ptr<Marshallable>> candidates_;
+  unordered_map<uint64_t, janus::Command> candidates_;
   unordered_map<uint64_t, bool> appeared_;
   int total_write_ = 0;
   uint64_t to_recover_id_ = -1;

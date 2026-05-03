@@ -450,6 +450,8 @@ void TxLogServer::RuleWitnessGC(const shared_ptr<Marshallable>& cmd) {
 
 
 void RevoveryCandidates::push_back(uint64_t cmd_id, shared_ptr<Marshallable> cmd, bool is_write) {
+  // L10f-prep6f: candidates_ holds Command;
+  // operator=(shared_ptr<Marshallable>) handles the conversion.
   candidates_[cmd_id] = cmd;
   if (total_write_ == 0 && is_write) {
     verify(to_recover_id_ == (uint64_t)(-1));
@@ -465,7 +467,9 @@ void RevoveryCandidates::push_back(uint64_t cmd_id, shared_ptr<Marshallable> cmd
 bool RevoveryCandidates::remove(uint64_t cmd_id) {
   auto it = candidates_.find(cmd_id);
   if (it != candidates_.end()) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(it->second);
+    // L10f-prep6f: it->second is Command; SimpleRWCommand still
+    // takes shared_ptr<Marshallable>.
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(it->second.inner_marshallable());
     if (total_write_ == 1 && parsed_cmd.IsWrite()) {
       to_recover_id_ = (uint64_t)(-1);
     }
@@ -494,10 +498,11 @@ bool RevoveryCandidates::has_cmd_to_recover() const {
 }
 
 shared_ptr<Marshallable> RevoveryCandidates::cmd_to_recover() {
-  
+  // L10f-prep6f: return the legacy shared_ptr<Marshallable> shape via
+  // .inner_marshallable() unwrap.
   if (to_recover_id_ != (uint64_t)(-1)) {
     if (candidates_.find(to_recover_id_) != candidates_.end()) {
-      return candidates_[to_recover_id_];
+      return candidates_[to_recover_id_].inner_marshallable();
     } else {
       return nullptr;
     }
