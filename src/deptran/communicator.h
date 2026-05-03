@@ -192,7 +192,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
     key_states_.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); i++) {
       key_index_[keys[i]] = i;
-      key_states_.push_back(KeyState{keys[i], {}, 0, nullptr});
+      key_states_.push_back(KeyState{keys[i], {}, 0, janus::Command{}});
     }
     int f = (n_total_ - 1) / 2;
     majority_threshold_ = (f + 2 + 1) / 2;
@@ -217,6 +217,9 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
           int count = ++state.cmd_counts_[cmd_id];
           if (count > state.max_count) {
             state.max_count = count;
+            // L10f-prep6e: state.max_cmd is Command;
+            // Command::operator=(shared_ptr<Marshallable>) handles
+            // the conversion from `cmd`.
             state.max_cmd = cmd;
           }
         }
@@ -235,8 +238,10 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   std::vector<std::pair<key_t, shared_ptr<Marshallable>>> GetRecoveredCommands() const {
     std::vector<std::pair<key_t, shared_ptr<Marshallable>>> result;
     for (const auto& state : key_states_) {
-      if (state.max_cmd && state.max_count >= majority_threshold_) {
-        result.emplace_back(state.key, state.max_cmd);
+      // L10f-prep6e: state.max_cmd is Command; unwrap for the legacy
+      // shared_ptr<Marshallable> result shape.
+      if (state.max_cmd.has_value() && state.max_count >= majority_threshold_) {
+        result.emplace_back(state.key, state.max_cmd.inner_marshallable());
       }
     }
     return result;
@@ -248,11 +253,12 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   epoch_t max_oepoch_ = -1;
 
  private:
+  // Workstream N L10f-prep6e: max_cmd migrated to janus::Command.
   struct KeyState {
     key_t key;
     std::unordered_map<uint64_t, int> cmd_counts_;
     int max_count = 0;
-    shared_ptr<Marshallable> max_cmd = nullptr;
+    janus::Command max_cmd{};
   };
 
   std::vector<key_t> ordered_keys_;
