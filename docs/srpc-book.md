@@ -1280,12 +1280,12 @@ the bytes exactly as `Marshal::operator>>` would (Phase 1's
 byte-for-byte commitment). Use these adapters when integrating the
 new archive layer with the existing TCP TX/RX path.
 
-#### Marshallable ↔ Serializable bridge adapters (transitional)
+#### Marshallable ↔ Serializable bridge adapter (transitional)
 
-While Phase 4 migrates per-command types from `Marshallable` to
-`Serializable`, both interfaces coexist. The bridge in
-`marshal_serializable_bridge.hpp` lets a value satisfying one
-interface be presented as the other:
+While the migration to `Serializable` is incomplete (the Marshallable
+base survives until L10f drops it), the bridge in
+`marshal_serializable_bridge.hpp` lets a Serializable type flow
+through APIs that still take `shared_ptr<Marshallable>`:
 
 ```cpp srpc-no-compile
 // Wrap a SerializableProxy as a Marshallable (full bidirectional).
@@ -1295,18 +1295,6 @@ std::shared_ptr<rrr::Marshallable> m =
 // `m` can now go anywhere a Marshallable does — to_marshal /
 // from_marshal route through Phase 3a's MarshalSink / MarshalSource
 // bridges.
-
-// Wrap a Marshallable as a SerializableProxy (SAVE-only).
-auto serial = rrr::as_serializable(my_marshallable);
-serial->save(writer);  // OK
-// serial->load(reader); -- aborts; the streaming Marshal model
-//   doesn't invert on demand. Migrate the type to Serializable in
-//   Phase 4 instead.
-
-// Save-only view of a MarshallDeputy's inner Marshallable.
-rrr::MarshallDeputy md{...};
-auto view = rrr::as_serializable(md);
-view->save(writer);  // bytes match md.inner()->to_marshal(...)
 
 // Register a Serializable type T (no Marshallable inheritance) so
 // MarshallDeputy::operator>> can decode an instance of it from the
@@ -1319,6 +1307,12 @@ static int _reg = rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
 // is Serializable.
 MyCommand* p = rrr::serializable_cast<MyCommand>(md);
 ```
+
+The reverse direction (Marshallable → Serializable view) was retired
+in L10d-prep along with the `MarshallDeputy::serializable()` lazy
+cache it backed; production now uses `janus::Command`
+(`SerializableEnvelope<MakoCommands>`) which has its own proxy-shaped
+save path with no adaptation layer.
 
 #### `rpcgen --archive` emission (default ON)
 
@@ -1345,20 +1339,12 @@ Status: Phase 1 (primitives, containers, FdSink/FdSource), Phase 2
 RTTI on `SerializableFacade`), Phase 3e (rpcgen default flipped to
 `--archive`; archive ops added for `TxReply` and `ParentEdge<RccTx>`),
 Phase 3f-1 (`MarshallDeputy::sp_data_` elimination), Phase 3f-prep
-(`MarshallDeputy` archive operators), Phase 3f-2
-(`MarshallDeputy` parallel `SerializableProxy` storage via
-`shared_ptr<SerializableProxy>` field), Phase 3f-3 (lazy cache
-semantics — field starts null and is populated on first
-`serializable()` accessor call), Phase 3f-4 (wired the bridge
-`operator<<(BinaryWriteArchive&, MarshallDeputy&)` through
-`md.serializable()` — first production caller of the lazy accessor;
-per-call alloc savings on the hot path), Phase 3f-5
-(`serializable()` short-circuits through
-`SerializableMarshallableAdapter` — when the deputy was entered via
-`as_marshallable(proxy)`, alias the SMA's inner proxy directly via
-`shared_ptr` aliasing, avoiding the stacked `M→S→M→S` adapter
-wrapping; the production path skips one heap allocation and one
-temp-Marshal byte copy per first proxy access), Phase 4a-prep
+(`MarshallDeputy` archive operators).  Phase 3f-2/3/4/5 (the lazy
+`MarshallDeputy::serializable()` cache + its bridge
+`operator<<(BinaryWriteArchive&, MarshallDeputy&)` fast path) was
+retired by Workstream N L10d-prep — once production switched to
+`janus::Command` (`SerializableEnvelope<MakoCommands>`, which drives
+the proxy directly on save) the cache had no caller left.  Phase 4a-prep
 (`marshallable_cast` / `wrap_typed_marshallable` overloads for
 Serializable types — call-site transparency for migrations),
 Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
@@ -1437,29 +1423,25 @@ overloads (Phase 3e-2 drops those), (b) the legacy
 `Marshallable::to_marshal` virtual override pattern in
 non-Serializable types (Phase 4 + Phase 5 territory), and (c) the
 intentional byte-format-parity tests in
-`rpc_marshal_archive_test.cc`.  Phase 3d is complete. Phase 3f-2
-landed 2026-04-30 (added `std::shared_ptr<SerializableProxy> serializable_`
-storage to MarshallDeputy; stored as shared_ptr to keep the deputy
-copyable for the ~25 `req.cmd = md;` call sites across commo.cc
-files; explicit copy/move special-member defaults to counteract the
-implicit-move suppression caused by the user-declared destructor).
-Phase 3f-3 also landed 2026-04-30 — flipped the population from
-eager (inside `set_marshallable`) to a lazy cache: the field is
-`mutable` and is populated on first call to a public
-`SerializableProxy& serializable() const` accessor that wraps
-`inner_sp_data_` via `as_serializable(...)` and caches the result.
-Lazy semantics extend to the wire-decode path; the receive side
-never touches the proxy view. Wire format unchanged. The remaining
-Phase 5 deletion (`Marshallable::to_marshal`/`from_marshal`
-virtuals) is **blocked** — `SerializableMarshallableAdapter` (the
-production bridge in `marshal_serializable_bridge.hpp` that lets a
-Serializable type flow through `MarshallDeputy::operator<<` /
-`operator>>`) overrides these virtuals, and the legacy
-`operator<<(Marshal&, MarshallDeputy&)` dispatches
-`rhs.inner()->to_marshal(m)` through the virtual table; closing
-the loop would require an architectural change (route every wire
-encode through `serializable()->save(...)`, or migrate the bridge
-class away from `Marshallable` inheritance). See
+`rpc_marshal_archive_test.cc`.  Phase 3d is complete.
+
+Workstream N L10c retired the `MarshallDeputy` envelope from
+production polymorphic command fields: graphs migrated to
+`AnyMessage` (L10c-graphs), and the closed-set `[v32 kind][payload]`
+envelope is now `janus::Command`
+(`SerializableEnvelope<MakoCommands>`, L10c-cmds-prep / restructure /
+prep2 / fields / sites).  L10d-prep then deleted the lazy
+`MarshallDeputy::serializable()` cache + the
+`MarshallableSerializableAdapter` reverse-direction bridge it backed,
+trimming ~622 LOC of dead transitional machinery.
+
+The remaining `Marshallable::to_marshal` / `from_marshal` virtual
+deletion (and `MarshallDeputy` itself) is **L10f**, still pending.
+`MarshallDeputy` lingers as the in-memory shape that ~30 internal
+scheduler / server / coord APIs taking `shared_ptr<Marshallable>`
+still consume — and `Command::inner_marshallable()` returns the
+same `shared_ptr<Marshallable>` shape — so closing the loop needs
+those internal APIs to move off `shared_ptr<Marshallable>` first.  See
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
 for the full design.
 

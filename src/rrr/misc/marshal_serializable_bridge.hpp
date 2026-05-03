@@ -2,14 +2,17 @@
 
 // Workstream N Phase 3b — Marshallable ↔ Serializable adapters.
 //
-// During Phase 4 we migrate per-command-type implementations from the
+// During Phase 4 we migrated per-command-type implementations from the
 // old `Marshallable` (virtual to_marshal/from_marshal) interface to
 // the new `Serializable` (save/load/kind via SerializableProxy)
-// interface. While the migration is in flight, `MarshallDeputy`
-// callers must keep working — some hold pointers to Marshallable,
-// others want to hand bytes to a SerializableProxy-consuming API.
+// interface.  Production payload types now implement the Serializable
+// triplet; the Marshallable base survives only as the in-memory shape
+// that `MarshallDeputy::inner()` and the ~30 internal scheduler/server
+// APIs taking `shared_ptr<Marshallable>` still consume — closing that
+// gap is the L10f / L10g milestone.
 //
-// This header provides two adapters and a couple of free helpers:
+// This header provides one adapter and a couple of free helpers that
+// bridge Serializable types into the legacy Marshallable shape:
 //
 //   SerializableMarshallableAdapter  Wraps a SerializableProxy and
 //                                    presents it as a Marshallable
@@ -17,27 +20,18 @@
 //                                    Uses the Phase 3a Marshal↔Archive
 //                                    bridges; both directions work.
 //
-//   MarshallableSerializableAdapter  Wraps a shared_ptr<Marshallable>
-//                                    and presents it as a Serializable.
-//                                    SAVE works (drains via a temp
-//                                    Marshal); LOAD aborts (the
-//                                    Marshal-streaming model can't be
-//                                    inverted on demand). Phase 4
-//                                    work flips command types to be
-//                                    Serializable directly, so the
-//                                    load direction here doesn't
-//                                    need to be supported.
-//
-// Free helpers:
-//   as_serializable(shared_ptr<Marshallable>) -> SerializableProxy
-//       (save-only; aborts on load)
+// Free helper:
 //   as_marshallable(SerializableProxy) -> shared_ptr<Marshallable>
 //       (full bidirectional via 3a bridges)
 //
-// Workstream N Phase 5b-14: dropped the deputy-overload
-// `as_serializable(const MarshallDeputy&)`. Use `md.serializable()`
-// (the Phase 3f-3 lazy cached accessor) — equivalent semantics, plus
-// caching across repeat reads.
+// Workstream N L10d-prep (2026-05-03): dropped the reverse-direction
+// machinery — `MarshallableSerializableAdapter`,
+// `as_serializable(shared_ptr<Marshallable>)`, and the
+// `MarshallDeputy::serializable()` lazy accessor that was its only
+// production caller.  Production now uses `janus::Command`
+// (`SerializableEnvelope<MakoCommands>`) which has its own
+// proxy-shaped save path that drives the proxy directly with no
+// `Marshallable→Serializable` adaptation layer needed.
 
 #include <memory>
 #include <utility>

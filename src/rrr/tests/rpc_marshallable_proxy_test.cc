@@ -45,6 +45,13 @@ static_assert(!std::is_base_of_v<Marshallable, janus::SyncNoOpRequest>);
 static_assert(!std::is_base_of_v<Marshallable, janus::LogEntry>);
 static_assert(!std::is_base_of_v<Marshallable, janus::BulkPaxosCmd>);
 
+// TestMarshallable: a generic Marshallable test fixture used to
+// exercise the legacy `MarshallDeputy` round-trip + the
+// `marshallable_cast<T>(Marshallable&|*|shared_ptr<>)` reference/
+// pointer overloads.  Stays a Marshallable subclass because those
+// overloads (declared in `marshal.hpp`) take `Marshallable&` /
+// `Marshallable*` / `shared_ptr<Marshallable>`, and exercising them
+// requires a Marshallable subclass on the test side.
 class TestMarshallable : public Marshallable {
  public:
   int32_t value = 0;
@@ -61,9 +68,6 @@ class TestMarshallable : public Marshallable {
     m >> kind_ >> value;
     return m;
   }
-  // Workstream N Phase 5b-6: removed unused `entity_size` /
-  // `write_to_fd` overrides. The virtual base methods on
-  // Marshallable went away in the same commit.
 };
 
 void EnsureTestMarshallableInitializer() {

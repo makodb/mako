@@ -327,15 +327,9 @@ class MarshallDeputy {
     // @unsafe - Stores a shared_ptr<Marshallable> as the deputy's
     // payload. Workstream N Phase 5b-9: inlined the previous
     // make_initializer_state / set_marshallable_state two-step;
-    // there's no separate state struct anymore.
-    //
-    // Workstream N Phase 3f-2: body moved to marshal.cpp so the
-    // bridge helper `as_serializable(...)` (declared in
-    // marshal_serializable_bridge.hpp, which depends on this header)
-    // is reachable when populating `serializable_`. The header
-    // dependency graph is acyclic: marshal.hpp → marshal_archive.hpp;
-    // marshal_serializable_bridge.hpp → marshal.hpp, and marshal.cpp
-    // pulls in `../rrr.hpp` which exports the bridge.
+    // there's no separate state struct anymore.  Body lives in
+    // marshal.cpp; trivial post-L10d-prep (the lazy `serializable_`
+    // cache populate it used to do is gone with the cache itself).
     void set_marshallable(std::shared_ptr<rrr::Marshallable> m);
 
     // @unsafe - Template delegates to non-borrow-checked set_marshallable.
