@@ -73,7 +73,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                        slot,
                        ballot,
                        dep,
-                       const_cast<janus::Command&>(cmd).inner(),
+                       cmd,
                        dep_id,
                        max_ballot,
                        ret_dep,
@@ -93,7 +93,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                    slot,
                    ballot,
                    dep,
-                   const_cast<janus::Command&>(cmd).inner(),
+                   cmd,
                    dep_id,
                    max_ballot,
                    [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -105,7 +105,7 @@ void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const janus::Command& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_);
-  sched_->OnCommit(is_pilot, slot, dep, const_cast<janus::Command&>(cmd).inner());
+  sched_->OnCommit(is_pilot, slot, dep, cmd);
   defer.reply();
 }
 

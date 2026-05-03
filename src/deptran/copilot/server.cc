@@ -262,11 +262,14 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
                                  const uint64_t& slot,
                                  const ballot_t& ballot,
                                  const uint64_t& dep,
-                                 shared_ptr<Marshallable>& cmd,
+                                 const janus::Command& cmd_env,
                                  const struct DepId& dep_id,
                                  ballot_t* max_ballot,
                                  uint64_t* ret_dep,
                                  rusty::Function<void()> cb) {
+  // L10f-prep6r: take Command at boundary; downstream uses
+  // shared_ptr<Marshallable> via .inner_marshallable() once.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   // TODO: deal with ballot
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("server %d [FAST_ACCEPT] %s : %lu -> %lu", id_,
@@ -364,10 +367,12 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
                              const uint64_t& slot,
                              const ballot_t& ballot,
                              const uint64_t& dep,
-                             shared_ptr<Marshallable>& cmd,
+                             const janus::Command& cmd_env,
                              const struct DepId& dep_id,
                              ballot_t* max_ballot,
                              rusty::Function<void()> cb) {
+  // L10f-prep6r: take Command at boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("server %d [ACCEPT     ] %s : %lu -> %lu", id_, toString(is_pilot), slot, dep);
 
@@ -405,7 +410,9 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
 void CopilotServer::OnCommit(const uint8_t& is_pilot,
                              const uint64_t& slot,
                              const uint64_t& dep,
-                             shared_ptr<Marshallable>& cmd) {
+                             const janus::Command& cmd_env) {
+  // L10f-prep6r: take Command at boundary.
+  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnCommit is_pilot=" + std::to_string(is_pilot) +

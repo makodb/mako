@@ -113,11 +113,14 @@ class CopilotServer : public TxLogServer {
                  status_t* status,
                  rusty::Function<void()> cb);
 
+  // Workstream N L10f-prep6r (2026-05-03): handlers take
+  // const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
   void OnFastAccept(const uint8_t& is_pilot,
                     const uint64_t& slot,
                     const ballot_t& ballot,
                     const uint64_t& dep,
-                    shared_ptr<Marshallable>& cmd,
+                    const janus::Command& cmd,
                     const struct DepId& dep_id,
                     ballot_t* max_ballot,
                     uint64_t* ret_dep,
@@ -127,7 +130,7 @@ class CopilotServer : public TxLogServer {
                 const uint64_t& slot,
                 const ballot_t& ballot,
                 const uint64_t& dep,
-                shared_ptr<Marshallable>& cmd,
+                const janus::Command& cmd,
                 const struct DepId& dep_id,
                 ballot_t* max_ballot,
                 rusty::Function<void()> cb);
@@ -135,7 +138,7 @@ class CopilotServer : public TxLogServer {
   void OnCommit(const uint8_t& is_pilot,
                 const uint64_t& slot,
                 const uint64_t& dep,
-                shared_ptr<Marshallable>& cmd);
+                const janus::Command& cmd);
   
   void Print(std::string log);
   void Print();
