@@ -64,7 +64,7 @@ class MultiPaxosCommo : public Communicator {
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
                         shared_ptr<Marshallable> cmd,
-                        const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb) override;
+                        const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb) override;
 
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>

@@ -710,8 +710,8 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
                                    bool_t* ok,
                                    epoch_t* reply_jepoch,
                                    epoch_t* reply_oepoch,
-                                   MarshallDeputy* reply_old_view,
-                                   MarshallDeputy* reply_new_view,
+                                   janus::Command* reply_old_view,
+                                   janus::Command* reply_new_view,
                                    shared_ptr<KeyCmdBatchData>& batch) {
   TxLogServer::OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch,
                                 reply_old_view, reply_new_view, batch);
@@ -984,7 +984,7 @@ void RaftServer::Setup() {
       replicated_db_ = std::make_shared<ReplicatedDB>(this, db_path);
 
       // Register apply callback so committed Raft entries are applied to RocksDB
-      RegLearnerAction([this](int slot, MarshallDeputy md) -> int {
+      RegLearnerAction([this](int slot, janus::Command md) -> int {
         if (replicated_db_) {
           replicated_db_->ApplyEntry(slot, md.inner());
         }

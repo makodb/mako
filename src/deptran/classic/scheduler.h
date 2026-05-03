@@ -69,9 +69,9 @@ class SchedulerClassic: public TxLogServer {
 
   virtual void DoAbort(Tx& tx_box);
 
-  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // L6-A2 (2026-05-01): take janus::Command (matches RegLearnerAction
   // signature in deptran/scheduler.h).
-  virtual int Next(int, MarshallDeputy) override;
+  virtual int Next(int, janus::Command) override;
 
   virtual bool IsLeader() override { return rep_sched_->IsLeader(); }
 

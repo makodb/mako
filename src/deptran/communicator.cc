@@ -521,7 +521,7 @@ void Communicator::BroadcastDispatch(
         int32_t ret;
         TxnOutput outputs;
         uint64_t coro_id = 0;
-        MarshallDeputy view_md;
+        janus::Command view_md;
         fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
         
         // Handle WRONG_LEADER response with view data
@@ -560,7 +560,7 @@ void Communicator::BroadcastDispatch(
   // Record Time
   sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
 
-  MarshallDeputy md(sp_vpd);
+  janus::Command md(sp_vpd);
 
   DepId di;
   di.str = "dep";
@@ -637,7 +637,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
           int32_t ret;
           TxnOutput outputs;
           uint64_t coro_id = 0;
-          MarshallDeputy view_md;
+          janus::Command view_md;
 	  			double cpu = 0.0;
 	  			double net = 0.0;
           fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
@@ -695,7 +695,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
     auto proxy = pair_leader_proxy.second;
     shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
     sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-    MarshallDeputy md(sp_vpd); // ????
+    janus::Command md(sp_vpd); // ????
     CoordinatorClassic* classic_coo = (CoordinatorClassic*) coo;
     //classic_coo->debug_cnt++;
 
@@ -731,7 +731,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
                 int32_t ret;
                 TxnOutput outputs;
                 uint64_t coro_id = 0;
-                MarshallDeputy view_md;
+                janus::Command view_md;
                 fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
                 //e->add_dep(coo->cli_id_, src_coroid, follower_id, coro_id);
                 //coo->ids_.push_back(follower_id);
@@ -923,7 +923,7 @@ Communicator::SendCommit(Coordinator* coo,
 			bool_t slow;
       uint64_t coro_id = 0;
 			Profiling profile;
-      MarshallDeputy view_md;
+      janus::Command view_md;
       fu->get_reply() >> res >> slow >> coro_id >> profile >> view_md;
 			this->slow = slow;
 			// Workstream N Phase 4e-17: removed `cpu = profile.cpu_util;`
@@ -1046,7 +1046,7 @@ Communicator::SendAbort(Coordinator* coo,
       bool_t slow;
       uint64_t coro_id = 0;
       Profiling profile;
-      MarshallDeputy view_md;
+      janus::Command view_md;
       fu->get_reply() >> res >> slow >> coro_id >> profile >> view_md;
       this->slow = slow;
 
@@ -1267,7 +1267,7 @@ Communicator::SendMessage(siteid_t site_id,
 
 
 void Communicator::AddMessageHandler(
-    function<bool(const MarshallDeputy&, MarshallDeputy&)> f) {
+    function<bool(const janus::Command&, janus::Command&)> f) {
    msg_marshall_handlers_.push_back(f);
 }
 
@@ -1446,7 +1446,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
 
-  MarshallDeputy old_view_deputy, new_view_deputy;
+  janus::Command old_view_deputy, new_view_deputy;
   old_view_deputy.set_marshallable(std::make_shared<ViewData>(old_view));
   new_view_deputy.set_marshallable(std::make_shared<ViewData>(new_view));
   
@@ -1490,11 +1490,11 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
     //     // Local call - call OnJetpackPullIdSet directly
     //     bool_t ok;
     //     epoch_t reply_jepoch, reply_oepoch;
-    //     MarshallDeputy reply_old_view, reply_new_view;
+    //     janus::Command reply_old_view, reply_new_view;
     //     auto id_set = std::make_shared<VecRecData>();
     //     dtxn_sched_->OnJetpackPullIdSet(jepoch, oepoch, &ok, &reply_jepoch, &reply_oepoch, 
     //                                    &reply_old_view, &reply_new_view, id_set);
-    //     MarshallDeputy id_set_deputy;
+    //     janus::Command id_set_deputy;
     //     id_set_deputy.set_marshallable(id_set);
     //     e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set_deputy);
     //     continue;
@@ -1508,7 +1508,7 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view, id_set;
+      janus::Command reply_old_view, reply_new_view, id_set;
       fu->get_reply() >> ok >> reply_jepoch >> reply_oepoch >> reply_old_view >> reply_new_view >> id_set;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set);
     };
@@ -1545,7 +1545,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
   vector<rusty::Arc<Future>> fus;
   auto key_batch = std::make_shared<VecRecData>();
   key_batch->key_data_ = std::make_shared<vector<key_t>>(keys.begin(), keys.end());
-  MarshallDeputy key_batch_md;
+  janus::Command key_batch_md;
   key_batch_md.set_marshallable(key_batch);
 	WAN_WAIT;
   for (auto& p : proxies) {
@@ -1554,11 +1554,11 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
     //     // Local call - call OnJetpackPullCmd directly
     //     bool_t ok;
     //     epoch_t reply_jepoch, reply_oepoch;
-    //     MarshallDeputy reply_old_view, reply_new_view;
+    //     janus::Command reply_old_view, reply_new_view;
     //     auto cmd = std::make_shared<TpcCommitCommand>();
     //     dtxn_sched_->OnJetpackPullCmd(jepoch, oepoch, key, &ok, &reply_jepoch, &reply_oepoch, 
     //                                  &reply_old_view, &reply_new_view, cmd);
-    //     MarshallDeputy cmd_deputy;
+    //     janus::Command cmd_deputy;
     //     cmd_deputy.set_marshallable(cmd);
     //     e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd_deputy);
     //     continue;
@@ -1577,7 +1577,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view, cmd;
+      janus::Command reply_old_view, reply_new_view, cmd;
       fu->get_reply() >> ok >> reply_jepoch >> reply_oepoch >> reply_old_view >> reply_new_view >> cmd;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
     };
@@ -1617,7 +1617,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
   for (const auto& entry : cmds) {
     batch_data->AddEntry(entry.first, entry.second);
   }
-  MarshallDeputy cmd_deputy;
+  janus::Command cmd_deputy;
   cmd_deputy.set_marshallable(batch_data);
   
   // Log_info("[JETPACK-DEBUG] Broadcasting RecordCmd to %zu sites, need %d votes", proxies.size(), n/2+1);
@@ -1671,7 +1671,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
     //     // Local call - call OnJetpackPrepare directly
     //     bool_t ok;
     //     epoch_t reply_jepoch, reply_oepoch;
-    //     MarshallDeputy reply_old_view, reply_new_view;
+    //     janus::Command reply_old_view, reply_new_view;
     //     ballot_t accepted_ballot;
     //     int replied_sid, replied_set_size;
     //     dtxn_sched_->OnJetpackPrepare(jepoch, oepoch, max_seen_ballot, &ok, &reply_jepoch, &reply_oepoch,
@@ -1688,7 +1688,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view;
+      janus::Command reply_old_view, reply_new_view;
       ballot_t reply_max_seen_ballot;
       ballot_t accepted_ballot;
       int replied_sid, replied_set_size;
@@ -1726,7 +1726,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view;
+      janus::Command reply_old_view, reply_new_view;
       ballot_t reply_max_seen_ballot;
       fu->get_reply() >> ok;
       fu->get_reply() >> reply_jepoch;
@@ -1795,7 +1795,7 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view, cmd;
+      janus::Command reply_old_view, reply_new_view, cmd;
       fu->get_reply() >> ok;
       fu->get_reply() >> reply_jepoch;
       fu->get_reply() >> reply_oepoch;

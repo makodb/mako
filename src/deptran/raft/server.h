@@ -460,8 +460,8 @@ class RaftServer : public TxLogServer {
                         bool_t* ok,
                         epoch_t* reply_jepoch,
                         epoch_t* reply_oepoch,
-                        MarshallDeputy* reply_old_view,
-                        MarshallDeputy* reply_new_view,
+                        janus::Command* reply_old_view,
+                        janus::Command* reply_new_view,
                         shared_ptr<KeyCmdBatchData>& batch) override;
 
   // @unsafe - const char* parameter type requires unsafe context

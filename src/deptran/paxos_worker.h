@@ -156,14 +156,14 @@ class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
 //   int32_t sync_data.size() | N x MarshallDeputy bytes
 //   int32_t missing_slots.size()
 //   per missing_slots row: int32_t inner.size() | M x slotid_t
-// The nested `vector<shared_ptr<MarshallDeputy>>` field uses the
+// The nested `vector<shared_ptr<janus::Command>>` field uses the
 // Phase 3f-prep `operator<<` / `operator>>` overloads for
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
 // layout as the legacy `m << *sync_data[i]` / `m >> *x`.
 class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
                                                  MakoCommands> {
   public:
-    vector<shared_ptr<MarshallDeputy>> sync_data;
+    vector<shared_ptr<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
     SyncLogResponse() = default;
 
@@ -185,7 +185,7 @@ class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
       int32_t sz;
       ar >> sz;
       for (int i = 0; i < sz; i++) {
-        auto x = std::make_shared<MarshallDeputy>();
+        auto x = std::make_shared<janus::Command>();
         ar >> *x;
         sync_data.push_back(std::move(x));
       }
@@ -281,7 +281,7 @@ public:
   int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
-  vector<shared_ptr<MarshallDeputy>> cmds{};
+  vector<shared_ptr<janus::Command>> cmds{};
 
   BulkPaxosCmd() = default;
   ~BulkPaxosCmd() {
@@ -324,7 +324,7 @@ public:
       }
       ar >> szc;
       for (int i = 0; i < szc; i++) {
-          auto sp_md = std::make_shared<MarshallDeputy>();
+          auto sp_md = std::make_shared<janus::Command>();
           ar >> *sp_md;
           cmds.push_back(std::move(sp_md));
       }
@@ -408,7 +408,7 @@ public:
   void ShutDown();
   // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
   // signature in deptran/scheduler.h).
-  int Next(int, MarshallDeputy);
+  int Next(int, janus::Command);
   void WaitForSubmit();
   void WaitForNoops();
   void IncSubmit();

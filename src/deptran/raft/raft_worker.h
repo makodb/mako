@@ -210,10 +210,10 @@ public:
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy
-  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // L6-A2 (2026-05-01): take janus::Command (matches RegLearnerAction
   // signature in deptran/scheduler.h).  Body unwraps via `md.inner()` /
   // `marshallable_cast<T>(md)` overload as needed.
-  int Next(int slot, MarshallDeputy md);
+  int Next(int slot, janus::Command md);
 
   // @safe
   rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {

@@ -585,7 +585,7 @@ void RaftWorker::register_apply_callback_par_id_return(
 }
 
 // @unsafe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
-int RaftWorker::Next(int slot_id, MarshallDeputy md) {
+int RaftWorker::Next(int slot_id, janus::Command md) {
   int status = -1;
 
   // @unsafe

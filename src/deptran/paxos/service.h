@@ -19,7 +19,7 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
  public:
   PaxosServer* sched_;
   MultiPaxosServiceImpl(TxLogServer* sched);
-  // Workstream N Phase 4e-38: removed `Forward(MarshallDeputy, ...)`
+  // Workstream N Phase 4e-38: removed `Forward(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below); body was empty and the matching `MultiPaxos::Forward`
   // RPC was dropped from rcc_rpc.rpc.
@@ -33,51 +33,51 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   void Accept(const uint64_t& slot,
 	      const uint64_t& time,
               const ballot_t& ballot,
-              const MarshallDeputy& cmd,
+              const janus::Command& cmd,
               ballot_t* max_ballot,
               uint64_t* coro_id,
               rrr::DeferredReply defer);
 
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
-              const MarshallDeputy& cmd,
+              const janus::Command& cmd,
               rrr::DeferredReply defer);
 
-  void BulkDecide(const MarshallDeputy& cmd,
+  void BulkDecide(const janus::Command& cmd,
                   i32* ballot,
                   i32* valid,
                   rrr::DeferredReply defer);
 
-  void BulkAccept(const MarshallDeputy& cmd,
+  void BulkAccept(const janus::Command& cmd,
                   i32* ballot,
                   i32* valid,
                   rrr::DeferredReply defer);
 
-  // Workstream N Phase 4e-26: removed `BulkPrepare(MarshallDeputy, ...)`
-  // and `Heartbeat(MarshallDeputy, ...)` declarations — paired with
+  // Workstream N Phase 4e-26: removed `BulkPrepare(janus::Command, ...)`
+  // and `Heartbeat(janus::Command, ...)` declarations — paired with
   // their typed-rpc overrides (also removed below); both became dead
   // when their senders went away in Phase 4e-25.
 
-  // Workstream N Phase 4e-27: removed `BulkPrepare2(MarshallDeputy, ...)`
+  // Workstream N Phase 4e-27: removed `BulkPrepare2(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below).
 
-  void SyncLog(const MarshallDeputy& md_cmd,
+  void SyncLog(const janus::Command& md_cmd,
                      i32* ballot,
                      i32* valid,
-                     MarshallDeputy* ret,
+                     janus::Command* ret,
                      rrr::DeferredReply defer);
 
-  void SyncCommit(const MarshallDeputy& md_cmd,
+  void SyncCommit(const janus::Command& md_cmd,
                      i32* ballot,
                      i32* valid,
                      rrr::DeferredReply defer);
 
-  // Workstream N Phase 4e-26: removed `SyncNoOps(MarshallDeputy, ...)`
+  // Workstream N Phase 4e-26: removed `SyncNoOps(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below).
 
-  void ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer);
+  void ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const janus::Command& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer);
 
 
   // BEGIN typed-rpc-decls (MultiPaxosServiceImpl)

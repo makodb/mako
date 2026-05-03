@@ -52,7 +52,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   //     fu->get_reply() >> b;
   //     e->FeedResponse(b==ballot);
   //   };
-  //   MarshallDeputy md(cmd);
+  //   janus::Command md(cmd);
   //   auto f = proxy->async_Accept(slot_id, ballot, md, fuattr);
   //   Future::safe_release(f);
   // }
@@ -104,7 +104,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         cb(slot, ballot);
         //e->FeedResponse(1);
 	      };
-	     MarshallDeputy md(cmd);
+	     janus::Command md(cmd);
 	     //Log_info("ForwardToLearner: SENDING to learner site_id=%d, slot=%lu", p.first, slot);
        MultiPaxosProxy::RpcForwardToLearnerServerRequest req;
        req.par_id = par_id;
@@ -118,7 +118,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
     // auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     // if (Config::GetConfig()->SiteById(p.first).role!=2) continue;
     //  auto proxy = (MultiPaxosProxy*) p.second;
-    //  MarshallDeputy md(cmd);
+    //  janus::Command md(cmd);
     //  uint64_t *slotr;
     //  ballot_t *ballotr;
     //  proxy->ForwardToLearnerServer(par_id, slot, ballot, md, slotr, ballotr);
@@ -143,7 +143,7 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
   //   auto proxy = (MultiPaxosProxy*) p.second;
   //   FutureAttr fuattr;
   //   fuattr.callback = [](Future* fu) {};
-  //   MarshallDeputy md(cmd);
+  //   janus::Command md(cmd);
   //   auto f = proxy->async_Decide(slot_id, ballot, md, fuattr);
   //   Future::safe_release(f);
   // }
@@ -167,7 +167,7 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
                                   shared_ptr<Marshallable> cmd,
-                                  const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb) {
+                                  const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb) {
   is_broadcast_syncLog = true;
   Log_info("invoke BroadcastSyncLog to prepare for the failover");
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
@@ -190,14 +190,14 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       }
       i32 valid;
       i32 ballot;
-      MarshallDeputy response_val;
+      janus::Command response_val;
       fu->get_reply() >> ballot >> valid >> response_val;
-      auto sp_md = make_shared<MarshallDeputy>(response_val);
+      auto sp_md = make_shared<janus::Command>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
     };
     verify(cmd != nullptr);
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
     MultiPaxosProxy::RpcSyncLogRequest req;
     req.cmd = md;
     auto fu_result = proxy->async_SyncLog(req, fuattr);
@@ -238,7 +238,7 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
   //     e->FeedResponse(valid);
   //   };
   //   verify(cmd != nullptr);
-  //   MarshallDeputy md(cmd);
+  //   janus::Command md(cmd);
   //   auto f = proxy->async_SyncCommit(md, fuattr);
   //   Future::safe_release(f);
   // }
@@ -279,7 +279,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       e->FeedResponse(valid);
     };
     verify(cmd != nullptr);
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkAcceptRequest req;
     req.cmd = md;
     auto fu_result = proxy->async_BulkAccept(req, fuattr);
@@ -318,7 +318,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
       cb(ballot, valid);
       e->FeedResponse(valid);
     };
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkDecideRequest req;
     req.cmd = md;
     auto fu_result = proxy->async_BulkDecide(req, fuattr);

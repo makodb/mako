@@ -27,7 +27,7 @@ void CopilotServiceImpl::Commit(const CopilotService::RpcCommitRequest& req, Cop
   this->Commit(req.is_pilot, req.slot, req.dep, req.cmd, std::move(defer));
 }
 
-// Workstream N Phase 4e-40: removed `Forward(MarshallDeputy, ...)`
+// Workstream N Phase 4e-40: removed `Forward(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim above;
 // the receiver `CopilotServer::OnForward` is also gone.
 
@@ -35,7 +35,7 @@ void CopilotServiceImpl::Prepare(const uint8_t& is_pilot,
                                  const uint64_t& slot,
                                  const ballot_t& ballot,
                                  const DepId& dep_id,
-                                 MarshallDeputy* ret_cmd,
+                                 janus::Command* ret_cmd,
                                  ballot_t* max_ballot,
                                  uint64_t* dep,
                                  status_t* status,
@@ -56,7 +56,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                                     const uint64_t& slot,
                                     const ballot_t& ballot,
                                     const uint64_t& dep,
-                                    const MarshallDeputy& cmd,
+                                    const janus::Command& cmd,
                                     const DepId& dep_id,
                                     ballot_t* max_ballot,
                                     uint64_t* ret_dep,
@@ -73,7 +73,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                        slot,
                        ballot,
                        dep,
-                       const_cast<MarshallDeputy&>(cmd).inner(),
+                       const_cast<janus::Command&>(cmd).inner(),
                        dep_id,
                        max_ballot,
                        ret_dep,
@@ -84,7 +84,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                                 const uint64_t& slot,
                                 const ballot_t& ballot,
                                 const uint64_t& dep,
-                                const MarshallDeputy& cmd,
+                                const janus::Command& cmd,
                                 const DepId& dep_id,
                                 ballot_t* max_ballot,
                                 rrr::DeferredReply defer) {
@@ -93,7 +93,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                    slot,
                    ballot,
                    dep,
-                   const_cast<MarshallDeputy&>(cmd).inner(),
+                   const_cast<janus::Command&>(cmd).inner(),
                    dep_id,
                    max_ballot,
                    [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -102,10 +102,10 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
 void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const uint64_t& slot,
                                 const uint64_t& dep,
-                                const MarshallDeputy& cmd,
+                                const janus::Command& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_);
-  sched_->OnCommit(is_pilot, slot, dep, const_cast<MarshallDeputy&>(cmd).inner());
+  sched_->OnCommit(is_pilot, slot, dep, const_cast<janus::Command&>(cmd).inner());
   defer.reply();
 }
 

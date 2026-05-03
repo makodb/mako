@@ -50,7 +50,7 @@ void FpgaRaftServiceImpl::Heartbeat(const uint64_t& leaderPrevLogIndex,
   defer.reply();
 }
 
-// Workstream N Phase 4e-39: removed `Forward(MarshallDeputy, ...)`
+// Workstream N Phase 4e-39: removed `Forward(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim
 // above; the receiver `FpgaRaftServer::OnForward` is also gone.
 
@@ -95,7 +95,7 @@ void FpgaRaftServiceImpl::AppendEntries2(const uint64_t& slot,
                                          const uint64_t& leaderPrevLogTerm,
                                          const uint64_t& leaderCommitIndex,
                                          const DepId& dep_id,
-                                         const MarshallDeputy& cmd,
+                                         const janus::Command& cmd,
                                          uint64_t* followerAppendOK,
                                          uint64_t* followerCurrentTerm,
                                          uint64_t* followerLastLogIndex,
@@ -122,7 +122,7 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
                                         const uint64_t& leaderPrevLogTerm,
                                         const uint64_t& leaderCommitIndex,
                                         const DepId& dep_id,
-                                        const MarshallDeputy& cmd,
+                                        const janus::Command& cmd,
                                         uint64_t* followerAppendOK,
                                         uint64_t* followerCurrentTerm,
                                         uint64_t* followerLastLogIndex,
@@ -149,7 +149,7 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
         leaderPrevLogTerm,
         leaderCommitIndex,
         dep_id,
-        const_cast<MarshallDeputy&>(cmd).inner(),
+        const_cast<janus::Command&>(cmd).inner(),
         followerAppendOK,
         followerCurrentTerm,
         followerLastLogIndex,
@@ -160,14 +160,14 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
 void FpgaRaftServiceImpl::Decide(const uint64_t& slot,
                                  const ballot_t& ballot,
                                  const DepId& dep_id,
-                                 const MarshallDeputy& cmd,
+                                 const janus::Command& cmd,
                                  rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   (void)dep_id;
   Fiber::create_run([this, slot, ballot, cmd, defer = std::move(defer)]() mutable {
     sched_->OnCommit(slot,
                      ballot,
-                     const_cast<MarshallDeputy&>(cmd).inner());
+                     const_cast<janus::Command&>(cmd).inner());
     defer.reply();
   });
 }

@@ -16,7 +16,7 @@ void MongodbCommo::BroadcastCommit(const parid_t par_id,
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
     MongodbProxy::RpcCommitRequest req;
-    req.cmd = MarshallDeputy(cmd);
+    req.cmd = janus::Command(cmd);
     auto f = proxy->async_Commit(req, fuattr);
     if (f.is_ok()) {
       Future::safe_release(f.unwrap().raw_future());

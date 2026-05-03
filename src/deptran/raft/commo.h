@@ -15,7 +15,7 @@
 //   verify: [safe, (bool) -> void],
 //   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
 //   Config::GetConfig: [safe, () -> Config*],
-//   MarshallDeputy: [safe, (...) -> MarshallDeputy],
+//   MarshallDeputy: [safe, (...) -> janus::Command],
 //   Future::safe_release: [safe, (Future*) -> void],
 //   vote_yes: [safe, () -> void],
 //   vote_no: [safe, () -> void]

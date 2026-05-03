@@ -59,12 +59,64 @@ class SerializableEnvelope {
   // migrates from `MarshallDeputy` to `SerializableEnvelope<MyList>`.
   // Aliases the deputy's `inner_sp_data_` so the resulting envelope
   // shares ownership and payload state with the deputy.
-  SerializableEnvelope(const MarshallDeputy& md) : inner_(md.inner()) {}
+  SerializableEnvelope(const MarshallDeputy& md) : inner_(md.inner()) {
+    refresh_kind();
+  }
 
   SerializableEnvelope& operator=(const MarshallDeputy& md) {
     inner_ = md.inner();
+    refresh_kind();
     return *this;
   }
+
+  // -- Migration compat: implicit construction from shared_ptr<Marshallable>
+  // Mirrors `MarshallDeputy(shared_ptr<Marshallable>)` ctor — lets call
+  // sites that pass `shared_ptr<Marshallable>` (e.g., `app_next_(slot,
+  // ins->cmd)` where app_next_ expects a Command and `ins->cmd` is a
+  // shared_ptr<Marshallable>) work without explicit wrapping.
+  SerializableEnvelope(std::shared_ptr<Marshallable> sp)
+      : inner_(std::move(sp)) {
+    refresh_kind();
+  }
+
+  // Templated ctor for `shared_ptr<T>` where T is a Marshallable
+  // subclass — supports `make_shared<Command>(make_shared<TestMarshallable>(...))`
+  // (test fixtures that wrap concrete Marshallable subclasses).
+  template<typename T>
+    requires std::is_base_of_v<Marshallable, T>
+  SerializableEnvelope(std::shared_ptr<T> sp)
+      : inner_(std::static_pointer_cast<Marshallable>(std::move(sp))) {
+    refresh_kind();
+  }
+
+  // -- Migration compat: matches `MarshallDeputy::set_marshallable` ------
+  // Lets `cmd.set_marshallable(sp)` patterns continue to compile.
+  void set_marshallable(std::shared_ptr<Marshallable> sp) {
+    inner_ = std::move(sp);
+    refresh_kind();
+  }
+
+  // Templated overload for non-Marshallable Serializable types (mirrors
+  // `MarshallDeputy::set_marshallable<T>(shared_ptr<T>)` template).  Routes
+  // through `wrap_typed_marshallable<T>` which goes through the bridge
+  // for Serializable T's.
+  template<typename T>
+    requires (!std::is_base_of_v<Marshallable, T>)
+  void set_marshallable(std::shared_ptr<T> typed) {
+    inner_ = wrap_typed_marshallable(std::move(typed));
+    refresh_kind();
+  }
+
+  // -- Migration compat: matches `MarshallDeputy::has_marshallable` ------
+  bool has_marshallable() const noexcept { return has_value(); }
+
+  // -- Migration compat: `inner()` alias for `inner_marshallable()` ------
+  // Matches `MarshallDeputy::inner()` so `md.inner()` callers swap
+  // verbatim.  Returns the same shared_ptr by reference; no copy.
+  const std::shared_ptr<Marshallable>& inner() const noexcept {
+    return inner_;
+  }
+  std::shared_ptr<Marshallable>& inner() noexcept { return inner_; }
 
   // -- Factories ---------------------------------------------------------
   // VALUE-SEMANTIC: proxy owns a copy of `value`.
@@ -75,6 +127,7 @@ class SerializableEnvelope {
                   "Add T to the TypeList declaration.");
     SerializableEnvelope env;
     env.inner_ = as_marshallable(make_serializable_proxy<T>(value));
+    env.refresh_kind();
     return env;
   }
 
@@ -89,6 +142,7 @@ class SerializableEnvelope {
     verify(sp != nullptr);
     SerializableEnvelope env;
     env.inner_ = wrap_serializable_aliased(std::move(sp));
+    env.refresh_kind();
     return env;
   }
 
@@ -212,6 +266,7 @@ class SerializableEnvelope {
     // scope (and want compile-time dispatch); it is exercised by
     // the `TypeListFactory.*` tests in `rpc_marshal_archive_test`.
     inner_ = MarshallDeputy::create_initializer(kind_v.get());
+    refresh_kind();
     // For Phase-4-migrated Serializable types, `inner_` is a
     // `SerializableMarshallableAdapter`; drive load through its
     // proxy directly so the bytes go through the BinaryReadArchive
@@ -230,7 +285,22 @@ class SerializableEnvelope {
     inner_->from_marshal(*mark_adapter->source()->marshal());
   }
 
+ public:
+  // -- Migration compat: public `kind_` field matching MarshallDeputy ---
+  // Cached snapshot of `inner_->kind()`; refreshed by every state-
+  // changing entry point.  Lets `cmd.kind_ == X` direct-field access
+  // patterns continue to compile after a field migrates from
+  // `MarshallDeputy` to `SerializableEnvelope<MyList>`.  Writers that
+  // mutate `kind_` directly are not supported (the field is
+  // overwritten on the next state change); migrate to `set_marshallable`
+  // or pack/load instead.
+  int32_t kind_{0};
+
  private:
+  void refresh_kind() noexcept {
+    kind_ = inner_ != nullptr ? inner_->kind() : 0;
+  }
+
   std::shared_ptr<Marshallable> inner_;
 };
 
@@ -251,6 +321,13 @@ inline std::shared_ptr<T> marshallable_cast(
     const SerializableEnvelope<TypeList>& env) {
   return const_cast<SerializableEnvelope<TypeList>&>(env)
       .template unpack_shared<T>();
+}
+
+template<typename T, typename TypeList>
+inline std::shared_ptr<T> marshallable_cast(
+    SerializableEnvelope<TypeList>* env) {
+  if (env == nullptr) return nullptr;
+  return env->template unpack_shared<T>();
 }
 
 // Free archive operators — let SerializableEnvelope ride directly in

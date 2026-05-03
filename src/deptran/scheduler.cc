@@ -1126,14 +1126,14 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
   }
 }
 
-void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
-                                         const MarshallDeputy& new_view, 
+void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
+                                         const janus::Command& new_view, 
                                          const epoch_t& new_view_id) {
   rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
   rep_sched_->oepoch_ = new_view_id;
   auto config = Config::GetConfig();
   
-  // Extract ViewData from MarshallDeputy parameters
+  // Extract ViewData from janus::Command parameters
   auto sp_old_view_data = marshallable_cast<ViewData>(old_view);
   auto sp_new_view_data = marshallable_cast<ViewData>(new_view);
   
@@ -1141,11 +1141,11 @@ void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
   if (sp_old_view_data) {
     rep_sched_->old_view_ = sp_old_view_data->GetView();
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Updated old_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Updated old_view from janus::Command");
 #endif
   } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Warning: Could not extract old_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Warning: Could not extract old_view from janus::Command");
 #endif
   }
   
@@ -1155,7 +1155,7 @@ void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
              partition_id_, rep_sched_->new_view_.ToString().c_str(), incoming_view.ToString().c_str());
     rep_sched_->new_view_ = incoming_view;
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Updated new_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Updated new_view from janus::Command");
 #endif
     
     // Update the communicator's view immediately
@@ -1202,7 +1202,7 @@ void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
     }
   } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Warning: Could not extract new_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Warning: Could not extract new_view from janus::Command");
 #endif
   }
 }
@@ -1212,8 +1212,8 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
                                      bool_t* ok,
                                      epoch_t* reply_jepoch,
                                      epoch_t* reply_oepoch,
-                                     MarshallDeputy* reply_old_view,
-                                     MarshallDeputy* reply_new_view,
+                                     janus::Command* reply_old_view,
+                                     janus::Command* reply_new_view,
                                      shared_ptr<VecRecData> id_set) {
   
   
@@ -1239,7 +1239,7 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
   }
 #endif
   
-  // Initialize MarshallDeputy objects with ViewData objects
+  // Initialize janus::Command objects with ViewData objects
   reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
   reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
@@ -1267,8 +1267,8 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
                                    bool_t* ok, 
                                    epoch_t* reply_jepoch, 
                                    epoch_t* reply_oepoch,
-                                   MarshallDeputy* reply_old_view,
-                                   MarshallDeputy* reply_new_view,
+                                   janus::Command* reply_old_view,
+                                   janus::Command* reply_new_view,
                                    shared_ptr<KeyCmdBatchData>& batch) {
   
   if (!rep_sched_ || !batch) {
@@ -1332,13 +1332,13 @@ void TxLogServer::OnJetpackPrepare(const epoch_t& jepoch,
                                    bool_t* ok, 
                                    epoch_t* reply_jepoch,
                                    epoch_t* reply_oepoch,
-                                   MarshallDeputy* reply_old_view,
-                                   MarshallDeputy* reply_new_view,
+                                   janus::Command* reply_old_view,
+                                   janus::Command* reply_new_view,
                                    ballot_t* reply_max_seen_ballot,
                                    ballot_t* accepted_ballot, 
                                    int32_t* replied_sid, 
                                    int32_t* replied_set_size) {
-  // Initialize MarshallDeputy objects with ViewData objects
+  // Initialize janus::Command objects with ViewData objects
   reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
   reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
@@ -1368,10 +1368,10 @@ void TxLogServer::OnJetpackAccept(const epoch_t& jepoch,
                                   bool_t* ok,
                                   epoch_t* reply_jepoch,
                                   epoch_t* reply_oepoch,
-                                  MarshallDeputy* reply_old_view,
-                                  MarshallDeputy* reply_new_view,
+                                  janus::Command* reply_old_view,
+                                  janus::Command* reply_new_view,
                                   ballot_t* reply_max_seen_ballot) {
-  // Initialize MarshallDeputy objects with ViewData objects
+  // Initialize janus::Command objects with ViewData objects
   reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
   reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
@@ -1413,10 +1413,10 @@ void TxLogServer::OnJetpackPullRecSetIns(const epoch_t& jepoch,
                                          bool_t* ok, 
                                          epoch_t* reply_jepoch,
                                          epoch_t* reply_oepoch,
-                                         MarshallDeputy* reply_old_view,
-                                         MarshallDeputy* reply_new_view,
+                                         janus::Command* reply_old_view,
+                                         janus::Command* reply_new_view,
                                          shared_ptr<Marshallable> cmd) {
-  // Initialize MarshallDeputy objects with ViewData objects
+  // Initialize janus::Command objects with ViewData objects
   reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
   reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   

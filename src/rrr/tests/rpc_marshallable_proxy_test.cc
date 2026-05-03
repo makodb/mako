@@ -610,13 +610,13 @@ TEST(MarshallableProxyFacadeTest,
 
   auto sync_resp = std::make_shared<janus::SyncLogResponse>();
   sync_resp->sync_data.push_back(
-      std::make_shared<MarshallDeputy>(std::make_shared<TestMarshallable>(55)));
+      std::make_shared<janus::Command>(std::make_shared<TestMarshallable>(55)));
   sync_resp->missing_slots = {{4, 8}, {15}};
   auto sync_resp_decoded = RoundTripTypedDeputyPayload(sync_resp);
   ASSERT_NE(sync_resp_decoded, nullptr);
   ASSERT_EQ(sync_resp_decoded->sync_data.size(), 1u);
   auto nested =
-      marshallable_cast<TestMarshallable>(sync_resp_decoded->sync_data[0].get());
+      marshallable_cast<TestMarshallable>(sync_resp_decoded->sync_data[0]->inner());
   ASSERT_NE(nested, nullptr);
   EXPECT_EQ(nested->value, 55);
   ASSERT_EQ(sync_resp_decoded->missing_slots.size(), 2u);
@@ -654,9 +654,9 @@ TEST(MarshallableProxyFacadeTest, PaxosBulkPaxosCmdRoundTripUsesTypedAdapter) {
   payload->slots = {10, 11};
   payload->ballots = {20, 21};
   payload->cmds.push_back(
-      std::make_shared<MarshallDeputy>(std::make_shared<TestMarshallable>(88)));
+      std::make_shared<janus::Command>(std::make_shared<TestMarshallable>(88)));
   payload->cmds.push_back(
-      std::make_shared<MarshallDeputy>(std::make_shared<TestMarshallable>(99)));
+      std::make_shared<janus::Command>(std::make_shared<TestMarshallable>(99)));
 
   auto decoded = RoundTripTypedDeputyPayload(payload);
   ASSERT_NE(decoded, nullptr);
@@ -667,8 +667,8 @@ TEST(MarshallableProxyFacadeTest, PaxosBulkPaxosCmdRoundTripUsesTypedAdapter) {
   EXPECT_EQ(decoded->slots[1], 11);
   EXPECT_EQ(decoded->ballots[0], 20);
 
-  auto nested0 = marshallable_cast<TestMarshallable>(decoded->cmds[0].get());
-  auto nested1 = marshallable_cast<TestMarshallable>(decoded->cmds[1].get());
+  auto nested0 = marshallable_cast<TestMarshallable>(decoded->cmds[0]->inner());
+  auto nested1 = marshallable_cast<TestMarshallable>(decoded->cmds[1]->inner());
   ASSERT_NE(nested0, nullptr);
   ASSERT_NE(nested1, nullptr);
   EXPECT_EQ(nested0->value, 88);

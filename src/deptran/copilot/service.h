@@ -20,7 +20,7 @@ class CopilotServiceImpl : public CopilotService {
   CopilotServiceImpl(TxLogServer *sched);
 
   // Defer handlers (preferred for async RPC completion).
-  // Workstream N Phase 4e-40: removed `Forward(MarshallDeputy, ...)`
+  // Workstream N Phase 4e-40: removed `Forward(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below); matching `Copilot::Forward` RPC was dropped from
   // rcc_rpc.rpc and `CopilotServer::OnForward` is also gone.
@@ -29,7 +29,7 @@ class CopilotServiceImpl : public CopilotService {
                const uint64_t& slot,
                const ballot_t& ballot,
                const DepId& dep_id,
-               MarshallDeputy* ret_cmd,
+               janus::Command* ret_cmd,
                ballot_t* max_ballot,
                uint64_t* dep,
                status_t* status,
@@ -39,7 +39,7 @@ class CopilotServiceImpl : public CopilotService {
                   const uint64_t& slot,
                   const ballot_t& ballot,
                   const uint64_t& dep,
-                  const MarshallDeputy& cmd,
+                  const janus::Command& cmd,
                   const DepId& dep_id,
                   ballot_t* max_ballot,
                   uint64_t* ret_dep,
@@ -49,7 +49,7 @@ class CopilotServiceImpl : public CopilotService {
               const uint64_t& slot,
               const ballot_t& ballot,
               const uint64_t& dep,
-              const MarshallDeputy& cmd,
+              const janus::Command& cmd,
               const DepId& dep_id,
               ballot_t* max_ballot,
               rrr::DeferredReply defer);
@@ -57,7 +57,7 @@ class CopilotServiceImpl : public CopilotService {
   void Commit(const uint8_t& is_pilot,
               const uint64_t& slot,
               const uint64_t& dep,
-              const MarshallDeputy& cmd,
+              const janus::Command& cmd,
               rrr::DeferredReply defer);
 
   // BEGIN typed-rpc-decls (CopilotServiceImpl)

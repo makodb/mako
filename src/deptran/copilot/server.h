@@ -105,7 +105,7 @@ class CopilotServer : public TxLogServer {
                  const uint64_t& slot,
                  const ballot_t& ballot,
                  const struct DepId& dep_id,
-                 MarshallDeputy* ret_cmd,
+                 janus::Command* ret_cmd,
                  ballot_t* max_ballot,
                  uint64_t* dep,
                  status_t* status,

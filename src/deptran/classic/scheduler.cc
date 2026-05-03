@@ -391,7 +391,7 @@ bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
   return (sp_tx->commit_result->is_ready());
 }
 
-int SchedulerClassic::Next(int slot, MarshallDeputy md) {
+int SchedulerClassic::Next(int slot, janus::Command md) {
   if (md.kind_ == TpcPrepareCommand::static_kind()) {
     // Phase 4a-3a: TpcPrepareCommand migrated to Serializable.
     auto* c = serializable_cast<TpcPrepareCommand>(md.inner());

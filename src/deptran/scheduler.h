@@ -356,12 +356,12 @@ class TxLogServer {
   unordered_map<txid_t, mdb::Txn *> mdb_txns_{};
   unordered_map<txid_t, Executor *> executors_{};
 
-  // L6-A2 (2026-05-01): app_next_ now takes MarshallDeputy (not
+  // L6-A2 (2026-05-01): app_next_ now takes janus::Command (not
   // shared_ptr<Marshallable>) so user code is one type level removed
   // from the rrr framework's wire-boundary shared_ptr.  MarshallDeputy
   // ctors are non-explicit, so callers passing `shared_ptr<Marshallable>`
   // (e.g. `instance->log_`) auto-convert at the call site.
-  function<int(int, MarshallDeputy)> app_next_{};
+  function<int(int, janus::Command)> app_next_{};
   // Workstream N Phase 4e-9: removed
   //   `function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};`
   // — declared but never written or invoked anywhere.
@@ -519,18 +519,18 @@ class TxLogServer {
     return REJECT;
   }
 
-  // L6-A2 (2026-05-01): take a `function<int(int, MarshallDeputy)>`.
+  // L6-A2 (2026-05-01): take a `function<int(int, janus::Command)>`.
   // Lambdas registered here see the deputy directly; if they need the
   // legacy shared_ptr they can call `md.inner()`, or use the
   // `marshallable_cast<T>(md)` overload to downcast to a concrete type.
-  void RegLearnerAction(function<int(int, MarshallDeputy)> learner_action) {
+  void RegLearnerAction(function<int(int, janus::Command)> learner_action) {
     app_next_ = learner_action;
   }
 
-  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // L6-A2 (2026-05-01): take janus::Command (matches RegLearnerAction
   // signature above).  Body uses `md.inner()` / `marshallable_cast<T>(md)`
   // to access the underlying typed payload.
-  virtual int Next(int, MarshallDeputy md) { verify(0); };
+  virtual int Next(int, janus::Command md) { verify(0); };
   /**
    * Check if the command is already committed
    * @param commit_cmd command to be checked
@@ -636,8 +636,8 @@ class TxLogServer {
   void JetpackResubmit(int sid, int set_size);
   void DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_ptr<IntEvent> recovery_event = nullptr);
   
-  void OnJetpackBeginRecovery(const MarshallDeputy& old_view,
-                              const MarshallDeputy& new_view, 
+  void OnJetpackBeginRecovery(const janus::Command& old_view,
+                              const janus::Command& new_view, 
                               const epoch_t& new_view_id);
   
   void OnJetpackPullIdSet(const epoch_t& jepoch,
@@ -645,8 +645,8 @@ class TxLogServer {
                           bool_t* ok,
                           epoch_t* reply_jepoch,
                           epoch_t* reply_oepoch,
-                          MarshallDeputy* reply_old_view,
-                          MarshallDeputy* reply_new_view,
+                          janus::Command* reply_old_view,
+                          janus::Command* reply_new_view,
                           shared_ptr<VecRecData> id_set);
   
   // @unsafe
@@ -656,8 +656,8 @@ class TxLogServer {
                         bool_t* ok, 
                         epoch_t* reply_jepoch, 
                         epoch_t* reply_oepoch,
-                        MarshallDeputy* reply_old_view,
-                        MarshallDeputy* reply_new_view,
+                        janus::Command* reply_old_view,
+                        janus::Command* reply_new_view,
                         shared_ptr<KeyCmdBatchData>& batch);
   
   void OnJetpackRecordCmd(const epoch_t& jepoch, 
@@ -672,8 +672,8 @@ class TxLogServer {
                         bool_t* ok, 
                         epoch_t* reply_jepoch,
                         epoch_t* reply_oepoch,
-                        MarshallDeputy* reply_old_view,
-                        MarshallDeputy* reply_new_view,
+                        janus::Command* reply_old_view,
+                        janus::Command* reply_new_view,
                         ballot_t* reply_max_seen_ballot,
                         ballot_t* accepted_ballot, 
                         int32_t* replied_sid, 
@@ -687,8 +687,8 @@ class TxLogServer {
                        bool_t* ok,
                        epoch_t* reply_jepoch,
                        epoch_t* reply_oepoch,
-                       MarshallDeputy* reply_old_view,
-                       MarshallDeputy* reply_new_view,
+                       janus::Command* reply_old_view,
+                       janus::Command* reply_new_view,
                        ballot_t* reply_max_seen_ballot);
   
   void OnJetpackCommit(const epoch_t& jepoch, 
@@ -703,8 +703,8 @@ class TxLogServer {
                               bool_t* ok, 
                               epoch_t* reply_jepoch,
                               epoch_t* reply_oepoch,
-                              MarshallDeputy* reply_old_view,
-                              MarshallDeputy* reply_new_view,
+                              janus::Command* reply_old_view,
+                              janus::Command* reply_new_view,
                               shared_ptr<Marshallable> cmd);
   
   void OnJetpackFinishRecovery(const epoch_t& oepoch);

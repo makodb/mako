@@ -22,13 +22,13 @@ abstract service MultiPaxos {
   defer Accept(uint64_t slot,
                uint64_t time,
                ballot_t ballot,
-               MarshallDeputy cmd |
+               Command cmd |
                ballot_t max_ballot,
                uint64_t coro_id);
 
   defer Decide(uint64_t slot,
                ballot_t ballot,
-               MarshallDeputy cmd);
+               Command cmd);
 
   // Mako's bulk Paxos operations for optimized batching
   // Workstream N Phase 4e-26: removed `Heartbeat`, `BulkPrepare`,
@@ -40,9 +40,9 @@ abstract service MultiPaxos {
   defer ForwardToLearnerServer(i32 par_id,
                                uint64_t slot,
                                ballot_t ballot,
-                               MarshallDeputy cmd | uint64_t ret_slot, ballot_t ret_ballot);
+                               Command cmd | uint64_t ret_slot, ballot_t ret_ballot);
 
-  defer BulkAccept(MarshallDeputy cmd | i32 ballot, i32 val);
+  defer BulkAccept(Command cmd | i32 ballot, i32 val);
 
   // Workstream N Phase 4e-27: removed `BulkPrepare2` RPC declaration
   // — the only sender (`BulkCoordinatorMultiPaxos::Prepare()`) was
@@ -50,16 +50,16 @@ abstract service MultiPaxos {
   // `MultiPaxosServiceImpl::BulkPrepare2` / `OnBulkPrepare2` chain
   // is removed in this phase.
 
-  defer SyncLog(MarshallDeputy cmd | i32 ballot, i32 val, MarshallDeputy ret);
+  defer SyncLog(Command cmd | i32 ballot, i32 val, Command ret);
 
-  defer SyncCommit(MarshallDeputy cmd | i32 ballot, i32 val);
+  defer SyncCommit(Command cmd | i32 ballot, i32 val);
 
-  defer BulkDecide(MarshallDeputy cmd | i32 ballot, i32 val);
+  defer BulkDecide(Command cmd | i32 ballot, i32 val);
 }
 
 
 abstract service Mongodb {
-  defer Commit(MarshallDeputy cmd);
+  defer Commit(Command cmd);
 }
 
 abstract service Mencius {
@@ -75,13 +75,13 @@ abstract service Mencius {
                uint64_t sender,
                vector<uint64_t> skip_commits,
                vector<uint64_t> skip_potentials,
-               MarshallDeputy cmd |
+               Command cmd |
                ballot_t max_ballot,
                uint64_t coro_id);
 
   defer Decide(uint64_t slot,
                ballot_t ballot,
-               MarshallDeputy cmd);
+               Command cmd);
 }
 
 abstract service FpgaRaft {
@@ -89,7 +89,7 @@ abstract service FpgaRaft {
 									DepId dep_id |
 									uint64_t followerPrevLogIndex);
 
-  // Workstream N Phase 4e-39: removed `Forward(MarshallDeputy cmd |
+  // Workstream N Phase 4e-39: removed `Forward(Command cmd |
   // uint64_t cmt_idx)` RPC declaration — only sender
   // (`CoordinatorFpgaRaft::Forward`) had `verify(0); // TODO delete it`
   // and was never called.  No live caller anywhere in the tree.
@@ -115,7 +115,7 @@ abstract service FpgaRaft {
                       uint64_t leaderPrevLogTerm,
                       uint64_t leaderCommitIndex,
 											DepId dep_id,
-                      MarshallDeputy cmd |
+                      Command cmd |
                       uint64_t followerAppendOK,
                       uint64_t followerCurrentTerm,
                       uint64_t followerLastLogIndex);
@@ -127,7 +127,7 @@ abstract service FpgaRaft {
                       uint64_t leaderPrevLogTerm,
                       uint64_t leaderCommitIndex,
 											DepId dep_id,
-                      MarshallDeputy cmd |
+                      Command cmd |
                       uint64_t followerAppendOK,
                       uint64_t followerCurrentTerm,
                       uint64_t followerLastLogIndex);
@@ -135,7 +135,7 @@ abstract service FpgaRaft {
   defer Decide(uint64_t slot,
                ballot_t ballot,
 							 DepId dep_id,
-               MarshallDeputy cmd);
+               Command cmd);
 }
 
 abstract service Raft {
@@ -160,7 +160,7 @@ abstract service Raft {
                       uint64_t leaderPrevLogIndex,
                       uint64_t leaderPrevLogTerm,
                       uint64_t leaderCommitIndex,
-                      MarshallDeputy cmd,
+                      Command cmd,
                       uint64_t leaderNextLogTerm |
                       uint64_t followerAppendOK,
                       uint64_t followerCurrentTerm,
@@ -216,7 +216,7 @@ abstract service Raft {
 }
 
 abstract service Copilot {
-  // Workstream N Phase 4e-40: removed `Forward(MarshallDeputy cmd);`
+  // Workstream N Phase 4e-40: removed `Forward(Command cmd);`
   // RPC declaration — no sender anywhere in the tree (no
   // `CopilotCommo::SendForward`, no `async_Forward(...)` call site).
   // The matching `CopilotServiceImpl::Forward` and
@@ -226,7 +226,7 @@ abstract service Copilot {
                 uint64_t slot,
                 ballot_t ballot,
                 DepId dep_id |
-                MarshallDeputy ret_cmd,
+                Command ret_cmd,
                 ballot_t max_ballot,
                 uint64_t dep,
                 status_t status);
@@ -235,7 +235,7 @@ abstract service Copilot {
                    uint64_t slot,
                    ballot_t ballot,
                    uint64_t dep,
-                   MarshallDeputy cmd,
+                   Command cmd,
                    DepId dep_id |
                    ballot_t max_ballot,
                    uint64_t ret_dep);
@@ -244,33 +244,33 @@ abstract service Copilot {
                uint64_t slot,
                ballot_t ballot,
                uint64_t dep,
-               MarshallDeputy cmd,
+               Command cmd,
                DepId dep_id |
                ballot_t max_ballot);
 
   defer Commit(uint8_t is_pilot,
                uint64_t slot,
                uint64_t dep,
-               MarshallDeputy cmd);
+               Command cmd);
 }
 
 // below is for 2PL and OCC
 abstract service Classic {
   defer MsgString(string arg | string ret);
 
-  defer MsgMarshall(MarshallDeputy arg | MarshallDeputy ret);
+  defer MsgMarshall(Command arg | Command ret);
 
 //  defer Dispatch(vector<SimpleCommand> cmd |
 //                 i32 res,
 //                 TxnOutput output);
 
 	defer ReElect(| bool_t success);
-  defer RuleSpeculativeExecute(MarshallDeputy md |
+  defer RuleSpeculativeExecute(Command md |
                                bool_t accepted,
                                int32_t result,
                                bool_t is_leader);
-  defer Dispatch(i64 tid, DepId dep_id, MarshallDeputy cmd |
-                 i32 res, TxnOutput output, uint64_t coro_id, MarshallDeputy view_data);
+  defer Dispatch(i64 tid, DepId dep_id, Command cmd |
+                 i32 res, TxnOutput output, uint64_t coro_id, Command view_data);
   defer Prepare(i64 tid, 
                 vector<i32> sids,
                 DepId dep_id | 
@@ -278,9 +278,9 @@ abstract service Classic {
 								bool_t slow,
                 uint64_t coro_id);
 
-  defer Commit(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, MarshallDeputy view_data);
+  defer Commit(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, Command view_data);
 
-  defer Abort(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, MarshallDeputy view_data);
+  defer Abort(i64 tid, DepId dep_id | i32 res, bool_t slow, uint64_t coro_id, Profiling profile, Command view_data);
 
   defer EarlyAbort(i64 tid | i32 res);
 
@@ -326,7 +326,7 @@ abstract service Classic {
 
   // defer RccInquire(epoch_t epoch,
   //                  txnid_t txn_id |
-  //                  MarshallDeputy md_res_graph);
+  //                  Command md_res_graph);
 
   defer RccInquire(txnid_t txn_id, int32_t rank |
                    map<uint64_t, parent_set_t>);
@@ -398,8 +398,8 @@ abstract service Classic {
                     AnyMessage graph |
                     i32 res);
 
-  defer JetpackBeginRecovery(MarshallDeputy old_view,
-                             MarshallDeputy new_view, 
+  defer JetpackBeginRecovery(Command old_view,
+                             Command new_view, 
                              epoch_t new_view_id);
 
   defer JetpackPullIdSet(epoch_t jepoch,
@@ -407,25 +407,25 @@ abstract service Classic {
                          bool_t ok,
                          epoch_t reply_jepoch,
                          epoch_t reply_oepoch,
-                         MarshallDeputy reply_old_view,
-                         MarshallDeputy reply_new_view,
-                         MarshallDeputy id_set);
+                         Command reply_old_view,
+                         Command reply_new_view,
+                         Command id_set);
   
   defer JetpackPullCmd(epoch_t jepoch,
                        epoch_t oepoch,
-                       MarshallDeputy key_batch |
+                       Command key_batch |
                        bool_t ok,
                        epoch_t reply_jepoch,
                        epoch_t reply_oepoch,
-                       MarshallDeputy reply_old_view,
-                       MarshallDeputy reply_new_view,
-                       MarshallDeputy cmd_batch);
+                       Command reply_old_view,
+                       Command reply_new_view,
+                       Command cmd_batch);
   
   defer JetpackRecordCmd(epoch_t jepoch,
                          epoch_t oepoch,
                          int32_t sid,
                          int32_t rid,
-                         MarshallDeputy cmd_batch);
+                         Command cmd_batch);
   
   defer JetpackPrepare(epoch_t jepoch,
                        epoch_t oepoch,
@@ -433,8 +433,8 @@ abstract service Classic {
                        bool_t ok,
                        epoch_t reply_jepoch,
                        epoch_t reply_oepoch,
-                       MarshallDeputy reply_old_view,
-                       MarshallDeputy reply_new_view,
+                       Command reply_old_view,
+                       Command reply_new_view,
                        ballot_t reply_max_seen_ballot,
                        ballot_t accepted_ballot,
                        int32_t replied_sid,
@@ -448,8 +448,8 @@ abstract service Classic {
                       bool_t ok,
                       epoch_t reply_jepoch,
                       epoch_t reply_oepoch,
-                      MarshallDeputy reply_old_view,
-                      MarshallDeputy reply_new_view,
+                      Command reply_old_view,
+                      Command reply_new_view,
                       ballot_t reply_max_seen_ballot);
 
   defer JetpackCommit(epoch_t jepoch,
@@ -464,9 +464,9 @@ abstract service Classic {
                              bool_t ok,
                              epoch_t reply_jepoch,
                              epoch_t reply_oepoch,
-                             MarshallDeputy reply_old_view,
-                             MarshallDeputy reply_new_view,
-                             MarshallDeputy cmd);
+                             Command reply_old_view,
+                             Command reply_new_view,
+                             Command cmd);
 
   defer JetpackFinishRecovery(epoch_t oepoch);
 }

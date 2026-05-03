@@ -11,7 +11,7 @@ shared_ptr<ElectionState> es = ElectionState::instance();
 
 // Workstream N Phase 4e-37: removed `PaxosServer::OnForward` —
 // body was `verify(0); // Should never be called in Mako`.  The
-// `MultiPaxosServiceImpl::Forward(MarshallDeputy, ...)` handler
+// `MultiPaxosServiceImpl::Forward(janus::Command, ...)` handler
 // already has an empty body (Mako uses `OnForwardToLearner` via
 // `ForwardToLearnerServer` RPC instead), so this method was
 // genuinely unreachable.
@@ -162,8 +162,8 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
         bp_cmd->slots.push_back(j);
         bp_cmd->ballots.push_back(inst->max_ballot_accepted_);
         auto temp_cmd = inst->committed_cmd_;
-      	MarshallDeputy md(temp_cmd);
-      	auto shrd_ptr = make_shared<MarshallDeputy>(md);
+      	janus::Command md(temp_cmd);
+      	auto shrd_ptr = make_shared<janus::Command>(md);
         bp_cmd->cmds.push_back(shrd_ptr);
       }
     }
@@ -176,8 +176,8 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
     }
     //Log_info("The partition %d has missing slots size %d", i, ret_cmd->missing_slots[i].size());
     auto sp_marshallable = wrap_typed_marshallable(bp_cmd);
-    MarshallDeputy bp_md_cmd(sp_marshallable);
-    auto bp_sp_md = make_shared<MarshallDeputy>(bp_md_cmd);
+    janus::Command bp_md_cmd(sp_marshallable);
+    auto bp_sp_md = make_shared<janus::Command>(bp_md_cmd);
     ret_cmd->sync_data.push_back(bp_sp_md);
     ps->mtx_.unlock();
   }

@@ -53,7 +53,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     int32_t ret;
     TxnOutput outputs;
     uint64_t coro_id = 0;
-    MarshallDeputy view_md;
+    janus::Command view_md;
     fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
     n_pending_rpc_[0]--;
     verify(n_pending_rpc_[0] >= 0);
@@ -79,7 +79,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
             pair_proxies[1].first);
   shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
   sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-  MarshallDeputy md(sp_vpd);
+  janus::Command md(sp_vpd);
 
   struct DepId di;
   di.id = cmd_id;
@@ -113,7 +113,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     int32_t ret;
     TxnOutput outputs;
     uint64_t coro_id = 0;
-    MarshallDeputy view_md;
+    janus::Command view_md;
     fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
     n_pending_rpc_[1]--;
     verify(n_pending_rpc_[1] >= 0);

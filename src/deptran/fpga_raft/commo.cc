@@ -107,7 +107,7 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
 
-		MarshallDeputy md(cmd);
+		janus::Command md(cmd);
 		verify(md.inner() != nullptr);
 
 		DepId di;
@@ -209,7 +209,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
       bool y = ((accept == 1) && (isLeader) && (currentTerm == term));
       e->FeedResponse(y, index, ip);
     };
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
 		verify(md.inner() != nullptr);
 		outbound++;
 		DepId di;
@@ -248,7 +248,7 @@ void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
 		DepId di;
 		di.str = "dep";
 		di.id = dep_id;

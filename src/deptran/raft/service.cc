@@ -74,7 +74,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
   }
   resp.followerAckType = 0;  // Memory — response precedes fsync
   // @unsafe { MarshallDeputy::inner() returns a std::shared_ptr<Marshallable> }
-  auto cmd = const_cast<MarshallDeputy&>(req.cmd).inner();
+  auto cmd = const_cast<janus::Command&>(req.cmd).inner();
   svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
                        req.leaderSiteId, req.leaderPrevLogIndex,
                        req.leaderPrevLogTerm, req.leaderCommitIndex,

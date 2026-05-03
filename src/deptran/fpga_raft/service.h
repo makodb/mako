@@ -25,7 +25,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                  uint64_t* followerPrevLogIndex,
                  rrr::DeferredReply defer);
 
-  // Workstream N Phase 4e-39: removed `Forward(MarshallDeputy, ...)`
+  // Workstream N Phase 4e-39: removed `Forward(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below); the matching FpgaRaft::Forward RPC was dropped from
   // rcc_rpc.rpc and the receiver `FpgaRaftServer::OnForward` is also
@@ -54,7 +54,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                       const uint64_t& leaderPrevLogTerm,
                       const uint64_t& leaderCommitIndex,
                       const DepId& dep_id,
-                      const MarshallDeputy& cmd,
+                      const janus::Command& cmd,
                       uint64_t* followerAppendOK,
                       uint64_t* followerCurrentTerm,
                       uint64_t* followerLastLogIndex,
@@ -67,7 +67,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                      const uint64_t& leaderPrevLogTerm,
                      const uint64_t& leaderCommitIndex,
                      const DepId& dep_id,
-                     const MarshallDeputy& cmd,
+                     const janus::Command& cmd,
                      uint64_t* followerAppendOK,
                      uint64_t* followerCurrentTerm,
                      uint64_t* followerLastLogIndex,
@@ -76,7 +76,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
               const DepId& dep_id,
-              const MarshallDeputy& cmd,
+              const janus::Command& cmd,
               rrr::DeferredReply defer);
 
 

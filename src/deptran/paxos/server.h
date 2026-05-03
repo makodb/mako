@@ -143,7 +143,7 @@ class PaxosServer : public TxLogServer {
 
   // Workstream N Phase 4e-37: removed `OnForward` declaration —
   // body was `verify(0); // Should never be called in Mako`; the
-  // `MultiPaxosServiceImpl::Forward(MarshallDeputy, ...)` handler
+  // `MultiPaxosServiceImpl::Forward(janus::Command, ...)` handler
   // has an empty body that never reaches this method (Mako uses
   // `OnForwardToLearner` instead via the `ForwardToLearnerServer`
   // RPC).

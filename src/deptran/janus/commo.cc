@@ -24,7 +24,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
         rrr::AnyMessage am;
         fu->get_reply() >> res >> output >> am;
         // Workstream N L10c-graphs: graph reply rides directly as
-        // an `AnyMessage`, no `MarshallDeputy` wrapper.
+        // an `AnyMessage`, no `janus::Command` wrapper.
         if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
           auto v = rgraph.CreateV(tid);
@@ -121,7 +121,7 @@ void JanusCommo::BroadcastPreAccept(
       // Arc auto-released
     } else {
       // Workstream N L10c-graphs: graph field is now `AnyMessage`
-      // directly (not wrapped in `MarshallDeputy`).
+      // directly (not wrapped in `janus::Command`).
       auto sp_graph_copy = std::make_shared<RccGraph>(*sp_graph);
       ClassicProxy::RpcJanusPreAcceptRequest req;
       req.txn_id = txn_id;

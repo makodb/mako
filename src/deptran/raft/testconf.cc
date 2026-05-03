@@ -15,7 +15,7 @@ namespace janus {
 int _test_id_g = 0;
 
 std::map<siteid_t, RaftFrame*> RaftTestConfig::replicas;
-std::map<siteid_t, std::function<int(int, MarshallDeputy)>>
+std::map<siteid_t, std::function<int(int, janus::Command)>>
     RaftTestConfig::commit_callbacks;
 std::map<siteid_t, std::vector<int>> RaftTestConfig::committed_cmds;
 std::map<siteid_t, uint64_t> RaftTestConfig::rpc_count_last;
@@ -40,7 +40,7 @@ void RaftTestConfig::SetLearnerAction(void) {
     auto frame = pair.second;
     // rep_frame_ is already set in constructor, no need to set it here
     RaftTestConfig::commit_callbacks[svr] =
-        [svr](int slot, MarshallDeputy md) -> int {
+        [svr](int slot, janus::Command md) -> int {
           verify(md.kind_ == TpcCommitCommand::static_kind());
           auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
           verify(commit_cmd != nullptr);
@@ -741,7 +741,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
   // Re-register learner action BEFORE adding to replicas map
   commit_callbacks[svr] =
-      [svr](int slot, MarshallDeputy md) -> int {
+      [svr](int slot, janus::Command md) -> int {
         verify(md.kind_ == TpcCommitCommand::static_kind());
         auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
         verify(commit_cmd != nullptr);

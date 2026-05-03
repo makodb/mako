@@ -92,7 +92,7 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
       Log_info("Get a error message in reply");
       return;
     }
-//    MarshallDeputy md;
+//    janus::Command md;
     fu->get_reply() >> *ret;
     ev->set(1);
   };

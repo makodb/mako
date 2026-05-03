@@ -114,7 +114,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
         Log_info("Get a error message in reply");
         return;
       }
-      MarshallDeputy md;
+      janus::Command md;
       ballot_t b;
       uint64_t dep;
       status_t status;
@@ -125,7 +125,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
         e->FeedRetCmd(ballot,
                       dep,
                       is_pilot, slot_id,
-                      const_cast<MarshallDeputy&>(md).inner(),
+                      const_cast<janus::Command&>(md).inner(),
                       static_cast<enum Status>(status));
       } // Feed command before feeding response, since if there is a committed command,
         // the prepare event will be ready in advance without waiting for a quorum.
@@ -202,7 +202,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
       };
 
       verify(cmd);
-      MarshallDeputy md(cmd);
+      janus::Command md(cmd);
 
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
@@ -266,7 +266,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
         e->remove_xid(site);
       };
 
-      MarshallDeputy md(cmd);
+      janus::Command md(cmd);
       CopilotProxy::RpcAcceptRequest req;
       req.is_pilot = is_pilot;
       req.slot = slot_id;
@@ -307,7 +307,7 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
     fuattr.callback = [e, site](rusty::Arc<Future> fu) {
       e->remove_xid(site);
     };
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
     CopilotProxy::RpcCommitRequest req;
     req.is_pilot = is_pilot;
     req.slot = slot_id;

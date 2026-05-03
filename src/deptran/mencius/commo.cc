@@ -127,7 +127,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
       // e->deps[leader_id][src_coroid][follower_id].erase(-1);
       // e->deps[leader_id][src_coroid][follower_id].insert(coro_id);
     };
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
     auto start1 = chrono::system_clock::now();
     uint64_t sender = loc_id_;
     // time_t tstart = chrono::system_clock::to_time_t(start);
@@ -180,7 +180,7 @@ void MenciusCommo::BroadcastDecide(const parid_t par_id,
     auto proxy = (MenciusProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
     MenciusProxy::RpcDecideRequest req{};
     req.slot = slot_id;
     req.ballot = ballot;

@@ -238,7 +238,7 @@ void ClassicServiceImpl::ReElect(bool_t* success,
 	defer.reply();
 }
 
-void ClassicServiceImpl::RuleSpeculativeExecute(const MarshallDeputy& md,
+void ClassicServiceImpl::RuleSpeculativeExecute(const janus::Command& md,
                                                 bool_t* accepted,
                                                 int32_t* result,
                                                 bool_t* is_leader,
@@ -250,11 +250,11 @@ void ClassicServiceImpl::RuleSpeculativeExecute(const MarshallDeputy& md,
 
 void ClassicServiceImpl::Dispatch(const i64& cmd_id,
 																	const DepId& dep_id,
-                                  const MarshallDeputy& md,
+                                  const janus::Command& md,
                                   int32_t* res,
                                   TxnOutput* output,
                                   uint64_t* coro_id,
-                                  MarshallDeputy* view_data,
+                                  janus::Command* view_data,
                                   rrr::DeferredReply defer) {
   // usleep(20000);
 
@@ -473,7 +473,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
 																bool_t* slow,
                                 uint64_t* coro_id,
 																Profiling* profile,
-                                MarshallDeputy* view_data,
+                                janus::Command* view_data,
                                 rrr::DeferredReply defer) {
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
@@ -522,7 +522,7 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
 															 bool_t* slow,
                                uint64_t* coro_id,
 															 Profiling* profile,
-                               MarshallDeputy* view_data,
+                               janus::Command* view_data,
                                rrr::DeferredReply defer) {
   Log_debug("get abort_txn: tid: %ld", tid);
   //std::lock_guard<std::mutex> guard(mtx_);
@@ -818,8 +818,8 @@ void ClassicServiceImpl::JanusAccept(const cmdid_t& txnid,
   defer.reply();
 }
 
-void ClassicServiceImpl::JetpackBeginRecovery(const MarshallDeputy& old_view,
-                                              const MarshallDeputy& new_view, 
+void ClassicServiceImpl::JetpackBeginRecovery(const janus::Command& old_view,
+                                              const janus::Command& new_view, 
                                               const epoch_t& new_view_id, 
                                               rrr::DeferredReply defer) {
   dtxn_sched()->OnJetpackBeginRecovery(old_view, new_view, new_view_id);
@@ -831,9 +831,9 @@ void ClassicServiceImpl::JetpackPullIdSet(const epoch_t& jepoch,
                                           bool_t* ok, 
                                           epoch_t* reply_jepoch, 
                                           epoch_t* reply_oepoch,
-                                          MarshallDeputy* reply_old_view,
-                                          MarshallDeputy* reply_new_view,
-                                          MarshallDeputy* id_set, 
+                                          janus::Command* reply_old_view,
+                                          janus::Command* reply_new_view,
+                                          janus::Command* id_set, 
                                           rrr::DeferredReply defer) {
   id_set->set_marshallable(std::make_shared<VecRecData>());
   shared_ptr<VecRecData> sp_ret_id_set = marshallable_cast<VecRecData>(id_set);
@@ -843,13 +843,13 @@ void ClassicServiceImpl::JetpackPullIdSet(const epoch_t& jepoch,
 
 void ClassicServiceImpl::JetpackPullCmd(const epoch_t& jepoch,
                                         const epoch_t& oepoch, 
-                                        const MarshallDeputy& key_batch, 
+                                        const janus::Command& key_batch, 
                                         bool_t* ok, 
                                         epoch_t* reply_jepoch, 
                                         epoch_t* reply_oepoch,
-                                        MarshallDeputy* reply_old_view,
-                                        MarshallDeputy* reply_new_view,
-                                        MarshallDeputy* cmd_batch, 
+                                        janus::Command* reply_old_view,
+                                        janus::Command* reply_new_view,
+                                        janus::Command* cmd_batch, 
                                         rrr::DeferredReply defer) {
   auto vec_keys = marshallable_cast<VecRecData>(key_batch);
   std::vector<key_t> keys;
@@ -867,7 +867,7 @@ void ClassicServiceImpl::JetpackRecordCmd(const epoch_t& jepoch,
                                           const epoch_t& oepoch,
                                           const int32_t& sid,
                                           const int32_t& rid,
-                                          const MarshallDeputy& md, 
+                                          const janus::Command& md, 
                                           rrr::DeferredReply defer) {
   auto batch = marshallable_cast<KeyCmdBatchData>(md);
   if (!batch) {
@@ -883,8 +883,8 @@ void ClassicServiceImpl::JetpackPrepare(const epoch_t& jepoch,
                                         bool_t* ok, 
                                         epoch_t* reply_jepoch,
                                         epoch_t* reply_oepoch,
-                                        MarshallDeputy* reply_old_view,
-                                        MarshallDeputy* reply_new_view,
+                                        janus::Command* reply_old_view,
+                                        janus::Command* reply_new_view,
                                         ballot_t* reply_max_seen_ballot,
                                         ballot_t* accepted_ballot, 
                                         int32_t* replied_sid, 
@@ -902,8 +902,8 @@ void ClassicServiceImpl::JetpackAccept(const epoch_t& jepoch,
                                        bool_t* ok, 
                                        epoch_t* reply_jepoch,
                                        epoch_t* reply_oepoch,
-                                       MarshallDeputy* reply_old_view,
-                                       MarshallDeputy* reply_new_view,
+                                       janus::Command* reply_old_view,
+                                       janus::Command* reply_new_view,
                                        ballot_t* reply_max_seen_ballot,
                                        rrr::DeferredReply defer) {
   dtxn_sched()->OnJetpackAccept(jepoch, oepoch, max_seen_ballot, sid, set_size, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, reply_max_seen_ballot);
@@ -926,12 +926,12 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               bool_t* ok, 
                                               epoch_t* reply_jepoch,
                                               epoch_t* reply_oepoch,
-                                              MarshallDeputy* reply_old_view,
-                                              MarshallDeputy* reply_new_view,
-                                              MarshallDeputy* cmd, 
+                                              janus::Command* reply_old_view,
+                                              janus::Command* reply_new_view,
+                                              janus::Command* cmd, 
                                               rrr::DeferredReply defer) {
   cmd->set_marshallable(wrap_typed_marshallable(std::make_shared<TpcCommitCommand>()));
-  shared_ptr<Marshallable> sp_ret_cmd = marshallable_cast<Marshallable>(cmd);
+  shared_ptr<Marshallable> sp_ret_cmd = cmd->inner();
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_cmd);
   defer.reply();
 }
@@ -971,8 +971,8 @@ void ClassicServiceImpl::MsgString(const string& arg,
   return;
 }
 
-void ClassicServiceImpl::MsgMarshall(const MarshallDeputy& arg,
-                                     MarshallDeputy* ret,
+void ClassicServiceImpl::MsgMarshall(const janus::Command& arg,
+                                     janus::Command* ret,
                                      rrr::DeferredReply defer) {
 
   verify(comm_ != nullptr);

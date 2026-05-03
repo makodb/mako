@@ -54,7 +54,7 @@ MultiPaxosServiceImpl::MultiPaxosServiceImpl(TxLogServer *sched)
 
 }
 
-// Workstream N Phase 4e-38: removed `Forward(MarshallDeputy, ...)`
+// Workstream N Phase 4e-38: removed `Forward(janus::Command, ...)`
 // N-arg overload — body was empty (Mako uses ForwardToLearner
 // instead via ForwardToLearnerServer RPC).
 
@@ -74,7 +74,7 @@ void MultiPaxosServiceImpl::Prepare(const uint64_t& slot,
 void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
 		                   const uint64_t& time,
                                    const ballot_t& ballot,
-                                   const MarshallDeputy& md_cmd,
+                                   const janus::Command& md_cmd,
                                    ballot_t* max_ballot,
                                    uint64_t* coro_id,
                                    rrr::DeferredReply defer) {
@@ -99,7 +99,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
     sched_->OnAccept(slot,
 		     time,
                      ballot,
-                     const_cast<MarshallDeputy&>(md_cmd).inner(),
+                     const_cast<janus::Command&>(md_cmd).inner(),
                      max_ballot,
                      coro_id,
                      [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -114,7 +114,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
 
 void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
                                    const ballot_t& ballot,
-                                   const MarshallDeputy& md_cmd,
+                                   const janus::Command& md_cmd,
                                    rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   auto x = md_cmd.inner();
@@ -123,29 +123,29 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
 }
 
 
-// Workstream N Phase 4e-26: removed `BulkPrepare(MarshallDeputy, ...)`
-// and `Heartbeat(MarshallDeputy, ...)` N-arg overloads — only callers
+// Workstream N Phase 4e-26: removed `BulkPrepare(janus::Command, ...)`
+// and `Heartbeat(janus::Command, ...)` N-arg overloads — only callers
 // were the now-deleted typed-rpc shims; the corresponding
 // `PaxosServer::OnBulkPrepare` / `OnHeartbeat` impls are also gone.
 
-// Workstream N Phase 4e-27: removed `BulkPrepare2(MarshallDeputy, ...)`
+// Workstream N Phase 4e-27: removed `BulkPrepare2(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim above;
 // the corresponding `PaxosServer::OnBulkPrepare2` impl is also gone.
 
-void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
+void MultiPaxosServiceImpl::BulkAccept(const janus::Command& md_cmd,
                                        i32* ballot,
                                        i32* valid,
                                        rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnBulkAccept(const_cast<MarshallDeputy&>(md_cmd).inner(),
+    sched_->OnBulkAccept(const_cast<janus::Command&>(md_cmd).inner(),
                          ballot,
                          valid,
                         [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
 
-void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
+void MultiPaxosServiceImpl::BulkDecide(const janus::Command& md_cmd,
                                        i32* ballot,
                                        i32* valid,
                                        rrr::DeferredReply defer) {
@@ -153,7 +153,7 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
   // Log_info("BulkDecide RPC handler called");
   Fiber::create_run([&] () {
     // Log_info("BulkDecide coroutine executing, calling OnBulkCommit");
-    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).inner(),
+    sched_->OnBulkCommit(const_cast<janus::Command&>(md_cmd).inner(),
                          ballot,
                          valid,
                          [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -163,16 +163,16 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
   // Log_info("BulkDecide RPC handler returning");
 }
 
-void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
+void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
                                      i32* ballot,
                                      i32* valid,
-                                     MarshallDeputy* ret,
+                                     janus::Command* ret,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   ret->set_marshallable(std::make_shared<SyncLogResponse>());
   auto response = marshallable_cast<SyncLogResponse>(ret);
   Fiber::create_run([&] () {
-    sched_->OnSyncLog(const_cast<MarshallDeputy&>(md_cmd).inner(),
+    sched_->OnSyncLog(const_cast<janus::Command&>(md_cmd).inner(),
                       ballot,
                       valid,
                       response,
@@ -191,13 +191,13 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
 
 }
 
-void MultiPaxosServiceImpl::SyncCommit(const MarshallDeputy& md_cmd,
+void MultiPaxosServiceImpl::SyncCommit(const janus::Command& md_cmd,
                                      i32* ballot,
                                      i32* valid,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Fiber::create_run([&] () {
-    sched_->OnSyncCommit(const_cast<MarshallDeputy&>(md_cmd).inner(),
+    sched_->OnSyncCommit(const_cast<janus::Command&>(md_cmd).inner(),
                          ballot,
                          valid,
                          [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -205,19 +205,19 @@ void MultiPaxosServiceImpl::SyncCommit(const MarshallDeputy& md_cmd,
   });
 }
 
-// Workstream N Phase 4e-26: removed `SyncNoOps(MarshallDeputy, ...)`
+// Workstream N Phase 4e-26: removed `SyncNoOps(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim above.
 
 void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
                                                    const uint64_t& slot, 
                                                    const ballot_t& ballot, /* slot and ballot from the leader */
-                                                   const MarshallDeputy& cmd, 
+                                                   const janus::Command& cmd, 
                                                    uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer) {
     verify(sched_ != nullptr);
     *ret_slot = slot;
     *ret_ballot = ballot;
     Fiber::create_run([&] () {
-      sched_->OnForwardToLearner(par_id, slot, ballot, const_cast<MarshallDeputy&>(cmd).inner(),
+      sched_->OnForwardToLearner(par_id, slot, ballot, const_cast<janus::Command&>(cmd).inner(),
                                [defer = std::move(defer)]() mutable { defer.reply(); });
     });
 }

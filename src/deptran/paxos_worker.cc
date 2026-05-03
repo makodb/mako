@@ -70,7 +70,7 @@ void PaxosWorker::SetupBase() {
 }
 
 
-int PaxosWorker::Next(int slot_id, MarshallDeputy md) {
+int PaxosWorker::Next(int slot_id, janus::Command md) {
   int status=-1;
   // if (site_info_->proc_name.compare("learner")==0){
   //   Log_info("receive a slot_id:%d",slot_id);
@@ -277,8 +277,8 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
         sp_cmd->slots.push_back(mpc.get()->slot_id_);
         sp_cmd->ballots.push_back(send_epoch);
         verify(mpc->cmd_ != nullptr);
-        MarshallDeputy* md =  new MarshallDeputy(mpc.get()->cmd_);
-        sp_cmd->cmds.push_back(shared_ptr<MarshallDeputy>(md));
+        janus::Command* md =  new janus::Command(mpc.get()->cmd_);
+        sp_cmd->cmds.push_back(shared_ptr<janus::Command>(md));
     }
     auto sp_m = wrap_typed_marshallable(sp_cmd);
     _BulkSubmit(sp_m, entries.size());
@@ -315,7 +315,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   vector<shared_ptr<SyncLogResponse>> responses;
   auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_, 
                                                    sp_m, 
-                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<MarshallDeputy> md, 
+                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<janus::Command> md, 
                                                                                     ballot_t ballot, 
                                                                                     int resp_type) {
     if(!resp_type)
@@ -332,7 +332,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   sp_quorum->wait();
   done = true;
   if (sp_quorum->yes()) {
-    map<pair<int,slotid_t>, shared_ptr<MarshallDeputy>> commited_slots;
+    map<pair<int,slotid_t>, shared_ptr<janus::Command>> commited_slots;
     for(int i = 0; i < responses.size(); i++){
       for(int j = 0; j < responses[i]->sync_data.size(); j++){
         auto bp_cmd =
@@ -351,7 +351,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
           if(inst->committed_cmd_){
 	    //Log_info("The slots are for partition %d slot %d", j, responses[i]->missing_slots[j][k]);
             auto tmp = inst->committed_cmd_;
-            commited_slots[make_pair(j, responses[i]->missing_slots[j][k])] = make_shared<MarshallDeputy>(MarshallDeputy(tmp));
+            commited_slots[make_pair(j, responses[i]->missing_slots[j][k])] = make_shared<janus::Command>(MarshallDeputy(tmp));
           }
         }
       }

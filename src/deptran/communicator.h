@@ -146,7 +146,7 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   
-  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& id_set) {
+  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& id_set) {
     if (y) {
       vote_yes();
       // If ok=true, jepoch and oepoch are not larger than local, so we can update id_sets
@@ -198,7 +198,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
     majority_threshold_ = (f + 2 + 1) / 2;
   }
 
-  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& batch_md) {
+  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& batch_md) {
     if (y) {
       vote_yes();
       auto batch = marshallable_cast<KeyCmdBatchData>(batch_md);
@@ -343,7 +343,7 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
   epoch_t max_oepoch_ = -1;
   shared_ptr<Marshallable> recovered_cmd_;
   
-  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& cmd) {
+  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& cmd) {
     if (y) {
       vote_yes();
       // Store the recovered command if we get one
@@ -487,8 +487,8 @@ class Communicator {
 
   vector<function<bool(const string& arg, string& ret)> >
       msg_string_handlers_{};
-  vector<function<bool(const MarshallDeputy& arg,
-                       MarshallDeputy& ret)> > msg_marshall_handlers_{};
+  vector<function<bool(const janus::Command& arg,
+                       janus::Command& ret)> > msg_marshall_handlers_{};
 
   void SendStart(SimpleCommand& cmd,
                  int32_t output_size,
@@ -551,8 +551,8 @@ class Communicator {
   std::shared_ptr<MessageEvent> SendMessage(svrid_t svr_id, string& msg);
 
   void AddMessageHandler(std::function<bool(const string&, string&)>);
-  void AddMessageHandler(std::function<bool(const MarshallDeputy&,
-                                            MarshallDeputy&)>);
+  void AddMessageHandler(std::function<bool(const janus::Command&,
+                                            janus::Command&)>);
 
   // Workstream N Phase 4e-26: removed `BroadcastBulkPrepare`,
   // `BroadcastHeartBeat`, `BroadcastSyncNoOps` virtual stubs — the
@@ -570,7 +570,7 @@ class Communicator {
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
                       shared_ptr<Marshallable> cmd,
-                      const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb){
+                      const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb){
       verify(0);
     }
 
