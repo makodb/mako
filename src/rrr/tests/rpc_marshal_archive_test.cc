@@ -2412,30 +2412,54 @@ TEST(MarshallDeputyKindEncoding, V32SingleByteForSmallKindsViaArchive) {
 // Three small Serializable types for the TypeList factory tests. They
 // have distinct save/load shapes so an out-of-position dispatch
 // produces a recognizable type mismatch.
+// Test types use kind values 50/51/52 — fit in v32 single-byte range
+// (≤63), distinct from `MakoCommands` (1-19) and `ANY_MESSAGE` (24).
+// The L10c-cmds runtime-registry path on `SerializableEnvelope::load`
+// uses `MarshallDeputy::create_initializer(kind)` which requires the
+// kind to be registered; tests register their types via
+// `reg_serializable_in_deputy` below.  `TypeList::index_of<T>()`
+// remains compile-time (1-indexed positions); the kind value the
+// test types report is independent of TypeList position.
 struct TypeListFactoryAlpha {
+  static constexpr int32_t kKind = 60;
   int32_t a{0};
   void save(BinaryWriteArchive& ar) const { ar << a; }
   void load(BinaryReadArchive& ar) { ar >> a; }
-  int32_t kind() const { return 1; }  // = position in factory test list
+  int32_t kind() const { return kKind; }
 };
 
 struct TypeListFactoryBeta {
+  static constexpr int32_t kKind = 61;
   std::string b;
   void save(BinaryWriteArchive& ar) const { ar << b; }
   void load(BinaryReadArchive& ar) { ar >> b; }
-  int32_t kind() const { return 2; }
+  int32_t kind() const { return kKind; }
 };
 
 struct TypeListFactoryGamma {
+  static constexpr int32_t kKind = 62;
   int64_t c{0};
   void save(BinaryWriteArchive& ar) const { ar << c; }
   void load(BinaryReadArchive& ar) { ar >> c; }
-  int32_t kind() const { return 3; }
+  int32_t kind() const { return kKind; }
 };
 
 using TypeListFactoryList = TypeList<TypeListFactoryAlpha,
                                      TypeListFactoryBeta,
                                      TypeListFactoryGamma>;
+
+// Register with MarshallDeputy so SerializableEnvelope::load can find
+// them via the runtime registry path.  (Static-init ordering is fine:
+// these run before any test body.)
+static int _reg_tl_factory_alpha =
+    reg_serializable_in_deputy<TypeListFactoryAlpha>(
+        TypeListFactoryAlpha::kKind);
+static int _reg_tl_factory_beta =
+    reg_serializable_in_deputy<TypeListFactoryBeta>(
+        TypeListFactoryBeta::kKind);
+static int _reg_tl_factory_gamma =
+    reg_serializable_in_deputy<TypeListFactoryGamma>(
+        TypeListFactoryGamma::kKind);
 
 TEST(TypeListFactory, IndexOfReturns1IndexedPosition) {
   EXPECT_EQ(TypeListFactoryList::index_of<TypeListFactoryAlpha>(), 1);
@@ -2507,7 +2531,7 @@ TEST(SerializableEnvelope, PackValueSemanticHoldsCopy) {
 
   auto env = SerializableEnvelope<EnvelopeTestList>::pack(beta);
   EXPECT_TRUE(env.has_value());
-  EXPECT_EQ(env.kind(), 2);  // beta is at TypeList position 2
+  EXPECT_EQ(env.kind(), TypeListFactoryBeta::kKind);
   EXPECT_TRUE(env.is_a<TypeListFactoryBeta>());
   EXPECT_FALSE(env.is_a<TypeListFactoryAlpha>());
 
@@ -2526,7 +2550,7 @@ TEST(SerializableEnvelope, PackAliasedSharesPayload) {
 
   auto env = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
   EXPECT_TRUE(env.has_value());
-  EXPECT_EQ(env.kind(), 1);  // alpha is at position 1
+  EXPECT_EQ(env.kind(), TypeListFactoryAlpha::kKind);
 
   auto* recovered = env.unpack<TypeListFactoryAlpha>();
   ASSERT_NE(recovered, nullptr);
@@ -2563,7 +2587,7 @@ TEST(SerializableEnvelope, RoundTripValueSemanticViaArchive) {
   incoming.load(reader);
 
   EXPECT_TRUE(incoming.has_value());
-  EXPECT_EQ(incoming.kind(), 2);
+  EXPECT_EQ(incoming.kind(), TypeListFactoryBeta::kKind);
   auto* recovered = incoming.unpack<TypeListFactoryBeta>();
   ASSERT_NE(recovered, nullptr);
   EXPECT_EQ(recovered->b, "wire round-trip");
@@ -2585,15 +2609,15 @@ TEST(SerializableEnvelope, RoundTripAliasedViaArchive) {
   SerializableEnvelope<EnvelopeTestList> incoming;
   incoming.load(reader);
 
-  EXPECT_EQ(incoming.kind(), 3);
+  EXPECT_EQ(incoming.kind(), TypeListFactoryGamma::kKind);
   auto* recovered = incoming.unpack<TypeListFactoryGamma>();
   ASSERT_NE(recovered, nullptr);
   EXPECT_EQ(recovered->c, 0xDEADBEEFCAFEBABEll);
 }
 
 TEST(SerializableEnvelope, WireSizeFor1ByteKind) {
-  // Kind 1 (alpha) fits in 1 byte v32; alpha's `a` field is i32 (4 bytes).
-  // Total wire size: 1 (v32 kind) + 4 (i32 a) = 5 bytes.
+  // Kind 50 (alpha) fits in 1-byte v32 (≤63); alpha's `a` field is
+  // i32 (4 bytes).  Total wire size: 1 (v32 kind) + 4 (i32 a) = 5 bytes.
   TypeListFactoryAlpha alpha;
   alpha.a = 0;
 
@@ -2603,7 +2627,8 @@ TEST(SerializableEnvelope, WireSizeFor1ByteKind) {
   env.save(writer);
 
   EXPECT_EQ(sink.bytes.len(), 1u + sizeof(int32_t));
-  EXPECT_EQ(sink.bytes[0], 1u);  // v32 kind=1, 1-byte single-byte encoding
+  EXPECT_EQ(sink.bytes[0],
+            static_cast<uint8_t>(TypeListFactoryAlpha::kKind));
 }
 
 TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {

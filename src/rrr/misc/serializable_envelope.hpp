@@ -196,9 +196,38 @@ class SerializableEnvelope {
   void load(BinaryReadArchive& ar) {
     v32 kind_v;
     ar >> kind_v;
-    auto proxy = TypeList::create_at(kind_v.get());
-    proxy->load(ar);
-    inner_ = as_marshallable(std::move(proxy));
+    // Workstream N L10c-cmds: dispatch via the runtime
+    // `MarshallDeputy::create_initializer` registry (populated at
+    // static-init time by each TypeList type's
+    // `reg_serializable_in_deputy<T>()` call).  Avoids forcing
+    // every TU that includes `mako_commands.h` (and transitively
+    // `rcc_rpc.h`) to have all TypeList types complete — the L10a
+    // compile-time `TypeList::create_at(pos)` requires that, but
+    // the include graph (paxos_worker.h → coordinator.h → rcc_rpc.h)
+    // makes it impossible to ship those headers from rcc_rpc.rpc
+    // without circular dependencies.
+    //
+    // The L10a `TypeList::create_at(pos)` path is still available
+    // for tests and direct callers that already have the types in
+    // scope (and want compile-time dispatch); it is exercised by
+    // the `TypeListFactory.*` tests in `rpc_marshal_archive_test`.
+    inner_ = MarshallDeputy::create_initializer(kind_v.get());
+    // For Phase-4-migrated Serializable types, `inner_` is a
+    // `SerializableMarshallableAdapter`; drive load through its
+    // proxy directly so the bytes go through the BinaryReadArchive
+    // path.  Legacy Marshallable types fall back to from_marshal.
+    auto* adapter =
+        dynamic_cast<SerializableMarshallableAdapter*>(inner_.get());
+    if (adapter != nullptr) {
+      adapter->proxy_mut()->load(ar);
+      return;
+    }
+    // Fallback for legacy Marshallable subclasses — unused for
+    // Phase-4-migrated payloads, but kept for completeness.
+    auto* mark_adapter =
+        proxy_cast<MarshalSourceAdapter>(&*ar.source());
+    verify(mark_adapter != nullptr);
+    inner_->from_marshal(*mark_adapter->source()->marshal());
   }
 
  private:
