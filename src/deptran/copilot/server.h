@@ -158,7 +158,7 @@ class CopilotServer : public TxLogServer {
   bool allCmdComitted(shared_ptr<Marshallable> batch_cmd);
 
 #ifdef ZERO_OVERHEAD
-  bool ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) override;
+  bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) override;
 #endif
 };
 

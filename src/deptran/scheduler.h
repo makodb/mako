@@ -629,7 +629,10 @@ class TxLogServer {
   void RuleWitnessGC(const janus::Command& cmd);
 
 #ifdef ZERO_OVERHEAD
-  virtual bool ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) {
+  // Workstream N L10f-prep6m (2026-05-03): takes janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  virtual bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) {
     // This function should be overrided by the deriviated class (replica server)
     assert(0);
     return false;

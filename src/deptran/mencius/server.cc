@@ -190,14 +190,15 @@ void MenciusServer::Setup() {
 }
 
 #ifdef ZERO_OVERHEAD
-bool MenciusServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) {
+bool MenciusServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_env) {
   return false;
+  // L10f-prep6m: cmd_env is Command; SimpleRWCommand::Conflict still
+  // takes shared_ptr<Marshallable>.
+  auto cmd = cmd_env.inner_marshallable();
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   for (slotid_t id = max_executed_slot_ + 1; id <= max_active_slot_; id++) {
     auto next_instance = GetInstance(id);
     // check next_instance->executed_ since Mencius have out-of-order execution
-    // L10f-prep3b: committed_cmd_ is Command; Conflict still takes
-    // shared_ptr<Marshallable>.
     if (next_instance->committed_cmd_.has_value() && !next_instance->executed_ &&
         SimpleRWCommand::Conflict(next_instance->committed_cmd_.inner_marshallable(), cmd))
       return true;
