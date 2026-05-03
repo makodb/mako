@@ -158,7 +158,10 @@ class CopilotServer : public TxLogServer {
   copilot_stack_t stack_;
 
   bool isExecuted(shared_ptr<CopilotData>& ins);
-  bool allCmdComitted(shared_ptr<Marshallable> batch_cmd);
+  // Workstream N L10f-prep6w (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  bool allCmdComitted(const janus::Command& batch_cmd);
 
 #ifdef ZERO_OVERHEAD
   bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) override;

@@ -85,7 +85,7 @@ bool CopilotServer::WaitMaxCommittedGT(uint8_t is_pilot, slotid_t slot, int time
   return (event.value_ >= slot);
 }
 
-bool CopilotServer::allCmdComitted(shared_ptr<Marshallable> batch_cmd) {
+bool CopilotServer::allCmdComitted(const janus::Command& batch_cmd) {
   auto cmds = marshallable_cast<TpcBatchCommand>(batch_cmd);
   verify(cmds != nullptr);
   for (auto& c : cmds->cmds_) {
@@ -98,9 +98,6 @@ bool CopilotServer::allCmdComitted(shared_ptr<Marshallable> batch_cmd) {
 
 bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
   verify(ins);
-  // L10f-prep3c: ins->cmd is Command; the local `cmd` is held as a
-  // Command reference so kind_ uses the public field.  allCmdComitted
-  // still takes shared_ptr<Marshallable> so unwrap at the boundary.
   auto& cmd = ins->cmd;
   if (GET_STATUS(ins->status) < Status::FAST_ACCEPTED)
     return false;
@@ -110,7 +107,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
   }
   if (likely(cmd.kind_ == TpcBatchCommand::static_kind())) {
     // check if cmd committed in tx scheduler, which virtually means cmd is executed
-    if (allCmdComitted(cmd.inner_marshallable())) {
+    if (allCmdComitted(cmd)) {
       Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
        ins->status = Status::EXECUTED;
        if (ins->cmit_evt.value_ < 1)
