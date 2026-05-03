@@ -604,12 +604,6 @@ class TxLogServer {
     return checksum;
   }
 
-  UniqueCmdID GetUniqueCmdID(shared_ptr<Marshallable> cmd);
-
-  value_t DBGet(const shared_ptr<Marshallable>& cmd);
-
-  value_t DBPut(const shared_ptr<Marshallable>& cmd);
-
   // This used for garbage collection / evaluation data structure grows over time
   void PrintStructureSize();
 
@@ -618,12 +612,18 @@ class TxLogServer {
   Witness witness_;
 
   // For Rule usage
-  void OnRuleSpeculativeExecute(const shared_ptr<Marshallable>& cmd,
+  // Workstream N L10f-prep6v (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void OnRuleSpeculativeExecute(const janus::Command& cmd,
                                 bool_t* accepted,
                                 value_t* result,
                                 bool_t* is_leader);
 
-  void OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<Marshallable>& cmd);
+  // Workstream N L10f-prep6v (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd);
 
   // @unsafe
   // Workstream N L10f-prep6h (2026-05-03): takes janus::Command;

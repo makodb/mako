@@ -364,44 +364,13 @@ int32_t TxLogServer::OnUpgradeEpoch(uint32_t old_epoch) {
   return epoch_mgr_.CheckBufferInactive();
 }
 
-UniqueCmdID TxLogServer::GetUniqueCmdID(shared_ptr<Marshallable> cmd) {
-  shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
-  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
-    shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-    verify(tpc_cmd != nullptr);
-    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    verify(cmd_cast != nullptr);
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-  } else if (cmd->kind_ == VecPieceData::static_kind()) {
-    shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
-    verify(cmd_cast != nullptr);
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-  } else {
-    verify(0);
-  }
-  shared_ptr<TxPieceData> vector0 = *(sp_vec_piece->begin());
-  shared_ptr<CmdData> casted_cmd = dynamic_pointer_cast<CmdData>(vector0);
-  UniqueCmdID cmd_id;
-  cmd_id.client_id_ = casted_cmd->client_id_;
-  cmd_id.cmd_id_ = casted_cmd->cmd_id_in_client_;
-  return cmd_id;
-}
-
-value_t TxLogServer::DBGet(const shared_ptr<Marshallable>& cmd) {
-  shared_ptr<SimpleRWCommand> parsed_cmd_ = make_shared<SimpleRWCommand>(cmd);
-  return kv_table_[parsed_cmd_->key_];
-}
-
-value_t TxLogServer::DBPut(const shared_ptr<Marshallable>& cmd) {
-  shared_ptr<SimpleRWCommand> parsed_cmd_ = make_shared<SimpleRWCommand>(cmd);
-  kv_table_[parsed_cmd_->key_] = parsed_cmd_->value_;
-  return 1;
-}
-
+// Workstream N L10f-prep6v (2026-05-03): removed dead helpers
+// `GetUniqueCmdID(shared_ptr<Marshallable>)`, `DBGet(...)`, and
+// `DBPut(...)`.  None had callers anywhere in the tree.
 
 // below are about rule
 
-void TxLogServer::OnRuleSpeculativeExecute(const shared_ptr<Marshallable>& cmd,
+void TxLogServer::OnRuleSpeculativeExecute(const janus::Command& cmd,
                     bool_t* accepted,
                     value_t* result,
                     bool_t* is_leader) {
@@ -429,8 +398,8 @@ void TxLogServer::OnRuleSpeculativeExecute(const shared_ptr<Marshallable>& cmd,
   *is_leader = IsLeader();
 }
 
-void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<Marshallable>& cmd) {
-  if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd)) {
+void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd) {
+  if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd.inner_marshallable())) {
     // Log_info("[JETPACK-Witness] loc_id %d about to push_back", loc_id_);
     rep_sched_->witness_.push_back(cmd);
   }

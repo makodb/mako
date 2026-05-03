@@ -243,8 +243,7 @@ void ClassicServiceImpl::RuleSpeculativeExecute(const janus::Command& md,
                                                 int32_t* result,
                                                 bool_t* is_leader,
                                                 rrr::DeferredReply defer) {
-  shared_ptr<Marshallable> sp = md.inner();
-  dtxn_sched()->OnRuleSpeculativeExecute(sp, accepted, result, is_leader);
+  dtxn_sched()->OnRuleSpeculativeExecute(md, accepted, result, is_leader);
   defer.reply();
 }
 
@@ -287,13 +286,13 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
       piece_count_[piece_count_key]++;
   piece_count_tid_.insert(header.tid);
 #endif
-  shared_ptr<Marshallable> sp = md.inner();
 #ifndef ZERO_OVERHEAD
-  dtxn_sched()->OriginalPathUnexecutedCmdConflictPlaceHolder(sp);
+  dtxn_sched()->OriginalPathUnexecutedCmdConflictPlaceHolder(md);
 #endif
 
   // Check if this is a recovery command
   bool is_recovery = false;
+  shared_ptr<Marshallable> sp = md.inner();
   if (sp && sp->kind_ == VecPieceData::static_kind()) {
     auto vec_piece_data = marshallable_cast<VecPieceData>(sp);
     if (vec_piece_data && vec_piece_data->is_recovery_command_) {
