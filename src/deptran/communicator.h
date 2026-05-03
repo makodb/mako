@@ -341,14 +341,19 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
   using QuorumEvent::QuorumEvent;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
-  shared_ptr<Marshallable> recovered_cmd_;
-  
+  // Workstream N L10f-prep6d (2026-05-03): recovered_cmd_ migrated
+  // from `shared_ptr<Marshallable>` to `janus::Command`.
+  // GetRecoveredCmd keeps its `shared_ptr<Marshallable>` return type
+  // so the lone caller in `scheduler.cc::JetpackHandleSyncStable`
+  // doesn't need to change.
+  janus::Command recovered_cmd_;
+
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& cmd) {
     if (y) {
       vote_yes();
       // Store the recovered command if we get one
-      if (!recovered_cmd_ && cmd.inner()) {
-        recovered_cmd_ = cmd.inner();
+      if (!recovered_cmd_.has_value() && cmd.has_value()) {
+        recovered_cmd_ = cmd;
       }
     } else {
       vote_no();
@@ -361,9 +366,9 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
       }
     }
   }
-  
+
   shared_ptr<Marshallable> GetRecoveredCmd() {
-    return recovered_cmd_;
+    return recovered_cmd_.inner_marshallable();
   }
 };
 
