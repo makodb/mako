@@ -20,6 +20,7 @@
 #include <rusty/cell.hpp>
 
 #include "rrr/rrr.hpp"
+#include "../mako_commands.h"  // janus::Command (SerializableEnvelope<MakoCommands>)
 
 namespace janus {
 namespace raft {
@@ -31,6 +32,7 @@ using ::rrr::MarshallDeputy;
 using ::rrr::BinaryWriteArchive;
 using ::rrr::BinaryReadArchive;
 using ::rrr::i8;
+using ::janus::Command;
 
 // Type aliases matching existing codebase
 // Use preprocessor guards to avoid conflict with macro definitions in constants.h
@@ -54,7 +56,16 @@ struct LogEntry {
     ballot_t term{0};                 // Raft term or Paxos epoch
     ballot_t max_ballot_seen{0};      // Highest ballot seen (Paxos)
     ballot_t max_ballot_accepted{0};  // Highest accepted ballot (Paxos)
-    std::shared_ptr<Marshallable> command{nullptr};  // The replicated command
+    // Workstream N L10f-prep1 (2026-05-03): the persistent log's
+    // polymorphic command field migrated from
+    // `shared_ptr<Marshallable>` to `janus::Command`
+    // (`SerializableEnvelope<MakoCommands>`).  Command's internal
+    // storage is still a `shared_ptr<Marshallable>` (callers crossing
+    // the boundary into APIs that still take
+    // `shared_ptr<Marshallable>` use `command.inner_marshallable()`),
+    // so wire format is byte-for-byte unchanged.  See
+    // `docs/dev/l10-unblock-plan.md` for the broader migration plan.
+    Command command{};                // The replicated command
     bool committed{false};            // Whether entry is committed
     bool is_no_op{false};             // No-op entry flag
 
@@ -65,9 +76,11 @@ struct LogEntry {
     LogEntry(slotid_t slot, ballot_t t)
         : slot_id(slot), term(t) {}
 
-    // @safe - Full constructor
-    LogEntry(slotid_t slot, ballot_t t, std::shared_ptr<Marshallable> cmd,
-             bool commit = false)
+    // @safe - Full constructor.  `cmd` accepts any
+    // `shared_ptr<T>` for T inheriting Marshallable (via Command's
+    // templated ctor), so callers passing `shared_ptr<Marshallable>`
+    // / `shared_ptr<TestCommand>` continue to compile unchanged.
+    LogEntry(slotid_t slot, ballot_t t, Command cmd, bool commit = false)
         : slot_id(slot), term(t), command(std::move(cmd)), committed(commit) {}
 
     // @safe - Comparison for ordering
@@ -111,11 +124,14 @@ struct LogEntry {
         ar << static_cast<i8>(committed ? 1 : 0);
         ar << static_cast<i8>(is_no_op ? 1 : 0);
 
-        i8 has_command = (command != nullptr) ? 1 : 0;
+        // L10f-prep1: drive the polymorphic command through Command's
+        // own archive operator instead of wrapping it in a temporary
+        // MarshallDeputy.  Wire format is identical (Command emits
+        // `[v32 kind][payload]`, same as MarshallDeputy post-L9).
+        i8 has_command = command.has_value() ? 1 : 0;
         ar << has_command;
         if (has_command) {
-            MarshallDeputy md(command);
-            ar << md;
+            ar << command;
         }
     }
 
@@ -143,11 +159,9 @@ struct LogEntry {
         i8 has_command = 0;
         ar >> has_command;
         if (has_command) {
-            MarshallDeputy md;
-            ar >> md;
-            command = md.inner();
+            ar >> command;
         } else {
-            command = nullptr;
+            command = Command{};
         }
     }
 };

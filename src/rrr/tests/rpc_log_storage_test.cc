@@ -67,7 +67,7 @@ TEST_F(LogEntryTest, DefaultConstruction) {
     EXPECT_EQ(entry.term, 0u);
     EXPECT_EQ(entry.max_ballot_seen, 0u);
     EXPECT_EQ(entry.max_ballot_accepted, 0u);
-    EXPECT_EQ(entry.command, nullptr);
+    EXPECT_FALSE(entry.command.has_value());
     EXPECT_FALSE(entry.committed);
     EXPECT_FALSE(entry.is_no_op);
 }
@@ -76,7 +76,7 @@ TEST_F(LogEntryTest, ConstructionWithSlotAndTerm) {
     LogEntry entry(42, 5);
     EXPECT_EQ(entry.slot_id, 42u);
     EXPECT_EQ(entry.term, 5u);
-    EXPECT_EQ(entry.command, nullptr);
+    EXPECT_FALSE(entry.command.has_value());
     EXPECT_FALSE(entry.committed);
 }
 
@@ -86,7 +86,7 @@ TEST_F(LogEntryTest, FullConstruction) {
 
     EXPECT_EQ(entry.slot_id, 10u);
     EXPECT_EQ(entry.term, 3u);
-    EXPECT_NE(entry.command, nullptr);
+    EXPECT_TRUE(entry.command.has_value());
     EXPECT_TRUE(entry.committed);
 }
 
@@ -132,7 +132,7 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
     EXPECT_EQ(restored.max_ballot_accepted, 8u);
     EXPECT_TRUE(restored.committed);
     EXPECT_TRUE(restored.is_no_op);
-    EXPECT_EQ(restored.command, nullptr);
+    EXPECT_FALSE(restored.command.has_value());
 }
 
 TEST_F(LogEntryTest, SerializationWithCommand) {

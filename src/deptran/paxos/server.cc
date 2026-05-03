@@ -618,10 +618,13 @@ bool PaxosServer::RecoverFromStorage() {
       paxos_data->max_ballot_accepted_ = entry.max_ballot_accepted;
       paxos_data->is_no_op = entry.is_no_op;
 
+      // L10f-prep1: LogEntry::command is now janus::Command; PaxosData
+      // still holds shared_ptr<Marshallable> (migrating it is
+      // L10f-prep3), so unwrap at the boundary.
       if (entry.committed) {
-        paxos_data->committed_cmd_ = entry.command;
+        paxos_data->committed_cmd_ = entry.command.inner_marshallable();
       } else {
-        paxos_data->accepted_cmd_ = entry.command;
+        paxos_data->accepted_cmd_ = entry.command.inner_marshallable();
       }
     }
 

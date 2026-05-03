@@ -79,6 +79,16 @@ class SerializableEnvelope {
     refresh_kind();
   }
 
+  // L10f-prep1: `cmd = sp;` form (where sp is shared_ptr<Marshallable>)
+  // would otherwise be ambiguous between the Command(sp) ctor + the
+  // default operator=(Command&&), and operator=(MarshallDeputy&&) via
+  // MarshallDeputy(sp).  Provide a direct overload to disambiguate.
+  SerializableEnvelope& operator=(std::shared_ptr<Marshallable> sp) {
+    inner_ = std::move(sp);
+    refresh_kind();
+    return *this;
+  }
+
   // Templated ctor for `shared_ptr<T>` where T is a Marshallable
   // subclass — supports `make_shared<Command>(make_shared<TestMarshallable>(...))`
   // (test fixtures that wrap concrete Marshallable subclasses).

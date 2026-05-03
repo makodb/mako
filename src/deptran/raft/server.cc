@@ -316,7 +316,10 @@ bool RaftServer::RecoverFromStorage() {
     for (const auto& entry : entries) {
       auto data = std::make_shared<RaftData>();
       data->term = entry.term;
-      data->log_ = entry.command;
+      // L10f-prep1: LogEntry::command is now janus::Command; raft's
+      // RaftData::log_ is still shared_ptr<Marshallable> (migrating
+      // it is L10f-prep2), so unwrap at the boundary.
+      data->log_ = entry.command.inner_marshallable();
       data->max_ballot_seen_ = entry.max_ballot_seen;
       data->max_ballot_accepted_ = entry.max_ballot_accepted;
       raft_logs_[entry.slot_id] = data;
