@@ -86,7 +86,10 @@ void CoordinatorRule::GotoNextPhase() {
           c->rule_mode_on_and_is_original_path_only_command_ = !go_to_fastpath_;
           dispatch_acks_[c->inn_id_] = false;
           sp_vec_piece->push_back(c);
-          client_worker_->frequency_.append(SimpleRWCommand::GetKey(c));
+          // L10f-prep6bb: explicit cast disambiguates between the
+          // shared_ptr<Marshallable> and (future) Command overloads
+          // of GetKey when callers pass shared_ptr<DerivedT>.
+          client_worker_->frequency_.append(SimpleRWCommand::GetKey(std::static_pointer_cast<Marshallable>(c)));
         }
         sp_vec_piece_by_par_[par_id] = sp_vec_piece;
       }

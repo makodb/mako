@@ -194,8 +194,8 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
 void BulkCoordinatorMultiPaxos::Accept() {
     in_accept = true;
     // L10f-prep3a: cmd_ is Command; marshallable_cast<T>(Command&)
-    // overload handles the cast.  BroadcastBulkAccept takes
-    // shared_ptr<Marshallable>; unwrap via inner_marshallable().
+    // overload handles the cast.  BroadcastBulkAccept now also takes
+    // const Command& (per prep6t), so cmd_ flows through directly.
     auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
     verify(cmd_temp1 != nullptr);
     if(!in_submission_){

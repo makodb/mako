@@ -980,23 +980,20 @@ bool CopilotServer::strongConnect(shared_ptr<CopilotData>& ins, int* index) {
 
 #ifdef ZERO_OVERHEAD
 bool CopilotServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_env) {
-  // L10f-prep6m: cmd_env is Command; downstream code uses cmd
-  // (shared_ptr<Marshallable>) for SimpleRWCommand::Conflict.
-  auto cmd = cmd_env.inner_marshallable();
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   if (!(isPilot_ || isCopilot_)) return false;
   // Log_info("[Begin] isPilot_ %d isCopilot_ %d from %d to %d", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
   for (slotid_t id = log_infos_[isPilot_].max_executed_slot + 1; id <= log_infos_[isPilot_].max_active_slot; id++) {
     // Log_info("id=%d", id);
     shared_ptr<CopilotData> ins = GetInstance(id, isPilot_);
-    // L10f-prep3c: ins->cmd is Command; marshallable_cast<T>(Command&)
-    // overload handles the cast.
     if (ins && ins->cmd.has_value()) {
       // Copilots use batch cmds in copilot instance
       verify(ins->cmd.kind_ == TpcBatchCommand::static_kind());
       shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
       for (int i = 0; i < batch_cmd->Size(); i++)
-        if (SimpleRWCommand::Conflict(batch_cmd->cmds_[i], cmd))
+        // L10f-prep6bb: explicit cast disambiguates the
+        // shared_ptr<Marshallable> vs Command overloads of Conflict.
+        if (SimpleRWCommand::Conflict(std::static_pointer_cast<Marshallable>(batch_cmd->cmds_[i]), cmd_env.inner_marshallable()))
           return true;
     }
       

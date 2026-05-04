@@ -575,14 +575,13 @@ void FpgaRaftServer::StartTimer()
 
 #ifdef ZERO_OVERHEAD
   bool FpgaRaftServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) {
-    // L10f-prep6m: cmd is now Command; SimpleRWCommand::Conflict
-    // still takes shared_ptr<Marshallable>.
-    auto cmd_sp = cmd.inner_marshallable();
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     for (slotid_t id = executeIndex + 1; id <= maxIndex; id++) {
       auto next_instance = GetFpgaRaftInstance(id);
+      // L10f-prep6bb: Conflict has Command overload now; both args
+      // are Command so dispatch directly.
       if (next_instance->log_.has_value() &&
-          SimpleRWCommand::Conflict(next_instance->log_.inner_marshallable(), cmd_sp))
+          SimpleRWCommand::Conflict(next_instance->log_, cmd))
         return true;
     }
     return false;
