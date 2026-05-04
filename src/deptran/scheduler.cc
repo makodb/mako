@@ -1275,7 +1275,7 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
       if (rep_sched_->witness_.has_cmd_to_recover(key)) {
         auto cmd = rep_sched_->witness_.cmd_to_recover(key);
         if (cmd.has_value()) {
-          batch->AddEntry(key, cmd.inner_marshallable());
+          batch->AddEntry(key, cmd);
         }
       }
     }

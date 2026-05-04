@@ -297,10 +297,11 @@ class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
 // payloads.
 //
 // Workstream N L10f-prep6b (2026-05-03): `commands_` migrated from
-// `vector<shared_ptr<Marshallable>>` to `vector<Command>`.  External
-// API (AddEntry / GetCommand) keeps the `shared_ptr<Marshallable>`
-// shape so callers don't need to change.  save/load drives Command
-// archive ops directly; wire format unchanged.
+// `vector<shared_ptr<Marshallable>>` to `vector<Command>`.
+// L10f-prep6an (2026-05-03): external API (AddEntry / GetCommand)
+// also uses Command directly; shared_ptr<Marshallable> callers
+// auto-convert via Command's implicit ctor.  save/load drives
+// Command archive ops directly; wire format unchanged.
 class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
                                                  MakoCommands> {
  public:
@@ -309,12 +310,12 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
 
   KeyCmdBatchData() = default;
 
-  void AddEntry(key_t key, const shared_ptr<Marshallable>& cmd) {
-    if (!cmd) {
+  void AddEntry(key_t key, const Command& cmd) {
+    if (!cmd.has_value()) {
       return;
     }
     keys_.push_back(key);
-    commands_.emplace_back(cmd);
+    commands_.push_back(cmd);
   }
 
   size_t Size() const {
@@ -327,9 +328,9 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
     return keys_[idx];
   }
 
-  shared_ptr<Marshallable> GetCommand(size_t idx) const {
+  const Command& GetCommand(size_t idx) const {
     verify(idx < commands_.size());
-    return commands_[idx].inner_marshallable();
+    return commands_[idx];
   }
 
   void save(BinaryWriteArchive& ar) const {

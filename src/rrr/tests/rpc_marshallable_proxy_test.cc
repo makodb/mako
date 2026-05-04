@@ -389,8 +389,12 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   ASSERT_NE(decoded_batch, nullptr);
   ASSERT_EQ(decoded_batch->Size(), 1u);
   EXPECT_EQ(decoded_batch->GetKey(0), 1001);
+  // L10f-prep6an: GetCommand now returns const Command&; the
+  // SerializableEnvelope overload of marshallable_cast<T> requires
+  // T be in the TypeList.  TestMarshallable is a test fixture, so
+  // unwrap to the legacy shared_ptr<Marshallable> path explicitly.
   auto nested_decoded =
-      marshallable_cast<TestMarshallable>(decoded_batch->GetCommand(0));
+      marshallable_cast<TestMarshallable>(decoded_batch->GetCommand(0).inner_marshallable());
   ASSERT_NE(nested_decoded, nullptr);
   EXPECT_EQ(nested_decoded->value, 77);
 }

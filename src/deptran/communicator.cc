@@ -1615,9 +1615,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
 
   auto batch_data = std::make_shared<KeyCmdBatchData>();
   for (const auto& entry : cmds) {
-    // KeyCmdBatchData::AddEntry still takes shared_ptr<Marshallable>;
-    // unwrap once at the boundary.
-    batch_data->AddEntry(entry.first, entry.second.inner_marshallable());
+    batch_data->AddEntry(entry.first, entry.second);
   }
   janus::Command cmd_deputy;
   cmd_deputy.set_marshallable(batch_data);

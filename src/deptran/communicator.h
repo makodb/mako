@@ -208,18 +208,16 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
           if (it == key_index_.end()) {
             continue;
           }
-          auto cmd = batch->GetCommand(i);
-          if (!cmd) {
+          const auto& cmd = batch->GetCommand(i);
+          if (!cmd.has_value()) {
             continue;
           }
           auto& state = key_states_[it->second];
-          uint64_t cmd_id = SimpleRWCommand::GetCombinedCmdID(cmd);
+          // L10f-prep6an: GetCombinedCmdID still takes shared_ptr<Marshallable>.
+          uint64_t cmd_id = SimpleRWCommand::GetCombinedCmdID(cmd.inner_marshallable());
           int count = ++state.cmd_counts_[cmd_id];
           if (count > state.max_count) {
             state.max_count = count;
-            // L10f-prep6e: state.max_cmd is Command;
-            // Command::operator=(shared_ptr<Marshallable>) handles
-            // the conversion from `cmd`.
             state.max_cmd = cmd;
           }
         }
