@@ -275,39 +275,10 @@ class RecentAverage {
   }
 };
 
-struct ResponseData {
-  // pair<ver_t, ver_t> pos_of_this_pack;
-  map<pair<int, int>, vector<shared_ptr<Marshallable> > >responses_;
-  shared_ptr<Marshallable> max_cmd_{nullptr};
-  int received_count_ = 0, accept_count_ = 0, max_accept_count_ = 0;
-  double first_seen_time_ = 0;
-  bool done_{false};
-  pair<int, int> append_response(const shared_ptr<Marshallable>& cmd) {
-    shared_ptr<VecPieceData> vec_piece;
-    if (cmd->kind_ == TpcCommitCommand::static_kind()) { // original through tx svr
-      shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-      verify(tpc_cmd != nullptr);
-      vec_piece = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    } else if (cmd->kind_ == VecPieceData::static_kind()) { // jetpack broadcast
-      vec_piece = marshallable_cast<VecPieceData>(cmd);
-    } else {
-      verify(0);
-    }
-    verify(vec_piece != nullptr);
-    shared_ptr<CmdData> md = vec_piece->sp_vec_piece_data_->at(0);
-    pair<int, int> cmd_id = {md->client_id_, md->cmd_id_in_client_};
-    responses_[cmd_id].push_back(cmd);
-    accept_count_++;
-    if (responses_[cmd_id].size() > max_accept_count_) {
-      max_accept_count_ = responses_[cmd_id].size();
-      max_cmd_ = cmd;
-    }
-    return {accept_count_, max_accept_count_};
-  }
-  shared_ptr<Marshallable> GetMaxCmd() {
-    return max_cmd_;
-  }
-};
+// Workstream N L10f-prep6ad (2026-05-03): removed dead `struct ResponseData`
+// (~30 LOC) — declared with `responses_`, `max_cmd_`, `accept_count_` etc.
+// fields plus `append_response()` and `GetMaxCmd()` methods, but never
+// instantiated, referenced, or constructed anywhere in the tree.
 
 // Workstream N L10f-prep6e (2026-05-03): rec_set_ migrated from
 // `vector<shared_ptr<Marshallable>>` to `vector<janus::Command>`.
