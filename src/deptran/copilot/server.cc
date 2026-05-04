@@ -312,7 +312,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
          */
 #ifdef FULL_LOG_DEBUG
         Log_info("cmd<%d, %d> entered site %d for j(%d) dep_id(%d)<slot(%d) thus set suggest_dep(%d) log_info.max_accepted_slot(%d)",
-          SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, j, dep_id, slot, suggest_dep, log_info.max_accepted_slot);
+          SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).second, loc_id_, j, dep_id, slot, suggest_dep, log_info.max_accepted_slot);
 #endif
         // Log_info("loc_id_=%d isPilot_=%d slot=%d j=%d dep_id=%d, dep_id!=0 && dep_id<slot suggest_dep(%d->%d)", loc_id_, isPilot_, slot, j, dep_id, suggest_dep, log_info.max_accepted_slot);
         suggest_dep = log_info.max_accepted_slot;
