@@ -15,7 +15,8 @@ class MenciusExecutor: public Executor {
    */
   ballot_t Prepare(const ballot_t ballot);
 
-  ballot_t Suggest(const ballot_t ballot, shared_ptr<Marshallable> cmd);
+  // Workstream N L10f-prep6aq (2026-05-03): removed dead `Suggest`
+  // method — `verify(0); return 0;` stub with no callers.
 
   ballot_t Decide(ballot_t ballot, CmdData& cmd);
 };
