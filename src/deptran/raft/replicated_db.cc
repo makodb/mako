@@ -321,8 +321,8 @@ bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
 }
 
 // @unsafe - Applies committed Raft entries to local RocksDB
-void ReplicatedDB::ApplyEntry(int slot, shared_ptr<Marshallable> cmd) {
-  if (!db_ || !cmd) return;
+void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
+  if (!db_ || !cmd.has_value()) return;
 
   uint64_t index = static_cast<uint64_t>(slot);
 
@@ -332,7 +332,7 @@ void ReplicatedDB::ApplyEntry(int slot, shared_ptr<Marshallable> cmd) {
   }
 
   // Only process ReplicatedDBCommand entries
-  if (cmd->kind_ != ReplicatedDBCommand::static_kind()) {
+  if (cmd.kind_ != ReplicatedDBCommand::static_kind()) {
     // Not our command type; still advance the index to avoid re-processing
     last_applied_index_ = index;
     PersistLastAppliedIndex();

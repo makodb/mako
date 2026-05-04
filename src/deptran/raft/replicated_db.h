@@ -114,11 +114,10 @@ public:
 
     // Apply callback - registered as app_next_ on RaftServer's scheduler
     // @unsafe - Applies commands to RocksDB
-    // L6-A2: ApplyEntry's signature still takes `shared_ptr<Marshallable>`
-    // (as a deeper-down API).  The L6-A2 lambda update path is to call
-    // it via `rdb->ApplyEntry(slot, md.inner())` from the
-    // MarshallDeputy-shaped RegLearnerAction lambdas.
-    void ApplyEntry(int slot, shared_ptr<Marshallable> cmd);
+    // Workstream N L10f-prep6at (2026-05-03): take const janus::Command&;
+    // shared_ptr<Marshallable> callers auto-convert via Command's
+    // implicit ctor.
+    void ApplyEntry(int slot, const janus::Command& cmd);
 
     // @safe - Returns whether RocksDB is open
     bool IsOpen() const { return db_ != nullptr; }
