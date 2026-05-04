@@ -95,8 +95,7 @@ void MenciusServiceImpl::Decide(const uint64_t& slot,
                                 rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
 
-  // L10f-prep6q: OnCommit takes janus::Command directly.
-  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd.inner());
+  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   sched_->c_mutex.lock();
   sched_->unexecuted_keys_[parsed_cmd.key_] += 1;
   sched_->c_mutex.unlock();

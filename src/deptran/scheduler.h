@@ -165,14 +165,17 @@ class RevoveryCandidates {
 };
 
 class Witness {
+  // Workstream N L10f-4 (2026-05-04): WitnessLog::cmd_ migrated from
+  // shared_ptr<Marshallable> to janus::Command.  Conditional
+  // WITNESS_LOG_DEBUG; never compiled in default builds.
   class WitnessLog {
    public:
     double time_;
     int operation_; // 0: push_back; 1: remove
-    shared_ptr<Marshallable> cmd_;
+    janus::Command cmd_;
     bool success_;
     int size_;
-    WitnessLog(int operation, shared_ptr<Marshallable> cmd, bool success, int size):
+    WitnessLog(int operation, const janus::Command& cmd, bool success, int size):
       operation_(operation), cmd_(cmd), success_(success), size_(size) {
       time_ = SimpleRWCommand::GetCurrentMsTime();
     }

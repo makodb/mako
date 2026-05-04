@@ -500,7 +500,7 @@ bool Witness::push_back(const janus::Command& cmd_env) {
     Log_info("[JETPACK-DEBUG] Added cmd to candidates[%d], no conflict", key);
 #endif
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(0, cmd_env.inner_marshallable(), 1, witness_size_));
+    witness_log_.push_back(WitnessLog(0, cmd_env, 1, witness_size_));
 #endif
     witness_size_distribution_.mid_time_append(++witness_size_);
     return true;
@@ -513,7 +513,7 @@ bool Witness::push_back(const janus::Command& cmd_env) {
              key, candidates_[key].size());
 #endif
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(0, cmd_env.inner_marshallable(), 0, witness_size_));
+    witness_log_.push_back(WitnessLog(0, cmd_env, 0, witness_size_));
 #endif
     return false;
   }
@@ -531,7 +531,7 @@ int Witness::remove(const janus::Command& cmd_env) {
       //   candidates_.erase(parsed_cmd.key_);
     }
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(1, cmd_env.inner_marshallable(), removed, witness_size_));
+    witness_log_.push_back(WitnessLog(1, cmd_env, removed, witness_size_));
 #endif
     return removed;
   } else {
@@ -548,7 +548,9 @@ int Witness::remove(const janus::Command& cmd_env) {
         //   candidates_.erase(parsed_cmd.key_);
       }
 #ifdef WITNESS_LOG_DEBUG
-      witness_log_.push_back(WitnessLog(1, c, removed, witness_size_));
+      // c is shared_ptr<TpcCommitCommand>; wrap into Command via the
+      // Serializable bridge.
+      witness_log_.push_back(WitnessLog(1, Command(wrap_typed_marshallable(c)), removed, witness_size_));
 #endif
     }
     return total_removed;
