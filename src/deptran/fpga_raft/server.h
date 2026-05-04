@@ -274,6 +274,9 @@ class FpgaRaftServer : public TxLogServer {
                       rusty::Function<void()> cb) ;
 
 
+  // Workstream N L10f-prep6ap (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   void OnAppendEntries(const slotid_t slot_id,
                        const ballot_t ballot,
                        const uint64_t leaderCurrentTerm,
@@ -281,15 +284,16 @@ class FpgaRaftServer : public TxLogServer {
                        const uint64_t leaderPrevLogTerm,
                        const uint64_t leaderCommitIndex,
 											 const struct DepId dep_id,
-                       shared_ptr<Marshallable> &cmd,
+                       const janus::Command& cmd,
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,
                        uint64_t *followerLastLogIndex,
                        rusty::Function<void()> cb);
 
+  // Workstream N L10f-prep6ap (2026-05-03): take janus::Command.
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd);
+                const janus::Command& cmd);
 
   // Workstream N Phase 4e-39: removed `OnForward` declaration —
   // only caller was the deleted `FpgaRaftServiceImpl::Forward`

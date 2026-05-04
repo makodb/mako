@@ -149,7 +149,7 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
         leaderPrevLogTerm,
         leaderCommitIndex,
         dep_id,
-        const_cast<janus::Command&>(cmd).inner(),
+        cmd,
         followerAppendOK,
         followerCurrentTerm,
         followerLastLogIndex,
@@ -167,7 +167,7 @@ void FpgaRaftServiceImpl::Decide(const uint64_t& slot,
   Fiber::create_run([this, slot, ballot, cmd, defer = std::move(defer)]() mutable {
     sched_->OnCommit(slot,
                      ballot,
-                     const_cast<janus::Command&>(cmd).inner());
+                     cmd);
     defer.reply();
   });
 }

@@ -392,13 +392,13 @@ void FpgaRaftServer::StartTimer()
                                      const uint64_t leaderPrevLogTerm,
                                      const uint64_t leaderCommitIndex,
 																		 const struct DepId dep_id,
-                                     shared_ptr<Marshallable> &cmd,
+                                     const janus::Command& cmd,
                                      uint64_t *followerAppendOK,
                                      uint64_t *followerCurrentTerm,
                                      uint64_t *followerLastLogIndex,
                                      rusty::Function<void()> cb) {
 #ifdef LATENCY_LOG_DEBUG
-        Log_info("Time of cmd <%d, %d> arrive svr %d OnAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+        Log_info("Time of cmd <%d, %d> arrive svr %d OnAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
         // Log_info("OnAppendEntries svr %d", loc_id_);
         std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -447,7 +447,7 @@ void FpgaRaftServer::StartTimer()
             *followerCurrentTerm = this->currentTerm;
             *followerLastLogIndex = this->lastLogIndex;
             
-						if (cmd->kind_ == TpcCommitCommand::static_kind()){
+						if (cmd.kind_ == TpcCommitCommand::static_kind()){
               auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
               auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
               verify(vec_piece_data != nullptr);
@@ -494,9 +494,9 @@ void FpgaRaftServer::StartTimer()
 
   void FpgaRaftServer::OnCommit(const slotid_t slot_id,
                               const ballot_t ballot,
-                              shared_ptr<Marshallable> &cmd) {
+                              const janus::Command& cmd) {
 #ifdef LATENCY_LOG_DEBUG
-    Log_info("Time of cmd <%d, %d> arrive svr %d OnCommit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+    Log_info("Time of cmd <%d, %d> arrive svr %d OnCommit: %.2fms", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // Log_info("OnCommit");
