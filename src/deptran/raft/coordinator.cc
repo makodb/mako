@@ -55,9 +55,6 @@ bool CoordinatorRaft::IsFPGALeader() {
 void CoordinatorRaft::Submit(const janus::Command& cmd_env,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
-  // L10f-prep6o: take Command at the boundary; downstream uses
-  // shared_ptr<Marshallable> via .inner_marshallable() once.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   if (!IsLeader()) {
     // verify(0);
     auto config = Config::GetConfig();
@@ -70,8 +67,8 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
     }
 
     // Handle WRONG_LEADER case
-    if (cmd->kind_ == TpcCommitCommand::static_kind()) {
-      auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    if (cmd_env.kind_ == TpcCommitCommand::static_kind()) {
+      auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd_env);
       if (tpc_cmd) {
         // Set WRONG_LEADER error code
         tpc_cmd->ret_ = WRONG_LEADER;
@@ -115,21 +112,21 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
     // Pass 0 as log index since we're not actually committing (WRONG_LEADER error path)
     // @unsafe
     {
-    svr_->app_next_(0, cmd);
+    svr_->app_next_(0, cmd_env);
     }
     return;
   } else {
-    // Log_info("[YYYYY] Submit to loc_id %d, which is leader. Command kind=%d, is_recovery=%d", 
-    //          loc_id_, cmd ? cmd->kind_ : -1, SimpleRWCommand(cmd).IsRecoveryCommand());
+    // Log_info("[YYYYY] Submit to loc_id %d, which is leader. Command kind=%d, is_recovery=%d",
+    //          loc_id_, cmd_env.has_value() ? cmd_env.kind_ : -1, SimpleRWCommand(cmd_env.inner_marshallable()).IsRecoveryCommand());
   }
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   verify(!in_submission_);
-  verify(cmd_ == nullptr);
+  verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
-  cmd_ = cmd;
-  verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
+  cmd_ = cmd_env;
+  verify(cmd_.kind_ != MarshallDeputy::UNKNOWN);
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
