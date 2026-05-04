@@ -61,7 +61,11 @@ void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
   bool_t has_view_data = (sp_view_data_ != nullptr) ? 1 : 0;
   ar << has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md(sp_view_data_);
+    // L10f-5: was MarshallDeputy view_md(sp_view_data_) — Command
+    // produces identical wire bytes via the same registry-dispatched
+    // save/load path.
+    janus::Command view_md;
+    view_md.set_marshallable(sp_view_data_);
     ar << view_md;
   }
 }
@@ -78,7 +82,7 @@ void TpcCommitCommand::load(BinaryReadArchive& ar) {
   bool_t has_view_data;
   ar >> has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md;
+    janus::Command view_md;
     ar >> view_md;
     sp_view_data_ = marshallable_cast<ViewData>(view_md);
   }

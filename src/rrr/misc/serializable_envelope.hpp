@@ -357,4 +357,32 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
   return ar;
 }
 
+// Workstream N L10f-5 (2026-05-04): legacy `Marshal&` archive
+// operators.  Wire format identical to `MarshallDeputy`'s:
+// `[v32 kind] [payload bytes]`.  Lets us replace `MarshallDeputy
+// view_md` with `Command view_md` in code paths that still drive the
+// legacy `Marshal&` (e.g., TxReply / TpcCommitCommand archive
+// operators in the legacy RPC reply path).
+template<typename TypeList>
+inline Marshal& operator<<(Marshal& m,
+                           const SerializableEnvelope<TypeList>& env) {
+  verify(env.has_value());
+  m << v32(env.kind_);
+  env.inner_marshallable()->to_marshal(m);
+  return m;
+}
+
+template<typename TypeList>
+inline Marshal& operator>>(Marshal& m,
+                           SerializableEnvelope<TypeList>& env) {
+  v32 kind_v;
+  m >> kind_v;
+  // Dispatch via the runtime `MarshallDeputy::create_initializer`
+  // registry (same path as `SerializableEnvelope::load`).
+  auto sp = MarshallDeputy::create_initializer(kind_v.get());
+  sp->from_marshal(m);
+  env.set_marshallable(std::move(sp));
+  return m;
+}
+
 }  // namespace rrr

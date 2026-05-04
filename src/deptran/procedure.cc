@@ -144,11 +144,11 @@ Marshal& operator << (Marshal& m, const TxReply& reply) {
   bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
   m << has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md;
+    janus::Command view_md;
     view_md.set_marshallable(reply.sp_view_data_);
     m << view_md;
   }
-  
+
   return m;
 }
 
@@ -164,7 +164,7 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
   bool_t has_view_data;
   m >> has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md;
+    janus::Command view_md;
     m >> view_md;
     reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
@@ -190,7 +190,7 @@ BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply) {
   bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
   ar << has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md;
+    janus::Command view_md;
     view_md.set_marshallable(reply.sp_view_data_);
     ar << view_md;
   }
@@ -208,7 +208,7 @@ BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply) {
   bool_t has_view_data;
   ar >> has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md;
+    janus::Command view_md;
     ar >> view_md;
     reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
