@@ -264,9 +264,6 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
                                  ballot_t* max_ballot,
                                  uint64_t* ret_dep,
                                  rusty::Function<void()> cb) {
-  // L10f-prep6r: take Command at boundary; downstream uses
-  // shared_ptr<Marshallable> via .inner_marshallable() once.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   // TODO: deal with ballot
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("server %d [FAST_ACCEPT] %s : %lu -> %lu", id_,
@@ -275,7 +272,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
+  Log_info("cmd<%d, %d> entered site %d CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).second, loc_id_);
 #endif
 
   auto ins = GetInstance(slot, is_pilot);
@@ -331,7 +328,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
   if (ins->ballot <= ballot) {
     ins->ballot = ballot;
     ins->dep_id = dep;
-    ins->cmd = cmd;
+    ins->cmd = cmd_env;
     log_infos_[is_pilot].max_active_slot = std::max(log_infos_[is_pilot].max_active_slot, slot);
     // still set the cmd here, to prevent PREPARE from getting an empty cmd
     ins->status = Status::FAST_ACCEPTED;
@@ -348,7 +345,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[2-] [tx=%d] Before on FastAccept cb() %.3f", marshallable_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[2-] [tx=%d] Before on FastAccept cb() %.3f", marshallable_cast<TpcBatchCommand>(cmd_env)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   // Print("loc_id_ = " + std::to_string(loc_id_) + " After OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
@@ -368,8 +365,6 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
                              const struct DepId& dep_id,
                              ballot_t* max_ballot,
                              rusty::Function<void()> cb) {
-  // L10f-prep6r: take Command at boundary.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("server %d [ACCEPT     ] %s : %lu -> %lu", id_, toString(is_pilot), slot, dep);
 
@@ -384,7 +379,7 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
   if (ins->ballot <= ballot) {
     ins->ballot = ballot;
     ins->dep_id = dep;
-    ins->cmd = cmd;
+    ins->cmd = cmd_env;
     ins->status = Status::ACCEPTED;
     updateMaxAcptSlot(log_info, slot);
   } else {  // ins->ballot > ballot
@@ -408,8 +403,6 @@ void CopilotServer::OnCommit(const uint8_t& is_pilot,
                              const uint64_t& slot,
                              const uint64_t& dep,
                              const janus::Command& cmd_env) {
-  // L10f-prep6r: take Command at boundary.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnCommit is_pilot=" + std::to_string(is_pilot) +
@@ -425,14 +418,14 @@ void CopilotServer::OnCommit(const uint8_t& is_pilot,
      * This case only happens when: this instance is fast-takovered on
      * another server and that server sent a COMMIT for that instance
      * to all replicas
-     * 
+     *
      * We can return even if it's committed but yet executed, since a committed
      * command is bound to get executed.
      */
     return;
   }
-  
-  ins->cmd = cmd;
+
+  ins->cmd = cmd_env;
   ins->status = Status::COMMITED;
 #ifdef WAIT_AT_UNCOMMIT
   ins->cmit_evt.set(1);
