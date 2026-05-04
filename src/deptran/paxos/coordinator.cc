@@ -29,7 +29,7 @@ void CoordinatorMultiPaxos::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_DEBUG
-  client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd.inner_marshallable()));
+  client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
 #endif
   if (!IsLeader()) {
     //change back to fatal

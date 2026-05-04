@@ -53,7 +53,7 @@ void CoordinatorCopilot::Submit(const janus::Command& cmd,
   done_ = false;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_);
+  Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
 #endif
   // L10f-prep3c: cmd_now_ is now janus::Command.
   verify(!cmd_now_.has_value());
@@ -196,7 +196,7 @@ void CoordinatorCopilot::FastAccept() {
   sq_quorum->wait();
 #ifdef FULL_LOG_DEBUG
   // L10f-prep3c: GetCmdID still takes shared_ptr<Marshallable>.
-  Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).second, loc_id_);
+  Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
@@ -228,7 +228,7 @@ void CoordinatorCopilot::FastAccept() {
   } else {
     if (sq_quorum->yes()) {
 #ifdef FULL_LOG_DEBUG
-      Log_info("cmd<%d, %d> site %d sq_quorum->yes()", SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_now_.inner_marshallable()).second, loc_id_);
+      Log_info("cmd<%d, %d> site %d sq_quorum->yes()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
       /**
        * go to accept phase (regular-path):

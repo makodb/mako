@@ -398,7 +398,7 @@ void FpgaRaftServer::StartTimer()
                                      uint64_t *followerLastLogIndex,
                                      rusty::Function<void()> cb) {
 #ifdef LATENCY_LOG_DEBUG
-        Log_info("Time of cmd <%d, %d> arrive svr %d OnAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+        Log_info("Time of cmd <%d, %d> arrive svr %d OnAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
         // Log_info("OnAppendEntries svr %d", loc_id_);
         std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -496,7 +496,7 @@ void FpgaRaftServer::StartTimer()
                               const ballot_t ballot,
                               const janus::Command& cmd) {
 #ifdef LATENCY_LOG_DEBUG
-    Log_info("Time of cmd <%d, %d> arrive svr %d OnCommit: %.2fms", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+    Log_info("Time of cmd <%d, %d> arrive svr %d OnCommit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // Log_info("OnCommit");
@@ -519,7 +519,7 @@ void FpgaRaftServer::StartTimer()
             // WAN_WAIT
             RuleWitnessGC(next_instance->log_);
 #ifdef LATENCY_LOG_DEBUG
-            Log_info("Time of cmd <%d, %d> arrive svr %d app_next: %.2fms", SimpleRWCommand::GetCmdID(next_instance->log_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(next_instance->log_.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+            Log_info("Time of cmd <%d, %d> arrive svr %d app_next: %.2fms", SimpleRWCommand::GetCmdID(next_instance->log_).first, SimpleRWCommand::GetCmdID(next_instance->log_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
             app_next_(id, next_instance->log_);
             executeIndex++;

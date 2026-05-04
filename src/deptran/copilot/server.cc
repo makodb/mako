@@ -272,7 +272,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).second, loc_id_);
+  Log_info("cmd<%d, %d> entered site %d CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
 #endif
 
   auto ins = GetInstance(slot, is_pilot);
@@ -312,7 +312,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
          */
 #ifdef FULL_LOG_DEBUG
         Log_info("cmd<%d, %d> entered site %d for j(%d) dep_id(%d)<slot(%d) thus set suggest_dep(%d) log_info.max_accepted_slot(%d)",
-          SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).second, loc_id_, j, dep_id, slot, suggest_dep, log_info.max_accepted_slot);
+          SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_, j, dep_id, slot, suggest_dep, log_info.max_accepted_slot);
 #endif
         // Log_info("loc_id_=%d isPilot_=%d slot=%d j=%d dep_id=%d, dep_id!=0 && dep_id<slot suggest_dep(%d->%d)", loc_id_, isPilot_, slot, j, dep_id, suggest_dep, log_info.max_accepted_slot);
         suggest_dep = log_info.max_accepted_slot;

@@ -43,7 +43,7 @@ void CoordinatorFpgaRaft::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
-  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   // client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
   if (!IsLeader()) {
@@ -182,7 +182,7 @@ void CoordinatorFpgaRaft::Commit() {
             (int) par_id_, (int) slot_id_);
 #ifdef LATENCY_LOG_DEBUG
   // L10f-prep6g: GetCmdID still takes shared_ptr<Marshallable>.
-  Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
   verify(phase_ == Phase::COMMIT);
@@ -204,7 +204,7 @@ void CoordinatorFpgaRaft::LeaderLearn() {
     /* } */
 #ifdef LATENCY_LOG_DEBUG
     // L10f-prep6g: GetCmdID still takes shared_ptr<Marshallable>.
-  Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_.inner_marshallable()).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
     verify(phase_ == Phase::COMMIT);

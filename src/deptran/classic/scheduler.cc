@@ -88,7 +88,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
                                 const janus::Command& cmd_env,
                                 TxnOutput& ret_output) {
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).second);
+  Log_info("cmd<%d, %d> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second);
 #endif
 
   auto vec_piece_data = marshallable_cast<VecPieceData>(cmd_env);
@@ -249,7 +249,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 #ifdef FULL_LOG_DEBUG
   // L10f-prep6: GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("cmd<%d, %d> entered SchedulerClassic::OnCommit, Config::GetConfig()->IsReplicated()=%d",
-    SimpleRWCommand::GetCmdID(sp_tx->cmd_.inner_marshallable()).first, SimpleRWCommand::GetCmdID(sp_tx->cmd_.inner_marshallable()).second, Config::GetConfig()->IsReplicated());
+    SimpleRWCommand::GetCmdID(sp_tx->cmd_).first, SimpleRWCommand::GetCmdID(sp_tx->cmd_).second, Config::GetConfig()->IsReplicated());
 #endif
   if (Config::GetConfig()->IsReplicated()) {
     auto cmd = std::make_shared<TpcCommitCommand>();

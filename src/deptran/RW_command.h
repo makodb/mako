@@ -43,6 +43,30 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   static key_t GetKey(shared_ptr<rrr::Marshallable> cmd);
   static bool NeedRecordConflictInOriginalPath(shared_ptr<rrr::Marshallable> cmd);
   static bool Conflict(shared_ptr<rrr::Marshallable> cmd1, shared_ptr<rrr::Marshallable> cmd2);
+
+  // Workstream N L10f-prep6ay (2026-05-03): Command-taking overloads
+  // for the static methods that don't have shared_ptr<DerivedT>
+  // callers.  GetKey + Conflict are skipped because:
+  //   - rule/coordinator.cc passes shared_ptr<SimpleCommand> to GetKey
+  //     (would create overload ambiguity with shared_ptr<Marshallable>)
+  //   - copilot/server.cc passes shared_ptr<TpcCommitCommand> to
+  //     Conflict for the same reason.
+  // Each overload forwards via inner_marshallable().
+  static pair<int32_t, int32_t> GetCmdID(const Command& cmd) {
+    return GetCmdID(cmd.inner_marshallable());
+  }
+  static uint64_t GetCombinedCmdID(const Command& cmd) {
+    return GetCombinedCmdID(cmd.inner_marshallable());
+  }
+  static double GetCommandMsTime(const Command& cmd) {
+    return GetCommandMsTime(cmd.inner_marshallable());
+  }
+  static double GetCommandMsTimeElaps(const Command& cmd) {
+    return GetCommandMsTimeElaps(cmd.inner_marshallable());
+  }
+  static bool NeedRecordConflictInOriginalPath(const Command& cmd) {
+    return NeedRecordConflictInOriginalPath(cmd.inner_marshallable());
+  }
   static uint64_t CombineInt32(pair<uint32_t, uint32_t> a) {
     return (((uint64_t)a.first) << 31) | a.second;
     // return (((uint64_t)a.first) * 1000000000) + a.second;

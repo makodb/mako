@@ -214,7 +214,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
           }
           auto& state = key_states_[it->second];
           // L10f-prep6an: GetCombinedCmdID still takes shared_ptr<Marshallable>.
-          uint64_t cmd_id = SimpleRWCommand::GetCombinedCmdID(cmd.inner_marshallable());
+          uint64_t cmd_id = SimpleRWCommand::GetCombinedCmdID(cmd);
           int count = ++state.cmd_counts_[cmd_id];
           if (count > state.max_count) {
             state.max_count = count;

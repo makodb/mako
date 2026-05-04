@@ -399,7 +399,7 @@ void TxLogServer::OnRuleSpeculativeExecute(const janus::Command& cmd,
 }
 
 void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd) {
-  if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd.inner_marshallable())) {
+  if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd)) {
     // Log_info("[JETPACK-Witness] loc_id %d about to push_back", loc_id_);
     rep_sched_->witness_.push_back(cmd);
   }
