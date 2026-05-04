@@ -86,14 +86,10 @@ void CoordinatorFpgaRaft::AppendEntries() {
 
     /* TODO: get prevLogTerm based on the logs */
     uint64_t prevLogTerm = this->sch_->currentTerm;
-    // L10f-prep6ab: SetLocalAppend now takes const Command&; pass
-    // cmd_ directly.  GetCmdID still takes shared_ptr<Marshallable>,
-    // so unwrap once for the LATENCY_LOG_DEBUG path.
 		this->sch_->SetLocalAppend(cmd_, &prevLogTerm, &prevLogIndex, slot_id_, curr_ballot_) ;
 
 #ifdef LATENCY_LOG_DEBUG
-    auto cmd_sp = cmd_.inner_marshallable();
-    Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd_sp).first, SimpleRWCommand::GetCmdID(cmd_sp).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+    Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     auto sp_quorum = commo()->BroadcastAppendEntries(par_id_,
                                                      this->sch_->site_id_,
