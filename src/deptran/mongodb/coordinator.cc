@@ -12,11 +12,10 @@ MongodbServer* CoordinatorMongodb::Server() {
 void CoordinatorMongodb::Submit(const janus::Command& cmd,
                                 rusty::Function<void()> func,
                                 rusty::Function<void()> exe_callback) {
-  // L10f-prep6o: MongodbServer::Submit + BroadcastCommit still take
-  // shared_ptr<Marshallable>; unwrap once.
-  auto cmd_sp = cmd.inner_marshallable();
-  Server()->Submit(cmd_sp);
-  commo()->BroadcastCommit(par_id_, cmd_sp);
+  // L10f-prep6aw: BroadcastCommit takes Command directly;
+  // MongodbServer::Submit still takes shared_ptr<Marshallable>.
+  Server()->Submit(cmd.inner_marshallable());
+  commo()->BroadcastCommit(par_id_, cmd);
   func();
   exe_callback();
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
