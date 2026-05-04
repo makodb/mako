@@ -1399,7 +1399,10 @@ void RaftServer::applyLogs() {
 struct PendingAppendEntries {
   siteid_t follower_id;
   shared_ptr<AppendEntriesResponse> response;  // shared_ptr ensures callback memory safety
-  shared_ptr<Marshallable> cmd;  // nullptr for heartbeat
+  // Workstream N L10f-prep6af (2026-05-03): migrated from
+  // `shared_ptr<Marshallable>` to `janus::Command`.  Empty Command
+  // (has_value() == false) signals heartbeat.
+  janus::Command cmd;
   uint64_t sent_term;  // term when RPC was sent
 };
 
@@ -1763,7 +1766,7 @@ void RaftServer::HeartbeatLoop() {
                         pending.follower_id, resp.last_log_index);
             }
 
-            if (pending.cmd == nullptr) {
+            if (!pending.cmd.has_value()) {
               Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
               if (resp.last_log_index > match_index) {
                 match_index = resp.last_log_index;
