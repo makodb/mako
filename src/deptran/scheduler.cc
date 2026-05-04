@@ -476,13 +476,13 @@ janus::Command RevoveryCandidates::cmd_to_recover() {
 }
 
 bool Witness::push_back(const janus::Command& cmd_env) {
-  // L10f-prep6L: take Command at the boundary; helpers below still
-  // use shared_ptr<Marshallable>.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
-  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
+  // L10f-prep6ai: SimpleRWCommand ctor + WitnessLog ctor still take
+  // shared_ptr<Marshallable>; unwrap at the boundary.
+  // RevoveryCandidates::push_back takes Command directly (prep6aa).
+  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env.inner_marshallable());
   key_t key = parsed_cmd.key_;
   uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
-  
+
 #ifdef JETPACK_RECOVERY_DEBUG
   Log_info("[JETPACK-DEBUG] Witness::push_back called for key=%d, cmd_id=%lu", key, cmd_id);
 #endif
@@ -495,35 +495,35 @@ bool Witness::push_back(const janus::Command& cmd_env) {
 #endif
     // not exist conflict
     // Log_info("[JETPACK-Witness] candidates_[%d].push_back %lu", key, cmd_id);
-    candidates_[key].push_back(cmd_id, cmd, parsed_cmd.IsWrite());
+    candidates_[key].push_back(cmd_id, cmd_env, parsed_cmd.IsWrite());
 #ifdef JETPACK_RECOVERY_DEBUG
     Log_info("[JETPACK-DEBUG] Added cmd to candidates[%d], no conflict", key);
 #endif
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(0, cmd, 1, witness_size_));
+    witness_log_.push_back(WitnessLog(0, cmd_env.inner_marshallable(), 1, witness_size_));
 #endif
     witness_size_distribution_.mid_time_append(++witness_size_);
     return true;
   } else {
     // exist conflict, candidates_[key].size() >= 1
     // Log_info("[JETPACK-Witness] candidates_[%d].push_back %lu", key, cmd_id);
-    candidates_[key].push_back(cmd_id, cmd, parsed_cmd.IsWrite());
+    candidates_[key].push_back(cmd_id, cmd_env, parsed_cmd.IsWrite());
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-DEBUG] Added cmd to candidates[%d], WITH conflict (size now=%zu)", 
+    Log_info("[JETPACK-DEBUG] Added cmd to candidates[%d], WITH conflict (size now=%zu)",
              key, candidates_[key].size());
 #endif
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(0, cmd, 0, witness_size_));
+    witness_log_.push_back(WitnessLog(0, cmd_env.inner_marshallable(), 0, witness_size_));
 #endif
     return false;
   }
 }
 
 int Witness::remove(const janus::Command& cmd_env) {
-  // L10f-prep6L: unwrap at the boundary.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
-  if (cmd->kind_ != TpcBatchCommand::static_kind()) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
+  // L10f-prep6ai: SimpleRWCommand + WitnessLog still take shared_ptr;
+  // marshallable_cast works on Command directly via Envelope overload.
+  if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env.inner_marshallable());
     bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
     if (removed) {
       witness_size_distribution_.mid_time_append(--witness_size_);
@@ -531,11 +531,11 @@ int Witness::remove(const janus::Command& cmd_env) {
       //   candidates_.erase(parsed_cmd.key_);
     }
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(1, cmd, removed, witness_size_));
+    witness_log_.push_back(WitnessLog(1, cmd_env.inner_marshallable(), removed, witness_size_));
 #endif
     return removed;
   } else {
-    auto cmds = marshallable_cast<TpcBatchCommand>(cmd);
+    auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
     verify(cmds != nullptr);
     int total_removed = 0;
     for (auto& c: cmds->cmds_) {
@@ -556,15 +556,15 @@ int Witness::remove(const janus::Command& cmd_env) {
 }
 
 bool Witness::has_appeared(const janus::Command& cmd_env) {
-  // L10f-prep6L: unwrap at the boundary.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
+  // L10f-prep6ai: SimpleRWCommand still takes shared_ptr;
+  // marshallable_cast works on Command directly.
   // For a batched command, return whether all of them have appeared
-  if (cmd->kind_ != TpcBatchCommand::static_kind()) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
+  if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env.inner_marshallable());
     uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
     return candidates_[parsed_cmd.key_].has_appeared(cmd_id);
   } else {
-    auto cmds = marshallable_cast<TpcBatchCommand>(cmd);
+    auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
     verify(cmds != nullptr);
     bool all_has_appeared = true;
     for (auto& c: cmds->cmds_) {
