@@ -333,8 +333,11 @@ public:
 
 class PaxosWorker {
 private:
-  inline void _Submit(shared_ptr<Marshallable>);
-  inline void _BulkSubmit(shared_ptr<Marshallable>, int);
+  // Workstream N L10f-prep6au (2026-05-03): take const janus::Command&;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  inline void _Submit(const janus::Command&);
+  inline void _BulkSubmit(const janus::Command&, int);
 
   std::mutex finish_mutex{};
   std::condition_variable finish_cond{};

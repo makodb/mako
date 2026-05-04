@@ -287,7 +287,7 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
     //Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
 }
 
-inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0){
+inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
     auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
     coord.get()->par_id_ = site_info_->partition_id_;
     coord.get()->loc_id_ = site_info_->locale_id;
@@ -522,7 +522,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
   _Submit(sp_m);
 }
 
-inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
+inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
   static cooid_t cid{1};
   static id_t id{1};
   verify(rep_frame_ != nullptr);
