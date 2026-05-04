@@ -1,11 +1,16 @@
 # L10f / L10g — Retire `Marshallable` + `MarshallDeputy`
 
-**Status:** Plan, 2026-05-04. After prep6u..prep6bd, the
-`shared_ptr<Marshallable>` interface surface in production code is
-limited to (a) the `SimpleRWCommand` interface itself, (b) the
-`WitnessLog` debug struct, and (c) framework boundary points
-(rrr bridges, dynamic_cast escape hatches). The next stage retires
-the `Marshallable` base class entirely.
+**Status:** L10f-1, -2, -3, -4 landed 2026-05-04.  After prep6u..prep6bd
+the `shared_ptr<Marshallable>` interface surface was already limited
+to (a) the `SimpleRWCommand` interface itself, (b) the `WitnessLog`
+debug struct, and (c) framework boundary points.  L10f-1 through
+L10f-4 reduce the active production-code count to 0 (8 remaining
+sites are all inline header forwarders that delegate to Command).
+L10f-5 (drop MarshallDeputy) and L10f-6 (drop Marshallable base) are
+the remaining architectural steps; both require more invasive changes
+than the prior leaves and are blocked on the legacy `Marshal&`
+operator pair on `MarshallDeputy` (used by `TxReply` /
+`TpcCommitCommand` archive operators in the legacy RPC reply path).
 
 ## Current state
 
