@@ -1515,7 +1515,10 @@ void RaftServer::HeartbeatLoop() {
 
         uint64_t prevLogIndex = 0;
         uint64_t prevLogTerm = 0;
-        shared_ptr<Marshallable> cmd = nullptr;
+        // Workstream N L10f-prep6am (2026-05-03): migrated from
+        // `shared_ptr<Marshallable> cmd = nullptr` to `janus::Command{}`.
+        // Empty Command (has_value() == false) signals heartbeat.
+        janus::Command cmd{};
         uint64_t cmdLogTerm = 0;
         bool skip_follower = false;
         {
@@ -1600,12 +1603,12 @@ void RaftServer::HeartbeatLoop() {
                 if (!curInstance) {
                   Log_error("[HEARTBEAT-SEND] GetRaftInstance(%lu) returned NULL, skipping", it->second);
                 } else {
-                  // L10f-prep2: curInstance->log_ is Command;
-                  // local `cmd` here is shared_ptr<Marshallable>.
-                  cmd = curInstance->log_.inner_marshallable();
+                  // L10f-prep6am: cmd is Command; assign directly from
+                  // curInstance->log_ (also Command).
+                  cmd = curInstance->log_;
                   cmdLogTerm = curInstance->term;
                   Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd=%p",
-                      site_id_, it->second, site_id, cmd.get());
+                      site_id_, it->second, site_id, cmd.inner_marshallable().get());
                 }
               }
 #endif
@@ -1632,7 +1635,7 @@ void RaftServer::HeartbeatLoop() {
                 if (!curCmd) {
                   Log_info("[BATCH_SKIP] site=%d idx=%lu: log entry is not TpcCommitCommand (kind=%d), using raw log",
                            site_id_, idx, curInstance->log_.has_value() ? curInstance->log_.kind_ : -1);
-                  cmd = curInstance->log_.inner_marshallable();
+                  cmd = curInstance->log_;
                   break;
                 }
                 curCmd->term = curInstance->term;
