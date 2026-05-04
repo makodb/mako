@@ -34,6 +34,9 @@
 namespace janus {
 namespace raft {
 
+// Workstream N L10f-5 (2026-05-04): MarshallDeputy alias retained
+// only as the in-process facade payload type — production wire path
+// uses janus::Command (rcc_rpc-generated RpcAppendEntriesRequest).
 using ::rrr::MarshallDeputy;
 
 // ---------------------------------------------------------------------------

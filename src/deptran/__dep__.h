@@ -80,6 +80,9 @@ using rrr::TimeoutALock;
 using rrr::PollThread;
 using rrr::Marshal;
 using rrr::Marshallable;
+// Workstream N L10f-5 (2026-05-04): MarshallDeputy alias retained
+// solely for the bridge layer + test fixtures.  Production code no
+// longer references MarshallDeputy directly.
 using rrr::MarshallDeputy;
 
 // User include files
