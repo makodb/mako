@@ -22,63 +22,59 @@ SimpleRWCommand::SimpleRWCommand() {
 SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd) {
   verify(cmd != nullptr);
   //Log_info("[copilot+] SimpleRWCommand created");
-  shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
-  shared_ptr<TxPieceData> vector0;
+  shared_ptr<VecPieceData> cmd_cast{nullptr};
   if (unlikely(cmd->kind_ == TpcBatchCommand::static_kind())) {
     shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
     verify(batch_cmd != nullptr);
     verify(batch_cmd->Size() == 1);
     shared_ptr<TpcCommitCommand> tpc_cmd = batch_cmd->cmds_[0];
-    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    verify(cmd_cast != nullptr);
-    is_recovery_command_ = cmd_cast->is_recovery_command_;
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-    vector0 = *(sp_vec_piece->begin());
+    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
   } else if (likely(cmd->kind_ == TpcCommitCommand::static_kind())) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
-    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    verify(cmd_cast != nullptr);
-    is_recovery_command_ = cmd_cast->is_recovery_command_;
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-    vector0 = *(sp_vec_piece->begin());
+    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
   } else if (cmd->kind_ == VecPieceData::static_kind()) {
-    shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
-    verify(cmd_cast != nullptr);
-    is_recovery_command_ = cmd_cast->is_recovery_command_;
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-    vector0 = *(sp_vec_piece->begin());
-  } else if (cmd->kind_ == MarshallDeputy::CONTAINER_CMD) {
-    vector0 = dynamic_pointer_cast<TxPieceData>(cmd);
+    cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
+    // Workstream N L10f-1 (2026-05-04): removed the
+    // `MarshallDeputy::CONTAINER_CMD` branch — it was reachable only
+    // when CmdData inherited Marshallable, which is no longer the
+    // case.  Callers holding a `SimpleCommand` directly use the new
+    // `SimpleRWCommand(const SimpleCommand&)` ctor instead.
     verify(0);
   }
-  
-  TxWorkspace tx_ws = vector0->input;
-  std::map<int32_t, mdb::Value> kv_map = *(tx_ws.values_);
-  cmd_id_ = make_pair(vector0->client_id_, vector0->cmd_id_in_client_);
-  auto raw_type = vector0->type_;
-  rule_mode_on_and_is_original_path_only_command_ = vector0->rule_mode_on_and_is_original_path_only_command_;
-  if (vector0->type_ == RW_BENCHMARK_R_TXN || vector0->type_ == RW_BENCHMARK_R_TXN_0) {
+  verify(cmd_cast != nullptr);
+  shared_ptr<TxPieceData> vector0 = *(cmd_cast->sp_vec_piece_data_->begin());
+  *this = SimpleRWCommand(*vector0);
+  // is_recovery_command_ lives on the wrapper (VecPieceData), not on
+  // the inner SimpleCommand — patch it back after delegating.
+  is_recovery_command_ = cmd_cast->is_recovery_command_;
+}
+
+// Workstream N L10f-1 (2026-05-04): SimpleCommand-direct ctor.
+SimpleRWCommand::SimpleRWCommand(const SimpleCommand& cmd) {
+  std::map<int32_t, mdb::Value> kv_map = *(cmd.input.values_);
+  cmd_id_ = make_pair(cmd.client_id_, cmd.cmd_id_in_client_);
+  rule_mode_on_and_is_original_path_only_command_ = cmd.rule_mode_on_and_is_original_path_only_command_;
+  if (cmd.type_ == RW_BENCHMARK_R_TXN || cmd.type_ == RW_BENCHMARK_R_TXN_0) {
     type_ = RW_BENCHMARK_R_TXN;
     key_ = kv_map[0].get_i32();
     value_ = 0;
-  } else if (vector0->type_ == RW_BENCHMARK_W_TXN || vector0->type_ == RW_BENCHMARK_W_TXN_0) {
+  } else if (cmd.type_ == RW_BENCHMARK_W_TXN || cmd.type_ == RW_BENCHMARK_W_TXN_0) {
     type_ = RW_BENCHMARK_W_TXN;
     key_ = kv_map[0].get_i32();
     value_ = kv_map[1].get_i32();
-  } else if (vector0->type_ == RW_BENCHMARK_FINISH) {
-    type_ = vector0->type_;
+  } else if (cmd.type_ == RW_BENCHMARK_FINISH) {
+    type_ = cmd.type_;
     key_ = kv_map[0].get_i32();
     value_ = kv_map[1].get_i32();
-  } else if (vector0->type_ == RW_BENCHMARK_NOOP) {
-    type_ = vector0->type_;
+  } else if (cmd.type_ == RW_BENCHMARK_NOOP) {
+    type_ = cmd.type_;
     key_ = kv_map[0].get_i32();
     value_ = 0;
   } else {
     verify(0);
   }
-  // key_t key = (*(*(((VecPieceData*)(marshallable_cast<TpcCommitCommand>(cmd)->cmd_.get()))->sp_vec_piece_data_->begin()))->input.values_)[0].get_i32();
 }
 
 // SimpleRWCommand::SimpleRWCommand(const SimpleRWCommand &o): Marshallable(o.kind_) {

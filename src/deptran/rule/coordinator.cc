@@ -52,10 +52,10 @@ void CoordinatorRule::GotoNextPhase() {
       for (auto& pair: cmds_by_par_) {
         auto& cmds = pair.second;
         if (cmds.size() > 0)
-          // L10f-prep6bc: explicit cast disambiguates between the
-          // shared_ptr<Marshallable> and (future) Command ctors
-          // when the caller passes shared_ptr<DerivedT>.
-          cmd_is_write_ = SimpleRWCommand(std::static_pointer_cast<Marshallable>(cmds[0])).IsWrite();
+          // L10f-1: SimpleCommand-direct ctor (CmdData no longer
+          // inherits Marshallable, so the static_pointer_cast path
+          // is gone).
+          cmd_is_write_ = SimpleRWCommand(*cmds[0]).IsWrite();
       }
 
       if (0 <= Config::GetConfig()->jetpack_fastpath_attempt_rate_ && Config::GetConfig()->jetpack_fastpath_attempt_rate_ <= 100) {
@@ -89,10 +89,10 @@ void CoordinatorRule::GotoNextPhase() {
           c->rule_mode_on_and_is_original_path_only_command_ = !go_to_fastpath_;
           dispatch_acks_[c->inn_id_] = false;
           sp_vec_piece->push_back(c);
-          // L10f-prep6bb: explicit cast disambiguates between the
-          // shared_ptr<Marshallable> and (future) Command overloads
-          // of GetKey when callers pass shared_ptr<DerivedT>.
-          client_worker_->frequency_.append(SimpleRWCommand::GetKey(std::static_pointer_cast<Marshallable>(c)));
+          // L10f-1: SimpleCommand no longer inherits Marshallable;
+          // construct SimpleRWCommand directly from the SimpleCommand
+          // and pull .key_ off it.
+          client_worker_->frequency_.append(SimpleRWCommand(*c).key_);
         }
         sp_vec_piece_by_par_[par_id] = sp_vec_piece;
       }

@@ -7,6 +7,8 @@
 
 namespace janus {
 
+class SimpleCommand;  // forward decl for ctor below; full def in procedure.h
+
 // Workstream N L8: TypeList-derived kind. Wire payload preserved:
 // int32_t type_ | key_t key_ | int32_t value_ (the cmd_id_,
 // rule_mode_*, is_recovery_command_, zero_time_ fields are local
@@ -30,6 +32,12 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   // static_pointer_cast<Marshallable>, so adding this overload no
   // longer creates ambiguity.
   SimpleRWCommand(const Command& cmd) : SimpleRWCommand(cmd.inner_marshallable()) {}
+  // Workstream N L10f-1 (2026-05-04): SimpleCommand-direct ctor.
+  // After CmdData stops inheriting Marshallable, callers that hold a
+  // SimpleCommand directly must use this overload (not the
+  // shared_ptr<Marshallable> path that no longer accepts derived
+  // pointers).  Body just reads SimpleCommand fields directly.
+  SimpleRWCommand(const SimpleCommand& cmd);
   std::string cmd_to_string();
   bool same_as(SimpleRWCommand &other);
 

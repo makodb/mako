@@ -6,7 +6,11 @@
 
 
 namespace janus {
-class CmdData : public rrr::Marshallable {
+// Workstream N L10f-1 (2026-05-04): CmdData no longer inherits
+// Marshallable.  The metadata fields + virtuals stay; the
+// Marshallable-based polymorphism (kind_, to_marshal/from_marshal)
+// was vestigial.
+class CmdData {
  public:
   cmdid_t id_ = 0;
   cmdtype_t type_ = 0;
@@ -52,8 +56,8 @@ class CmdData : public rrr::Marshallable {
   // by `TxData::GetReadyPiecesData` / `TxData::GetNextReadySubCmd`
   // but never read by anything).
 
-  CmdData() : rrr::Marshallable(rrr::MarshallDeputy::CONTAINER_CMD) {}
-  virtual ~CmdData() {};
+  CmdData() = default;
+  virtual ~CmdData() = default;
   // Workstream N Phase 5b-12: removed `to_marshal` / `from_marshal`
   // overrides. CmdData is never registered with
   // `MarshallDeputy::reg_initializer` and never instantiated directly
