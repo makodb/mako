@@ -25,13 +25,12 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   bool is_recovery_command_{false};
   SimpleRWCommand();
   // SimpleRWCommand(const SimpleRWCommand &o);
-  SimpleRWCommand(shared_ptr<rrr::Marshallable> cmd);
-  // Workstream N L10f-prep6bc (2026-05-03): Command-taking ctor.
-  // rule/coordinator.cc:55 was the only call site that passed
-  // shared_ptr<DerivedT>; now uses an explicit
-  // static_pointer_cast<Marshallable>, so adding this overload no
-  // longer creates ambiguity.
-  SimpleRWCommand(const Command& cmd) : SimpleRWCommand(cmd.inner_marshallable()) {}
+  // Workstream N L10f-2 (2026-05-04): Command is now the primary
+  // ctor; the legacy `shared_ptr<Marshallable>` overload delegates
+  // through Command to keep call sites that already wrap their
+  // payload via `wrap_typed_marshallable` working unchanged.
+  SimpleRWCommand(const Command& cmd);
+  SimpleRWCommand(shared_ptr<rrr::Marshallable> cmd) : SimpleRWCommand(Command(std::move(cmd))) {}
   // Workstream N L10f-1 (2026-05-04): SimpleCommand-direct ctor.
   // After CmdData stops inheriting Marshallable, callers that hold a
   // SimpleCommand directly must use this overload (not the

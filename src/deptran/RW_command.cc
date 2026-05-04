@@ -19,27 +19,31 @@ SimpleRWCommand::SimpleRWCommand() {
   value_ = 0;
 }
 
-SimpleRWCommand::SimpleRWCommand(shared_ptr<Marshallable> cmd) {
-  verify(cmd != nullptr);
-  //Log_info("[copilot+] SimpleRWCommand created");
+// Workstream N L10f-2 (2026-05-04): primary Command-taking ctor.
+// Was the body of `SimpleRWCommand(shared_ptr<Marshallable>)`; now
+// uses Command's `kind_` and the Envelope `marshallable_cast<T>`
+// overload directly.  The legacy shared_ptr<Marshallable> ctor
+// delegates here.
+SimpleRWCommand::SimpleRWCommand(const Command& cmd) {
+  verify(cmd.has_value());
   shared_ptr<VecPieceData> cmd_cast{nullptr};
-  if (unlikely(cmd->kind_ == TpcBatchCommand::static_kind())) {
+  if (unlikely(cmd.kind_ == TpcBatchCommand::static_kind())) {
     shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
     verify(batch_cmd != nullptr);
     verify(batch_cmd->Size() == 1);
     shared_ptr<TpcCommitCommand> tpc_cmd = batch_cmd->cmds_[0];
     cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-  } else if (likely(cmd->kind_ == TpcCommitCommand::static_kind())) {
+  } else if (likely(cmd.kind_ == TpcCommitCommand::static_kind())) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-  } else if (cmd->kind_ == VecPieceData::static_kind()) {
+  } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
-    // Workstream N L10f-1 (2026-05-04): removed the
-    // `MarshallDeputy::CONTAINER_CMD` branch — it was reachable only
-    // when CmdData inherited Marshallable, which is no longer the
-    // case.  Callers holding a `SimpleCommand` directly use the new
+    // Workstream N L10f-1: removed the `MarshallDeputy::CONTAINER_CMD`
+    // branch — it was reachable only when CmdData inherited
+    // Marshallable, which is no longer the case.  Callers holding a
+    // `SimpleCommand` directly use the
     // `SimpleRWCommand(const SimpleCommand&)` ctor instead.
     verify(0);
   }
