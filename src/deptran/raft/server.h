@@ -898,6 +898,9 @@ class RaftServer : public TxLogServer {
                      bool_t* acknowledged);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
+  // Workstream N L10f-prep6ac (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   void OnAppendEntries(const slotid_t slot_id,
                        const ballot_t ballot,
                        const uint64_t leaderCurrentTerm,
@@ -905,7 +908,7 @@ class RaftServer : public TxLogServer {
                        const uint64_t leaderPrevLogIndex,
                        const uint64_t leaderPrevLogTerm,
                        const uint64_t leaderCommitIndex,
-                       shared_ptr<Marshallable> &cmd,
+                       const janus::Command& cmd,
                        const uint64_t leaderNextLogTerm, // disabled in batched version (term recorded in the TpcCommitCommand)
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,

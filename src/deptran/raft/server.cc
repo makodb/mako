@@ -2437,7 +2437,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  const uint64_t leaderPrevLogIndex,
                                  const uint64_t leaderPrevLogTerm,
                                  const uint64_t leaderCommitIndex,
-                                 shared_ptr<Marshallable> &cmd,
+                                 const janus::Command& cmd,
                                  const uint64_t leaderNextLogTerm, // disabled in batched version (term recorded in the TpcCommitCommand)
                                  uint64_t *followerAppendOK,
                                  uint64_t *followerCurrentTerm,
@@ -2464,7 +2464,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   bool prev_term_ok = (leaderPrevLogIndex == 0 || local_prev_term == leaderPrevLogTerm);
 
   // Only log rejections or when cmd is present (actual log entries)
-  if (!term_ok || !index_ok || !prev_term_ok || cmd != nullptr) {
+  if (!term_ok || !index_ok || !prev_term_ok || cmd.has_value()) {
   }
 
   // CRITICAL FIX: Reset timer if we hear from a current-term leader, even if log conflicts
@@ -2512,7 +2512,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>> entries_to_persist;
       uint64_t log_index_for_durable_ack = 0;
 
-      if (cmd != nullptr) {
+      if (cmd.has_value()) {
 #ifndef RAFT_BATCH_OPTIMIZATION
         lastLogIndex = leaderPrevLogIndex + 1;
         auto instance = GetRaftInstance(lastLogIndex);
@@ -2626,8 +2626,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       lock.lock();
 
 #ifndef RAFT_TEST_CORO
-      if (cmd != nullptr) {
-        if (cmd->kind_ == TpcCommitCommand::static_kind()){
+      if (cmd.has_value()) {
+        if (cmd.kind_ == TpcCommitCommand::static_kind()){
           auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
           auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
           verify(vec_piece_data != nullptr);

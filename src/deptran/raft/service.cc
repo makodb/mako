@@ -73,12 +73,10 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
     return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
   }
   resp.followerAckType = 0;  // Memory — response precedes fsync
-  // @unsafe { MarshallDeputy::inner() returns a std::shared_ptr<Marshallable> }
-  auto cmd = const_cast<janus::Command&>(req.cmd).inner();
   svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
                        req.leaderSiteId, req.leaderPrevLogIndex,
                        req.leaderPrevLogTerm, req.leaderCommitIndex,
-                       cmd, req.leaderNextLogTerm,
+                       req.cmd, req.leaderNextLogTerm,
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
                        &resp.followerLastLogIndex);
   return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
@@ -97,15 +95,14 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
     return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
   }
   resp.followerAckType = 0;
-  std::shared_ptr<Marshallable> cmd = nullptr;
   // OnAppendEntries uses the same fields as the non-empty variant with
-  // cmd == nullptr and leaderNextLogTerm == 0 (heartbeat path).
+  // an empty cmd and leaderNextLogTerm == 0 (heartbeat path).
   // followerAppendOK/Term/LastLogIndex are shared layout with the non-empty
   // response, so we can pass pointers directly into our resp struct.
   svr->OnAppendEntries(req.slot, req.ballot, req.leaderCurrentTerm,
                        req.leaderSiteId, req.leaderPrevLogIndex,
                        req.leaderPrevLogTerm, req.leaderCommitIndex,
-                       cmd, 0,
+                       janus::Command{}, 0,
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
                        &resp.followerLastLogIndex,
                        req.trigger_election_now);
