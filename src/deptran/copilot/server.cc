@@ -991,9 +991,11 @@ bool CopilotServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_
       verify(ins->cmd.kind_ == TpcBatchCommand::static_kind());
       shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
       for (int i = 0; i < batch_cmd->Size(); i++)
-        // L10f-prep6bb: explicit cast disambiguates the
-        // shared_ptr<Marshallable> vs Command overloads of Conflict.
-        if (SimpleRWCommand::Conflict(std::static_pointer_cast<Marshallable>(batch_cmd->cmds_[i]), cmd_env.inner_marshallable()))
+        // L10f-prep6bd: passing Command to second arg forces
+        // Conflict's (Command, Command) overload — first arg
+        // (shared_ptr<TpcCommitCommand>) auto-converts via Command's
+        // templated ctor, second arg is already Command.
+        if (SimpleRWCommand::Conflict(batch_cmd->cmds_[i], cmd_env))
           return true;
     }
       
