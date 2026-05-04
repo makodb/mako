@@ -437,7 +437,7 @@ bool RevoveryCandidates::remove(uint64_t cmd_id) {
   if (it != candidates_.end()) {
     // L10f-prep6f: it->second is Command; SimpleRWCommand still
     // takes shared_ptr<Marshallable>.
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(it->second.inner_marshallable());
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(it->second);
     if (total_write_ == 1 && parsed_cmd.IsWrite()) {
       to_recover_id_ = (uint64_t)(-1);
     }
@@ -479,7 +479,7 @@ bool Witness::push_back(const janus::Command& cmd_env) {
   // L10f-prep6ai: SimpleRWCommand ctor + WitnessLog ctor still take
   // shared_ptr<Marshallable>; unwrap at the boundary.
   // RevoveryCandidates::push_back takes Command directly (prep6aa).
-  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env.inner_marshallable());
+  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
   key_t key = parsed_cmd.key_;
   uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
 
@@ -523,7 +523,7 @@ int Witness::remove(const janus::Command& cmd_env) {
   // L10f-prep6ai: SimpleRWCommand + WitnessLog still take shared_ptr;
   // marshallable_cast works on Command directly via Envelope overload.
   if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env.inner_marshallable());
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
     bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
     if (removed) {
       witness_size_distribution_.mid_time_append(--witness_size_);
@@ -560,7 +560,7 @@ bool Witness::has_appeared(const janus::Command& cmd_env) {
   // marshallable_cast works on Command directly.
   // For a batched command, return whether all of them have appeared
   if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env.inner_marshallable());
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
     uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
     return candidates_[parsed_cmd.key_].has_appeared(cmd_id);
   } else {

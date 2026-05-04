@@ -52,7 +52,10 @@ void CoordinatorRule::GotoNextPhase() {
       for (auto& pair: cmds_by_par_) {
         auto& cmds = pair.second;
         if (cmds.size() > 0)
-          cmd_is_write_ = SimpleRWCommand(cmds[0]).IsWrite();
+          // L10f-prep6bc: explicit cast disambiguates between the
+          // shared_ptr<Marshallable> and (future) Command ctors
+          // when the caller passes shared_ptr<DerivedT>.
+          cmd_is_write_ = SimpleRWCommand(std::static_pointer_cast<Marshallable>(cmds[0])).IsWrite();
       }
 
       if (0 <= Config::GetConfig()->jetpack_fastpath_attempt_rate_ && Config::GetConfig()->jetpack_fastpath_attempt_rate_ <= 100) {

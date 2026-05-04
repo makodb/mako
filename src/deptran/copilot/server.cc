@@ -521,7 +521,7 @@ void CopilotServer::Print(std::string log) {
 
         if (data_ptr->cmd.has_value()) {
           // Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
-          SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd.inner_marshallable());
+          SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
           oss << " cmd_id=<" << parsed_cmd.cmd_id_.first << ", " << parsed_cmd.cmd_id_.second << "> ";
         } else {
           // Log_info("nullptr");

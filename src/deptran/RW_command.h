@@ -24,6 +24,12 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   SimpleRWCommand();
   // SimpleRWCommand(const SimpleRWCommand &o);
   SimpleRWCommand(shared_ptr<rrr::Marshallable> cmd);
+  // Workstream N L10f-prep6bc (2026-05-03): Command-taking ctor.
+  // rule/coordinator.cc:55 was the only call site that passed
+  // shared_ptr<DerivedT>; now uses an explicit
+  // static_pointer_cast<Marshallable>, so adding this overload no
+  // longer creates ambiguity.
+  SimpleRWCommand(const Command& cmd) : SimpleRWCommand(cmd.inner_marshallable()) {}
   std::string cmd_to_string();
   bool same_as(SimpleRWCommand &other);
 

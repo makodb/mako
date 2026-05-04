@@ -130,7 +130,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
         app_next_(id, next_instance->committed_cmd_);
         next_instance->executed_ = true;
 
-        SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_.inner_marshallable());
+        SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_);
         c_mutex.lock();
         unexecuted_keys_[parsed_cmd.key_] -= 1;
         // Log_info("[-1] cmd %d %d cnt %d", parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, unexecuted_keys_[parsed_cmd.key_].load());
@@ -149,7 +149,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
     if (next_instance->committed_cmd_.has_value()) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_.inner_marshallable());
+      SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_);
       if ((!next_instance->executed_) && (unexecuted_keys_[parsed_cmd.key_]==1)){
         RuleWitnessGC(next_instance->committed_cmd_);
         app_next_(id, next_instance->committed_cmd_);
