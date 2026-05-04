@@ -69,7 +69,7 @@ void CoordinatorCopilot::Submit(const janus::Command& cmd,
   is_pilot_ = IsPilot() ? YES : NO;
   slot_id_ = slot_and_dep.first;
   dep_ = slot_and_dep.second;
-  verify(cmd_now_.kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_now_.has_value());
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }

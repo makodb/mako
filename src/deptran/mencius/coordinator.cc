@@ -34,7 +34,7 @@ void CoordinatorMencius::Submit(const janus::Command& cmd,
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
   cmd_ = cmd;
-  verify(cmd_.kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_.has_value());
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
