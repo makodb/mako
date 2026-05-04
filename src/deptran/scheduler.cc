@@ -997,20 +997,20 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr
 #endif
 
   // Extract the inner command if this is a TpcCommitCommand
-  shared_ptr<Marshallable> inner_cmd = cmd.inner_marshallable();
+  janus::Command inner_cmd = cmd;
   if (cmd.kind_ == TpcCommitCommand::static_kind()) {
     auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
-      inner_cmd = tpc_cmd->cmd_.inner_marshallable();
+      inner_cmd = tpc_cmd->cmd_;
 #ifdef JETPACK_RECOVERY_DEBUG
-      Log_info("[JETPACK-RECOVERY] Extracted inner command from TpcCommitCommand, inner kind=%d", inner_cmd->kind_);
+      Log_info("[JETPACK-RECOVERY] Extracted inner command from TpcCommitCommand, inner kind=%d", inner_cmd.kind_);
 #endif
     }
   }
-  
+
   // Check if the inner command is VecPieceData
-  if (inner_cmd->kind_ == VecPieceData::static_kind()) {
+  if (inner_cmd.kind_ == VecPieceData::static_kind()) {
     auto vec_piece_data = marshallable_cast<VecPieceData>(inner_cmd);
     if (vec_piece_data && vec_piece_data->sp_vec_piece_data_) {
       // Mark this as a recovery command
@@ -1092,13 +1092,13 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] WARNING: Inner command is not VecPieceData, cannot dispatch");
 #endif
-      Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand failed: inner command kind=%d (expected VecPieceData)", inner_cmd->kind_);
+      Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand failed: inner command kind=%d (expected VecPieceData)", inner_cmd.kind_);
     }
   } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] WARNING: Command kind %d not supported for dispatch", inner_cmd->kind_);
+    Log_info("[JETPACK-RECOVERY] WARNING: Command kind %d not supported for dispatch", inner_cmd.kind_);
 #endif
-    Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand unsupported command kind=%d", inner_cmd->kind_);
+    Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand unsupported command kind=%d", inner_cmd.kind_);
   }
 }
 
