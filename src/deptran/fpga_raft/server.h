@@ -175,7 +175,10 @@ class FpgaRaftServer : public TxLogServer {
     return fpga_is_leader_ ;
   }
   
-  void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
+  // Workstream N L10f-prep6ab (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void SetLocalAppend(const janus::Command& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     *index = lastLogIndex ;
     lastLogIndex += 1;
@@ -187,7 +190,7 @@ class FpgaRaftServer : public TxLogServer {
 		instance->ballot = ballot;
     maxIndex = std::max(maxIndex, slot_id);
 
-    if (cmd->kind_ == TpcCommitCommand::static_kind()){
+    if (cmd.kind_ == TpcCommitCommand::static_kind()){
       auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
       auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
       verify(vec_piece_data != nullptr);

@@ -585,7 +585,10 @@ class RaftServer : public TxLogServer {
   void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
-  bool Start(shared_ptr<Marshallable> &cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
+  // Workstream N L10f-prep6ab (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  bool Start(const janus::Command& cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
 
   // @unsafe - output pointer writes and mutex operations
   void GetState(bool *is_leader, uint64_t *term) {
@@ -615,7 +618,10 @@ class RaftServer : public TxLogServer {
   void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
 
   // @unsafe - external calls plus output pointer writes and shared_ptr ops
-  void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
+  // Workstream N L10f-prep6ab (2026-05-03): take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void SetLocalAppend(const janus::Command& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // @unsafe
     {
@@ -638,7 +644,7 @@ class RaftServer : public TxLogServer {
     // @unsafe
     {
 #ifndef RAFT_TEST_CORO
-      if (cmd->kind_ == TpcCommitCommand::static_kind()){
+      if (cmd.kind_ == TpcCommitCommand::static_kind()){
         auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
         auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
         verify(vec_piece_data != nullptr);

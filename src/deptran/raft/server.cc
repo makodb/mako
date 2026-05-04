@@ -2381,7 +2381,7 @@ void RaftServer::StartElectionTimer() {
 }
 
 // @unsafe - external calls marked @external [safe], pointer ops in @unsafe blocks
-bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
+bool RaftServer::Start(const janus::Command& cmd,
                        uint64_t *index,
                        uint64_t *term,
                        slotid_t slot_id,
