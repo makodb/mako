@@ -934,8 +934,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               janus::Command* cmd, 
                                               rrr::DeferredReply defer) {
   cmd->set_marshallable(wrap_typed_marshallable(std::make_shared<TpcCommitCommand>()));
-  shared_ptr<Marshallable> sp_ret_cmd = cmd->inner();
-  dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_cmd);
+  dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view);
   defer.reply();
 }
 

@@ -697,16 +697,21 @@ class TxLogServer {
                        const int32_t& sid, 
                        const int32_t& set_size);
   
+  // Workstream N L10f-prep6ae (2026-05-03): dropped trailing dead
+  // `shared_ptr<Marshallable> cmd` parameter — was assigned by the
+  // body but passed by value, so the assignment never propagated to
+  // the caller.  Caller in service.cc::JetpackPullRecSetIns retains
+  // its `cmd->set_marshallable(empty TpcCommitCommand)` pre-fill as
+  // the actual wire-out value.
   void OnJetpackPullRecSetIns(const epoch_t& jepoch,
-                              const epoch_t& oepoch, 
-                              const int32_t& sid, 
-                              const int32_t& rid, 
-                              bool_t* ok, 
+                              const epoch_t& oepoch,
+                              const int32_t& sid,
+                              const int32_t& rid,
+                              bool_t* ok,
                               epoch_t* reply_jepoch,
                               epoch_t* reply_oepoch,
                               janus::Command* reply_old_view,
-                              janus::Command* reply_new_view,
-                              shared_ptr<Marshallable> cmd);
+                              janus::Command* reply_new_view);
   
   void OnJetpackFinishRecovery(const epoch_t& oepoch);
 

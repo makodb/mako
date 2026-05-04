@@ -1383,24 +1383,24 @@ void TxLogServer::OnJetpackCommit(const epoch_t& jepoch,
 }
 
 void TxLogServer::OnJetpackPullRecSetIns(const epoch_t& jepoch,
-                                         const epoch_t& oepoch, 
-                                         const int32_t& sid, 
-                                         const int32_t& rid, 
-                                         bool_t* ok, 
+                                         const epoch_t& oepoch,
+                                         const int32_t& sid,
+                                         const int32_t& rid,
+                                         bool_t* ok,
                                          epoch_t* reply_jepoch,
                                          epoch_t* reply_oepoch,
                                          janus::Command* reply_old_view,
-                                         janus::Command* reply_new_view,
-                                         shared_ptr<Marshallable> cmd) {
+                                         janus::Command* reply_new_view) {
   // Initialize janus::Command objects with ViewData objects
   reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
   reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
-  
+
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     *ok = 1;
     *reply_jepoch = rep_sched_->jepoch_;
     *reply_oepoch = rep_sched_->oepoch_;
-    cmd = rep_sched_->rec_set_.get(sid, rid).inner_marshallable();
+    // Note: `cmd` wire-out param populated in service.cc with empty
+    // TpcCommitCommand pre-fill — never wired up in scheduler.
   } else {
     *ok = 0;
     *reply_jepoch = rep_sched_->jepoch_;
