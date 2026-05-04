@@ -1,16 +1,56 @@
 # L10f / L10g — Retire `Marshallable` + `MarshallDeputy`
 
-**Status:** L10f-1, -2, -3, -4 landed 2026-05-04.  After prep6u..prep6bd
-the `shared_ptr<Marshallable>` interface surface was already limited
-to (a) the `SimpleRWCommand` interface itself, (b) the `WitnessLog`
-debug struct, and (c) framework boundary points.  L10f-1 through
-L10f-4 reduce the active production-code count to 0 (8 remaining
-sites are all inline header forwarders that delegate to Command).
-L10f-5 (drop MarshallDeputy) and L10f-6 (drop Marshallable base) are
-the remaining architectural steps; both require more invasive changes
-than the prior leaves and are blocked on the legacy `Marshal&`
-operator pair on `MarshallDeputy` (used by `TxReply` /
-`TpcCommitCommand` archive operators in the legacy RPC reply path).
+**Status:** L10f-1 through L10f-5 parts 1-3 landed 2026-05-04.
+
+After prep6u..prep6bd the `shared_ptr<Marshallable>` interface
+surface was already limited to (a) the `SimpleRWCommand` interface
+itself, (b) the `WitnessLog` debug struct, and (c) framework
+boundary points.  This session landed:
+
+* **L10f-1**: `CmdData` no longer inherits `Marshallable`; new
+  `SimpleRWCommand(const SimpleCommand&)` ctor; dead
+  `MarshallDeputy::CONTAINER_CMD` enum value removed.
+* **L10f-2 part 1**: `SimpleRWCommand(const Command&)` is now the
+  primary ctor; legacy `shared_ptr<Marshallable>` overload delegates.
+* **L10f-3**: `SimpleRWCommand` static methods (GetCmdID,
+  GetCombinedCmdID, GetCommandMsTime, GetCommandMsTimeElaps, GetKey,
+  NeedRecordConflictInOriginalPath, Conflict) flipped to make
+  Command primary.  Legacy shared_ptr overloads delegate.
+* **L10f-4**: `WitnessLog::cmd_` migrated from
+  `shared_ptr<Marshallable>` to `janus::Command`.
+* **L10f-5 part 1**: Added legacy `Marshal&` operator<<>> for
+  `SerializableEnvelope` so `TxReply` and `TpcCommitCommand`
+  archive operators can replace `MarshallDeputy view_md` with
+  `janus::Command view_md`.  All three production users migrated.
+* **L10f-5 part 2**: 5 `verify(cmd_.kind_ != MarshallDeputy::UNKNOWN)`
+  assertions in Submit-style coordinators replaced with
+  `verify(cmd_.has_value())`.
+* **L10f-5 part 3**: Remaining `using rrr::MarshallDeputy;` aliases
+  documented as bridge/test/facade-only.
+
+**Remaining work (L10f-5 final + L10f-6):**
+
+The MarshallDeputy class itself + the bridge helpers
+(`wrap_typed_marshallable`, `marshallable_cast` for
+shared_ptr<Marshallable>, `as_marshallable`, `wrap_serializable`,
+`SerializableMarshallableAdapter`, `MarshallableSerializableAdapter`)
+still exist.  Dropping them requires:
+
+1. Migrating `AnyMessage` (open-set polymorphic envelope, still a
+   `Marshallable` subclass) — needs a Serializable replacement, or
+   keep `Marshallable` minimally for AnyMessage only.
+2. Migrating test fixtures (`TestMarshallable`, `CanaryMarshallable`,
+   `TestCommand` in src/rrr/tests/) — replace with Serializable-based
+   fixtures, or accept that `Marshallable` survives only for tests.
+3. Switching `Command::inner_` storage from `shared_ptr<Marshallable>`
+   to a non-Marshallable type (e.g., `shared_ptr<SerializableProxy>`
+   or direct value storage per type).  This is the L10f-2 part 2
+   that was deferred.
+4. Removing `Command::inner_marshallable()` accessor (and the 8
+   inline header forwarders in RW_command.h).
+5. Removing the bridge helpers themselves.
+
+This is a multi-day effort with deep test-coverage requirements.
 
 ## Current state
 
