@@ -46,43 +46,41 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   bool IsRead();
   bool IsWrite();
   bool IsRecoveryCommand();
-  static pair<int32_t, int32_t> GetCmdID(shared_ptr<rrr::Marshallable> cmd);
-  static uint64_t GetCombinedCmdID(shared_ptr<rrr::Marshallable> cmd);
   static double GetCurrentMsTime();
   static void SetZeroTime();
   static double GetMsTimeElaps();
-  static double GetCommandMsTime(shared_ptr<rrr::Marshallable> cmd);
-  static double GetCommandMsTimeElaps(shared_ptr<rrr::Marshallable> cmd);
-  static key_t GetKey(shared_ptr<rrr::Marshallable> cmd);
-  static bool NeedRecordConflictInOriginalPath(shared_ptr<rrr::Marshallable> cmd);
-  static bool Conflict(shared_ptr<rrr::Marshallable> cmd1, shared_ptr<rrr::Marshallable> cmd2);
 
-  // Workstream N L10f-prep6ay/prep6bb (2026-05-03): Command-taking
-  // overloads for the static methods.  Callers passing
-  // shared_ptr<DerivedT> were updated (rule/coordinator.cc,
-  // copilot/server.cc) to use std::static_pointer_cast<Marshallable>
-  // explicitly to disambiguate.  Each overload forwards via
-  // inner_marshallable().
-  static pair<int32_t, int32_t> GetCmdID(const Command& cmd) {
-    return GetCmdID(cmd.inner_marshallable());
+  // Workstream N L10f-3 (2026-05-04): Command-taking statics are
+  // primary; the legacy `shared_ptr<Marshallable>` overloads delegate
+  // through Command(sp).
+  static pair<int32_t, int32_t> GetCmdID(const Command& cmd);
+  static uint64_t GetCombinedCmdID(const Command& cmd);
+  static double GetCommandMsTime(const Command& cmd);
+  static double GetCommandMsTimeElaps(const Command& cmd);
+  static key_t GetKey(const Command& cmd);
+  static bool NeedRecordConflictInOriginalPath(const Command& cmd);
+  static bool Conflict(const Command& cmd1, const Command& cmd2);
+
+  static pair<int32_t, int32_t> GetCmdID(shared_ptr<rrr::Marshallable> cmd) {
+    return GetCmdID(Command(std::move(cmd)));
   }
-  static uint64_t GetCombinedCmdID(const Command& cmd) {
-    return GetCombinedCmdID(cmd.inner_marshallable());
+  static uint64_t GetCombinedCmdID(shared_ptr<rrr::Marshallable> cmd) {
+    return GetCombinedCmdID(Command(std::move(cmd)));
   }
-  static double GetCommandMsTime(const Command& cmd) {
-    return GetCommandMsTime(cmd.inner_marshallable());
+  static double GetCommandMsTime(shared_ptr<rrr::Marshallable> cmd) {
+    return GetCommandMsTime(Command(std::move(cmd)));
   }
-  static double GetCommandMsTimeElaps(const Command& cmd) {
-    return GetCommandMsTimeElaps(cmd.inner_marshallable());
+  static double GetCommandMsTimeElaps(shared_ptr<rrr::Marshallable> cmd) {
+    return GetCommandMsTimeElaps(Command(std::move(cmd)));
   }
-  static key_t GetKey(const Command& cmd) {
-    return GetKey(cmd.inner_marshallable());
+  static key_t GetKey(shared_ptr<rrr::Marshallable> cmd) {
+    return GetKey(Command(std::move(cmd)));
   }
-  static bool NeedRecordConflictInOriginalPath(const Command& cmd) {
-    return NeedRecordConflictInOriginalPath(cmd.inner_marshallable());
+  static bool NeedRecordConflictInOriginalPath(shared_ptr<rrr::Marshallable> cmd) {
+    return NeedRecordConflictInOriginalPath(Command(std::move(cmd)));
   }
-  static bool Conflict(const Command& cmd1, const Command& cmd2) {
-    return Conflict(cmd1.inner_marshallable(), cmd2.inner_marshallable());
+  static bool Conflict(shared_ptr<rrr::Marshallable> cmd1, shared_ptr<rrr::Marshallable> cmd2) {
+    return Conflict(Command(std::move(cmd1)), Command(std::move(cmd2)));
   }
   static uint64_t CombineInt32(pair<uint32_t, uint32_t> a) {
     return (((uint64_t)a.first) << 31) | a.second;

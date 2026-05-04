@@ -147,15 +147,15 @@ bool SimpleRWCommand::IsRecoveryCommand() {
   return is_recovery_command_;
 }
 
-pair<int32_t, int32_t> SimpleRWCommand::GetCmdID(shared_ptr<Marshallable> cmd) {
-  if (cmd == nullptr) {
+pair<int32_t, int32_t> SimpleRWCommand::GetCmdID(const Command& cmd) {
+  if (!cmd.has_value()) {
     return make_pair(-32768, -32768);
   }
   SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   return parsed_cmd.cmd_id_;
 }
 
-uint64_t SimpleRWCommand::GetCombinedCmdID(shared_ptr<Marshallable> cmd) {
+uint64_t SimpleRWCommand::GetCombinedCmdID(const Command& cmd) {
   pair<int32_t, int32_t> cmd_id = GetCmdID(cmd);
   return CombineInt32(cmd_id.first, cmd_id.second);
 }
@@ -176,13 +176,13 @@ double SimpleRWCommand::GetMsTimeElaps() {
   return GetCurrentMsTime() - zero_time_;
 }
 
-double SimpleRWCommand::GetCommandMsTime(shared_ptr<Marshallable> cmd) {
+double SimpleRWCommand::GetCommandMsTime(const Command& cmd) {
   shared_ptr<VecPieceData> cmd_cast{nullptr};
-  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
+  if (cmd.kind_ == TpcCommitCommand::static_kind()) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-  } else if (cmd->kind_ == VecPieceData::static_kind()) {
+  } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
     verify(0);
@@ -191,22 +191,22 @@ double SimpleRWCommand::GetCommandMsTime(shared_ptr<Marshallable> cmd) {
   return cmd_cast->time_sent_from_client_;
 }
 
-double SimpleRWCommand::GetCommandMsTimeElaps(shared_ptr<Marshallable> cmd) {
+double SimpleRWCommand::GetCommandMsTimeElaps(const Command& cmd) {
   return GetCurrentMsTime() - GetCommandMsTime(cmd);
 }
 
-key_t SimpleRWCommand::GetKey(shared_ptr<Marshallable> cmd) {
+key_t SimpleRWCommand::GetKey(const Command& cmd) {
   SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   return parsed_cmd.key_;
 }
 
-bool SimpleRWCommand::NeedRecordConflictInOriginalPath(shared_ptr<Marshallable> cmd) {
+bool SimpleRWCommand::NeedRecordConflictInOriginalPath(const Command& cmd) {
   shared_ptr<VecPieceData> cmd_cast{nullptr};
-  if (cmd->kind_ == TpcCommitCommand::static_kind()) {
+  if (cmd.kind_ == TpcCommitCommand::static_kind()) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
     cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-  } else if (cmd->kind_ == VecPieceData::static_kind()) {
+  } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
     // Workstream N L10f-1: dropped the
@@ -219,7 +219,7 @@ bool SimpleRWCommand::NeedRecordConflictInOriginalPath(shared_ptr<Marshallable> 
   return vector0->rule_mode_on_and_is_original_path_only_command_;
 }
 
-bool SimpleRWCommand::Conflict(shared_ptr<Marshallable> cmd1, shared_ptr<Marshallable> cmd2) {
+bool SimpleRWCommand::Conflict(const Command& cmd1, const Command& cmd2) {
   SimpleRWCommand parsed_cmd1 = SimpleRWCommand(cmd1);
   SimpleRWCommand parsed_cmd2 = SimpleRWCommand(cmd2);
   if (parsed_cmd1.key_ != parsed_cmd2.key_) {
