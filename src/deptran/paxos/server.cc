@@ -132,19 +132,9 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
                                i32* valid,
                                shared_ptr<SyncLogResponse> ret_cmd,
                                rusty::Function<void()> cb){
-  // L10f-prep6p: take Command at boundary; downstream uses
-  // shared_ptr<Marshallable> via .inner_marshallable() once.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
-  // auto xx = (int32_t)ret_cmd->missing_slots.size();
-  // Log_info("received a OnSyncLog,xxx: %d",xx);
-  // for(int i = 0; i < ret_cmd->missing_slots.size(); i++){
-  //    Log_info("yy: %d", (int32_t)ret_cmd->missing_slots[i].size());
-  //    for(int j = 0; j < ret_cmd->missing_slots[i].size(); j++){
-  //       Log_info("yy2 a OnSyncLog,xxx: %d",j);
-  //    }
-  // }
-  //cb();
-  auto bcmd = marshallable_cast<SyncLogRequest>(cmd);
+  // L10f-prep6ak: marshallable_cast works on Command directly via
+  // Envelope overload — drop the boundary lift.
+  auto bcmd = marshallable_cast<SyncLogRequest>(cmd_env);
   verify(bcmd != nullptr);
   es->state_lock();
   if(bcmd->epoch < es->cur_epoch){
@@ -198,9 +188,8 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
-  // L10f-prep6p: take Command at boundary.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
-  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd);
+  // L10f-prep6ak: marshallable_cast works on Command directly.
+  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd != nullptr);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
@@ -276,13 +265,12 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
-  // L10f-prep6p: take Command at boundary.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   //mtx_.lock();
   //Log_info("here");
   //Log_info("multi-paxos scheduler decide for slot: %ld", bcmd->slots.size());
-  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd);
+  // L10f-prep6ak: marshallable_cast works on Command directly.
+  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd != nullptr);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
@@ -390,9 +378,8 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
-  // L10f-prep6p: take Command at boundary.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
-  auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd);
+  // L10f-prep6ak: marshallable_cast works on Command directly.
+  auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd_env);
   verify(bcmd != nullptr);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
