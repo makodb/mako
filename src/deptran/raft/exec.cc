@@ -9,21 +9,9 @@ ballot_t RaftExecutor::Prepare(const ballot_t ballot) {
   return 0;
 }
 
-// @unsafe - calls Log_warn (non-borrow-checked I/O)
-ballot_t RaftExecutor::Accept(const ballot_t ballot,
-                                    shared_ptr<Marshallable> cmd) {
-  // @unsafe { Log_warn is not borrow-checked }
-  Log_warn("[RAFT] RaftExecutor::Accept called but not implemented for Raft");
-  return 0;
-}
-
-// @unsafe - calls Log_warn (non-borrow-checked I/O)
-ballot_t RaftExecutor::AppendEntries(const ballot_t ballot,
-                                         shared_ptr<Marshallable> cmd) {
-  // @unsafe { Log_warn is not borrow-checked }
-  Log_warn("[RAFT] RaftExecutor::AppendEntries called but not implemented for Raft");
-  return 0;
-}
+// Workstream N L10f-prep6ag (2026-05-03): removed dead `Accept` and
+// `AppendEntries` impls — both were `Log_warn`-and-return-0 stubs
+// with no callers anywhere in the tree.
 
 // @unsafe - calls Log_warn (non-borrow-checked I/O)
 ballot_t RaftExecutor::Decide(ballot_t ballot, CmdData& cmd) {
