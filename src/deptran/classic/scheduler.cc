@@ -329,9 +329,9 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   if (sp_tx->commit_result->is_ready())
     return 0;
   int commit_or_abort = tpc_commit_cmd.ret_;
-  // L10f-prep4: tpc_commit_cmd.cmd_ is Command; unwrap at boundary.
-  if (!sp_tx->cmd_)
-    sp_tx->cmd_ = tpc_commit_cmd.cmd_.inner_marshallable();
+  // L10f-prep6ba: both fields are Command; direct assignment.
+  if (!sp_tx->cmd_.has_value())
+    sp_tx->cmd_ = tpc_commit_cmd.cmd_;
   if (!sp_tx->is_leader_hint_) {
     if (commit_or_abort == REJECT) {
       sp_tx->commit_result->set(1);

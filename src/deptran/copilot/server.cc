@@ -238,10 +238,10 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
    * an id of the dependency's proposing pilot.
    */
   *max_ballot = ins->ballot;
-  // L10f-prep3c: ins->cmd is Command; set_marshallable still takes
-  // shared_ptr<Marshallable>.
+  // L10f-prep6ba: ins->cmd is Command; *ret_cmd = ... uses Command's
+  // default operator= directly.
   if (ins->cmd.has_value())
-    ret_cmd->set_marshallable(ins->cmd.inner_marshallable());
+    *ret_cmd = ins->cmd;
   else
     ret_cmd->set_marshallable(rrr::wrap_serializable(make_shared<TpcNoopCommand>()));
   *dep = ins->dep_id;
