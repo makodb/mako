@@ -31,7 +31,8 @@ class CoordinatorMultiPaxos : public Coordinator {
   // Boundary calls into commo (which still takes
   // `shared_ptr<Marshallable>`) use `cmd_.inner_marshallable()`.
   Command cmd_{};
-  vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md{};
+  // Workstream N L10f-prep6ao (2026-05-03): removed dead `vec_md`
+  // field — declared but never written or read anywhere.
   CoordinatorMultiPaxos(uint32_t coo_id,
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
