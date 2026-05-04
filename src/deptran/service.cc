@@ -292,9 +292,8 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
 
   // Check if this is a recovery command
   bool is_recovery = false;
-  shared_ptr<Marshallable> sp = md.inner();
-  if (sp && sp->kind_ == VecPieceData::static_kind()) {
-    auto vec_piece_data = marshallable_cast<VecPieceData>(sp);
+  if (md.has_value() && md.kind_ == VecPieceData::static_kind()) {
+    auto vec_piece_data = marshallable_cast<VecPieceData>(md);
     if (vec_piece_data && vec_piece_data->is_recovery_command_) {
       is_recovery = true;
     }
