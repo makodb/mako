@@ -87,14 +87,11 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
                                 struct DepId dep_id,
                                 const janus::Command& cmd_env,
                                 TxnOutput& ret_output) {
-  // L10f-prep6n: take Command at the boundary; downstream uses
-  // shared_ptr<Marshallable> via .inner_marshallable() once.
-  shared_ptr<Marshallable> cmd = cmd_env.inner_marshallable();
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
+  Log_info("cmd<%d, %d> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).first, SimpleRWCommand::GetCmdID(cmd_env.inner_marshallable()).second);
 #endif
 
-  auto vec_piece_data = marshallable_cast<VecPieceData>(cmd);
+  auto vec_piece_data = marshallable_cast<VecPieceData>(cmd_env);
   verify(vec_piece_data != nullptr);
   auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
   verify(sp_vec_piece);
@@ -114,12 +111,12 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
 //    if (piece_data.inn_id_ == 205) b2 = true;
 //  }
 //  verify(b1 == b2);
-  verify(cmd) ;
-  // L10f-prep6: tx->cmd_ is Command; cmd here is shared_ptr<Marshallable>.
-  // Compare via inner shared_ptr for identity check.
+  verify(cmd_env.has_value());
+  // L10f-prep6aj: identity check between tx->cmd_ and cmd_env via
+  // inner shared_ptr equality (same Marshallable instance).
   if (!tx->cmd_.has_value()) {
-    tx->cmd_ = cmd;
-  } else if (tx->cmd_.inner_marshallable() != cmd) {
+    tx->cmd_ = cmd_env;
+  } else if (tx->cmd_.inner_marshallable() != cmd_env.inner_marshallable()) {
     auto present_cmd =
         marshallable_cast<VecPieceData>(tx->cmd_)->sp_vec_piece_data_;
     verify(present_cmd);
@@ -212,10 +209,10 @@ int SchedulerClassic::PrepareReplicated(TpcPrepareCommand& prepare_cmd) {
   // TODO and return the prepare callback here.
   auto tx_id = prepare_cmd.tx_id_;
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
-  // L10f-prep4: prepare_cmd.cmd_ is Command; sp_tx->cmd_ is still
-  // shared_ptr<Marshallable>; unwrap at the boundary.
-  if (!sp_tx->cmd_)
-    sp_tx->cmd_ = prepare_cmd.cmd_.inner_marshallable();
+  // L10f-prep6aj: prepare_cmd.cmd_ and sp_tx->cmd_ are both Command;
+  // direct assignment.
+  if (!sp_tx->cmd_.has_value())
+    sp_tx->cmd_ = prepare_cmd.cmd_;
   if (!sp_tx->is_leader_hint_) {
     return 0;
   }
@@ -260,7 +257,6 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
     cmd->ret_ = commit_or_abort;
     cmd->cmd_ = sp_tx->cmd_;
     sp_tx->is_leader_hint_ = true;
-    shared_ptr<Marshallable> sp_m = wrap_typed_marshallable(cmd);
     shared_ptr<Coordinator> coo{CreateRepCoord(dep_id.id)};
     coo->svr_workers_g = svr_workers_g;
 
@@ -272,7 +268,10 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
     double start_ms = tp.tv_sec * 1000 + tp.tv_usec / 1000.0;
     cli2tx.append(start_ms - client_ms);
 
-    coo->Submit(sp_m);
+    // L10f-prep6aj: Coordinator::Submit takes Command (prep6o);
+    // wrap_typed_marshallable returns shared_ptr<Marshallable> which
+    // auto-converts via Command's implicit ctor.
+    coo->Submit(wrap_typed_marshallable(cmd));
     
     sp_tx->commit_result->wait();
 
