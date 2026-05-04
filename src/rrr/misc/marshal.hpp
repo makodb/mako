@@ -254,12 +254,10 @@ class MarshallDeputy {
       // 4-23 with a gap at 17) retired — closed-set Command types
       // now derive their kind from their position in the
       // `janus::MakoCommands` TypeList (see deptran/mako_commands.h).
-      // CONTAINER_CMD=3 stays because the legacy `CmdData` Marshallable
-      // base class (deptran/command.h) still uses it as a sentinel kind
-      // value; CmdData is never registered with MarshallDeputy and
-      // never round-trips on the wire, so the value is just a local
-      // tag for branch-to-detect-CmdData dispatch sites.
-      CONTAINER_CMD=3,
+      // L10f-1 (2026-05-04): CONTAINER_CMD=3 also retired — CmdData
+      // no longer inherits Marshallable, so the sentinel value has
+      // no users.  Numeric value left as a gap to preserve
+      // wire-compat for any cached hosts.
       // Workstream N L7: open-set polymorphic envelope. Every
       // `AnyMessage` payload — regardless of carried inner type —
       // serializes under this fixed kind. The actual type

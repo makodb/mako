@@ -197,25 +197,21 @@ key_t SimpleRWCommand::GetKey(shared_ptr<Marshallable> cmd) {
 }
 
 bool SimpleRWCommand::NeedRecordConflictInOriginalPath(shared_ptr<Marshallable> cmd) {
-  shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
-  shared_ptr<TxPieceData> vector0;
+  shared_ptr<VecPieceData> cmd_cast{nullptr};
   if (cmd->kind_ == TpcCommitCommand::static_kind()) {
     shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     verify(tpc_cmd != nullptr);
-    auto cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    verify(cmd_cast != nullptr);
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-    vector0 = *(sp_vec_piece->begin());
+    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
   } else if (cmd->kind_ == VecPieceData::static_kind()) {
-    shared_ptr<VecPieceData> cmd_cast = marshallable_cast<VecPieceData>(cmd);
-    verify(cmd_cast != nullptr);
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-    vector0 = *(sp_vec_piece->begin());
-  } else if (cmd->kind_ == MarshallDeputy::CONTAINER_CMD){ // This only verified it's CmdData, but I assume it is SimpleCommand
-    vector0 = dynamic_pointer_cast<TxPieceData>(cmd);
+    cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
+    // Workstream N L10f-1: dropped the
+    // `MarshallDeputy::CONTAINER_CMD` branch — CmdData no longer
+    // inherits Marshallable, so this kind is unreachable.
     verify(0);
   }
+  verify(cmd_cast != nullptr);
+  shared_ptr<TxPieceData> vector0 = *(cmd_cast->sp_vec_piece_data_->begin());
   return vector0->rule_mode_on_and_is_original_path_only_command_;
 }
 
