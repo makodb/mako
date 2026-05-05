@@ -331,3 +331,53 @@ remaining production code is fully migrated for the parts not
 gated on Marshallable inheritance — Marshallable lives on inside
 the test fixture realm and the bridge adapter, both of which need
 their own L10f follow-ups.
+
+## Update 2026-05-05: Step 4 landed (production helper migration)
+
+Step 4 (`wrap_typed_marshallable` / `marshallable_cast` callers)
+landed independently of Step 3 — it doesn't require the storage
+flip, just an additive change to `Command`'s API.  Two commits:
+
+* `6a125649f` — add `Command(shared_ptr<T>)` templated ctor +
+  `operator=(shared_ptr<T>)` for non-Marshallable T.  The matching
+  exact-template `operator=` outranks the previously-ambiguous
+  pair (shared_ptr<T> → Command via the templated ctor; or
+  shared_ptr<T> → MarshallDeputy → Command via the implicit
+  conversion chain).
+
+* `5ab0305ee` — drop `wrap_typed_marshallable(sp_T)` at all 16
+  production call sites.  Includes flipping
+  `SchedulerClassic::CheckCommitted(Marshallable&)` to
+  `(const Command&)` since the only caller (copilot/server.cc:92)
+  was wrapping a TpcCommitCommand into a Marshallable just to
+  deref it.
+
+Wire bytes unchanged.  Test results:
+* test_rpc_marshal_archive (88 tests) ✓
+* test_rpc_marshallable_proxy (21 tests) ✓
+* test_rpc_log_storage ✓
+* simpleTransaction ✓
+* shard1Replication ✓ (sequential — parallel runs hit dbtest race)
+
+**Step 2.5 re-assessed:** the "multi-day effort" assumption needs
+revisiting.  Looking at the actual fixture usage:
+
+* `rpc_marshallable_proxy_test.cc`: 7 tests testing pure
+  MarshallDeputy/Marshallable infrastructure — these go away with
+  the underlying API at Step 5, not earlier.  3 tests use
+  TestMarshallable as a generic nested Serializable inside
+  KeyCmdBatchData / SyncLogResponse / BulkPaxosCmd; could be
+  retargeted to a real MakoCommands type (e.g. TpcEmptyCommand or
+  HeartBeatLog).
+* `rpc_log_storage_test.cc`: 2 tests use TestCommand as the
+  LogEntry's command field; could swap to TpcEmptyCommand.
+* `rpc_marshal_archive_test.cc`: 1 test uses CanaryMarshallable
+  to verify `serializable_cast` returns nullptr on a non-bridge
+  Marshallable — goes away with Marshallable at Step 5.
+* `any_message.hpp`: production code that inherits Marshallable;
+  the most substantial migration target.
+
+**Revised path:** Step 5 (drop Marshallable) is the natural next
+single-step retirement once Step 2.5's narrow scope (3-4 tests
+retargeted, plus AnyMessage migration) is done.  Step 3 (storage
+flip) folds into Step 5 rather than being a separate phase.
