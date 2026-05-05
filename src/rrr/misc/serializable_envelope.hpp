@@ -213,6 +213,18 @@ class SerializableEnvelope {
   bool has_value() const noexcept { return inner_ != nullptr; }
   explicit operator bool() const noexcept { return has_value(); }
 
+  // Workstream N L10f-2 step 1 (2026-05-04): identity comparison.
+  // Two envelopes compare equal iff they wrap the same payload
+  // instance (same shared_ptr).  Lets call sites replace
+  // `a.inner_marshallable() != b.inner_marshallable()` with
+  // `a != b`.
+  bool operator==(const SerializableEnvelope& other) const noexcept {
+    return inner_ == other.inner_;
+  }
+  bool operator!=(const SerializableEnvelope& other) const noexcept {
+    return !(*this == other);
+  }
+
   // -- inner_marshallable() — migration compat ---------------------------
   // Direct access to the underlying `shared_ptr<Marshallable>` —
   // matches `MarshallDeputy::inner()` so call sites that pass

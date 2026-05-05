@@ -1607,8 +1607,11 @@ void RaftServer::HeartbeatLoop() {
                   // curInstance->log_ (also Command).
                   cmd = curInstance->log_;
                   cmdLogTerm = curInstance->term;
-                  Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd=%p",
-                      site_id_, it->second, site_id, cmd.inner_marshallable().get());
+                  // L10f-2 step 1: debug log no longer needs the
+                  // inner shared_ptr's raw pointer; the kind tag is
+                  // a more useful identifier anyway.
+                  Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd_kind=%d",
+                      site_id_, it->second, site_id, cmd.kind_);
                 }
               }
 #endif

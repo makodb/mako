@@ -492,18 +492,13 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   if (ret == WRONG_LEADER) {
     *res = WRONG_LEADER;
     Log_info("[WRONG_LEADER] ServiceImpl::Commit returning WRONG_LEADER for tx_id: %lu", tid);
-    // Get view data from the transaction or command
-    auto sp_tx = dynamic_pointer_cast<TxClassic>(sched->GetTx(tid));
-    // L10f-prep6: sp_tx->cmd_ is Command; unwrap to legacy
-    // shared_ptr<Marshallable> for the .get()→TxData* dynamic_cast.
-    if (sp_tx && sp_tx->cmd_.has_value()) {
-      auto tx_data = dynamic_cast<TxData*>(sp_tx->cmd_.inner_marshallable().get());
-      if (tx_data && tx_data->reply_.sp_view_data_) {
-        view_data->set_marshallable(tx_data->reply_.sp_view_data_);
-        Log_info("[WRONG_LEADER] ServiceImpl::Commit attached view data: %s",
-                 tx_data->reply_.sp_view_data_->ToString().c_str());
-      }
-    }
+    // Workstream N L10f-2 step 1 (2026-05-04): removed the
+    // `dynamic_cast<TxData*>(sp_tx->cmd_.inner_marshallable().get())`
+    // escape hatch.  After L10f-1, TxData no longer inherits
+    // Marshallable, so the dynamic_cast always returned nullptr
+    // and the entire if-block was dead.  sp_tx->cmd_ in this path
+    // is always a dispatched RPC command (VecPieceData or
+    // TpcCommitCommand kind), not a TxData.
   } else {
     *res = SUCCESS;
     // Set view data from replication scheduler if available

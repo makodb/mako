@@ -112,11 +112,10 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
 //  }
 //  verify(b1 == b2);
   verify(cmd_env.has_value());
-  // L10f-prep6aj: identity check between tx->cmd_ and cmd_env via
-  // inner shared_ptr equality (same Marshallable instance).
+  // L10f-2 step 1: identity check via Command::operator==.
   if (!tx->cmd_.has_value()) {
     tx->cmd_ = cmd_env;
-  } else if (tx->cmd_.inner_marshallable() != cmd_env.inner_marshallable()) {
+  } else if (tx->cmd_ != cmd_env) {
     auto present_cmd =
         marshallable_cast<VecPieceData>(tx->cmd_)->sp_vec_piece_data_;
     verify(present_cmd);
