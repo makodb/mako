@@ -939,6 +939,15 @@ class SerializableRegistry {
     return 0;
   }
 
+  // No-arg overload — auto-derives kind from `T::static_kind()`.
+  // Used by every TypeList-derived `Serializable<T, MakoCommands>`
+  // type whose kind = its 1-indexed position in `MakoCommands`.
+  //   static int _reg = SerializableRegistry::reg<TpcCommitCommand>();
+  template<class T>
+  static int reg() {
+    return reg<T>(T::static_kind());
+  }
+
   // Create a fresh proxy for the given kind. Aborts via verify() if
   // the kind is not registered.
   static SerializableProxy create(int32_t kind);
