@@ -523,3 +523,52 @@ work.  Wire bytes stay invariant across all steps.
 single-step retirement once Step 2.5's narrow scope (3-4 tests
 retargeted, plus AnyMessage migration) is done.  Step 3 (storage
 flip) folds into Step 5 rather than being a separate phase.
+
+---
+
+## 2026-05-05 — L10f-2 step 5 lands; Marshallable + MarshallDeputy retired
+
+Final session of the long-running L10 plan.  Six commits this session
+land the entire residual scope:
+
+1. **Storage flip** (208b76cf2): `SerializableEnvelope::inner_`
+   migrated from `shared_ptr<Marshallable>` to
+   `pro::proxy<SerializableFacade>` (value member; no shared_ptr
+   layer).  Lifetime is preserved by holder-shaped proxies wrapping
+   `shared_ptr<T>` so `unpack_shared<T>` returns the original
+   refcount.  Wire format unchanged.
+2. **AnyMessage payload migration** (9bd9fcde2):
+   `AnyMessage::payload_` flipped from `shared_ptr<Marshallable>` to
+   `pro::proxy<SerializableFacade>`, registry returns proxy directly.
+3. **Bulk reg_serializable_in_deputy → SerializableRegistry::reg
+   migration** (4a48bb732): all production registration sites
+   migrated to the no-arg `SerializableRegistry::reg<T>()` (kind
+   derived from TypeList).
+4. **Bridge dropped** (cdcb8abee): `marshal_serializable_bridge.hpp`
+   deleted (528 LOC).  No production code referenced it.
+5. **Marshallable + MarshallDeputy retired** (this commit):
+   Marshallable abstract base, MarshallDeputy concrete envelope, and
+   the SpinMutex<MarContainer> registry are gone.  Raft's
+   `AppendEntriesReq.cmd` field flipped to `::janus::Command`.
+   Test-side `static_assert(!is_base_of_v<Marshallable, ...>)`
+   guards retired (no longer expressible).
+
+**Test verification** (all four affected tests pass after rebuild):
+- test_rpc_marshal_archive: 68 tests
+- test_rpc_any_message: 8 tests
+- test_rpc_log_storage: 35 tests
+- test_rpc_marshallable_proxy: 12 tests
+
+**Outstanding scope:** none for L10f-2.  Wire format remained
+byte-for-byte identical throughout (the `[v32 kind][payload]` shape
+locked in by L9 alignment).  The `marshal.hpp` and `marshal.cpp`
+files are now ~500 LOC lighter; `__dep__.h`, `raft/log_storage.hpp`,
+and `raft/messages.hpp` no longer reference Marshallable or
+MarshallDeputy at all.
+
+The L10 series is complete.  Production code paths use
+`janus::Command` (closed-set, kind-tagged) for replicated commands
+and `rrr::AnyMessage` (open-set, name-tagged) for graph-shaped
+RPC payloads.  Both serialize through
+`pro::proxy<SerializableFacade>` value members; no
+`shared_ptr<Marshallable>` storage anywhere.
