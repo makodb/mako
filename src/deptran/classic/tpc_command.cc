@@ -1,20 +1,20 @@
 #include "tpc_command.h"
 #include "../command.h"
 #include "../command_marshaler.h"
-#include "rrr/misc/marshal_serializable_bridge.hpp"
+#include "rrr/misc/marshal_archive.hpp"
 
 using namespace janus;
 
 // Workstream N L8: registrations switched to the no-arg
-// `reg_serializable_in_deputy<T>()` overload — kind is auto-derived
+// `SerializableRegistry::reg<T>()` overload — kind is auto-derived
 // from each type's `static_kind()` method (provided by the
 // `Serializable<T, MakoCommands>` CRTP base, which returns the type's
 // 1-indexed position in the `MakoCommands` TypeList).
-static int volatile x1 = rrr::reg_serializable_in_deputy<TpcPrepareCommand>();
-static int volatile x2 = rrr::reg_serializable_in_deputy<TpcCommitCommand>();
-static int volatile x3 = rrr::reg_serializable_in_deputy<TpcEmptyCommand>();
-static int volatile x4 = rrr::reg_serializable_in_deputy<TpcNoopCommand>();
-static int volatile x5 = rrr::reg_serializable_in_deputy<TpcBatchCommand>();
+static int volatile x1 = rrr::SerializableRegistry::reg<TpcPrepareCommand>();
+static int volatile x2 = rrr::SerializableRegistry::reg<TpcCommitCommand>();
+static int volatile x3 = rrr::SerializableRegistry::reg<TpcEmptyCommand>();
+static int volatile x4 = rrr::SerializableRegistry::reg<TpcNoopCommand>();
+static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>();
 
 
 // Workstream N Phase 4a-3a: TpcPrepareCommand serialization via

@@ -1,6 +1,6 @@
 #include "replicated_db.h"
 #include "server.h"
-#include "rrr/misc/marshal_serializable_bridge.hpp"
+#include "rrr/misc/marshal_archive.hpp"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -20,7 +20,7 @@ using namespace janus;
 // Workstream N L8: registration switched to no-arg form — kind
 // auto-derived from `Serializable<T, MakoCommands>` CRTP base.
 static int volatile x_replicated_db =
-    rrr::reg_serializable_in_deputy<ReplicatedDBCommand>();
+    rrr::SerializableRegistry::reg<ReplicatedDBCommand>();
 
 // ===========================================================================
 // ReplicatedDBCommand factory methods and serialization

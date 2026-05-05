@@ -30,14 +30,13 @@
 #include "rrr/rrr.hpp"
 
 #include "../constants.h"
+#include "../mako_commands.h"  // janus::Command
 
 namespace janus {
 namespace raft {
 
-// Workstream N L10f-5 (2026-05-04): MarshallDeputy alias retained
-// only as the in-process facade payload type — production wire path
-// uses janus::Command (rcc_rpc-generated RpcAppendEntriesRequest).
-using ::rrr::MarshallDeputy;
+// Workstream N L10f-2 step 5 (2026-05-05): MarshallDeputy retired;
+// production wire path uses janus::Command directly.
 
 // ---------------------------------------------------------------------------
 // RequestVote
@@ -77,7 +76,11 @@ struct AppendEntriesReq {
   uint64_t       leader_prev_log_index{0};
   uint64_t       leader_prev_log_term{0};
   uint64_t       leader_commit_index{0};
-  MarshallDeputy cmd{};  // wire-compatible with the current rrr struct
+  // L10f-2 step 5 (2026-05-05): `cmd` migrated from `MarshallDeputy`
+  // to `janus::Command` (= `SerializableEnvelope<MakoCommands>`)
+  // alongside the Marshallable/MarshallDeputy retirement.  Wire format
+  // is identical (`[v32 kind][payload]` for both, post-L9 alignment).
+  ::janus::Command cmd{};
   uint64_t       leader_next_log_term{0};
 };
 

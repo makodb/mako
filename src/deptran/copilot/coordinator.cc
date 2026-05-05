@@ -4,7 +4,7 @@
 #include "commo.h"
 #include "server.h"
 #include "frame.h"
-#include "rrr/misc/marshal_serializable_bridge.hpp"  // wrap_serializable
+#include "rrr/misc/marshal_archive.hpp"  // wrap_serializable
 
 // #define DO_FINALIZE
 
