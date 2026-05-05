@@ -286,3 +286,48 @@ without committing to it.
 
 Then **Step 3** (storage flip) becomes a single, focused leaf —
 all dependents have been moved off the legacy interface.
+
+## Update 2026-05-04: Step 3 blocker — test fixtures
+
+Attempted Step 3 (storage flip) and reverted.  Two failures:
+
+* `test_rpc_marshallable_proxy` — uses `TestMarshallable` /
+  `CanaryMarshallable` test fixtures that inherit `Marshallable`
+  directly (not through the bridge adapter).  Constructing a Command
+  from `shared_ptr<TestMarshallable>` hits the `verify(adapter !=
+  nullptr)` in the new `set_from_marshallable` because there's no
+  SerializableMarshallableAdapter wrapper.
+
+* `test_rpc_log_storage` — uses `TestCommand` directly, same
+  pattern.
+
+**The dependency was hidden in the original plan.**  Test fixtures
+are also Marshallable consumers, and they need to migrate (or be
+wrapped via a synthesized adapter inside Command's ctors) before
+Step 3 can land.
+
+**Revised step ordering:**
+
+* **Step 2.5** (new): migrate test fixtures
+  (`TestMarshallable`, `CanaryMarshallable`, `TestCommand`,
+  `AnyMessage`) off Marshallable, OR build a `MarshallableSerializableAdapter`
+  (the reverse-direction bridge that was retired in L10d-prep) so
+  Command can wrap arbitrary Marshallables in a Serializable
+  proxy.
+
+  This is a multi-day effort because:
+  - Each fixture has its own `to_marshal/from_marshal` body that
+    needs to be ported to `save/load` for the proxy facade.
+  - `AnyMessage` is the open-set polymorphic envelope — its semantics
+    differ from the closed-set TypeList path; it might need its own
+    parallel envelope type.
+  - Several test files build on the legacy fixtures.
+
+* **Step 3** (storage flip): only after Step 2.5.
+
+**Status pause:** Steps 1 and 2 landed in this session; Step 2.5
+(test fixture migration) is the new blocker for Step 3.  The
+remaining production code is fully migrated for the parts not
+gated on Marshallable inheritance — Marshallable lives on inside
+the test fixture realm and the bridge adapter, both of which need
+their own L10f follow-ups.
