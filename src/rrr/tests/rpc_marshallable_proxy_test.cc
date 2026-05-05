@@ -44,17 +44,16 @@ static_assert(!std::is_base_of_v<Marshallable, janus::LogEntry>);
 static_assert(!std::is_base_of_v<Marshallable, janus::BulkPaxosCmd>);
 
 template <typename T>
-std::shared_ptr<T> RoundTripTypedDeputyPayload(const std::shared_ptr<T>& src) {
-  // Phase 4d-2: types migrated to Serializable lose their
-  // TypedMarshallableAdapter trait, so the
-  // `MarshallDeputy(shared_ptr<T>)` ctor's requires clause no longer
-  // matches. Route through `wrap_typed_marshallable` — its bridge
-  // overload (Phase 4a-prep) handles both legacy and Serializable T.
-  MarshallDeputy outgoing(wrap_typed_marshallable(src));
+std::shared_ptr<T> RoundTripTypedPayload(const std::shared_ptr<T>& src) {
+  // L10f-2 step 5 (2026-05-05): wire round-trip via Command's
+  // Marshal& archive operators (added in L10f-2 step 2; same wire
+  // bytes as the legacy MarshallDeputy path).  T is auto-wrapped by
+  // Command's templated non-Marshallable ctor (L10f-2 step 4a).
+  janus::Command outgoing{src};
   Marshal m;
   m << outgoing;
 
-  MarshallDeputy incoming;
+  janus::Command incoming;
   m >> incoming;
 
   return marshallable_cast<T>(incoming);
@@ -74,7 +73,7 @@ std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
   vec_piece->sp_vec_piece_data_ =
       std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
   vec_piece->is_recovery_command_ = recovery;
-  commit->cmd_ = wrap_typed_marshallable(vec_piece);
+  commit->cmd_ = vec_piece;
 
   auto view_data = std::make_shared<janus::ViewData>();
   view_data->view_.n_ = 3;
@@ -109,32 +108,12 @@ std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
 // exercised the `TypedMarshallableAdapter` trait path, which is
 // gone now (every production payload uses Serializable).
 
-TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataUsesTypedAdapterPath) {
-  auto payload = std::make_shared<janus::VecPieceData>();
-  payload->sp_vec_piece_data_ =
-      std::make_shared<std::vector<std::shared_ptr<janus::SimpleCommand>>>();
-  payload->time_sent_from_client_ = 42.5;
-  payload->is_recovery_command_ = 1;
-
-  auto wrapped = wrap_typed_marshallable(payload);
-  ASSERT_NE(wrapped, nullptr);
-  EXPECT_EQ(wrapped->kind(), janus::VecPieceData::static_kind());
-
-  // Phase 4d-6: VecPieceData migrated to Serializable via the
-  // value-semantic `wrap_serializable` path (no aliased adapter — the
-  // production sites in fpga_raft/server.cc, raft/server.h,
-  // mongodb_connection_thread_pool.h, etc. recover decoded state from
-  // round-tripped wire bytes, not in-memory shared_ptr identity).
-  // Use `wrap_serializable_aliased` here to keep the in-memory
-  // identity check that this regression test guards.
-  MarshallDeputy deputy(wrap_serializable_aliased(payload));
-  EXPECT_EQ(deputy.kind_, janus::VecPieceData::static_kind());
-  auto decoded = marshallable_cast<janus::VecPieceData>(deputy);
-  ASSERT_NE(decoded, nullptr);
-  EXPECT_EQ(decoded, payload);
-  EXPECT_DOUBLE_EQ(decoded->time_sent_from_client_, 42.5);
-  EXPECT_EQ(decoded->is_recovery_command_, 1);
-}
+// L10f-2 step 5 (2026-05-05): removed
+// `DeptranVecPieceDataUsesTypedAdapterPath` — exercised the
+// `wrap_serializable_aliased` aliasing identity through
+// `MarshallDeputy`.  Both helpers retire in this same commit;
+// the remaining `DeptranVecPieceDataNonEmptyRoundTrip` test
+// covers the wire-roundtrip case for VecPieceData.
 
 // Phase 4d-6: round-trip a populated VecPieceData (with a real
 // SimpleCommand carrying TxWorkspace input + map<int32_t,Value> output
@@ -177,15 +156,14 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataNonEmptyRoundTrip) {
   cmd2->partition_id_ = 22;
   payload->sp_vec_piece_data_->push_back(cmd2);
 
-  // Serialize via the new Serializable path (SerializableMarshallableAdapter::to_marshal
-  // delegates to VecPieceData::save through a MarshalSink + BinaryWriteArchive).
-  MarshallDeputy outgoing(wrap_typed_marshallable(payload));
+  // Serialize via Command's Marshal& archive operators (added in
+  // L10f-2 step 2; same wire bytes as the legacy MarshallDeputy
+  // path).
+  janus::Command outgoing{payload};
   Marshal m;
   m << outgoing;
 
-  // Deserialize via the new path (SerializableMarshallableAdapter::from_marshal
-  // delegates to VecPieceData::load through a MarshalSource + BinaryReadArchive).
-  MarshallDeputy incoming;
+  janus::Command incoming;
   m >> incoming;
   auto decoded = marshallable_cast<janus::VecPieceData>(incoming);
   ASSERT_NE(decoded, nullptr);
@@ -259,9 +237,9 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   vec_rec->key_data_->push_back(11);
   vec_rec->key_data_->push_back(12);
 
-  MarshallDeputy vec_rec_deputy(vec_rec);
-  EXPECT_EQ(vec_rec_deputy.kind_, janus::VecRecData::static_kind());
-  auto decoded_vec_rec = marshallable_cast<janus::VecRecData>(vec_rec_deputy);
+  janus::Command vec_rec_envelope{vec_rec};
+  EXPECT_EQ(vec_rec_envelope.kind_, janus::VecRecData::static_kind());
+  auto decoded_vec_rec = marshallable_cast<janus::VecRecData>(vec_rec_envelope);
   ASSERT_NE(decoded_vec_rec, nullptr);
   ASSERT_NE(decoded_vec_rec->key_data_, nullptr);
   ASSERT_EQ(decoded_vec_rec->key_data_->size(), 2u);
@@ -274,15 +252,12 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   nested->epoch = 0;
   batch->AddEntry(1001, nested);
 
-  MarshallDeputy batch_deputy(batch);
-  EXPECT_EQ(batch_deputy.kind_, janus::KeyCmdBatchData::static_kind());
-  auto decoded_batch = marshallable_cast<janus::KeyCmdBatchData>(batch_deputy);
+  janus::Command batch_envelope{batch};
+  EXPECT_EQ(batch_envelope.kind_, janus::KeyCmdBatchData::static_kind());
+  auto decoded_batch = marshallable_cast<janus::KeyCmdBatchData>(batch_envelope);
   ASSERT_NE(decoded_batch, nullptr);
   ASSERT_EQ(decoded_batch->Size(), 1u);
   EXPECT_EQ(decoded_batch->GetKey(0), 1001);
-  // L10f-2 step 2.5: HeartBeatLog is in MakoCommands, so the typed
-  // `marshallable_cast<T>(Command&)` overload works directly — no
-  // need to unwrap to the legacy shared_ptr<Marshallable> path.
   auto nested_decoded =
       marshallable_cast<janus::HeartBeatLog>(decoded_batch->GetCommand(0));
   ASSERT_NE(nested_decoded, nullptr);
@@ -293,18 +268,13 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   auto src = MakeTypedTpcCommitPayload(/*tx_id=*/321, /*ret=*/9, /*term=*/17,
                                        /*recovery=*/1);
 
-  // Phase 4a-3b: TpcCommitCommand is now Serializable. The
-  // `MarshallDeputy(shared_ptr<T>)` ctor's requires clause checks
-  // `kHasTypedMarshallableAdapter<T>` (no longer satisfied for
-  // migrated types). Explicitly route through wrap_typed_marshallable
-  // — its bridge overload (Phase 4a-prep) handles Serializable T's.
-  MarshallDeputy outgoing(wrap_typed_marshallable(src));
+  janus::Command outgoing{src};
   EXPECT_EQ(outgoing.kind_, janus::TpcCommitCommand::static_kind());
 
   Marshal m;
   m << outgoing;
 
-  MarshallDeputy incoming;
+  janus::Command incoming;
   m >> incoming;
   EXPECT_EQ(incoming.kind_, janus::TpcCommitCommand::static_kind());
 
@@ -332,14 +302,12 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
                                 /*recovery=*/1)};
   batch->AddCmds(commits);
 
-  // Phase 4a-3c: TpcBatchCommand migrated to Serializable; route
-  // through wrap_typed_marshallable as in the Commit case above.
-  MarshallDeputy batch_outgoing(wrap_typed_marshallable(batch));
+  janus::Command batch_outgoing{batch};
   EXPECT_EQ(batch_outgoing.kind_, janus::TpcBatchCommand::static_kind());
   Marshal batch_marshaled;
   batch_marshaled << batch_outgoing;
 
-  MarshallDeputy batch_incoming;
+  janus::Command batch_incoming;
   batch_marshaled >> batch_incoming;
   auto decoded_batch = marshallable_cast<janus::TpcBatchCommand>(batch_incoming);
   ASSERT_NE(decoded_batch, nullptr);
@@ -347,27 +315,24 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   EXPECT_EQ(decoded_batch->cmds_.at(0)->tx_id_, 101);
   EXPECT_EQ(decoded_batch->cmds_.at(1)->tx_id_, 202);
 
-  // Workstream N Phase 4a-2: TpcEmptyCommand migrated to Serializable.
-  // Construction goes through `wrap_serializable_aliased` (preserves
-  // event-member aliasing); recovery uses `serializable_cast<T>`.
+  // L10f-2 step 5 (2026-05-05): TpcEmptyCommand round-trip via
+  // Command::pack_aliased preserves the caller's shared_ptr identity.
   auto empty_cmd = std::make_shared<janus::TpcEmptyCommand>();
-  MarshallDeputy empty_deputy(wrap_serializable_aliased(empty_cmd));
-  EXPECT_EQ(empty_deputy.kind_, janus::TpcEmptyCommand::static_kind());
-  ASSERT_NE(serializable_cast<janus::TpcEmptyCommand>(empty_deputy),
-            nullptr);
-  EXPECT_EQ(serializable_cast<janus::TpcEmptyCommand>(empty_deputy),
+  janus::Command empty_envelope =
+      janus::Command::pack_aliased<janus::TpcEmptyCommand>(empty_cmd);
+  EXPECT_EQ(empty_envelope.kind_, janus::TpcEmptyCommand::static_kind());
+  ASSERT_NE(empty_envelope.unpack<janus::TpcEmptyCommand>(), nullptr);
+  EXPECT_EQ(empty_envelope.unpack<janus::TpcEmptyCommand>(),
             empty_cmd.get())
-      << "aliased wrap: serializable_cast should return the same "
-         "instance as the caller's shared_ptr";
+      << "pack_aliased: unpack should return the same instance as "
+         "the caller's shared_ptr";
 
-  // Workstream N Phase 4a-1: TpcNoopCommand was migrated from
-  // Marshallable to Serializable. Construction goes through
-  // `wrap_serializable` (returns shared_ptr<Marshallable>); recovery
-  // uses `serializable_cast<T>` instead of `marshallable_cast<T>`.
+  // TpcNoopCommand value-pack — owns a fresh copy; unpack returns
+  // a different instance from the caller's shared_ptr.
   auto noop_cmd = std::make_shared<janus::TpcNoopCommand>();
-  MarshallDeputy noop_deputy(wrap_serializable(noop_cmd));
-  EXPECT_EQ(noop_deputy.kind_, janus::TpcNoopCommand::static_kind());
-  ASSERT_NE(serializable_cast<janus::TpcNoopCommand>(noop_deputy), nullptr);
+  janus::Command noop_envelope = janus::Command::pack(*noop_cmd);
+  EXPECT_EQ(noop_envelope.kind_, janus::TpcNoopCommand::static_kind());
+  ASSERT_NE(noop_envelope.unpack<janus::TpcNoopCommand>(), nullptr);
 }
 
 TEST(MarshallableProxyFacadeTest,
@@ -375,13 +340,13 @@ TEST(MarshallableProxyFacadeTest,
   auto put_cmd = janus::ReplicatedDBCommand::CreatePut("k1", "v1");
   ASSERT_NE(put_cmd, nullptr);
 
-  MarshallDeputy outgoing(put_cmd);
+  janus::Command outgoing{put_cmd};
   EXPECT_EQ(outgoing.kind_, janus::ReplicatedDBCommand::static_kind());
 
   Marshal m;
   m << outgoing;
 
-  MarshallDeputy incoming;
+  janus::Command incoming;
   m >> incoming;
   EXPECT_EQ(incoming.kind_, janus::ReplicatedDBCommand::static_kind());
 
@@ -454,17 +419,20 @@ TEST(MarshallableProxyFacadeTest,
   auto sync_resp = std::make_shared<janus::SyncLogResponse>();
   auto sync_noop = std::make_shared<janus::SyncNoOpRequest>();
 
-  EXPECT_EQ(wrap_typed_marshallable(bulk_prepare)->kind(),
+  // L10f-2 step 5 (2026-05-05): construction path verifies that
+  // wrapping in `Command` produces the kind-tag the TypeList
+  // position dictates.
+  EXPECT_EQ(janus::Command{bulk_prepare}.kind_,
             janus::BulkPrepareLog::static_kind());
-  EXPECT_EQ(wrap_typed_marshallable(prep_cmd)->kind(),
+  EXPECT_EQ(janus::Command{prep_cmd}.kind_,
             janus::PaxosPrepCmd::static_kind());
-  EXPECT_EQ(wrap_typed_marshallable(heartbeat)->kind(),
+  EXPECT_EQ(janus::Command{heartbeat}.kind_,
             janus::HeartBeatLog::static_kind());
-  EXPECT_EQ(wrap_typed_marshallable(sync_req)->kind(),
+  EXPECT_EQ(janus::Command{sync_req}.kind_,
             janus::SyncLogRequest::static_kind());
-  EXPECT_EQ(wrap_typed_marshallable(sync_resp)->kind(),
+  EXPECT_EQ(janus::Command{sync_resp}.kind_,
             janus::SyncLogResponse::static_kind());
-  EXPECT_EQ(wrap_typed_marshallable(sync_noop)->kind(),
+  EXPECT_EQ(janus::Command{sync_noop}.kind_,
             janus::SyncNoOpRequest::static_kind());
 }
 
@@ -474,7 +442,7 @@ TEST(MarshallableProxyFacadeTest,
   bulk_prepare->min_prepared_slots = {{0u, 10}, {1u, 20}};
   bulk_prepare->leader_id = 3;
   bulk_prepare->epoch = 7;
-  auto bulk_prepare_decoded = RoundTripTypedDeputyPayload(bulk_prepare);
+  auto bulk_prepare_decoded = RoundTripTypedPayload(bulk_prepare);
   ASSERT_NE(bulk_prepare_decoded, nullptr);
   EXPECT_EQ(bulk_prepare_decoded->leader_id, 3u);
   EXPECT_EQ(bulk_prepare_decoded->epoch, 7);
@@ -485,7 +453,7 @@ TEST(MarshallableProxyFacadeTest,
   prep_cmd->slots = {5, 6};
   prep_cmd->ballots = {11, 12};
   prep_cmd->leader_id = 2;
-  auto prep_cmd_decoded = RoundTripTypedDeputyPayload(prep_cmd);
+  auto prep_cmd_decoded = RoundTripTypedPayload(prep_cmd);
   ASSERT_NE(prep_cmd_decoded, nullptr);
   EXPECT_EQ(prep_cmd_decoded->leader_id, 2);
   ASSERT_EQ(prep_cmd_decoded->slots.size(), 2u);
@@ -496,7 +464,7 @@ TEST(MarshallableProxyFacadeTest,
   auto heartbeat = std::make_shared<janus::HeartBeatLog>();
   heartbeat->leader_id = 9;
   heartbeat->epoch = 13;
-  auto heartbeat_decoded = RoundTripTypedDeputyPayload(heartbeat);
+  auto heartbeat_decoded = RoundTripTypedPayload(heartbeat);
   ASSERT_NE(heartbeat_decoded, nullptr);
   EXPECT_EQ(heartbeat_decoded->leader_id, 9u);
   EXPECT_EQ(heartbeat_decoded->epoch, 13);
@@ -505,7 +473,7 @@ TEST(MarshallableProxyFacadeTest,
   sync_req->leader_id = 1;
   sync_req->epoch = 44;
   sync_req->sync_commit_slot = {100, 120, 140};
-  auto sync_req_decoded = RoundTripTypedDeputyPayload(sync_req);
+  auto sync_req_decoded = RoundTripTypedPayload(sync_req);
   ASSERT_NE(sync_req_decoded, nullptr);
   EXPECT_EQ(sync_req_decoded->leader_id, 1);
   EXPECT_EQ(sync_req_decoded->epoch, 44);
@@ -519,7 +487,7 @@ TEST(MarshallableProxyFacadeTest,
   sync_resp->sync_data.push_back(
       std::make_shared<janus::Command>(nested_payload_55));
   sync_resp->missing_slots = {{4, 8}, {15}};
-  auto sync_resp_decoded = RoundTripTypedDeputyPayload(sync_resp);
+  auto sync_resp_decoded = RoundTripTypedPayload(sync_resp);
   ASSERT_NE(sync_resp_decoded, nullptr);
   ASSERT_EQ(sync_resp_decoded->sync_data.size(), 1u);
   auto nested =
@@ -534,7 +502,7 @@ TEST(MarshallableProxyFacadeTest,
   sync_noop->leader_id = 6;
   sync_noop->epoch = 77;
   sync_noop->sync_slots = {21, 22};
-  auto sync_noop_decoded = RoundTripTypedDeputyPayload(sync_noop);
+  auto sync_noop_decoded = RoundTripTypedPayload(sync_noop);
   ASSERT_NE(sync_noop_decoded, nullptr);
   EXPECT_EQ(sync_noop_decoded->leader_id, 6);
   EXPECT_EQ(sync_noop_decoded->epoch, 77);
@@ -547,7 +515,7 @@ TEST(MarshallableProxyFacadeTest, PaxosLogEntryRoundTripUsesTypedAdapter) {
   log_entry->length = 5;
   log_entry->log_entry = "abcde";
 
-  auto decoded = RoundTripTypedDeputyPayload(log_entry);
+  auto decoded = RoundTripTypedPayload(log_entry);
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded->length, 5);
   EXPECT_EQ(decoded->log_entry, "abcde");
@@ -567,7 +535,7 @@ TEST(MarshallableProxyFacadeTest, PaxosBulkPaxosCmdRoundTripUsesTypedAdapter) {
   payload->cmds.push_back(std::make_shared<janus::Command>(nested_payload_88));
   payload->cmds.push_back(std::make_shared<janus::Command>(nested_payload_99));
 
-  auto decoded = RoundTripTypedDeputyPayload(payload);
+  auto decoded = RoundTripTypedPayload(payload);
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded->leader_id, 4);
   ASSERT_EQ(decoded->slots.size(), 2u);
