@@ -262,7 +262,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
 #endif
 
 #ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> entered ClassicServiceImpl::Dispatch", SimpleRWCommand::GetCmdID(md.inner()).first, SimpleRWCommand::GetCmdID(md.inner()).second);
+  Log_info("[Jetpack] cmd<%d, %d> entered ClassicServiceImpl::Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
 #endif
 
 #ifdef COPILOT_TIME_DEBUG

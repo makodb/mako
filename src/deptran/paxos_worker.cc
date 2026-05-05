@@ -93,7 +93,7 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
           ((MultiPaxosCommo*)rep_commo_)->ForwardToLearner(site_info_->partition_id_,
                                          slot_id,
                                          cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
-                                         md.inner(),
+                                         md,
                                          [](uint64_t slot, ballot_t ballot) {
                                            //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
                                          });

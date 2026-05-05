@@ -7708,7 +7708,7 @@ int RaftLabTest::testReplicatedDBPutGet(void) {
   // Register the apply callback on the server
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -7794,7 +7794,7 @@ int RaftLabTest::testReplicatedDBDelete(void) {
   // Register apply callback
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -7892,11 +7892,11 @@ int RaftLabTest::testReplicatedDBReplication(void) {
   // Register apply callbacks on both
   // @unsafe { RegLearnerAction }
   leader_svr->RegLearnerAction([&leader_rdb](int slot, janus::Command md) -> int {
-    leader_rdb->ApplyEntry(slot, md.inner());
+    leader_rdb->ApplyEntry(slot, md);
     return 0;
   });
   follower_svr->RegLearnerAction([&follower_rdb](int slot, janus::Command md) -> int {
-    follower_rdb->ApplyEntry(slot, md.inner());
+    follower_rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -7985,7 +7985,7 @@ int RaftLabTest::testReplicatedDBSnapshot(void) {
 
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -8101,7 +8101,7 @@ int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
   // Register apply callback on leader
   // @unsafe { RegLearnerAction }
   leader_svr->RegLearnerAction([&leader_rdb](int slot, janus::Command md) -> int {
-    leader_rdb->ApplyEntry(slot, md.inner());
+    leader_rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -8214,7 +8214,7 @@ int RaftLabTest::testReplicatedDBWiring(void) {
   // @unsafe { RegLearnerAction }
   leader_svr->RegLearnerAction([rdb](int slot, janus::Command md) -> int {
     if (rdb) {
-      rdb->ApplyEntry(slot, md.inner());
+      rdb->ApplyEntry(slot, md);
     }
     return 0;
   });
@@ -8279,7 +8279,7 @@ int RaftLabTest::testReplicatedDBWiring(void) {
   // @unsafe { RegLearnerAction }
   follower_svr->RegLearnerAction([follower_rdb](int slot, janus::Command md) -> int {
     if (follower_rdb) {
-      follower_rdb->ApplyEntry(slot, md.inner());
+      follower_rdb->ApplyEntry(slot, md);
     }
     return 0;
   });
@@ -8361,7 +8361,7 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
 
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -8509,7 +8509,7 @@ int RaftLabTest::testConfigManagerBasic(void) {
   // Register apply callback
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -8616,7 +8616,7 @@ int RaftLabTest::testConfigManagerShardLifecycle(void) {
 
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -8714,7 +8714,7 @@ int RaftLabTest::testConfigManagerEpoch(void) {
 
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -8868,7 +8868,7 @@ int RaftLabTest::testClusterConfigLoadFromConfigManager(void) {
   // Register apply callback
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9003,7 +9003,7 @@ int RaftLabTest::testConfigWatcherDetectsChanges(void) {
   // Register apply callback
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9110,7 +9110,7 @@ int RaftLabTest::testConfigWatcherCallback(void) {
   // Register apply callback
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9241,7 +9241,7 @@ int RaftLabTest::testLinearizableGet(void) {
   // Register the apply callback on the server
   // @unsafe { RegLearnerAction }
   svr->RegLearnerAction([&rdb](int slot, janus::Command md) -> int {
-    rdb->ApplyEntry(slot, md.inner());
+    rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9358,7 +9358,7 @@ int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
 
   // @unsafe { RegLearnerAction }
   svr1->RegLearnerAction([&rdb1](int slot, janus::Command md) -> int {
-    rdb1->ApplyEntry(slot, md.inner());
+    rdb1->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9411,7 +9411,7 @@ int RaftLabTest::testLinearizableGetAfterLeaderChange(void) {
 
   // @unsafe { RegLearnerAction }
   svr2->RegLearnerAction([&rdb2](int slot, janus::Command md) -> int {
-    rdb2->ApplyEntry(slot, md.inner());
+    rdb2->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9510,7 +9510,7 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
 
   // @unsafe { RegLearnerAction }
   leader_svr->RegLearnerAction([&leader_rdb](int slot, janus::Command md) -> int {
-    leader_rdb->ApplyEntry(slot, md.inner());
+    leader_rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9529,7 +9529,7 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
 
   // @unsafe { RegLearnerAction }
   follower_svr->RegLearnerAction([&follower_rdb](int slot, janus::Command md) -> int {
-    follower_rdb->ApplyEntry(slot, md.inner());
+    follower_rdb->ApplyEntry(slot, md);
     return 0;
   });
 
@@ -9600,7 +9600,7 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   // Register apply callback on the restarted server
   // @unsafe { RegLearnerAction }
   restarted_svr->RegLearnerAction([&restarted_rdb](int slot, janus::Command md) -> int {
-    restarted_rdb->ApplyEntry(slot, md.inner());
+    restarted_rdb->ApplyEntry(slot, md);
     return 0;
   });
 

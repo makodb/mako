@@ -995,7 +995,7 @@ void RaftServer::Setup() {
       // Register apply callback so committed Raft entries are applied to RocksDB
       RegLearnerAction([this](int slot, janus::Command md) -> int {
         if (replicated_db_) {
-          replicated_db_->ApplyEntry(slot, md.inner());
+          replicated_db_->ApplyEntry(slot, md);
         }
         return 0;
       });
