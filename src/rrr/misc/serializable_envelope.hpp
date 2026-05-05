@@ -375,25 +375,30 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
 // view_md` with `Command view_md` in code paths that still drive the
 // legacy `Marshal&` (e.g., TxReply / TpcCommitCommand archive
 // operators in the legacy RPC reply path).
+//
+// L10f-2 step 2 (2026-05-04): drive the payload through a
+// `BinaryWriteArchive` backed by a `MarshalSink` instead of
+// `inner_->to_marshal(m)`.  Same bytes either way (the proxy's
+// `save(BinaryWriteArchive&)` is the canonical serializer); this
+// version avoids the Marshallable virtual dispatch and is the path
+// that survives once the `Marshallable`-shaped `inner_` storage
+// goes away.
 template<typename TypeList>
 inline Marshal& operator<<(Marshal& m,
                            const SerializableEnvelope<TypeList>& env) {
   verify(env.has_value());
-  m << v32(env.kind_);
-  env.inner_marshallable()->to_marshal(m);
+  MarshalSink sink(&m);
+  BinaryWriteArchive ar(&sink);
+  env.save(ar);
   return m;
 }
 
 template<typename TypeList>
 inline Marshal& operator>>(Marshal& m,
                            SerializableEnvelope<TypeList>& env) {
-  v32 kind_v;
-  m >> kind_v;
-  // Dispatch via the runtime `MarshallDeputy::create_initializer`
-  // registry (same path as `SerializableEnvelope::load`).
-  auto sp = MarshallDeputy::create_initializer(kind_v.get());
-  sp->from_marshal(m);
-  env.set_marshallable(std::move(sp));
+  MarshalSource source(&m);
+  BinaryReadArchive ar(&source);
+  env.load(ar);
   return m;
 }
 
