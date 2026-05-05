@@ -208,10 +208,12 @@ inline std::shared_ptr<Marshallable> wrap_serializable_aliased(
 // existing `as_marshallable` entry path rather than a new ctor.
 template<typename T>
 inline int reg_serializable_in_deputy(int32_t kind) {
-  // Workstream N Phase 5b-9: factory returns
-  // `shared_ptr<Marshallable>` directly — no MarInitializerState
-  // wrapper. `MarshallDeputy::set_marshallable` derives kind from
-  // the result.
+  // Workstream N L10f-2 step 5 prep (2026-05-05): populate BOTH the
+  // legacy MarshallDeputy registry AND the new SerializableRegistry
+  // so SerializableEnvelope::load can switch off MarshallDeputy
+  // independently of when production sites migrate registration
+  // calls.
+  SerializableRegistry::reg<T>(kind);
   return MarshallDeputy::reg_initializer(kind, [kind]() -> std::shared_ptr<Marshallable> {
     auto proxy = make_serializable_proxy<T>();
     verify(proxy->kind() == kind);
