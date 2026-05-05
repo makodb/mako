@@ -1446,9 +1446,8 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
 
-  janus::Command old_view_deputy, new_view_deputy;
-  old_view_deputy.set_marshallable(std::make_shared<ViewData>(old_view));
-  new_view_deputy.set_marshallable(std::make_shared<ViewData>(new_view));
+  janus::Command old_view_deputy = std::make_shared<ViewData>(old_view);
+  janus::Command new_view_deputy = std::make_shared<ViewData>(new_view);
   
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
@@ -1495,7 +1494,7 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
     //     dtxn_sched_->OnJetpackPullIdSet(jepoch, oepoch, &ok, &reply_jepoch, &reply_oepoch, 
     //                                    &reply_old_view, &reply_new_view, id_set);
     //     janus::Command id_set_deputy;
-    //     id_set_deputy.set_marshallable(id_set);
+    //     id_set_deputy = id_set;
     //     e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set_deputy);
     //     continue;
     // }
@@ -1545,8 +1544,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
   vector<rusty::Arc<Future>> fus;
   auto key_batch = std::make_shared<VecRecData>();
   key_batch->key_data_ = std::make_shared<vector<key_t>>(keys.begin(), keys.end());
-  janus::Command key_batch_md;
-  key_batch_md.set_marshallable(key_batch);
+  janus::Command key_batch_md = key_batch;
 	WAN_WAIT;
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
@@ -1559,7 +1557,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
     //     dtxn_sched_->OnJetpackPullCmd(jepoch, oepoch, key, &ok, &reply_jepoch, &reply_oepoch, 
     //                                  &reply_old_view, &reply_new_view, cmd);
     //     janus::Command cmd_deputy;
-    //     cmd_deputy.set_marshallable(cmd);
+    //     cmd_deputy = cmd;
     //     e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd_deputy);
     //     continue;
     // }
@@ -1617,8 +1615,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
   for (const auto& entry : cmds) {
     batch_data->AddEntry(entry.first, entry.second);
   }
-  janus::Command cmd_deputy;
-  cmd_deputy.set_marshallable(batch_data);
+  janus::Command cmd_deputy = batch_data;
   
   // Log_info("[JETPACK-DEBUG] Broadcasting RecordCmd to %zu sites, need %d votes", proxies.size(), n/2+1);
   

@@ -212,7 +212,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   log_infos_[is_pilot].current_slot = std::max(slot, log_infos_[is_pilot].current_slot);
   if (!ins) {
     // this entry is too old that it's already freed
-    ret_cmd->set_marshallable(rrr::wrap_serializable(make_shared<TpcNoopCommand>()));
+    *ret_cmd = make_shared<TpcNoopCommand>();
     *dep = 0;
     *status = Status::EXECUTED;
     *max_ballot = ballot;
@@ -242,7 +242,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   if (ins->cmd.has_value())
     *ret_cmd = ins->cmd;
   else
-    ret_cmd->set_marshallable(rrr::wrap_serializable(make_shared<TpcNoopCommand>()));
+    *ret_cmd = make_shared<TpcNoopCommand>();
   *dep = ins->dep_id;
   *status = ins->status;
 

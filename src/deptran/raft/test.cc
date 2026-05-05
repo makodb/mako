@@ -7555,7 +7555,7 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   // @unsafe { janus::Command uses non-borrow-checked factory }
   auto cmd3 = ReplicatedDBCommand::CreateDelete("deputy_test_key");
   janus::Command md;
-  md.set_marshallable(cmd3);
+  md = cmd3;
   rrr::Marshal m2;
   m2 << md;
 

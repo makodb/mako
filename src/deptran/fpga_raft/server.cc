@@ -253,12 +253,10 @@ bool FpgaRaftServer::RequestVote() {
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
     // L8: dropped tautological `kMarshallKind == static_kind()` verify
     // (the kMarshallKind constant retired with the L8 TypeList migration).
-    // Phase 4a-2: aliased wrap. (This site's empty_cmd is fire-and-
-    // forget — no Wait() is called — but using the aliased wrap is
-    // consistent with the migration pattern and preserves the option
-    // of synchronizing later if desired.)
-    auto sp_m = rrr::wrap_serializable_aliased(empty_cmd);
-    ((CoordinatorFpgaRaft*)co)->Submit(sp_m);
+    // Phase 4a-2: aliased wrap via Command::pack_aliased preserves
+    // shared_ptr identity through the proxy.
+    ((CoordinatorFpgaRaft*)co)->Submit(
+        janus::Command::pack_aliased<TpcEmptyCommand>(empty_cmd));
     
     //RequestVote2FPGA() ;
     if(IsLeader())

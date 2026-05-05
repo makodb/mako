@@ -25,12 +25,11 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   bool is_recovery_command_{false};
   SimpleRWCommand();
   // SimpleRWCommand(const SimpleRWCommand &o);
-  // Workstream N L10f-2 (2026-05-04): Command is now the primary
-  // ctor; the legacy `shared_ptr<Marshallable>` overload delegates
-  // through Command to keep call sites that already wrap their
-  // payload via `wrap_typed_marshallable` working unchanged.
+  // Workstream N L10f-2 (2026-05-04): Command is the only polymorphic
+  // ctor.  The L10f-2 step 5 retirement of Marshallable removed the
+  // legacy `shared_ptr<rrr::Marshallable>` overload — no production
+  // callers remained.
   SimpleRWCommand(const Command& cmd);
-  SimpleRWCommand(shared_ptr<rrr::Marshallable> cmd) : SimpleRWCommand(Command(std::move(cmd))) {}
   // Workstream N L10f-1 (2026-05-04): SimpleCommand-direct ctor.
   // After CmdData stops inheriting Marshallable, callers that hold a
   // SimpleCommand directly must use this overload (not the
@@ -61,27 +60,10 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   static bool NeedRecordConflictInOriginalPath(const Command& cmd);
   static bool Conflict(const Command& cmd1, const Command& cmd2);
 
-  static pair<int32_t, int32_t> GetCmdID(shared_ptr<rrr::Marshallable> cmd) {
-    return GetCmdID(Command(std::move(cmd)));
-  }
-  static uint64_t GetCombinedCmdID(shared_ptr<rrr::Marshallable> cmd) {
-    return GetCombinedCmdID(Command(std::move(cmd)));
-  }
-  static double GetCommandMsTime(shared_ptr<rrr::Marshallable> cmd) {
-    return GetCommandMsTime(Command(std::move(cmd)));
-  }
-  static double GetCommandMsTimeElaps(shared_ptr<rrr::Marshallable> cmd) {
-    return GetCommandMsTimeElaps(Command(std::move(cmd)));
-  }
-  static key_t GetKey(shared_ptr<rrr::Marshallable> cmd) {
-    return GetKey(Command(std::move(cmd)));
-  }
-  static bool NeedRecordConflictInOriginalPath(shared_ptr<rrr::Marshallable> cmd) {
-    return NeedRecordConflictInOriginalPath(Command(std::move(cmd)));
-  }
-  static bool Conflict(shared_ptr<rrr::Marshallable> cmd1, shared_ptr<rrr::Marshallable> cmd2) {
-    return Conflict(Command(std::move(cmd1)), Command(std::move(cmd2)));
-  }
+  // Workstream N L10f-2 step 5 (2026-05-05): removed the
+  // `shared_ptr<rrr::Marshallable>` overloads of every static
+  // helper above.  After Marshallable retires, no caller can
+  // synthesize that argument shape.
   static uint64_t CombineInt32(pair<uint32_t, uint32_t> a) {
     return (((uint64_t)a.first) << 31) | a.second;
     // return (((uint64_t)a.first) * 1000000000) + a.second;

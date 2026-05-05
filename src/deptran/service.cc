@@ -306,10 +306,10 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   
   // Set the view data in the output parameter
   if (view) {
-    view_data->set_marshallable(view);
+    *view_data = view;
   } else {
     // Initialize with empty view data if not set
-    view_data->set_marshallable(std::make_shared<ViewData>());
+    *view_data = std::make_shared<ViewData>();
   }
   
   auto coro_opt = Fiber::current_fiber();
@@ -401,12 +401,11 @@ void ClassicServiceImpl::SimpleCmd(
     const SimpleCommand& cmd, rrr::i32* res, rrr::DeferredReply defer) {
   Fiber::create_run([res, defer = std::move(defer), this]() mutable {
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    // L8: dropped tautological `kMarshallKind == static_kind()` verify.
     // Phase 4a-2: aliased wrap preserves event-member aliasing — the
     // apply path's Done() must wake this empty_cmd's Wait() below.
-    auto sp_m = rrr::wrap_serializable_aliased(empty_cmd);
     auto sched = (SchedulerClassic*)dtxn_sched_;
-    sched->CreateRepCoord(0)->Submit(sp_m);
+    sched->CreateRepCoord(0)->Submit(
+        janus::Command::pack_aliased<TpcEmptyCommand>(empty_cmd));
     empty_cmd->Wait();
     *res = SUCCESS;
     defer.reply();
@@ -503,10 +502,10 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
     *res = SUCCESS;
     // Set view data from replication scheduler if available
     if (sched->rep_sched_ != nullptr) {
-      view_data->set_marshallable(std::make_shared<ViewData>(sched->rep_sched_->new_view_));
+      *view_data = std::make_shared<ViewData>(sched->rep_sched_->new_view_);
     } else {
       // If no replication scheduler, set an empty ViewData
-      view_data->set_marshallable(std::make_shared<ViewData>());
+      *view_data = std::make_shared<ViewData>();
     }
   }
 
@@ -536,10 +535,10 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
   }
   // Set view data from replication scheduler if available
   if (sched->rep_sched_ != nullptr) {
-    view_data->set_marshallable(std::make_shared<ViewData>(sched->rep_sched_->new_view_));
+    *view_data = std::make_shared<ViewData>(sched->rep_sched_->new_view_);
   } else {
     // If no replication scheduler, set an empty ViewData
-    view_data->set_marshallable(std::make_shared<ViewData>());
+    *view_data = std::make_shared<ViewData>();
   }
   defer.reply();
 }
@@ -635,7 +634,7 @@ void ClassicServiceImpl::RccInquire(const txnid_t& tid,
 //  verify(IS_MODE_RCC || IS_MODE_RO6);
 //  std::lock_guard<std::mutex> guard(mtx_);
   RccServer* p_sched = (RccServer*) dtxn_sched_;
-//  p_md_graph->set_marshallable(std::make_shared<RccGraph>());
+//  *p_md_graph = std::make_shared<RccGraph>();
 //  p_sched->OnInquire(epoch,
 //                     tid,
 //                     dynamic_pointer_cast<RccGraph>(p_md_graph->sp_data_));
@@ -738,7 +737,7 @@ void ClassicServiceImpl::JanusInquire(const epoch_t& epoch,
                                       rrr::DeferredReply defer) {
   verify(0);
 //  std::lock_guard<std::mutex> guard(mtx_);
-//  p_md_graph->set_marshallable(std::make_shared<RccGraph>());
+//  *p_md_graph = std::make_shared<RccGraph>();
 //  auto p_sched = (SchedulerJanus*) dtxn_sched_;
 //  p_sched->OnInquire(epoch,
 //                     tid,
@@ -832,7 +831,7 @@ void ClassicServiceImpl::JetpackPullIdSet(const epoch_t& jepoch,
                                           janus::Command* reply_new_view,
                                           janus::Command* id_set, 
                                           rrr::DeferredReply defer) {
-  id_set->set_marshallable(std::make_shared<VecRecData>());
+  *id_set = std::make_shared<VecRecData>();
   shared_ptr<VecRecData> sp_ret_id_set = marshallable_cast<VecRecData>(id_set);
   dtxn_sched()->OnJetpackPullIdSet(jepoch, oepoch, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_id_set);
   defer.reply();
@@ -855,7 +854,7 @@ void ClassicServiceImpl::JetpackPullCmd(const epoch_t& jepoch,
   }
   auto batch_result = std::make_shared<KeyCmdBatchData>();
   dtxn_sched()->OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, batch_result);
-  cmd_batch->set_marshallable(batch_result);
+  *cmd_batch = batch_result;
   defer.reply();
 
 }
@@ -927,7 +926,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
                                               janus::Command* reply_new_view,
                                               janus::Command* cmd, 
                                               rrr::DeferredReply defer) {
-  cmd->set_marshallable(std::make_shared<TpcCommitCommand>());
+  *cmd = std::make_shared<TpcCommitCommand>();
   dtxn_sched()->OnJetpackPullRecSetIns(jepoch, oepoch, sid, rid, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view);
   defer.reply();
 }

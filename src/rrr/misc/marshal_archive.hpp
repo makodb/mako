@@ -883,6 +883,31 @@ struct SerializableFacade : pro::facade_builder
 
 using SerializableProxy = pro::proxy<SerializableFacade>;
 
+namespace details {
+
+// Wrapper used to put a `shared_ptr<T>` inside a SerializableProxy.
+// The proxy dispatches save/load/kind onto the underlying T by
+// forwarding through the held shared_ptr.  Copies of the proxy share
+// the underlying T (the shared_ptr's refcount).  Used by
+// `SerializableEnvelope::pack` / `pack_aliased` /
+// `SerializableEnvelope(shared_ptr<T>)` and by
+// `SerializableRegistry::reg<T>` so envelope.load() also produces a
+// holder-shaped proxy with shared ownership.
+template<typename T>
+struct SerializableSharedPtrHolder {
+  std::shared_ptr<T> ptr;
+
+  SerializableSharedPtrHolder() : ptr(std::make_shared<T>()) {}
+  explicit SerializableSharedPtrHolder(std::shared_ptr<T> p)
+      : ptr(std::move(p)) {}
+
+  void save(BinaryWriteArchive& ar) const { ptr->save(ar); }
+  void load(BinaryReadArchive& ar) { ptr->load(ar); }
+  int32_t kind() const { return ptr->kind(); }
+};
+
+}  // namespace details
+
 // L6-pivot (2026-05-01): the `SerializableConcept<T>` C++20 concept
 // was retired in this commit.  It described the "T has save/load/kind"
 // shape, but it duplicated what `SerializableFacade` already enforces
@@ -938,8 +963,15 @@ class SerializableRegistry {
   //   static int _reg = SerializableRegistry::reg<CanaryCommand>(0xCAFE);
   template<class T>
   static int reg(int32_t kind) {
-    register_factory(kind, []() {
-      return make_serializable_proxy<T>();
+    register_factory(kind, []() -> SerializableProxy {
+      // L10f-2 step 5 (2026-05-05): factory returns a holder-shaped
+      // proxy so SerializableEnvelope::load gives unpack_shared<T> a
+      // refcount-shared shared_ptr<T> — no dangling pointer when the
+      // helper outlives the source envelope.
+      auto sp = std::make_shared<T>();
+      return pro::make_proxy<SerializableFacade,
+                             details::SerializableSharedPtrHolder<T>>(
+          std::move(sp));
     });
     return 0;
   }

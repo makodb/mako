@@ -243,7 +243,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
         //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
-        instance->accepted_cmd_ = bcmd->cmds[i].get()->inner();
+        instance->accepted_cmd_ = *bcmd->cmds[i];
         max_accepted_slot_ = slot_id;
         n_accept_++;
         *valid &= 1;
@@ -324,7 +324,7 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
         verify(instance->max_ballot_accepted_ <= ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
-        instance->committed_cmd_ = bcmd->cmds[i].get()->inner();
+        instance->committed_cmd_ = *bcmd->cmds[i];
         *valid &= 1;
         if (slot_id > max_committed_slot_) {
             max_committed_slot_ = slot_id;

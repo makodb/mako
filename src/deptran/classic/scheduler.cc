@@ -169,10 +169,6 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
     // L8: dropped tautological `kMarshallKind == static_kind()` verify.
     sp_prepare_cmd->tx_id_ = tx_id;
     sp_prepare_cmd->cmd_ = sp_tx->cmd_;
-    // Phase 4a-3a: TpcPrepareCommand is now a Serializable; wrap via
-    // value-semantic `wrap_serializable` (no aliasing needed — the
-    // sender doesn't synchronize on sp_prepare_cmd, only on sp_tx).
-    auto sp_m = rrr::wrap_serializable(sp_prepare_cmd);
     sp_tx->is_leader_hint_ = true;
 		
 		struct timespec begin, end;
@@ -185,7 +181,7 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
 		/*clock_gettime(CLOCK_MONOTONIC, &end);
 		Log_info("time of prepare on server: %d", end.tv_nsec-begin.tv_nsec);*/
     //Log_info("The locale id: %d", coo->loc_id_);
-    coo->Submit(sp_m);
+    coo->Submit(sp_prepare_cmd);
     sp_tx->prepare_result->wait();
 		slow_ = coo->slow_;
 //    Log_debug("finished prepare command replication");

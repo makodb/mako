@@ -64,8 +64,7 @@ void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
     // L10f-5: was MarshallDeputy view_md(sp_view_data_) — Command
     // produces identical wire bytes via the same registry-dispatched
     // save/load path.
-    janus::Command view_md;
-    view_md.set_marshallable(sp_view_data_);
+    janus::Command view_md = sp_view_data_;
     ar << view_md;
   }
 }

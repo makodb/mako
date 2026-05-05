@@ -169,7 +169,7 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
                                      janus::Command* ret,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  ret->set_marshallable(std::make_shared<SyncLogResponse>());
+  *ret = std::make_shared<SyncLogResponse>();
   auto response = marshallable_cast<SyncLogResponse>(ret);
   Fiber::create_run([&] () {
     sched_->OnSyncLog(md_cmd,

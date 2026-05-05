@@ -145,7 +145,7 @@ Marshal& operator << (Marshal& m, const TxReply& reply) {
   m << has_view_data;
   if (has_view_data) {
     janus::Command view_md;
-    view_md.set_marshallable(reply.sp_view_data_);
+    view_md = reply.sp_view_data_;
     m << view_md;
   }
 
@@ -191,7 +191,7 @@ BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply) {
   ar << has_view_data;
   if (has_view_data) {
     janus::Command view_md;
-    view_md.set_marshallable(reply.sp_view_data_);
+    view_md = reply.sp_view_data_;
     ar << view_md;
   }
   return ar;
