@@ -6,12 +6,11 @@
 // SpinMutex. Mirrors the SerializableRegistry idiom — registrations
 // at static-init, lookups during RPC dispatch.
 //
-// Workstream N L10f-2 step 5 (2026-05-05): retired the
-// `MarshallDeputy::reg_initializer<AnyMessage>(ANY_MESSAGE)` static-
-// init line and the legacy `to_marshal`/`from_marshal` Marshallable
-// methods.  AnyMessage now embeds directly in RPC struct fields via
-// the Serializable-style `save`/`load` (and free archive operators
-// in the header).
+// Workstream N L10f-2 step 5 (2026-05-05): payload_ is now a value-
+// typed `pro::proxy<SerializableFacade>` (no more `shared_ptr<
+// Marshallable>`).  The factory returns a holder-shaped proxy
+// matching `SerializableEnvelope`'s storage shape, so unpack
+// semantics match.
 
 #include "any_message.hpp"
 
@@ -23,63 +22,23 @@
 
 namespace rrr {
 
-// ---- AnyMessage value-type ctor -------------------------------------
-
-AnyMessage::AnyMessage(std::string type_name,
-                       std::shared_ptr<Marshallable> payload)
-    : type_name_(std::move(type_name)),
-      payload_(std::move(payload)) {}
-
 // ---- Wire ops -------------------------------------------------------
 
 void AnyMessage::save(BinaryWriteArchive& ar) const {
-  // Wire format inside save: [v64-len-prefixed string: type_name]
-  // [payload bytes from payload_->to_marshal].  Identical to the
-  // bytes inside `to_marshal`; the difference vs the deputy path is
-  // only the absence of the surrounding kind tag (the C++ field type
-  // discriminates statically here).
+  // Wire format: [v64-len-prefixed string: type_name] [payload bytes].
   ar << type_name_;
-  if (payload_) {
-    // Route the payload through a temporary `Marshal` so the inner
-    // Marshallable's `to_marshal` (its only Serialize-shaped method
-    // until L10f drops `Marshallable`) can do its work.  Drain the
-    // temp into the archive byte-by-byte chunk.  One extra copy per
-    // payload byte vs the eventual all-Serializable design — accepted
-    // as a transitional cost during L10.
-    Marshal tmp;
-    payload_->to_marshal(tmp);
-    char buf[4096];
-    while (true) {
-      size_t got = tmp.read(buf, sizeof(buf));
-      if (got == 0) break;
-      ar.write_bytes(buf, got);
-    }
+  if (payload_.has_value()) {
+    payload_->save(ar);
   }
 }
 
 void AnyMessage::load(BinaryReadArchive& ar) {
   ar >> type_name_;
   payload_ = AnyMessageRegistry::create(type_name_);
-  verify(payload_ != nullptr &&
+  verify(payload_.has_value() &&
          "AnyMessage::load: unknown type name on wire.  "
          "Did the sender register a type the receiver does not know?");
-  // The inner payload's `from_marshal` needs a `Marshal*` to read
-  // from.  Recover the underlying Marshal from the archive's source
-  // (which must be a `MarshalSource` — same restriction as the
-  // `operator>>(BinaryReadArchive&, MarshallDeputy&)` bridge).  Then
-  // delegate to the legacy from_marshal so the inner type's existing
-  // logic stays unchanged.
-  auto* mark_adapter =
-      proxy_cast<MarshalSourceAdapter>(&*ar.source());
-  verify(mark_adapter != nullptr &&
-         "AnyMessage::load requires the archive's source to be a "
-         "MarshalSource.  Wrap the wire bytes in a Marshal first; "
-         "the streaming-from-arbitrary-source case needs a "
-         "length-prefixed wire format which AnyMessage does not have "
-         "at the payload-bytes layer.");
-  Marshal* m = mark_adapter->source()->marshal();
-  verify(m != nullptr);
-  payload_->from_marshal(*m);
+  payload_->load(ar);
 }
 
 // ---- AnyMessageRegistry ---------------------------------------------
@@ -129,11 +88,10 @@ int AnyMessageRegistry::register_type(std::string name,
   return 0;
 }
 
-std::shared_ptr<Marshallable> AnyMessageRegistry::create(
-    const std::string& name) {
+SerializableProxy AnyMessageRegistry::create(const std::string& name) {
   auto guard = registry().lock().unwrap();
   auto entry = guard->by_name.get(name);
-  if (entry.is_none()) return nullptr;
+  if (entry.is_none()) return SerializableProxy{};
   return (*entry.unwrap())();
 }
 
