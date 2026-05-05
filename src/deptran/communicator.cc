@@ -525,7 +525,7 @@ void Communicator::BroadcastDispatch(
         fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
         
         // Handle WRONG_LEADER response with view data
-        if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+        if (ret == WRONG_LEADER && view_md.has_value()) {
           auto sp_view_data = marshallable_cast<ViewData>(view_md);
           if (sp_view_data) {
             UpdatePartitionView(par_id, sp_view_data);
@@ -649,7 +649,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 	  			}
           else{
             // Handle WRONG_LEADER response with view data
-            if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+            if (ret == WRONG_LEADER && view_md.has_value()) {
               auto sp_view_data = marshallable_cast<ViewData>(view_md);
               if (sp_view_data) {
                 UpdatePartitionView(par_id, sp_view_data);
@@ -933,7 +933,7 @@ Communicator::SendCommit(Coordinator* coo,
       cmd->reply_.res_ = res;
       
       // Extract and attach view data if present
-      if (view_md.inner() != nullptr) {
+      if (view_md.has_value()) {
         auto sp_view_data = marshallable_cast<ViewData>(view_md);
         if (sp_view_data) {
           cmd->reply_.sp_view_data_ = sp_view_data;
@@ -1054,7 +1054,7 @@ Communicator::SendAbort(Coordinator* coo,
       cmd->reply_.res_ = res;
 
       // Extract and attach view data if present
-      if (view_md.inner() != nullptr) {
+      if (view_md.has_value()) {
         auto sp_view_data = marshallable_cast<ViewData>(view_md);
         if (sp_view_data) {
           cmd->reply_.sp_view_data_ = sp_view_data;

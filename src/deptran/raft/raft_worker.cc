@@ -587,8 +587,8 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   int status = -1;
 
   // @unsafe
-  { // operator bool on shared_ptr (null check)
-    if (!md.inner()) {
+  { // null check on Command envelope
+    if (!md.has_value()) {
       Log_error("Received null command in Next()");
       return status;
     }

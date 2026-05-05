@@ -210,7 +210,7 @@ void CommunicatorRule::BroadcastDispatch(
         fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
         
         // Handle WRONG_LEADER response with view data
-        if (ret == WRONG_LEADER && view_md.inner() != nullptr) {
+        if (ret == WRONG_LEADER && view_md.has_value()) {
           auto sp_view_data = marshallable_cast<ViewData>(view_md);
           if (sp_view_data) {
             UpdatePartitionView(par_id, sp_view_data);

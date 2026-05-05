@@ -7561,7 +7561,7 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
 
   janus::Command md2;
   m2 >> md2;
-  Assert2(md2.inner() != nullptr, "janus::Command should have deserialized data");
+  Assert2(md2.has_value(), "janus::Command should have deserialized data");
   auto cmd4 = marshallable_cast<ReplicatedDBCommand>(md2);
   Assert2(cmd4 != nullptr, "Should dynamic_cast to ReplicatedDBCommand");
   Assert2(cmd4->op_ == ReplicatedDBOp::DELETE,
