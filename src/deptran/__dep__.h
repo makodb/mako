@@ -79,11 +79,9 @@ using rrr::ALock;
 using rrr::TimeoutALock;
 using rrr::PollThread;
 using rrr::Marshal;
-using rrr::Marshallable;
-// Workstream N L10f-5 (2026-05-04): MarshallDeputy alias retained
-// solely for the bridge layer + test fixtures.  Production code no
-// longer references MarshallDeputy directly.
-using rrr::MarshallDeputy;
+// Workstream N L10f-2 step 5 (2026-05-05): retired
+// `using rrr::Marshallable` and `using rrr::MarshallDeputy` —
+// the underlying classes are gone in this same release.
 
 // User include files
 //

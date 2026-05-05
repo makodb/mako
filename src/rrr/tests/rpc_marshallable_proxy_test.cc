@@ -22,26 +22,11 @@ using namespace rrr;
 
 namespace {
 
-static_assert(!std::is_base_of_v<Marshallable, janus::VecPieceData>);
-static_assert(!std::is_base_of_v<Marshallable, janus::VecRecData>);
-static_assert(!std::is_base_of_v<Marshallable, janus::ViewData>);
-static_assert(!std::is_base_of_v<Marshallable, janus::KeyCmdBatchData>);
-static_assert(!std::is_base_of_v<Marshallable, janus::TpcPrepareCommand>);
-static_assert(!std::is_base_of_v<Marshallable, janus::TpcCommitCommand>);
-static_assert(!std::is_base_of_v<Marshallable, janus::TpcEmptyCommand>);
-static_assert(!std::is_base_of_v<Marshallable, janus::TpcNoopCommand>);
-static_assert(!std::is_base_of_v<Marshallable, janus::TpcBatchCommand>);
-static_assert(!std::is_base_of_v<Marshallable, janus::ReplicatedDBCommand>);
-static_assert(!std::is_base_of_v<Marshallable, janus::EmptyGraph>);
-static_assert(!std::is_base_of_v<Marshallable, janus::RccGraph>);
-static_assert(!std::is_base_of_v<Marshallable, janus::BulkPrepareLog>);
-static_assert(!std::is_base_of_v<Marshallable, janus::PaxosPrepCmd>);
-static_assert(!std::is_base_of_v<Marshallable, janus::HeartBeatLog>);
-static_assert(!std::is_base_of_v<Marshallable, janus::SyncLogRequest>);
-static_assert(!std::is_base_of_v<Marshallable, janus::SyncLogResponse>);
-static_assert(!std::is_base_of_v<Marshallable, janus::SyncNoOpRequest>);
-static_assert(!std::is_base_of_v<Marshallable, janus::LogEntry>);
-static_assert(!std::is_base_of_v<Marshallable, janus::BulkPaxosCmd>);
+// L10f-2 step 5 (2026-05-05): retired the
+// `static_assert(!std::is_base_of_v<Marshallable, ...>)` block — the
+// `Marshallable` type is gone, so the check is no longer
+// expressible. The Phase 4 migration that motivated these guards is
+// complete (every production payload uses Serializable directly).
 
 template <typename T>
 std::shared_ptr<T> RoundTripTypedPayload(const std::shared_ptr<T>& src) {
