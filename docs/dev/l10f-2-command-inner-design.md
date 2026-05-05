@@ -420,7 +420,72 @@ list entirely:
 production code now.  `.inner_marshallable()` is also empty (only
 mongodb sites remain — excluded from build).
 
-## Remaining work (handoff)
+## Update 2026-05-05 (still later): Test-side migration done
+
+* `6287d91bd` — migrated rpc_marshallable_proxy_test round-trips
+  off MarshallDeputy (helper rewritten to use Command, 5 tests
+  rewritten, 1 bridge-mechanics test deleted).  12 tests remain,
+  all passing; net -32 LOC.
+
+* `c3c990049` — bulk-deleted 670 LOC of bridge / MarshallDeputy
+  tests in rpc_marshal_archive_test.cc (17 tests + 4 helper
+  structs + 2 static reg lines covering
+  `SerializableMarshallableAdapter`, `MarshallDeputy::reg_initializer`,
+  `MarshallDeputyArchiveOps`, `MarshallDeputyKindEncoding`,
+  `WrapSerializableAliased`, `MarshallableCastSerializable`, etc.).
+  68 tests remain (was 87).
+
+## Remaining work (handoff, post-2026-05-05)
+
+The end-state retirement requires a coordinated change to:
+
+1. **Move the runtime kind→factory registry off `MarshallDeputy`**.
+   `SerializableEnvelope::load` calls
+   `MarshallDeputy::create_initializer(kind_v.get())`, which is
+   populated at static-init by `reg_serializable_in_deputy<T>(kind)`.
+   The registry concept is independent of MarshallDeputy — only
+   the namespace ties it.  Extract to a free
+   `rrr::SerializableProxyRegistry` (or rename the existing class
+   without the `MarshallDeputy::` prefix) and update all
+   registration / lookup sites.
+
+2. **Storage flip** (`Command::inner_` and `AnyMessage::payload_`
+   from `shared_ptr<Marshallable>` to `shared_ptr<SerializableProxy>`).
+   Once the registry no longer hands out `shared_ptr<Marshallable>`,
+   the bridge `SerializableMarshallableAdapter` becomes unused.
+   `Command::inner_` callers in production are zero
+   (`.inner()`/`.inner_marshallable()` retired earlier this session),
+   so this is purely an internal rewrite of `serializable_envelope.hpp`
+   and `any_message.{hpp,cpp}`.
+
+3. **Drop bridge + helpers**.  `SerializableMarshallableAdapter`,
+   `wrap_typed_marshallable`, `wrap_serializable`,
+   `wrap_serializable_aliased`, `as_marshallable`,
+   `make_serializable_proxy`,
+   `marshallable_cast<T>(shared_ptr<Marshallable>)`,
+   `serializable_cast<T>(shared_ptr<Marshallable>)`,
+   `reg_serializable_in_deputy`.  All in
+   `marshal_serializable_bridge.hpp`.
+
+4. **Drop `MarshallDeputy`** class from `marshal.hpp`.  Production
+   has zero runtime declarations; only the
+   `serializable_envelope.hpp` `SerializableEnvelope(MarshallDeputy&)`
+   migration-compat ctor and `marshal.hpp`'s reg_initializer registry
+   remain, both retired by step 1.
+
+5. **Drop `Marshallable`** abstract base.  Last user retires in
+   step 3.
+
+Each step is bounded but requires touching the
+`serializable_envelope.hpp` / `marshal_serializable_bridge.hpp` /
+`marshal.hpp` / `any_message.hpp` files together since they form a
+tightly-coupled cluster.  Estimated 4-6 hours of careful migration
+work; recommend doing it in a fresh session with explicit decisions
+on the new `SerializableProxy` storage shape (shared_ptr<proxy>?
+proxy directly with support_copy?  variant?) before code changes
+start.
+
+### Original step 1 listing (deferred — predates 2026-05-05 progress)
 
 The largest remaining items are interconnected and substantial:
 
