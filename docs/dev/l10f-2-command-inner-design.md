@@ -398,14 +398,39 @@ revisiting.  Looking at the actual fixture usage:
   rpc_marshallable_proxy_test.cc) rewritten to use the direct
   archive round-trip path that production already uses.
 
+## Update 2026-05-05 (later still): Production .inner() callers retired
+
+Two follow-up commits cleared the production `.inner()` consumer
+list entirely:
+
+* `65b073da0` — migrated 9 `.inner() != nullptr` /  `!.inner()` null
+  checks to `.has_value()` (communicator.cc x4, none_copilot/commo.cc
+  x2, rule/commo.cc, raft/raft_worker.cc, raft/test.cc).
+
+* `7ddd5fcff` — migrated 27 typed-cast / pass-through sites:
+  * `classic/scheduler.cc` (2 sites): `serializable_cast<T>(md.inner())`
+    → `md.unpack<T>()`.
+  * `communicator.cc` + `service.cc` (1 site each):
+    `GetCmdID(md.inner())` → `GetCmdID(md)`.
+  * `paxos_worker.cc`, `raft/server.cc`, `raft/test.cc` x21
+    (ApplyEntry/ForwardToLearner): `(md.inner())` → `(md)` via the
+    implicit `Command(shared_ptr<Marshallable>)` ctor.
+
+`git grep '.inner()' src/deptran` returns zero hits in non-test
+production code now.  `.inner_marshallable()` is also empty (only
+mongodb sites remain — excluded from build).
+
 ## Remaining work (handoff)
 
 The largest remaining items are interconnected and substantial:
 
 1. **Storage flip** (`Command::inner_` from `shared_ptr<Marshallable>`
-   to `shared_ptr<pro::proxy<SerializableFacade>>`).  Touches every
-   `.inner()` / `.inner_marshallable()` consumer (~15 production sites
-   that pass shared_ptr<Marshallable> to legacy APIs).
+   to `shared_ptr<pro::proxy<SerializableFacade>>`).  Production has
+   zero `.inner()` / `.inner_marshallable()` consumers, so the flip
+   is now structurally unblocked at the call-site level — the
+   remaining work is internal: `serializable_envelope.hpp` itself
+   (ctors, save/load fast path, the `inner()`/`inner_marshallable()`
+   accessors that need to be either dropped or repointed).
 
 2. **Test-side MarshallDeputy migration**.  ~13 tests in
    rpc_marshallable_proxy_test.cc + ~6 tests in
