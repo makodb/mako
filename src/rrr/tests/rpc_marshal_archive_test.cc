@@ -1228,30 +1228,11 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
   SerializableRegistry::clear_for_testing();
 }
 
-// ---- Marshallable ↔ Serializable bridges (Phase 3b) ------------------
-
-// Test fixture: a Marshallable subclass that mirrors CanaryCommand's
-// fields. Used to verify the bidirectional adapter bridges between
-// the old Marshallable interface and the new Serializable interface.
-struct CanaryMarshallable : public Marshallable {
-  int32_t id{0};
-  std::string name;
-  std::vector<int64_t> values;
-
-  static constexpr int32_t kKind = 0xBEEF;
-
-  CanaryMarshallable() : Marshallable(kKind) {}
-
-  Marshal& to_marshal(Marshal& m) const override {
-    m << id << name << values;
-    return m;
-  }
-
-  Marshal& from_marshal(Marshal& m) override {
-    m >> id >> name >> values;
-    return m;
-  }
-};
+// Workstream N L10f-2 step 5 (2026-05-05): removed
+// `CanaryMarshallable` fixture and the
+// `SerializableCast.ReturnsNullForNonSerializableMarshallable`
+// test below.  Both exercised the Marshallable infrastructure
+// being retired in this same commit.
 
 TEST(SerializableMarshallableAdapter, BidirectionalRoundTrip) {
   // Wrap a SerializableProxy in a Marshallable shape; serialize via
@@ -1445,16 +1426,6 @@ TEST(SerializableCast, ReturnsNullForWrongType) {
   EXPECT_NE(serializable_cast<CanaryDeputyCommand>(marsh), nullptr);
   // Cast to a different Serializable type — returns nullptr.
   EXPECT_EQ(serializable_cast<OtherSerializable>(marsh), nullptr);
-}
-
-TEST(SerializableCast, ReturnsNullForNonSerializableMarshallable) {
-  // serializable_cast on a Marshallable that's NOT a
-  // SerializableMarshallableAdapter (e.g. a plain Marshallable
-  // subclass from the legacy path) returns nullptr cleanly.
-  auto canary = std::make_shared<CanaryMarshallable>();
-  std::shared_ptr<Marshallable> marsh = canary;
-  EXPECT_EQ(serializable_cast<CanaryMarshallable>(marsh), nullptr);
-  EXPECT_EQ(serializable_cast<CanaryDeputyCommand>(marsh), nullptr);
 }
 
 TEST(SerializableCast, MutationVisibleThroughProxy) {

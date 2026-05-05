@@ -22,8 +22,6 @@ using namespace rrr;
 
 namespace {
 
-constexpr int32_t kTestMarshallableKind = 420042;
-
 static_assert(!std::is_base_of_v<Marshallable, janus::VecPieceData>);
 static_assert(!std::is_base_of_v<Marshallable, janus::VecRecData>);
 static_assert(!std::is_base_of_v<Marshallable, janus::ViewData>);
@@ -44,39 +42,6 @@ static_assert(!std::is_base_of_v<Marshallable, janus::SyncLogResponse>);
 static_assert(!std::is_base_of_v<Marshallable, janus::SyncNoOpRequest>);
 static_assert(!std::is_base_of_v<Marshallable, janus::LogEntry>);
 static_assert(!std::is_base_of_v<Marshallable, janus::BulkPaxosCmd>);
-
-// TestMarshallable: a generic Marshallable test fixture used to
-// exercise the legacy `MarshallDeputy` round-trip + the
-// `marshallable_cast<T>(Marshallable&|*|shared_ptr<>)` reference/
-// pointer overloads.  Stays a Marshallable subclass because those
-// overloads (declared in `marshal.hpp`) take `Marshallable&` /
-// `Marshallable*` / `shared_ptr<Marshallable>`, and exercising them
-// requires a Marshallable subclass on the test side.
-class TestMarshallable : public Marshallable {
- public:
-  int32_t value = 0;
-
-  explicit TestMarshallable(int32_t v = 0)
-      : Marshallable(kTestMarshallableKind), value(v) {}
-
-  Marshal& to_marshal(Marshal& m) const override {
-    m << kind_ << value;
-    return m;
-  }
-
-  Marshal& from_marshal(Marshal& m) override {
-    m >> kind_ >> value;
-    return m;
-  }
-};
-
-void EnsureTestMarshallableInitializer() {
-  static bool initialized = []() {
-    MarshallDeputy::reg_initializer<TestMarshallable>(kTestMarshallableKind);
-    return true;
-  }();
-  (void)initialized;
-}
 
 template <typename T>
 std::shared_ptr<T> RoundTripTypedDeputyPayload(const std::shared_ptr<T>& src) {
@@ -124,96 +89,20 @@ std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
 
 }  // namespace
 
-// Workstream N Phase 5b-4: removed six tests
-// (`AdapterForwardsToMarshal`, `AdapterForwardsFromMarshal`,
-// `AdapterForwardsKind`, `AdapterForwardsEntitySize`,
-// `ProxyIsMoveOnly`, `RoundTripThroughProxy`) that exercised the
-// `MarshallableProxy` / `MarshallableSharedPtrAdapter` /
-// `make_marshallable_proxy` infrastructure. That infrastructure was
-// the last remaining user-visible surface of the proxy facade after
-// Phase 5b-3 removed `MarshallDeputy::data_proxy()` and the
-// bypass-to-socket fast path; the proxy + adapter + helper went
-// away in the same Phase 5b-4 commit.
-
-TEST(MarshallableProxyFacadeTest, DeputyDefaultsToNoMarshallable) {
-  MarshallDeputy deputy;
-  EXPECT_FALSE(deputy.has_marshallable());
-  EXPECT_EQ(deputy.inner(), nullptr);
-}
-
-TEST(MarshallableProxyFacadeTest, DeputyStoresProxyAndPreservesInnerSharedPtr) {
-  auto sp = std::make_shared<TestMarshallable>(88);
-  MarshallDeputy deputy(sp);
-
-  EXPECT_TRUE(deputy.has_marshallable());
-  EXPECT_EQ(deputy.kind_, kTestMarshallableKind);
-  EXPECT_EQ(marshallable_cast<TestMarshallable>(deputy), sp);
-}
-
-TEST(MarshallableProxyFacadeTest, DeputyRoundTripPreservesDerivedMarshallable) {
-  EnsureTestMarshallableInitializer();
-
-  auto src = std::make_shared<TestMarshallable>(321);
-  MarshallDeputy outgoing(src);
-
-  Marshal m;
-  m << outgoing;
-
-  MarshallDeputy incoming;
-  m >> incoming;
-
-  EXPECT_TRUE(incoming.has_marshallable());
-  auto decoded = marshallable_cast<TestMarshallable>(incoming);
-  ASSERT_NE(decoded, nullptr);
-  EXPECT_EQ(decoded->kind_, kTestMarshallableKind);
-  EXPECT_EQ(decoded->value, 321);
-}
-
-// Phase 5b-9: simplified — the factory now returns
-// `shared_ptr<Marshallable>` directly (no MarInitializerState wrapper).
-// Kind is verified via `m->kind()`.
-TEST(MarshallableProxyFacadeTest, InitializerReturnsProxyBackedMetadata) {
-  EnsureTestMarshallableInitializer();
-
-  auto m = MarshallDeputy::create_initializer(kTestMarshallableKind);
-  ASSERT_NE(m, nullptr);
-  EXPECT_EQ(m->kind(), kTestMarshallableKind);
-}
-
-TEST(MarshallableProxyFacadeTest, MarshallableCastFromSharedPtrKeepsType) {
-  std::shared_ptr<Marshallable> base = std::make_shared<TestMarshallable>(17);
-  auto typed = marshallable_cast<TestMarshallable>(base);
-  ASSERT_NE(typed, nullptr);
-  EXPECT_EQ(typed->value, 17);
-}
-
-TEST(MarshallableProxyFacadeTest, MarshallableCastFromMarshallableRefKeepsType) {
-  TestMarshallable payload(23);
-  Marshallable& base = payload;
-  auto typed = marshallable_cast<TestMarshallable>(base);
-  ASSERT_NE(typed, nullptr);
-  EXPECT_EQ(typed.get(), &payload);
-  EXPECT_EQ(typed->value, 23);
-}
-
-TEST(MarshallableProxyFacadeTest,
-     MarshallableCastFromMarshallablePointerHandlesNullAndValue) {
-  Marshallable* null_base = nullptr;
-  EXPECT_EQ(marshallable_cast<TestMarshallable>(null_base), nullptr);
-
-  TestMarshallable payload(29);
-  Marshallable* base = &payload;
-  auto typed = marshallable_cast<TestMarshallable>(base);
-  ASSERT_NE(typed, nullptr);
-  EXPECT_EQ(typed.get(), &payload);
-  EXPECT_EQ(typed->value, 29);
-}
-
-TEST(MarshallableProxyFacadeTest, MarshallableCastFromNullDeputyPointerIsNull) {
-  MarshallDeputy* deputy = nullptr;
-  EXPECT_EQ(marshallable_cast<TestMarshallable>(deputy), nullptr);
-}
-
+// Workstream N L10f-2 step 5 (2026-05-05): removed eight tests
+// (`DeputyDefaultsToNoMarshallable`,
+// `DeputyStoresProxyAndPreservesInnerSharedPtr`,
+// `DeputyRoundTripPreservesDerivedMarshallable`,
+// `InitializerReturnsProxyBackedMetadata`,
+// `MarshallableCastFromSharedPtrKeepsType`,
+// `MarshallableCastFromMarshallableRefKeepsType`,
+// `MarshallableCastFromMarshallablePointerHandlesNullAndValue`,
+// `MarshallableCastFromNullDeputyPointerIsNull`) plus the
+// `TestMarshallable` fixture / `kTestMarshallableKind` constant /
+// `EnsureTestMarshallableInitializer` helper.  All exercised the
+// `MarshallDeputy` / `Marshallable` infrastructure that retires
+// alongside in this same commit.
+//
 // Workstream N Phase 5b-5: removed
 // `TypedPayloadRoundTripsViaDeputyAdapter` and
 // `TypedPayloadInitializerStateContainsAdapter` tests — they
