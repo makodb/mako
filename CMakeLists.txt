@@ -2212,9 +2212,18 @@ if(BUILD_TESTS)
 
     # Log Storage Tests (Phase 1.1)
     add_executable(test_rpc_log_storage src/rrr/tests/rpc_log_storage_test.cc)
-    target_include_directories(test_rpc_log_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_include_directories(test_rpc_log_storage PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
     target_compile_options(test_rpc_log_storage PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_log_storage ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_log_storage
+        txlog_core
+        ${RPC_TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+        pthread)
     add_test(NAME test_rpc_log_storage COMMAND test_rpc_log_storage)
 
     # RocksDB Log Storage Tests (Phase 1.2)

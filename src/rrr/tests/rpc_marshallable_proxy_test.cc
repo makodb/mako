@@ -380,7 +380,9 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   EXPECT_EQ((*decoded_vec_rec->key_data_)[1], 12);
 
   auto batch = std::make_shared<janus::KeyCmdBatchData>();
-  auto nested = std::make_shared<TestMarshallable>(77);
+  auto nested = std::make_shared<janus::HeartBeatLog>();
+  nested->leader_id = 77;
+  nested->epoch = 0;
   batch->AddEntry(1001, nested);
 
   MarshallDeputy batch_deputy(batch);
@@ -389,14 +391,13 @@ TEST(MarshallableProxyFacadeTest, DeptranVecRecAndBatchUseTypedAdapterPath) {
   ASSERT_NE(decoded_batch, nullptr);
   ASSERT_EQ(decoded_batch->Size(), 1u);
   EXPECT_EQ(decoded_batch->GetKey(0), 1001);
-  // L10f-prep6an: GetCommand now returns const Command&; the
-  // SerializableEnvelope overload of marshallable_cast<T> requires
-  // T be in the TypeList.  TestMarshallable is a test fixture, so
-  // unwrap to the legacy shared_ptr<Marshallable> path explicitly.
+  // L10f-2 step 2.5: HeartBeatLog is in MakoCommands, so the typed
+  // `marshallable_cast<T>(Command&)` overload works directly — no
+  // need to unwrap to the legacy shared_ptr<Marshallable> path.
   auto nested_decoded =
-      marshallable_cast<TestMarshallable>(decoded_batch->GetCommand(0).inner_marshallable());
+      marshallable_cast<janus::HeartBeatLog>(decoded_batch->GetCommand(0));
   ASSERT_NE(nested_decoded, nullptr);
-  EXPECT_EQ(nested_decoded->value, 77);
+  EXPECT_EQ(nested_decoded->leader_id, 77u);
 }
 
 TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
@@ -572,8 +573,6 @@ TEST(MarshallableProxyFacadeTest,
 
 TEST(MarshallableProxyFacadeTest,
      PaxosControlPayloadsRoundTripViaTypedAdapters) {
-  EnsureTestMarshallableInitializer();
-
   auto bulk_prepare = std::make_shared<janus::BulkPrepareLog>();
   bulk_prepare->min_prepared_slots = {{0u, 10}, {1u, 20}};
   bulk_prepare->leader_id = 3;
@@ -617,16 +616,19 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(sync_req_decoded->sync_commit_slot[2], 140);
 
   auto sync_resp = std::make_shared<janus::SyncLogResponse>();
+  auto nested_payload_55 = std::make_shared<janus::HeartBeatLog>();
+  nested_payload_55->leader_id = 55;
+  nested_payload_55->epoch = 0;
   sync_resp->sync_data.push_back(
-      std::make_shared<janus::Command>(std::make_shared<TestMarshallable>(55)));
+      std::make_shared<janus::Command>(nested_payload_55));
   sync_resp->missing_slots = {{4, 8}, {15}};
   auto sync_resp_decoded = RoundTripTypedDeputyPayload(sync_resp);
   ASSERT_NE(sync_resp_decoded, nullptr);
   ASSERT_EQ(sync_resp_decoded->sync_data.size(), 1u);
   auto nested =
-      marshallable_cast<TestMarshallable>(sync_resp_decoded->sync_data[0]->inner());
+      marshallable_cast<janus::HeartBeatLog>(*sync_resp_decoded->sync_data[0]);
   ASSERT_NE(nested, nullptr);
-  EXPECT_EQ(nested->value, 55);
+  EXPECT_EQ(nested->leader_id, 55u);
   ASSERT_EQ(sync_resp_decoded->missing_slots.size(), 2u);
   ASSERT_EQ(sync_resp_decoded->missing_slots[0].size(), 2u);
   EXPECT_EQ(sync_resp_decoded->missing_slots[0][1], 8);
@@ -655,16 +657,18 @@ TEST(MarshallableProxyFacadeTest, PaxosLogEntryRoundTripUsesTypedAdapter) {
 }
 
 TEST(MarshallableProxyFacadeTest, PaxosBulkPaxosCmdRoundTripUsesTypedAdapter) {
-  EnsureTestMarshallableInitializer();
-
   auto payload = std::make_shared<janus::BulkPaxosCmd>();
   payload->leader_id = 4;
   payload->slots = {10, 11};
   payload->ballots = {20, 21};
-  payload->cmds.push_back(
-      std::make_shared<janus::Command>(std::make_shared<TestMarshallable>(88)));
-  payload->cmds.push_back(
-      std::make_shared<janus::Command>(std::make_shared<TestMarshallable>(99)));
+  auto nested_payload_88 = std::make_shared<janus::HeartBeatLog>();
+  nested_payload_88->leader_id = 88;
+  nested_payload_88->epoch = 0;
+  auto nested_payload_99 = std::make_shared<janus::HeartBeatLog>();
+  nested_payload_99->leader_id = 99;
+  nested_payload_99->epoch = 0;
+  payload->cmds.push_back(std::make_shared<janus::Command>(nested_payload_88));
+  payload->cmds.push_back(std::make_shared<janus::Command>(nested_payload_99));
 
   auto decoded = RoundTripTypedDeputyPayload(payload);
   ASSERT_NE(decoded, nullptr);
@@ -675,10 +679,10 @@ TEST(MarshallableProxyFacadeTest, PaxosBulkPaxosCmdRoundTripUsesTypedAdapter) {
   EXPECT_EQ(decoded->slots[1], 11);
   EXPECT_EQ(decoded->ballots[0], 20);
 
-  auto nested0 = marshallable_cast<TestMarshallable>(decoded->cmds[0]->inner());
-  auto nested1 = marshallable_cast<TestMarshallable>(decoded->cmds[1]->inner());
+  auto nested0 = marshallable_cast<janus::HeartBeatLog>(*decoded->cmds[0]);
+  auto nested1 = marshallable_cast<janus::HeartBeatLog>(*decoded->cmds[1]);
   ASSERT_NE(nested0, nullptr);
   ASSERT_NE(nested1, nullptr);
-  EXPECT_EQ(nested0->value, 88);
-  EXPECT_EQ(nested1->value, 99);
+  EXPECT_EQ(nested0->leader_id, 88u);
+  EXPECT_EQ(nested1->leader_id, 99u);
 }

@@ -11,45 +11,11 @@
 
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/memory_log_storage.hpp"
+#include "deptran/classic/tpc_command.h"  // TpcEmptyCommand for nested-command tests
 #include "../rrr.hpp"
 
 using namespace rrr;
 using namespace janus::raft;
-
-// ============================================================================
-// Test Marshallable Command for testing
-// ============================================================================
-
-// L8: TestCommand was previously tagged with `MarshallDeputy::CMD_NOOP`
-// (kind=15) — sharing the kind with `janus::TpcNoopCommand`. After the
-// L8 TypeList migration, `TpcNoopCommand`'s kind is its position in
-// `janus::MakoCommands` (not visible from this rrr-side test, and
-// shouldn't be — TestCommand is its own type). Use a test-local
-// constant well outside the closed-set range.
-static constexpr int32_t kTestCommandKind = 0xC0DE;
-
-class TestCommand : public Marshallable {
-public:
-    std::string data;
-    int32_t value{0};
-
-    TestCommand() : Marshallable(kTestCommandKind) {}
-
-    TestCommand(const std::string& d, int32_t v)
-        : Marshallable(kTestCommandKind), data(d), value(v) {}
-
-    Marshal& to_marshal(Marshal& m) const override {
-        m << data;
-        m << value;
-        return m;
-    }
-
-    Marshal& from_marshal(Marshal& m) override {
-        m >> data;
-        m >> value;
-        return m;
-    }
-};
 
 // ============================================================================
 // LogEntry Tests
@@ -81,7 +47,12 @@ TEST_F(LogEntryTest, ConstructionWithSlotAndTerm) {
 }
 
 TEST_F(LogEntryTest, FullConstruction) {
-    auto cmd = std::make_shared<TestCommand>("test", 123);
+    // L10f-2 step 2.5: use TpcEmptyCommand (a real Serializable in
+    // MakoCommands) as the carried payload instead of a Marshallable
+    // test fixture; the test exercises LogEntry's command-carrying
+    // shape, the choice of T doesn't matter beyond "is a valid
+    // Command payload".
+    auto cmd = std::make_shared<janus::TpcEmptyCommand>();
     LogEntry entry(10, 3, cmd, true);
 
     EXPECT_EQ(entry.slot_id, 10u);
@@ -136,7 +107,7 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
 }
 
 TEST_F(LogEntryTest, SerializationWithCommand) {
-    auto cmd = std::make_shared<TestCommand>("hello", 999);
+    auto cmd = std::make_shared<janus::TpcEmptyCommand>();
     LogEntry original(100, 20, cmd, true);
 
     // Workstream N Phase 4d-9: see SerializationWithoutCommand for
