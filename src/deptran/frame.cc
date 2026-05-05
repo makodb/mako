@@ -398,7 +398,6 @@ map<string, int> &Frame::FrameNameToMode() {
       {"epaxos",        MODE_NOT_READY},
       {"rep_commit",    MODE_NOT_READY},
       {"rule",          MODE_RULE},
-      {"mongodb",       MODE_MONGODB},
   };
   return frame_name_mode_s;
 }

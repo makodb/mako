@@ -58,10 +58,6 @@ abstract service MultiPaxos {
 }
 
 
-abstract service Mongodb {
-  defer Commit(Command cmd);
-}
-
 abstract service Mencius {
 
   defer Prepare(uint64_t slot,
