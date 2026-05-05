@@ -20,17 +20,17 @@ moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
 // Workstream N L8: registrations switched to no-arg
-// `reg_serializable_in_deputy<T>()` — kind auto-derived from each
+// `SerializableRegistry::reg<T>()` — kind auto-derived from each
 // type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
 // base returns the type's 1-indexed position in `MakoCommands`).
-static int volatile xx  = rrr::reg_serializable_in_deputy<LogEntry>();
-static int volatile xxx = rrr::reg_serializable_in_deputy<BulkPaxosCmd>();
-static int volatile x4  = rrr::reg_serializable_in_deputy<BulkPrepareLog>();
-static int volatile x5  = rrr::reg_serializable_in_deputy<HeartBeatLog>();
-static int volatile x6  = rrr::reg_serializable_in_deputy<SyncLogRequest>();
-static int volatile x7  = rrr::reg_serializable_in_deputy<SyncLogResponse>();
-static int volatile x8  = rrr::reg_serializable_in_deputy<SyncNoOpRequest>();
-static int volatile x9  = rrr::reg_serializable_in_deputy<PaxosPrepCmd>();
+static int volatile xx  = rrr::SerializableRegistry::reg<LogEntry>();
+static int volatile xxx = rrr::SerializableRegistry::reg<BulkPaxosCmd>();
+static int volatile x4  = rrr::SerializableRegistry::reg<BulkPrepareLog>();
+static int volatile x5  = rrr::SerializableRegistry::reg<HeartBeatLog>();
+static int volatile x6  = rrr::SerializableRegistry::reg<SyncLogRequest>();
+static int volatile x7  = rrr::SerializableRegistry::reg<SyncLogResponse>();
+static int volatile x8  = rrr::SerializableRegistry::reg<SyncNoOpRequest>();
+static int volatile x9  = rrr::SerializableRegistry::reg<PaxosPrepCmd>();
 
 static int shared_ptr_apprch = 1;
 

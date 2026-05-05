@@ -1304,13 +1304,13 @@ using TypeListFactoryList = TypeList<TypeListFactoryAlpha,
 // them via the runtime registry path.  (Static-init ordering is fine:
 // these run before any test body.)
 static int _reg_tl_factory_alpha =
-    reg_serializable_in_deputy<TypeListFactoryAlpha>(
+    SerializableRegistry::reg<TypeListFactoryAlpha>(
         TypeListFactoryAlpha::kKind);
 static int _reg_tl_factory_beta =
-    reg_serializable_in_deputy<TypeListFactoryBeta>(
+    SerializableRegistry::reg<TypeListFactoryBeta>(
         TypeListFactoryBeta::kKind);
 static int _reg_tl_factory_gamma =
-    reg_serializable_in_deputy<TypeListFactoryGamma>(
+    SerializableRegistry::reg<TypeListFactoryGamma>(
         TypeListFactoryGamma::kKind);
 
 TEST(TypeListFactory, IndexOfReturns1IndexedPosition) {

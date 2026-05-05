@@ -9,13 +9,13 @@
 namespace janus {
 
 // Workstream N L8: registrations switched to no-arg
-// `reg_serializable_in_deputy<T>()` — kind auto-derived from each
+// `SerializableRegistry::reg<T>()` — kind auto-derived from each
 // type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
 // base returns the type's 1-indexed position in `MakoCommands`).
-static int volatile x1 = rrr::reg_serializable_in_deputy<VecPieceData>();
-static int volatile x2 = rrr::reg_serializable_in_deputy<VecRecData>();
-static int volatile x3 = rrr::reg_serializable_in_deputy<ViewData>();
-static int volatile x4 = rrr::reg_serializable_in_deputy<KeyCmdBatchData>();
+static int volatile x1 = rrr::SerializableRegistry::reg<VecPieceData>();
+static int volatile x2 = rrr::SerializableRegistry::reg<VecRecData>();
+static int volatile x3 = rrr::SerializableRegistry::reg<ViewData>();
+static int volatile x4 = rrr::SerializableRegistry::reg<KeyCmdBatchData>();
 
 TxWorkspace::TxWorkspace() {
   values_ = std::make_shared<map<int32_t, Value>>();
