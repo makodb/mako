@@ -199,10 +199,9 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
   if (!db_ || !raft_) return false;
 
   auto cmd = ReplicatedDBCommand::CreatePut(key, value);
-  auto cmd_base = wrap_typed_marshallable(cmd);
 
   uint64_t index = 0, term = 0;
-  bool is_leader = raft_->Start(cmd_base, &index, &term);
+  bool is_leader = raft_->Start(cmd, &index, &term);
   if (!is_leader) {
     Log_debug("[ReplicatedDB] Put failed: not leader");
     return false;
@@ -228,10 +227,9 @@ bool ReplicatedDB::Delete(const std::string& key) {
   if (!db_ || !raft_) return false;
 
   auto cmd = ReplicatedDBCommand::CreateDelete(key);
-  auto cmd_base = wrap_typed_marshallable(cmd);
 
   uint64_t index = 0, term = 0;
-  bool is_leader = raft_->Start(cmd_base, &index, &term);
+  bool is_leader = raft_->Start(cmd, &index, &term);
   if (!is_leader) {
     Log_debug("[ReplicatedDB] Delete failed: not leader");
     return false;
@@ -256,10 +254,9 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
   if (!db_ || !raft_ || ops.empty()) return false;
 
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
-  auto cmd_base = wrap_typed_marshallable(cmd);
 
   uint64_t index = 0, term = 0;
-  bool is_leader = raft_->Start(cmd_base, &index, &term);
+  bool is_leader = raft_->Start(cmd, &index, &term);
   if (!is_leader) {
     Log_debug("[ReplicatedDB] Batch failed: not leader");
     return false;

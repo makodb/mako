@@ -282,8 +282,7 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
         janus::Command* md =  new janus::Command(mpc.get()->cmd_);
         sp_cmd->cmds.push_back(shared_ptr<janus::Command>(md));
     }
-    auto sp_m = wrap_typed_marshallable(sp_cmd);
-    _BulkSubmit(sp_m, entries.size());
+    _BulkSubmit(sp_cmd, entries.size());
     //Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
 }
 
@@ -307,7 +306,6 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 // also clears the rcc_rpc.proto definitions.
 
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
-  auto sp_m = wrap_typed_marshallable(sync_log_req);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
   coord->par_id_ = site_info_->partition_id_;
@@ -315,8 +313,8 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   bool done = false;
   auto es_pww = es_pw;
   vector<shared_ptr<SyncLogResponse>> responses;
-  auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_, 
-                                                   sp_m, 
+  auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_,
+                                                   sync_log_req,
                                                    [&received_epoch, &done, es_pww, &responses](shared_ptr<janus::Command> md, 
                                                                                     ballot_t ballot, 
                                                                                     int resp_type) {
@@ -380,9 +378,8 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       //      std::cout << sync_cmds[i]->slots[kk] << " ";
       //std::cout << std::endl;
       auto pw = pxs_workers_g[i];
-      auto send_cmd = wrap_typed_marshallable(sync_cmds[i]);
-      auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i, 
-                                                           send_cmd,
+      auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i,
+                                                           sync_cmds[i],
                                                            [es_pww](ballot_t ballot, int valid){
           if(!valid){
             es_pww->step_down(ballot);
@@ -518,8 +515,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
   // Use std::string for payload to avoid mismatched allocation/deallocation
   sp_cmd->log_entry = std::string(log_entry, length);
   sp_cmd->length = length;
-  auto sp_m = wrap_typed_marshallable(sp_cmd);
-  _Submit(sp_m);
+  _Submit(sp_cmd);
 }
 
 inline void PaxosWorker::_Submit(const janus::Command& sp_m) {

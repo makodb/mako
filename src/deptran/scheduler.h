@@ -528,7 +528,7 @@ class TxLogServer {
    * @param commit_cmd command to be checked
    * @return true if it's already committed, false otherwise
    */
-  virtual bool CheckCommitted(Marshallable& commit_cmd) { verify(0); }
+  virtual bool CheckCommitted(const janus::Command& commit_cmd) { verify(0); }
 
   // Workstream N Phase 4e-7: removed `virtual void Next(Marshallable&)
   // { verify(0); }` — declared on the base but never overridden in

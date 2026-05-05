@@ -185,7 +185,7 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
     sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
     sp_vpd_ = sp_vpd;
 #ifdef MONGODB_DEBUG
-    auto sp_vpd_marshaled = wrap_typed_marshallable(sp_vpd_);
+    janus::Command sp_vpd_marshaled{sp_vpd_};
     Log_info("%.2f BroadcastRuleSpeculativeExecute <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
 #endif
     e = ((CommunicatorRule *)commo())->BroadcastRuleSpeculativeExecute(sp_vec_piece);
@@ -193,7 +193,7 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
   }
   e->wait();
 #ifdef MONGODB_DEBUG
-  auto sp_vpd_marshaled = wrap_typed_marshallable(sp_vpd_);
+  janus::Command sp_vpd_marshaled{sp_vpd_};
   Log_info("%.2f BroadcastRuleSpeculativeExecute after wait <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
 #endif
   if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {

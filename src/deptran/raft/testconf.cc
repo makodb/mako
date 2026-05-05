@@ -170,11 +170,10 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   auto vpd_p = std::make_shared<VecPieceData>();
   vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
   cmdptr->tx_id_ = cmd;
-  cmdptr->cmd_ = wrap_typed_marshallable(vpd_p);
-  auto cmdptr_m = wrap_typed_marshallable(cmdptr);
+  cmdptr->cmd_ = vpd_p;
   // call Start()
   // Log_info("Start: Calling Start() on server %d for command %d", svr, cmd);
-  bool result = it->second->svr_->Start(cmdptr_m, index, term);
+  bool result = it->second->svr_->Start(cmdptr, index, term);
   // Log_info("Start: Server %d Start() for command %d returned %s, index=%ld, term=%ld",
   //          svr, cmd, result ? "SUCCESS" : "FAILED", *index, *term);
   return result;

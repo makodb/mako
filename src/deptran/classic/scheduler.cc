@@ -268,9 +268,9 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
     cli2tx.append(start_ms - client_ms);
 
     // L10f-prep6aj: Coordinator::Submit takes Command (prep6o);
-    // wrap_typed_marshallable returns shared_ptr<Marshallable> which
-    // auto-converts via Command's implicit ctor.
-    coo->Submit(wrap_typed_marshallable(cmd));
+    // L10f-2 step 4: shared_ptr<TpcCommitCommand> auto-converts
+    // through Command's templated non-Marshallable ctor.
+    coo->Submit(cmd);
     
     sp_tx->commit_result->wait();
 
@@ -384,13 +384,10 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   return 0;
 }
 
-bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
+bool SchedulerClassic::CheckCommitted(const janus::Command& tpc_commit_cmd) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // Use the reference-taking marshallable_cast<T>(Marshallable&) overload
-  // (declared in marshal.hpp:430) instead of forging a non-owning
-  // shared_ptr with a no-op deleter — the overload already does the right
-  // thing internally and is the canonical API for "I have a reference to
-  // a Marshallable, downcast it to T".
+  // L10f-2 step 4: caller passes Command directly; downcast via the
+  // SerializableEnvelope `marshallable_cast<T>` overload.
   auto commit_cmd = marshallable_cast<TpcCommitCommand>(tpc_commit_cmd);
   verify(commit_cmd != nullptr);
   auto tx_id = commit_cmd->tx_id_;

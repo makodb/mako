@@ -175,10 +175,7 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
       }
     }
     //Log_info("The partition %d has missing slots size %d", i, ret_cmd->missing_slots[i].size());
-    auto sp_marshallable = wrap_typed_marshallable(bp_cmd);
-    janus::Command bp_md_cmd(sp_marshallable);
-    auto bp_sp_md = make_shared<janus::Command>(bp_md_cmd);
-    ret_cmd->sync_data.push_back(bp_sp_md);
+    ret_cmd->sync_data.push_back(make_shared<janus::Command>(bp_cmd));
     ps->mtx_.unlock();
   }
   //cb();

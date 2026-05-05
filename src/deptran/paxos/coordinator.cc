@@ -253,11 +253,9 @@ void BulkCoordinatorMultiPaxos::Commit() {
     commit_cmd->ballots = cmd_temp1->ballots;
     commit_cmd->leader_id = cmd_temp1->leader_id;
 
-    auto commit_cmd_marshallable = wrap_typed_marshallable(commit_cmd);
-
     auto ess_cc = es_cc;
     // Log_info("About to call BroadcastBulkDecide from Commit()");
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd_marshallable, [this, ess_cc](ballot_t ballot, int valid){
+    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd, [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_commit){
         return;
       }

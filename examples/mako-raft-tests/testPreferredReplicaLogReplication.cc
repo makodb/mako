@@ -86,7 +86,7 @@ shared_ptr<TpcCommitCommand> create_log_command(const char* log_data, int length
 
     // Assemble: TpcCommitCommand → VecPieceData → SimpleCommand
     vpd->sp_vec_piece_data_->push_back(simple_cmd);
-    tpc_cmd->cmd_ = wrap_typed_marshallable(vpd);
+    tpc_cmd->cmd_ = vpd;
 
     return tpc_cmd;
 }

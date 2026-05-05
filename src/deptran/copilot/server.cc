@@ -89,8 +89,7 @@ bool CopilotServer::allCmdComitted(const janus::Command& batch_cmd) {
   auto cmds = marshallable_cast<TpcBatchCommand>(batch_cmd);
   verify(cmds != nullptr);
   for (auto& c : cmds->cmds_) {
-    auto wrapped_cmd = wrap_typed_marshallable(c);
-    if (!tx_sched_->CheckCommitted(*wrapped_cmd))
+    if (!tx_sched_->CheckCommitted(janus::Command{c}))
       return false;
   }
   return true;

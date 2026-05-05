@@ -539,7 +539,7 @@ int Witness::remove(const janus::Command& cmd_env) {
     verify(cmds != nullptr);
     int total_removed = 0;
     for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(wrap_typed_marshallable(c));
+      SimpleRWCommand parsed_cmd{janus::Command{c}};
       bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
       if (removed) {
         witness_size_distribution_.mid_time_append(--witness_size_);
@@ -548,9 +548,9 @@ int Witness::remove(const janus::Command& cmd_env) {
         //   candidates_.erase(parsed_cmd.key_);
       }
 #ifdef WITNESS_LOG_DEBUG
-      // c is shared_ptr<TpcCommitCommand>; wrap into Command via the
-      // Serializable bridge.
-      witness_log_.push_back(WitnessLog(1, Command(wrap_typed_marshallable(c)), removed, witness_size_));
+      // c is shared_ptr<TpcCommitCommand>; auto-converts to Command
+      // via the templated non-Marshallable ctor (L10f-2 step 4).
+      witness_log_.push_back(WitnessLog(1, janus::Command{c}, removed, witness_size_));
 #endif
     }
     return total_removed;
@@ -570,7 +570,7 @@ bool Witness::has_appeared(const janus::Command& cmd_env) {
     verify(cmds != nullptr);
     bool all_has_appeared = true;
     for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(wrap_typed_marshallable(c));
+      SimpleRWCommand parsed_cmd{janus::Command{c}};
       uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
       if (!candidates_[parsed_cmd.key_].has_appeared(cmd_id)) {
         all_has_appeared = false;

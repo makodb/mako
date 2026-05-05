@@ -87,7 +87,7 @@ class SchedulerClassic: public TxLogServer {
   int PrepareReplicated(TpcPrepareCommand& prepare_cmd);
   int CommitReplicated(TpcCommitCommand& commit_cmd);
 
-  bool CheckCommitted(Marshallable& commit_cmd) override;
+  bool CheckCommitted(const janus::Command& commit_cmd) override;
 
 };
 

@@ -1647,7 +1647,7 @@ void RaftServer::HeartbeatLoop() {
               if (batch_buffer_.size() > 0) {
                 shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
                 batch_cmd->AddCmds(batch_buffer_);
-                cmd = wrap_typed_marshallable(batch_cmd);
+                cmd = batch_cmd;
                 const uint64_t batch_end_idx = batch_start_idx + batch_buffer_.size() - 1;
                 const bool truncated = batch_end_idx < lastLogIndex;
                 Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d "
@@ -2540,7 +2540,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           cnt++;
           lastLogIndex = leaderPrevLogIndex + cnt;
           auto instance = GetRaftInstance(lastLogIndex);
-          instance->log_ = wrap_typed_marshallable(c);
+          instance->log_ = c;
           instance->term = c->term;
 
           // Capture entry for async persistence

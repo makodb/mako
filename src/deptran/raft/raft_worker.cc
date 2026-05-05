@@ -410,7 +410,7 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   simple_cmd->partition_id_ = par_id;
 
   vpd->sp_vec_piece_data_->push_back(simple_cmd);
-  tpc_cmd->cmd_ = wrap_typed_marshallable(vpd);
+  tpc_cmd->cmd_ = vpd;
 
   Log_debug("[RAFT-LOG-CMD] Created TpcCommitCommand tx_id=%lu with %d bytes (Mako/test payload)",
             tx_id, length);
@@ -440,11 +440,9 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   // Use the production helper to create proper TpcCommitCommand{cmd_=VecPieceData}
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
 
-  auto cmd = wrap_typed_marshallable(tpc_cmd);
-
   uint64_t index = 0;
   uint64_t term = 0;
-  bool appended = raft_server->Start(cmd, &index, &term);
+  bool appended = raft_server->Start(tpc_cmd, &index, &term);
   if (!appended) {
     return;
   }
