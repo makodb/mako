@@ -1,6 +1,6 @@
 #include "replicated_db.h"
 #include "server.h"
-#include "rrr/misc/marshal_archive.hpp"
+#include "rrr/misc/serializable.hpp"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>

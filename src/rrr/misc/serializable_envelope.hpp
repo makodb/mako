@@ -36,7 +36,7 @@
 #include <utility>
 
 #include "../base/all.hpp"
-#include "marshal_archive.hpp"
+#include "serializable.hpp"
 
 namespace rrr {
 

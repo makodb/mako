@@ -26,7 +26,7 @@
 // receiver may not know about every possible carried type at compile
 // time), use `rrr::AnyMessage` instead — see `rrr/misc/any_message.hpp`.
 
-#include "rrr/misc/marshal_archive.hpp"
+#include "rrr/misc/serializable.hpp"
 #include "rrr/misc/serializable_envelope.hpp"
 
 namespace janus {

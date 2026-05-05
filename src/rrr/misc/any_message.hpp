@@ -62,7 +62,7 @@
 
 #include <rusty/fn.hpp>
 
-#include "marshal_archive.hpp"
+#include "serializable.hpp"
 
 namespace rrr {
 

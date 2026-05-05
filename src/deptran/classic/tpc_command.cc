@@ -1,7 +1,7 @@
 #include "tpc_command.h"
 #include "../command.h"
 #include "../command_marshaler.h"
-#include "rrr/misc/marshal_archive.hpp"
+#include "rrr/misc/serializable.hpp"
 
 using namespace janus;
 

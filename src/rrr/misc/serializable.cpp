@@ -11,10 +11,10 @@
 // before any RPC traffic. SpinMutex is fine for the low contention.
 //
 // Phase 3a — MarshalSink / MarshalSource bridges. Method bodies live
-// here so `marshal_archive.hpp` can forward-declare `class Marshal`
+// here so `serializable.hpp` can forward-declare `class Marshal`
 // and avoid pulling the heavy `marshal.hpp` header into every TU.
 
-#include "marshal_archive.hpp"
+#include "serializable.hpp"
 
 #include <rusty/hashmap.hpp>
 

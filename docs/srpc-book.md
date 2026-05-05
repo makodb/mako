@@ -1049,7 +1049,7 @@ write into a memory buffer, an fd, a TCP channel, or a hash without
 copying through `Marshal` first.
 
 ```cpp srpc-no-compile
-#include <rrr/misc/marshal_archive.hpp>
+#include <rrr/misc/serializable.hpp>
 
 // Sink: holds the bytes (Layer 1 — concrete; Layer 2 — `pro::proxy`)
 rrr::BufferSink sink;

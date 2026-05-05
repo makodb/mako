@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <type_traits>
 #include "../rrr.hpp"
-#include "../misc/marshal_archive.hpp"  // wrap_serializable, serializable_cast
+#include "../misc/serializable.hpp"  // wrap_serializable, serializable_cast
 #include "deptran/classic/tpc_command.h"
 #include "deptran/procedure.h"
 #include "deptran/raft/replicated_db.h"

@@ -42,7 +42,7 @@
 
 #include "../base/all.hpp"
 
-// Workstream N Phase 4d-prep: pull in `marshal_archive.hpp` for
+// Workstream N Phase 4d-prep: pull in `serializable.hpp` for
 // `SerializableProxy` / `SerializableFacade` definitions used by
 // `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` — the
 // templates dispatch transparently to the `wrap_typed_marshallable`
@@ -53,12 +53,12 @@
 // dropped from the bridge overloads here; templates now dispatch on
 // `!std::is_base_of_v<Marshallable, T>` alone and trust the proxy
 // library to reject wrong-shaped T at instantiation / runtime.  See
-// `marshal_archive.hpp` for the retirement rationale.
+// `serializable.hpp` for the retirement rationale.
 //
-// `marshal_archive.hpp` forward-declares `class Marshal` rather than
+// `serializable.hpp` forward-declares `class Marshal` rather than
 // including this file, so this is acyclic. The archive's MarshalSink/
 // MarshalSource use `Marshal*` only; method bodies live in the .cpp.
-#include "marshal_archive.hpp"
+#include "serializable.hpp"
 
 
 namespace rrr {
@@ -76,7 +76,7 @@ inline T safe_min(const T& a, const T& b) {
 // Phase 5b-11 confirmed `Marshal::read_from_fd` /
 // `Marshal::chnk_read_from_fd` / `chunk::read_from_fd` had no
 // production callers anywhere in the codebase. The receive path
-// uses `FdSource` (`marshal_archive.hpp`) instead.
+// uses `FdSource` (`serializable.hpp`) instead.
 
 // not thread safe, for better performance
 class Marshal;
@@ -263,7 +263,7 @@ private:
     // size_t)`. Its only callers were `Marshal::read_from_fd` and
     // `Marshal::chnk_read_from_fd` — both of which were unreferenced
     // by any production caller and went away in the same commit.
-    // The receive path uses `FdSource` (`marshal_archive.hpp`) for
+    // The receive path uses `FdSource` (`serializable.hpp`) for
     // direct fd reads.
 
     // check if it is not possible to write to the chunk anymore.
@@ -399,7 +399,7 @@ private:
   // Workstream N Phase 5b-11: removed `read_from_fd(int)` and
   // `chnk_read_from_fd(int, size_t)`. Neither had any production
   // callers; the receive path uses `FdSource`
-  // (`marshal_archive.hpp`) instead.
+  // (`serializable.hpp`) instead.
 
   // @unsafe - Reuses chunks from another marshal (uses raw pointer members)
   size_t read_reuse_chnk(Marshal& m, size_t nbytes);
@@ -416,7 +416,7 @@ private:
   size_t read_from_marshal(Marshal &m, size_t n);
 
   // Workstream N Phase 5b-7: removed `write_to_fd(int)`. It had no
-  // callers; new code uses `FdSink` (marshal_archive.hpp) to write
+  // callers; new code uses `FdSink` (serializable.hpp) to write
   // archive bytes directly to a file descriptor.
 
   void reset(){

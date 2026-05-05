@@ -28,8 +28,8 @@
 #include <gtest/gtest.h>
 
 #include "../misc/marshal.hpp"
-#include "../misc/marshal_archive.hpp"
-#include "../misc/marshal_archive.hpp"
+#include "../misc/serializable.hpp"
+#include "../misc/serializable.hpp"
 #include "../misc/serializable_envelope.hpp"
 
 namespace rrr {

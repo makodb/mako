@@ -49,7 +49,7 @@ namespace rrr {
 // block.  Phase 5b-8 deleted the marshal-out side; Phase 5b-11 deleted
 // the only remaining caller of `stat_marshal_in` (`chunk::read_from_fd`)
 // along with `Marshal::read_from_fd` / `Marshal::chnk_read_from_fd`.
-// The receive path uses `FdSource` (`marshal_archive.hpp`) instead, so
+// The receive path uses `FdSource` (`serializable.hpp`) instead, so
 // the histogram-bucket I/O accounting (`g_marshal_in_stat[12]`,
 // `g_marshal_in_stat_cumulative[12]`, `stat_marshal_report`,
 // `g_marshal_stat_report_time` / `g_marshal_stat_report_interval`,
@@ -181,7 +181,7 @@ size_t Marshal::read(void* p, size_t n) {
 // Workstream N Phase 5b-11: removed `Marshal::read_from_fd(int)` and
 // `Marshal::chnk_read_from_fd(int, size_t)`. Neither had any
 // production callers in the codebase; the receive path uses
-// `FdSource` (`marshal_archive.hpp`) for direct fd reads. The
+// `FdSource` (`serializable.hpp`) for direct fd reads. The
 // inner `chunk::read_from_fd` they used was deleted in the same
 // commit.
 
@@ -287,7 +287,7 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
 
 // Workstream N Phase 5b-7: removed `Marshal::write_to_fd(int)`. It
 // had no callers anywhere in the codebase. New code uses `FdSink`
-// (see `marshal_archive.hpp`) to write archive bytes directly to a
+// (see `serializable.hpp`) to write archive bytes directly to a
 // file descriptor without going through the legacy chunk-list
 // representation.
 

@@ -2,7 +2,7 @@
 #include "marshal-value.h"
 #include "coordinator.h"
 #include "procedure.h"
-#include "rrr/misc/marshal_archive.hpp"
+#include "rrr/misc/serializable.hpp"
 #include "benchmark_control_rpc.h"
 
 
