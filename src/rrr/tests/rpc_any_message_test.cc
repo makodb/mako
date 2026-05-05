@@ -4,8 +4,8 @@
 //   1. Pack + unpack roundtrip preserves typed payload values.
 //   2. `is_a<T>()` / `is_a(name)` / `type_name()` discriminators work.
 //   3. Wrong-type unpack returns nullptr (not abort).
-//   4. Wire roundtrip through `MarshallDeputy` produces an AnyMessage
-//      that decodes to the same typed value.
+//   4. Direct archive roundtrip produces an AnyMessage that decodes
+//      to the same typed value.
 //   5. `pack_as` with explicit name overrides the registered name.
 //   6. Registration with the same name twice (under same T) is fine
 //      via the static-init pattern; under different T aborts.
@@ -111,42 +111,38 @@ TEST(AnyMessageTest, IsAByName) {
   EXPECT_FALSE(am->is_a("nonexistent.Type"));
 }
 
-TEST(AnyMessageTest, WireRoundTripThroughMarshallDeputy) {
+TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   EnsureRegistered();
 
   auto val = std::make_shared<GraphPayload>();
   val->node_count = 1234;
   val->label = "wire-trip";
 
-  // Sender side: wrap in MarshallDeputy, serialize.
-  MarshallDeputy outgoing(AnyMessage::pack(val));
-  EXPECT_EQ(outgoing.kind_, MarshallDeputy::ANY_MESSAGE);
+  // Sender side: pack into AnyMessage, serialize via the archive.
+  AnyMessage outgoing = *AnyMessage::pack(val);
 
   Marshal m;
-  m << outgoing;
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(&sink);
+    writer << outgoing;
+  }
 
   // Receiver side: deserialize, recover typed payload.
-  MarshallDeputy incoming;
-  m >> incoming;
-  EXPECT_EQ(incoming.kind_, MarshallDeputy::ANY_MESSAGE);
+  AnyMessage incoming;
+  {
+    MarshalSource src(&m);
+    BinaryReadArchive reader(&src);
+    reader >> incoming;
+  }
 
-  auto am = AnyMessage::try_cast(incoming);
-  ASSERT_NE(am, nullptr);
-  EXPECT_EQ(am->type_name(), kGraphName);
-  EXPECT_TRUE(am->is_a<GraphPayload>());
+  EXPECT_EQ(incoming.type_name(), kGraphName);
+  EXPECT_TRUE(incoming.is_a<GraphPayload>());
 
-  auto recovered = am->unpack<GraphPayload>();
+  auto recovered = incoming.unpack<GraphPayload>();
   ASSERT_NE(recovered, nullptr);
   EXPECT_EQ(recovered->node_count, 1234);
   EXPECT_EQ(recovered->label, "wire-trip");
-}
-
-TEST(AnyMessageTest, TryCastReturnsNullptrForOtherKind) {
-  EnsureRegistered();
-
-  // Build an empty deputy (kind UNKNOWN) — try_cast must return null.
-  MarshallDeputy empty;
-  EXPECT_EQ(AnyMessage::try_cast(empty), nullptr);
 }
 
 TEST(AnyMessageTest, PackAsAdHocName) {
@@ -169,22 +165,28 @@ TEST(AnyMessageTest, PackAsAdHocName) {
   EXPECT_EQ(am->type_name(), "graph.alias.v1");
 
   // Wire roundtrip under the alias name.
-  MarshallDeputy outgoing(am);
+  AnyMessage outgoing = *am;
   Marshal m;
-  m << outgoing;
-  MarshallDeputy incoming;
-  m >> incoming;
-  auto am2 = AnyMessage::try_cast(incoming);
-  ASSERT_NE(am2, nullptr);
-  EXPECT_EQ(am2->type_name(), "graph.alias.v1");
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(&sink);
+    writer << outgoing;
+  }
+  AnyMessage incoming;
+  {
+    MarshalSource src(&m);
+    BinaryReadArchive reader(&src);
+    reader >> incoming;
+  }
+  EXPECT_EQ(incoming.type_name(), "graph.alias.v1");
 
   // is_a<GraphPayload>() resolves through the FIRST registered name
   // for GraphPayload (kGraphName). Under the alias name, is_a<T>
   // returns false because the carried type_name doesn't match the
   // (single) name_for_type lookup. This is intentional: the registry
   // tracks one canonical name per type.
-  EXPECT_FALSE(am2->is_a<GraphPayload>());
-  EXPECT_TRUE(am2->is_a("graph.alias.v1"));
+  EXPECT_FALSE(incoming.is_a<GraphPayload>());
+  EXPECT_TRUE(incoming.is_a("graph.alias.v1"));
 }
 
 TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
@@ -193,16 +195,21 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   auto val = std::make_shared<OtherPayload>();
   val->value = 0xDEADBEEFCAFEBABEull;
 
-  auto am = AnyMessage::pack(val);
-  MarshallDeputy outgoing(am);
+  AnyMessage outgoing = *AnyMessage::pack(val);
   Marshal m;
-  m << outgoing;
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(&sink);
+    writer << outgoing;
+  }
 
-  MarshallDeputy incoming;
-  m >> incoming;
-  auto am2 = AnyMessage::try_cast(incoming);
-  ASSERT_NE(am2, nullptr);
-  auto recovered = am2->unpack<OtherPayload>();
+  AnyMessage incoming;
+  {
+    MarshalSource src(&m);
+    BinaryReadArchive reader(&src);
+    reader >> incoming;
+  }
+  auto recovered = incoming.unpack<OtherPayload>();
   ASSERT_NE(recovered, nullptr);
   EXPECT_EQ(recovered->value, 0xDEADBEEFCAFEBABEull);
 }
@@ -247,38 +254,11 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   EXPECT_EQ(recovered->label, "save/load roundtrip");
 }
 
-TEST(AnyMessageTest, SerializableWireOmitsLeadingKindByte) {
-  // Wire format under direct embedding: [v64-prefixed string]
-  // [payload bytes].  Compared to the deputy-wrapped form, the leading
-  // [v32 ANY_MESSAGE=24] byte is gone.  Saves 1 byte per envelope on
-  // the wire when the field is statically typed as AnyMessage.
-  EnsureRegistered();
-
-  auto val = std::make_shared<OtherPayload>();
-  val->value = 0xCAFE;
-
-  // Serializable path bytes.
-  Marshal m_direct;
-  {
-    AnyMessage outgoing(*AnyMessage::pack(val));
-    MarshalSink sink(&m_direct);
-    BinaryWriteArchive ar(&sink);
-    ar << outgoing;
-  }
-  size_t direct_bytes = m_direct.content_size();
-
-  // Deputy-wrapped path bytes.
-  Marshal m_deputy;
-  {
-    MarshallDeputy outgoing(AnyMessage::pack(val));
-    m_deputy << outgoing;
-  }
-  size_t deputy_bytes = m_deputy.content_size();
-
-  // Deputy adds a v32 ANY_MESSAGE=24 prefix; ANY_MESSAGE=24 fits in 1
-  // byte (24 < 64) so the deputy path is exactly 1 byte longer.
-  EXPECT_EQ(deputy_bytes, direct_bytes + 1);
-}
+// Workstream N L10f-2 step 5 (2026-05-05): removed
+// `SerializableWireOmitsLeadingKindByte` — it compared bytes between
+// the direct AnyMessage path and the (now-retired) MarshallDeputy-
+// wrapped path.  With AnyMessage no longer inheriting Marshallable,
+// the deputy-wrapping path is gone; there's nothing to compare to.
 
 TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
   EnsureRegistered();

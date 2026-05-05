@@ -28,14 +28,10 @@
 // looks up a factory by the carried name, and downcasts to the concrete
 // type for typed access.
 //
-// Wire format (when wrapped inside `MarshallDeputy`):
-//   MarshallDeputy: [int32: ANY_MESSAGE] [AnyMessage::to_marshal bytes]
-//   AnyMessage:     [v64-prefixed string: type_name] [payload bytes]
+// Wire format:  `[v64-prefixed string: type_name] [payload bytes]`
 //
-// The payload bytes come from the inner `Marshallable::to_marshal`
-// (for Marshallable T) or the bridged `Save` of a `SerializableProxy`
-// view (for Serializable T) — both produce the byte stream the
-// receiver-side type's `from_marshal` / `Load` knows how to consume.
+// The payload bytes come from the inner type's `Save` / `Load`
+// (routed via the proxy facade after the L10f Marshallable retirement).
 //
 // Usage:
 //
@@ -47,15 +43,13 @@
 //
 //   // 2) Pack on the sender:
 //   auto graph = std::make_shared<RccGraph>();
-//   MarshallDeputy out(rrr::AnyMessage::pack(graph));
+//   AnyMessage out = *rrr::AnyMessage::pack(graph);
 //
 //   // 3) Unpack on the receiver:
-//   if (auto am = rrr::AnyMessage::try_cast(md)) {
-//     if (auto g = am->unpack<RccGraph>()) {
-//       // ... use g ...
-//     } else if (am->is_a<EmptyGraph>()) {
-//       // ... empty case ...
-//     }
+//   if (auto g = incoming.unpack<RccGraph>()) {
+//     // ... use g ...
+//   } else if (incoming.is_a<EmptyGraph>()) {
+//     // ... empty case ...
 //   }
 
 #include <memory>
@@ -73,51 +67,26 @@
 
 namespace rrr {
 
-// `AnyMessage` is a polymorphic envelope.  Two interfaces coexist
-// during the L10 migration:
+// `AnyMessage` is the open-set polymorphic envelope.  Wire format:
+//   `[v64-prefixed string: type_name] [payload bytes]`.
+// Direct field type for RPC struct fields — no surrounding
+// `MarshallDeputy` kind tag.
 //
-// * Marshallable interface (legacy path): `AnyMessage` inherits
-//   `Marshallable` and registers with `MarshallDeputy::reg_initializer`
-//   under the fixed kind `MarshallDeputy::ANY_MESSAGE=24`.  Any deputy
-//   carrying an AnyMessage hits this kind on the wire; the actual type
-//   discriminator is the carried `type_name_` string inside the
-//   AnyMessage's bytes.  Wire format under deputy:
-//     `[v32 ANY_MESSAGE] [v64-prefixed string: type_name] [payload bytes]`.
-//
-// * Serializable interface (L10c-anymsg, additive): `save` /
-//   `load` methods plus free `operator<<` / `operator>>` overloads on
-//   `BinaryWriteArchive` / `BinaryReadArchive` let callers embed an
-//   `AnyMessage` directly in an RPC struct field — no MarshallDeputy
-//   wrapping needed.  Wire format when embedded directly:
-//     `[v64-prefixed string: type_name] [payload bytes]` (no leading
-//   kind byte, since the C++ field type already discriminates).
-//
-// The two paths produce different wire bytes for the same logical
-// payload (the leading `[v32 ANY_MESSAGE=24]` is absent in the direct
-// path), so a field migrating from `MarshallDeputy graph_` to
-// `AnyMessage graph_` is a 1-byte wire change.  This is intentional:
-// once a field is statically typed as `AnyMessage`, the runtime kind
-// discriminator is dead weight.
-class AnyMessage : public Marshallable {
+// Workstream N L10f-2 step 5 (2026-05-05): no longer inherits
+// `Marshallable`.  The only API is the Serializable-style
+// `save(BinaryWriteArchive&)` / `load(BinaryReadArchive&)` plus the
+// free `operator<<` / `operator>>` overloads at the bottom of this
+// header.  The legacy `to_marshal/from_marshal` Marshallable path
+// retired with the inheritance.
+class AnyMessage {
  public:
-  AnyMessage();
+  AnyMessage() = default;
   AnyMessage(std::string type_name, std::shared_ptr<Marshallable> payload);
 
-  // Marshallable contract — the bytes flow through here when the
-  // surrounding MarshallDeputy serializes / deserializes (legacy path).
-  Marshal& to_marshal(Marshal& m) const override;
-  Marshal& from_marshal(Marshal& m) override;
-
-  // Workstream N L10c-anymsg: Serializable interface.  Lets an
-  // `AnyMessage` field be embedded directly in an RPC struct without
-  // going through MarshallDeputy.  Wire format inside save/load is
-  // identical to the bytes inside `to_marshal` / `from_marshal` (i.e.,
-  // the AnyMessage's own type_name + payload bytes); the difference vs
-  // the deputy path is only the absence of the surrounding kind tag.
-  //
-  // Implementation routes through a temporary `Marshal` so the inner
-  // payload's `to_marshal` / `from_marshal` methods can stay unchanged
-  // until L10f drops `Marshallable` entirely.
+  // Wire ops — `[v64 type_name] [payload bytes]`.  The payload's
+  // bytes come from the inner Marshallable's `to_marshal` (drained
+  // through a temp `Marshal`); after Marshallable retires, this
+  // routes through the proxy facade's `save`/`load` directly.
   void save(BinaryWriteArchive& ar) const;
   void load(BinaryReadArchive& ar);
 
@@ -149,11 +118,6 @@ class AnyMessage : public Marshallable {
   // verify() if T was not registered with `reg_any_message_as<T>(...)`.
   template <typename T>
   static std::shared_ptr<AnyMessage> pack(std::shared_ptr<T> val);
-
-  // Convenience: recover a shared_ptr<AnyMessage> from a deputy
-  // that carries an AnyMessage envelope. Returns nullptr if the
-  // deputy carries something else (kind != ANY_MESSAGE) or is empty.
-  static std::shared_ptr<AnyMessage> try_cast(const MarshallDeputy& md);
 
   // Inner payload accessor — exposes the underlying Marshallable so
   // callers that need the raw bytes-source (rare) can reach it.

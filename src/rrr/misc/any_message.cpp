@@ -1,18 +1,17 @@
-// Workstream N L7 — `AnyMessage` runtime registry + Marshal hookup.
+// Workstream N L7 — `AnyMessage` runtime registry + wire hookup.
 //
 // Header: any_message.hpp.
 //
-// Two pieces live here:
+// `AnyMessageRegistry`: name ↔ type_index ↔ factory map behind a
+// SpinMutex. Mirrors the SerializableRegistry idiom — registrations
+// at static-init, lookups during RPC dispatch.
 //
-//   1. `AnyMessageRegistry`: name ↔ type_index ↔ factory map behind a
-//      SpinMutex. Mirrors the SerializableRegistry / MarshallDeputy
-//      registry idiom — registrations at static-init, lookups during
-//      RPC dispatch.
-//
-//   2. The `MarshallDeputy::reg_initializer<AnyMessage>(ANY_MESSAGE)`
-//      static-init line that lets every AnyMessage envelope, regardless
-//      of carried type, deserialize through the existing deputy
-//      machinery under the single fixed kind.
+// Workstream N L10f-2 step 5 (2026-05-05): retired the
+// `MarshallDeputy::reg_initializer<AnyMessage>(ANY_MESSAGE)` static-
+// init line and the legacy `to_marshal`/`from_marshal` Marshallable
+// methods.  AnyMessage now embeds directly in RPC struct fields via
+// the Serializable-style `save`/`load` (and free archive operators
+// in the header).
 
 #include "any_message.hpp"
 
@@ -24,44 +23,14 @@
 
 namespace rrr {
 
-// ---- AnyMessage Marshallable ----------------------------------------
-
-AnyMessage::AnyMessage()
-    : Marshallable(MarshallDeputy::ANY_MESSAGE) {}
+// ---- AnyMessage value-type ctor -------------------------------------
 
 AnyMessage::AnyMessage(std::string type_name,
                        std::shared_ptr<Marshallable> payload)
-    : Marshallable(MarshallDeputy::ANY_MESSAGE),
-      type_name_(std::move(type_name)),
+    : type_name_(std::move(type_name)),
       payload_(std::move(payload)) {}
 
-Marshal& AnyMessage::to_marshal(Marshal& m) const {
-  // Wire format: [v64-len-prefixed string: type_name] [payload bytes]
-  // The string operator<< on `Marshal` already writes the v64 prefix
-  // (see marshal.hpp), so this is byte-compatible with what every
-  // other rrr-marshalled std::string looks like on the wire.
-  m << type_name_;
-  if (payload_) {
-    payload_->to_marshal(m);
-  }
-  return m;
-}
-
-Marshal& AnyMessage::from_marshal(Marshal& m) {
-  m >> type_name_;
-  payload_ = AnyMessageRegistry::create(type_name_);
-  // Unknown name on the wire is a hard error — the receiver was sent
-  // an envelope for a type it doesn't know about. We could surface
-  // this as a soft error instead, but that opens silent-data-loss
-  // failure modes; better to fail loud at the dispatch boundary.
-  verify(payload_ != nullptr &&
-         "AnyMessage::from_marshal: unknown type name on wire. "
-         "Did the sender register a type the receiver does not know?");
-  payload_->from_marshal(m);
-  return m;
-}
-
-// ---- Workstream N L10c-anymsg: Serializable interface ---------------
+// ---- Wire ops -------------------------------------------------------
 
 void AnyMessage::save(BinaryWriteArchive& ar) const {
   // Wire format inside save: [v64-len-prefixed string: type_name]
@@ -111,11 +80,6 @@ void AnyMessage::load(BinaryReadArchive& ar) {
   Marshal* m = mark_adapter->source()->marshal();
   verify(m != nullptr);
   payload_->from_marshal(*m);
-}
-
-std::shared_ptr<AnyMessage> AnyMessage::try_cast(const MarshallDeputy& md) {
-  if (md.kind_ != MarshallDeputy::ANY_MESSAGE) return nullptr;
-  return std::dynamic_pointer_cast<AnyMessage>(md.inner());
 }
 
 // ---- AnyMessageRegistry ---------------------------------------------
@@ -199,16 +163,5 @@ void AnyMessageRegistry::clear_for_testing() {
   guard->by_name.clear();
   guard->name_by_type_hash.clear();
 }
-
-// ---- AnyMessage envelope registration with MarshallDeputy ----------
-
-// AnyMessage is itself a Marshallable subclass. MarshallDeputy needs to
-// know how to default-construct an AnyMessage so that
-// `MarshallDeputy::create_initializer(ANY_MESSAGE)` can hand back a
-// fresh empty AnyMessage for the operator>> path. This is the open-set
-// counterpart of the per-type registrations the closed-set TypeList
-// path generates.
-static int volatile g_any_message_reg =
-    MarshallDeputy::reg_initializer<AnyMessage>(MarshallDeputy::ANY_MESSAGE);
 
 }  // namespace rrr

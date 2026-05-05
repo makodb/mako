@@ -397,42 +397,50 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
   ASSERT_NE(payload, nullptr);
 
   // Workstream N L7: graph payloads moved from kind-tagged Serializable
-  // to the open-set `AnyMessage` envelope.  All graph types now serialize
-  // under MarshallDeputy::ANY_MESSAGE; the type identity ("janus.EmptyGraph"
-  // vs "janus.RccGraph") is a string inside the envelope.
-  MarshallDeputy outgoing(rrr::AnyMessage::pack(payload));
-  EXPECT_EQ(outgoing.kind_, MarshallDeputy::ANY_MESSAGE);
+  // to the open-set `AnyMessage` envelope.  L10f-2 step 5 (2026-05-05):
+  // AnyMessage no longer inherits Marshallable; the envelope rides
+  // directly in RPC fields without a surrounding MarshallDeputy.
+  rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(payload);
 
   Marshal m;
-  m << outgoing;
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(&sink);
+    writer << outgoing;
+  }
 
-  MarshallDeputy incoming;
-  m >> incoming;
-  EXPECT_EQ(incoming.kind_, MarshallDeputy::ANY_MESSAGE);
-  auto am = rrr::AnyMessage::try_cast(incoming);
-  ASSERT_NE(am, nullptr);
-  EXPECT_TRUE(am->is_a<janus::EmptyGraph>());
-  ASSERT_NE(am->unpack<janus::EmptyGraph>(), nullptr);
+  rrr::AnyMessage incoming;
+  {
+    MarshalSource src(&m);
+    BinaryReadArchive reader(&src);
+    reader >> incoming;
+  }
+  EXPECT_TRUE(incoming.is_a<janus::EmptyGraph>());
+  ASSERT_NE(incoming.unpack<janus::EmptyGraph>(), nullptr);
 }
 
 TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
   auto payload = std::make_shared<janus::RccGraph>();
   ASSERT_NE(payload, nullptr);
 
-  MarshallDeputy outgoing(rrr::AnyMessage::pack(payload));
-  EXPECT_EQ(outgoing.kind_, MarshallDeputy::ANY_MESSAGE);
+  rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(payload);
 
   Marshal m;
-  m << outgoing;
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(&sink);
+    writer << outgoing;
+  }
 
-  MarshallDeputy incoming;
-  m >> incoming;
-  EXPECT_EQ(incoming.kind_, MarshallDeputy::ANY_MESSAGE);
+  rrr::AnyMessage incoming;
+  {
+    MarshalSource src(&m);
+    BinaryReadArchive reader(&src);
+    reader >> incoming;
+  }
 
-  auto am = rrr::AnyMessage::try_cast(incoming);
-  ASSERT_NE(am, nullptr);
-  EXPECT_TRUE(am->is_a<janus::RccGraph>());
-  auto decoded = am->unpack<janus::RccGraph>();
+  EXPECT_TRUE(incoming.is_a<janus::RccGraph>());
+  auto decoded = incoming.unpack<janus::RccGraph>();
   ASSERT_NE(decoded, nullptr);
   EXPECT_EQ(decoded->size(), 0u);
 }
