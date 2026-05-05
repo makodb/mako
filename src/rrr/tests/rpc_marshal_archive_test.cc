@@ -1029,10 +1029,11 @@ TEST(SerializableProxy, RoundTripSaveLoadViaProxy) {
 TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
   // Phase 2 DoD test: factory registry produces a fresh proxy whose
   // bytes match an independently-saved instance after load.
-  SerializableRegistry::clear_for_testing();
-  ASSERT_FALSE(SerializableRegistry::is_registered(CanaryCommand::kKind));
-
-  // Register CanaryCommand under its kind.
+  // L10f-2 step 5 prep (2026-05-05): no leading
+  // `clear_for_testing()` — the registry is shared with
+  // SerializableEnvelope::load and must keep static-init-time
+  // registrations alive.  CanaryCommand uses its own kind tag
+  // (0xCAFE) and coexists with whatever else is registered.
   (void)SerializableRegistry::reg<CanaryCommand>(CanaryCommand::kKind);
   EXPECT_TRUE(SerializableRegistry::is_registered(CanaryCommand::kKind));
 
@@ -1063,7 +1064,12 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
   auto loaded_bytes = sink_to_vector(sink_loaded);
   EXPECT_EQ(src_bytes, loaded_bytes);
 
-  SerializableRegistry::clear_for_testing();
+  // L10f-2 step 5 prep (2026-05-05): no longer
+  // `clear_for_testing()` at end — `SerializableEnvelope::load`
+  // now uses the same registry and depends on static-init-time
+  // registrations (TypeListFactory* + every MakoCommands type)
+  // staying alive across this test.  Leave whatever was registered
+  // before this test in place.
 }
 
 // ---- Marshal ↔ Archive bridges (Phase 3a) ----------------------------
@@ -1201,7 +1207,8 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
   // We re-use CanaryCommand as the underlying type (the registry
   // doesn't know or care about T identity, only the kind tag and the
   // factory's return value).
-  SerializableRegistry::clear_for_testing();
+  // L10f-2 step 5 prep (2026-05-05): see RegisterCreateAndRoundTrip
+  // for why we don't clear_for_testing here.
 
   constexpr int32_t kKindA = 0xAAAA;
   constexpr int32_t kKindB = 0xBBBB;
@@ -1224,8 +1231,8 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
   // proxy reflects the CONCRETE type's kind, not the registry slot.
   EXPECT_EQ(pa->kind(), CanaryCommand::kKind);
   EXPECT_EQ(pb->kind(), CanaryCommand::kKind);
-
-  SerializableRegistry::clear_for_testing();
+  // L10f-2 step 5 prep (2026-05-05): see RegisterCreateAndRoundTrip
+  // for why we no longer trailing-clear the registry.
 }
 
 // Workstream N L10f-2 step 5 (2026-05-05): removed the entire

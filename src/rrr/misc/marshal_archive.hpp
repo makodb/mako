@@ -874,6 +874,11 @@ struct SerializableFacade : pro::facade_builder
     // in `marshal_serializable_bridge.hpp` to extract a typed payload
     // from a SerializableMarshallableAdapter wrapped in MarshallDeputy.
     ::add_skill<pro::skills::indirect_rtti>
+    // L10f-2 step 5 (2026-05-05): enable `pro::proxy<F>` copy via
+    // T's copy ctor — required for SerializableEnvelope to be
+    // copyable when its `inner_` is a value-typed proxy.
+    // `support_copy` is a facade_builder method, not a skill.
+    ::support_copy<pro::constraint_level::nontrivial>
     ::build {};
 
 using SerializableProxy = pro::proxy<SerializableFacade>;
