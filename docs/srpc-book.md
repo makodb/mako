@@ -948,30 +948,14 @@ v32 small_val(5);    // Encoded in 1 byte
 v32 large_val(1000); // Encoded in 2 bytes
 ```
 
-### Custom Types (Marshallable)
+### Custom Types (Serializable)
 
-To serialize custom types, either implement `Marshallable` directly:
-
-```cpp srpc-no-compile
-struct MyData : public Marshallable {
-    i32 id;
-    std::string name;
-
-    Marshal& to_marshal(Marshal& m) const override {
-        m << id << name;
-        return m;
-    }
-
-    Marshal& from_marshal(Marshal& m) override {
-        m >> id >> name;
-        return m;
-    }
-};
-```
-
-Or — preferred for new code — keep the payload type free of inheritance
-and define `save` / `load` / `kind` directly on it (the
-`Serializable` path; see §10):
+To serialize a custom type, define three things on it: a `kind()`
+discriminator, `save(BinaryWriteArchive&)`, and `load(BinaryReadArchive&)`.
+No inheritance is required — the type stays a plain struct/class, and
+the `pro::proxy<SerializableFacade>` machinery (the proxy library
+facade in `third-party/proxy/`) does the type erasure at registration
+time:
 
 ```cpp srpc-no-compile
 struct MyTypedData {
@@ -990,11 +974,17 @@ struct MyTypedData {
     }
 };
 
-// Register so MarshallDeputy can recover the type by kind on the
-// receive side. Lives in any .cc file:
+// Register so the `SerializableEnvelope` factory path can recover the
+// type by kind on the receive side. Lives in any .cc file:
 static int volatile reg_my_typed_data =
-    rrr::reg_serializable_in_deputy<MyTypedData>(MyTypedData::kMarshallKind);
+    rrr::SerializableRegistry::reg<MyTypedData>(MyTypedData::kMarshallKind);
 ```
+
+For closed-set command types (the in-tree `MakoCommands` TypeList) the
+kind is derived from the type's TypeList position — drop the
+`kMarshallKind` constant + manual `kind()` method and inherit
+`Serializable<T, MakoCommands>` instead.  See the "Closed-set
+polymorphism" subsection below for the full pattern.
 
 All in-tree deptran payload types (`VecRecData`, `ViewData`,
 `KeyCmdBatchData`, `VecPieceData`, `TpcPrepareCommand`,
@@ -1002,56 +992,41 @@ All in-tree deptran payload types (`VecRecData`, `ViewData`,
 `TpcBatchCommand`, `ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`,
 `BulkPrepareLog`, `PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`,
 `SyncLogResponse`, `SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`,
-`SimpleRWCommand`) use the `Serializable` path. Wire format is
-byte-for-byte identical to the legacy Marshallable encoding; the
-bridges in `marshal_serializable_bridge.hpp` route call sites that
-use `wrap_typed_marshallable<T>` / `marshallable_cast<T>` /
-`MarshallDeputy(shared_ptr<T>)` / `set_marshallable(shared_ptr<T>)`
-to a `SerializableMarshallableAdapter` that satisfies the legacy
-Marshallable interface. The legacy `TypedMarshallableAdapter` /
-`TypedMarshallableAdapterTraits` opt-in trait was removed in
-Phase 5b-5 — only direct Marshallable subclasses (e.g. `CmdData`)
-and Serializable types remain.
+`SimpleRWCommand`) use the Serializable path.  Wire format is
+`[v32 kind][payload bytes]` for closed-set types and
+`[v32 ANY_MESSAGE][v64-prefixed type_name][payload bytes]` for the
+open-set `AnyMessage` envelope.
 
-For `MarshallDeputy` round-trip support, register a typed initializer (no raw
-pointer factory needed). This works for both direct `Marshallable` classes and
-trait-enabled typed payloads:
+> **Historical note** — the prior abstract base classes
+> `rrr::Marshallable` (virtual `to_marshal`/`from_marshal`) and
+> `rrr::MarshallDeputy` (kind-tagged envelope around
+> `shared_ptr<Marshallable>`) are gone as of Workstream N L10f-2 step 5
+> (2026-05-05).  Production code uses `janus::Command`
+> (`SerializableEnvelope<MakoCommands>`) for closed-set commands and
+> `rrr::AnyMessage` for open-set graph payloads; both serialize
+> through `pro::proxy<SerializableFacade>` value members with no
+> intermediate adapter or `shared_ptr<Marshallable>` storage.
 
-```cpp srpc-no-compile
-static int volatile my_data_init =
-    MarshallDeputy::reg_initializer<MyData>(MyMarshallableKind);
-
-static int volatile my_typed_data_init =
-    MarshallDeputy::reg_initializer<MyTypedData>(kMyTypedDataKind);
-```
-
-When extracting a typed payload from `MarshallDeputy`, use the centralized
-`marshallable_cast<T>(...)` helper (declared in `src/rrr/misc/marshal.hpp`) so
-call sites do not open-code `dynamic_pointer_cast` on `inner()`:
+When extracting a typed payload from a `Command` envelope, use
+`Command::unpack<T>()` (returns `T*` or `nullptr` on type mismatch)
+or `Command::unpack_shared<T>()` (returns a `shared_ptr<T>` aliased
+into the envelope's storage so the receiver can pin lifetime):
 
 ```cpp srpc-no-compile
-MarshallDeputy md;
-m >> md;
+janus::Command cmd;
+m >> cmd;  // wire decode populates kind + payload via factory + load
 
-auto view = marshallable_cast<ViewData>(md);
-if (view) {
+if (auto* view = cmd.unpack<ViewData>()) {
     // use view
 }
 
-MarshallDeputy* maybe_null = nullptr;
-auto empty = marshallable_cast<ViewData>(maybe_null); // nullptr-safe
+// Aliased shared_ptr — extends the envelope's storage refcount.
+auto sp = cmd.unpack_shared<ViewData>();
 ```
 
-For typed payloads stored behind `shared_ptr<Marshallable>` (for example
-`TpcCommitCommand::cmd_` or raft replicated-db log commands), use
-`marshallable_cast<T>(...)` instead of raw `dynamic_pointer_cast<T>(...)`.
-The helper also accepts `Marshallable&` / `Marshallable*` for callback paths
-that receive only base-class references.
 For RCC graph envelopes (`RccGraph`, `EmptyGraph`) the access pattern
-moved to the open-set `AnyMessage` envelope (Workstream N L7) — see
-the §10 AnyMessage subsection below. Sender packs with
-`rrr::AnyMessage::pack(graph)`; receiver pulls with
-`rrr::AnyMessage::try_cast(md)->unpack<RccGraph>()`.
+uses `AnyMessage` directly (Workstream N L7).  See the AnyMessage
+subsection below.
 
 ### Bookmarks
 
@@ -1120,9 +1095,9 @@ int fd = ::open("/tmp/snap.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
 #### Polymorphic command types — `SerializableProxy` + registry
 
-For tag-dispatched polymorphism (the role currently filled by
-`Marshallable` + `MarshallDeputy::reg_initializer`), Layer 4 of the
-new system is `SerializableProxy`:
+For tag-dispatched polymorphism — the role formerly filled by
+`Marshallable` + `MarshallDeputy::reg_initializer` before L10f-2
+step 5 — Layer 4 of the archive system is `SerializableProxy`:
 
 ```cpp srpc-no-compile
 struct MyCommand {
@@ -1147,9 +1122,11 @@ proxy->load(reader);
 ```
 
 `SerializableProxy::save` emits only the payload bytes (no kind
-prefix); the kind tag is framed by the next-higher layer
-(`MarshallDeputy` in the existing codebase, which Phase 3 will
-rewrite atop `SerializableProxy`).
+prefix); the kind tag is framed by the enclosing envelope —
+`SerializableEnvelope<TypeList>` (e.g. `janus::Command`) for
+closed-set commands, or `rrr::AnyMessage` for open-set graph
+payloads.  Both envelopes wrap the proxy as a value member; there is
+no `shared_ptr<Marshallable>` storage layer.
 
 #### Open-set polymorphism — `AnyMessage` (Workstream N L7)
 
@@ -1171,29 +1148,29 @@ struct GraphPayload {
 // Register under a stable string name (anywhere, at static init).
 static int _reg = rrr::reg_any_message_as<GraphPayload>("my.GraphPayload");
 
-// Sender: pack typed value into envelope, embed in MarshallDeputy.
+// Sender: pack typed value into AnyMessage and ride it directly on
+// an RPC field of type `rrr::AnyMessage`.
 auto val = std::make_shared<GraphPayload>();
 val->node_count = 42;
 val->label = "x";
-MarshallDeputy outgoing(rrr::AnyMessage::pack(val));
+rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(val);
 
-// Receiver: pull envelope, dispatch by carried type.
-auto am = rrr::AnyMessage::try_cast(incoming);
-verify(am);
-if (am->is_a<GraphPayload>()) {
-  auto p = am->unpack<GraphPayload>();
+// Receiver: dispatch by carried type.
+if (incoming.is_a<GraphPayload>()) {
+  auto p = incoming.unpack<GraphPayload>();
   // ... use p ...
 }
 ```
 
 Wire layout: `[v32: ANY_MESSAGE=24] [v64-prefixed string: type_name]
-[payload bytes]`. The `MarshallDeputy::ANY_MESSAGE` kind value is
-fixed; `type_name` is the runtime discriminator. After Workstream N L9,
+[payload bytes]`.  The `ANY_MESSAGE` discriminator (24) is the fixed
+kind; `type_name` is the runtime discriminator.  After Workstream N L9,
 the kind itself rides in 1 byte (v32 single-byte range covers values
 0-63), so the envelope's framing overhead is 1 byte (v32 kind) +
-length-prefixed type_name string. Aliasing semantics: mutations on
+length-prefixed type_name string.  Aliasing semantics: mutations on
 the caller's `shared_ptr<T>` after `pack` remain visible to the
-encoded payload, matching `wrap_serializable_aliased`.
+encoded payload (the holder-shaped proxy retains the original
+refcount).
 
 When to choose AnyMessage vs. closed-set TypeList:
 - **AnyMessage** for graph / data payloads (`RccGraph`, `EmptyGraph`),
@@ -1218,14 +1195,12 @@ hashing.
 
 ```cpp srpc-no-compile
 // Inherit Serializable<T, MakoCommands> for kind() / static_kind()
-// from the TypeList position. Drop the legacy
-// `static constexpr int32_t kMarshallKind = MarshallDeputy::CMD_X`
-// constant and the matching `int32_t kind() const` method.
+// from the TypeList position.
 class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
                                                   janus::MakoCommands> {
  public:
   txnid_t tx_id_ = 0;
-  shared_ptr<Marshallable> cmd_{nullptr};
+  janus::Command cmd_{};   // nested polymorphic field rides Command directly
 
   void save(rrr::BinaryWriteArchive& ar) const;
   void load(rrr::BinaryReadArchive& ar);
@@ -1233,7 +1208,7 @@ class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
 
 // Register at static init — the no-arg overload picks up the kind
 // from `T::static_kind()` (the TypeList position).
-static int _reg = rrr::reg_serializable_in_deputy<TpcCommitCommand>();
+static int _reg = rrr::SerializableRegistry::reg<TpcCommitCommand>();
 ```
 
 Adding a new closed-set Command type:
@@ -1242,13 +1217,13 @@ Adding a new closed-set Command type:
    (appending preserves existing types' kind values; reordering or
    inserting in the middle is a wire-format break).
 3. Define `class T : public rrr::Serializable<T, janus::MakoCommands>`.
-4. Add `static int _reg = rrr::reg_serializable_in_deputy<T>();` in
+4. Add `static int _reg = rrr::SerializableRegistry::reg<T>();` in
    T's .cc.
 
-After Workstream N L9, the `MarshallDeputy::kind_` field serializes
-as `rrr::v32` (variable-length SparseInt) on the wire instead of raw
-4-byte int32. SparseInt's first-byte encoding has a 6-bit signed
-payload, so values in [-64, 63] fit in 1 byte. With closed-set kinds
+After Workstream N L9, the `Command::kind_` field serializes as
+`rrr::v32` (variable-length SparseInt) on the wire instead of raw
+4-byte int32.  SparseInt's first-byte encoding has a 6-bit signed
+payload, so values in [-64, 63] fit in 1 byte.  With closed-set kinds
 in [1, 19] and ANY_MESSAGE=24, every production polymorphic envelope
 saves 3 bytes for the kind prefix vs. the pre-L9 4-byte encoding —
 non-trivial savings on the Paxos LogEntry / TpcCommit / heartbeat
@@ -1280,170 +1255,118 @@ the bytes exactly as `Marshal::operator>>` would (Phase 1's
 byte-for-byte commitment). Use these adapters when integrating the
 new archive layer with the existing TCP TX/RX path.
 
-#### Marshallable ↔ Serializable bridge adapter (transitional)
+#### Marshallable ↔ Serializable bridge adapter (retired)
 
-While the migration to `Serializable` is incomplete (the Marshallable
-base survives until L10f drops it), the bridge in
-`marshal_serializable_bridge.hpp` lets a Serializable type flow
-through APIs that still take `shared_ptr<Marshallable>`:
+The `marshal_serializable_bridge.hpp` header (528 LOC) carried a
+`SerializableMarshallableAdapter` that wrapped a
+`pro::proxy<SerializableFacade>` so it satisfied the legacy
+`Marshallable` virtual interface; together with
+`as_marshallable`, `wrap_typed_marshallable`,
+`wrap_serializable[_aliased]`, `marshallable_cast<T>` /
+`serializable_cast<T>` overloads, and
+`reg_serializable_in_deputy<T>`, it was the migration-period glue
+that let Serializable types flow through APIs typed against
+`shared_ptr<Marshallable>`.  Workstream N L10f-2 step 5 retired the
+entire bridge — every production payload registers via
+`SerializableRegistry::reg<T>()` and rides `janus::Command` /
+`rrr::AnyMessage` directly.
 
-```cpp srpc-no-compile
-// Wrap a SerializableProxy as a Marshallable (full bidirectional).
-rrr::SerializableProxy proxy = ...;
-std::shared_ptr<rrr::Marshallable> m =
-    rrr::as_marshallable(std::move(proxy));
-// `m` can now go anywhere a Marshallable does — to_marshal /
-// from_marshal route through Phase 3a's MarshalSink / MarshalSource
-// bridges.
+If you encounter a stale reference to one of these names in third-
+party docs or comments, the modern equivalent is:
 
-// Register a Serializable type T (no Marshallable inheritance) so
-// MarshallDeputy::operator>> can decode an instance of it from the
-// wire. Mirrors the pattern of MarshallDeputy::reg_initializer<T>.
-static int _reg = rrr::reg_serializable_in_deputy<MyCommand>(MyCommand::kKind);
-
-// Recover the typed payload from a MarshallDeputy populated via the
-// Serializable factory path. Returns nullptr on type mismatch — the
-// Phase 4 replacement for `marshallable_cast<T>(md.inner())` when T
-// is Serializable.
-MyCommand* p = rrr::serializable_cast<MyCommand>(md);
-```
-
-The reverse direction (Marshallable → Serializable view) was retired
-in L10d-prep along with the `MarshallDeputy::serializable()` lazy
-cache it backed; production now uses `janus::Command`
-(`SerializableEnvelope<MakoCommands>`) which has its own proxy-shaped
-save path with no adaptation layer.
+| Retired symbol                         | Replacement                                      |
+|----------------------------------------|--------------------------------------------------|
+| `reg_serializable_in_deputy<T>(kind)`  | `SerializableRegistry::reg<T>(kind)`             |
+| `reg_serializable_in_deputy<T>()`      | `SerializableRegistry::reg<T>()` (TypeList kind) |
+| `wrap_typed_marshallable<T>(sp)`       | `Command{sp}` or `Command::pack_aliased<T>(sp)`  |
+| `wrap_serializable_aliased(proxy)`     | `Command::pack_aliased<T>(sp)`                   |
+| `as_marshallable(proxy)`               | (gone — use `Command` value type)                |
+| `marshallable_cast<T>(md)`             | `cmd.unpack<T>()` / `unpack_shared<T>()`         |
+| `serializable_cast<T>(md)`             | `cmd.unpack<T>()`                                |
+| `MarshallDeputy(shared_ptr<T>)`        | `Command{sp}`                                    |
+| `md.set_marshallable(sp)`              | `cmd = sp` (Command's templated `operator=`)     |
+| `Command::inner_marshallable()`        | `cmd.unpack_shared<T>()` (typed)                 |
 
 #### `rpcgen --archive` emission (default ON)
 
 `bin/rpcgen` emits BinaryWriteArchive / BinaryReadArchive operator<<>>
 overloads alongside the existing Marshal& ones for generated headers.
-Both forms compile and produce identical wire bytes. As of Phase 3e
-(2026-04-29) this is the default — every in-tree .rpc file now
-references types with archive operators (`MarshallDeputy` via
-Phase 3f-prep, `Value` / `SimpleCommand` / `TxWorkspace` via Phase 4d-6,
-`TxReply` and `ParentEdge<RccTx>` via Phase 3e), so the additive
-emission compiles cleanly. Use `--no-archive` to opt out (e.g., when
-generating against a custom .rpc that uses user types without archive
-overloads).
+Both forms compile and produce identical wire bytes.  As of Phase 3e
+(2026-04-29) this is the default — every in-tree `.rpc` file now
+references types with archive operators (`janus::Command` /
+`rrr::AnyMessage` via the L10c/L10f migrations, `Value` /
+`SimpleCommand` / `TxWorkspace` via Phase 4d-6, `TxReply` and
+`ParentEdge<RccTx>` via Phase 3e), so the additive emission compiles
+cleanly.  Use `--no-archive` to opt out (e.g. when generating against
+a custom `.rpc` that uses user types without archive overloads).
 
 The four in-tree generated headers (`rcc_rpc.h`, `helloworld.h`,
 `network.h`, `benchmark_service.h`) all carry archive operators;
 `rpcgen_compile_test.py` exercises both modes.
 
-Status: Phase 1 (primitives, containers, FdSink/FdSource), Phase 2
-(`SerializableProxy` + registry), Phase 3a/3b
-(Marshal↔Archive and Marshallable↔Serializable bridges), Phase 3c
-(`rpcgen --archive` flag), Phase 3b-2
-(`reg_serializable_in_deputy`), Phase 3b-3 (`serializable_cast<T>` +
-RTTI on `SerializableFacade`), Phase 3e (rpcgen default flipped to
-`--archive`; archive ops added for `TxReply` and `ParentEdge<RccTx>`),
-Phase 3f-1 (`MarshallDeputy::sp_data_` elimination), Phase 3f-prep
-(`MarshallDeputy` archive operators).  Phase 3f-2/3/4/5 (the lazy
-`MarshallDeputy::serializable()` cache + its bridge
-`operator<<(BinaryWriteArchive&, MarshallDeputy&)` fast path) was
-retired by Workstream N L10d-prep — once production switched to
-`janus::Command` (`SerializableEnvelope<MakoCommands>`, which drives
-the proxy directly on save) the cache had no caller left.  Phase 4a-prep
-(`marshallable_cast` / `wrap_typed_marshallable` overloads for
-Serializable types — call-site transparency for migrations),
-Phase 4a-1/2/3 (TPC commands: `TpcNoopCommand`,
-`TpcEmptyCommand` via aliased adapter, `TpcPrepareCommand`,
-`TpcCommitCommand`, `TpcBatchCommand`), Phase 4d-prep (forward-declared
-bridge `wrap_typed_marshallable` in `marshal.hpp` so
-`MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` accept
-Serializable T's transparently), Phase 4d-1/2/3/4/5/6/7/8
-(`EmptyGraph`, five simple paxos types, three `procedure.h` types,
-`SyncLogResponse`, `RccGraph`, `VecPieceData` plus archive operators
-for `SimpleCommand`/`TxWorkspace`/`mdb::Value`, `LogEntry` +
-`BulkPaxosCmd`, `SimpleRWCommand`), Phase 4c-1
-(`ReplicatedDBCommand`), Phase 5a-1 (prune dead bypass-to-socket
-machinery on LogEntry / BulkPaxosCmd + delete unused
-`TypedPaxosLogEnvelopeAdapter`), and Phase 5b-1..5b-12 (Phase 5
-cleanup sweep: dead `TxData::to_marshal`/`from_marshal`; dead
-`MarInitializerState::proxy`; the broader bypass-to-socket
-infrastructure including `Marshal::bypass_copying` and chunk
-`shared_data`; `MarshallableProxy` facade + `MarshallableSharedPtrAdapter` +
-`make_marshallable_proxy`; `TypedMarshallableAdapter` machinery;
-`Marshallable::entity_size`/`write_to_fd` virtuals + dead
-`CustomMarshallable` test class; `Marshal::write_to_fd` +
-`chunk::write_to_fd` + `Marshal::read_from_fd` /
-`Marshal::chnk_read_from_fd` / `chunk::read_from_fd`; dead
-`RPC_STATISTICS` marshal-out + marshal-in infrastructure
-(`stat_marshal_out`/`stat_marshal_in`/`stat_marshal_report` +
-`g_marshal_*_stat[12]` arrays); `MarInitializerState` struct itself —
-factory now returns `shared_ptr<Marshallable>` directly; and
-`CmdData::to_marshal`/`from_marshal` overrides — the legacy 8-field
-virtual was dead code since `CmdData` is never registered or
-instantiated, and the only subclasses that actually serialize
-(`SimpleCommand`) use free `operator<<` overloads instead) have all
-landed. Every in-tree deptran payload uses the Serializable path,
-generated headers carry archive ops by default, and ~1410 LOC of
-dead infrastructure has been removed. Phase 3d (reactor TX/RX path
-on Sink/Source, + matching Phase 3e-2 to drop the legacy Marshal&
-emission) is partially landed — Phase 3d-1 migrated the channel-mode
-response demux (`ClientConnection::decode_response_and_notify`) off
-its temporary `Marshal body` onto a `BufferSource` +
-`BinaryReadArchive`, eliminating one Marshal allocation per inbound
-reply; Phase 3d-2 made `ClientConnection::request_via_channel<F>` and
-`request_with_options<F>` dual-signature, so write_fn lambdas can
-take either `Marshal&` (legacy) or `BinaryWriteArchive&` (new path)
-selected at compile time via `if constexpr` over
-`std::is_invocable_v`.  Phase 3d-3 extended the same dual dispatch
-to `ServerConnection::reply<F>` and flipped `rpcgen`'s emission to
-write `BinaryWriteArchive&` lambdas in every generated proxy
-request and reply — `rcc_rpc.h` and the small fixture headers
-regenerated, so production code is now on the archive path with no
-Marshal-write call sites in the generated layer.  Phase 3d-4 flipped
-`DeferredReply`'s stored callback type from
-`rusty::Function<void(Marshal&)>` to
-`rusty::Function<void(BinaryWriteArchive&)>` and updated lang_cpp.py
-to emit the matching lambda for deferred-style RPCs — every
-write-side lambda the rpcgen output now generates lands as
-`BinaryWriteArchive&`.  Phase 3d-5 then swept the remaining
-hand-written `Marshal&` write_fn callers across the codebase: 27
-test files under `src/rrr/tests/`, three Mako application files,
-`client.hpp` / `server.hpp` empty-lambda convenience overloads,
-the timeout/retry closure in `request_with_options<F>`, the doc
-snippet in `srpc-book.md`, and the user-facing examples in
-`docs/rpc/{api,migration-guide,reliability}.md` — about 150 lambda
-rewrites total, plus ~15 `m.write(p, n)` → `m.write_bytes(p, n)`
-body rewrites where the underlying Marshal API call needed to
-adapt to the archive's surface.  Phase 3d-6 finally migrated the
-Python C extension `_pyrpc.cpp` (drain Python-side Marshal into a
-contiguous `vector<uint8_t>`, then write through the archive's
-`out.write_bytes`) and collapsed the `if constexpr` dual-signature
-dispatches in `request_via_channel<F>`, `request_with_options<F>`,
-and `reply<F>` into a single archive-only path with a
-`static_assert` for clearer call-site error messages.  After Phase
-3d-6, every write-side caller in the production path uses
-`BinaryWriteArchive&`; the only remaining `Marshal&` references
-sit in (a) the additive Phase 3c user-struct `operator<<>>`
-overloads (Phase 3e-2 drops those), (b) the legacy
-`Marshallable::to_marshal` virtual override pattern in
-non-Serializable types (Phase 4 + Phase 5 territory), and (c) the
-intentional byte-format-parity tests in
-`rpc_marshal_archive_test.cc`.  Phase 3d is complete.
+Status: the archive layer landed in five broad strokes.
 
-Workstream N L10c retired the `MarshallDeputy` envelope from
-production polymorphic command fields: graphs migrated to
-`AnyMessage` (L10c-graphs), and the closed-set `[v32 kind][payload]`
-envelope is now `janus::Command`
-(`SerializableEnvelope<MakoCommands>`, L10c-cmds-prep / restructure /
-prep2 / fields / sites).  L10d-prep then deleted the lazy
-`MarshallDeputy::serializable()` cache + the
-`MarshallableSerializableAdapter` reverse-direction bridge it backed,
-trimming ~622 LOC of dead transitional machinery.
+1. **Foundation (Phases 1–3)** — primitive / container archive ops,
+   `SerializableProxy` + registry, `rpcgen --archive` (now the
+   default), `Marshal↔Archive` adapters (`MarshalSink` / `MarshalSource`),
+   archive ops on `Value` / `SimpleCommand` / `TxWorkspace` /
+   `TxReply` / `ParentEdge<RccTx>` so every in-tree `.rpc` references
+   archive-aware types.
+2. **Reactor TX/RX migration (Phase 3d)** — channel-mode response
+   demux moved to `BufferSource`, request/reply lambdas typed as
+   `BinaryWriteArchive&`, `DeferredReply`'s stored callback flipped
+   to `rusty::Function<void(BinaryWriteArchive&)>`, the Python C
+   extension migrated, and `if constexpr` dual-signature dispatch
+   collapsed back to a single archive-only path.  Every write-side
+   caller in the production path now uses `BinaryWriteArchive&`.
+3. **Per-payload Serializable migration (Phase 4)** — every in-tree
+   deptran payload (`EmptyGraph`, the simple paxos control types,
+   `procedure.h` types, `SyncLogResponse`, `RccGraph`, `VecPieceData`,
+   `LogEntry`, `BulkPaxosCmd`, `SimpleRWCommand`,
+   `ReplicatedDBCommand`, the TPC commands) defines `save` / `load` /
+   `kind` directly with no `Marshallable` inheritance.
+4. **Dead-code sweep (Phase 5)** — the bypass-to-socket fast path,
+   `MarshallableProxy` / `MarshallableSharedPtrAdapter`,
+   `TypedMarshallableAdapter`, the `Marshallable::entity_size` /
+   `write_to_fd` virtuals, the `RPC_STATISTICS` marshal-out / marshal-
+   in counters, `MarInitializerState`, and dead
+   `CmdData::to_marshal` / `from_marshal` overrides — ~1410 LOC of
+   transitional / dead infrastructure removed.
+5. **Workstream N L10 — Marshallable + MarshallDeputy retirement.**
+   - **L10c** retired the `MarshallDeputy` envelope from production
+     polymorphic command fields: graphs migrated to `AnyMessage`
+     (L10c-graphs), and the closed-set `[v32 kind][payload]` envelope
+     became `janus::Command` (`SerializableEnvelope<MakoCommands>`).
+   - **L10d-prep** deleted the lazy `MarshallDeputy::serializable()`
+     cache and the `MarshallableSerializableAdapter` reverse-direction
+     bridge (~622 LOC).
+   - **L10f-2 step 5** (the final cut, 2026-05-05) flipped
+     `Command::inner_` and `AnyMessage::payload_` from
+     `shared_ptr<Marshallable>` to `pro::proxy<SerializableFacade>`
+     value members; retired `marshal_serializable_bridge.hpp` (528
+     LOC); deleted the `Marshallable` abstract base and the
+     `MarshallDeputy` concrete envelope from `marshal.hpp` /
+     `marshal.cpp` (~500 LOC); migrated every
+     `reg_serializable_in_deputy<T>` callsite to
+     `SerializableRegistry::reg<T>()`; flipped raft's in-process
+     `AppendEntriesReq.cmd` field type from `MarshallDeputy` to
+     `::janus::Command`.
 
-The remaining `Marshallable::to_marshal` / `from_marshal` virtual
-deletion (and `MarshallDeputy` itself) is **L10f**, still pending.
-`MarshallDeputy` lingers as the in-memory shape that ~30 internal
-scheduler / server / coord APIs taking `shared_ptr<Marshallable>`
-still consume — and `Command::inner_marshallable()` returns the
-same `shared_ptr<Marshallable>` shape — so closing the loop needs
-those internal APIs to move off `shared_ptr<Marshallable>` first.  See
+Result: every payload type in the tree implements `save` / `load` /
+`kind` directly; closed-set polymorphism rides
+`SerializableEnvelope<TypeList>` (typed as `janus::Command` for
+Mako); open-set polymorphism rides `rrr::AnyMessage`; both envelopes
+back their storage with `pro::proxy<SerializableFacade>` value
+members and have no `shared_ptr<Marshallable>` layer.  The only
+`Marshal&` references that remain in source are the intentional
+byte-format-parity tests in `rpc_marshal_archive_test.cc` and the
+`Marshal` buffer abstraction itself (still used as the underlying
+storage that `MarshalSink` / `MarshalSource` adapt to the archive
+API).
+
+For deeper background see
 [`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
-for the full design.
+and [`docs/dev/l10f-2-command-inner-design.md`](dev/l10f-2-command-inner-design.md).
 
 ---
 
