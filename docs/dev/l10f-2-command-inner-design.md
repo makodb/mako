@@ -377,6 +377,58 @@ revisiting.  Looking at the actual fixture usage:
 * `any_message.hpp`: production code that inherits Marshallable;
   the most substantial migration target.
 
+## Update 2026-05-05 (later): Steps 2.5 + 5-prep landed
+
+* `9779f5e7c` — migrated 5 fixture-using tests
+  (rpc_marshallable_proxy_test.cc nested-payload tests +
+  rpc_log_storage_test.cc LogEntry tests) to use real MakoCommands
+  types (HeartBeatLog / TpcEmptyCommand) instead of the legacy
+  fixtures.
+
+* `e62cb7954` — deleted the 8 tests in rpc_marshallable_proxy_test.cc
+  that exercised pure MarshallDeputy / Marshallable infrastructure
+  (the 3 fixtures `TestMarshallable`, `CanaryMarshallable`, the 1 test
+  using `CanaryMarshallable`) — they retire alongside the API.
+
+* `fc84612c5` — migrated `AnyMessage` off Marshallable inheritance.
+  The class no longer inherits Marshallable, dropped `to_marshal` /
+  `from_marshal` / `try_cast(MarshallDeputy&)` and the
+  `MarshallDeputy::reg_initializer<AnyMessage>(ANY_MESSAGE)`
+  static-init line.  Test code (rpc_any_message_test.cc and
+  rpc_marshallable_proxy_test.cc) rewritten to use the direct
+  archive round-trip path that production already uses.
+
+## Remaining work (handoff)
+
+The largest remaining items are interconnected and substantial:
+
+1. **Storage flip** (`Command::inner_` from `shared_ptr<Marshallable>`
+   to `shared_ptr<pro::proxy<SerializableFacade>>`).  Touches every
+   `.inner()` / `.inner_marshallable()` consumer (~15 production sites
+   that pass shared_ptr<Marshallable> to legacy APIs).
+
+2. **Test-side MarshallDeputy migration**.  ~13 tests in
+   rpc_marshallable_proxy_test.cc + ~6 tests in
+   rpc_marshal_archive_test.cc use `MarshallDeputy` as a wire-
+   round-trip envelope.  Each can be rewritten using `Command` (whose
+   Marshal& archive operators were added in L10f-2 step 2 and emit
+   identical wire bytes for closed-set types).
+
+3. **Drop bridge** (`SerializableMarshallableAdapter`,
+   `wrap_typed_marshallable`, `marshallable_cast<T>(shared_ptr<
+   Marshallable>)`, `as_marshallable`, `make_serializable_proxy`,
+   `wrap_serializable`, `wrap_serializable_aliased`) from
+   `marshal_serializable_bridge.hpp`.  Depends on (1) and (2).
+
+4. **Drop `MarshallDeputy`** class.  Production has zero runtime
+   declarations; only test code and a few source-level aliases
+   (`using rrr::MarshallDeputy;`) remain.  Depends on (2).
+
+5. **Drop `Marshallable`** abstract base.  The final retirement.
+
+Each step is bounded but cumulatively several hours of careful
+work.  Wire bytes stay invariant across all steps.
+
 **Revised path:** Step 5 (drop Marshallable) is the natural next
 single-step retirement once Step 2.5's narrow scope (3-4 tests
 retargeted, plus AnyMessage migration) is done.  Step 3 (storage
