@@ -103,7 +103,6 @@ std::vector<int> CommunicatorRule::LeadersForPartition(parid_t par_id) const {
   switch (config->replica_proto_) {
     case MODE_RAFT:
     case MODE_FPGA_RAFT:
-    case MODE_MONGODB:
       leaders.push_back(0);
       break;
     case MODE_COPILOT:
