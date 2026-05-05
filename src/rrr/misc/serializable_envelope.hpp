@@ -99,6 +99,36 @@ class SerializableEnvelope {
     refresh_kind();
   }
 
+  // L10f-2 step 4 (2026-05-04): templated ctor for non-Marshallable
+  // Serializable types.  Routes through `wrap_typed_marshallable<T>`
+  // (its `!is_base_of_v<Marshallable, T>` overload in
+  // marshal_serializable_bridge.hpp) so call sites that did
+  // `Command(wrap_typed_marshallable(sp))` can drop the wrap and write
+  // `Command(sp)` directly — including the implicit-conversion sites
+  // (`coo->Submit(sp)`, `cmd_field = sp;`).
+  template<typename T>
+    requires (!std::is_base_of_v<Marshallable, T>)
+  SerializableEnvelope(std::shared_ptr<T> sp)
+      : inner_(wrap_typed_marshallable(std::move(sp))) {
+    refresh_kind();
+  }
+
+  // L10f-2 step 4 (2026-05-05): direct templated assignment for
+  // non-Marshallable T.  Without this, `cmd_field = sp;` (sp is
+  // shared_ptr<T> for some non-Marshallable Serializable T) is
+  // ambiguous between two implicit user-defined conversions:
+  // shared_ptr<T> → Command (via the templated ctor above) and
+  // shared_ptr<T> → MarshallDeputy (via MarshallDeputy's matching
+  // templated ctor).  A direct exact-match overload outranks both
+  // user-defined conversion sequences and resolves the ambiguity.
+  template<typename T>
+    requires (!std::is_base_of_v<Marshallable, T>)
+  SerializableEnvelope& operator=(std::shared_ptr<T> sp) {
+    inner_ = wrap_typed_marshallable(std::move(sp));
+    refresh_kind();
+    return *this;
+  }
+
   // -- Migration compat: matches `MarshallDeputy::set_marshallable` ------
   // Lets `cmd.set_marshallable(sp)` patterns continue to compile.
   void set_marshallable(std::shared_ptr<Marshallable> sp) {
