@@ -17,7 +17,7 @@
 
 #include "../rrr.hpp"
 #include "../misc/any_message.hpp"
-#include "../misc/marshal_serializable_bridge.hpp"
+#include "../misc/marshal_archive.hpp"
 
 namespace rrr {
 namespace {

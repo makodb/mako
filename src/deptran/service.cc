@@ -12,7 +12,7 @@
 #include "janus/scheduler.h"
 #include "procedure.h"
 #include "rcc/dep_graph.h"
-#include "rrr/misc/marshal_serializable_bridge.hpp"  // wrap_serializable_aliased
+#include "rrr/misc/marshal_archive.hpp"  // wrap_serializable_aliased
 #include "service.h"
 #include "rcc/server.h"
 #include "scheduler.h"

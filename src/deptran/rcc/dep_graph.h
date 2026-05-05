@@ -10,7 +10,7 @@
 // open-set `AnyMessage` envelope. Pull in the bridge header (for
 // `wrap_serializable_aliased`, `marshallable_cast<T>` overloads) and
 // `any_message.hpp` for the envelope type.
-#include "rrr/misc/marshal_serializable_bridge.hpp"
+#include "rrr/misc/marshal_archive.hpp"
 #include "rrr/misc/any_message.hpp"
 
 /**

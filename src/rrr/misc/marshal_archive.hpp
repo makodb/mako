@@ -908,6 +908,28 @@ struct SerializableSharedPtrHolder {
 
 }  // namespace details
 
+// CRTP base providing `kind()` (instance) + `static_kind()` (static)
+// derived from a TypeList position.  Production payload types
+// inherit `rrr::Serializable<MyType, MakoCommands>` to pick up these
+// methods + satisfy the SerializableFacade convention shape.
+//
+// L10f-2 step 5 (2026-05-05): moved here from marshal_serializable_bridge.hpp
+// when that header retired with the rest of the bridge.
+struct DefaultPayloadList {
+  template<typename T>
+  static constexpr int32_t index_of() noexcept { return 0; }
+};
+
+template<typename Derived, typename PayloadList = DefaultPayloadList>
+struct Serializable {
+  int32_t kind() const noexcept {
+    return PayloadList::template index_of<Derived>();
+  }
+  static int32_t static_kind() noexcept {
+    return PayloadList::template index_of<Derived>();
+  }
+};
+
 // L6-pivot (2026-05-01): the `SerializableConcept<T>` C++20 concept
 // was retired in this commit.  It described the "T has save/load/kind"
 // shape, but it duplicated what `SerializableFacade` already enforces

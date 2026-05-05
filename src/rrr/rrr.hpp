@@ -48,7 +48,7 @@
 // call sites that invoke those templates with a Serializable T (one
 // migrated off Marshallable) would fail the legacy `requires` clause
 // and emit a no-matching-function error.
-#include "misc/marshal_serializable_bridge.hpp"
+#include "misc/marshal_archive.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/event.h"
 #include "misc/marshallable_proxy.h"

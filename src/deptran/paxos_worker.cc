@@ -1,6 +1,6 @@
 #include "paxos/server.h"
 #include "paxos/commo.h"
-#include "rrr/misc/marshal_serializable_bridge.hpp"
+#include "rrr/misc/marshal_archive.hpp"
 #include "service.h"
 #include <chrono>
 #include <thread>
