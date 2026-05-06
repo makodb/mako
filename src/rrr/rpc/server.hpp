@@ -455,31 +455,23 @@ public:
     // always bind_channel before any reply.
     template<typename F>
     void reply(const Request& req, i32 error_code, F&& write_fn) const {
-        Marshal body;
-        v64 v_reply_xid = req.xid;
-        v32 v_error_code = error_code;
-        // @unsafe { Marshal::operator<< }
-        {
-            body << v_reply_xid;
-            body << v_error_code;
-            body << v64(static_cast<i64>(ctx_->server_instance_id));
-        }
-        // write_fn is exclusively
-        // BinaryWriteArchive&-shaped (Marshal& branch removed); the
-        // archive wraps the same `body` through a `MarshalSink`, so
-        // wire bytes stay byte-for-byte identical to the legacy path.
+        // Build response body directly into a contiguous `BufferSink`.
+        // Header (`v64 xid`, `v32 error_code`,
+        // `v64 server_instance_id`) and the user payload accumulate
+        // in `body_sink.bytes`; passed straight to the channel layer
+        // with no `Marshal` chunks and no intermediate `body_bytes`
+        // copy.  Mirrors the same simplification on the client send
+        // path.
+        BufferSink body_sink;
+        BinaryWriteArchive ar(&body_sink);
         static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                       "reply write_fn must accept BinaryWriteArchive&");
-        MarshalSink sink(&body);
-        BinaryWriteArchive ar(&sink);
+        ar << v64(req.xid);
+        ar << v32(error_code);
+        ar << v64(static_cast<i64>(ctx_->server_instance_id));
         write_fn(ar);
-        const std::size_t body_size = body.content_size();
-        std::vector<std::uint8_t> body_bytes;
-        if (body_size > 0) {
-            body_bytes.resize(body_size);
-            verify(body.read(body_bytes.data(), body_size) == body_size);
-        }
-        dispatch_response_frame_via_channel(body_bytes.data(), body_size);
+        dispatch_response_frame_via_channel(body_sink.bytes.data(),
+                                            body_sink.bytes.len());
     }
 
     // @safe - Sends empty reply

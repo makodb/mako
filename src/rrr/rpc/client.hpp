@@ -1454,35 +1454,24 @@ private:
             pending_guard->insert(fu->xid_, fu);
         }
 
-        // Build frame body — no size prefix; the channel adds it.
-        // the user write_fn is invoked
-        // exclusively through a `BinaryWriteArchive` over
-        // `MarshalSink(&body)`.  The legacy `void(Marshal&)` write_fn
-        // signature was removed once every caller migrated (Phase
-        // 3d-5).  `Marshal body` is now an internal byte accumulator
-        // for the header (xid + rpc_id) plus the archive-emitted
-        // payload — a future leaf can flip it to `BufferSink` to drop
-        // `Marshal` from this path entirely.
-        Marshal body;
-        // @unsafe { Marshal operators }
-        body << v64(fu->xid_);
-        body << rpc_id;
+        // Build frame body directly into a contiguous `BufferSink`.
+        // Header (`v64 xid`, `i32 rpc_id`) plus user payload (via
+        // `write_fn`) accumulate in `body_sink.bytes`
+        // (`rusty::Vec<uint8_t>`) and are passed straight to the
+        // channel layer — no `Marshal` chunk allocations and no
+        // intermediate `body_bytes` copy.  Eliminates one heap
+        // allocation + one memcpy per outbound RPC.
+        BufferSink body_sink;
+        BinaryWriteArchive ar(&body_sink);
         static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                       "request write_fn must accept BinaryWriteArchive&");
-        MarshalSink sink(&body);
-        BinaryWriteArchive ar(&sink);
+        ar << v64(fu->xid_);
+        ar << rpc_id;
         write_fn(ar);
 
-        const std::size_t body_size = body.content_size();
-        std::vector<std::uint8_t> body_bytes;
-        if (body_size > 0) {
-            body_bytes.resize(body_size);
-            // @unsafe { Marshal::read writes into raw buffer }
-            verify(body.read(body_bytes.data(), body_size) == body_size);
-        }
-
         const ChannelError ch_err =
-            dispatch_frame_via_channel(body_bytes.data(), body_size);
+            dispatch_frame_via_channel(body_sink.bytes.data(),
+                                       body_sink.bytes.len());
         if (ch_err != ChannelError::None) {
             {
                 auto pending_guard = pending_fu_.lock().unwrap();

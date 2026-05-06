@@ -114,20 +114,27 @@ using SourceProxy = pro::proxy<SourceFacade>;
 // In-memory byte sink. Bytes accumulate in `bytes` and can be observed
 // after each write or at the end. Mostly used for tests + as the
 // internal buffer for cases where Marshal-style accumulation is needed.
+//
+// Note: `rusty::Vec::reserve(n)` sets capacity to exactly `n` (not
+// geometric grow), so we double the capacity ourselves on every
+// realloc to keep amortized append cost O(1).  Without this, a
+// frame built from N small writes triggers N reallocations.
 class BufferSink {
  public:
   rusty::Vec<uint8_t> bytes;
 
-  // @safe - delegates to Vec::push, no raw pointer ops.
+  // @unsafe { memcpy + set_len bypass per-element init for trivial T=uint8_t }
   void write(const void* p, size_t n) {
-    // @unsafe { reading from the const void* p }
-    {
-      const auto* b = static_cast<const uint8_t*>(p);
-      bytes.reserve(bytes.len() + n);
-      for (size_t i = 0; i < n; ++i) {
-        bytes.push(b[i]);
-      }
+    if (n == 0) return;
+    const size_t old_len = bytes.len();
+    const size_t needed = old_len + n;
+    if (needed > bytes.capacity()) {
+      size_t new_cap = bytes.capacity() == 0 ? 64 : bytes.capacity() * 2;
+      while (new_cap < needed) new_cap *= 2;
+      bytes.reserve(new_cap);
     }
+    std::memcpy(bytes.data() + old_len, p, n);
+    bytes.set_len(needed);
   }
 
   // Allow callers to reset between encodings without reallocating.
