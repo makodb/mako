@@ -24,7 +24,7 @@ class SchedulerClassic: public TxLogServer {
   ~SchedulerClassic() {
   }
 
-  // Workstream N L10f-prep6n (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void MergeCommands(vector<shared_ptr<TxPieceData>>&,
@@ -72,7 +72,7 @@ class SchedulerClassic: public TxLogServer {
 
   virtual void DoAbort(Tx& tx_box);
 
-  // L6-A2 (2026-05-01): take janus::Command (matches RegLearnerAction
+  // take janus::Command (matches RegLearnerAction
   // signature in deptran/scheduler.h).
   virtual int Next(int, janus::Command) override;
 

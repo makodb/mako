@@ -1,6 +1,6 @@
-// Workstream N — out-of-line implementations for marshal_archive.
+// out-of-line implementations for marshal_archive.
 //
-// Phase 2 — SerializableRegistry. The registry maps int32_t kind tags
+// SerializableRegistry. The registry maps int32_t kind tags
 // to factories that construct fresh `SerializableProxy` instances.
 // Stored behind a SpinMutex because:
 //   - Static-init-time registrations (`SerializableRegistry::reg<T>`)
@@ -10,7 +10,7 @@
 // Lookups are read-mostly — registrations happen at static init time,
 // before any RPC traffic. SpinMutex is fine for the low contention.
 //
-// Phase 3a — MarshalSink / MarshalSource bridges. Method bodies live
+// MarshalSink / MarshalSource bridges. Method bodies live
 // here so `serializable.hpp` can forward-declare `class Marshal`
 // and avoid pulling the heavy `marshal.hpp` header into every TU.
 
@@ -23,7 +23,7 @@
 
 namespace rrr {
 
-// ---- Phase 3a: Marshal ↔ Archive bridges --------------------------
+// ---- Marshal ↔ Archive bridges --------------------------
 
 void MarshalSink::write(const void* p, size_t n) {
   // @unsafe { Marshal::write writes to its internal chunk list }
@@ -38,7 +38,7 @@ size_t MarshalSource::read(void* p, size_t n) {
   return m_->read(p, n);
 }
 
-// ---- Phase 2: SerializableRegistry --------------------------------
+// ---- SerializableRegistry --------------------------------
 
 namespace {
 

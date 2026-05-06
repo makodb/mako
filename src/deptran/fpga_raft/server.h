@@ -12,7 +12,7 @@ class CmdData;
 #define NUM_BATCH_TIMER_RESET  (100)
 #define SEC_BATCH_TIMER_RESET  (1)
 
-// Workstream N L10f-prep2 (2026-05-03): polymorphic command fields
+// polymorphic command fields
 // (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
 // `shared_ptr<Marshallable>` to `janus::Command`.  See
 // `docs/dev/l10-unblock-plan.md`.
@@ -75,7 +75,7 @@ class FpgaRaftServer : public TxLogServer {
   {
     Log_debug("set loc_id %d is leader %d", loc_id_, isLeader) ;
     is_leader_ = isLeader ;
-    // Workstream N Phase 4e-7: removed
+    // removed
     // `witness_.set_belongs_to_leader(isLeader);` — see the
     // companion comment on the deleted field/setter in scheduler.h.
   }
@@ -175,7 +175,7 @@ class FpgaRaftServer : public TxLogServer {
     return fpga_is_leader_ ;
   }
   
-  // Workstream N L10f-prep6ab (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void SetLocalAppend(const janus::Command& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
@@ -274,7 +274,7 @@ class FpgaRaftServer : public TxLogServer {
                       rusty::Function<void()> cb) ;
 
 
-  // Workstream N L10f-prep6ap (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void OnAppendEntries(const slotid_t slot_id,
@@ -290,12 +290,12 @@ class FpgaRaftServer : public TxLogServer {
                        uint64_t *followerLastLogIndex,
                        rusty::Function<void()> cb);
 
-  // Workstream N L10f-prep6ap (2026-05-03): take janus::Command.
+  // take janus::Command.
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
                 const janus::Command& cmd);
 
-  // Workstream N Phase 4e-39: removed `OnForward` declaration —
+  // removed `OnForward` declaration —
   // only caller was the deleted `FpgaRaftServiceImpl::Forward`
   // handler; the matching FpgaRaft::Forward RPC was dropped from
   // rcc_rpc.rpc.

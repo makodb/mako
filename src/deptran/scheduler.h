@@ -142,9 +142,9 @@ class Frequency {
   }
 };
 
-// Workstream N L10f-prep6f (2026-05-03): candidates_ migrated to
+// candidates_ migrated to
 // `unordered_map<uint64_t, janus::Command>`.
-// L10f-prep6aa (2026-05-03): external API (push_back, cmd_to_recover)
+// external API (push_back, cmd_to_recover)
 // also takes/returns Command; shared_ptr<Marshallable> callers
 // auto-convert via Command's implicit ctor.
 class RevoveryCandidates {
@@ -165,7 +165,7 @@ class RevoveryCandidates {
 };
 
 class Witness {
-  // Workstream N L10f-4 (2026-05-04): WitnessLog::cmd_ migrated from
+  // WitnessLog::cmd_ migrated from
   // shared_ptr<Marshallable> to janus::Command.  Conditional
   // WITNESS_LOG_DEBUG; never compiled in default builds.
   class WitnessLog {
@@ -191,7 +191,7 @@ class Witness {
       }
     }
   };
-  // Workstream N Phase 4e-7: removed `bool belongs_to_leader_{false};`
+  // removed `bool belongs_to_leader_{false};`
   // and `void set_belongs_to_leader(bool);` — the field was already
   // commented `// discard`; it was set in 3 callers
   // (`mencius/server.h:48`, `fpga_raft/server.h:75`,
@@ -208,7 +208,7 @@ class Witness {
   /* Recover related begin */
   ballot_t max_seen_ballot_ = -1, max_accepted_ballot_ = -1;
   int sid_ = -1, set_size_ = 0;
-  // Workstream N Phase 4e-7: removed `bool committed_ = false;` —
+  // removed `bool committed_ = false;` —
   // set by `TxLogServer::OnJetpackCommit` at scheduler.cc:1437 but
   // never read anywhere.  The matching `sid_` / `set_size_` fields
   // it was set alongside ARE read at scheduler.cc:1388-1389, so
@@ -217,7 +217,7 @@ class Witness {
 
   Witness() {};
   ~Witness() {};
-  // Workstream N L10f-prep6L (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   // return whether meet conflict, but not whether push_back success
@@ -232,7 +232,7 @@ class Witness {
   bool has_cmd_to_recover(key_t key) {
     return candidates_[key].has_cmd_to_recover();
   }
-  // Workstream N L10f-prep6aa (2026-05-03): returns Command;
+  // returns Command;
   // shared_ptr<Marshallable> callers auto-convert via implicit ctor.
   janus::Command cmd_to_recover(key_t key) {
     return candidates_[key].cmd_to_recover();
@@ -278,14 +278,14 @@ class RecentAverage {
   }
 };
 
-// Workstream N L10f-prep6ad (2026-05-03): removed dead `struct ResponseData`
+// removed dead `struct ResponseData`
 // (~30 LOC) — declared with `responses_`, `max_cmd_`, `accept_count_` etc.
 // fields plus `append_response()` and `GetMaxCmd()` methods, but never
 // instantiated, referenced, or constructed anywhere in the tree.
 
-// Workstream N L10f-prep6e (2026-05-03): rec_set_ migrated from
+// rec_set_ migrated from
 // `vector<shared_ptr<Marshallable>>` to `vector<janus::Command>`.
-// L10f-prep6z (2026-05-03): external API now also uses Command;
+// external API now also uses Command;
 // shared_ptr<Marshallable> callers auto-convert via Command's
 // implicit ctor.
 class RecoverySet {
@@ -309,7 +309,7 @@ class RecoverySet {
 
 
 
-// Workstream N Phase 4e-9: removed `struct CommitNotification` —
+// removed `struct CommitNotification` —
 // declared with 7 fields (client_stored_, committed_, commit_result_,
 // commit_callback_, coordinator_stored_, coordinator_commit_result_,
 // coordinator_replied_, receive_time_) but never instantiated
@@ -332,7 +332,7 @@ class TxLogServer {
   View old_view_, new_view_;
   int sid, rid, sid_cnt_ = 0;
   RecoverySet rec_set_;
-  // Workstream N Phase 4e-9: removed `bool simulated_fail_ = false;`
+  // removed `bool simulated_fail_ = false;`
   // — declared but never written or read anywhere.
   std::chrono::steady_clock::time_point jetpack_recovery_start_time_{};
   /* Some Jetpack elements end */
@@ -345,19 +345,19 @@ class TxLogServer {
   unordered_map<txid_t, mdb::Txn *> mdb_txns_{};
   unordered_map<txid_t, Executor *> executors_{};
 
-  // L6-A2 (2026-05-01): app_next_ now takes janus::Command (not
+  // app_next_ now takes janus::Command (not
   // shared_ptr<Marshallable>) so user code is one type level removed
   // from the rrr framework's wire-boundary shared_ptr.  MarshallDeputy
   // ctors are non-explicit, so callers passing `shared_ptr<Marshallable>`
   // (e.g. `instance->log_`) auto-convert at the call site.
   function<int(int, janus::Command)> app_next_{};
-  // Workstream N Phase 4e-9: removed
+  // removed
   //   `function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};`
   // — declared but never written or invoked anywhere.
 
   shared_ptr<mdb::TxnMgr> mdb_txn_mgr_{};
   int mode_;
-  // Workstream N Phase 4e-34: removed `Recorder *recorder_ = nullptr;`
+  // removed `Recorder *recorder_ = nullptr;`
   // — only assignment was a commented-out
   // `recorder_ = new Recorder(path);` in `scheduler.cc::SetupTransport`,
   // and the only readers were `dtxn->recorder_ = this->recorder_;`
@@ -380,7 +380,7 @@ class TxLogServer {
   bool in_upgrade_epoch_{false};
   const int EPOCH_DURATION = 5;
 
-  // Workstream N Phase 4e-9: removed `bool paused_ = false;` — set
+  // removed `bool paused_ = false;` — set
   // in `TxLogServer::Pause()` / `Resume()` (scheduler.cc:333, 338)
   // alongside `commo_->Pause()` / `commo_->Resume()` calls but
   // never read.  The Pause/Resume methods themselves are kept
@@ -388,7 +388,7 @@ class TxLogServer {
   // 396`) since the `commo_->Pause()` side effect is real; only the
   // dead `paused_` writes were removed.
 
-  // Phase 2.4: State machine recovery tracking
+  // State machine recovery tracking
   bool in_state_machine_recovery_{false};
   size_t transactions_recovered_{0};
 
@@ -490,7 +490,7 @@ class TxLogServer {
   virtual mdb::Txn *GetOrCreateMTxn(const i64 tid);
   virtual mdb::Txn *RemoveMTxn(const i64 tid);
 
-  // Workstream N Phase 4e-41: removed `get_prepare_log` declaration —
+  // removed `get_prepare_log` declaration —
   // see scheduler.cc retirement comment.
 
   // TODO: (Shuai: I am not sure this is supposed to be here.)
@@ -500,7 +500,7 @@ class TxLogServer {
                  mdb::Table *tbl
   );
 
-  // Workstream N L10f-prep6n (2026-05-03): takes janus::Command;
+  // takes janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   virtual int32_t Dispatch(cmdid_t cmd_id,
@@ -511,7 +511,7 @@ class TxLogServer {
     return REJECT;
   }
 
-  // L6-A2 (2026-05-01): take a `function<int(int, janus::Command)>`.
+  // take a `function<int(int, janus::Command)>`.
   // Lambdas registered here see the deputy directly; if they need the
   // legacy shared_ptr they can call `md.inner()`, or use the
   // `marshallable_cast<T>(md)` overload to downcast to a concrete type.
@@ -519,7 +519,7 @@ class TxLogServer {
     app_next_ = learner_action;
   }
 
-  // L6-A2 (2026-05-01): take janus::Command (matches RegLearnerAction
+  // take janus::Command (matches RegLearnerAction
   // signature above).  Body uses `md.inner()` / `marshallable_cast<T>(md)`
   // to access the underlying typed payload.
   virtual int Next(int, janus::Command md) { verify(0); };
@@ -530,7 +530,7 @@ class TxLogServer {
    */
   virtual bool CheckCommitted(const janus::Command& commit_cmd) { verify(0); }
 
-  // Workstream N Phase 4e-7: removed `virtual void Next(Marshallable&)
+  // removed `virtual void Next(Marshallable&)
   // { verify(0); }` — declared on the base but never overridden in
   // any subclass and never called.  The live virtual is the
   // `Next(int, shared_ptr<Marshallable>)` overload above.
@@ -561,7 +561,7 @@ class TxLogServer {
   unordered_map<key_t, value_t> database_;
   int database_operation_count_ = 0;
 
-  // Workstream N L10f-prep6i (2026-05-03): takes janus::Command;
+  // takes janus::Command;
   // unwraps to shared_ptr<Marshallable> at the boundary into
   // SimpleRWCommand which still takes the legacy shape.
   void ApplyToDatabase(const janus::Command& cmd) {
@@ -591,7 +591,7 @@ class TxLogServer {
   Witness witness_;
 
   // For Rule usage
-  // Workstream N L10f-prep6v (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void OnRuleSpeculativeExecute(const janus::Command& cmd,
@@ -599,19 +599,19 @@ class TxLogServer {
                                 value_t* result,
                                 bool_t* is_leader);
 
-  // Workstream N L10f-prep6v (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd);
 
   // @unsafe
-  // Workstream N L10f-prep6h (2026-05-03): takes janus::Command;
+  // takes janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void RuleWitnessGC(const janus::Command& cmd);
 
 #ifdef ZERO_OVERHEAD
-  // Workstream N L10f-prep6m (2026-05-03): takes janus::Command;
+  // takes janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   virtual bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) {
@@ -635,7 +635,7 @@ class TxLogServer {
   void JetpackCommit(int sid, int set_size);
 
   void JetpackResubmit(int sid, int set_size);
-  // Workstream N L10f-prep6y (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr<IntEvent> recovery_event = nullptr);
@@ -700,7 +700,7 @@ class TxLogServer {
                        const int32_t& sid, 
                        const int32_t& set_size);
   
-  // Workstream N L10f-prep6ae (2026-05-03): dropped trailing dead
+  // dropped trailing dead
   // `shared_ptr<Marshallable> cmd` parameter — was assigned by the
   // body but passed by value, so the assignment never propagated to
   // the caller.  Caller in service.cc::JetpackPullRecSetIns retains

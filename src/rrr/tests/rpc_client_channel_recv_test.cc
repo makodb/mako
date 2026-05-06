@@ -1,5 +1,5 @@
 // Channel-mode response demux test for `ClientConnection`
-// (Workstream K, sub-leaf 4c2).
+//.
 //
 // Verifies that when a `ChannelConnectionProxy` has been bound via
 // `bind_channel`, inbound response frames delivered through the
@@ -188,7 +188,7 @@ void pump_until(Pred&& pred, int max_iterations = 1000) {
 class ClientChannelRecvTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        // L1c-tests: rusty::Option<T> swap. `(*opt)` no longer
+        // rusty::Option<T> swap. `(*opt)` no longer
         // returns the inner T (it returns the Option itself);
         // use `opt.as_ref().unwrap()` for borrowed access.
         // `emplace`/`reset` aren't on rusty::Option — assign

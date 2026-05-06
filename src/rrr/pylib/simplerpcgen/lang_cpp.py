@@ -1,13 +1,12 @@
 from simplerpcgen.misc import SourceFile
 
-# Workstream N Phase 3c: optional archive overload emission.
+# optional archive overload emission.
 #
 # When `archive` is True (controlled by the `--archive` CLI flag on
 # rpcgen), `emit_struct` and `emit_marshaled_typed_struct` emit
 # additional `BinaryWriteArchive&` / `BinaryReadArchive&`
 # operator<</>> overloads alongside the existing `Marshal&` ones.
-# Both forms compile and produce byte-identical wire output (Phase 1
-# commitment); Phase 4 will migrate per-command-type call sites to
+# Both forms compile and produce byte-identical wire output; Phase 4 will migrate per-command-type call sites to
 # use the archive form.
 #
 # Default is off — generators run with the same behavior as before
@@ -22,9 +21,9 @@ def emit_struct(struct, f, archive=False):
             f.writeln("%s %s;" % (field.type, field.name))
     f.writeln("};")
     f.writeln()
-    # Workstream N Phase 3g-2: dropped the legacy
+    # dropped the legacy
     # `rrr::Marshal& operator>>(rrr::Marshal&, T&)` emission too.
-    # Phase 3g-1 flipped all rpcgen dispatcher reads to
+    # 1 flipped all rpcgen dispatcher reads to
     # `BinaryReadArchive`; the routed
     # `operator>>(rusty::RefMut<Marshal>&, U&)` in `client.hpp` also
     # dispatches through the archive layer, so hand-written
@@ -90,7 +89,7 @@ def emit_marshaled_typed_struct(struct_name, fields, f, archive=False):
         for field_type, field_name in fields:
             f.writeln("%s %s;" % (field_type, field_name))
     f.writeln("};")
-    # Workstream N Phase 3g-2: dropped the legacy `Marshal&` `>>`
+    # dropped the legacy `Marshal&` `>>`
     # emission too.  Phase 3g-1 flipped dispatcher reads to
     # `BinaryReadArchive`, and the routed
     # `operator>>(rusty::RefMut<Marshal>&, U&)` overload now also
@@ -165,7 +164,7 @@ def emit_typed_proxy_sync_signature(func, f):
     f.writeln("}")
 
 def emit_proxy_request_call(service, func, marshal_args, f):
-    # Workstream N Phase 3d-3: emit a `BinaryWriteArchive&` lambda
+    # emit a `BinaryWriteArchive&` lambda
     # for the proxy request.  Phase 3d-2's dual-signature
     # `request_via_channel<F>` accepts either signature; archive is
     # the path forward (decouples user code from the legacy `Marshal`
@@ -219,7 +218,7 @@ def emit_typed_proxy_future_wrapper(func, f):
                 f.writeln("return %s::Err(__ret__);" % result_type)
             f.writeln("}")
             f.writeln("%s __typed_resp__;" % response_struct_name)
-            # Workstream N Phase 3g-1: decode reply bytes through
+            # decode reply bytes through
             # BinaryReadArchive (matches the request-side archive
             # emission).  The borrow guard `__reply_guard__` keeps the
             # underlying `Marshal` alive for the entire chain of reads
@@ -246,7 +245,7 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
     f.writeln("%s async_%s(const %s& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (result_type, func.name, request_struct_name))
     with f.indent():
         if len(typed_async_call_params) > 0:
-            # Workstream N Phase 3d-3: see `emit_proxy_request_call`.
+            # see `emit_proxy_request_call`.
             f.writeln("auto __fu_result__ = __cl__->request(%sService::%s, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {" % (service.name, func.name.upper()))
             with f.indent():
                 for param in typed_async_call_params:
@@ -350,7 +349,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         input_fields = typed_struct_fields(func.input, "in")
                         output_fields = typed_struct_fields(func.output, "out")
                         f.writeln("%s __typed_req__;" % request_struct_name)
-                        # Workstream N Phase 3g-1: decode incoming request
+                        # decode incoming request
                         # bytes through BinaryReadArchive (matches the
                         # write-side archive emission landed in Phase 3d-3).
                         # MarshalSource bridges the legacy `req->m` Marshal
@@ -377,7 +376,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         output_fields = typed_struct_fields(func.output, "out")
                         input_fields = typed_struct_fields(func.input, "in")
                         f.writeln("%s __typed_req__;" % request_struct_name)
-                        # Workstream N Phase 3g-1: see comment under
+                        # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
                             f.writeln("rrr::MarshalSource __req_src__(&req->m);")
@@ -418,7 +417,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         output_fields = typed_struct_fields(func.output, "out")
                         input_fields = typed_struct_fields(func.input, "in")
                         f.writeln("%s __typed_req__;" % request_struct_name)
-                        # Workstream N Phase 3g-1: see comment under
+                        # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
                             f.writeln("rrr::MarshalSource __req_src__(&req->m);")
@@ -458,7 +457,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         output_fields = typed_struct_fields(func.output, "out")
                         input_fields = typed_struct_fields(func.input, "in")
                         f.writeln("%s __typed_req__;" % request_struct_name)
-                        # Workstream N Phase 3g-1: see comment under
+                        # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
                             f.writeln("rrr::MarshalSource __req_src__(&req->m);")
@@ -562,7 +561,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                     if len(sync_out_params) > 0:
                         f.writeln("if (__ret__ == 0) {")
                         with f.indent():
-                            # Workstream N Phase 3g-1: decode reply bytes
+                            # decode reply bytes
                             # through BinaryReadArchive — see the matching
                             # comment in `emit_typed_proxy_future_wrapper`.
                             f.writeln("auto __reply_guard__ = __fu__->get_reply();")

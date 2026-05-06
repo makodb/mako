@@ -4,17 +4,16 @@ RAFT PERSISTENCE TEST - STATUS AND NOTES
 Date: 2026-01-11
 Branch: zeyu-raft-disk
 
-NOTE (2026-05-05, Workstream N L10f-2 step 5)
----------------------------------------------
-This is a historical status document.  Workstream N L10f-2 step 5
-retired the `Marshallable` abstract base and the `MarshallDeputy`
-envelope; production persistence code now serializes through
-`janus::Command` (`SerializableEnvelope<MakoCommands>`) which
-produces byte-for-byte identical wire bytes to the prior
-`MarshallDeputy` path.  Where this doc says "wrap in
-MarshallDeputy" / "Marshallable kind", read "wrap in Command" /
-"Command kind"; the underlying logic and `[v32 kind][payload]`
-on-disk format are unchanged.
+NOTE
+----
+This is a historical status document.  The `Marshallable` abstract
+base and the `MarshallDeputy` envelope were later retired;
+production persistence code now serializes through `janus::Command`
+(`SerializableEnvelope<MakoCommands>`) which produces byte-for-byte
+identical wire bytes to the prior `MarshallDeputy` path.  Where this
+doc says "wrap in MarshallDeputy" / "Marshallable kind", read "wrap
+in Command" / "Command kind"; the underlying logic and
+`[v32 kind][payload]` on-disk format are unchanged.
 
 CURRENT STATUS
 --------------

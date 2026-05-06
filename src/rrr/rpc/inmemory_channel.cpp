@@ -1,4 +1,4 @@
-// Workstream K, leaf 6a — in-memory channel backend implementation.
+// in-memory channel backend implementation.
 
 #include <std_compat.hpp>
 

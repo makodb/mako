@@ -1,6 +1,6 @@
 #pragma once
 
-// Workstream N L8 — central `MakoCommands` TypeList.
+// central `MakoCommands` TypeList.
 //
 // Closes the closed-set half of the dual-envelope architecture
 // (counterpart to the open-set `rrr::AnyMessage` envelope from L7):
@@ -83,14 +83,14 @@ using MakoCommands = rrr::TypeList<
     ReplicatedDBCommand   // pos 19 (was CMD_REPLICATED_DB=23)
 >;
 
-// Workstream N L10c: `Command` is the user-facing closed-set
+// `Command` is the user-facing closed-set
 // polymorphic carrier — the user's "Command type" that wraps any of
 // the MakoCommands variants on the wire.  Replaces `MarshallDeputy`
 // for closed-set fields:
 //
 //   // Before (legacy):
 //   void Foo(MarshallDeputy md) { auto cmd = marshallable_cast<T>(md); }
-//   // After (L10c+):
+//   // After:
 //   void Foo(janus::Command cmd) { auto* p = cmd.unpack<T>(); }
 //
 // Wire format is byte-for-byte identical to post-L9 MarshallDeputy

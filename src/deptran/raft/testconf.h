@@ -46,7 +46,7 @@ class RaftTestConfig {
 
  private:
   static std::map<siteid_t, RaftFrame*> replicas;
-  // L6-A2 (2026-05-01): take janus::Command (matching the
+  // take janus::Command (matching the
   // RegLearnerAction signature change in deptran/scheduler.h).
   static std::map<siteid_t, std::function<int(int, janus::Command)>> commit_callbacks;
   static std::map<siteid_t, std::vector<int>> committed_cmds;
@@ -97,7 +97,7 @@ class RaftTestConfig {
   // Checks if the committed value for index is the same across servers.
   int NCommitted(uint64_t index);
 
-  // Workstream N Phase 4e-15: removed `shared_ptr<CommitIndex>
+  // removed `shared_ptr<CommitIndex>
   // StartAgreement(siteid_t, int);` — replaced by `Start()` long ago;
   // the impl in `testconf.cc` started with `verify(0); // this
   // function has been replaced by Start()` and had no callers.
@@ -192,7 +192,7 @@ class RaftTestConfig {
   RaftServer *GetServer(siteid_t svr);
 
   // ============================================================================
-  // SPECULATIVE RAFT STATE QUERIES (Phase 7)
+  // SPECULATIVE RAFT STATE QUERIES
   // ============================================================================
   // Query speculative state from servers for testing
 

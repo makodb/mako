@@ -42,14 +42,14 @@
 
 #include "../base/all.hpp"
 
-// Workstream N Phase 4d-prep: pull in `serializable.hpp` for
+// pull in `serializable.hpp` for
 // `SerializableProxy` / `SerializableFacade` definitions used by
 // `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` — the
 // templates dispatch transparently to the `wrap_typed_marshallable`
 // bridge overload (declared below) for migrated Serializable types
 // (any non-Marshallable T) — call sites need no updates.
 //
-// L6-pivot (2026-05-01): the `SerializableConcept<T>` constraint was
+// the `SerializableConcept<T>` constraint was
 // dropped from the bridge overloads here; templates now dispatch on
 // `!std::is_base_of_v<Marshallable, T>` alone and trust the proxy
 // library to reject wrong-shaped T at instantiation / runtime.  See
@@ -70,10 +70,10 @@ inline T safe_min(const T& a, const T& b) {
   { return std::min(a, b); }
 }
 
-// Workstream N Phase 5b-11: removed the entire `RPC_STATISTICS` block
+// removed the entire `RPC_STATISTICS` block
 // and `stat_marshal_in` declaration. After Phase 5b-7/5b-8 deleted
 // the marshal-out side, the marshal-in side became dead too once
-// Phase 5b-11 confirmed `Marshal::read_from_fd` /
+// 11 confirmed `Marshal::read_from_fd` /
 // `Marshal::chnk_read_from_fd` / `chunk::read_from_fd` had no
 // production callers anywhere in the codebase. The receive path
 // uses `FdSource` (`serializable.hpp`) instead.
@@ -85,7 +85,7 @@ class Marshal;
 class Marshal: public NoCopy {
 private:
   // Migrated from RefCounted to std::shared_ptr for automatic reference counting
-  // Workstream N Phase 5b-3: removed `marshallable_entity`,
+  // removed `marshallable_entity`,
   // `shared_data`, `written_to_socket` fields and the
   // `raw_bytes(MarshallDeputy, sz)` ctor — they backed the dead
   // bypass-to-socket fast path.
@@ -138,7 +138,7 @@ private:
     chunk *next;
 
     // Updated constructors to use std::make_shared instead of new.
-    // Workstream N Phase 5b-3: removed `chunk(MarshallDeputy, sz)`
+    // removed `chunk(MarshallDeputy, sz)`
     // ctor (backed dead bypass-to-socket fast path).
     chunk() : data(std::make_shared<raw_bytes>()),
               read_idx(0), write_idx(0), next(nullptr) { }
@@ -161,7 +161,7 @@ private:
     }
 
     size_t resize_to_current() {
-      // Workstream N Phase 5b-3: removed
+      // removed
       // `verify(data->shared_data == false)` — `shared_data` no
       // longer exists on raw_bytes.
       size_t sz = data->resize_to(write_idx);
@@ -224,7 +224,7 @@ private:
       return n_read;
     }
 
-    // Workstream N Phase 5b-3: removed `is_shared_data_chunk()` —
+    // removed `is_shared_data_chunk()` —
     // `data->shared_data` no longer exists.
 
     // @safe - Peeks at data in chunk buffer
@@ -255,11 +255,11 @@ private:
       return n_discard;
     }
 
-    // Workstream N Phase 5b-7: removed `chunk::write_to_fd(int)` —
+    // removed `chunk::write_to_fd(int)` —
     // its only caller was `Marshal::write_to_fd(int)` which went
     // away in the same commit (no production callers).
 
-    // Workstream N Phase 5b-11: removed `chunk::read_from_fd(int,
+    // removed `chunk::read_from_fd(int,
     // size_t)`. Its only callers were `Marshal::read_from_fd` and
     // `Marshal::chnk_read_from_fd` — both of which were unreferenced
     // by any production caller and went away in the same commit.
@@ -396,7 +396,7 @@ private:
     }
   }
 
-  // Workstream N Phase 5b-11: removed `read_from_fd(int)` and
+  // removed `read_from_fd(int)` and
   // `chnk_read_from_fd(int, size_t)`. Neither had any production
   // callers; the receive path uses `FdSource`
   // (`serializable.hpp`) instead.
@@ -415,7 +415,7 @@ private:
   // SAFETY: Internal @unsafe block wraps raw pointer operations (head_, tail_, chunk*)
   size_t read_from_marshal(Marshal &m, size_t n);
 
-  // Workstream N Phase 5b-7: removed `write_to_fd(int)`. It had no
+  // removed `write_to_fd(int)`. It had no
   // callers; new code uses `FdSink` (serializable.hpp) to write
   // archive bytes directly to a file descriptor.
 
@@ -451,7 +451,7 @@ private:
     return cnt;
   }
 
-  // Workstream N Phase 5b-3: removed `bypass_copying` — the dead
+  // removed `bypass_copying` — the dead
   // bypass-to-socket fast path that no production type ever
   // enabled (no caller set `bypass_to_socket_=true`).
 };
@@ -678,7 +678,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v)
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    // L9: rusty::BTreeMap iter `operator*()` returns
+    // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
     for (typename rusty::BTreeMap<K, V>::const_iterator it = v.begin(); it != v.end();
          ++it) {
@@ -740,7 +740,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    // L9: rusty::HashMap iter `operator*()` returns
+    // rusty::HashMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
     for (typename rusty::HashMap<K, V>::const_iterator it = v.begin();
          it != v.end(); ++it) {
@@ -1063,7 +1063,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
   return m;
 }
 
-// L10f-2 step 5 (2026-05-05): Marshal& operators for MarshallDeputy
+// 2 step 5 (2026-05-05): Marshal& operators for MarshallDeputy
 // retired with the class.  janus::Command (SerializableEnvelope<
 // MakoCommands>) has its own Marshal& archive operators in
 // serializable_envelope.hpp.

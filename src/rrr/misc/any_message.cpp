@@ -1,4 +1,4 @@
-// Workstream N L7 — `AnyMessage` runtime registry + wire hookup.
+// `AnyMessage` runtime registry + wire hookup.
 //
 // Header: any_message.hpp.
 //
@@ -6,7 +6,7 @@
 // SpinMutex. Mirrors the SerializableRegistry idiom — registrations
 // at static-init, lookups during RPC dispatch.
 //
-// Workstream N L10f-2 step 5 (2026-05-05): payload_ is now a value-
+// payload_ is now a value-
 // typed `pro::proxy<SerializableFacade>` (no more `shared_ptr<
 // Marshallable>`).  The factory returns a holder-shaped proxy
 // matching `SerializableEnvelope`'s storage shape, so unpack

@@ -75,7 +75,7 @@ TEST(RequestQueueTest, FifoOrder) {
     }
 }
 
-// L5o (2026-05-01): the prior `Peek` and `PeekEmptyReturnsFalse`
+// the prior `Peek` and `PeekEmptyReturnsFalse`
 // tests went away with the `RequestQueue::peek(QueuedRequest&)`
 // method itself — once `QueuedRequest::callback` migrated to
 // move-only rusty::Function, peek's `out = guard->front();` copy

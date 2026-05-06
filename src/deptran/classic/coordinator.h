@@ -100,7 +100,7 @@ class CoordinatorClassic : public Coordinator {
   void Restart() override;
 
   virtual void DispatchAsync();
-  // Workstream N Phase 4e-43: removed `DispatchSync()` declaration —
+  // removed `DispatchSync()` declaration —
   // never called externally; impl deleted.
   virtual void DispatchAsync(bool last);
   virtual void DispatchAck(phase_t phase,
@@ -130,7 +130,7 @@ class CoordinatorClassic : public Coordinator {
 
   void ForwardTxnRequest(TxRequest& req);
   void ForwardTxRequestAck(const TxReply&);
-  // Workstream N Phase 4e-43: removed `___phase_one_tids_` /
+  // removed `___phase_one_tids_` /
   // `___phase_three_tids_` debug sets and `___TestPhaseOne` /
   // `___TestPhaseThree` test helpers — only references were
   // commented-out call sites in tapir/coordinator.cc and

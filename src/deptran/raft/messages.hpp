@@ -2,7 +2,7 @@
 
 /**
  * @file messages.hpp
- * @brief Plain C++ Raft RPC payload structs (Phase 0 of the Raft decouple plan).
+ * @brief Plain C++ Raft RPC payload structs.
  *
  * These structs are the abstract representation of every Raft RPC carried
  * over the wire today. They do not contain any rrr-specific machinery
@@ -35,7 +35,7 @@
 namespace janus {
 namespace raft {
 
-// Workstream N L10f-2 step 5 (2026-05-05): MarshallDeputy retired;
+// MarshallDeputy retired;
 // production wire path uses janus::Command directly.
 
 // ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ struct AppendEntriesReq {
   uint64_t       leader_prev_log_index{0};
   uint64_t       leader_prev_log_term{0};
   uint64_t       leader_commit_index{0};
-  // L10f-2 step 5 (2026-05-05): `cmd` migrated from `MarshallDeputy`
+  // 2 step 5 (2026-05-05): `cmd` migrated from `MarshallDeputy`
   // to `janus::Command` (= `SerializableEnvelope<MakoCommands>`)
   // alongside the Marshallable/MarshallDeputy retirement.  Wire format
   // is identical (`[v32 kind][payload]` for both, post-L9 alignment).

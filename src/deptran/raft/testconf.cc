@@ -326,7 +326,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
   return 0;
 }
 
-// Workstream N Phase 4e-15: removed
+// removed
 //   `shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t,
 //    int)`
 // — body started with `verify(0); // this function has been replaced
@@ -843,7 +843,7 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
 }
 
 // ============================================================================
-// SPECULATIVE RAFT STATE QUERIES (Phase 7)
+// SPECULATIVE RAFT STATE QUERIES
 // ============================================================================
 
 bool RaftTestConfig::IsSecuredLeader(siteid_t svr) {

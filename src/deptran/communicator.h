@@ -213,7 +213,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
             continue;
           }
           auto& state = key_states_[it->second];
-          // L10f-prep6an: GetCombinedCmdID still takes shared_ptr<Marshallable>.
+          // GetCombinedCmdID still takes shared_ptr<Marshallable>.
           uint64_t cmd_id = SimpleRWCommand::GetCombinedCmdID(cmd);
           int count = ++state.cmd_counts_[cmd_id];
           if (count > state.max_count) {
@@ -233,7 +233,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
     }
   }
 
-  // Workstream N L10f-prep6x (2026-05-03): return Commands directly
+  // return Commands directly
   // (no inner_marshallable() unwrap).  JetpackBroadcastRecordCmd takes
   // the same shape on input.
   std::vector<std::pair<key_t, janus::Command>> GetRecoveredCommands() const {
@@ -252,7 +252,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   epoch_t max_oepoch_ = -1;
 
  private:
-  // Workstream N L10f-prep6e: max_cmd migrated to janus::Command.
+  // max_cmd migrated to janus::Command.
   struct KeyState {
     key_t key;
     std::unordered_map<uint64_t, int> cmd_counts_;
@@ -346,9 +346,9 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
   using QuorumEvent::QuorumEvent;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
-  // Workstream N L10f-prep6d (2026-05-03): recovered_cmd_ migrated
+  // recovered_cmd_ migrated
   // from `shared_ptr<Marshallable>` to `janus::Command`.
-  // L10f-prep6z (2026-05-03): GetRecoveredCmd now returns Command too;
+  // GetRecoveredCmd now returns Command too;
   // shared_ptr<Marshallable> callers auto-convert via implicit ctor.
   janus::Command recovered_cmd_;
 
@@ -391,12 +391,12 @@ class Communicator {
   map<siteid_t, ClassicProxy *> rpc_proxies_{};
   map<parid_t, vector<SiteProxyPair>> rpc_par_proxies_{};
   map<parid_t, SiteProxyPair> leader_cache_ = {};
-  // Workstream N Phase 4e-10: removed `lat_util_` and `leader_`
+  // removed `lat_util_` and `leader_`
   // fields — `lat_util_` was referenced only in commented-out
   // `Log_info` lines at `classic/coordinator.cc:474, 651`; `leader_`
   // had no readers or writers anywhere in the codebase.
   //
-  // Workstream N Phase 4e-17: excised the dead CPU-utilization /
+  // excised the dead CPU-utilization /
   // RPC-latency profiling subsystem.  Removed fields:
   //   - `unordered_map<uint64_t, pair<rrr::i64, rrr::i64>> outbound_`
   //     (RPC start-time map; written in `BroadcastDispatch` callback
@@ -435,7 +435,7 @@ class Communicator {
   std::vector<std::thread> threads;
   bool broadcasting_to_leaders_only_{true};
   bool follower_forwarding{false};
-  // Workstream N Phase 4e-18: removed `std::mutex lock_;`,
+  // removed `std::mutex lock_;`,
   // `std::condition_variable cv_;`, and `bool waiting = false;`
   // — neither field was accessed via `commo()->`/`commo_->` from
   // any caller, nor by any internal `Communicator` member function.
@@ -505,9 +505,9 @@ class Communicator {
   virtual void BroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
                          Coordinator *coo,
                          const std::function<void(int res, TxnOutput &)> &) ;
-  // Workstream N Phase 4e-44: removed `SyncBroadcastDispatch(...)`
+  // removed `SyncBroadcastDispatch(...)`
   // declaration — only call site was the now-deleted
-  // `CoordinatorClassic::DispatchSync` (Phase 4e-43).
+  // `CoordinatorClassic::DispatchSync`.
 
 	shared_ptr<QuorumEvent> SendReelect();
 
@@ -563,12 +563,12 @@ class Communicator {
   void AddMessageHandler(std::function<bool(const janus::Command&,
                                             janus::Command&)>);
 
-  // Workstream N Phase 4e-26: removed `BroadcastBulkPrepare`,
+  // removed `BroadcastBulkPrepare`,
   // `BroadcastHeartBeat`, `BroadcastSyncNoOps` virtual stubs — the
   // matching `MultiPaxosCommo` overrides + `PaxosWorker::Send*`
   // senders were deleted in Phases 4e-25/4e-26.
 
-    // Workstream N L10f-prep6t: take janus::Command;
+    // take janus::Command;
     // shared_ptr<Marshallable> callers auto-convert.
     virtual void ForwardToLearner(parid_t par_id,
                                   uint64_t slot,
@@ -607,7 +607,7 @@ class Communicator {
                                                                    epoch_t jepoch, epoch_t oepoch);
   shared_ptr<JetpackPullCmdQuorumEvent> JetpackBroadcastPullCmd(parid_t par_id, locid_t loc_id, 
                                                                const std::vector<key_t>& keys, epoch_t jepoch, epoch_t oepoch);
-  // Workstream N L10f-prep6x (2026-05-03): take Commands directly
+  // take Commands directly
   // (was vector<pair<key_t, shared_ptr<Marshallable>>>).  Callers
   // produce these from GetRecoveredCommands.
   shared_ptr<QuorumEvent> JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,

@@ -10,7 +10,7 @@
 
 using namespace rrr;
 
-// Workstream N Phase 5b-5: removed the `TypedOnlyPayload` test
+// removed the `TypedOnlyPayload` test
 // fixture (struct + namespace + adapter typedef +
 // `TypedMarshallableAdapterTraits` specialization +
 // `EnsureTypedOnlyPayloadInitializer` helper +
@@ -22,7 +22,7 @@ using namespace rrr;
 
 namespace {
 
-// L10f-2 step 5 (2026-05-05): retired the
+// 2 step 5 (2026-05-05): retired the
 // `static_assert(!std::is_base_of_v<Marshallable, ...>)` block — the
 // `Marshallable` type is gone, so the check is no longer
 // expressible. The Phase 4 migration that motivated these guards is
@@ -30,10 +30,10 @@ namespace {
 
 template <typename T>
 std::shared_ptr<T> RoundTripTypedPayload(const std::shared_ptr<T>& src) {
-  // L10f-2 step 5 (2026-05-05): wire round-trip via Command's
+  // 2 step 5 (2026-05-05): wire round-trip via Command's
   // Marshal& archive operators (added in L10f-2 step 2; same wire
   // bytes as the legacy MarshallDeputy path).  T is auto-wrapped by
-  // Command's templated non-Marshallable ctor (L10f-2 step 4a).
+  // Command's templated non-Marshallable ctor.
   janus::Command outgoing{src};
   Marshal m;
   m << outgoing;
@@ -73,7 +73,7 @@ std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
 
 }  // namespace
 
-// Workstream N L10f-2 step 5 (2026-05-05): removed eight tests
+// removed eight tests
 // (`DeputyDefaultsToNoMarshallable`,
 // `DeputyStoresProxyAndPreservesInnerSharedPtr`,
 // `DeputyRoundTripPreservesDerivedMarshallable`,
@@ -87,20 +87,20 @@ std::shared_ptr<janus::TpcCommitCommand> MakeTypedTpcCommitPayload(
 // `MarshallDeputy` / `Marshallable` infrastructure that retires
 // alongside in this same commit.
 //
-// Workstream N Phase 5b-5: removed
+// removed
 // `TypedPayloadRoundTripsViaDeputyAdapter` and
 // `TypedPayloadInitializerStateContainsAdapter` tests — they
 // exercised the `TypedMarshallableAdapter` trait path, which is
 // gone now (every production payload uses Serializable).
 
-// L10f-2 step 5 (2026-05-05): removed
+// 2 step 5 (2026-05-05): removed
 // `DeptranVecPieceDataUsesTypedAdapterPath` — exercised the
 // `wrap_serializable_aliased` aliasing identity through
 // `MarshallDeputy`.  Both helpers retire in this same commit;
 // the remaining `DeptranVecPieceDataNonEmptyRoundTrip` test
 // covers the wire-roundtrip case for VecPieceData.
 
-// Phase 4d-6: round-trip a populated VecPieceData (with a real
+// round-trip a populated VecPieceData (with a real
 // SimpleCommand carrying TxWorkspace input + map<int32_t,Value> output
 // fields) through Marshal serialization to exercise the new archive
 // operators end-to-end. This stresses the SimpleCommand,
@@ -142,7 +142,7 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataNonEmptyRoundTrip) {
   payload->sp_vec_piece_data_->push_back(cmd2);
 
   // Serialize via Command's Marshal& archive operators (added in
-  // L10f-2 step 2; same wire bytes as the legacy MarshallDeputy
+  // 2 step 2; same wire bytes as the legacy MarshallDeputy
   // path).
   janus::Command outgoing{payload};
   Marshal m;
@@ -193,7 +193,7 @@ TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
   src.view_.leaders_ = {1, 2, 1};
   src.partition_id_ = 7;
 
-  // Phase 4d-3: ViewData migrated to Serializable. Use Archive
+  // ViewData migrated to Serializable. Use Archive
   // round-trip — the Marshal-based to_marshal/from_marshal methods
   // are gone.
   Marshal m;
@@ -300,7 +300,7 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   EXPECT_EQ(decoded_batch->cmds_.at(0)->tx_id_, 101);
   EXPECT_EQ(decoded_batch->cmds_.at(1)->tx_id_, 202);
 
-  // L10f-2 step 5 (2026-05-05): TpcEmptyCommand round-trip via
+  // 2 step 5 (2026-05-05): TpcEmptyCommand round-trip via
   // Command::pack_aliased preserves the caller's shared_ptr identity.
   auto empty_cmd = std::make_shared<janus::TpcEmptyCommand>();
   janus::Command empty_envelope =
@@ -346,7 +346,7 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
   auto payload = std::make_shared<janus::EmptyGraph>();
   ASSERT_NE(payload, nullptr);
 
-  // Workstream N L7: graph payloads moved from kind-tagged Serializable
+  // graph payloads moved from kind-tagged Serializable
   // to the open-set `AnyMessage` envelope.  L10f-2 step 5 (2026-05-05):
   // AnyMessage no longer inherits Marshallable; the envelope rides
   // directly in RPC fields without a surrounding MarshallDeputy.
@@ -404,7 +404,7 @@ TEST(MarshallableProxyFacadeTest,
   auto sync_resp = std::make_shared<janus::SyncLogResponse>();
   auto sync_noop = std::make_shared<janus::SyncNoOpRequest>();
 
-  // L10f-2 step 5 (2026-05-05): construction path verifies that
+  // 2 step 5 (2026-05-05): construction path verifies that
   // wrapping in `Command` produces the kind-tag the TypeList
   // position dictates.
   EXPECT_EQ(janus::Command{bulk_prepare}.kind_,

@@ -1,5 +1,5 @@
 /**
- * Unit tests for Phase 3.2: Connection Health Metrics
+ * Unit tests for Connection Health Metrics
  * Tests ConnectionMetrics tracking of requests, bytes, latency, and connection lifecycle.
  */
 

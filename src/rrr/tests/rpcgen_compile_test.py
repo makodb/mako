@@ -25,14 +25,14 @@ RPC_SOURCES = [
     "src/deptran/rcc_rpc.rpc",
 ]
 
-# Workstream N Phase 3c: a subset of RPC sources is also tested with
+# a subset of RPC sources is also tested with
 # the `--archive` flag, which causes rpcgen to emit additional
 # BinaryWriteArchive / BinaryReadArchive operator<<>> overloads. Only
 # fixtures whose .rpc references types that already have archive
 # operators (primitives + std/rusty containers + user types defined
 # in the same .rpc) are listed here. `rcc_rpc.rpc` is excluded
 # because it uses `MarshallDeputy` and other types that don't have
-# archive operators yet (Phase 3f / Phase 4 work).
+# archive operators yet.
 RPC_SOURCES_ARCHIVE = [
     "src/deptran/helloworld.rpc",
     "src/deptran/network.rpc",

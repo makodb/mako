@@ -73,13 +73,13 @@ using rrr::i64;
 using rrr::Future;
 using rrr::DragonBall;
 using rrr::RandomGenerator;
-// Workstream N Phase 4e-36: removed `using rrr::Recorder;` — class deleted.
+// removed `using rrr::Recorder;` — class deleted.
 using rrr::AvgStat;
 using rrr::ALock;
 using rrr::TimeoutALock;
 using rrr::PollThread;
 using rrr::Marshal;
-// Workstream N L10f-2 step 5 (2026-05-05): retired
+// retired
 // `using rrr::Marshallable` and `using rrr::MarshallDeputy` —
 // the underlying classes are gone in this same release.
 

@@ -8,12 +8,12 @@ namespace janus {
 
 
 class TxData;
-// Workstream N L8: TypeList-derived kind from `MakoCommands` position.
+// TypeList-derived kind from `MakoCommands` position.
 // Previously held a manual `kMarshallKind = MarshallDeputy::CMD_TPC_PREPARE`
 // constant; the position in `MakoCommands` (see mako_commands.h) now
 // supplies the kind via the `Serializable` CRTP base.
 //
-// Workstream N L10f-prep4 (2026-05-03): the nested polymorphic
+// the nested polymorphic
 // command field `cmd_` migrated from `shared_ptr<Marshallable>` to
 // `janus::Command`.  Wire format unchanged; see
 // `docs/dev/l10-unblock-plan.md`.
@@ -28,8 +28,8 @@ class TpcPrepareCommand : public rrr::Serializable<TpcPrepareCommand,
   void load(BinaryReadArchive& ar);
 };
 
-// Workstream N L8: TypeList-derived kind via `MakoCommands` position.
-// Workstream N L10f-prep4: nested `cmd_` migrated to janus::Command.
+// TypeList-derived kind via `MakoCommands` position.
+// nested `cmd_` migrated to janus::Command.
 class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
                                                   MakoCommands> {
  public:
@@ -44,7 +44,7 @@ class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
   void load(BinaryReadArchive& ar);
 };
 
-// Workstream N L8: TypeList-derived kind via `MakoCommands` position.
+// TypeList-derived kind via `MakoCommands` position.
 // Wire payload empty (no fields). The `event` member is local state
 // used for sender↔apply synchronization on the leader; it is NOT
 // serialized. Construction sites that need the leader-local "wrap,
@@ -63,7 +63,7 @@ class TpcEmptyCommand : public rrr::Serializable<TpcEmptyCommand,
   void Done() { event->set(1); };
 };
 
-// Workstream N L8: TypeList-derived kind. Stateless tag command — no
+// TypeList-derived kind. Stateless tag command — no
 // fields, save/load are no-ops.
 class TpcNoopCommand : public rrr::Serializable<TpcNoopCommand,
                                                 MakoCommands> {
@@ -72,7 +72,7 @@ class TpcNoopCommand : public rrr::Serializable<TpcNoopCommand,
   void load(BinaryReadArchive&) {}
 };
 
-// Workstream N L8: TypeList-derived kind. Holds a vector of
+// TypeList-derived kind. Holds a vector of
 // TpcCommitCommand; each element's save/load uses TpcCommitCommand's
 // Serializable interface.
 class TpcBatchCommand : public rrr::Serializable<TpcBatchCommand,
@@ -93,7 +93,7 @@ public:
 
 } // namespace janus
 
-// Workstream N Phase 4e-2: removed an empty `namespace rrr {}` block
+// removed an empty `namespace rrr {}` block
 // that previously held `TypedMarshallableAdapterTraits<T>`
 // specializations for the TPC command types.  The traits machinery
 // went away in Phase 5b-5; all TPC types are now Serializables, and

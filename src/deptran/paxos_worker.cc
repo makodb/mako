@@ -14,12 +14,12 @@ vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 vector<shared_ptr<PaxosWorker>> ler_workers_g = {};
 
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
-// Workstream N Phase 4e-29: removed `coo_queue_nc` static definition
+// removed `coo_queue_nc` static definition
 // — never read or written outside commented-out code; field also gone.
 
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
-// Workstream N L8: registrations switched to no-arg
+// registrations switched to no-arg
 // `SerializableRegistry::reg<T>()` — kind auto-derived from each
 // type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
 // base returns the type's 1-indexed position in `MakoCommands`).
@@ -34,7 +34,7 @@ static int volatile x9  = rrr::SerializableRegistry::reg<PaxosPrepCmd>();
 
 static int shared_ptr_apprch = 1;
 
-// Workstream N Phase 4d-7: LogEntry::save/load. Wire format
+// LogEntry::save/load. Wire format
 // byte-for-byte preserved from the legacy to_marshal/from_marshal
 // pair. Encode: int length, then the operation_test bytes (as a
 // length-prefixed std::string) when present, else log_entry.
@@ -199,7 +199,7 @@ void PaxosWorker::SetupCommo() {
     }
     rep_sched_->commo_ = rep_commo_;
   }
-  // Workstream N Phase 4e-29: removed commented-out
+  // removed commented-out
   // `submit_pool = new SubmitPool();` — `SubmitPool` class deleted.
 }
 
@@ -228,7 +228,7 @@ void PaxosWorker::SetupHeartbeat() {
 }
 
 void PaxosWorker::WaitForShutdown() {
-  // Workstream N Phase 4e-29: removed `if (submit_pool != nullptr)
+  // removed `if (submit_pool != nullptr)
   // { delete submit_pool; submit_pool = nullptr; }` — field always
   // nullptr (never assigned non-null), and the `SubmitPool` class
   // is gone.
@@ -239,7 +239,7 @@ void PaxosWorker::WaitForShutdown() {
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     // Arc auto-releases on destruction
 
-    // Workstream N Phase 4e-35: removed `for_each_service(...) { if
+    // removed `for_each_service(...) { if
     // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
     // recorder = s->recorder_; if (recorder) { Log::info(...) } } }`
     // block — `Service::recorder_` field is always nullptr (now
@@ -276,7 +276,7 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
         sp_cmd->slots.push_back(mpc.get()->slot_id_);
         sp_cmd->ballots.push_back(send_epoch);
-        // L10f-prep3a: CoordinatorMultiPaxos::cmd_ is now Command;
+        // CoordinatorMultiPaxos::cmd_ is now Command;
         // null check via has_value, copy via Command's copy ctor.
         verify(mpc->cmd_.has_value());
         janus::Command* md =  new janus::Command(mpc.get()->cmd_);
@@ -297,7 +297,7 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
     });
 }
 
-// Workstream N Phase 4e-25: removed `PaxosWorker::SendBulkPrepare` and
+// removed `PaxosWorker::SendBulkPrepare` and
 // `PaxosWorker::SendHeartBeat` — both became dead in Phase 4e-24 when
 // `send_bulk_prep` and `electionMonitor` (their only callers) went
 // away.  The `BroadcastBulkPrepare` / `BroadcastHeartBeat` commo
@@ -348,7 +348,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
         auto ps_j = dynamic_cast<PaxosServer*>(pxs_workers_g[j]->rep_sched_);
         for(int k = 0; k < responses[i]->missing_slots[j].size(); k++){
           auto inst = ps_j->GetInstance(responses[i]->missing_slots[j][k]);
-          // L10f-prep3a: PaxosData::committed_cmd_ is Command;
+          // PaxosData::committed_cmd_ is Command;
           // direct copy via Command's copy ctor.
           if(inst->committed_cmd_.has_value()){
 	    //Log_info("The slots are for partition %d slot %d", j, responses[i]->missing_slots[j][k]);
@@ -396,7 +396,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   return received_epoch;
 }
 
-// Workstream N Phase 4e-25: removed `PaxosWorker::SendSyncNoOpLog` —
+// removed `PaxosWorker::SendSyncNoOpLog` —
 // became dead in Phase 4e-24 when `send_no_ops_to_all_workers` (its
 // only caller) went away.  The `BroadcastSyncNoOps` commo method and
 // `MultiPaxosService::SyncNoOps` service handler / `OnSyncNoOps`
@@ -437,7 +437,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
   return nullptr;
 }
 
-// Workstream N Phase 4e-28: removed `AddAcceptNc` and
+// removed `AddAcceptNc` and
 // `StartReadAcceptNc` — the NC-batching path was driven by a
 // pthread launched from `InitQueueRead`'s commented-out
 // `Pthread_create(&bulkops_th_, ..., StartReadAcceptNc, ...)` line.
@@ -474,13 +474,13 @@ void PaxosWorker::WaitForSubmit() {
 void PaxosWorker::InitQueueRead(){
   if(IsLeader(site_info_->partition_id_)){
     stop_flag = false;
-    // Workstream N Phase 4e-28: removed commented-out
+    // removed commented-out
     // `Pthread_create(&bulkops_th_, ..., StartReadAcceptNc, this)` /
     // `pthread_detach(bulkops_th_)` — both target and field gone.
   }
 }
 
-// Workstream N Phase 4e-28: removed `AddReplayEntry` and
+// removed `AddReplayEntry` and
 // `StartReplayRead` — `StartReplayRead` was launched from a
 // commented-out `Pthread_create(&replay_th_, ..., StartReplayRead,
 // this)` line in the `PaxosWorker()` constructor; no surviving call
@@ -489,7 +489,7 @@ void PaxosWorker::InitQueueRead(){
 // this phase.
 
 PaxosWorker::PaxosWorker() {
-  // Workstream N Phase 4e-28: removed `stop_replay_flag = true;` plus
+  // removed `stop_replay_flag = true;` plus
   // the commented-out `Pthread_create(&replay_th_, ..., StartReplayRead,
   // this)` / `pthread_detach(replay_th_)` lines — the replay thread
   // never ran; the field went away with the dead method.
@@ -498,7 +498,7 @@ PaxosWorker::PaxosWorker() {
 PaxosWorker::~PaxosWorker() {
   Log_info("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
   stop_flag = true;
-  // Workstream N Phase 4e-28: removed `stop_replay_flag = true;` —
+  // removed `stop_replay_flag = true;` —
   // the field went away with the dead `StartReplayRead`.
 
   // Shutdown PollThreads if we own them

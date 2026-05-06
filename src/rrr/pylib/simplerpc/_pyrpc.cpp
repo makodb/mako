@@ -126,7 +126,7 @@ void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakSer
     if (sconn_opt.is_some()) {
         auto sconn = sconn_opt.unwrap();
         if (output_m != NULL) {
-            // Workstream N Phase 3d-6: drain the Python-side Marshal
+            // drain the Python-side Marshal
             // into a contiguous buffer and write through the archive's
             // raw-byte API.  The legacy `out.read_from_marshal(*output_m, n)`
             // chunk-share fast path is gone; the extra memcpy is
@@ -301,7 +301,7 @@ static PyObject* _pyrpc_client_async_call(PyObject* self, PyObject* args) {
     Marshal* m = (Marshal*) m_id;
 
     bool valid_id = m->valid_id;
-    // Workstream N Phase 3d-6: drain the Python-side Marshal into
+    // drain the Python-side Marshal into
     // a contiguous buffer and push it through the archive's
     // raw-byte API.  See the matching comment in
     // `_pyrpc_python_func_executor`'s reply path.
@@ -345,7 +345,7 @@ static PyObject* _pyrpc_client_sync_call(PyObject* self, PyObject* args) {
     Client* clnt = (Client*) u;
     Marshal* m = (Marshal*) m_id;
 
-    // Workstream N Phase 3d-6: drain the Python-side Marshal into
+    // drain the Python-side Marshal into
     // a contiguous buffer and push it through the archive's
     // raw-byte API.  See the matching comment in
     // `_pyrpc_python_func_executor`'s reply path.

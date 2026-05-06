@@ -1,5 +1,4 @@
-// Channel-mode reply test for `ServerConnection::reply` (Workstream
-// K, server sub-leaf 5b).
+// Channel-mode reply test for `ServerConnection::reply`.
 //
 // Exercises the new `bind_channel(...)` / `is_channel_mode()` /
 // `reply<F>` channel-mode path. A `CapturingChannelStub` records
@@ -108,7 +107,7 @@ inline rusty::Arc<RpcServiceContext> make_test_ctx() {
 
 class ServerChannelSendTest : public ::testing::Test {
  protected:
-    // L1c-tests: rusty::Option<T> swap. See
+    // rusty::Option<T> swap. See
     // rpc_client_channel_recv_test.cc for the API translation
     // pattern (`emplace` → `= rusty::Some(...)`, `reset` → `=
     // rusty::None`, `(*opt)` → `opt.as_ref().unwrap()`).

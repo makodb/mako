@@ -5,7 +5,7 @@
  * @brief Raft inbound-RPC dispatcher abstraction. Mirrors transport.hpp
  *        but for the receiver side.
  *
- * Design intent (Phase 8.0 — fiber-synchronous):
+ * Design intent:
  *  - Every `handle_*` method on the facade returns its reply type
  *    directly. The transport (rrr shim or in-memory channel worker)
  *    invokes the dispatcher and uses the returned value as the reply

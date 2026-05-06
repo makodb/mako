@@ -61,7 +61,7 @@ class Config {
   bool batch_start_;
   bool early_return_;
   bool retry_wait_;
-  // Workstream N Phase 4e-42: removed `string logging_path_;` field
+  // removed `string logging_path_;` field
   // — only readers (`do_logging` and `log_path`) were already
   // deleted in Phase 4e-41; only writer was the `-r` CLI flag (also
   // removed in this phase).
@@ -177,7 +177,7 @@ class Config {
          uint32_t duration,
          bool heart_beat,
          single_server_t single_server,
-         // Workstream N Phase 4e-42: removed `string logging_path,`
+         // removed `string logging_path,`
          // ctor parameter — field gone.
          int jetpack_fastpath_attempt_rate
   );
@@ -271,7 +271,7 @@ class Config {
   uint64_t get_txn_timeout() const { return txn_timeout_us_; }
   bool get_batch_start();
   bool do_early_return();
-  // Workstream N Phase 4e-41: removed `bool do_logging();` declaration
+  // removed `bool do_logging();` declaration
   // — see config.cc retirement comment.
   bool IsReplicated();
   int32_t get_tot_req();
@@ -282,7 +282,7 @@ class Config {
   bool get_failover_random() { return failover_random_; }
   bool get_failover_leader() { return failover_leader_; }
 
-  // Workstream N Phase 4e-41: removed `const char *log_path();`
+  // removed `const char *log_path();`
   // declaration — no callers anywhere.
 
   bool retry_wait();

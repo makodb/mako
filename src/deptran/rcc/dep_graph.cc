@@ -6,7 +6,7 @@
 
 namespace janus {
 
-// Workstream N L7: register the two graph types under the open-set
+// register the two graph types under the open-set
 // `AnyMessage` envelope.  Names use the canonical fully-qualified
 // `janus.<Type>` shape so receivers across multiple registries can
 // tell them apart.  Aborts loud if name collides — see

@@ -1,5 +1,5 @@
 // Wire-format guard test for the SRPC channel frame codec
-// (Workstream K, Phase 2).
+//.
 //
 // Validates `frame_codec.hpp` against the byte sequence that
 // `ClientConnection::handle_read` / `ServerConnection::handle_read`

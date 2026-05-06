@@ -1,5 +1,5 @@
 // Unit tests for the TCP channel backend's listener-side accept path
-// (Workstream K, Phase 1 leaf 3b).
+//.
 //
 // Strategy: bind a `TcpListener` to `127.0.0.1:0`, open client TCP
 // sockets in the same process, drive `handle_read()` directly to

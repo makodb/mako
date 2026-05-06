@@ -12,7 +12,7 @@
 #include <ctime>
 /**
  * Load balancing strategies for RPC client pools.
- * Part of Phase 5.2: Load Balancing Strategies.
+ * Load Balancing Strategies.
  *
  * Provides different strategies for selecting clients from a pool:
  * - RANDOM: Random selection (default, fast)

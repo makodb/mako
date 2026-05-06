@@ -1,6 +1,6 @@
 #pragma once
 
-// Workstream K, leaf 6a — in-memory `ChannelConnection` /
+// in-memory `ChannelConnection` /
 // `ChannelListener` / `ChannelFactory` backend for deterministic
 // SRPC tests.
 //

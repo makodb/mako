@@ -83,7 +83,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Log_info("OnCommit loc_id_=%d cmd_id=<%d, %d>", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
   auto instance = GetInstance(slot_id);
-  // L10f-prep3b: MenciusData::committed_cmd_ is now Command;
+  // MenciusData::committed_cmd_ is now Command;
   // assignment from shared_ptr<Marshallable>& works via the
   // Command operator=(shared_ptr<Marshallable>) overload.
   instance->committed_cmd_ = cmd;
@@ -108,7 +108,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   
 #ifdef JETPACK_DEDUPLICATE_OPTIMIZATION
   // deduplicate optimization: Accepted duplicated cmd can be ignored
-  // L10f-prep3b: cmd_ is Command; witness_.has_appeared still takes
+  // cmd_ is Command; witness_.has_appeared still takes
   // shared_ptr<Marshallable>.
   for (slotid_t id = max_committed_slot_; id < max_active_slot_; id++) {
     auto next_instance = GetInstance(id);
@@ -121,7 +121,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   slotid_t tmp_max_executed_slot_ = max_executed_slot_;
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
-    // L10f-prep3b: committed_cmd_ is Command; RuleWitnessGC and
+    // committed_cmd_ is Command; RuleWitnessGC and
     // SimpleRWCommand still take shared_ptr<Marshallable>; app_next_
     // takes Command directly.
     if (next_instance->committed_cmd_.has_value()) {
@@ -192,7 +192,7 @@ void MenciusServer::Setup() {
 #ifdef ZERO_OVERHEAD
 bool MenciusServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_env) {
   return false;
-  // L10f-prep6bb: Conflict has Command overload now; pass Commands.
+  // Conflict has Command overload now; pass Commands.
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   for (slotid_t id = max_executed_slot_ + 1; id <= max_active_slot_; id++) {
     auto next_instance = GetInstance(id);

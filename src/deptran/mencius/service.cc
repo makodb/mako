@@ -59,7 +59,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
   for (auto x: skip_commits) {
     auto cmd_ptr = std::make_shared<TpcCommitCommand>();
     janus::Command md{cmd_ptr};
-    // L10f-prep6q: OnCommit takes janus::Command directly.
+    // OnCommit takes janus::Command directly.
     sched_->OnCommit(x, 100, md, true);
   }
   sched_->g_mutex.unlock();

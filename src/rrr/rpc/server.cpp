@@ -560,7 +560,7 @@ int Server::start(const char* bind_addr) {
       drop_heartbeat_replies_,
       instance_id_));
 
-  // Workstream K, server sub-leaf 5f — auto-install default TcpFactory.
+  // auto-install default TcpFactory.
   //
   // If the caller hasn't bound a factory via `set_channel_factory(...)`,
   // construct one wrapping a default `TcpFactory(poll_thread_)` so the
@@ -575,7 +575,7 @@ int Server::start(const char* bind_addr) {
     set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
   }
 
-  // Workstream K, server sub-leaf 5e — channel-mode listen path.
+  // channel-mode listen path.
   //
   // Routes `start(addr)` through `factory->make_listener() ->
   // listener.set_on_accept(...) -> listener->listen(addr)` instead
@@ -771,16 +771,16 @@ bool Server::drain(uint64_t timeout_ms) {
 void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
     Log_info("Server::graceful_shutdown: starting graceful shutdown");
 
-    // Phase 1: Stop accepting new connections
+    // Stop accepting new connections
     stop_accepting();  // @unsafe
 
-    // Phase 2: Drain existing requests
+    // Drain existing requests
     bool drained = drain(drain_timeout_ms);  // @unsafe
     if (!drained) {
         Log_warn("Server::graceful_shutdown: drain timed out, proceeding with shutdown");
     }
 
-    // Phase 3: Execute shutdown hooks
+    // Execute shutdown hooks
     Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks");
     shutdown_phase_.set(ShutdownPhase::CLOSING);
 
@@ -800,7 +800,7 @@ void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
         }
     }
 
-    // Phase 4: Close all connections (destructor handles this)
+    // Close all connections (destructor handles this)
     // Signal shutdown to any waiting threads
     do_shutdown();
 

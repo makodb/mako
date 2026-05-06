@@ -47,7 +47,7 @@ TEST_F(LogEntryTest, ConstructionWithSlotAndTerm) {
 }
 
 TEST_F(LogEntryTest, FullConstruction) {
-    // L10f-2 step 2.5: use TpcEmptyCommand (a real Serializable in
+    // 2 step 2.5: use TpcEmptyCommand (a real Serializable in
     // MakoCommands) as the carried payload instead of a Marshallable
     // test fixture; the test exercises LogEntry's command-carrying
     // shape, the choice of T doesn't matter beyond "is a valid
@@ -78,7 +78,7 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
     original.committed = true;
     original.is_no_op = true;
 
-    // Workstream N Phase 4d-9: LogEntry's `to_marshal`/`from_marshal`
+    // LogEntry's `to_marshal`/`from_marshal`
     // were replaced with `save(BinaryWriteArchive&)` /
     // `load(BinaryReadArchive&)`. Drive bytes through the same backing
     // Marshal via MarshalSink/MarshalSource so this test continues to
@@ -110,7 +110,7 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
     auto cmd = std::make_shared<janus::TpcEmptyCommand>();
     LogEntry original(100, 20, cmd, true);
 
-    // Workstream N Phase 4d-9: see SerializationWithoutCommand for
+    // see SerializationWithoutCommand for
     // the to_marshal → save migration rationale.
     Marshal m;
     {

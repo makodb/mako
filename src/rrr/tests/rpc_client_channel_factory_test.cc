@@ -1,5 +1,5 @@
 // Channel-factory connect/reconnect test for `ClientConnection`
-// (Workstream K, sub-leaf 4e).
+//.
 //
 // Verifies that when a `ChannelFactoryProxy` has been bound via
 // `bind_factory(...)`, the connection routes its `connect(addr)`

@@ -6,7 +6,7 @@
 #include "command.h"
 #include "command_marshaler.h"
 #include "__dep__.h"
-// Workstream N L7: migrated from closed-set TypeList discriminants to
+// migrated from closed-set TypeList discriminants to
 // open-set `AnyMessage` envelope. Pull in the bridge header (for
 // `wrap_serializable_aliased`, `marshallable_cast<T>` overloads) and
 // `any_message.hpp` for the envelope type.
@@ -21,7 +21,7 @@ namespace janus {
 //typedef RccDTxn RccDTxn;
 typedef vector<RccTx*> RccScc;
 
-// Workstream N L7: graph payloads (`EmptyGraph`, `RccGraph`) moved
+// graph payloads (`EmptyGraph`, `RccGraph`) moved
 // from the closed-set TypeList discriminant pattern to the open-set
 // `AnyMessage` envelope.  No central TypeList — each type registers
 // under a stable string name and the envelope dispatches by that
@@ -46,7 +46,7 @@ class EmptyGraph {
 };
 
 class RccServer;
-// Workstream N L7: AnyMessage-wrapped Serializable.  `Graph<RccTx>`
+// AnyMessage-wrapped Serializable.  `Graph<RccTx>`
 // carries a `to_marshal`/`from_marshal` pair (graph.h:966) that emits
 // `uint64_t size` followed by per-vertex (id, *vertex) pairs. RccTx's
 // `operator<<`/`operator>>` are `verify(0)` stubs (tx.h:353-365), so

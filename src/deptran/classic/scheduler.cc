@@ -112,7 +112,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
 //  }
 //  verify(b1 == b2);
   verify(cmd_env.has_value());
-  // L10f-2 step 1: identity check via Command::operator==.
+  // 2 step 1: identity check via Command::operator==.
   if (!tx->cmd_.has_value()) {
     tx->cmd_ = cmd_env;
   } else if (tx->cmd_ != cmd_env) {
@@ -166,7 +166,7 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
                 PRIx64, __FUNCTION__, this->site_id_, tx_id);
   if (Config::GetConfig()->IsReplicated()) {
     auto sp_prepare_cmd = std::make_shared<TpcPrepareCommand>();
-    // L8: dropped tautological `kMarshallKind == static_kind()` verify.
+    // dropped tautological `kMarshallKind == static_kind()` verify.
     sp_prepare_cmd->tx_id_ = tx_id;
     sp_prepare_cmd->cmd_ = sp_tx->cmd_;
     sp_tx->is_leader_hint_ = true;
@@ -187,7 +187,7 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
 //    Log_debug("finished prepare command replication");
     return sp_tx->prepare_result->get();
   } else {
-    // Workstream N Phase 4e-41: collapsed `else if (do_logging()) {
+    // collapsed `else if (do_logging()) {
     // string log; get_prepare_log(tx_id, sids, &log); }` branch into
     // the else — the disk-logging path was a no-op (built `log` and
     // discarded it; `Recorder::submit` was already commented out and
@@ -204,7 +204,7 @@ int SchedulerClassic::PrepareReplicated(TpcPrepareCommand& prepare_cmd) {
   // TODO and return the prepare callback here.
   auto tx_id = prepare_cmd.tx_id_;
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
-  // L10f-prep6aj: prepare_cmd.cmd_ and sp_tx->cmd_ are both Command;
+  // prepare_cmd.cmd_ and sp_tx->cmd_ are both Command;
   // direct assignment.
   if (!sp_tx->cmd_.has_value())
     sp_tx->cmd_ = prepare_cmd.cmd_;
@@ -242,7 +242,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 //
   //always true
 #ifdef FULL_LOG_DEBUG
-  // L10f-prep6: GetCmdID still takes shared_ptr<Marshallable>.
+  // GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("cmd<%d, %d> entered SchedulerClassic::OnCommit, Config::GetConfig()->IsReplicated()=%d",
     SimpleRWCommand::GetCmdID(sp_tx->cmd_).first, SimpleRWCommand::GetCmdID(sp_tx->cmd_).second, Config::GetConfig()->IsReplicated());
 #endif
@@ -263,8 +263,8 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
     double start_ms = tp.tv_sec * 1000 + tp.tv_usec / 1000.0;
     cli2tx.append(start_ms - client_ms);
 
-    // L10f-prep6aj: Coordinator::Submit takes Command (prep6o);
-    // L10f-2 step 4: shared_ptr<TpcCommitCommand> auto-converts
+    // Coordinator::Submit takes Command (prep6o);
+    // 2 step 4: shared_ptr<TpcCommitCommand> auto-converts
     // through Command's templated non-Marshallable ctor.
     coo->Submit(cmd);
     
@@ -294,7 +294,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 
 void SchedulerClassic::DoCommit(Tx& tx_box) {
 #ifdef DB_CHECKSUM
-  // L10f-prep6i: ApplyToDatabase now takes Command directly.
+  // ApplyToDatabase now takes Command directly.
   ApplyToDatabase(tx_box.cmd_);
 #endif
   auto mdb_txn = RemoveMTxn(tx_box.tid_);
@@ -324,7 +324,7 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   if (sp_tx->commit_result->is_ready())
     return 0;
   int commit_or_abort = tpc_commit_cmd.ret_;
-  // L10f-prep6ba: both fields are Command; direct assignment.
+  // both fields are Command; direct assignment.
   if (!sp_tx->cmd_.has_value())
     sp_tx->cmd_ = tpc_commit_cmd.cmd_;
   if (!sp_tx->is_leader_hint_) {
@@ -335,7 +335,7 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
       verify(sp_tx->cmd_.has_value());
       unique_ptr<TxnOutput> out = std::make_unique<TxnOutput>();
 			DepId di = { "dep", 0 };
-      // L10f-prep6n: Dispatch now takes janus::Command directly.
+      // Dispatch now takes janus::Command directly.
       SchedulerClassic::Dispatch(sp_tx->tid_, di, sp_tx->cmd_, *out);
       DoPrepare(sp_tx->tid_);
     }
@@ -344,7 +344,7 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
     // Log_info("[SUCCESS] Scheduler received SUCCESS for tx_id: %lu", tx_id);
     sp_tx->committed_ = true;
     DoCommit(*sp_tx);
-    // Phase 2.4: Track recovered transactions
+    // Track recovered transactions
     if (in_state_machine_recovery_) {
       transactions_recovered_++;
     }
@@ -382,7 +382,7 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
 
 bool SchedulerClassic::CheckCommitted(const janus::Command& tpc_commit_cmd) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // L10f-2 step 4: caller passes Command directly; downcast via the
+  // 2 step 4: caller passes Command directly; downcast via the
   // SerializableEnvelope `marshallable_cast<T>` overload.
   auto commit_cmd = marshallable_cast<TpcCommitCommand>(tpc_commit_cmd);
   verify(commit_cmd != nullptr);
@@ -395,7 +395,7 @@ bool SchedulerClassic::CheckCommitted(const janus::Command& tpc_commit_cmd) {
 
 int SchedulerClassic::Next(int slot, janus::Command md) {
   if (md.kind_ == TpcPrepareCommand::static_kind()) {
-    // Phase 4a-3a: TpcPrepareCommand migrated to Serializable.
+    // TpcPrepareCommand migrated to Serializable.
     auto* c = md.unpack<TpcPrepareCommand>();
     verify(c != nullptr);
     PrepareReplicated(*c);
@@ -404,7 +404,7 @@ int SchedulerClassic::Next(int slot, janus::Command md) {
     verify(c != nullptr);
     CommitReplicated(*c);
   } else if (md.kind_ == TpcEmptyCommand::static_kind()) {
-    // Phase 4a-2: TpcEmptyCommand is now a Serializable; the apply
+    // TpcEmptyCommand is now a Serializable; the apply
     // path's Done() must wake the original sender's Wait() — possible
     // because construction sites use `wrap_serializable_aliased`,
     // which preserves shared_ptr aliasing through the proxy. On the

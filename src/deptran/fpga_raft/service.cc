@@ -15,7 +15,7 @@ void FpgaRaftServiceImpl::Heartbeat(const FpgaRaftService::RpcHeartbeatRequest& 
   this->Heartbeat(req.leaderPrevLogIndex, req.dep_id, &resp.followerPrevLogIndex, std::move(defer));
 }
 
-// Workstream N Phase 4e-39: removed `Forward` typed-rpc override
+// removed `Forward` typed-rpc override
 // (and matching N-arg overload further below).
 
 void FpgaRaftServiceImpl::Vote(const FpgaRaftService::RpcVoteRequest& req, FpgaRaftService::RpcVoteResponse& resp, rrr::DeferredReply defer) {
@@ -50,7 +50,7 @@ void FpgaRaftServiceImpl::Heartbeat(const uint64_t& leaderPrevLogIndex,
   defer.reply();
 }
 
-// Workstream N Phase 4e-39: removed `Forward(janus::Command, ...)`
+// removed `Forward(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim
 // above; the receiver `FpgaRaftServer::OnForward` is also gone.
 

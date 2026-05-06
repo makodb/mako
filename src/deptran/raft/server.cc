@@ -158,7 +158,7 @@ bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
 }  // namespace
 
 // ============================================================================
-// LOG PERSISTENCE IMPLEMENTATION (Phase 1.3)
+// LOG PERSISTENCE IMPLEMENTATION
 // ============================================================================
 
 // @unsafe - Uses LogStorage API
@@ -316,7 +316,7 @@ bool RaftServer::RecoverFromStorage() {
     for (const auto& entry : entries) {
       auto data = std::make_shared<RaftData>();
       data->term = entry.term;
-      // L10f-prep1/2: both LogEntry::command and RaftData::log_ are
+      // prep1/2: both LogEntry::command and RaftData::log_ are
       // janus::Command — direct copy (Command is cheap to copy via
       // its inner shared_ptr).
       data->log_ = entry.command;
@@ -386,7 +386,7 @@ void RaftServer::ReplayCommittedEntries() {
   Log_info("[RAFT-REPLAY] Site %d: Replayed %zu entries, executeIndex now %lu",
            site_id_, replayed, executeIndex);
 
-  // Phase 2.3: Log uncommitted entries status
+  // Log uncommitted entries status
   size_t uncommitted = GetUncommittedCount();
   if (uncommitted > 0) {
     Log_info("[RAFT-RECOVERY] Site %d: %zu uncommitted entries (lastLogIndex=%lu, commitIndex=%lu) - will be resolved by consensus",
@@ -764,7 +764,7 @@ void RaftServer::StartApplyFiber() {
 // Enqueue newly committed entries for the background apply thread.
 // Called from OnAppendEntries (already under mtx_) when commitIndex advances.
 void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit) {
-  // L10f-prep6c: apply_queue_ now holds Command — direct copy from
+  // apply_queue_ now holds Command — direct copy from
   // RaftData::log_ (also Command after prep2).
   std::vector<std::pair<slotid_t, Command>> batch;
   slotid_t first_missing = 0;
@@ -810,7 +810,7 @@ void RaftServer::StartApplyThread() {
     auto last_log_time = std::chrono::steady_clock::now();
     while (!stop_ && apply_thread_running_.load()) {
       // Drain entries from the queue
-      // L10f-prep6c: apply_queue_ holds Command; entry is
+      // apply_queue_ holds Command; entry is
       // pair<slotid_t, Command>.  RuleWitnessGC takes
       // shared_ptr<Marshallable> so unwrap at the boundary; app_next_
       // takes Command directly.
@@ -975,7 +975,7 @@ void RaftServer::Setup() {
     }
   }
 
-  // ========== INITIALIZE SNAPSHOT MANAGER (Phase 3.1) ==========
+  // ========== INITIALIZE SNAPSHOT MANAGER ==========
   InitializeSnapshotManager();
 
   // ========== INITIALIZE REPLICATED DB (optional) ==========
@@ -1343,7 +1343,7 @@ void RaftServer::applyLogs() {
       if (next_instance && next_instance->log_.has_value()) {
         // @unsafe
         {
-        // L10f-prep2: RuleWitnessGC takes shared_ptr<Marshallable>;
+        // RuleWitnessGC takes shared_ptr<Marshallable>;
         // app_next_ takes Command — Command's auto-conversion +
         // explicit unwrap meet at the boundary.
         RuleWitnessGC(next_instance->log_);
@@ -1399,7 +1399,7 @@ void RaftServer::applyLogs() {
 struct PendingAppendEntries {
   siteid_t follower_id;
   shared_ptr<AppendEntriesResponse> response;  // shared_ptr ensures callback memory safety
-  // Workstream N L10f-prep6af (2026-05-03): migrated from
+  // migrated from
   // `shared_ptr<Marshallable>` to `janus::Command`.  Empty Command
   // (has_value() == false) signals heartbeat.
   janus::Command cmd;
@@ -1515,7 +1515,7 @@ void RaftServer::HeartbeatLoop() {
 
         uint64_t prevLogIndex = 0;
         uint64_t prevLogTerm = 0;
-        // Workstream N L10f-prep6am (2026-05-03): migrated from
+        // migrated from
         // `shared_ptr<Marshallable> cmd = nullptr` to `janus::Command{}`.
         // Empty Command (has_value() == false) signals heartbeat.
         janus::Command cmd{};
@@ -1603,11 +1603,11 @@ void RaftServer::HeartbeatLoop() {
                 if (!curInstance) {
                   Log_error("[HEARTBEAT-SEND] GetRaftInstance(%lu) returned NULL, skipping", it->second);
                 } else {
-                  // L10f-prep6am: cmd is Command; assign directly from
+                  // cmd is Command; assign directly from
                   // curInstance->log_ (also Command).
                   cmd = curInstance->log_;
                   cmdLogTerm = curInstance->term;
-                  // L10f-2 step 1: debug log no longer needs the
+                  // 2 step 1: debug log no longer needs the
                   // inner shared_ptr's raw pointer; the kind tag is
                   // a more useful identifier anyway.
                   Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd_kind=%d",
@@ -1630,7 +1630,7 @@ void RaftServer::HeartbeatLoop() {
                   Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%lu) returned NULL, skipping", idx);
                   continue;
                 }
-                // L10f-prep2: curInstance->log_ is Command; the
+                // curInstance->log_ is Command; the
                 // `marshallable_cast<T>(SerializableEnvelope&)`
                 // overload (in serializable_envelope.hpp) handles
                 // this directly.
@@ -1887,7 +1887,7 @@ void RaftServer::HeartbeatLoop() {
           // Persist updated speculative indices
           PersistSpeculativeIndicesToLogStorage();
 
-          // Phase 5.3: Notify clients with SPECULATIVE status for newly committed entries
+          // Notify clients with SPECULATIVE status for newly committed entries
           if (lastSpecNotifiedIndex_ < newSpecCommitIndex) {
             uint64_t notifyFrom = std::max(lastSpecNotifiedIndex_, oldSpecCommitIndex);
             NotifyCallbacks(notifyFrom, newSpecCommitIndex, CommitStatus::SPECULATIVE);
@@ -2324,7 +2324,7 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
       // Persist updated speculative indices
       PersistSpeculativeIndicesToLogStorage();
 
-      // Phase 5.3: Notify clients with DURABLE status for newly secured entries
+      // Notify clients with DURABLE status for newly secured entries
       if (lastDurableNotifiedIndex_ < newSecuredIndex) {
         uint64_t notifyFrom = std::max(lastDurableNotifiedIndex_, oldSecuredLogIndex);
         NotifyCallbacks(notifyFrom, newSecuredIndex, CommitStatus::DURABLE);
@@ -3241,7 +3241,7 @@ void RaftServer::InitiateLeadershipTransfer() {
 }
 
 // ============================================================================
-// SPECULATIVE REPLICATION STATE (Phase 1.1)
+// SPECULATIVE REPLICATION STATE
 // ============================================================================
 
 void RaftServer::ResetSpeculativeState() {
@@ -3305,7 +3305,7 @@ void RaftServer::VerifySpeculativeInvariants() const {
     verify(specCommitIndex_ <= lastLogIndex);
   }
 
-  // Note (Phase 6): durableVoters ⊆ specVoters is NOT strictly enforced after crashes.
+  // Note: durableVoters ⊆ specVoters is NOT strictly enforced after crashes.
   // A crashed node loses its memory vote but keeps its durable vote on disk.
   // This is expected behavior, not an invariant violation.
   //
@@ -3366,11 +3366,11 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
   //    - Same logic: durable acks survive crashes by definition
 
   // Check if we need to become secured or step down
-  // Phase 6: Relaxed invariant - durableVoters and specVoters are independent after crashes
+  // Relaxed invariant - durableVoters and specVoters are independent after crashes
   if (!securedLeader_ && is_leader_) {
     size_t quorum = GetQuorumSize();
 
-    // NEW (Phase 6.4.1): Check if durable quorum is sufficient for secured status
+    // NEW: Check if durable quorum is sufficient for secured status
     // Note: site_id_ is already in durableVoters_ (inserted by ResetSpeculativeState
     // or RequestElection), so no +1 needed. This matches OnVoteDurable() at line 1417.
     size_t durable_vote_count = durableVoters_.size();
@@ -3435,12 +3435,12 @@ void RaftServer::stepDown(StepDownReason reason) {
 
   Log_info("[SPEC-RAFT] Site %d: Step-down complete, now follower", site_id_);
 
-  // Notify pending callbacks of rollback based on step-down reason (Phase 5.3)
+  // Notify pending callbacks of rollback based on step-down reason
   NotifyRollback(reason);
 }
 
 // ============================================================================
-// CLIENT NOTIFICATION CALLBACKS (Phase 5.3)
+// CLIENT NOTIFICATION CALLBACKS
 // ============================================================================
 
 void RaftServer::RegisterCommitCallback(uint64_t index,

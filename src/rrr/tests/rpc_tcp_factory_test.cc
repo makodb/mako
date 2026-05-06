@@ -1,5 +1,5 @@
 // End-to-end integration tests for the TCP channel backend's
-// `TcpFactory` (Workstream K, Phase 1 leaf 3c).
+// `TcpFactory`.
 //
 // Strategy: create a real `PollThread`, build a `TcpFactory` against
 // it, and exercise the full connect / listen / accept / send / recv /

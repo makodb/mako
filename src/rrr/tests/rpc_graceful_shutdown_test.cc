@@ -1,5 +1,5 @@
 /**
- * Unit tests for Graceful Server Shutdown (Phase 4.1)
+ * Unit tests for Graceful Server Shutdown
  *
  * Tests the shutdown phase tracking, hooks, request tracking,
  * drain functionality, and full graceful shutdown sequence.

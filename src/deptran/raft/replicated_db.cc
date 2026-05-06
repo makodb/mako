@@ -9,7 +9,7 @@
 
 using namespace janus;
 
-// Workstream N Phase 4c-1: ReplicatedDBCommand migrated from
+// ReplicatedDBCommand migrated from
 // TypedMarshallableAdapter to Serializable. Registration switched
 // to `rrr::reg_serializable_in_deputy<T>` (replaces
 // `MarshallDeputy::reg_initializer<T>`). Wire format byte-for-byte
@@ -17,7 +17,7 @@ using namespace janus;
 // delegate to save/load via a MarshalSink/MarshalSource bridge, and
 // bridge-dispatched `wrap_typed_marshallable` / `marshallable_cast<T>`
 // keep the legacy call sites working unchanged.
-// Workstream N L8: registration switched to no-arg form — kind
+// registration switched to no-arg form — kind
 // auto-derived from `Serializable<T, MakoCommands>` CRTP base.
 static int volatile x_replicated_db =
     rrr::SerializableRegistry::reg<ReplicatedDBCommand>();
@@ -55,7 +55,7 @@ shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
   return cmd;
 }
 
-// Workstream N Phase 4c-1: Serializable save/load — moved here from
+// Serializable save/load — moved here from
 // to_marshal/from_marshal. Wire format is byte-for-byte identical;
 // the BinaryWriteArchive/BinaryReadArchive `<<`/`>>` overloads for
 // uint8_t / uint32_t / std::string match the legacy Marshal encoding.
@@ -94,7 +94,7 @@ void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
   }
 }
 
-// Phase 4c-1 legacy wrappers: keep the existing test.cc call sites
+// 1 legacy wrappers: keep the existing test.cc call sites
 // (cmd->to_marshal(m) / cmd2->from_marshal(m)) compiling. Each wrapper
 // builds a single-use BinaryWriteArchive/BinaryReadArchive on top of a
 // MarshalSink/MarshalSource adapter and delegates to save/load.

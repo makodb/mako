@@ -37,7 +37,7 @@ class TxWorkspace {
  public:
   set<int32_t> keys_ = {};
   std::shared_ptr<map<int32_t, Value>> values_{};
-  // Workstream N Phase 4e-6: removed
+  // removed
   // `std::shared_ptr<map<int32_t, shared_ptr<IntEvent>>> value_events_{};`
   // — defined but never written or read anywhere in the codebase.
   TxWorkspace();
@@ -105,7 +105,7 @@ class TxRequest {
   int cmd_id_in_client_ = -1;
   /******global unique id end********/
   rusty::Function<void(TxReply &)> callback_ = [] (TxReply&)->void {verify(0);};
-  // Workstream N Phase 4e-6: removed
+  // removed
   //   `rusty::Function<void()> fail_callback_ = [] () { verify(0); };`
   // and `void get_log(i64 tid, std::string &log);` — neither was
   // referenced outside the definitions themselves.  `fail_callback_`
@@ -118,9 +118,9 @@ Marshal& operator << (Marshal& m, const TxWorkspace &ws);
 
 Marshal& operator >> (Marshal& m, TxWorkspace& ws);
 
-// Workstream N Phase 4d-6: archive operators for TxWorkspace
+// archive operators for TxWorkspace
 // (mirrors the Marshal-based pair byte-for-byte). Used by the
-// Phase 4d-6 SimpleCommand archive operators which feed VecPieceData's
+// 6 SimpleCommand archive operators which feed VecPieceData's
 // Serializable save/load.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws);
 
@@ -130,7 +130,7 @@ Marshal& operator << (Marshal& m, const TxReply& reply);
 
 Marshal& operator >> (Marshal& m, TxReply& reply);
 
-// Workstream N Phase 3e: archive operators for TxReply (mirrors the
+// archive operators for TxReply (mirrors the
 // Marshal-based pair byte-for-byte). Used by the rcc_rpc.h archive
 // emission now that rpcgen defaults to --archive.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply);
@@ -148,7 +148,7 @@ enum CommandStatus {
 // TODO rename to TxPieceData? Seems a bad name. Should figure out a better name.
 class SimpleCommand: public CmdData {
  public:
-  // Workstream N Phase 4e-3: removed the dead `CmdData* root_`
+  // removed the dead `CmdData* root_`
   // back-pointer.  It was written by `TxData::GetReadyPiecesData`
   // and `TxData::GetNextReadySubCmd` (procedure.cc:288, 329) but
   // never read by anything; the matching `RootCmd()` accessor and
@@ -173,7 +173,7 @@ typedef SimpleCommand TxPieceData;
 
 typedef map<parid_t, vector<shared_ptr<SimpleCommand>>> ReadyPiecesData;
 
-// Workstream N Phase 4d-6: migrated from Marshallable to Serializable.
+// migrated from Marshallable to Serializable.
 // Wire format preserved byte-for-byte:
 //   int32_t sp_vec_piece_data_->size()
 //   per SimpleCommand: SimpleCommand bytes (via Phase 4d-6 archive op)
@@ -215,7 +215,7 @@ class VecPieceData : public rrr::Serializable<VecPieceData, MakoCommands> {
   }
 };
 
-// Workstream N L8: TypeList-derived kind.
+// TypeList-derived kind.
 class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
  public:
   // TODO move shared_ptr into the vector.
@@ -243,7 +243,7 @@ class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
   }
 };
 
-// Workstream N L8: TypeList-derived kind.
+// TypeList-derived kind.
 class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
  public:
   View view_;
@@ -292,13 +292,13 @@ class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
   }
 };
 
-// Workstream N L8: TypeList-derived kind. Uses Phase 3f-prep
+// TypeList-derived kind. Uses Phase 3f-prep
 // nested-MarshallDeputy archive operators for the per-entry command
 // payloads.
 //
-// Workstream N L10f-prep6b (2026-05-03): `commands_` migrated from
+// `commands_` migrated from
 // `vector<shared_ptr<Marshallable>>` to `vector<Command>`.
-// L10f-prep6an (2026-05-03): external API (AddEntry / GetCommand)
+// external API (AddEntry / GetCommand)
 // also uses Command directly; shared_ptr<Marshallable> callers
 // auto-convert via Command's implicit ctor.  save/load drives
 // Command archive ops directly; wire format unchanged.
@@ -339,7 +339,7 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
     ar << sz;
     for (int32_t i = 0; i < sz; i++) {
       ar << keys_[i];
-      // L10f-prep6b: drive Command's archive op directly (same wire
+      // drive Command's archive op directly (same wire
       // format as the previous `MarshallDeputy(commands_[i])` round-trip).
       ar << commands_[i];
     }
@@ -376,7 +376,7 @@ class TxData: public CmdData {
   }
   map<innid_t, TxWorkspace> inputs_ = {};  // input of each piece.
  public:
-  // Workstream N Phase 4e-4: removed `bool read_only_failed_ = false;`
+  // removed `bool read_only_failed_ = false;`
   // — the field was reset in `TxData::TxData()` and inside the now-
   // deleted `read_only_reset()` but never read by anything.  The
   // only `read_only_failed_ = true` writers were already
@@ -384,7 +384,7 @@ class TxData: public CmdData {
   double pre_time_ = 0.0;
   bool early_return_ = false;
  public:
-  // Workstream N Phase 4e-5: removed protected `ChooseRandom<T>`
+  // removed protected `ChooseRandom<T>`
   // template — defined here but never instantiated anywhere in the
   // codebase (`grep ChooseRandom` returned only the definition).
   txnid_t txn_id_; // TODO obsolete
@@ -407,7 +407,7 @@ class TxData: public CmdData {
   int n_pieces_dispatchable_ = 0;
   int n_pieces_dispatch_acked_ = 0;
   int n_pieces_dispatched_ = 0;
-  // Workstream N Phase 4e-5: removed `int n_finished_ = 0;` — the
+  // removed `int n_finished_ = 0;` — the
   // field was previously serialized in the legacy
   // TxData::to_marshal/from_marshal pair (deleted in Phase 5b-1) but
   // never written or read by any other code.
@@ -415,7 +415,7 @@ class TxData: public CmdData {
   int max_try_ = 0;
   int n_try_ = 0;
 
-  // Workstream N Phase 4e-5: removed `bool validation_ok_{true};`
+  // removed `bool validation_ok_{true};`
   // (no writer or reader anywhere) and `bool need_validation_{false};`
   // (the only writer was `tx_data().need_validation_ = true;` at
   // `rcc/coord.cc:86`, no readers; that write was removed in this
@@ -438,7 +438,7 @@ class TxData: public CmdData {
                             int res,
                             map<int32_t, Value> &output) = 0;
   virtual bool IsReadOnly() = 0;
-  // Workstream N Phase 4e-4: removed several dead virtual methods —
+  // removed several dead virtual methods —
   //   `read_only_reset()`, `IsFinished()`, `Merge(TxnOutput&)`, and
   //   `GetNextReadySubCmd()` — none had any production callers. Each
   //   was either a `verify(0)` stub on the base class with no
@@ -470,16 +470,16 @@ class TxData: public CmdData {
   }
   virtual bool IsOneRound();
   vector<SimpleCommand> GetCmdsByPartition(parid_t par_id);
-  // Workstream N Phase 4e-4: removed
+  // removed
   // `vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t, rank_t)`
   // — declared and defined but never called anywhere.
 
-  // Workstream N Phase 5b-1: removed dead TxData::to_marshal/from_marshal
+  // removed dead TxData::to_marshal/from_marshal
   // overrides (never invoked in production). The Marshallable base's
   // `verify(0)` defaults remain for any unintentionally surviving
   // virtual-dispatch path.
 
-  // Workstream N Phase 4e-5: removed `inline bool can_retry()` —
+  // removed `inline bool can_retry()` —
   // defined but never called.  Removed `inline void
   // disable_early_return()` — only call sites were commented-out
   // code in `snow/ro6_coord.cc:57` and `rcc/coord.cc:105`.
@@ -500,7 +500,7 @@ class TxData: public CmdData {
 
 } // namespace rcc
 
-// Workstream N Phase 4e-4: removed an empty `namespace rrr {}` block
+// removed an empty `namespace rrr {}` block
 // at the bottom of this header — companion to the Phase 4e-2 cleanup
 // of the same shape in `tpc_command.h`.  The block previously held
 // `TypedMarshallableAdapterTraits<T>` specializations for VecRecData

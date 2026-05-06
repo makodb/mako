@@ -1,4 +1,4 @@
-// Workstream K, leaf 6a — basic tests for `InMemoryFactory` /
+// basic tests for `InMemoryFactory` /
 // `InMemoryListener` / `InMemoryChannel` (the in-memory channel
 // backend).
 //

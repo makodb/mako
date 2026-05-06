@@ -5,7 +5,7 @@
  * @brief In-process Raft transport built on rusty::sync::mpsc. Enables
  *        raft tests to run without sockets, rrr, or PollThreads.
  *
- * Architecture (Phase 8.0 — fiber-synchronous):
+ * Architecture:
  *   - ChannelSwitchboard owns one mpsc channel per site and a small
  *     fault-injection state machine (drop direction, partition two
  *     groups, reset).

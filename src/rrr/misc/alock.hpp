@@ -180,7 +180,7 @@ class WaitDieALock: public ALock {
     WD_WAIT,
     WD_DIE
   } wd_status_t;
-  // L2c-alock carve-out (2026-05-01): the wait-die lock-waiter queue
+  // alock carve-out (2026-05-01): the wait-die lock-waiter queue
   // stays `std::list` (NOT `rusty::VecDeque`).  alock.cpp relies on
   // three standard linked-list properties that VecDeque can't supply
   // without a semantic-level refactor:
@@ -370,7 +370,7 @@ class WoundDieALock: public ALock {
     }
   };
 
-  // L2c-alock carve-out (2026-05-01) — see the WaitDieALock comment
+  // alock carve-out (2026-05-01) — see the WaitDieALock comment
   // above for full rationale.  Same iterator-stability / reverse-
   // iteration / pointer-stability requirements apply here.
   std::list<lock_req_t> requests_;
@@ -590,7 +590,7 @@ class TimeoutALock: public ALock {
 
   uint64_t id_locked_ = 0;
 
-  // L7-alock (2026-05-01): the prior `std::mutex lock_;` field never
+  // the prior `std::mutex lock_;` field never
   // had any uncommented lock/unlock site — every reference to `lock_`
   // in alock.{hpp,cpp} was inside `//`-prefixed dead code (see git
   // blame for the commented-out `lock_.lock()` / `lock_.unlock()`
@@ -601,7 +601,7 @@ class TimeoutALock: public ALock {
   // pattern: wrap the protected fields in `SpinMutex<Inner>` rather
   // than re-adding a separate std::mutex.
   //
-  // L2c-alock carve-out (2026-05-01) — `std::list<ALockReq>` stays for
+  // alock carve-out (2026-05-01) — `std::list<ALockReq>` stays for
   // the same iterator-stability reasons as the WaitDieALock variant
   // (see that class's comment above for full rationale).
   std::list<ALockReq> requests_;
@@ -653,7 +653,7 @@ class ALockGroup {
 
   enum status_t { INIT, WAIT, LOCK, TIMEOUT, UNLOCK };
 
-  // L7-alock (2026-05-01): both `std::recursive_mutex mtx_locks_` and
+  // both `std::recursive_mutex mtx_locks_` and
   // `std::mutex mtx_` were dead — every uncommented use site of
   // either was already inside `//` comments (see git blame for the
   // historical `mtx_locks_.lock()` and `mtx_.lock_guard` blocks that
@@ -731,7 +731,7 @@ class ALockGroup {
 
   void abort_all_locked() {
     //        mtx_locks_.lock();
-    // L9: rusty::BTreeMap iter `operator*()` returns
+    // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, V&>` (post-2026-04 API). Use structured
     // bindings to keep the same `alock`/`areq_id` names.
     for (auto&& [alock, areq_id] : locked_) {

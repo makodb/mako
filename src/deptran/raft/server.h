@@ -80,7 +80,7 @@ enum class CommitStatus {
 
 // @safe - data struct with shared_ptr fields (shared_ptr marked @external)
 //
-// Workstream N L10f-prep2 (2026-05-03): polymorphic command fields
+// polymorphic command fields
 // (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
 // `shared_ptr<Marshallable>` to `janus::Command`.  Internal storage
 // inside Command remains `shared_ptr<Marshallable>` (boundary calls
@@ -121,13 +121,13 @@ class RaftServer : public TxLogServer {
   friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
   // ============================================================================
-  // LOG PERSISTENCE (Phase 1.3)
+  // LOG PERSISTENCE
   // ============================================================================
   std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
   bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
-  // SNAPSHOT SUPPORT (Phase 3.1)
+  // SNAPSHOT SUPPORT
   // ============================================================================
   std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
   uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
@@ -228,7 +228,7 @@ class RaftServer : public TxLogServer {
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
   // ============================================================================
-  // SPECULATIVE REPLICATION STATE (Phase 1.1)
+  // SPECULATIVE REPLICATION STATE
   // ============================================================================
   // Enables separation of "speculative" (memory quorum) from "secured" (durable
   // quorum) for both leadership and log entries. See docs/dev/phase1_speculative_state_plan.md
@@ -440,9 +440,9 @@ class RaftServer : public TxLogServer {
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
   std::mutex apply_queue_mtx_;
-  // Workstream N L10f-prep6c (2026-05-03): apply_queue_ holds Command
+  // apply_queue_ holds Command
   // instead of shared_ptr<Marshallable> — RaftData::log_ migrated in
-  // L10f-prep2; this drops the boundary unwrap that
+  // prep2; this drops the boundary unwrap that
   // EnqueueCommittedEntries had to do.  Wire format unchanged.
   std::deque<std::pair<slotid_t, Command>> apply_queue_;
 
@@ -585,7 +585,7 @@ class RaftServer : public TxLogServer {
   void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
-  // Workstream N L10f-prep6ab (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   bool Start(const janus::Command& cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
@@ -618,7 +618,7 @@ class RaftServer : public TxLogServer {
   void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
 
   // @unsafe - external calls plus output pointer writes and shared_ptr ops
-  // Workstream N L10f-prep6ab (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void SetLocalAppend(const janus::Command& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
@@ -728,7 +728,7 @@ class RaftServer : public TxLogServer {
   ~RaftServer() ;
 
   // ============================================================================
-  // LOG PERSISTENCE PUBLIC API (Phase 1.3)
+  // LOG PERSISTENCE PUBLIC API
   // ============================================================================
 
   /**
@@ -776,7 +776,7 @@ class RaftServer : public TxLogServer {
   size_t GetUncommittedCount() const;
 
   // ============================================================================
-  // SNAPSHOT SUPPORT PUBLIC API (Phase 3.1)
+  // SNAPSHOT SUPPORT PUBLIC API
   // ============================================================================
 
   /**
@@ -844,7 +844,7 @@ class RaftServer : public TxLogServer {
   uint64_t GetSnapshotTerm() const;
 
   /**
-   * Compact log entries up to the given index (Phase 3.4).
+   * Compact log entries up to the given index.
    * Removes entries from storage that are covered by a snapshot.
    * @param up_to_index Remove entries with index <= this value
    * @return Number of entries removed
@@ -898,7 +898,7 @@ class RaftServer : public TxLogServer {
                      bool_t* acknowledged);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
-  // Workstream N L10f-prep6ac (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   void OnAppendEntries(const slotid_t slot_id,
@@ -1161,7 +1161,7 @@ class RaftServer : public TxLogServer {
   void StopLeadershipTransferMonitoring();
 
   // ============================================================================
-  // PUBLIC API: Speculative Replication State (Phase 1.1)
+  // PUBLIC API: Speculative Replication State
   // ============================================================================
 
   /**

@@ -7,14 +7,14 @@
 
 namespace janus {
 
-// Workstream N Phase 5b-12: removed `CmdData::to_marshal` /
+// removed `CmdData::to_marshal` /
 // `CmdData::from_marshal` definitions. Both were declared as virtual
 // overrides of `Marshallable::to_marshal` / `from_marshal` but had no
 // production callers — `CmdData` is never registered with
 // `MarshallDeputy::reg_initializer` and never instantiated directly,
 // so the only way they could fire was via virtual dispatch on a
 // subclass instance.  `TxData` removed its own override pair in
-// Phase 5b-1; `SimpleCommand` uses the free `operator<<(Marshal&,
+// 1; `SimpleCommand` uses the free `operator<<(Marshal&,
 // const SimpleCommand&)` / `operator<<(BinaryWriteArchive&, ...)`
 // overloads below, never the inherited virtuals.  Removing the
 // overrides means accidental virtual-dispatch calls hit the base
@@ -59,7 +59,7 @@ rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd) {
   return m;
 }
 
-// Workstream N Phase 4d-6: archive operators for SimpleCommand.
+// archive operators for SimpleCommand.
 // Wire format byte-for-byte identical to the Marshal-based pair
 // above: the 8 inherited CmdData fields (id, type, inn_id, root_id,
 // root_type, client_id, cmd_id_in_client, rule_mode flag), followed

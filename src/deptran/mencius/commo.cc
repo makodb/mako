@@ -16,11 +16,11 @@ MenciusCommo::MenciusCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communi
 //  verify(poll != nullptr);
 }
 
-// Workstream N Phase 4e-11: removed deprecated callback-style
+// removed deprecated callback-style
 // `void MenciusCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,
 // callback)`.  See companion comment in commo.h.
 
-// Workstream N Phase 4e-30: removed `MenciusCommo::BroadcastPrepare`
+// removed `MenciusCommo::BroadcastPrepare`
 // (parid, slot, ballot) — body was a `verify(0);` shell.  Only call
 // site was the now-deleted `CoordinatorMencius::Prepare()`.
 
@@ -159,7 +159,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
   return e;
 }
 
-// Workstream N Phase 4e-11: removed deprecated callback-style
+// removed deprecated callback-style
 // `void MenciusCommo::BroadcastSuggest(parid_t, slotid_t, ballot_t,
 // cmd, callback)`.  Body had `verify(0);` and was mostly already
 // commented out.  See companion comment in commo.h.

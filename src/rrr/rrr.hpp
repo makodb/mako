@@ -43,7 +43,7 @@
 #include "misc/serializable.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/event.h"
-// Workstream N Phase 4e-36: removed `#include "misc/recorder.hpp"`
+// removed `#include "misc/recorder.hpp"`
 // — `Recorder` class deleted; was unused after Phase 4e-35.
 #include "rpc/idempotency.hpp"
 #include "rpc/request_queue.hpp"

@@ -1,6 +1,6 @@
 /**
  * Chaos Engineering Tests for RPC Reliability
- * Part of Phase 7.4: Chaos Engineering Tests
+ * Chaos Engineering Tests
  *
  * Tests system behavior under various failure conditions using
  * the chaos framework to inject controlled failures.

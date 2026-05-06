@@ -32,10 +32,10 @@ class MultiPaxosCommo : public Communicator {
   int current_proxy_batch_idx = 0;
   bool is_broadcast_syncLog = false;
 
-  // Workstream N Phase 4e-30: removed `BroadcastPrepare(parid, slot,
+  // removed `BroadcastPrepare(parid, slot,
   // ballot)` declaration — only call site was the now-deleted
   // `CoordinatorMultiPaxos::Prepare()`; body was a `verify(0)` shell.
-  // Workstream N Phase 4e-12: removed deprecated callback-style
+  // removed deprecated callback-style
   // `void BroadcastPrepare(parid_t, slotid_t, ballot_t, callback)` —
   // body had `verify(0);` and was mostly commented out; no live
   // callers anywhere.
@@ -44,7 +44,7 @@ class MultiPaxosCommo : public Communicator {
                   slotid_t slot_id,
                   ballot_t ballot,
                   const janus::Command& cmd);
-  // Workstream N Phase 4e-12: removed deprecated callback-style
+  // removed deprecated callback-style
   // `void BroadcastAccept(parid_t, slotid_t, ballot_t, cmd,
   // callback)` — same shape as the deprecated BroadcastPrepare.
   void ForwardToLearner(parid_t par_id,
@@ -56,9 +56,9 @@ class MultiPaxosCommo : public Communicator {
                        const slotid_t slot_id,
                        const ballot_t ballot,
                        const janus::Command& cmd);
-  // Workstream N Phase 4e-26: removed `BroadcastBulkPrepare`,
+  // removed `BroadcastBulkPrepare`,
   // `BroadcastHeartBeat`, `BroadcastSyncNoOps` — became dead in
-  // Phase 4e-25 when the matching `PaxosWorker::SendHeartBeat` /
+  // 25 when the matching `PaxosWorker::SendHeartBeat` /
   // `SendBulkPrepare` / `SendSyncNoOpLog` senders went away.
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
@@ -81,12 +81,12 @@ class MultiPaxosCommo : public Communicator {
                            const janus::Command& cmd,
                            const std::function<void(ballot_t, int)>& cb);
 
-  // Workstream N Phase 4e-27: removed `BroadcastPrepare2` declaration
+  // removed `BroadcastPrepare2` declaration
   // — only call site was the now-deleted
   // `BulkCoordinatorMultiPaxos::Prepare()`; the body was already a
   // `verify(0)`-then-commented-out shell.
 
-  // Workstream N Phase 4e-38: removed `SendForward(parid, follower_id,
+  // removed `SendForward(parid, follower_id,
   // dep_id, cmd)` declaration — never called from anywhere in the
   // tree; the only candidate caller would have been a Jetpack
   // forward-to-leader path that was never wired up.

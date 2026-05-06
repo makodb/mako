@@ -19,7 +19,7 @@ const status_t CLR_FLAG_TAKEOVER = (~FLAG_TAKEOVER);
 enum Status : status_t { NOT_ACCEPTED = 0, FAST_ACCEPTED, FAST_ACCEPTED_EQ, ACCEPTED, COMMITED, EXECUTED };
 const size_t n_status = 5;
 
-// Workstream N L10f-prep3c (2026-05-03): polymorphic command field
+// polymorphic command field
 // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
 struct CopilotData {
   Command                   cmd{};   // command
@@ -98,7 +98,7 @@ class CopilotServer : public TxLogServer {
   void WaitForPingPong();
   bool WillWait(int& time_to_wait) const;
 
-  // Workstream N Phase 4e-40: removed `OnForward` declaration —
+  // removed `OnForward` declaration —
   // only caller was the deleted `CopilotServiceImpl::Forward`
   // handler; the matching Copilot::Forward RPC was dropped from
   // rcc_rpc.rpc.
@@ -113,7 +113,7 @@ class CopilotServer : public TxLogServer {
                  status_t* status,
                  rusty::Function<void()> cb);
 
-  // Workstream N L10f-prep6r (2026-05-03): handlers take
+  // handlers take
   // const janus::Command&; shared_ptr<Marshallable> callers
   // auto-convert via Command's implicit ctor.
   void OnFastAccept(const uint8_t& is_pilot,
@@ -158,7 +158,7 @@ class CopilotServer : public TxLogServer {
   copilot_stack_t stack_;
 
   bool isExecuted(shared_ptr<CopilotData>& ins);
-  // Workstream N L10f-prep6w (2026-05-03): take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   bool allCmdComitted(const janus::Command& batch_cmd);

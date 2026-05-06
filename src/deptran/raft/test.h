@@ -43,7 +43,7 @@ class RaftLabTest {
   int testFigure8CrashRecovery(void);
 
   // ===========================================================================
-  // SPECULATIVE RAFT TESTS (Phase 7)
+  // SPECULATIVE RAFT TESTS
   // ===========================================================================
   // Tests for speculative replication functionality
 

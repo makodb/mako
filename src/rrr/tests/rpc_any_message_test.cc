@@ -1,4 +1,4 @@
-// Workstream N L7 — `AnyMessage` envelope unit tests.
+// `AnyMessage` envelope unit tests.
 //
 // Validates the open-set polymorphic envelope from `any_message.hpp`:
 //   1. Pack + unpack roundtrip preserves typed payload values.
@@ -215,7 +215,7 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
 }
 
 // ---------------------------------------------------------------------------
-// L10c-anymsg: Serializable interface (save / load + free archive
+// Serializable interface (save / load + free archive
 // operators).  Lets `AnyMessage` ride an RPC struct field directly,
 // without the surrounding `MarshallDeputy` wrapper.
 // ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   EXPECT_EQ(recovered->label, "save/load roundtrip");
 }
 
-// Workstream N L10f-2 step 5 (2026-05-05): removed
+// removed
 // `SerializableWireOmitsLeadingKindByte` — it compared bytes between
 // the direct AnyMessage path and the (now-retired) MarshallDeputy-
 // wrapped path.  With AnyMessage no longer inheriting Marshallable,

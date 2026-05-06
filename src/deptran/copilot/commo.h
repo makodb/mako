@@ -55,7 +55,7 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
       vote_no();
   }
 
-  // Workstream N L10f-prep6s: takes janus::Command;
+  // takes janus::Command;
   // shared_ptr<Marshallable> callers auto-convert.
   void FeedRetCmd(ballot_t ballot,
                   uint64_t dep,

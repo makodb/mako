@@ -201,7 +201,7 @@ int shutdown_paxos() {
     DISPATCH_RAFT_OR_PAXOS(shutdown_paxos);  // @unsafe
 }
 
-// Workstream N Phase 4e-22: removed `microbench_paxos()` dispatcher
+// removed `microbench_paxos()` dispatcher
 // — no callers anywhere; both impls (paxos + raft) deleted.
 
 void register_for_follower(std::function<void(const char*, int)> cb, uint32_t par_id) {
@@ -266,7 +266,7 @@ void wait_for_submit(uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(wait_for_submit, par_id);  // @unsafe
 }
 
-// Workstream N Phase 4e-22: removed `microbench_paxos_queue()`
+// removed `microbench_paxos_queue()`
 // dispatcher — no callers anywhere; both impls deleted.
 
 void pre_shutdown_step() {
@@ -293,7 +293,7 @@ void nc_setup_server(int port, std::string host) {
     DISPATCH_VOID_RAFT_OR_PAXOS(nc_setup_server, port, host);  // @unsafe
 }
 
-// Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
+// removed seven `nc_get_*_requests`
 // dispatcher functions (~25 lines) and their underlying impls in
 // `paxos_main_helper.cc` / `raft_main_helper.cc`.  The Paxos-side
 // getters returned `&nc_services[par_id]->...` against an

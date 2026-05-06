@@ -84,7 +84,7 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
   ServerResponse *res = &rpc_resp.res;
   res->cpu_util = rrr::CPUInfo::cpu_stat()[0];
 
-  // Workstream N Phase 4e-35: collapsed `if (recorder) { ... } else
+  // collapsed `if (recorder) { ... } else
   // {res->r_cnt_sum = 0; ... }` to just the else branch — recorder
   // was always nullptr; field + getter both gone.
   res->r_cnt_sum = 0;
@@ -118,7 +118,7 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
   defer.reply();
 }
 
-// Workstream N Phase 4e-35: removed 3rd `Recorder *recorder` ctor
+// removed 3rd `Recorder *recorder` ctor
 // parameter (and its `if (recorder) { ... set_recorder(recorder); }`
 // body) — every caller passed nullptr.
 ServerControlServiceImpl::ServerControlServiceImpl(rusty::Arc<ServerStatus> status,

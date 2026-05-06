@@ -282,7 +282,7 @@ int ClientConnection::connect(const char* addr) {
     return EINVAL;
   }
 
-  // Workstream K, sub-leaf 4g3c — channel mode is the only path.
+  // channel mode is the only path.
   //
   // Channel mode is non-negotiable post-4g3a, and `Client::connect`
   // always installs a default TCP factory before calling this method
@@ -527,7 +527,7 @@ size_t ClientConnection::replay_pending_requests() {
 }
 
 // @unsafe - Enqueue one internal heartbeat probe through the bound
-// channel proxy (Workstream K, sub-leaf 4b channel mode).
+// channel proxy.
 //
 // 4g3c3: legacy fd path removed. Channel mode is the only path; the
 // `out_` Marshal that backed the fd path is gone. Callers (the
@@ -556,7 +556,7 @@ void ClientConnection::enqueue_heartbeat_probe() const {
 }
 
 // @unsafe - Reset channel-mode state for a factory-driven reconnect
-// (Workstream K, sub-leaf 4e). Drops the closed FiberChannel,
+//. Drops the closed FiberChannel,
 // flips `channel_mode_` off, and forces the state machine to
 // DISCONNECTED so `connect()`'s `verify(!is_connected())` passes.
 // Caller: the spawn body inside `on_channel_closed_fan_out` when a
@@ -578,7 +578,7 @@ void ClientConnection::reset_channel_mode_for_reconnect() {
   state_machine_.force_state(ConnectionState::DISCONNECTED);
 }
 
-// @unsafe - Channel-factory connect path (Workstream K, sub-leaf 4e).
+// @unsafe - Channel-factory connect path.
 //
 // Calls the bound `ChannelFactoryProxy::connect(addr)` to obtain a
 // `ChannelConnectionProxy`, then hands it to `bind_channel(...)`.
@@ -664,7 +664,6 @@ int ClientConnection::connect_via_factory(const char* addr) {
 
 // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
 //
-// Workstream K, sub-leaves 4a/4b/4c2:
 //   - 4a flipped the `channel_mode_` latch.
 //   - 4b routed outbound frames through the proxy.
 //   - 4c2 wraps the proxy in a `FiberChannel` and spawns a recv-loop
@@ -728,7 +727,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
 }
 
 // @unsafe - Channel-mode bind that schedules the recv-loop fiber
-// spawn onto the *poll thread*. Workstream K, sub-leaf 4f.
+// spawn onto the *poll thread*.
 //
 // Used by production code paths (factory-driven `connect` /
 // reconnect) that run on the user thread but need the recv-loop
@@ -773,8 +772,7 @@ void ClientConnection::bind_channel_via_poll_thread(
   poll_thread_worker_->add(std::move(recv_job_base));
 }
 
-// @unsafe - Direct on_frame / on_closed callback binding (Workstream
-// K, sub-leaf 4g1c).
+// @unsafe - Direct on_frame / on_closed callback binding.
 //
 // Bypasses FiberChannel + recv-loop fiber entirely. Installs the
 // callbacks directly on the channel proxy:
@@ -899,7 +897,7 @@ void ClientConnection::run_recv_loop() {
 // surfaced through `ChannelFrame`.
 void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
                                                   std::size_t size) {
-  // Workstream N Phase 3d-1: parse the response header directly from
+  // parse the response header directly from
   // the input bytes via BufferSource + BinaryReadArchive — no
   // intermediate `Marshal body` allocation.  The payload tail (if
   // any) is written into the matching Future's `reply_` Marshal via
@@ -958,7 +956,7 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
   // owned by the caller and freed on return — nothing to drain.
 }
 
-// @unsafe - Channel-mode close fan-out (Workstream K, sub-leaf 4d).
+// @unsafe - Channel-mode close fan-out.
 //
 // Mirrors the legacy fd path's `handle_error` for channel-mode
 // connections: when the recv-loop fiber sees `recv_frame()` return
@@ -1039,7 +1037,7 @@ void ClientConnection::on_channel_closed_fan_out() {
       auto state = conn->connection_state();
       if (state == ConnectionState::FAILED ||
           state == ConnectionState::DISCONNECTED) {
-        // Workstream K, sub-leaf 4e — factory-driven reconnect.
+        // factory-driven reconnect.
         //
         // When a `ChannelFactoryProxy` is bound, the fan-out's
         // reconnect spawn re-runs the same factory connect path
@@ -1445,7 +1443,7 @@ int Client::connect(const char* addr, bool client) const {
     set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
   }
 
-  // Workstream K, sub-leaf 4e — push the pending channel factory
+  // push the pending channel factory
   // into the new ClientConnection. Once bound, the connection's
   // `connect(addr)` and reconnect spawn route through the factory
   // (`factory->connect(addr)` -> `bind_channel(...)`) instead of
@@ -1563,7 +1561,7 @@ bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
 
 // @safe - Destroys pool and all cached connections
 ClientPool::~ClientPool() {
-  // L9: rusty::BTreeMap iter `operator*()` returns
+  // rusty::BTreeMap iter `operator*()` returns
   // `std::tuple<const K&, V&>` (post-2026-04 API).
   for (auto&& [_addr, clients] : cache_) {
     for (auto& client : clients) {
@@ -1583,7 +1581,7 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
   size_t count = 0;
   auto clients_opt = cache_.get(addr);
   if (clients_opt.is_some()) {
-    // L9: rusty::BTreeMap::get returns `Option<V&>` (post-2026-04
+    // rusty::BTreeMap::get returns `Option<V&>` (post-2026-04
     // API), so unwrap() yields a reference, not a pointer.
     auto& clients = clients_opt.unwrap();
     for (const auto& client : clients) {
@@ -1602,7 +1600,7 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
   size_t removed = 0;
   auto clients_opt = cache_.get(addr);
   if (clients_opt.is_some()) {
-    // L9: BTreeMap::get returns `Option<V&>`; unwrap() yields a
+    // BTreeMap::get returns `Option<V&>`; unwrap() yields a
     // reference. Use `.` instead of `->`, drop the `*` deref.
     auto& clients = clients_opt.unwrap();
     auto cfg = config_.get();
@@ -1647,7 +1645,7 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
 
   auto clients_opt = cache_.get(addr);
   if (clients_opt.is_some()) {
-    // L9: BTreeMap::get returns `Option<V&>`.
+    // BTreeMap::get returns `Option<V&>`.
     auto& clients = clients_opt.unwrap();
 
     rusty::Vec<rusty::Arc<Client>> kept;
@@ -1680,7 +1678,7 @@ size_t ClientPool::remove_all_unhealthy() {
   size_t total_removed = 0;
   auto cfg = config_.get();
 
-  // L9: BTreeMap::keys() now returns `keys_range` (a transient
+  // BTreeMap::keys() now returns `keys_range` (a transient
   // iterator-shaped object), not `Vec<K>`. Drain into a Vec so the
   // subsequent loop body — which mutates `cache_` via `remove(...)`
   // — doesn't iterate while modifying.
@@ -1698,7 +1696,7 @@ size_t ClientPool::remove_all_unhealthy() {
     if (clients_opt.is_none()) {
       continue;
     }
-    // L9: BTreeMap::get returns `Option<V&>`.
+    // BTreeMap::get returns `Option<V&>`.
     auto& clients = clients_opt.unwrap();
     size_t removed = 0;
     rusty::Vec<rusty::Arc<Client>> kept;
@@ -1739,7 +1737,7 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
     return 0;
   }
 
-  // L9: same drain pattern as remove_all_unhealthy above —
+  // same drain pattern as remove_all_unhealthy above —
   // BTreeMap::keys() returns a transient `keys_range`.
   rusty::Vec<std::string> keys;
   {
@@ -1788,7 +1786,7 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
 size_t ClientPool::total_client_count() {
   l_.lock();
   size_t count = 0;
-  // L9: BTreeMap iter returns `tuple<const K&, V&>`.
+  // BTreeMap iter returns `tuple<const K&, V&>`.
   for (auto&& [_addr, clients] : cache_) {
     count += clients.size();
   }
@@ -1816,7 +1814,7 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
     l_.lock();
     auto clients_opt = cache_.get(addr);
     if (clients_opt.is_some()) {
-      // L9: BTreeMap::get returns `Option<V&>`.
+      // BTreeMap::get returns `Option<V&>`.
       auto& clients = clients_opt.unwrap();
       for (const auto& client : clients) {
         auto state = client->connection_state();
@@ -1902,7 +1900,7 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
   rusty::Vec<std::string> addresses;
   {
     l_.lock();
-    // L9: BTreeMap iter returns `tuple<const K&, V&>`.
+    // BTreeMap iter returns `tuple<const K&, V&>`.
     for (auto&& [addr, _clients] : cache_) {
       addresses.push(addr);
     }
@@ -1936,7 +1934,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     lb_state_.insert(addr, LoadBalancerState{});
     lb_state_opt = lb_state_.get(addr);
   }
-  // L9: BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
+  // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
   auto& lb_state = lb_state_opt.unwrap();
 
   auto clients_opt = cache_.get(addr);

@@ -18,7 +18,7 @@ class CoordinatorJanus : public RccCoord {
 //  phase_t  phase_; // a phase identifier
   uint32_t thread_id_;
   uint32_t cmdid_prefix_c_;
-  // Workstream N Phase 4e-33: removed `Recorder *recorder_;` shadow
+  // removed `Recorder *recorder_;` shadow
   // declaration — was never assigned or read on this class; the
   // base `Coordinator::recorder_` is also gone.
   ballot_t ballot_ = 0; // the ballot I am holding

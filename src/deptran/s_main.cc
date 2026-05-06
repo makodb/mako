@@ -239,7 +239,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
 
 void client_shutdown() {
   for (const unique_ptr<ClientWorker>& client: client_workers_g) {
-    // Workstream N Phase 4e-37: removed commented-out
+    // removed commented-out
     // `// client->retrive_statistic();` — method deleted.
     for (int i = 0; i < 6; i++)
       cli2cli[i].merge(client->cli2cli_[i]);

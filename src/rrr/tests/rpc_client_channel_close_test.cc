@@ -1,5 +1,5 @@
 // Channel-mode close fan-out test for `ClientConnection`
-// (Workstream K, sub-leaf 4d).
+//.
 //
 // Verifies that when the bound `ChannelConnectionProxy` reports
 // closed (`on_closed` callback fires through `FiberChannel`), the

@@ -47,7 +47,7 @@ class ServerControlServiceImpl: public ServerControlService {
   // Internal shutdown without RPC reply
   void do_shutdown();
 
-  // Workstream N Phase 4e-35: removed 3rd `Recorder *recorder = nullptr`
+  // removed 3rd `Recorder *recorder = nullptr`
   // ctor parameter — every caller passed nullptr; the constructor's
   // `if (recorder) { StatsRegistry::set_recorder(recorder); }` body
   // never fired.  `StatsRegistry::set_recorder` is also gone.

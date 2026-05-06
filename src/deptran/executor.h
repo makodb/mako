@@ -12,7 +12,7 @@ class SimpleCommand;
 class TxData;
 class Executor {
  public:
-  // Workstream N Phase 4e-34: removed `Recorder* recorder_ = nullptr;`
+  // removed `Recorder* recorder_ = nullptr;`
   // — declared but never written or read on this class.
   TxnRegistry* txn_reg_ = nullptr;
   mdb::Txn *mdb_txn_ = nullptr;

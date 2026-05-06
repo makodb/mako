@@ -27,7 +27,7 @@ struct KVOperation {
     std::string value;  // empty for DELETE
 };
 
-// Workstream N L8: TypeList-derived kind. Wire payload preserved
+// TypeList-derived kind. Wire payload preserved
 // byte-for-byte:
 //   uint8_t op | std::string key | std::string value
 //   [if op == BATCH] uint32_t count
@@ -56,11 +56,11 @@ public:
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
     static shared_ptr<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
 
-    // Serializable interface (Phase 4c-1).
+    // Serializable interface.
     void save(BinaryWriteArchive& ar) const;
     void load(BinaryReadArchive& ar);
 
-    // Legacy Marshal-based round-trip wrappers (Phase 4c-1) — kept for
+    // Legacy Marshal-based round-trip wrappers — kept for
     // test sites that exercise the on-wire encoding directly. They
     // delegate to save/load via MarshalSink/MarshalSource so the bytes
     // are byte-for-byte identical to the pre-migration encoding.
@@ -114,7 +114,7 @@ public:
 
     // Apply callback - registered as app_next_ on RaftServer's scheduler
     // @unsafe - Applies commands to RocksDB
-    // Workstream N L10f-prep6at (2026-05-03): take const janus::Command&;
+    // take const janus::Command&;
     // shared_ptr<Marshallable> callers auto-convert via Command's
     // implicit ctor.
     void ApplyEntry(int slot, const janus::Command& cmd);

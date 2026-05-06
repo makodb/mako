@@ -1,4 +1,4 @@
-// Guard test for the SRPC channel core interfaces (Workstream K, Phase 1).
+// Guard test for the SRPC channel core interfaces.
 //
 // Validates that the facade contracts in `rpc/channel.hpp` are coherent: a
 // fake implementation can satisfy each facade, and dispatch through the

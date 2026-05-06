@@ -24,14 +24,14 @@ class CoordinatorMultiPaxos : public Coordinator {
   bool in_prepare_ = false; // debug
   bool in_accept = false; // debug
   bool in_commit = false;
-  // Workstream N Phase 4e-14: removed `bool in_forward = false;` —
+  // removed `bool in_forward = false;` —
   // declared but never written or read.
-  // Workstream N L10f-prep3a (2026-05-03): polymorphic command field
+  // polymorphic command field
   // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
   // Boundary calls into commo (which still takes
   // `shared_ptr<Marshallable>`) use `cmd_.inner_marshallable()`.
   Command cmd_{};
-  // Workstream N L10f-prep6ao (2026-05-03): removed dead `vec_md`
+  // removed dead `vec_md`
   // field — declared but never written or read anywhere.
   CoordinatorMultiPaxos(uint32_t coo_id,
                         int32_t benchmark,
@@ -78,18 +78,18 @@ class CoordinatorMultiPaxos : public Coordinator {
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
-  // Workstream N Phase 4e-31: removed `PickBallot()` and `Forward()`
+  // removed `PickBallot()` and `Forward()`
   // declarations — `PickBallot()` was used only by the now-deleted
-  // `Prepare()` (Phase 4e-30); `Forward()` was declared but never
+  // `Prepare()`; `Forward()` was declared but never
   // defined (commented-out call site at coordinator.cc:157 also gone).
   void Submit();
 
-  // Workstream N Phase 4e-30: removed `Prepare()` declaration —
+  // removed `Prepare()` declaration —
   // the body was `verify(0)`-tagged debug code, and `GotoNextPhase`
   // skips the prepare phase entirely.  The commented-out `PrepareAck`
   // legacy callback signature is also gone now.
   void Accept();
-  // Workstream N Phase 4e-31: removed commented-out
+  // removed commented-out
   // `// void AcceptAck(phase_t phase, Future *fu);` legacy decl.
   void Commit();
 
@@ -105,10 +105,10 @@ class CoordinatorMultiPaxos : public Coordinator {
 
 class BulkCoordinatorMultiPaxos : public CoordinatorMultiPaxos {
 public:
-    // L10f-prep3a: shadow Command field (intentionally hides the
+    // shadow Command field (intentionally hides the
     // base class's `cmd_` for the bulk coordinator's separate state).
     Command cmd_{};
-    // Workstream N Phase 4e-27: removed `Prepare()` declaration — the
+    // removed `Prepare()` declaration — the
     // method was dead (`GotoNextPhase` skips the prepare phase via a
     // `// Prepare();` comment, and no other caller exists).
     void Accept();

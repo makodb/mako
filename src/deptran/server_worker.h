@@ -71,7 +71,7 @@ class ServerWorker {
   void Pause();
   void Resume();
 
-  // Phase 2.1: Initialize recovery for replication servers
+  // Initialize recovery for replication servers
   void InitializeRecovery(uint32_t partition_id, uint32_t locale_id);
 
   static const uint32_t CtrlPortDelta = 10000;

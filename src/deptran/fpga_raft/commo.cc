@@ -13,7 +13,7 @@ FpgaRaftCommo::FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_w
 //  verify(poll != nullptr);
 }
 
-// Workstream N Phase 4e-39: removed `FpgaRaftCommo::SendForward` —
+// removed `FpgaRaftCommo::SendForward` —
 // only call site was the now-deleted `CoordinatorFpgaRaft::Forward`.
 // `FpgaRaftForwardQuorumEvent` deleted alongside; the FpgaRaft::
 // Forward RPC declaration is gone from rcc_rpc.rpc.
@@ -231,7 +231,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
   return e;
 }
 
-// Workstream N Phase 4e-11: removed deprecated callback-style
+// removed deprecated callback-style
 // `void FpgaRaftCommo::BroadcastAppendEntries(... callback)` — body
 // had `verify(0); // deprecated function` and no callers.
 
@@ -261,7 +261,7 @@ void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
   }
 }
 
-// Workstream N Phase 4e-11: removed deprecated callback-style
+// removed deprecated callback-style
 // `void FpgaRaftCommo::BroadcastVote(... callback)` — body had
 // `verify(0); // deprecated function` and no callers.
 
@@ -305,7 +305,7 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
   return e;
 }
 
-// Workstream N Phase 4e-11: removed deprecated callback-style
+// removed deprecated callback-style
 // `void FpgaRaftCommo::BroadcastVote2FPGA(... callback)` — body had
 // `verify(0); // deprecated function` and no callers.
 

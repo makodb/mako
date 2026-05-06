@@ -1,5 +1,5 @@
 /**
- * Unit tests for Phase 3.3: Proactive Connection Validation
+ * Unit tests for Proactive Connection Validation
  * Tests TCP keepalive configuration, idle detection, and connection validation.
  */
 

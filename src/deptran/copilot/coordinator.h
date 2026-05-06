@@ -15,7 +15,7 @@ struct CopilotData;
 class CoordinatorCopilot : public Coordinator {
   ballot_t curr_ballot_ = 0;
 
-  // Workstream N L10f-prep3c (2026-05-03): cmd_now_ migrated to
+  // cmd_now_ migrated to
   // janus::Command.
   Command cmd_now_{};
   int current_phase_ = 0;
@@ -25,7 +25,7 @@ class CoordinatorCopilot : public Coordinator {
   bool in_fast_takeover_ = false;
   bool done_ = false;
 
-  // Workstream N Phase 4e-13: removed `uint64_t begin / fac / ac /
+  // removed `uint64_t begin / fac / ac /
   // cmt` timing counters.  `cmt` was never written or read anywhere.
   // `begin` was reset 4 times to compute `fac` and `ac`, but those
   // were never read.  All four fields were dead state.
@@ -87,7 +87,7 @@ class CoordinatorCopilot : public Coordinator {
   /* info of the current instance being coordinated */
   uint8_t is_pilot_ = 0;
   slotid_t slot_id_ = 0;
-  // Workstream N Phase 4e-13: removed `slotid_t *slot_hint_ = nullptr;`
+  // removed `slotid_t *slot_hint_ = nullptr;`
   // — assigned at `frame.cc:85` (`coord->slot_hint_ = &slot_hint_;`),
   // reset to `nullptr` at `coordinator.cc:432`, but never read.  The
   // frame-side write went away in the same commit.

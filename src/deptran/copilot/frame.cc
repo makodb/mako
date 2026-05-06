@@ -82,7 +82,7 @@ void CopilotFrame::setupCoordinator(CoordinatorCopilot *coord, Config *config) {
 
   verify(sch_ != nullptr);
   coord->sch_ = sch_;
-  // Workstream N Phase 4e-13: removed
+  // removed
   // `coord->slot_hint_ = &slot_hint_;` — the
   // `CoordinatorCopilot::slot_hint_` field had no readers anywhere
   // and was deleted in the same commit.

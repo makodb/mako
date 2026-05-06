@@ -19,7 +19,7 @@
 using namespace rrr;
 using namespace janus::raft;
 
-// Workstream N Phase 4e-1: removed the unused `TestCommand`
+// removed the unused `TestCommand`
 // Marshallable subclass.  None of the tests in this file ever
 // instantiated it (`grep make_shared<TestCommand>` returns zero hits
 // here); it was a defined-but-dead test fixture left over from an

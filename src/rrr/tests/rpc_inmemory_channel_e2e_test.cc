@@ -1,4 +1,4 @@
-// Workstream K, leaf 6d — end-to-end RPC test using
+// end-to-end RPC test using
 // `InMemoryFactory`.
 //
 // Drives a real `Server` + `Client` through the in-memory channel
@@ -106,7 +106,7 @@ class InMemoryE2ETest : public ::testing::Test {
         return make_inmemory_factory_proxy(std::move(factory_arc));
     }
 
-    // L1c-tests: rusty::Option<T> swap. See
+    // rusty::Option<T> swap. See
     // rpc_client_channel_recv_test.cc for the API translation
     // pattern (`emplace` → `= rusty::Some(...)`, `reset` → `=
     // rusty::None`, `(*opt)` → `opt.as_ref().unwrap()`).
@@ -152,7 +152,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3d-2: round-trip with a `BinaryWriteArchive&` write_fn (instead
+// round-trip with a `BinaryWriteArchive&` write_fn (instead
 // of the legacy `Marshal&`).  `request_via_channel<F>` dual-dispatches
 // via `if constexpr (std::is_invocable_v<F&, BinaryWriteArchive&>)`,
 // wrapping the same `Marshal body` through a `MarshalSink`. Bytes on
@@ -192,7 +192,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3d-2: a single test that exercises BOTH write_fn signatures on
+// a single test that exercises BOTH write_fn signatures on
 // the same client/server pair, asserting both succeed and produce the
 // expected echoed payload.  Guards against regressions where one or the
 // other branch of the `if constexpr` selection diverges from the wire

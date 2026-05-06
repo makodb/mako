@@ -25,7 +25,7 @@ namespace janus {
 		Log_info("commit id %ld and length %d from %s", cid, length, custom);
 	}
 
-	// Workstream N Phase 4e-29: removed `class SubmitPool` (~120 LOC) —
+	// removed `class SubmitPool` (~120 LOC) —
 	// the only user was the `SubmitPool* submit_pool = nullptr;` field
 	// on `PaxosWorker`, and that field was always nullptr (the only
 	// assignment, `submit_pool = new SubmitPool();`, was already
@@ -33,7 +33,7 @@ namespace janus {
 	// pthread-based job-queue thread pool; nothing in the rest of the
 	// codebase referenced it.
 
-// Workstream N L8: TypeList-derived kind.
+// TypeList-derived kind.
 class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
                                                 MakoCommands> {
   public:
@@ -63,7 +63,7 @@ class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
   }
 };
 
-// Workstream N L8: TypeList-derived kind.
+// TypeList-derived kind.
 class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
   public:
   vector<slotid_t> slots{};
@@ -101,7 +101,7 @@ class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
   }
 };
 
-// Workstream N L8: TypeList-derived kind.
+// TypeList-derived kind.
 class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
   public:
   uint32_t leader_id;
@@ -120,7 +120,7 @@ class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
   }
 };
 
-// Workstream N L8: TypeList-derived kind.
+// TypeList-derived kind.
 class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
                                                 MakoCommands> {
   public:
@@ -151,13 +151,13 @@ class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
     }
 };
 
-// Workstream N Phase 4d-4: migrated from Marshallable to Serializable.
+// migrated from Marshallable to Serializable.
 // Wire payload preserved byte-for-byte:
 //   int32_t sync_data.size() | N x MarshallDeputy bytes
 //   int32_t missing_slots.size()
 //   per missing_slots row: int32_t inner.size() | M x slotid_t
 // The nested `vector<shared_ptr<janus::Command>>` field uses the
-// Phase 3f-prep `operator<<` / `operator>>` overloads for
+// prep `operator<<` / `operator>>` overloads for
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
 // layout as the legacy `m << *sync_data[i]` / `m >> *x`.
 class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
@@ -204,7 +204,7 @@ class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
     }
 };
 
-// Workstream N L8: TypeList-derived kind.
+// TypeList-derived kind.
 class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
                                                  MakoCommands> {
   public:
@@ -236,14 +236,14 @@ class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
 };
 
 
-// Workstream N Phase 4d-7: migrated from TypedPaxosLogEnvelopeAdapter
+// migrated from TypedPaxosLogEnvelopeAdapter
 // to Serializable. Wire format byte-for-byte preserved:
 //   int length
 //   std::string log_entry-equivalent bytes
 // (the shared_ptr_apprch=1 fast path that copies operation_test bytes
 // into a temporary std::string is reproduced inside save()).
 //
-// Phase 5a-1 cleanup: deleted the unused `bypass_to_socket_` /
+// 1 cleanup: deleted the unused `bypass_to_socket_` /
 // `entity_size` / `write_to_fd` / `length_as_v64` / `operation_` /
 // `len_v64` members. They were a zero-copy fast path that no caller
 // ever enabled; only `length`, `log_entry`, and `operation_test` are
@@ -256,13 +256,13 @@ public:
 
   LogEntry() = default;
 
-  // Serializable interface (Phase 4d-7). Implementations live in
+  // Serializable interface. Implementations live in
   // paxos_worker.cc — they reference the file-static `shared_ptr_apprch`
   // flag that gates the operation_test-vs-log_entry encoding choice.
   void save(BinaryWriteArchive& ar) const;
   void load(BinaryReadArchive& ar);
 };
-// Workstream N Phase 4d-7: migrated from TypedPaxosLogEnvelopeAdapter
+// migrated from TypedPaxosLogEnvelopeAdapter
 // to Serializable. Wire format byte-for-byte preserved:
 //   int32_t leader_id
 //   int32_t slots.size() | N x slotid_t
@@ -272,7 +272,7 @@ public:
 // `operator>>` overloads on BinaryWriteArchive / BinaryReadArchive —
 // same byte layout as legacy `m << *cmds[i]` / `m >> *cmds[i]`.
 //
-// Phase 5a-1 cleanup: deleted the unused `bypass_to_socket_` /
+// 1 cleanup: deleted the unused `bypass_to_socket_` /
 // `entity_size` / `serialize_slots_ballots` / `write_to_fd` /
 // `serialized_slots` members. They were a zero-copy fast path that
 // no caller ever enabled.
@@ -333,7 +333,7 @@ public:
 
 class PaxosWorker {
 private:
-  // Workstream N L10f-prep6au (2026-05-03): take const janus::Command&;
+  // take const janus::Command&;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
   inline void _Submit(const janus::Command&);
@@ -354,14 +354,14 @@ public:
   std::atomic<int> n_current{0};  // requests sent out
   std::atomic<int> n_submit{0};
   std::atomic<int> n_tot{0};
-  // Workstream N Phase 4e-29: removed `SubmitPool* submit_pool = nullptr;`
+  // removed `SubmitPool* submit_pool = nullptr;`
   // — always nullptr; the assignment was commented out and the
   // class itself is now deleted.
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
   rrr::Server* rpc_server_ = nullptr;
   rusty::Arc<base::ThreadPool> thread_pool_g{nullptr};
-  // Workstream N Phase 4e-22: removed `std::atomic<int> submit_num{0};`
+  // removed `std::atomic<int> submit_num{0};`
   // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
   // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
   // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place: it
@@ -370,7 +370,7 @@ public:
   int tot_num = 0;
   int cur_epoch;
   int is_leader;
-  // Workstream N Phase 4e-28: removed `int bulk_writer = 0;` and
+  // removed `int bulk_writer = 0;` and
   // `int bulk_reader = 0;` — only used inside the now-deleted
   // `AddAcceptNc` / `StartReadAcceptNc` NC-batching pair.
 
@@ -388,15 +388,15 @@ public:
   std::recursive_mutex mtx_worker_submit{};
   std::mutex condition_mutex;
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
-  // Workstream N Phase 4e-29: removed `static std::queue<shared_ptr<Coordinator>>
+  // removed `static std::queue<shared_ptr<Coordinator>>
   // coo_queue_nc;` — declared and defined but never read or written
   // anywhere outside commented-out code in the now-deleted
   // `StartReadAcceptNc` / `AddAcceptNc` pair.
-  // Workstream N Phase 4e-28: removed `replay_queue`, `all_coords`,
+  // removed `replay_queue`, `all_coords`,
   // `bulkops_th_`, `replay_th_`, `stop_replay_flag` — all only fed
   // the dead `AddAcceptNc` / `StartReadAcceptNc` / `AddReplayEntry`
   // / `StartReplayRead` paths.
-  // Workstream N Phase 4e-29: removed `std::mutex nc_submit_l_;` —
+  // removed `std::mutex nc_submit_l_;` —
   // declared but never locked anywhere outside commented-out code.
   std::recursive_mutex election_state_lock;
   const unsigned int cnt = bulkBatchCount;
@@ -409,7 +409,7 @@ public:
   void SetupService();
   void SetupCommo();
   void ShutDown();
-  // L6-A2 (2026-05-01): take MarshallDeputy (matches RegLearnerAction
+  // take MarshallDeputy (matches RegLearnerAction
   // signature in deptran/scheduler.h).
   int Next(int, janus::Command);
   void WaitForSubmit();
@@ -417,11 +417,11 @@ public:
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);
   void AddAccept(shared_ptr<Coordinator>);
-  // Workstream N Phase 4e-28: removed `AddAcceptNc`, `AddReplayEntry`,
+  // removed `AddAcceptNc`, `AddReplayEntry`,
   // `StartReplayRead`, `StartReadAcceptNc` declarations — see
   // paxos_worker.cc retirement comments.
   void submitJob(rusty::Arc<Job>);
-  // Workstream N Phase 4e-25: removed `SendBulkPrepare`, `SendHeartBeat`,
+  // removed `SendBulkPrepare`, `SendHeartBeat`,
   // `SendSyncNoOpLog` declarations — definitions deleted; see
   // paxos_worker.cc retirement comments.
   int SendSyncLog(shared_ptr<SyncLogRequest>);
@@ -592,11 +592,7 @@ public:
 
 } // namespace janus
 
-// (Phase 4d-2/4/7: BulkPrepareLog, PaxosPrepCmd, HeartBeatLog,
-// SyncLogRequest, SyncLogResponse, SyncNoOpRequest, LogEntry,
-// BulkPaxosCmd are all Serializables now — no TypedMarshallableAdapter
-// or TypedPaxosLogEnvelopeAdapter traits. Construction sites use
-// `wrap_typed_marshallable(make_shared<T>())` (the bridge overload in
+//)` (the bridge overload in
 // marshal_serializable_bridge.hpp routes Serializable T through
 // `wrap_serializable`); cast sites use `marshallable_cast<T>` (also
 // bridged). Phase 5a-1 cleanup deleted the unused

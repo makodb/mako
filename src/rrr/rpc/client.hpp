@@ -45,11 +45,10 @@
 namespace rrr {
 
 // Stream operator for RefMut<Marshal> — supports the
-// `fu->get_reply() >> x` pattern.  Workstream N Phase 3g-2: each
-// read dispatches through a `BinaryReadArchive` over a fresh
-// `MarshalSource` so the format-decode contract matches the
-// rpcgen-emitted dispatchers (which were flipped to archive in
-// Phase 3g-1).  The archive is a thin format wrapper — its read
+// `fu->get_reply() >> x` pattern.  Each read dispatches through
+// a `BinaryReadArchive` over a fresh `MarshalSource` so the
+// format-decode contract matches the rpcgen-emitted dispatchers.
+// The archive is a thin format wrapper — its read
 // state lives on the underlying `Marshal`'s read cursor, so
 // constructing a new archive per `>>` call produces the same byte
 // stream as a single chained reader.  We return the guard
@@ -354,7 +353,7 @@ class Future {
     rusty::Mutex<State> state_;  // Mutex protects State (ready/timed_out flags)
     rusty::Condvar ready_cond_;  // Uses interior mutability (const methods like Rust's &self)
 
-    // Phase 2.4: Retry support
+    // Retry support
     rusty::Cell<RequestOptions> options_;     // Request options (timeout, retry config)
     rusty::Cell<TimeoutType> timeout_type_{TimeoutType::NONE};  // Type of timeout that occurred
     rusty::Cell<uint16_t> retry_count_{0};    // Number of retries attempted
@@ -462,7 +461,7 @@ public:
     }
 
     // =========================================================================
-    // Phase 2.4: Retry Support Accessors
+    // Retry Support Accessors
     // =========================================================================
 
     // @safe - Get request options
@@ -678,7 +677,6 @@ class ClientConnection {
     // path still routes through it for thread affinity.
     rusty::Arc<PollThread> poll_thread_worker_;
 
-    // Workstream K migration (sub-leaves 4a/4b/4c2):
     //
     // When the client is in channel mode, `fiber_channel_` owns a
     // `FiberChannel` wrapper around the `ChannelConnectionProxy`; the
@@ -717,7 +715,7 @@ class ClientConnection {
     // way to break out of `recv_frame` other than process exit).
     mutable SpinMutex<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_{rusty::Option<rusty::Box<FiberChannel>>(rusty::None)};
 
-    // Workstream K, sub-leaf 4g1c — direct-callback channel binding.
+    // direct-callback channel binding.
     //
     // When `bind_channel_direct(...)` is called instead of
     // `bind_channel*(...)`, this slot owns the channel proxy and
@@ -740,7 +738,7 @@ class ClientConnection {
 
     rusty::Cell<bool> channel_mode_{false};
 
-    // Workstream K, sub-leaf 4e — channel-mode factory.
+    // channel-mode factory.
     //
     // When a `ChannelFactoryProxy` is bound via `bind_factory()`,
     // `connect(addr)` and the close fan-out's reconnect path route
@@ -828,7 +826,7 @@ class ClientConnection {
     // Safe to call repeatedly; only first call for a given xid has effect.
     void fail_pending_future(i64 xid, int err) const;
 
-    // Workstream K, sub-leaves 4c2/4d — channel-mode response demux
+    // channel-mode response demux
     // and close-side fan-out.
     //
     // `run_recv_loop` blocks the calling fiber on
@@ -868,7 +866,7 @@ class ClientConnection {
     // before the fan-out ran).
     void reset_channel_mode_for_reconnect();
 
-    // Workstream K, sub-leaf 4d — observable counter for channel-mode
+    // observable counter for channel-mode
     // auto-reconnect attempts. Incremented before the reconnect
     // thread spawn in `on_channel_closed_fan_out`. Tests inspect
     // this to verify the fan-out reached the reconnect-policy branch
@@ -905,7 +903,7 @@ public:
 
     /**
      * Bind a `ChannelConnectionProxy` to this connection
-     * (Workstream K, sub-leaves 4a/4b/4c2).
+     *.
      *
      * Once bound, the connection enters "channel mode": outbound frames
      * are routed through the channel via `request_via_channel`, and a
@@ -928,7 +926,7 @@ public:
     void bind_channel(ChannelConnectionProxy channel);
 
     /**
-     * Workstream K, sub-leaf 4f — bind that schedules the recv-loop
+     * bind that schedules the recv-loop
      * fiber spawn onto the poll thread.
      *
      * Used by production code paths (factory-driven `connect` /
@@ -947,7 +945,7 @@ public:
     void bind_channel_via_poll_thread(ChannelConnectionProxy channel);
 
     /**
-     * Workstream K, sub-leaf 4g1c — direct on_frame callback.
+     * direct on_frame callback.
      *
      * Bind the channel without `FiberChannel` and without the
      * recv-loop fiber. Installs `on_frame` and `on_closed` callbacks
@@ -975,7 +973,7 @@ public:
 
     /**
      * Bind a `ChannelFactoryProxy` to this connection
-     * (Workstream K, sub-leaf 4e).
+     *.
      *
      * Once bound, `connect(addr)` and the close fan-out's reconnect
      * spawn route through `factory->connect(addr)` instead of the
@@ -1021,7 +1019,7 @@ public:
         { weak_self_ = std::move(weak); }
     }
 
-    // Workstream K, sub-leaf 4d — observable counter for
+    // observable counter for
     // channel-mode close fan-out's reconnect spawn. Tests verify the
     // fan-out reached the reconnect branch by checking this counter
     // pre/post a synthesized `on_closed`.
@@ -1394,8 +1392,7 @@ private:
     }
 
     /**
-     * Channel-mode counterpart of `request` (Workstream K, sub-leaf
-     * 4b). Mirrors the legacy fd path's bookkeeping (state checks,
+     * Channel-mode counterpart of `request`. Mirrors the legacy fd path's bookkeeping (state checks,
      * `pending_fu_` insert, circuit-breaker accounting, metrics) but
      * dispatches the outbound frame through the bound
      * `ChannelConnectionProxy` instead of the legacy `out_` Marshal +
@@ -1458,7 +1455,7 @@ private:
         }
 
         // Build frame body — no size prefix; the channel adds it.
-        // Workstream N Phase 3d-6: the user write_fn is invoked
+        // the user write_fn is invoked
         // exclusively through a `BinaryWriteArchive` over
         // `MarshalSink(&body)`.  The legacy `void(Marshal&)` write_fn
         // signature was removed once every caller migrated (Phase
@@ -1519,7 +1516,7 @@ public:
     }
 
     // =========================================================================
-    // Phase 2.4: Request with Options (Timeout/Retry Support)
+    // Request with Options (Timeout/Retry Support)
     // =========================================================================
 
     /**
@@ -1537,7 +1534,7 @@ public:
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
         // Serialize args once so retries can replay identical payload safely.
-        // Workstream N Phase 3d-6: write_fn is exclusively
+        // write_fn is exclusively
         // BinaryWriteArchive&-shaped now (Marshal& branch removed).
         Marshal serialized_args;
         static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
@@ -1816,7 +1813,7 @@ class Client {
     // Shared lifecycle callback manager, wired into active ClientConnection.
     rusty::Arc<CallbackManager> callback_manager_{rusty::Arc<CallbackManager>::make()};
 
-    // Workstream K, sub-leaf 4e — pending channel factory.
+    // pending channel factory.
     //
     // When set via `set_channel_factory(...)`, every subsequent
     // `Client::connect(addr)` pushes a clone-equivalent of this
@@ -1911,7 +1908,7 @@ public:
     }
 
     // =========================================================================
-    // Phase 2.4: Request with Options (Timeout/Retry Support)
+    // Request with Options (Timeout/Retry Support)
     // =========================================================================
 
     /**
@@ -1979,7 +1976,7 @@ public:
     }
 
     /**
-     * Install a `ChannelFactoryProxy` (Workstream K, sub-leaf 4e).
+     * Install a `ChannelFactoryProxy`.
      *
      * Subsequent `Client::connect(addr)` calls will route through
      * the factory: `factory->connect(addr)` returns a

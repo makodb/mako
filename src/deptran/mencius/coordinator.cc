@@ -29,7 +29,7 @@ void CoordinatorMencius::Submit(const janus::Command& cmd,
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  // L10f-prep3b: cmd_ is now janus::Command.
+  // cmd_ is now janus::Command.
   verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
@@ -39,9 +39,9 @@ void CoordinatorMencius::Submit(const janus::Command& cmd,
   GotoNextPhase();
 }
 
-// Workstream N Phase 4e-31: removed `CoordinatorMencius::PickBallot()`
-// — only call site was the now-deleted `Prepare()` (Phase 4e-30).
-// Workstream N Phase 4e-30: removed `CoordinatorMencius::Prepare()`
+// removed `CoordinatorMencius::PickBallot()`
+// — only call site was the now-deleted `Prepare()`.
+// removed `CoordinatorMencius::Prepare()`
 // (~67 LOC) — body started with `verify(0); // for debug;`, and the
 // only path that could reach it was via `GotoNextPhase()`'s
 // `Phase::PREPARE` case which is unreachable: `INIT_END` jumps
@@ -78,7 +78,7 @@ void CoordinatorMencius::Suggest() {
     // TODO process timeout.
     verify(0);
   }
-// Workstream N Phase 4e-31: removed ~30 LOC of commented-out
+// removed ~30 LOC of commented-out
 // `BroadcastSuggest(..., SuggestAck-callback)` legacy + companion
 // `SuggestAck(phase_t, Future*)` body — same shape as the also-gone
 // AcceptAck variant in paxos/coordinator.cc.

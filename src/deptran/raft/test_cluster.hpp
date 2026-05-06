@@ -104,8 +104,7 @@ class TestCluster {
 
   // ------------------------------------------------------------------
   // Each node has a background worker thread draining its channel
-  // (Phase 8.0 — fiber-synchronous senders block on the reply channel,
-  // so they need a live consumer on the far side).
+  //.
   // ------------------------------------------------------------------
 
   ~TestCluster() {

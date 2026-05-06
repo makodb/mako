@@ -25,7 +25,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                  uint64_t* followerPrevLogIndex,
                  rrr::DeferredReply defer);
 
-  // Workstream N Phase 4e-39: removed `Forward(janus::Command, ...)`
+  // removed `Forward(janus::Command, ...)`
   // declaration — paired with its typed-rpc override (also removed
   // below); the matching FpgaRaft::Forward RPC was dropped from
   // rcc_rpc.rpc and the receiver `FpgaRaftServer::OnForward` is also
@@ -83,7 +83,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
   // BEGIN typed-rpc-decls (FpgaRaftServiceImpl)
   // Typed RPC interface overrides (new API).
   void Heartbeat(const FpgaRaftService::RpcHeartbeatRequest& req, FpgaRaftService::RpcHeartbeatResponse& resp, rrr::DeferredReply defer) override;
-  // Workstream N Phase 4e-39: removed `Forward` typed-rpc override —
+  // removed `Forward` typed-rpc override —
   // matching abstract base class virtual is gone (rcc_rpc.rpc updated).
   void Vote(const FpgaRaftService::RpcVoteRequest& req, FpgaRaftService::RpcVoteResponse& resp, rrr::DeferredReply defer) override;
   void Vote2FPGA(const FpgaRaftService::RpcVote2FPGARequest& req, FpgaRaftService::RpcVote2FPGAResponse& resp, rrr::DeferredReply defer) override;

@@ -1,6 +1,6 @@
 /**
  * Load Balancer Unit Tests
- * Part of Phase 5.2: Load Balancing Strategies
+ * Load Balancing Strategies
  *
  * Tests for:
  * - LoadBalancerState: round-robin index tracking

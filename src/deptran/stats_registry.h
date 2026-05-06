@@ -37,7 +37,7 @@ public:
     // Record a statistic value
     void do_statistics(const char* key, int64_t value_delta);
 
-    // Workstream N Phase 4e-35: removed `set_recorder(Recorder*)` /
+    // removed `set_recorder(Recorder*)` /
     // `get_recorder()` declarations — see stats_registry.cc retirement
     // comment.
 

@@ -1,7 +1,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-// Workstream N Phase 4e-45: removed `#include "exec.h"` —
+// removed `#include "exec.h"` —
 // FpgaRaftExecutor class deleted (was 4 verify(0) stubs).
 #include "coordinator.h"
 #include "server.h"
@@ -46,7 +46,7 @@ FpgaRaftFrame::FpgaRaftFrame(int mode) : Frame(mode) {
 
 }
 
-// Workstream N Phase 4e-45: removed `FpgaRaftFrame::CreateExecutor`
+// removed `FpgaRaftFrame::CreateExecutor`
 // — `FpgaRaftExecutor` class deleted (was 4 verify(0) stubs); the
 // `Frame::CreateExecutor` virtual is also never called anywhere
 // in the tree (no `frame_->CreateExecutor(...)` site survives), so

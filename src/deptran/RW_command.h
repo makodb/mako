@@ -9,7 +9,7 @@ namespace janus {
 
 class SimpleCommand;  // forward decl for ctor below; full def in procedure.h
 
-// Workstream N L8: TypeList-derived kind. Wire payload preserved:
+// TypeList-derived kind. Wire payload preserved:
 // int32_t type_ | key_t key_ | int32_t value_ (the cmd_id_,
 // rule_mode_*, is_recovery_command_, zero_time_ fields are local
 // state, never serialized).
@@ -25,12 +25,12 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   bool is_recovery_command_{false};
   SimpleRWCommand();
   // SimpleRWCommand(const SimpleRWCommand &o);
-  // Workstream N L10f-2 (2026-05-04): Command is the only polymorphic
+  // Command is the only polymorphic
   // ctor.  The L10f-2 step 5 retirement of Marshallable removed the
   // legacy `shared_ptr<rrr::Marshallable>` overload — no production
   // callers remained.
   SimpleRWCommand(const Command& cmd);
-  // Workstream N L10f-1 (2026-05-04): SimpleCommand-direct ctor.
+  // SimpleCommand-direct ctor.
   // After CmdData stops inheriting Marshallable, callers that hold a
   // SimpleCommand directly must use this overload (not the
   // shared_ptr<Marshallable> path that no longer accepts derived
@@ -49,7 +49,7 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   static void SetZeroTime();
   static double GetMsTimeElaps();
 
-  // Workstream N L10f-3 (2026-05-04): Command-taking statics are
+  // Command-taking statics are
   // primary; the legacy `shared_ptr<Marshallable>` overloads delegate
   // through Command(sp).
   static pair<int32_t, int32_t> GetCmdID(const Command& cmd);
@@ -60,7 +60,7 @@ class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
   static bool NeedRecordConflictInOriginalPath(const Command& cmd);
   static bool Conflict(const Command& cmd1, const Command& cmd2);
 
-  // Workstream N L10f-2 step 5 (2026-05-05): removed the
+  // removed the
   // `shared_ptr<rrr::Marshallable>` overloads of every static
   // helper above.  After Marshallable retires, no caller can
   // synthesize that argument shape.

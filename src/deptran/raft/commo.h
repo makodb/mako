@@ -146,7 +146,7 @@ friend class RaftProxy;
 
   // @safe
   // Returns shared_ptr to response data - callback captures this to ensure memory validity
-  // Workstream N L10f-prep6u: take janus::Command (was shared_ptr<Marshallable>);
+  // take janus::Command (was shared_ptr<Marshallable>);
   // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
   shared_ptr<AppendEntriesResponse>
   SendAppendEntries2(siteid_t site_id,
@@ -164,7 +164,7 @@ friend class RaftProxy;
                     );
 
   // @unsafe - C-style cast, raw pointers
-  // Workstream N L10f-prep6u: take janus::Command (was shared_ptr<Marshallable>);
+  // take janus::Command (was shared_ptr<Marshallable>);
   // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
   shared_ptr<SendAppendEntriesResults>
   SendAppendEntries(siteid_t site_id,
@@ -309,7 +309,7 @@ friend class RaftProxy;
                            std::function<void(uint64_t follower_term)> callback);
 
   // ==========================================================================
-  // Phase 2.5 — callback-shaped variants of the quorum RPCs.
+  // callback-shaped variants of the quorum RPCs.
   //
   // The existing SendAppendEntries / BroadcastVote methods return
   // shared_ptr<QuorumEvent> shapes that fit the fiber-based wait path in
@@ -323,7 +323,7 @@ friend class RaftProxy;
   // Called once per reply (for the single target site). `on_reply` fires
   // with the site_id that replied; on error, it does not fire at all, so
   // callers should treat absence of reply as a timeout.
-  // Workstream N L10f-prep6u: take janus::Command (was shared_ptr<Marshallable>);
+  // take janus::Command (was shared_ptr<Marshallable>);
   // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
   void SendAppendEntriesCb(
       siteid_t site_id,

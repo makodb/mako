@@ -13,18 +13,18 @@ MultiPaxosCommo::MultiPaxosCommo(rusty::Option<rusty::Arc<PollThread>> poll)
   : Communicator(std::move(poll)) {
 }
 
-// Workstream N Phase 4e-38: removed `MultiPaxosCommo::SendForward` —
+// removed `MultiPaxosCommo::SendForward` —
 // never called from anywhere in the tree; was a stub for an
 // unwired-up Jetpack forward-to-leader path.  The corresponding
 // `Forward` RPC declaration in rcc_rpc.rpc and the
 // `MultiPaxosServiceImpl::Forward` empty handler are also gone.
 
-// Workstream N Phase 4e-12: removed deprecated callback-style
+// removed deprecated callback-style
 // `void MultiPaxosCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,
 // callback)` — body had `verify(0);` and was mostly commented out;
 // no live callers anywhere.
 
-// Workstream N Phase 4e-30: removed `MultiPaxosCommo::BroadcastPrepare`
+// removed `MultiPaxosCommo::BroadcastPrepare`
 // (parid, slot, ballot) — body was a `verify(0);` shell with the
 // real implementation commented out.  Only call site was the
 // now-deleted `CoordinatorMultiPaxos::Prepare()`.
@@ -59,7 +59,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   return e;
 }
 
-// Workstream N Phase 4e-12: removed deprecated callback-style
+// removed deprecated callback-style
 // `void MultiPaxosCommo::BroadcastAccept(parid_t, slotid_t, ballot_t,
 // cmd, callback)` — body had `verify(0);` and was mostly commented
 // out; no live callers anywhere.
@@ -149,17 +149,17 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
   // }
 }
 
-// Workstream N Phase 4e-26: removed `MultiPaxosCommo::BroadcastBulkPrepare`
+// removed `MultiPaxosCommo::BroadcastBulkPrepare`
 // — became dead in Phase 4e-25 when the only sender
 // (`PaxosWorker::SendBulkPrepare`) went away.  The body was already a
 // `verify(0)`-then-commented-out shell.
 
-// Workstream N Phase 4e-27: removed `MultiPaxosCommo::BroadcastPrepare2`
+// removed `MultiPaxosCommo::BroadcastPrepare2`
 // — only call site was the now-deleted
 // `BulkCoordinatorMultiPaxos::Prepare()`; body was a
 // `verify(0)`-then-commented-out shell.
 
-// Workstream N Phase 4e-26: removed `MultiPaxosCommo::BroadcastHeartBeat`
+// removed `MultiPaxosCommo::BroadcastHeartBeat`
 // — became dead in Phase 4e-25 when the only sender
 // (`PaxosWorker::SendHeartBeat`) went away.
 
@@ -208,7 +208,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
   return e;
 }
 
-// Workstream N Phase 4e-26: removed `MultiPaxosCommo::BroadcastSyncNoOps`
+// removed `MultiPaxosCommo::BroadcastSyncNoOps`
 // — became dead in Phase 4e-25 when the only sender
 // (`PaxosWorker::SendSyncNoOpLog`) went away.
 

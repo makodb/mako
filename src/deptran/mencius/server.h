@@ -15,7 +15,7 @@
 namespace janus {
 class CmdData;
 
-// Workstream N L10f-prep3b (2026-05-03): polymorphic command fields
+// polymorphic command fields
 // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
 struct MenciusData {
   ballot_t max_ballot_seen_ = 0;
@@ -46,7 +46,7 @@ class MenciusServer : public TxLogServer {
   bool in_applying_logs_{false};
 
   MenciusServer() {
-    // Workstream N Phase 4e-7: removed
+    // removed
     // `witness_.set_belongs_to_leader(true);` — the
     // `belongs_to_leader_` field on Witness was never read and was
     // already commented `// discard`; the setter went away in the
@@ -81,7 +81,7 @@ class MenciusServer : public TxLogServer {
                  uint64_t* coro_id,
                  rusty::Function<void()> cb);
 
-  // Workstream N L10f-prep6q (2026-05-03): handlers take
+  // handlers take
   // const janus::Command&; shared_ptr<Marshallable> callers
   // auto-convert via Command's implicit ctor.
   void OnSuggest(const slotid_t slot_id,

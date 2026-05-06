@@ -1,6 +1,6 @@
 #pragma once
 
-// Workstream N L10b: `SerializableEnvelope<TypeList>` — closed-set
+// `SerializableEnvelope<TypeList>` — closed-set
 // polymorphic carrier.
 //
 // Wire format `[v32 kind][payload bytes]` — byte-for-byte identical

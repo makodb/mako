@@ -5,7 +5,7 @@
 
 using namespace janus;
 
-// Workstream N L8: registrations switched to the no-arg
+// registrations switched to the no-arg
 // `SerializableRegistry::reg<T>()` overload — kind is auto-derived
 // from each type's `static_kind()` method (provided by the
 // `Serializable<T, MakoCommands>` CRTP base, which returns the type's
@@ -17,7 +17,7 @@ static int volatile x4 = rrr::SerializableRegistry::reg<TpcNoopCommand>();
 static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>();
 
 
-// Workstream N Phase 4a-3a: TpcPrepareCommand serialization via
+// TpcPrepareCommand serialization via
 // BinaryWriteArchive / BinaryReadArchive. The nested
 // `shared_ptr<Marshallable> cmd_` field is wrapped/unwrapped through
 // a MarshallDeputy on each save/load — the Phase 3f-prep
@@ -27,7 +27,7 @@ static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>();
 void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
   ar << tx_id_;
   ar << ret_;
-  // L10f-prep4: cmd_ is janus::Command — drive its archive op
+  // cmd_ is janus::Command — drive its archive op
   // directly instead of wrapping it in a temporary MarshallDeputy.
   // Wire format identical (`[v32 kind][payload]`).
   ar << cmd_;
@@ -36,7 +36,7 @@ void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
 void TpcPrepareCommand::load(BinaryReadArchive& ar) {
   ar >> tx_id_;
   ar >> ret_;
-  // L10f-prep4: cmd_ load through Command's archive op.
+  // cmd_ load through Command's archive op.
   if (!cmd_.has_value()) {
     ar >> cmd_;
   } else {
@@ -44,7 +44,7 @@ void TpcPrepareCommand::load(BinaryReadArchive& ar) {
   }
 }
 
-// Workstream N Phase 4a-3b: TpcCommitCommand serialization via
+// TpcCommitCommand serialization via
 // BinaryWriteArchive / BinaryReadArchive. Both nested
 // `cmd_` (shared_ptr<Marshallable>) and optional
 // `sp_view_data_` (shared_ptr<ViewData>) are wrapped/unwrapped through
@@ -56,12 +56,12 @@ void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
   ar << tx_id_;
   ar << ret_;
   ar << term;
-  // L10f-prep4: drive cmd_ through Command's archive op directly.
+  // drive cmd_ through Command's archive op directly.
   ar << cmd_;
   bool_t has_view_data = (sp_view_data_ != nullptr) ? 1 : 0;
   ar << has_view_data;
   if (has_view_data) {
-    // L10f-5: was MarshallDeputy view_md(sp_view_data_) — Command
+    // was MarshallDeputy view_md(sp_view_data_) — Command
     // produces identical wire bytes via the same registry-dispatched
     // save/load path.
     janus::Command view_md = sp_view_data_;
@@ -73,7 +73,7 @@ void TpcCommitCommand::load(BinaryReadArchive& ar) {
   ar >> tx_id_;
   ar >> ret_;
   ar >> term;
-  // L10f-prep4: cmd_ load through Command's archive op.
+  // cmd_ load through Command's archive op.
   if (!cmd_.has_value())
     ar >> cmd_;
   else
@@ -93,7 +93,7 @@ void TpcCommitCommand::load(BinaryReadArchive& ar) {
 // (TpcNoopCommand's Marshal-based serialization removed in Phase 4a-1;
 // see save/load methods inline in tpc_command.h.)
 
-// Workstream N Phase 4a-3c: TpcBatchCommand serialization via
+// TpcBatchCommand serialization via
 // BinaryWriteArchive / BinaryReadArchive. Iterates each commit and
 // delegates to its save/load. uint32_t size prefix matches the
 // legacy encoding.

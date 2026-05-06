@@ -13,7 +13,7 @@
 
 #include <rusty/rusty.hpp>
 /**
- * Idempotency Support for RPC (Phase 2.3)
+ * Idempotency Support for RPC
  *
  * Provides duplicate request detection on the server side to ensure
  * idempotent operations are not executed multiple times due to retries.

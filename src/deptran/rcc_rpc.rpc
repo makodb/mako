@@ -1,13 +1,13 @@
 #include "procedure.h"
 #include "rcc/tx.h"
-#include "rrr/misc/any_message.hpp"  // L10c-graphs: graph fields are AnyMessage
+#include "rrr/misc/any_message.hpp"  // graph fields are AnyMessage
 %%
 
 namespace janus;
 
 abstract service MultiPaxos {
 
-  // Workstream N Phase 4e-38: removed `Forward(cmd, dep_id | coro_id)`
+  // removed `Forward(cmd, dep_id | coro_id)`
   // RPC declaration — no sender (`MultiPaxosCommo::SendForward` was
   // never called) and no real handler (`MultiPaxosServiceImpl::
   // Forward` had an empty body marked "Mako uses OnForwardToLearner
@@ -31,7 +31,7 @@ abstract service MultiPaxos {
                Command cmd);
 
   // Mako's bulk Paxos operations for optimized batching
-  // Workstream N Phase 4e-26: removed `Heartbeat`, `BulkPrepare`,
+  // removed `Heartbeat`, `BulkPrepare`,
   // `SyncNoOps` RPC declarations — became dead in Phase 4e-25 when the
   // matching `PaxosWorker::SendHeartBeat` / `SendBulkPrepare` /
   // `SendSyncNoOpLog` senders went away.  No callers, no service-side
@@ -44,7 +44,7 @@ abstract service MultiPaxos {
 
   defer BulkAccept(Command cmd | i32 ballot, i32 val);
 
-  // Workstream N Phase 4e-27: removed `BulkPrepare2` RPC declaration
+  // removed `BulkPrepare2` RPC declaration
   // — the only sender (`BulkCoordinatorMultiPaxos::Prepare()`) was
   // dead.  No callers; the matching `BroadcastPrepare2` /
   // `MultiPaxosServiceImpl::BulkPrepare2` / `OnBulkPrepare2` chain
@@ -85,7 +85,7 @@ abstract service FpgaRaft {
 									DepId dep_id |
 									uint64_t followerPrevLogIndex);
 
-  // Workstream N Phase 4e-39: removed `Forward(Command cmd |
+  // removed `Forward(Command cmd |
   // uint64_t cmt_idx)` RPC declaration — only sender
   // (`CoordinatorFpgaRaft::Forward`) had `verify(0); // TODO delete it`
   // and was never called.  No live caller anywhere in the tree.
@@ -212,7 +212,7 @@ abstract service Raft {
 }
 
 abstract service Copilot {
-  // Workstream N Phase 4e-40: removed `Forward(Command cmd);`
+  // removed `Forward(Command cmd);`
   // RPC declaration — no sender anywhere in the tree (no
   // `CopilotCommo::SendForward`, no `async_Forward(...)` call site).
   // The matching `CopilotServiceImpl::Forward` and

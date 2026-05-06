@@ -100,7 +100,7 @@ public:
 //
 // DEPRECATED: snapshot_group inherits from RefCounted for legacy compatibility.
 // New code should use rusty::Arc<snapshot_group> for shared ownership.
-// Migration status: in progress (Phase 4 Leaf 4).
+// Migration status: in progress.
 template <class Key, class Value, class Container, class Snapshot>
 struct snapshot_group: public NoCopy {
     Container data;

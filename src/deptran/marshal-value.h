@@ -9,7 +9,7 @@ Marshal& operator << (Marshal& m, const mdb::Value &value);
 
 Marshal& operator >> (Marshal& m, mdb::Value &value);
 
-// Workstream N Phase 4d-6: archive operators for mdb::Value, mirroring
+// archive operators for mdb::Value, mirroring
 // the Marshal-based ones byte-for-byte. Used by Phase 4 type
 // migrations (TxWorkspace, SimpleCommand) that need to write Value
 // fields through BinaryWriteArchive / BinaryReadArchive.

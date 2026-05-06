@@ -27,7 +27,7 @@ using namespace network_client;
 // ============================================================================
 namespace paxos_impl {
 
-// Workstream N Phase 4e-21: removed
+// removed
 //   `std::vector<shared_ptr<network_client::NetworkClientServiceImpl>>
 //    nc_services = {};`
 // — never populated anywhere (only `vector::push_back` etc. would
@@ -36,7 +36,7 @@ namespace paxos_impl {
 // been UB on the empty vector.  The live `nc_setup_server` /
 // `nc_start_server` create their own `NetworkClientServiceImpl`
 // instances inside an `rrr::Server` and never touch this global.
-// Workstream N Phase 4e-16: removed
+// removed
 //   `std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};`
 // — declared but never written or read anywhere in the codebase.
 // end of network client
@@ -48,29 +48,29 @@ vector<unique_ptr<ClientWorker>> client_workers_g = {};
 typedef std::chrono::high_resolution_clock::time_point tp;
 typedef pair<const char*, pair<int,tp>> queue_entry;
 typedef pair<const char*, pair<int,int>> queue_entry_par;
-// Workstream N Phase 4e-19: removed
+// removed
 //   `static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;`
 // — `add_log` enqueued into it but the only dequeue happened in
 // the now-deleted `submit_logger` (which was itself only called from
 // the dead `PollSubmitLog` thread function — no `pthread_create`
 // for it survived the Phase 4e-16 cleanup).
-// Workstream N Phase 4e-16: removed
+// removed
 //   `static std::queue<queue_entry_par> submit_queue_nc;`
 // — only used inside the now-deleted `PollSubQNc` function.
-// Workstream N Phase 4e-21: removed `static rrr::SpinLock l_;` —
+// removed `static rrr::SpinLock l_;` —
 // declared but no `lock()` / `unlock()` calls anywhere in the file
 // or codebase.
-// Workstream N Phase 4e-19: removed `static atomic<int> producer{0};`
+// removed `static atomic<int> producer{0};`
 // — only read inside the now-deleted `PollSubmitLog`'s
 // `while(producer >= 0)` loop guard; no writers anywhere.
-// Workstream N Phase 4e-16 already removed the `consumer` half of
+// 16 already removed the `consumer` half of
 // the original `static atomic<int> producer{0}, consumer{0};`
 // pair for the same reason.
 static atomic<int> submit_tot{0};
-// Workstream N Phase 4e-16: removed `pthread_t submit_poll_th_;` —
+// removed `pthread_t submit_poll_th_;` —
 // referenced only in commented-out `pthread_create(...)` /
 // `pthread_detach(...)` lines.
-// Workstream N Phase 4e-22: removed `const int len = 5;` and
+// removed `const int len = 5;` and
 // `static std::map<std::string,long double> timer;`.  Both fed only
 // the now-deleted `microbench_paxos` / `microbench_paxos_queue`
 // driver functions and `add_time()` reporting helper.
@@ -81,7 +81,7 @@ std::map<int, std::function<int(const char*&, int, int, int, std::queue<std::tup
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
-// Workstream N Phase 4e-23: removed `const bool is_datacenter_failure = false;`
+// removed `const bool is_datacenter_failure = false;`
 // and `const bool is_fail_new_impl = true;` — both were hard-coded
 // constants with no command-line / YAML override path, gating dead
 // branches in `setup2()` (the `is_datacenter_failure` branch and its
@@ -161,12 +161,12 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
     Log_info("server workers' communicators setup");
 }
 
-// Workstream N Phase 4e-22: removed `char* message[200];` global +
+// removed `char* message[200];` global +
 // `microbench_paxos()` driver — never called from production paths
 // (only the now-deleted dispatcher in `replication_helper.cc`
 // referenced it; nothing referenced the dispatcher either).
 //
-// Workstream N Phase 4e-19: removed long-commented-out
+// removed long-commented-out
 // `remove_from_submitq()` helper that called
 // `submit_queue.try_dequeue` — `submit_queue` is gone.
 
@@ -187,7 +187,7 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
 }
 
 
-// Workstream N Phase 4e-19: removed dead `wait` / `count_free` /
+// removed dead `wait` / `count_free` /
 // `submit_logger()` / `PollSubmitLog()` chain.  `PollSubmitLog`
 // was a `pthread_create` worker entry point that polled
 // `submit_queue` and called `submit_logger`, which in turn
@@ -260,7 +260,7 @@ int shutdown_paxos() {
     // kill the election thread
     es->running = false;
 
-    // Workstream N Phase 4e-22: removed `timer` print loop — fed only
+    // removed `timer` print loop — fed only
     // by the now-deleted `add_time()` helper.
     for (auto& worker : pxs_workers_g) {
         worker->WaitForShutdown();
@@ -352,7 +352,7 @@ void register_for_leader_par_id_return(std::function<int(const char*&, int, int,
 void submit(const char* log, int len, uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {  // submit a transaction
         if (!worker->IsLeader(par_id)) continue;
-        // Workstream N Phase 4e-29: removed
+        // removed
         // `verify(worker->submit_pool != nullptr);` — `submit_pool`
         // was always nullptr (assignment was commented out in
         // `SetupBase`), so this verify would have always fired had
@@ -370,12 +370,12 @@ void submit(const char* log, int len, uint32_t par_id) {
         submit_tot++;
     }
 }
-// Workstream N Phase 4e-22: removed `add_time(key, value, denom)`
+// removed `add_time(key, value, denom)`
 // helper — the only call site was inside the also-deleted
 // `microbench_paxos_queue` driver, and the `timer` map it accumulated
 // into is gone (only reader was the `shutdown_paxos` print loop).
 //
-// Workstream N Phase 4e-20: removed dead `static tp firstTime;`,
+// removed dead `static tp firstTime;`,
 // `static tp endTime;`, `static bool debug = false;` — declared
 // but no production reader or writer anywhere.  The only `debug`
 // reference was a `// marker:ansh for debug` line comment inside
@@ -403,18 +403,18 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   Log_error("add_log_to_nc: no worker found for par_id %d", par_id);
 }
 
-// Workstream N Phase 4e-16: removed `void* PollSubQNc(void*)` — body
+// removed `void* PollSubQNc(void*)` — body
 // started with `Log_error("exit branch"); exit(1);`, making everything
 // after unreachable.  The only reference to the function (a
 // `pthread_create(..., PollSubQNc, ...)` at line 939) was already
 // commented out.  `submit_queue_nc` and `submit_poll_th_` went away
 // alongside.
 
-// Workstream N Phase 4e-24: removed `createBulkPrepare(epoch, machine_id)`
+// removed `createBulkPrepare(epoch, machine_id)`
 // — only call site was inside the now-deleted `send_bulk_prep`.
-// Workstream N Phase 4e-24: removed `createHeartBeat(epoch, machine_id)`
+// removed `createHeartBeat(epoch, machine_id)`
 // — only call site was inside the deleted `electionMonitor` thread fn
-// (Phase 4e-20).  No surviving caller.
+//.  No surviving caller.
 
 shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   auto syncLog = make_shared<SyncLogRequest>();
@@ -430,12 +430,12 @@ shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   return syncLog;
 }
 
-// Workstream N Phase 4e-25: removed `createSyncNoOpLog(epoch, machine_id)`
+// removed `createSyncNoOpLog(epoch, machine_id)`
 // — only call site was inside the now-deleted `send_no_ops_to_all_workers`
-// (Phase 4e-24).  No surviving caller; the matching
+//.  No surviving caller; the matching
 // `PaxosWorker::SendSyncNoOpLog` is also removed in this phase.
 
-// Workstream N Phase 4e-24: removed `send_no_ops_to_all_workers(epoch)`
+// removed `send_no_ops_to_all_workers(epoch)`
 // — only call site was inside the now-deleted `stuff_todo_leader_election`.
 // The commented-out `// send_no_ops_to_all_workers(epoch)` line in
 // `stuff_todo_learner_upgrade` is unaffected.
@@ -533,14 +533,14 @@ void stuff_todo_learner_upgrade(){
   }
 }
 
-// Workstream N Phase 4e-24: removed `stuff_todo_leader_election()` —
-// no caller anywhere; the `electionMonitor` thread fn (Phase 4e-20)
+// removed `stuff_todo_leader_election()` —
+// no caller anywhere; the `electionMonitor` thread fn
 // was its only invoker, and the surviving cluster-internal
 // `heartbeatMonitor2` path uses `stuff_todo_learner_upgrade` instead.
-// Workstream N Phase 4e-24: removed `send_bulk_prep(send_epoch)` —
+// removed `send_bulk_prep(send_epoch)` —
 // also referenced only by the deleted `electionMonitor` thread fn.
 
-// Workstream N Phase 4e-20: removed dead `void* electionMonitor(void*)`
+// removed dead `void* electionMonitor(void*)`
 // (~46 lines) and `void* heartbeatMonitor(void*)` (~29 lines)
 // pthread thread functions.  Both were referenced only inside
 // commented-out `// Pthread_create(...)` lines further down in
@@ -580,7 +580,7 @@ void* heartbeatBackground(void* arg) {
   return nullptr;
 }
 
-// Workstream N Phase 4e-23: removed `void* heartbeatBackground2(void*)`
+// removed `void* heartbeatBackground2(void*)`
 // — referenced only inside the now-deleted `if (is_datacenter_failure)`
 // branch of `setup2()` (`Pthread_create(..., heartbeatBackground2, ...)`)
 // and the constant gating that branch was hard-coded `false`.
@@ -604,7 +604,7 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
 
      Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
 
-     // Workstream N Phase 4e-23: collapsed `if (is_fail_new_impl) {...}
+     // collapsed `if (is_fail_new_impl) {...}
      // else {...}` (the constant was hard-coded `true`); the dead else
      // branch ran a stale 4-step `leader_callback_(0/2/3)` sequence
      // with chrono timing instrumentation.
@@ -618,7 +618,7 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
   return nullptr;
 }
 
-// Workstream N Phase 4e-23: removed `void* heartbeatMonitor3(void*)`
+// removed `void* heartbeatMonitor3(void*)`
 // — paired with the deleted `heartbeatBackground2`; referenced only
 // inside the same dead `if (is_datacenter_failure)` branch.
 
@@ -642,7 +642,7 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
     es->set_epoch(0);
     es->set_leader(0);
   }
-  // Workstream N Phase 4e-23: collapsed `if (is_datacenter_failure)
+  // collapsed `if (is_datacenter_failure)
   // {...} else {...}` to just the else-branch (the constant was
   // hard-coded `false`).  The dead if-branch launched
   // `heartbeatBackground2` / `heartbeatMonitor3`, both removed above.
@@ -653,7 +653,7 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
     Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
     pthread_detach(es->heartbeat_th_checking_);
   }
-  // Workstream N Phase 4e-20 / 4e-19 / 4e-16: cleared a stale
+  // 20 / 4e-19 / 4e-16: cleared a stale
   // commented-out block that referenced now-deleted thread entry
   // points (`PollSubQNc`, `electionMonitor`, `heartbeatMonitor`)
   // and their `Pthread_create` / `pthread_detach` lines.  The live
@@ -664,7 +664,7 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
 
 void add_log(const char* log, int len, uint32_t par_id){
     //read_log(log, len, "silo");
-    // Workstream N Phase 4e-19: removed the `chrono::high_resolution_clock`
+    // removed the `chrono::high_resolution_clock`
     // start/end snapshots, the `paxos_entry = make_pair(...)` packing,
     // and `submit_queue.enqueue(paxos_entry)` — `submit_queue` was a
     // leaked write-only queue (no live dequeue thread; see the
@@ -716,11 +716,11 @@ void wait_for_submit(uint32_t par_id) {
           continue;
         }
         worker->election_state_lock.unlock();
-        // Workstream N Phase 4e-29: removed commented-out
+        // removed commented-out
         // `//verify(worker->submit_pool != nullptr);` and
         // `//worker->submit_pool->wait_for_all();` — `submit_pool`
         // field is gone.
-	      // Workstream N Phase 4e-28: dropped `replay_queue.size_approx()`
+	      // dropped `replay_queue.size_approx()`
 	      // from this Log_info — `replay_queue` field went away with
 	      // the dead `AddReplayEntry` / `StartReplayRead` pair.
 	      Log_info("The number of completed submits n_current: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, par_id, (int)worker->n_tot);
@@ -729,7 +729,7 @@ void wait_for_submit(uint32_t par_id) {
     }
     for (auto& worker : pxs_workers_g) {
         if (!worker->IsPartition(par_id)) continue;
-	      // Workstream N Phase 4e-28: dropped `replay_queue.size_approx()`
+	      // dropped `replay_queue.size_approx()`
 	      // from this Log_info too.
 	      Log_info("Par_id %ld [partition], the number of completed submits %ld", par_id, (int)worker->n_current);
         worker->n_tot = total_submits;
@@ -745,7 +745,7 @@ void pre_shutdown_step(){
     }
 }
 
-// Workstream N Phase 4e-22: removed `microbench_paxos_queue()` driver
+// removed `microbench_paxos_queue()` driver
 // — never called from production paths (only the now-deleted
 // dispatcher in `replication_helper.cc` referenced it; nothing
 // referenced the dispatcher either).
@@ -818,7 +818,7 @@ void nc_setup_server(int nthreads, std::string host) {
   }
 }
 
-// Workstream N Phase 4e-21: removed seven `nc_get_*_requests` getter
+// removed seven `nc_get_*_requests` getter
 // functions (~30 lines):
 //   nc_get_new_order_requests, nc_get_payment_requests,
 //   nc_get_delivery_requests, nc_get_order_status_requests,

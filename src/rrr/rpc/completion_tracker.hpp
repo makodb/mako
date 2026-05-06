@@ -13,7 +13,7 @@
 
 #include <rusty/rusty.hpp>
 /**
- * Request Completion Tracking for RPC (Phase 4.3)
+ * Request Completion Tracking for RPC
  *
  * Tracks completed request XIDs on the server side to allow clients
  * to query if a request completed after reconnection.

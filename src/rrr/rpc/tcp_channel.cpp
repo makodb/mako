@@ -135,7 +135,6 @@ ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
     // The `poll_thread_` slot may be `None` for unit tests that drive
     // `TcpConnection` directly via `socketpair(2)` without a poll
     // thread (those tests are single-threaded — flag-poll is fine).
-    // Workstream K, sub-leaf 4g1b.
     if (poll_thread_.is_some() && !PollThreadWorker::is_on_poll_thread()) {
         poll_thread_.as_ref().unwrap()->update_mode(
             fd_, PollMode::READ | PollMode::WRITE);
@@ -740,7 +739,7 @@ bool TcpListener::handle_read() {
             conn_fd, std::move(peer_addr_str));
 
         if (poll_thread_.is_some()) {
-            // Workstream K, sub-leaf 4g1b — wire the poll thread into
+            // wire the poll thread into
             // the accepted connection BEFORE registering its pollable
             // proxy, so non-poll-thread `send_frame` callers on the
             // server side can also post `update_mode` actively.
@@ -878,7 +877,7 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
     // Arc; the pollable proxy keeps another, so the connection
     // survives until both layers release.
     auto conn = rusty::Arc<TcpConnection>::make(fd, std::string(addr));
-    // Workstream K, sub-leaf 4g1b — wire the poll thread reference into
+    // wire the poll thread reference into
     // the connection BEFORE the channel proxy is handed back, so any
     // user-thread `send_frame` call can post `update_mode` actively
     // (without the lost-wake-up race against `pending_write_update_`).

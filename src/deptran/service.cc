@@ -223,7 +223,7 @@ ClassicServiceImpl::ClassicServiceImpl(TxLogServer* sched,
   piece_count_prepare_success_ = 0;
 #endif
 
-  // Workstream N Phase 4e-35: removed `if (do_logging()) { verify(0);
+  // removed `if (do_logging()) { verify(0);
   // ... }` block — body was a `verify(0)`-only TODO shell with the
   // `recorder_ = new Recorder(path);` and `poll_thread_worker->add`
   // calls already commented out; `Service::recorder_` field gone.
@@ -300,7 +300,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   }
 
   std::shared_ptr<ViewData> view;
-  // L10f-prep6n: TxLogServer::Dispatch now takes janus::Command;
+  // TxLogServer::Dispatch now takes janus::Command;
   // pass `md` (RPC param) directly.
   *res = dtxn_sched()->Dispatch(cmd_id, md, *output, view);
   
@@ -401,7 +401,7 @@ void ClassicServiceImpl::SimpleCmd(
     const SimpleCommand& cmd, rrr::i32* res, rrr::DeferredReply defer) {
   Fiber::create_run([res, defer = std::move(defer), this]() mutable {
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    // Phase 4a-2: aliased wrap preserves event-member aliasing — the
+    // aliased wrap preserves event-member aliasing — the
     // apply path's Done() must wake this empty_cmd's Wait() below.
     auto sched = (SchedulerClassic*)dtxn_sched_;
     sched->CreateRepCoord(0)->Submit(
@@ -491,7 +491,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   if (ret == WRONG_LEADER) {
     *res = WRONG_LEADER;
     Log_info("[WRONG_LEADER] ServiceImpl::Commit returning WRONG_LEADER for tx_id: %lu", tid);
-    // Workstream N L10f-2 step 1 (2026-05-04): removed the
+    // removed the
     // `dynamic_cast<TxData*>(sp_tx->cmd_.inner_marshallable().get())`
     // escape hatch.  After L10f-1, TxData no longer inherits
     // Marshallable, so the dynamic_cast always returned nullptr
@@ -604,7 +604,7 @@ void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,
 //  std::lock_guard<std::mutex> guard(this->mtx_);
   RccServer* sched = (RccServer*) dtxn_sched_;
   auto p = std::make_shared<RccGraph>();
-  // Workstream N L10c-graphs: graph reply rides directly as `AnyMessage`.
+  // graph reply rides directly as `AnyMessage`.
   *p_md_graph = *rrr::AnyMessage::pack(p);
   *res = sched->OnDispatch(cmd, output, p);
   defer.reply();
@@ -614,7 +614,7 @@ void ClassicServiceImpl::RccFinish(const cmdid_t& cmd_id,
                                    const rrr::AnyMessage& md_graph,
                                    TxnOutput* output,
                                    rrr::DeferredReply defer) {
-  // Workstream N L10c-graphs: graph rides directly as AnyMessage.
+  // graph rides directly as AnyMessage.
   auto sp_graph = md_graph.unpack<RccGraph>();
   verify(sp_graph);
   const RccGraph& graph = *sp_graph;
@@ -680,7 +680,7 @@ void ClassicServiceImpl::JanusDispatch(const vector<SimpleCommand>& cmd,
     auto* sched = (SchedulerJanus*) dtxn_sched_;
     *p_res = sched->OnDispatch(cmd, p_output, sp_graph);
     if (sp_graph->size() <= 1) {
-      // Workstream N L10c-graphs: graph reply rides directly as AnyMessage.
+      // graph reply rides directly as AnyMessage.
       *p_md_res_graph =
           *rrr::AnyMessage::pack(std::make_shared<EmptyGraph>());
     } else {
@@ -806,7 +806,7 @@ void ClassicServiceImpl::JanusAccept(const cmdid_t& txnid,
                                      const rrr::AnyMessage& md_graph,
                                      int32_t* res,
                                      rrr::DeferredReply defer) {
-  // Workstream N L10c-graphs: graph rides directly as AnyMessage.
+  // graph rides directly as AnyMessage.
   auto graph = md_graph.unpack<RccGraph>();
   verify(graph);
   auto sched = (SchedulerJanus*) dtxn_sched_;
@@ -940,7 +940,7 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
 
 void ClassicServiceImpl::RegisterStats() {
   auto& registry = StatsRegistry::instance();
-  // Workstream N Phase 4e-35: removed `registry.set_recorder(recorder_);`
+  // removed `registry.set_recorder(recorder_);`
   // — `Service::recorder_` field is gone; `StatsRegistry::set_recorder`
   // method removed in this phase too.
   registry.set_stat(StatsRegistry::STAT_SZ_SCC, &stat_sz_scc_);

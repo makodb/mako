@@ -11,7 +11,7 @@
 
 #include "procedure.h"
 #include "rcc/tx.h"
-#include "rrr/misc/any_message.hpp"  // L10c-graphs: graph fields are AnyMessage
+#include "rrr/misc/any_message.hpp"  // graph fields are AnyMessage
 namespace janus {
 
 struct ValueTimesPair {

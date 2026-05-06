@@ -90,7 +90,7 @@ private:
     }
 
     // @unsafe - Uses Marshal which has non-borrow-checked operations.
-    // Workstream N Phase 4d-9: routes through `LogEntry::save(BinaryWriteArchive&)`
+    // routes through `LogEntry::save(BinaryWriteArchive&)`
     // (the migrated archive method) by way of a `MarshalSink` over the
     // backing `Marshal`. Wire format byte-for-byte unchanged.  The
     // const_cast on `entry` was removed — `save` is `const`-qualified.
@@ -106,7 +106,7 @@ private:
     }
 
     // @unsafe - Uses Marshal which has non-borrow-checked operations.
-    // Workstream N Phase 4d-9: routes through `LogEntry::load(BinaryReadArchive&)`
+    // routes through `LogEntry::load(BinaryReadArchive&)`
     // by way of a `MarshalSource` over the same backing `Marshal`.
     // The Phase 3f-prep MarshallDeputy archive op requires a
     // MarshalSource (no length prefix on the deputy payload), which

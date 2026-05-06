@@ -2,7 +2,7 @@
 
 // Marshal Archive — serde / cereal-style serialization layer.
 //
-// Workstream N Phase 1: parallel to the existing `Marshal` /
+// parallel to the existing `Marshal` /
 // `Marshallable` system, decoupling format (how bytes are laid out)
 // from target (where bytes go). Built atop `pro::proxy` for
 // type-erased Sink/Source dispatch.
@@ -196,7 +196,7 @@ inline SourceProxy make_source_proxy(BufferSource* source) {
 }
 
 // ---------------------------------------------------------------------------
-// File descriptor Sink / Source (Phase 1c).
+// File descriptor Sink / Source.
 //
 // FdSink::write — full-write loop. Calls ::write in a loop until n bytes
 // have been written, retrying transparently on EINTR. On any other
@@ -290,7 +290,7 @@ inline SourceProxy make_source_proxy(FdSource* source) {
 }
 
 // ---------------------------------------------------------------------------
-// Marshal ↔ Archive bridges (Phase 3a).
+// Marshal ↔ Archive bridges.
 //
 // MarshalSink wraps an `rrr::Marshal*` and forwards `write(p, n)` to
 // `Marshal::write(p, n)`, so new `BinaryWriteArchive`-based code can
@@ -299,7 +299,7 @@ inline SourceProxy make_source_proxy(FdSource* source) {
 //
 // MarshalSource is the dual: wraps a `Marshal*` and forwards
 // `read(p, n)` to `Marshal::read(p, n)`. Wire format is byte-for-byte
-// identical (Phase 1 commitment), so a Marshal accumulated by old
+// identical, so a Marshal accumulated by old
 // `Marshal::operator<<` calls can be drained by a `BinaryReadArchive`
 // over `MarshalSource` and produce the same decoded values.
 //
@@ -401,7 +401,7 @@ class BinaryWriteArchive {
   explicit BinaryWriteArchive(FdSink* sink)
       : sink_(make_sink_proxy(sink)) {}
 
-  // Convenience: build directly atop a concrete MarshalSink (Phase 3a).
+  // Convenience: build directly atop a concrete MarshalSink.
   explicit BinaryWriteArchive(MarshalSink* sink)
       : sink_(make_sink_proxy(sink)) {}
 
@@ -536,7 +536,7 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::BTreeMap<K, V>& v) {
     rrr::v64 v_len = static_cast<rrr::i64>(v.len());
     *this << v_len;
-    // L9: rusty::BTreeMap iter `operator*()` returns
+    // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, V&>` (post-2026-04 API).
     for (auto it = v.begin(); it != v.end(); ++it) {
       auto kv = *it;
@@ -559,7 +559,7 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::HashMap<K, V>& v) {
     rrr::v64 v_len = static_cast<rrr::i64>(v.len());
     *this << v_len;
-    // L9: rusty::HashMap iter `operator*()` returns
+    // rusty::HashMap iter `operator*()` returns
     // `std::tuple<const K&, V&>` (post-2026-04 API).
     for (auto it = v.begin(); it != v.end(); ++it) {
       auto kv = *it;
@@ -593,7 +593,7 @@ class BinaryReadArchive {
   explicit BinaryReadArchive(FdSource* source)
       : source_(make_source_proxy(source)) {}
 
-  // Convenience: build directly atop a concrete MarshalSource (Phase 3a).
+  // Convenience: build directly atop a concrete MarshalSource.
   explicit BinaryReadArchive(MarshalSource* source)
       : source_(make_source_proxy(source)) {}
 
@@ -838,7 +838,7 @@ class BinaryReadArchive {
 };
 
 // ---------------------------------------------------------------------------
-// Layer 4: Serializable proxy + factory registry (Phase 2).
+// Layer 4: Serializable proxy + factory registry.
 //
 // A type T satisfies the Serializable concept if it provides:
 //   - void save(BinaryWriteArchive&) const  -- emit bytes
@@ -874,7 +874,7 @@ struct SerializableFacade : pro::facade_builder
     // in `marshal_serializable_bridge.hpp` to extract a typed payload
     // from a SerializableMarshallableAdapter wrapped in MarshallDeputy.
     ::add_skill<pro::skills::indirect_rtti>
-    // L10f-2 step 5 (2026-05-05): enable `pro::proxy<F>` copy via
+    // 2 step 5 (2026-05-05): enable `pro::proxy<F>` copy via
     // T's copy ctor — required for SerializableEnvelope to be
     // copyable when its `inner_` is a value-typed proxy.
     // `support_copy` is a facade_builder method, not a skill.
@@ -913,7 +913,7 @@ struct SerializableSharedPtrHolder {
 // inherit `rrr::Serializable<MyType, MakoCommands>` to pick up these
 // methods + satisfy the SerializableFacade convention shape.
 //
-// L10f-2 step 5 (2026-05-05): moved here from marshal_serializable_bridge.hpp
+// 2 step 5 (2026-05-05): moved here from marshal_serializable_bridge.hpp
 // when that header retired with the rest of the bridge.
 struct DefaultPayloadList {
   template<typename T>
@@ -930,7 +930,7 @@ struct Serializable {
   }
 };
 
-// L6-pivot (2026-05-01): the `SerializableConcept<T>` C++20 concept
+// the `SerializableConcept<T>` C++20 concept
 // was retired in this commit.  It described the "T has save/load/kind"
 // shape, but it duplicated what `SerializableFacade` already enforces
 // at proxy construction time (and what `pro::proxy_cast<T*>` enforces
@@ -986,7 +986,7 @@ class SerializableRegistry {
   template<class T>
   static int reg(int32_t kind) {
     register_factory(kind, []() -> SerializableProxy {
-      // L10f-2 step 5 (2026-05-05): factory returns a holder-shaped
+      // 2 step 5 (2026-05-05): factory returns a holder-shaped
       // proxy so SerializableEnvelope::load gives unpack_shared<T> a
       // refcount-shared shared_ptr<T> — no dangling pointer when the
       // helper outlives the source envelope.
@@ -1076,7 +1076,7 @@ class SerializableRegistry {
 // to 0 (UNKNOWN), which surfaces as a `verify(0)`-grade error at
 // registration / set_marshallable time.
 //
-// Workstream N L10a: `create_at(pos)` adds compile-time-driven factory
+// `create_at(pos)` adds compile-time-driven factory
 // dispatch — given a 1-indexed wire kind, returns a fresh
 // `SerializableProxy` for the corresponding type. This is the
 // closed-set counterpart of `MarshallDeputy::create_initializer(kind)`,

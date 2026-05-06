@@ -9,7 +9,7 @@ ballot_t RaftExecutor::Prepare(const ballot_t ballot) {
   return 0;
 }
 
-// Workstream N L10f-prep6ag (2026-05-03): removed dead `Accept` and
+// removed dead `Accept` and
 // `AppendEntries` impls — both were `Log_warn`-and-return-0 stubs
 // with no callers anywhere in the tree.
 

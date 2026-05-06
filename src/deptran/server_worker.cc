@@ -98,7 +98,7 @@ void ServerWorker::SetupBase() {
     tx_sched_->rep_frame_ = rep_frame_;
     tx_sched_->rep_sched_ = rep_sched_;
 
-    // Phase 2.1: Initialize recovery for replication servers
+    // Initialize recovery for replication servers
     InitializeRecovery(site_info_->partition_id_, site_info_->locale_id);
   }
   // add callbacks to execute commands to rep_sched_
@@ -109,10 +109,10 @@ void ServerWorker::SetupBase() {
         std::placeholders::_1,
         std::placeholders::_2));
 
-    // Phase 2.4: Start state machine recovery tracking
+    // Start state machine recovery tracking
     tx_sched_->SetRecoveryMode(true);
 
-    // Phase 2.2: Replay committed entries after callback is registered
+    // Replay committed entries after callback is registered
     if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
       raft_server->ReplayCommittedEntries();
     }
@@ -120,7 +120,7 @@ void ServerWorker::SetupBase() {
       paxos_server->ReplayCommittedEntries();
     }
 
-    // Phase 2.4: End state machine recovery tracking
+    // End state machine recovery tracking
     tx_sched_->SetRecoveryMode(false);
   }
 #endif
@@ -263,7 +263,7 @@ void ServerWorker::WaitForShutdown() {
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     // Arc auto-releases on destruction (hb_thread_pool_g goes out of scope with ServerWorker)
 
-    // Workstream N Phase 4e-35: removed `for_each_service(...) { if
+    // removed `for_each_service(...) { if
     // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
     // recorder = s->recorder_; if (recorder) { Log::info(...) } } }`
     // block — `Service::recorder_` field is always nullptr (now
@@ -381,7 +381,7 @@ ServerWorker::~ServerWorker() {
   }
 }
 
-// Phase 2.1: Initialize recovery for replication servers
+// Initialize recovery for replication servers
 // @unsafe - Uses LogStorage and filesystem operations
 void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id) {
   if (!rep_sched_) {

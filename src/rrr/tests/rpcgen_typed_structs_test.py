@@ -54,15 +54,15 @@ def assert_contains(haystack: str, needle: str) -> None:
 
 def assert_not_contains(haystack: str, needle: str) -> None:
     if needle in haystack:
-        raise AssertionError(f"snippet should NOT appear (Phase 3e-2 dropped emission):\n{needle}\n")
+        raise AssertionError(f"snippet should NOT appear:\n{needle}\n")
 
 
 def verify_alpha_service_block(block: str) -> None:
     assert_contains(block, "struct RpcPingRequest {\n        rrr::i32 id;\n    };")
     assert_contains(block, "struct RpcPingResponse {\n        std::string msg;\n    };")
-    # Workstream N Phase 3e-2: the legacy `Marshal&` operator<<
+    # the legacy `Marshal&` operator<<
     # emission is gone from auto-generated typed wrappers.  The
-    # Workstream N Phase 3g-2: the `operator>>(Marshal&, ...)` form is
+    # the `operator>>(Marshal&, ...)` form is
     # also dropped — every read path now routes through
     # `BinaryReadArchive`, including the routed
     # `operator>>(rusty::RefMut<Marshal>&, U&)` overload in
@@ -363,7 +363,7 @@ def verify_alpha_service_block(block: str) -> None:
 def verify_beta_service_block(block: str) -> None:
     assert_contains(block, "struct RpcPingRequest {\n        rrr::i32 other_id;\n    };")
     assert_contains(block, "struct RpcPingResponse {\n        std::string echoed;\n    };")
-    # Workstream N Phase 3e-2 / Phase 3g-2: see
+    # 2 / Phase 3g-2: see
     # verify_alpha_service_block — both Marshal& operator<< and
     # operator>> emissions are dropped.
     assert_not_contains(

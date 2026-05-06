@@ -67,7 +67,7 @@ class Alarm: public FrequentJob {
     auto it = waiting_.begin();
     if (it != waiting_.end()) {
       uint64_t tm_now = rrr::Time::now();
-      // L9: rusty::BTreeMap iter `operator*()` returns
+      // rusty::BTreeMap iter `operator*()` returns
       // `std::tuple<const K&, V&>` (post-2026-04 API). Outer value V
       // is the `pair<timeout, callback>` we stored, accessed via
       // `std::get<1>` on the tuple.

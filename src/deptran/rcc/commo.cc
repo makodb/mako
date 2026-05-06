@@ -24,7 +24,7 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
         TxnOutput output;
         rrr::AnyMessage am;
         fu->get_reply() >> res >> output >> am;
-        // Workstream N L10c-graphs: graph field rides directly as AnyMessage.
+        // graph field rides directly as AnyMessage.
         if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
           auto v = rgraph.CreateV(tid);
@@ -72,7 +72,7 @@ void RccCommo::SendFinish(parid_t pid,
   };
   fuattr.callback = cb;
   auto proxy = NearestProxyForPartition(pid).second;
-  // Workstream N L10c-graphs: graph field is `AnyMessage` directly.
+  // graph field is `AnyMessage` directly.
   auto sp_graph = std::make_shared<RccGraph>(*graph);
   ClassicProxy::RpcRccFinishRequest req;
   req.id = tid;
@@ -166,7 +166,7 @@ void RccCommo::BroadcastCommit(parid_t par_id,
       auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Workstream N L10c-graphs: graph field is `AnyMessage` directly.
+      // graph field is `AnyMessage` directly.
       auto sp_graph = std::make_shared<RccGraph>(*graph);
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;

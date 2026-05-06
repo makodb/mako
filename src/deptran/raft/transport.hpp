@@ -8,7 +8,7 @@
  * plain C++ classes with matching method names; the proxy binds to them
  * via PRO_DEF_MEM_DISPATCH + facade_builder.
  *
- * Design intent (Phase 8.0 — fiber-synchronous):
+ * Design intent:
  *  - Every reply-expecting `send_*` method returns its reply type
  *    directly. The calling fiber yields (via rrr::IntEvent::Wait on the
  *    rrr side, or a reply-slot signaled by the channel worker on the

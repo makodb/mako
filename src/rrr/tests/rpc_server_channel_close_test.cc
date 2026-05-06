@@ -1,5 +1,5 @@
 // Channel-mode close/error fan-out test for `ServerConnection`
-// (Workstream K, server sub-leaf 5d).
+//.
 //
 // Verifies that when a `ChannelConnectionProxy` fires `on_closed`
 // or `on_error`, the bound `ServerConnection` transitions to the

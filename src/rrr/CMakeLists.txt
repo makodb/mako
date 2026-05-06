@@ -38,7 +38,7 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
-        # Workstream N Phase 4e-36: removed misc/recorder.cpp — class
+        # removed misc/recorder.cpp — class
         # deleted; was unused after Phase 4e-35.
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp

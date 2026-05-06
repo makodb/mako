@@ -14,7 +14,7 @@
  *   - It runs without binding a socket (verify with
  *     `ss -lntp | grep raft_lab_standalone` — no rows).
  *
- * Phase 8.7 replaces the DummyDispatcher harness here with a real
+ * Replaces the prior DummyDispatcher harness with a real
  * RaftServer + RaftLabTest driver.
  */
 

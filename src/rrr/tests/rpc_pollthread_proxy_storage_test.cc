@@ -19,7 +19,7 @@ namespace {
 
 using namespace std::chrono;
 
-// L5r: rusty::Function takes the predicate by value-with-move; the
+// rusty::Function takes the predicate by value-with-move; the
 // non-const operator() is called in the loop body.  Each call site
 // passes a fresh lambda which auto-converts via Function(Callable&&).
 bool wait_until(rusty::Function<bool()> pred, int timeout_ms) {

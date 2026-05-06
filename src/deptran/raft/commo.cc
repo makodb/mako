@@ -725,7 +725,7 @@ void RaftCommo::SendInstallSnapshot(siteid_t site_id,
 }
 
 // ============================================================================
-// Phase 2.5 — callback-shaped quorum RPCs
+// callback-shaped quorum RPCs
 // ============================================================================
 
 // @unsafe - C-style casts, std::function captures

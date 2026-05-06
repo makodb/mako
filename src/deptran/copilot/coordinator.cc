@@ -55,10 +55,10 @@ void CoordinatorCopilot::Submit(const janus::Command& cmd,
 #ifdef FULL_LOG_DEBUG
   Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
 #endif
-  // L10f-prep3c: cmd_now_ is now janus::Command.
+  // cmd_now_ is now janus::Command.
   verify(!cmd_now_.has_value());
 
-  // Workstream N Phase 4e-13: removed `begin = Time::now(true);` —
+  // removed `begin = Time::now(true);` —
   // the `begin` field was used only to compute `fac` / `ac`, both
   // of which were dead state.
 
@@ -180,11 +180,11 @@ void CoordinatorCopilot::FastAccept() {
       "partition: %u, %s : %lu -> %lu",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
       // marshallable_cast<TpcCommitCommand>(cmd_now_)->tx_id_);
-  // Workstream N Phase 4e-13: removed `begin = Time::now(true);` —
+  // removed `begin = Time::now(true);` —
   // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("FastAccept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
-  // L10f-prep6s: BroadcastFastAccept now takes janus::Command.
+  // BroadcastFastAccept now takes janus::Command.
   auto sq_quorum = commo()->BroadcastFastAccept(par_id_,
                                                 is_pilot_, slot_id_,
                                                 curr_ballot_,
@@ -195,7 +195,7 @@ void CoordinatorCopilot::FastAccept() {
 
   sq_quorum->wait();
 #ifdef FULL_LOG_DEBUG
-  // L10f-prep3c: GetCmdID still takes shared_ptr<Marshallable>.
+  // GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
 #ifdef COPILOT_TIME_DEBUG
@@ -204,7 +204,7 @@ void CoordinatorCopilot::FastAccept() {
   // marshallable_cast<T>(Command&) overload handles cmd_now_ directly.
   Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", marshallable_cast<TpcBatchCommand>(cmd_now_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
-  // Workstream N Phase 4e-13: removed `fac = Time::now(true) - begin;`
+  // removed `fac = Time::now(true) - begin;`
   // — `fac` was a timing counter that nothing read.
 #ifdef DO_FINALIZE
   sq_quorum->finalize(finalize_timeout_us,
@@ -259,7 +259,7 @@ void CoordinatorCopilot::Accept() {
       "partition: %u, %s : %lu -> %lu",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
 
-  // Workstream N Phase 4e-13: removed `begin = Time::now(true);` —
+  // removed `begin = Time::now(true);` —
   // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("Accept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
@@ -279,7 +279,7 @@ void CoordinatorCopilot::Accept() {
   // cout << "ac";
   // sp_quorum->Log();
   // if ((static_cast<CopilotFrame*>(frame_)->n_accept_ & 0x3ff) == 0)
-  // Workstream N Phase 4e-13: removed `ac = Time::now(true) - begin;`
+  // removed `ac = Time::now(true) - begin;`
   // — `ac` was a timing counter that nothing read.
 
   if (sp_quorum->yes()) {
@@ -325,7 +325,7 @@ void CoordinatorCopilot::Commit() {
   auto dep_ins = sch_->GetInstance(dep_, REVERSE(is_pilot_));
   int take = 0;
   if (dep_ins && !in_fast_takeover_ && dep_ != 0) {
-      // Workstream N Phase 4e-13: removed `begin = Time::now(true);`
+      // removed `begin = Time::now(true);`
       // — see companion comment in CoordinatorCopilot::Submit.
   // if (false) {
     // auto dep_ins = sch_->GetInstance(dep_, REVERSE(is_pilot_));
@@ -360,7 +360,7 @@ void CoordinatorCopilot::Commit() {
         }
       }
     }
-    // Workstream N Phase 4e-13: removed
+    // removed
     //   `uint64_t finish = Time::now(true) - begin;`
     // — `finish` was unused (the only Log_info consumer is
     // commented-out below) and `begin` went away with the other
@@ -435,7 +435,7 @@ inline void CoordinatorCopilot::clearStatus() {
     return;
   done_ = true;
   curr_ballot_ = 0;
-  // L10f-prep3c: Command's reset is via default-construction.
+  // Command's reset is via default-construction.
   cmd_now_ = Command{};
   current_phase_ = INIT_END;
   fast_path_ = false;
@@ -444,7 +444,7 @@ inline void CoordinatorCopilot::clearStatus() {
 
   is_pilot_ = 0;
   slot_id_ = 0;
-  // Workstream N Phase 4e-13: removed `slot_hint_ = nullptr;` —
+  // removed `slot_hint_ = nullptr;` —
   // the field was never read; the frame-side write at frame.cc:85
   // also went away.
   dep_ = 0;

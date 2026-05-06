@@ -22,14 +22,14 @@ class CoordinatorFpgaRaft : public Coordinator {
     return (FpgaRaftCommo *) commo_;
   }
   bool in_submission_ = false; // debug;
-  // Workstream N Phase 4e-14: removed `in_prepare_` and `in_accept`
+  // removed `in_prepare_` and `in_accept`
   // debug-guard fields — neither was ever written or read in the
   // fpga_raft path.
   bool in_append_entries = false; // debug
   uint64_t minIndex = 0;
 
  public:
-  // Workstream N L10f-prep6g (2026-05-03): polymorphic command field
+  // polymorphic command field
   // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
   Command cmd_{};
   CoordinatorFpgaRaft(uint32_t coo_id,
@@ -63,7 +63,7 @@ class CoordinatorFpgaRaft : public Coordinator {
   }
 
   void DoTxAsync(TxRequest &req) override {}
-  // Workstream N Phase 4e-39: removed `Forward(...)` declaration —
+  // removed `Forward(...)` declaration —
   // body had `verify(0); // TODO delete it` and was never called.
 
   void Submit(const janus::Command& cmd,

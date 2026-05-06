@@ -6,7 +6,7 @@
 
 
 namespace janus {
-// Workstream N L10f-1 (2026-05-04): CmdData no longer inherits
+// CmdData no longer inherits
 // Marshallable.  The metadata fields + virtuals stay; the
 // Marshallable-based polymorphism (kind_, to_marshal/from_marshal)
 // was vestigial.
@@ -45,7 +45,7 @@ class CmdData {
   virtual void Reset() {
     verify(0);
   }
-  // Workstream N Phase 4e-3: removed `virtual CmdData* Clone() const`
+  // removed `virtual CmdData* Clone() const`
   // (and the matching `SimpleCommand::Clone` override).  The method
   // was annotated `// deprecated.` and `verify(0)`-stubbed; no caller
   // anywhere in the codebase invoked it (`grep "->Clone()"` /
@@ -58,14 +58,14 @@ class CmdData {
 
   CmdData() = default;
   virtual ~CmdData() = default;
-  // Workstream N Phase 5b-12: removed `to_marshal` / `from_marshal`
+  // removed `to_marshal` / `from_marshal`
   // overrides. CmdData is never registered with
   // `MarshallDeputy::reg_initializer` and never instantiated directly
   // (no `make_shared<CmdData>` / `new CmdData` callers); its only
   // subclasses are `SimpleCommand` (serialized via free `operator<<`
   // overloads on `Marshal&` / `BinaryWriteArchive&` in
   // `command_marshaler.cc`, never via virtual dispatch) and `TxData`
-  // (Phase 5b-1 deleted its own override pair). The base
+  //. The base
   // `Marshallable::to_marshal` / `from_marshal` `verify(0)` defaults
   // remain in place.
 };

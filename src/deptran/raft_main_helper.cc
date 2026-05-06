@@ -694,7 +694,7 @@ int shutdown_paxos() {
   return 0;
 }
 
-// Workstream N Phase 4e-22: removed `microbench_paxos()` Log_warn-only
+// removed `microbench_paxos()` Log_warn-only
 // stub — both impls (paxos + raft) and the dispatcher in
 // `replication_helper.cc` are gone (no callers anywhere in tree).
 
@@ -828,7 +828,7 @@ void wait_for_submit(uint32_t par_id) {
   worker->WaitForSubmit();
 }
 
-// Workstream N Phase 4e-22: removed `microbench_paxos_queue()`
+// removed `microbench_paxos_queue()`
 // Log_warn-only stub — counterpart in paxos_impl deleted; no callers.
 
 // pre_shutdown_step politely drops control RPC connections before shutdown.
@@ -947,7 +947,7 @@ void nc_setup_server(int /*port*/, std::string /*ip*/) {
   Log_warn("nc_setup_server not implemented for Raft helper (unused).");
 }
 
-// Workstream N Phase 4e-21: removed seven `nc_get_*_requests`
+// removed seven `nc_get_*_requests`
 // `Log_warn`-only stubs (~35 lines).  The Paxos-side `nc_get_*`
 // getters they paralleled returned `&nc_services[par_id]->...`
 // against an unpopulated `nc_services` global (UB), and the only

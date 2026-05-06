@@ -172,7 +172,7 @@ void CoordinatorClassic::GotoNextPhase() {
 
 void CoordinatorClassic::Reset() {
   Coordinator::Reset();
-  // Workstream N Phase 4e-32: removed `site_prepare_[i] = 0;` reset
+  // removed `site_prepare_[i] = 0;` reset
   // loop and `n_prepare_req_ = 0;` write — both fields are gone.
   n_dispatch_ = 0;
   n_dispatch_ack_ = 0;
@@ -182,7 +182,7 @@ void CoordinatorClassic::Reset() {
   dispatch_acks_.clear();
   committed_ = false;
   aborted_ = false;
-  // Workstream N Phase 4e-18: removed `repeat_ = false;` — the
+  // removed `repeat_ = false;` — the
   // `repeat_` field was deleted alongside (always-false dead state).
 }
 
@@ -249,7 +249,7 @@ void CoordinatorClassic::DispatchAsync() {
   Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
 }
 
-// Workstream N Phase 4e-43: removed `CoordinatorClassic::DispatchSync`
+// removed `CoordinatorClassic::DispatchSync`
 // (~36 LOC) — never called externally; was the synchronous twin of
 // `DispatchAsync` and the only call site of
 // `Communicator::SyncBroadcastDispatch` (left for follow-up).
@@ -426,14 +426,14 @@ void CoordinatorClassic::Prepare() {
     cmd->commit_.store(true);
     committed_ = true;
   }
-  // Workstream N Phase 4e-18: removed empty-body `if(repeat_) {}`
+  // removed empty-body `if(repeat_) {}`
   // — `repeat_` was always false (default-init, never set true);
   // the field and this empty branch went away together.
 	if (commo()->slow) {
 		Log_info("prep_slow");
 		prep_slow = true;
 	}
-	// Workstream N Phase 4e-17: removed the dead re-elect branch that
+	// removed the dead re-elect branch that
 	// referenced the now-deleted `commo()->total / window_avg / cpu /
 	// last_cpu / low_util / ResetProfiles()` profiling state.  The
 	// branch was already commented out (`//if(...)` then nested
@@ -476,7 +476,7 @@ void CoordinatorClassic::EarlyAbort() {
                   PRIx64
                   " to %d", tx_data().id_, rp);
     commo()->SendEarlyAbort(rp, cmd_->id_);
-    // Workstream N Phase 4e-32: removed `site_abort_[rp]++;` — write-only.
+    // removed `site_abort_[rp]++;` — write-only.
   }
   GotoNextPhase();
 }
@@ -485,7 +485,7 @@ void CoordinatorClassic::Commit() {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
   auto it = dispatch_acks_.begin();
   it->second = true;
-  // Workstream N Phase 4e-43: removed commented-out
+  // removed commented-out
   // `// ___TestPhaseThree(cmd_->id_);` — method deleted.
   auto mode = Config::GetConfig()->tx_proto_;
   verify(mode == MODE_OCC || mode == MODE_2PL);
@@ -586,7 +586,7 @@ void CoordinatorClassic::Commit() {
   } else {
     verify(0);
   }
-	// Workstream N Phase 4e-17: removed the `if(false && ...)`
+	// removed the `if(false && ...)`
 	// short-circuited re-elect branch that referenced the now-deleted
 	// `commo()->total` / `window_avg` / `cpu` / `last_cpu` /
 	// `low_util` / `ResetProfiles()` profiling state.  The branch
@@ -700,7 +700,7 @@ void CoordinatorClassic::Report(TxReply& txn_reply,
   }
 }
 
-// Workstream N Phase 4e-43: removed `___TestPhaseOne(txnid_t)` and
+// removed `___TestPhaseOne(txnid_t)` and
 // `___TestPhaseThree(txnid_t)` test helpers + companion
 // `___phase_one_tids_` / `___phase_three_tids_` set fields — only
 // references were commented-out call sites in

@@ -30,7 +30,7 @@ bool CoordinatorFpgaRaft::IsFPGALeader() {
    return this->sch_->IsFPGALeader() ;
 }
 
-// Workstream N Phase 4e-39: removed `CoordinatorFpgaRaft::Forward`
+// removed `CoordinatorFpgaRaft::Forward`
 // — body started with `verify(0); // TODO delete it` and the only
 // upstream caller would have been a forwarding-from-follower path
 // that was never wired up.  Companion `FpgaRaftCommo::SendForward`,
@@ -47,7 +47,7 @@ void CoordinatorFpgaRaft::Submit(const janus::Command& cmd,
 #endif
   // client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
   if (!IsLeader()) {
-    // Workstream N Phase 4e-39: removed `Forward(cmd, ...)` call —
+    // removed `Forward(cmd, ...)` call —
     // `Forward` method deleted (was `verify(0)`-tagged dead code).
     // Treat non-leader submission as a hard failure for now —
     // production behavior was already a crash via the dead Forward.
@@ -57,7 +57,7 @@ void CoordinatorFpgaRaft::Submit(const janus::Command& cmd,
 
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  // L10f-prep6g: cmd_ is now janus::Command.
+  // cmd_ is now janus::Command.
   verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
@@ -160,7 +160,7 @@ void CoordinatorFpgaRaft::AppendEntries() {
     }
     else if (sp_quorum->no()) {
         verify(0);
-        // Workstream N Phase 4e-39: removed `Forward(cmd_,
+        // removed `Forward(cmd_,
         // commit_callback_)` call inside this `verify(0)`-guarded
         // unreachable branch — `Forward` method deleted.
     }
@@ -177,7 +177,7 @@ void CoordinatorFpgaRaft::Commit() {
   Log_debug("fpga-raft broadcast commit for partition: %d, slot %d",
             (int) par_id_, (int) slot_id_);
 #ifdef LATENCY_LOG_DEBUG
-  // L10f-prep6g: GetCmdID still takes shared_ptr<Marshallable>.
+  // GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
@@ -199,7 +199,7 @@ void CoordinatorFpgaRaft::LeaderLearn() {
     /*     this->sch_->app_next_(*instance->log_); */
     /* } */
 #ifdef LATENCY_LOG_DEBUG
-    // L10f-prep6g: GetCmdID still takes shared_ptr<Marshallable>.
+    // GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
@@ -222,7 +222,7 @@ void CoordinatorFpgaRaft::GotoNextPhase() {
       } else {
         // TODO
         verify(0);
-        // Workstream N Phase 4e-39: removed `Forward(cmd_,
+        // removed `Forward(cmd_,
         // commit_callback_)` and `phase_ = Phase::COMMIT;` inside
         // this `verify(0)`-guarded unreachable branch — `Forward`
         // method deleted.

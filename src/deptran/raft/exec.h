@@ -16,7 +16,7 @@ class RaftExecutor: public Executor {
   // @unsafe - calls Log_warn (non-borrow-checked I/O)
   ballot_t Prepare(const ballot_t ballot);
 
-  // Workstream N L10f-prep6ag (2026-05-03): removed dead `Accept` and
+  // removed dead `Accept` and
   // `AppendEntries` methods — both `Log_warn`-and-return-0 stubs that
   // didn't override anything in the `Executor` base, and had no
   // callers anywhere in the tree.

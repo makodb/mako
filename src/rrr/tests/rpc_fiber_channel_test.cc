@@ -1,4 +1,4 @@
-// FiberChannel guard test (Workstream K, sub-leaf 4c1).
+// FiberChannel guard test.
 //
 // Verifies that the fiber-blocking wrapper around a
 // `ChannelConnectionProxy` correctly:

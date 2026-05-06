@@ -64,10 +64,10 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testFigure8CrashRecovery());        // Test 19
   }
 
-  // Snapshot data format and metadata tests (Phase 3.1)
+  // Snapshot data format and metadata tests
   // These are unit tests that don't require persistence
   if (!failed) {
-    Log_info("Running SNAPSHOT data format tests (Phase 3.1)");
+    Log_info("Running SNAPSHOT data format tests");
     failed =
         TEST_EXPAND(testSnapshotMetadataCreation())         // Test 50
         || TEST_EXPAND(testSnapshotFormatRoundTrip())       // Test 51
@@ -76,18 +76,18 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testSnapshotManagerWiring());         // Test 54
   }
 
-  // CreateSnapshot integration tests (Phase 3.2)
+  // CreateSnapshot integration tests
   if (!failed) {
-    Log_info("Running CreateSnapshot tests (Phase 3.2)");
+    Log_info("Running CreateSnapshot tests");
     failed =
         TEST_EXPAND(testCreateSnapshotBasic())               // Test 55
         || TEST_EXPAND(testCreateSnapshotAndCompaction())    // Test 56
         || TEST_EXPAND(testSnapshotThresholdConfigurable()); // Test 57
   }
 
-  // InstallSnapshot tests (Phase 3.3)
+  // InstallSnapshot tests
   if (!failed) {
-    Log_info("Running InstallSnapshot tests (Phase 3.3)");
+    Log_info("Running InstallSnapshot tests");
     failed =
         TEST_EXPAND(testInstallSnapshotBasic())              // Test 58
         || TEST_EXPAND(testInstallSnapshotRejectsStaleTerm()) // Test 59
@@ -689,7 +689,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
   for (int round = 1; round <= NUM_ROUNDS; round++) {
     Log_info("TEST 15: ===== ROUND %d =====", round);
 
-    // Phase 1: Kill 2 random servers (maintain quorum with 3 remaining)
+    // Kill 2 random servers (maintain quorum with 3 remaining)
     Log_info("TEST 15: Phase 1 - Killing 2 random servers");
 
     siteid_t victim1 = pickRandom(alive_servers);
@@ -717,7 +717,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     Log_info("TEST 15: Round %d - Committing with %zu alive servers", round, alive_servers.size());
     DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
 
-    // Phase 2: Restart one of the dead servers
+    // Restart one of the dead servers
     Log_info("TEST 15: Phase 2 - Restarting one dead server");
 
     siteid_t restart1 = pickRandom(dead_servers);
@@ -737,7 +737,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
 
     DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
 
-    // Phase 3: Kill another random alive server (back to 3 alive)
+    // Kill another random alive server (back to 3 alive)
     Log_info("TEST 15: Phase 3 - Killing another random server");
 
     // Make sure we don't kill the current leader to make it more interesting sometimes
@@ -773,7 +773,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     // Commit with remaining servers
     DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
 
-    // Phase 4: Restart all dead servers
+    // Restart all dead servers
     Log_info("TEST 15: Phase 4 - Restarting all dead servers");
 
     std::vector<siteid_t> to_restart(dead_servers.begin(), dead_servers.end());
@@ -2100,7 +2100,7 @@ void RaftLabTest::wait(uint64_t microseconds) {
 }
 
 // ============================================================================
-// SPECULATIVE RAFT TESTS (Phase 7)
+// SPECULATIVE RAFT TESTS
 // ============================================================================
 
 /**

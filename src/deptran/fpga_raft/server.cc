@@ -2,7 +2,7 @@
 
 #include "server.h"
 // #include "paxos_worker.h"
-// Workstream N Phase 4e-45: removed `#include "exec.h"` —
+// removed `#include "exec.h"` —
 // FpgaRaftExecutor class deleted.
 #include "frame.h"
 #include "coordinator.h"
@@ -55,7 +55,7 @@ void* FpgaRaftServer::HeartbeatLoop(void* args) {
 		auto prevTerm = instance->prevTerm;
 		auto ballot = instance->ballot;
 		auto slot = instance->slot_id;
-		// L10f-prep6u: SendAppendEntriesAgain now takes const Command&;
+		// SendAppendEntriesAgain now takes const Command&;
 		// pass instance->log_ directly.
 		const auto& cmd = instance->log_;
 
@@ -251,9 +251,9 @@ bool FpgaRaftServer::RequestVote() {
 
     auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    // L8: dropped tautological `kMarshallKind == static_kind()` verify
+    // dropped tautological `kMarshallKind == static_kind()` verify
     // (the kMarshallKind constant retired with the L8 TypeList migration).
-    // Phase 4a-2: aliased wrap via Command::pack_aliased preserves
+    // aliased wrap via Command::pack_aliased preserves
     // shared_ptr identity through the proxy.
     ((CoordinatorFpgaRaft*)co)->Submit(
         janus::Command::pack_aliased<TpcEmptyCommand>(empty_cmd));
@@ -485,7 +485,7 @@ void FpgaRaftServer::StartTimer()
         cb();
     }
 
-// Workstream N Phase 4e-39: removed `FpgaRaftServer::OnForward`
+// removed `FpgaRaftServer::OnForward`
 // (~20 LOC) — only caller was the deleted
 // `FpgaRaftServiceImpl::Forward` handler; the matching
 // FpgaRaft::Forward RPC declaration is gone from rcc_rpc.rpc.
@@ -509,7 +509,7 @@ void FpgaRaftServer::StartTimer()
     
     for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
         auto next_instance = GetFpgaRaftInstance(id);
-        // L10f-prep2: next_instance->log_ is Command; unwrap at the
+        // next_instance->log_ is Command; unwrap at the
         // boundary for RuleWitnessGC + GetCmdID (still take
         // shared_ptr<Marshallable>).  app_next_ takes Command.
         if (next_instance->log_.has_value()) {
@@ -549,7 +549,7 @@ void FpgaRaftServer::StartTimer()
 
       for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
           auto next_instance = GetFpgaRaftInstance(id);
-          // L10f-prep2: same Command-boundary pattern as the apply
+          // same Command-boundary pattern as the apply
           // loop above.
           if (next_instance->log_.has_value()) {
               // WAN_WAIT
@@ -576,7 +576,7 @@ void FpgaRaftServer::StartTimer()
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     for (slotid_t id = executeIndex + 1; id <= maxIndex; id++) {
       auto next_instance = GetFpgaRaftInstance(id);
-      // L10f-prep6bb: Conflict has Command overload now; both args
+      // Conflict has Command overload now; both args
       // are Command so dispatch directly.
       if (next_instance->log_.has_value() &&
           SimpleRWCommand::Conflict(next_instance->log_, cmd))

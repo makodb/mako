@@ -79,7 +79,7 @@ int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
       Log_info("dispatch ret graph size: %d", graph->size());
   }
 #endif
-  // Workstream N Phase 4e-41: removed commented-out
+  // removed commented-out
   // `do_logging() / recorder_->submit(m, job)` block — both
   // `do_logging` and `recorder_` are gone.
   return 0;

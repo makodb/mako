@@ -4,7 +4,7 @@
 #include "../paxos_worker.h"
 
 namespace janus {
-// Workstream N Phase 4e-38: removed `Forward` typed-rpc override
+// removed `Forward` typed-rpc override
 // (and matching N-arg overload further below).
 
 void MultiPaxosServiceImpl::Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
@@ -20,10 +20,10 @@ void MultiPaxosServiceImpl::Decide(const MultiPaxosService::RpcDecideRequest& re
   this->Decide(req.slot, req.ballot, req.cmd, std::move(defer));
 }
 
-// Workstream N Phase 4e-26: removed `BulkPrepare` and `Heartbeat`
+// removed `BulkPrepare` and `Heartbeat`
 // typed-rpc overrides (and matching N-arg overloads further below).
 
-// Workstream N Phase 4e-27: removed `BulkPrepare2` typed-rpc override
+// removed `BulkPrepare2` typed-rpc override
 // (and matching N-arg overload further below).
 
 void MultiPaxosServiceImpl::BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) {
@@ -42,7 +42,7 @@ void MultiPaxosServiceImpl::SyncCommit(const MultiPaxosService::RpcSyncCommitReq
   this->SyncCommit(req.cmd, &resp.ballot, &resp.val, std::move(defer));
 }
 
-// Workstream N Phase 4e-26: removed `SyncNoOps` typed-rpc override
+// removed `SyncNoOps` typed-rpc override
 // (and matching N-arg overload further below).
 
 void MultiPaxosServiceImpl::ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, rrr::DeferredReply defer) {
@@ -54,7 +54,7 @@ MultiPaxosServiceImpl::MultiPaxosServiceImpl(TxLogServer *sched)
 
 }
 
-// Workstream N Phase 4e-38: removed `Forward(janus::Command, ...)`
+// removed `Forward(janus::Command, ...)`
 // N-arg overload — body was empty (Mako uses ForwardToLearner
 // instead via ForwardToLearnerServer RPC).
 
@@ -117,18 +117,18 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
                                    const janus::Command& md_cmd,
                                    rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  // L10f-prep6p: OnCommit takes janus::Command directly.
+  // OnCommit takes janus::Command directly.
   sched_->OnCommit(slot, ballot, md_cmd);
   defer.reply();
 }
 
 
-// Workstream N Phase 4e-26: removed `BulkPrepare(janus::Command, ...)`
+// removed `BulkPrepare(janus::Command, ...)`
 // and `Heartbeat(janus::Command, ...)` N-arg overloads — only callers
 // were the now-deleted typed-rpc shims; the corresponding
 // `PaxosServer::OnBulkPrepare` / `OnHeartbeat` impls are also gone.
 
-// Workstream N Phase 4e-27: removed `BulkPrepare2(janus::Command, ...)`
+// removed `BulkPrepare2(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim above;
 // the corresponding `PaxosServer::OnBulkPrepare2` impl is also gone.
 
@@ -205,7 +205,7 @@ void MultiPaxosServiceImpl::SyncCommit(const janus::Command& md_cmd,
   });
 }
 
-// Workstream N Phase 4e-26: removed `SyncNoOps(janus::Command, ...)`
+// removed `SyncNoOps(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim above.
 
 void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,

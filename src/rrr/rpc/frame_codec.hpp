@@ -12,7 +12,7 @@
 #include "internal_protocol.hpp"
 
 /**
- * SRPC Channel Frame Codec (Workstream K, Phase 2).
+ * SRPC Channel Frame Codec.
  *
  * Centralizes the wire-level framing rules that previously lived inline
  * inside `ClientConnection::handle_read` / `ServerConnection::handle_read`
@@ -46,7 +46,7 @@
  *                                          fill size; symmetrically for
  *                                          `ServerConnection::reply`.
  *
- * Splitting the channel layer (Workstream K) needs all three to be
+ * Splitting the channel layer needs all three to be
  * driven from one place so the channel sees frames as opaque
  * `(payload, size)` byte spans. This module provides that single source
  * of truth. Byte-for-byte wire compatibility is guaranteed by the

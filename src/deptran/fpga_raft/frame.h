@@ -17,7 +17,7 @@ class FpgaRaftFrame : public Frame {
   FpgaRaftCommo *commo_ = nullptr;
   /* TODO: have another class for common data */
   FpgaRaftServer *sch_ = nullptr;
-  // Workstream N Phase 4e-45: removed `CreateExecutor` override —
+  // removed `CreateExecutor` override —
   // `FpgaRaftExecutor` class deleted; the virtual is never called.
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,

@@ -1,5 +1,5 @@
 // Scaffolding guard test for `ClientConnection::bind_channel` /
-// `is_channel_mode` (Workstream K, sub-leaf 4a).
+// `is_channel_mode`.
 //
 // Verifies that the new channel-binding entry points exist with the
 // expected signatures and that the latch flips as documented. There

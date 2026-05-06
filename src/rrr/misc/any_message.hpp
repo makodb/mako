@@ -1,6 +1,6 @@
 #pragma once
 
-// Workstream N L7 — `AnyMessage`: open-set polymorphic envelope.
+// `AnyMessage`: open-set polymorphic envelope.
 //
 // Counterpart to the closed-set `TypeList` discriminant pattern of
 // `SerializableEnvelope<TypeList>`.  The two cover different polymorphism

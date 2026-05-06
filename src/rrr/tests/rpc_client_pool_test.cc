@@ -1,5 +1,5 @@
 /**
- * Unit tests for Phase 5.1: Enhanced ClientPool with Health Awareness
+ * Unit tests for Enhanced ClientPool with Health Awareness
  * Tests pool configuration, health checking, idle cleanup, and connection management.
  */
 

@@ -1,5 +1,5 @@
 // Channel-mode outbound-send test for `ClientConnection`
-// (Workstream K, sub-leaf 4b).
+//.
 //
 // Verifies that when a `ChannelConnectionProxy` has been bound via
 // `bind_channel`, outbound frames produced by `ClientConnection`'s

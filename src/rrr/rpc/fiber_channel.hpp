@@ -19,7 +19,7 @@
 
 /**
  * `FiberChannel` — fiber-blocking wrapper over a
- * `ChannelConnectionProxy` (Workstream K, sub-leaf 4c1).
+ * `ChannelConnectionProxy`.
  *
  * The channel layer's primitive is callback-driven: every backend
  * (TcpConnection, future in-memory channel, etc.) only has to

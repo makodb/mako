@@ -8,7 +8,7 @@
 
 namespace janus {
 
-// Workstream N L8: registrations switched to no-arg
+// registrations switched to no-arg
 // `SerializableRegistry::reg<T>()` — kind auto-derived from each
 // type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
 // base returns the type's 1-indexed position in `MakoCommands`).
@@ -58,7 +58,7 @@ Value& TxWorkspace::operator[](size_t idx) {
 
 TxData::TxData() {
   clock_gettime(&start_time_);
-  // Workstream N Phase 4e-4: removed `read_only_failed_ = false;`
+  // removed `read_only_failed_ = false;`
   // (the field went away with its only remaining writer; default
   // initialization for the bool was already false anyway).
   pre_time_ = timespec2ms(start_time_);
@@ -95,7 +95,7 @@ Marshal& operator >> (Marshal& m, TxWorkspace &ws) {
   return m;
 }
 
-// Workstream N Phase 4d-6: archive operators for TxWorkspace.
+// archive operators for TxWorkspace.
 // Wire format byte-for-byte identical to the Marshal-based pair
 // above: keys_ (set<int32_t>), then per-present-key (k, value) pairs,
 // terminated by k=-1.
@@ -174,7 +174,7 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
   return m;
 }
 
-// Workstream N Phase 3e: archive operators for TxReply. Wire format
+// archive operators for TxReply. Wire format
 // byte-for-byte identical to the Marshal-based pair above:
 //   res_ (i32) | output_ (map<int32_t, Value>) | n_try_ (i32) |
 //   time_ (double) | txn_type_ (i32) |
@@ -225,7 +225,7 @@ bool TxData::IsOneRound() {
   return false;
 }
 
-// Workstream N Phase 4e-4: removed `vector<TxPieceData>
+// removed `vector<TxPieceData>
 // TxData::GetCmdsByPartitionAndRank(parid_t, rank_t)` — declared and
 // defined but never called anywhere in the codebase.
 
@@ -266,7 +266,7 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
       piece_data->cmd_id_in_client_ = cmd_id_in_client_;
       piece_data->input = inputs_[pi];
       piece_data->output_size = output_size_[pi];
-      // Workstream N Phase 4e-3: removed `piece_data->root_ = this;`
+      // removed `piece_data->root_ = this;`
       // — the `root_` back-pointer field on SimpleCommand was unread.
       piece_data->timestamp_ = timestamp_;
       piece_data->rank_ = ranks_[pi]; // TODO fix bug here
@@ -289,7 +289,7 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
   return ready_pieces_data;
 }
 
-// Workstream N Phase 4e-4: removed `shared_ptr<TxPieceData>
+// removed `shared_ptr<TxPieceData>
 // TxData::GetNextReadySubCmd()`.  The function body started with
 // `verify(0)` (intentionally disabled) and the only call sites were
 // commented-out code in `snow/ro6_coord.cc:22, 179` and
@@ -304,7 +304,7 @@ bool TxData::OutputReady() {
   }
 }
 
-// Workstream N Phase 4e-4: removed `void TxData::Merge(TxnOutput&)`
+// removed `void TxData::Merge(TxnOutput&)`
 // — the only call sites (`janus/coordinator.cc:228`,
 // `rcc/coord.cc:214`) were already commented out.  The live overloads
 // `Merge(CmdData&)` and `Merge(innid_t, map<int32_t, Value>&)` cover
@@ -352,7 +352,7 @@ void TxData::Reset() {
   outputs_.clear();
 }
 
-// Workstream N Phase 4e-4: removed `void TxData::read_only_reset()`
+// removed `void TxData::read_only_reset()`
 // — the only call sites (`snow/ro6_coord.cc:216`, `rcc/coord.cc:272`)
 // were already commented out, and the `read_only_failed_` field it
 // reset went away in the same commit.  Callers needing a reset use
@@ -405,18 +405,13 @@ TxReply &TxData::get_reply() {
   return reply_;
 }
 
-// Workstream N Phase 4e-6: removed `void TxRequest::get_log(i64,
+// removed `void TxRequest::get_log(i64,
 // std::string&)` — both call sites were already commented-out code
 // (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).  The method was a
 // 14-line bookkeeping helper for an old logging path that is no
 // longer invoked.
 
-// (Workstream N Phase 5b-1: TxData::to_marshal/from_marshal deleted.
-// They were inherited Marshallable virtual overrides but never
-// invoked: TxData is never registered with `MarshallDeputy::reg_initializer`,
-// no caller wraps it in a `MarshallDeputy`, and no production path
-// dispatches `to_marshal`/`from_marshal` virtually on a TxData
-// pointer. The Marshallable base's `verify(0)` defaults will trigger
+//` defaults will trigger
 // if the dead path is ever exercised — a stricter, more honest
 // failure than silently writing partial bytes.)
 

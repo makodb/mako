@@ -31,7 +31,7 @@ read_only) {
   auto dtxn = frame_->CreateTx(epoch, tid, read_only, this);
   if (dtxn != nullptr) {
     dtxns_[tid] = dtxn;
-    // Workstream N Phase 4e-34: removed
+    // removed
     // `dtxn->recorder_ = this->recorder_;` — both fields gone.
     dtxn->txn_reg_ = txn_reg_;
     verify(txn_reg_ != nullptr);
@@ -53,7 +53,7 @@ shared_ptr<Tx> TxLogServer::CreateTx(txnid_t tx_id, bool ro) {
   auto dtxn = frame_->CreateTx(epoch_mgr_.curr_epoch_, tx_id, ro, this);
   if (dtxn != nullptr) {
     dtxns_[tx_id] = dtxn;
-    // Workstream N Phase 4e-34: removed
+    // removed
     // `dtxn->recorder_ = this->recorder_;` — both fields gone.
     verify(txn_reg_);
     dtxn->txn_reg_ = txn_reg_;
@@ -150,14 +150,14 @@ mdb::Txn *TxLogServer::GetOrCreateMTxn(const i64 tid) {
   return txn;
 }
 
-// Workstream N Phase 4e-41: removed `TxLogServer::get_prepare_log`
+// removed `TxLogServer::get_prepare_log`
 // (~42 LOC) — only call site was the now-deleted `do_logging()`-
 // gated branch in `SchedulerClassic::Prepare`, which built a `log`
 // string only to discard it.
 
 TxLogServer::TxLogServer() : mtx_() {
   mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();
-  // Workstream N Phase 4e-34: removed `if (do_logging()) { ... }`
+  // removed `if (do_logging()) { ... }`
   // block — body was a commented-out
   // `// recorder_ = new Recorder(path);` and the field is gone.
 }
@@ -188,7 +188,7 @@ Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
   coord->par_id_ = partition_id_;
   //Log_info("Partition id set: %d", partition_id_);
   coord->loc_id_ = this->loc_id_;
-  // Workstream N Phase 4e-8: removed a second
+  // removed a second
   // `coord->dep_id_ = dep_id;` immediately below this line — it was
   // a duplicate write of the same value already done above.
   return coord;
@@ -291,14 +291,14 @@ void TxLogServer::DestroyExecutor(txnid_t txn_id) {
 void TxLogServer::Pause() {
   Log_info("!!!!!!!! TxLogServer::Pause()");
   commo_->Pause();
-  // Workstream N Phase 4e-9: removed `paused_ = true;` — the
+  // removed `paused_ = true;` — the
   // `paused_` field on TxLogServer had no readers anywhere; the
   // field went away in the same commit.
 };
 
 void TxLogServer::Resume() {
   commo_->Resume();
-  // Workstream N Phase 4e-9: removed `paused_ = false;` — see the
+  // removed `paused_ = false;` — see the
   // companion comment on Pause() above.
 };
 
@@ -364,7 +364,7 @@ int32_t TxLogServer::OnUpgradeEpoch(uint32_t old_epoch) {
   return epoch_mgr_.CheckBufferInactive();
 }
 
-// Workstream N L10f-prep6v (2026-05-03): removed dead helpers
+// removed dead helpers
 // `GetUniqueCmdID(shared_ptr<Marshallable>)`, `DBGet(...)`, and
 // `DBPut(...)`.  None had callers anywhere in the tree.
 
@@ -407,7 +407,7 @@ void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Comm
 
 
 void TxLogServer::RuleWitnessGC(const janus::Command& cmd) {
-  // L10f-prep6L: Witness::remove now takes Command directly.
+  // Witness::remove now takes Command directly.
   if (Config::GetConfig()->tx_proto_ == MODE_RULE)
     witness_.remove(cmd);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
@@ -435,7 +435,7 @@ void RevoveryCandidates::push_back(uint64_t cmd_id, const janus::Command& cmd, b
 bool RevoveryCandidates::remove(uint64_t cmd_id) {
   auto it = candidates_.find(cmd_id);
   if (it != candidates_.end()) {
-    // L10f-prep6f: it->second is Command; SimpleRWCommand still
+    // it->second is Command; SimpleRWCommand still
     // takes shared_ptr<Marshallable>.
     SimpleRWCommand parsed_cmd = SimpleRWCommand(it->second);
     if (total_write_ == 1 && parsed_cmd.IsWrite()) {
@@ -476,7 +476,7 @@ janus::Command RevoveryCandidates::cmd_to_recover() {
 }
 
 bool Witness::push_back(const janus::Command& cmd_env) {
-  // L10f-prep6ai: SimpleRWCommand ctor + WitnessLog ctor still take
+  // SimpleRWCommand ctor + WitnessLog ctor still take
   // shared_ptr<Marshallable>; unwrap at the boundary.
   // RevoveryCandidates::push_back takes Command directly (prep6aa).
   SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
@@ -520,7 +520,7 @@ bool Witness::push_back(const janus::Command& cmd_env) {
 }
 
 int Witness::remove(const janus::Command& cmd_env) {
-  // L10f-prep6ai: SimpleRWCommand + WitnessLog still take shared_ptr;
+  // SimpleRWCommand + WitnessLog still take shared_ptr;
   // marshallable_cast works on Command directly via Envelope overload.
   if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
@@ -549,7 +549,7 @@ int Witness::remove(const janus::Command& cmd_env) {
       }
 #ifdef WITNESS_LOG_DEBUG
       // c is shared_ptr<TpcCommitCommand>; auto-converts to Command
-      // via the templated non-Marshallable ctor (L10f-2 step 4).
+      // via the templated non-Marshallable ctor.
       witness_log_.push_back(WitnessLog(1, janus::Command{c}, removed, witness_size_));
 #endif
     }
@@ -558,7 +558,7 @@ int Witness::remove(const janus::Command& cmd_env) {
 }
 
 bool Witness::has_appeared(const janus::Command& cmd_env) {
-  // L10f-prep6ai: SimpleRWCommand still takes shared_ptr;
+  // SimpleRWCommand still takes shared_ptr;
   // marshallable_cast works on Command directly.
   // For a batched command, return whether all of them have appeared
   if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
@@ -581,7 +581,7 @@ bool Witness::has_appeared(const janus::Command& cmd_env) {
   }
 }
 
-// Workstream N Phase 4e-7: removed `void Witness::set_belongs_to_leader(bool)`
+// removed `void Witness::set_belongs_to_leader(bool)`
 // — see the companion comment on the deleted field in scheduler.h.
 
 std::vector<double> Witness::witness_size_distribution() {
@@ -626,7 +626,7 @@ void Witness::reset() {
   max_accepted_ballot_ = -1;
   sid_ = -1;
   set_size_ = 0;
-  // Workstream N Phase 4e-7: removed `committed_ = false;` — the
+  // removed `committed_ = false;` — the
   // Witness::committed_ field was deleted in the same commit.
 }
 
@@ -1378,7 +1378,7 @@ void TxLogServer::OnJetpackCommit(const epoch_t& jepoch,
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->witness_.sid_ = sid;
     rep_sched_->witness_.set_size_ = set_size;
-    // Workstream N Phase 4e-7: removed
+    // removed
     // `rep_sched_->witness_.committed_ = true;` along with the
     // never-read `committed_` field on Witness.
   }

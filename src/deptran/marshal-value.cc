@@ -54,7 +54,7 @@ rrr::Marshal &operator>>(rrr::Marshal &m, mdb::Value &value) {
   return m;
 }
 
-// Workstream N Phase 4d-6: archive operators for mdb::Value. Wire
+// archive operators for mdb::Value. Wire
 // format is byte-for-byte identical to the Marshal-based operators
 // above: ver_ (i64 typically), then i32 tag (0=I32, 1=I64, 2=DOUBLE,
 // 3=STR), then the payload.

@@ -8,7 +8,7 @@
 
 namespace janus {
 
-// Workstream N L8: registration switched to no-arg form — kind
+// registration switched to no-arg form — kind
 // auto-derived from `Serializable<T, MakoCommands>` CRTP base.
 static int volatile x = rrr::SerializableRegistry::reg<SimpleRWCommand>();
 
@@ -19,7 +19,7 @@ SimpleRWCommand::SimpleRWCommand() {
   value_ = 0;
 }
 
-// Workstream N L10f-2 (2026-05-04): primary Command-taking ctor.
+// primary Command-taking ctor.
 // Was the body of `SimpleRWCommand(shared_ptr<Marshallable>)`; now
 // uses Command's `kind_` and the Envelope `marshallable_cast<T>`
 // overload directly.  The legacy shared_ptr<Marshallable> ctor
@@ -40,7 +40,7 @@ SimpleRWCommand::SimpleRWCommand(const Command& cmd) {
   } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
-    // Workstream N L10f-1: removed the `MarshallDeputy::CONTAINER_CMD`
+    // removed the `MarshallDeputy::CONTAINER_CMD`
     // branch — it was reachable only when CmdData inherited
     // Marshallable, which is no longer the case.  Callers holding a
     // `SimpleCommand` directly use the
@@ -55,7 +55,7 @@ SimpleRWCommand::SimpleRWCommand(const Command& cmd) {
   is_recovery_command_ = cmd_cast->is_recovery_command_;
 }
 
-// Workstream N L10f-1 (2026-05-04): SimpleCommand-direct ctor.
+// SimpleCommand-direct ctor.
 SimpleRWCommand::SimpleRWCommand(const SimpleCommand& cmd) {
   std::map<int32_t, mdb::Value> kv_map = *(cmd.input.values_);
   cmd_id_ = make_pair(cmd.client_id_, cmd.cmd_id_in_client_);
@@ -120,7 +120,7 @@ bool SimpleRWCommand::same_as(SimpleRWCommand &other) {
 }
 
 
-// Workstream N Phase 4d-8: Serializable save/load. Wire format
+// Serializable save/load. Wire format
 // identical to the legacy to_marshal/from_marshal pair (just three
 // fields: type_, key_, value_).
 void SimpleRWCommand::save(BinaryWriteArchive& ar) const {
@@ -209,7 +209,7 @@ bool SimpleRWCommand::NeedRecordConflictInOriginalPath(const Command& cmd) {
   } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
-    // Workstream N L10f-1: dropped the
+    // dropped the
     // `MarshallDeputy::CONTAINER_CMD` branch — CmdData no longer
     // inherits Marshallable, so this kind is unreachable.
     verify(0);

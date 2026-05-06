@@ -26,7 +26,7 @@
 
 
 /**
- * SRPC Channel Layer Core Interfaces (Workstream K, Phase 1).
+ * SRPC Channel Layer Core Interfaces.
  *
  * This header defines the *contract* between SRPC's RPC layer and the
  * underlying byte-channel that moves serialized frames across the wire.

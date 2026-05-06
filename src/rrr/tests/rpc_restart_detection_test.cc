@@ -1,5 +1,5 @@
 /**
- * Unit tests for Server Restart Detection (Phase 4.2)
+ * Unit tests for Server Restart Detection
  *
  * Tests the server instance ID generation, client-side tracking,
  * and restart detection callback functionality.

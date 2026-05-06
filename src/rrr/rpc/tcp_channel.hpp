@@ -32,7 +32,7 @@
 #include "../reactor/reactor.h"
 
 /**
- * SRPC TCP Channel Backend (Workstream K, Phase 1 leaf 3a — `TcpConnection`).
+ * SRPC TCP Channel Backend.
  *
  * `TcpConnection` is one side of a connected TCP/Unix socket pair that
  * conforms to both the channel layer's `ChannelConnectionFacade` and the
@@ -154,7 +154,7 @@ class TcpConnection {
     // commands directly to wake `epoll_wait` instead of waiting for the
     // poll thread to poll the `pending_write_update_` flag.
     //
-    // Workstream K, sub-leaf 4g1b: must be called *before* the connection
+    // must be called *before* the connection
     // starts receiving outbound traffic. `TcpFactory::connect()` and
     // `TcpListener::handle_read()` (accept loop) wire this in immediately
     // after the connection is constructed and before its proxy is handed
@@ -305,7 +305,7 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
 // ---------------------------------------------------------------------------
 
 /**
- * Server-side TCP listener (Workstream K, Phase 1 leaf 3b).
+ * Server-side TCP listener.
  *
  * Owns a single listening socket. `listen(addr)` creates the socket
  * (`socket(2)` + `setsockopt(SO_REUSEADDR)` + `bind(2)` + `listen(2)`)
@@ -467,7 +467,7 @@ inline PollableProxy make_tcp_listener_pollable_proxy(
 }
 
 // ---------------------------------------------------------------------------
-// TcpFactory (Workstream K, Phase 1 leaf 3c)
+// TcpFactory
 // ---------------------------------------------------------------------------
 
 /**

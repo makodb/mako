@@ -337,7 +337,7 @@ class ServerConnection {
     // Used to pass weak reference to async handlers
     WeakServerConnection weak_self_;
 
-    // Workstream K, server sub-leaf 5b — outbound reply through the
+    // outbound reply through the
     // channel layer.
     //
     // When `bind_channel(...)` is called with a non-null
@@ -402,7 +402,7 @@ public:
     }
 
     /**
-     * Workstream K, server sub-leaf 5b — bind a `ChannelConnectionProxy`
+     * bind a `ChannelConnectionProxy`
      * to this connection.
      *
      * Once bound, outbound `reply(...)` calls route through
@@ -464,7 +464,7 @@ public:
             body << v_error_code;
             body << v64(static_cast<i64>(ctx_->server_instance_id));
         }
-        // Workstream N Phase 3d-6: write_fn is exclusively
+        // write_fn is exclusively
         // BinaryWriteArchive&-shaped (Marshal& branch removed); the
         // archive wraps the same `body` through a `MarshalSink`, so
         // wire bytes stay byte-for-byte identical to the legacy path.
@@ -570,11 +570,11 @@ namespace rrr {
 class DeferredReply {
     rusty::Box<rrr::Request> req_;
     WeakServerConnection weak_sconn_;
-    // Workstream N Phase 3d-4: stored callback signature is now
+    // stored callback signature is now
     // `void(BinaryWriteArchive&)` so generated `defer` handlers can
     // write through the archive layer matching every other Phase 3d
     // emission point.  `ServerConnection::reply<F>` is dual-signature
-    // (Phase 3d-3) so the inner dispatch picks the archive branch
+    // so the inner dispatch picks the archive branch
     // automatically when this callback runs.
     rusty::Function<void(BinaryWriteArchive&)> archive_reply_;
     rusty::Function<void()> cleanup_;
@@ -695,7 +695,7 @@ class Server: public NoCopy {
     // Used by clients to detect server restarts (ID changes after restart)
     uint64_t instance_id_;
 
-    // Workstream K, server sub-leaf 5a — channel-factory scaffolding.
+    // channel-factory scaffolding.
     //
     // When a `ChannelFactoryProxy` is bound via `set_channel_factory(...)`,
     // 5e routes `Server::start(addr)` through `factory->make_listener()
@@ -708,7 +708,7 @@ class Server: public NoCopy {
     // (same workaround applied to `ClientConnection::factory_`).
     rusty::Option<rusty::Box<ChannelFactoryProxy>> channel_factory_{rusty::None};
 
-    // Workstream K, server sub-leaf 5e — channel-mode listener +
+    // channel-mode listener +
     // accepted-connection tracking.
     //
     // `channel_listener_` owns the `ChannelListenerProxy` returned by
@@ -741,7 +741,7 @@ public:
     int start(const char* bind_addr);
 
     /**
-     * Workstream K, server sub-leaf 5a — bind a `ChannelFactoryProxy`
+     * bind a `ChannelFactoryProxy`
      * to this server.
      *
      * Once bound, subsequent leaves (5e/5f) will route `start(addr)`

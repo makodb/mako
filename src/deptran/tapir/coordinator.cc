@@ -20,7 +20,7 @@ TapirCommo *CoordinatorTapir::commo() {
 
 void CoordinatorTapir::DispatchAsync() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // Workstream N Phase 4e-43: removed commented-out
+  // removed commented-out
   // `// ___TestPhaseOne(cmd_id_);` — method deleted.
   auto tx_data = (TxData *) cmd_;
 

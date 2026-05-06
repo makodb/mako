@@ -1,6 +1,6 @@
 /**
  * Idempotency Unit Tests
- * Part of Phase 2.3: Idempotency Support
+ * Idempotency Support
  *
  * Tests for:
  * - IdempotencyKey: creation, comparison, hashing

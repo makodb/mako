@@ -30,7 +30,7 @@ class Table;
  * DEPRECATED: Row inherits from RefCounted for legacy compatibility.
  * New code should use rusty::Arc<Row> for shared ownership.
  * The ref_copy()/release() pattern is being replaced by Arc::clone() and implicit drop.
- * Migration status: in progress (Phase 4 Leaf 3).
+ * Migration status: in progress.
  */
 class Row: public NoCopy {
   // fixed size part

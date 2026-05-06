@@ -1,5 +1,4 @@
-// Channel-factory listen-path test for `Server::start` (Workstream
-// K, server sub-leaf 5e).
+// Channel-factory listen-path test for `Server::start`.
 //
 // Verifies that when a `ChannelFactoryProxy` is bound on the server
 // via `set_channel_factory(...)`, `Server::start(addr)`:
@@ -184,7 +183,7 @@ inline ChannelFactoryProxy make_factory_proxy(
 
 class ServerChannelFactoryTest : public ::testing::Test {
  protected:
-    // L1c-tests: rusty::Option<T> swap.
+    // rusty::Option<T> swap.
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
         server_ = rusty::make_box<Server>(

@@ -12,7 +12,7 @@
 #include <ctime>
 
 /**
- * Connection Health Metrics (Phase 3.2)
+ * Connection Health Metrics
  *
  * Tracks request, data transfer, connection lifecycle, and latency metrics
  * for monitoring connection health and performance.

@@ -1,5 +1,5 @@
 // Scaffolding guard test for `Server::set_channel_factory` /
-// `is_channel_factory_bound` (Workstream K, server sub-leaf 5a).
+// `is_channel_factory_bound`.
 //
 // Verifies that the new channel-factory binding entry points exist
 // with the expected signatures and that the latch flips as
@@ -75,7 +75,7 @@ inline ChannelFactoryProxy make_stub_factory_proxy() {
 
 class ServerChannelBindingTest : public ::testing::Test {
  protected:
-    // L1c-tests: rusty::Option<T> swap. See
+    // rusty::Option<T> swap. See
     // rpc_client_channel_recv_test.cc for the API translation.
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());

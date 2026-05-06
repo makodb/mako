@@ -10,7 +10,7 @@
 namespace janus {
 class CmdData;
 
-// Workstream N L10f-prep3a (2026-05-03): polymorphic command fields
+// polymorphic command fields
 // (`accepted_cmd_` / `committed_cmd_`) migrated from
 // `shared_ptr<Marshallable>` to `janus::Command`.  See
 // `docs/dev/l10-unblock-plan.md`.
@@ -51,7 +51,7 @@ class PaxosServer : public TxLogServer {
   bool in_applying_logs_{false};
 
   // ========================================================================
-  // LOG PERSISTENCE (Phase 1.4)
+  // LOG PERSISTENCE
   // ========================================================================
   std::shared_ptr<janus::raft::LogStorage> log_storage_;
 
@@ -79,7 +79,7 @@ class PaxosServer : public TxLogServer {
   bool RecoverFromStorage();
 
   // ========================================================================
-  // SNAPSHOT SUPPORT (Phase 3.1)
+  // SNAPSHOT SUPPORT
   // ========================================================================
   std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;
 
@@ -109,7 +109,7 @@ class PaxosServer : public TxLogServer {
   size_t GetUncommittedCount() const;
 
   /**
-   * Compact log entries up to the given index (Phase 3.4).
+   * Compact log entries up to the given index.
    * Removes entries from storage that are covered by a snapshot.
    * @param up_to_index Remove entries with index <= this value
    * @return Number of entries removed
@@ -145,7 +145,7 @@ class PaxosServer : public TxLogServer {
     return sp_instance;
   }
 
-  // Workstream N Phase 4e-37: removed `OnForward` declaration —
+  // removed `OnForward` declaration —
   // body was `verify(0); // Should never be called in Mako`; the
   // `MultiPaxosServiceImpl::Forward(janus::Command, ...)` handler
   // has an empty body that never reaches this method (Mako uses
@@ -158,7 +158,7 @@ class PaxosServer : public TxLogServer {
                  uint64_t* coro_id,
                  rusty::Function<void()> cb);
 
-  // Workstream N L10f-prep6p (2026-05-03): handler parameters take
+  // handler parameters take
   // const janus::Command&; shared_ptr<Marshallable> callers
   // auto-convert via Command's implicit ctor.
   void OnAccept(const slotid_t slot_id,
@@ -173,7 +173,7 @@ class PaxosServer : public TxLogServer {
                 const ballot_t ballot,
                 const janus::Command& cmd);
 
-  // Workstream N Phase 4e-26: removed `OnBulkPrepare`, `OnHeartbeat`
+  // removed `OnBulkPrepare`, `OnHeartbeat`
   // declarations — only callers were the now-deleted
   // `MultiPaxosServiceImpl::BulkPrepare` / `Heartbeat` handlers.
 
@@ -187,7 +187,7 @@ class PaxosServer : public TxLogServer {
                     i32 *valid,
                     rusty::Function<void()> cb);
 
-  // Workstream N Phase 4e-27: removed `OnBulkPrepare2` declaration —
+  // removed `OnBulkPrepare2` declaration —
   // only caller was the now-deleted
   // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
@@ -203,7 +203,7 @@ class PaxosServer : public TxLogServer {
                       rusty::Function<void()> cb);
 
 
-  // Workstream N Phase 4e-26: removed `OnSyncNoOps` declaration — only
+  // removed `OnSyncNoOps` declaration — only
   // caller was the now-deleted `MultiPaxosServiceImpl::SyncNoOps`
   // handler.
 

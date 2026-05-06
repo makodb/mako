@@ -243,7 +243,7 @@ public:
         return rusty::Some(guard->pop_front());
     }
 
-    // L5o: removed `peek(QueuedRequest&)` — its `out = guard->front();`
+    // removed `peek(QueuedRequest&)` — its `out = guard->front();`
     // copy-assignment relied on QueuedRequest being copyable, which is
     // no longer the case after the callback field migrated from
     // std::function to move-only rusty::Function.  The method had no

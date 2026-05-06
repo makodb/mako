@@ -181,7 +181,7 @@ void RaftWorker::SetupHeartbeat() {
   }
 
   // Setup heartbeat/control RPC server
-  // Workstream N Phase 4e-35: ServerControlServiceImpl ctor 3rd
+  // ServerControlServiceImpl ctor 3rd
   // `Recorder*` parameter removed; updated call site to 2 args.
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
   hb_thread_pool_g = base::ThreadPool::make(1);
@@ -603,7 +603,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
   auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
-  // L10f-prep4: tpc_cmd->cmd_ is Command; has_value() for null
+  // tpc_cmd->cmd_ is Command; has_value() for null
   // check; marshallable_cast<T>(Command&) overload handles the cast.
   if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
     // Extract VecPieceData that contains the raw bytes

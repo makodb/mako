@@ -23,7 +23,7 @@ CopilotServer::CopilotServer(Frame* frame) : log_infos_(2) {
   id_ = frame->site_info_->id;
   setIsPilot(frame_->site_info_->locale_id == 0);
   setIsCopilot(frame_->site_info_->locale_id == 1);
-  // Workstream N Phase 4e-7: removed
+  // removed
   // `witness_.set_belongs_to_leader(...);` — see the companion
   // comment on the deleted field/setter in scheduler.h.
   Setup();
@@ -37,7 +37,7 @@ shared_ptr<CopilotData> CopilotServer::GetInstance(slotid_t slot, uint8_t is_pil
   auto& sp_instance = log_infos_[is_pilot].logs[slot];
   if (!sp_instance)
     sp_instance = std::make_shared<CopilotData>(
-      // L10f-prep3c: cmd field is now Command — default-construct.
+      // cmd field is now Command — default-construct.
       CopilotData{Command{},
                   0,
                   is_pilot, slot,
@@ -193,7 +193,7 @@ bool CopilotServer::WillWait(int &time_to_wait) const {
   }
 }
 
-// Workstream N Phase 4e-40: removed `CopilotServer::OnForward`
+// removed `CopilotServer::OnForward`
 // (~17 LOC) — only caller was the deleted
 // `CopilotServiceImpl::Forward` handler; the matching
 // Copilot::Forward RPC declaration is gone from rcc_rpc.rpc.
@@ -237,7 +237,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
    * an id of the dependency's proposing pilot.
    */
   *max_ballot = ins->ballot;
-  // L10f-prep6ba: ins->cmd is Command; *ret_cmd = ... uses Command's
+  // ins->cmd is Command; *ret_cmd = ... uses Command's
   // default operator= directly.
   if (ins->cmd.has_value())
     *ret_cmd = ins->cmd;
@@ -595,7 +595,7 @@ void CopilotServer::updateMaxCmtdSlot(CopilotLogInfo& log_info, slotid_t slot) {
 }
 
 void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
-  // L10f-prep3c: cmd deduces to Command; kind_ is the public field;
+  // cmd deduces to Command; kind_ is the public field;
   // marshallable_cast<T>(Command&) overload handles the cast.
   auto cmd = log_info.logs[slot]->cmd;
   if (cmd.kind_ == TpcCommitCommand::static_kind()) {
@@ -610,7 +610,7 @@ void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
 }
 
 bool CopilotServer::executeCmd(shared_ptr<CopilotData>& ins) {
-  // L10f-prep3c: ins->cmd is Command; RuleWitnessGC still takes
+  // ins->cmd is Command; RuleWitnessGC still takes
   // shared_ptr<Marshallable>; app_next_ takes Command directly;
   // kind_ is Command's public field.
   if (likely(ins->cmd.has_value())) {
@@ -990,7 +990,7 @@ bool CopilotServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_
       verify(ins->cmd.kind_ == TpcBatchCommand::static_kind());
       shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
       for (int i = 0; i < batch_cmd->Size(); i++)
-        // L10f-prep6bd: passing Command to second arg forces
+        // passing Command to second arg forces
         // Conflict's (Command, Command) overload — first arg
         // (shared_ptr<TpcCommitCommand>) auto-converts via Command's
         // templated ctor, second arg is already Command.

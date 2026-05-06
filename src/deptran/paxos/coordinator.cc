@@ -39,7 +39,7 @@ void CoordinatorMultiPaxos::Submit(const janus::Command& cmd,
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  // L10f-prep3a: cmd_ is now janus::Command; null check via has_value.
+  // cmd_ is now janus::Command; null check via has_value.
   verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
@@ -59,9 +59,9 @@ void BulkCoordinatorMultiPaxos::BulkSubmit(const janus::Command& cmd,
     GotoNextPhase();
 }
 
-// Workstream N Phase 4e-31: removed `CoordinatorMultiPaxos::PickBallot()`
-// — only call site was the now-deleted `Prepare()` (Phase 4e-30).
-// Workstream N Phase 4e-30: removed `CoordinatorMultiPaxos::Prepare()`
+// removed `CoordinatorMultiPaxos::PickBallot()`
+// — only call site was the now-deleted `Prepare()`.
+// removed `CoordinatorMultiPaxos::Prepare()`
 // (~50 LOC) — body started with `verify(0); // for debug;`, and the
 // only place the method could have been reached was via
 // `GotoNextPhase()`'s `Phase::PREPARE` case which is itself
@@ -79,7 +79,7 @@ void CoordinatorMultiPaxos::Accept() {
             par_id_, slot_id_);
   auto start = chrono::system_clock::now();
 #ifdef LATENCY_DEBUG
-  // L10f-prep3a: GetCommandMsTimeElaps + Broadcast* still take
+  // GetCommandMsTimeElaps + Broadcast* still take
   // shared_ptr<Marshallable>; unwrap from Command.
   client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_));
 #endif
@@ -94,7 +94,7 @@ void CoordinatorMultiPaxos::Accept() {
     // TODO process timeout.
     verify(0);
   }
-// Workstream N Phase 4e-31: removed ~30 LOC of commented-out
+// removed ~30 LOC of commented-out
 // `BroadcastAccept(..., AcceptAck-callback)` legacy + companion
 // `AcceptAck(phase_t, Future*)` body.  The shape was the
 // callback-style RPC dispatch that pre-dated the
@@ -126,7 +126,7 @@ void CoordinatorMultiPaxos::GotoNextPhase() {
         phase_++;
         verify(phase_ % n_phase == Phase::COMMIT);
       } else {
-        // Workstream N Phase 4e-31: dropped commented-out
+        // dropped commented-out
         // `//Forward();` and stale TODO breadcrumbs — `Forward()`
         // was never defined and the non-leader branch is
         // `verify(0)`-guarded anyway.
@@ -185,7 +185,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
   }
 }
 
-// Workstream N Phase 4e-27: removed `BulkCoordinatorMultiPaxos::Prepare()`
+// removed `BulkCoordinatorMultiPaxos::Prepare()`
 // (~70 LOC) — never called.  `GotoNextPhase` already skipped this
 // phase via a `// Prepare();` comment + `phase_++` workaround.  The
 // matching `BroadcastPrepare2`, `MultiPaxosServiceImpl::BulkPrepare2`,
@@ -193,7 +193,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
 
 void BulkCoordinatorMultiPaxos::Accept() {
     in_accept = true;
-    // L10f-prep3a: cmd_ is Command; marshallable_cast<T>(Command&)
+    // cmd_ is Command; marshallable_cast<T>(Command&)
     // overload handles the cast.  BroadcastBulkAccept now also takes
     // const Command& (per prep6t), so cmd_ flows through directly.
     auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
@@ -244,7 +244,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     }
     in_commit = true;
 
-    // L10f-prep3a: cmd_ is Command; marshallable_cast<T>(Command&)
+    // cmd_ is Command; marshallable_cast<T>(Command&)
     // overload handles the cast.
     auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
     verify(cmd_temp1 != nullptr);

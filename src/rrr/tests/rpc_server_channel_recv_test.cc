@@ -1,5 +1,4 @@
-// Channel-mode inbound demux test for `ServerConnection` (Workstream
-// K, server sub-leaf 5c).
+// Channel-mode inbound demux test for `ServerConnection`.
 //
 // Exercises `bind_channel(...)`'s on_frame callback wiring: a
 // synthesized request frame fed through the stub's on_frame fires

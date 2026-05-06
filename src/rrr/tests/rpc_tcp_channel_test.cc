@@ -1,5 +1,5 @@
 // Unit tests for the TCP channel backend's connection-side data path
-// (Workstream K, Phase 1 leaf 3a).
+//.
 //
 // Strategy: build a `TcpConnection` over one end of a `socketpair(2)`,
 // read/write the other end manually as the "peer", and drive the

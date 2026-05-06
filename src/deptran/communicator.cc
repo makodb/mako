@@ -127,7 +127,7 @@ void Communicator::WaitConnectClientLeaders() {
   Log_info("Done waiting to connect to client leaders.");
 }
 
-// Workstream N Phase 4e-17: removed `Communicator::ResetProfiles()`
+// removed `Communicator::ResetProfiles()`
 // — reset all of the now-deleted CPU-utilization / RPC-latency
 // profiling fields (`index`, `total`, `window`, `window_time`,
 // `total_time`, `window_avg`, `total_avg`). Its only callers were
@@ -589,9 +589,9 @@ void Communicator::BroadcastDispatch(
   }
 }
 
-// Workstream N Phase 4e-44: removed `Communicator::SyncBroadcastDispatch`
+// removed `Communicator::SyncBroadcastDispatch`
 // (~78 LOC) — only call site was the now-deleted
-// `CoordinatorClassic::DispatchSync` (Phase 4e-43).  This was the
+// `CoordinatorClassic::DispatchSync`.  This was the
 // synchronous (blocking `proxy->Dispatch(req)`) twin of the live
 // async `BroadcastDispatch` path; no surviving caller anywhere.
 
@@ -682,7 +682,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
               classic_coo->DispatchAsync(false);
             }
               //e->add_dep(coo->cli_id_, src_coroid, leader_id, coro_id);
-            // Workstream N Phase 4e-8: removed
+            // removed
             // `coo->ids_.push_back(leader_id);` — the
             // `Coordinator::ids_` vector had no readers anywhere, so
             // the field went away in the same commit.
@@ -699,7 +699,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
     CoordinatorClassic* classic_coo = (CoordinatorClassic*) coo;
     //classic_coo->debug_cnt++;
 
-    // Workstream N Phase 4e-17: removed the `outbound_[src_coroid]` start-time
+    // removed the `outbound_[src_coroid]` start-time
     // record + the matching `clock_gettime(CLOCK_REALTIME, &start_)` — the
     // recorded start times were only consumed by the dead window-tracking
     // blocks in the Commit / Abort callbacks below, also removed.
@@ -926,7 +926,7 @@ Communicator::SendCommit(Coordinator* coo,
       janus::Command view_md;
       fu->get_reply() >> res >> slow >> coro_id >> profile >> view_md;
 			this->slow = slow;
-			// Workstream N Phase 4e-17: removed `cpu = profile.cpu_util;`
+			// removed `cpu = profile.cpu_util;`
 			// — the `cpu` field was deleted alongside the rest of the
 			// dead CPU / RPC-latency profiling subsystem.
       // Propagate the result status (including WRONG_LEADER) back to the coordinator
@@ -942,7 +942,7 @@ Communicator::SendCommit(Coordinator* coo,
         }
       }
 
-      // Workstream N Phase 4e-17: removed the rolling-window
+      // removed the rolling-window
       // RPC-latency tracking block that read
       // `outbound_[src_coroid]`, computed `curr` in microseconds,
       // and updated `total_time` / `window_time` / `window_avg`
@@ -991,7 +991,7 @@ Communicator::SendCommit(Coordinator* coo,
       }
     }
 
-    // Workstream N Phase 4e-32: removed `coo->site_commit_[rp]++;` —
+    // removed `coo->site_commit_[rp]++;` —
     // counter was write-only; field gone.
 
   }
@@ -1063,7 +1063,7 @@ Communicator::SendAbort(Coordinator* coo,
         }
       }
 
-      // Workstream N Phase 4e-17: removed the CPU-utilization /
+      // removed the CPU-utilization /
       // network-utilization snapshot (`profile.cpu_util` /
       // `profile.tx_util` writes into `this->cpu` / `this->tx`)
       // and the rolling-window RPC-latency tracking block that
@@ -1111,7 +1111,7 @@ Communicator::SendAbort(Coordinator* coo,
       }
 
     }
-    // Workstream N Phase 4e-32: removed `coo->site_abort_[rp]++;` —
+    // removed `coo->site_abort_[rp]++;` —
     // counter was write-only; field gone.
   }
   return e;

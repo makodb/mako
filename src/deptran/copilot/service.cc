@@ -7,7 +7,7 @@ CopilotServiceImpl::CopilotServiceImpl(TxLogServer *sched)
     : sched_((CopilotServer *)sched) {
 }
 
-// Workstream N Phase 4e-40: removed `Forward` typed-rpc override
+// removed `Forward` typed-rpc override
 // (and matching N-arg overload further below).
 
 void CopilotServiceImpl::Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
@@ -27,7 +27,7 @@ void CopilotServiceImpl::Commit(const CopilotService::RpcCommitRequest& req, Cop
   this->Commit(req.is_pilot, req.slot, req.dep, req.cmd, std::move(defer));
 }
 
-// Workstream N Phase 4e-40: removed `Forward(janus::Command, ...)`
+// removed `Forward(janus::Command, ...)`
 // N-arg overload — only caller was the deleted typed-rpc shim above;
 // the receiver `CopilotServer::OnForward` is also gone.
 

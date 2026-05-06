@@ -90,7 +90,7 @@ public:
   std::atomic<int> n_current{0};   // Current in-flight requests
   std::atomic<int> n_submit{0};    // Total submitted
   std::atomic<int> n_tot{0};       // Total processed
-  // Workstream N Phase 4e-22: removed `std::atomic<int> submit_num{0};`
+  // removed `std::atomic<int> submit_num{0};`
   // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
   // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
   // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place
@@ -210,7 +210,7 @@ public:
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy
-  // L6-A2 (2026-05-01): take janus::Command (matches RegLearnerAction
+  // take janus::Command (matches RegLearnerAction
   // signature in deptran/scheduler.h).  Body unwraps via `md.inner()` /
   // `marshallable_cast<T>(md)` overload as needed.
   int Next(int slot, janus::Command md);

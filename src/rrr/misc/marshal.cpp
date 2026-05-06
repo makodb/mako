@@ -45,7 +45,7 @@ using namespace std;
 
 namespace rrr {
 
-// Workstream N Phase 5b-11: retired the entire `#ifdef RPC_STATISTICS`
+// retired the entire `#ifdef RPC_STATISTICS`
 // block.  Phase 5b-8 deleted the marshal-out side; Phase 5b-11 deleted
 // the only remaining caller of `stat_marshal_in` (`chunk::read_from_fd`)
 // along with `Marshal::read_from_fd` / `Marshal::chnk_read_from_fd`.
@@ -126,7 +126,7 @@ size_t Marshal::write(const void* p, size_t n) {
     return n;
 }
 
-// Workstream N Phase 5b-3: removed `Marshal::bypass_copying`. It
+// removed `Marshal::bypass_copying`. It
 // was the implementation of the dead bypass-to-socket fast path —
 // no production type ever set `bypass_to_socket_=true`, so the
 // `if (rhs.bypass_to_socket_)` branch in `operator<<(MarshallDeputy)`
@@ -178,7 +178,7 @@ size_t Marshal::read(void* p, size_t n) {
     }
 }
 
-// Workstream N Phase 5b-11: removed `Marshal::read_from_fd(int)` and
+// removed `Marshal::read_from_fd(int)` and
 // `Marshal::chnk_read_from_fd(int, size_t)`. Neither had any
 // production callers in the codebase; the receive path uses
 // `FdSource` (`serializable.hpp`) for direct fd reads. The
@@ -285,7 +285,7 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
 }
 
 
-// Workstream N Phase 5b-7: removed `Marshal::write_to_fd(int)`. It
+// removed `Marshal::write_to_fd(int)`. It
 // had no callers anywhere in the codebase. New code uses `FdSink`
 // (see `serializable.hpp`) to write archive bytes directly to a
 // file descriptor without going through the legacy chunk-list
@@ -306,7 +306,7 @@ Marshal::bookmark Marshal::set_bookmark(size_t n) {
                 head_ = new chunk;
                 tail_ = head_;
             } else if (tail_->fully_written()) {
-                // Workstream N Phase 5b-3: dropped
+                // dropped
                 // `|| tail_->is_shared_data_chunk()` — `shared_data`
                 // chunks no longer exist (dead bypass-to-socket
                 // fast path removed).

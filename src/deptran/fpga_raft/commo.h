@@ -8,7 +8,7 @@ namespace janus {
 
 class TxData;
 
-// Workstream N Phase 4e-39: removed `class FpgaRaftForwardQuorumEvent`
+// removed `class FpgaRaftForwardQuorumEvent`
 // — only constructed by the now-deleted `FpgaRaftCommo::SendForward`.
 
 class FpgaRaftPrepareQuorumEvent: public QuorumEvent {
@@ -120,7 +120,7 @@ friend class FpgaRaftProxy;
 	
   FpgaRaftCommo() = delete;
   FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>>);
-  // Workstream N Phase 4e-39: removed `SendForward(par_id, self_id,
+  // removed `SendForward(par_id, self_id,
   // cmd)` declaration — only call site was the now-deleted
   // `CoordinatorFpgaRaft::Forward`.
 	void BroadcastHeartbeat(parid_t par_id,
@@ -129,7 +129,7 @@ friend class FpgaRaftProxy;
 										 siteid_t site_id,
 										 uint64_t logIndex);
 	//ONLY FOR SIMULATION
-  // Workstream N L10f-prep6u: take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert.
   void SendAppendEntriesAgain(siteid_t site_id,
 															parid_t par_id,
@@ -141,7 +141,7 @@ friend class FpgaRaftProxy;
 															uint64_t prevLogTerm,
 															uint64_t commitIndex,
 															const janus::Command& cmd);
-  // Workstream N Phase 4e-11: removed dead `BroadcastPrepare` and
+  // removed dead `BroadcastPrepare` and
   // `BroadcastAccept` declarations (both shared_ptr-returning and
   // callback-style overloads).  Neither had any implementation in
   // `commo.cc` — they were declared but never defined, and no caller
@@ -154,7 +154,7 @@ friend class FpgaRaftProxy;
                         ballot_t lst_log_term,
                         parid_t self_id,
                         ballot_t cur_term );
-  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // removed deprecated callback-style
   // `void BroadcastVote(... callback)` — body had `verify(0);` and
   // no callers.
   shared_ptr<FpgaRaftVote2FPGAQuorumEvent>
@@ -163,10 +163,10 @@ friend class FpgaRaftProxy;
                         ballot_t lst_log_term,
                         parid_t self_id,
                         ballot_t cur_term );
-  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // removed deprecated callback-style
   // `void BroadcastVote2FPGA(... callback)` — body had `verify(0);`
   // and no callers.
-  // Workstream N L10f-prep6u: take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert.
   shared_ptr<FpgaRaftAppendQuorumEvent>
   BroadcastAppendEntries(parid_t par_id,
@@ -180,10 +180,10 @@ friend class FpgaRaftProxy;
                          uint64_t prevLogTerm,
                          uint64_t commitIndex,
                          const janus::Command& cmd);
-  // Workstream N Phase 4e-11: removed deprecated callback-style
+  // removed deprecated callback-style
   // `void BroadcastAppendEntries(... callback)` — body had
   // `verify(0);` and no callers.
-  // Workstream N L10f-prep6u: take janus::Command;
+  // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert.
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,

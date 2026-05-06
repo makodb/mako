@@ -1,6 +1,6 @@
 /**
  * Chaos Engineering Test Framework
- * Part of Phase 7.4: Chaos Engineering Tests
+ * Chaos Engineering Tests
  *
  * Provides infrastructure for injecting controlled failures and
  * verifying system recovery in RPC reliability tests.

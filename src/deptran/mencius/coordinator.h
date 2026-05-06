@@ -22,9 +22,9 @@ class CoordinatorMencius : public Coordinator {
   bool in_submission_ = false; // debug;
   bool in_prepare_ = false; // debug
   bool in_suggest = false; // debug
-  // Workstream N Phase 4e-14: removed `bool in_forward = false;` —
+  // removed `bool in_forward = false;` —
   // declared but never written or read.
-  // Workstream N L10f-prep3b: cmd_ migrated to janus::Command.
+  // cmd_ migrated to janus::Command.
   Command cmd_{};
   CoordinatorMencius(uint32_t coo_id,
                         int32_t benchmark,
@@ -64,11 +64,11 @@ class CoordinatorMencius : public Coordinator {
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
-  // Workstream N Phase 4e-31: removed `PickBallot()` declaration —
-  // only call site was the now-deleted `Prepare()` (Phase 4e-30).
+  // removed `PickBallot()` declaration —
+  // only call site was the now-deleted `Prepare()`.
   void Submit();
 
-  // Workstream N Phase 4e-30: removed `Prepare()` declaration —
+  // removed `Prepare()` declaration —
   // body was `verify(0)`-tagged debug code; `GotoNextPhase` skips
   // the prepare phase entirely.
   void Suggest();

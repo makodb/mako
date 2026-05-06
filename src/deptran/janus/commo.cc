@@ -23,7 +23,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
         TxnOutput output;
         rrr::AnyMessage am;
         fu->get_reply() >> res >> output >> am;
-        // Workstream N L10c-graphs: graph reply rides directly as
+        // graph reply rides directly as
         // an `AnyMessage`, no `janus::Command` wrapper.
         if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
@@ -120,7 +120,7 @@ void JanusCommo::BroadcastPreAccept(
       auto fu_result = proxy->async_JanusPreAcceptWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Workstream N L10c-graphs: graph field is now `AnyMessage`
+      // graph field is now `AnyMessage`
       // directly (not wrapped in `janus::Command`).
       auto sp_graph_copy = std::make_shared<RccGraph>(*sp_graph);
       ClassicProxy::RpcJanusPreAcceptRequest req;
@@ -155,7 +155,7 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
       callback(res);
     };
     verify(cmd_id > 0);
-    // Workstream N L10c-graphs: graph field is `AnyMessage` directly.
+    // graph field is `AnyMessage` directly.
     auto sp_graph = std::make_shared<RccGraph>(*graph);
     rank_t rank = RANK_D;
     ClassicProxy::RpcJanusAcceptRequest req;
@@ -201,7 +201,7 @@ void JanusCommo::BroadcastCommit(
       auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Workstream N L10c-graphs: graph field is `AnyMessage` directly.
+      // graph field is `AnyMessage` directly.
       auto sp_graph = std::make_shared<RccGraph>(*graph);
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;

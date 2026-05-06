@@ -1,4 +1,4 @@
-// Workstream N Phase 1: byte-for-byte compatibility tests for the
+// byte-for-byte compatibility tests for the
 // new BinaryWriteArchive / BinaryReadArchive against the existing
 // `Marshal` operator<< / operator>> wire format.
 //
@@ -74,8 +74,7 @@ void check_byte_compat_write(const T& value) {
 
 template <typename T>
 void check_round_trip(const T& value) {
-  // Encode via the OLD Marshal path. (Phase 1 commitment: the new
-  // archive's read side must consume bytes the old Marshal produces.)
+  // Encode via the OLD Marshal path.
   Marshal old_m;
   old_m << value;
   auto bytes = drain_marshal(old_m);
@@ -346,7 +345,7 @@ TEST(BufferSinkSemantics, AccumulatesBytes) {
 }
 
 // ---------------------------------------------------------------------------
-// Container shapes (Phase 1b).
+// Container shapes.
 //
 // All linear containers share the same wire format: v64 length prefix +
 // each element serialized via its element-type operator<<. Iteration
@@ -632,7 +631,7 @@ TEST(MarshalArchiveRoundTrip, RustyHashMapPrimitives) {
   EXPECT_TRUE(source.eof());
 }
 
-// ---- FdSink / FdSource (Phase 1c) ------------------------------------
+// ---- FdSink / FdSource ------------------------------------
 
 // RAII wrapper around a pipe pair so test failures don't leak fds.
 struct ScopedPipe {
@@ -923,7 +922,7 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
   writer_thread.join();
 }
 
-// ---- SerializableProxy / SerializableRegistry (Phase 2) --------------
+// ---- SerializableProxy / SerializableRegistry --------------
 
 // Canary command for Phase 2: implements BOTH the new Serializable
 // interface (`save` / `load` / `kind`) AND the old Marshal-based
@@ -932,7 +931,6 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
 //
 // This type is intentionally test-local — Phase 2 only validates the
 // new infrastructure. Per-command-type production migrations land in
-// Phase 4.
 struct CanaryCommand {
   int32_t id{0};
   std::string name;
@@ -1029,7 +1027,7 @@ TEST(SerializableProxy, RoundTripSaveLoadViaProxy) {
 TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
   // Phase 2 DoD test: factory registry produces a fresh proxy whose
   // bytes match an independently-saved instance after load.
-  // L10f-2 step 5 prep (2026-05-05): no leading
+  // 2 step 5 prep (2026-05-05): no leading
   // `clear_for_testing()` — the registry is shared with
   // SerializableEnvelope::load and must keep static-init-time
   // registrations alive.  CanaryCommand uses its own kind tag
@@ -1064,7 +1062,7 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
   auto loaded_bytes = sink_to_vector(sink_loaded);
   EXPECT_EQ(src_bytes, loaded_bytes);
 
-  // L10f-2 step 5 prep (2026-05-05): no longer
+  // 2 step 5 prep (2026-05-05): no longer
   // `clear_for_testing()` at end — `SerializableEnvelope::load`
   // now uses the same registry and depends on static-init-time
   // registrations (TypeListFactory* + every MakoCommands type)
@@ -1072,7 +1070,7 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
   // before this test in place.
 }
 
-// ---- Marshal ↔ Archive bridges (Phase 3a) ----------------------------
+// ---- Marshal ↔ Archive bridges ----------------------------
 
 TEST(MarshalSinkBridge, WriteIntoMarshalProducesIdenticalBytes) {
   // Encode a payload via:
@@ -1207,7 +1205,7 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
   // We re-use CanaryCommand as the underlying type (the registry
   // doesn't know or care about T identity, only the kind tag and the
   // factory's return value).
-  // L10f-2 step 5 prep (2026-05-05): see RegisterCreateAndRoundTrip
+  // 2 step 5 prep (2026-05-05): see RegisterCreateAndRoundTrip
   // for why we don't clear_for_testing here.
 
   constexpr int32_t kKindA = 0xAAAA;
@@ -1231,11 +1229,11 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
   // proxy reflects the CONCRETE type's kind, not the registry slot.
   EXPECT_EQ(pa->kind(), CanaryCommand::kKind);
   EXPECT_EQ(pb->kind(), CanaryCommand::kKind);
-  // L10f-2 step 5 prep (2026-05-05): see RegisterCreateAndRoundTrip
+  // 2 step 5 prep (2026-05-05): see RegisterCreateAndRoundTrip
   // for why we no longer trailing-clear the registry.
 }
 
-// Workstream N L10f-2 step 5 (2026-05-05): removed the entire
+// removed the entire
 // "Marshallable ↔ Serializable bridges" + "MarshallDeputy
 // registration" + "MarshallDeputy archive operators" + "Phase 3f
 // lazy serializable() cache" + "L9 wire compaction via
@@ -1252,7 +1250,7 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
 // removed earlier this session.
 
 // ---------------------------------------------------------------------------
-// L10a: TypeList::create_at(pos) compile-time-dispatched factory.
+// TypeList::create_at(pos) compile-time-dispatched factory.
 //
 // Replaces the runtime `MarshallDeputy::reg_initializer(kind, factory)`
 // registry for the closed-set polymorphic path: the TypeList knows its
@@ -1356,7 +1354,7 @@ TEST(TypeListFactory, CreateAtReturnsCorrectTypeForEachPosition) {
 }
 
 // ---------------------------------------------------------------------------
-// L10b: SerializableEnvelope<TypeList> — closed-set polymorphic carrier.
+// SerializableEnvelope<TypeList> — closed-set polymorphic carrier.
 //
 // Replaces MarshallDeputy for closed-set polymorphism. Wire format
 // [v32 kind][payload bytes] — byte-for-byte identical to MarshallDeputy

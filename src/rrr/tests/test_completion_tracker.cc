@@ -1,6 +1,6 @@
 /**
  * Completion Tracker Unit Tests
- * Part of Phase 4.3: Request Completion Tracking
+ * Request Completion Tracking
  *
  * Tests for:
  * - CompletionTrackerConfig: presets and configuration

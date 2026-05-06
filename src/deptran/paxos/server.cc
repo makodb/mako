@@ -9,7 +9,7 @@ namespace janus {
 
 shared_ptr<ElectionState> es = ElectionState::instance();
 
-// Workstream N Phase 4e-37: removed `PaxosServer::OnForward` —
+// removed `PaxosServer::OnForward` —
 // body was `verify(0); // Should never be called in Mako`.  The
 // `MultiPaxosServiceImpl::Forward(janus::Command, ...)` handler
 // already has an empty body (Mako uses `OnForwardToLearner` via
@@ -29,7 +29,7 @@ void PaxosServer::OnPrepare(slotid_t slot_id,
   verify(ballot != instance->max_ballot_seen_);
   if (instance->max_ballot_seen_ < ballot) {
     instance->max_ballot_seen_ = ballot;
-    PersistLogEntry(slot_id, *instance);  // Phase 1.4: persist ballot update
+    PersistLogEntry(slot_id, *instance);  // persist ballot update
   } else {
     // TODO if accepted anything, return;
     verify(0);
@@ -62,7 +62,7 @@ void PaxosServer::OnAccept(const slotid_t slot_id,
   if (instance->max_ballot_seen_ <= ballot) {
     instance->max_ballot_seen_ = ballot;
     instance->max_ballot_accepted_ = ballot;
-    PersistLogEntry(slot_id, *instance);  // Phase 1.4: persist accept
+    PersistLogEntry(slot_id, *instance);  // persist accept
   } else {
     // TODO
     verify(0);
@@ -84,7 +84,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
   auto instance = GetInstance(slot_id);
-  // L10f-prep6p: cmd is Command; PaxosData::committed_cmd_ is Command;
+  // cmd is Command; PaxosData::committed_cmd_ is Command;
   // direct copy.
   instance->committed_cmd_ = cmd;
   bool slot_advanced = false;
@@ -92,9 +92,9 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
     max_committed_slot_ = slot_id;
     slot_advanced = true;
   }
-  PersistLogEntry(slot_id, *instance);  // Phase 1.4: persist commit
+  PersistLogEntry(slot_id, *instance);  // persist commit
   if (slot_advanced) {
-    PersistMaxCommitted();  // Phase 1.4: persist max_committed_slot
+    PersistMaxCommitted();  // persist max_committed_slot
   }
   verify(slot_id > max_executed_slot_);
   // This prevents the log entry from being applied twice
@@ -104,7 +104,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
   in_applying_logs_ = true;
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
-    // L10f-prep3a: PaxosData::committed_cmd_ is Command;
+    // PaxosData::committed_cmd_ is Command;
     // app_next_ takes Command directly.
     if (next_instance->committed_cmd_.has_value()) {
       app_next_(slot_id,next_instance->committed_cmd_);
@@ -118,12 +118,12 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
   in_applying_logs_ = false;
   FreeSlots();
 }
-// Workstream N Phase 4e-26: removed `PaxosServer::OnBulkPrepare`
+// removed `PaxosServer::OnBulkPrepare`
 // (~85 LOC) and `PaxosServer::OnHeartbeat` (~58 LOC) — only callers
 // were the now-deleted `MultiPaxosServiceImpl::BulkPrepare` /
 // `Heartbeat` handlers in paxos/service.cc.
 
-// Workstream N Phase 4e-27: removed `PaxosServer::OnBulkPrepare2`
+// removed `PaxosServer::OnBulkPrepare2`
 // (~85 LOC) — only caller was the now-deleted
 // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
@@ -132,7 +132,7 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
                                i32* valid,
                                shared_ptr<SyncLogResponse> ret_cmd,
                                rusty::Function<void()> cb){
-  // L10f-prep6ak: marshallable_cast works on Command directly via
+  // marshallable_cast works on Command directly via
   // Envelope overload — drop the boundary lift.
   auto bcmd = marshallable_cast<SyncLogRequest>(cmd_env);
   verify(bcmd != nullptr);
@@ -155,7 +155,7 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
 
     for(int j = bcmd->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
       auto inst = ps->GetInstance(j);
-      // L10f-prep3a: committed_cmd_ is Command; the temp_cmd
+      // committed_cmd_ is Command; the temp_cmd
       // copy + janus::Command(Command) wrapping below relies on
       // Command's copy ctor.
       if(inst->committed_cmd_.has_value()){
@@ -185,7 +185,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
-  // L10f-prep6ak: marshallable_cast works on Command directly.
+  // marshallable_cast works on Command directly.
   auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd != nullptr);
   *valid = 1;
@@ -209,7 +209,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   //   es->set_state(0);
   // es->state_unlock();
 
-  // Phase 1.4: collect entries for batch persistence
+  // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
 
   //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
@@ -248,10 +248,10 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
         n_accept_++;
         *valid &= 1;
 	      *ballot = ballot_id;
-        entries_to_persist.emplace_back(slot_id, instance);  // Phase 1.4
+        entries_to_persist.emplace_back(slot_id, instance);  
       }
   }
-  // Phase 1.4: batch persist all accepted entries
+  // batch persist all accepted entries
   PersistLogEntries(entries_to_persist);
   if(req_leader != 0)
 	Log_debug("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
@@ -266,7 +266,7 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
   //mtx_.lock();
   //Log_info("here");
   //Log_info("multi-paxos scheduler decide for slot: %ld", bcmd->slots.size());
-  // L10f-prep6ak: marshallable_cast works on Command directly.
+  // marshallable_cast works on Command directly.
   auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd != nullptr);
   *valid = 1;
@@ -291,7 +291,7 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
   es->set_state(0);
   es->state_unlock();
   vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
-  // Phase 1.4: collect entries for batch persistence
+  // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
   for(int i = 0; i < bcmd->slots.size(); i++){
       //break;
@@ -329,10 +329,10 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
         if (slot_id > max_committed_slot_) {
             max_committed_slot_ = slot_id;
         }
-        entries_to_persist.emplace_back(slot_id, instance);  // Phase 1.4
+        entries_to_persist.emplace_back(slot_id, instance);  
       }
   }
-  // Phase 1.4: batch persist all committed entries
+  // batch persist all committed entries
   PersistLogEntries(entries_to_persist);
   PersistMaxCommitted();
   //es->state_unlock();
@@ -375,7 +375,7 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
                                rusty::Function<void()> cb) {
-  // L10f-prep6ak: marshallable_cast works on Command directly.
+  // marshallable_cast works on Command directly.
   auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd_env);
   verify(bcmd != nullptr);
   *valid = 1;
@@ -397,7 +397,7 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   // es->set_state(0);
   // es->state_unlock();
   vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
-  // Phase 1.4: collect entries for batch persistence
+  // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
@@ -437,10 +437,10 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
         if (slot_id > max_committed_slot_) {
             max_committed_slot_ = slot_id;
         }
-        entries_to_persist.emplace_back(slot_id, instance);  // Phase 1.4
+        entries_to_persist.emplace_back(slot_id, instance);  
       }
   }
-  // Phase 1.4: batch persist all committed entries
+  // batch persist all committed entries
   PersistLogEntries(entries_to_persist);
   PersistMaxCommitted();
   if(*valid == 0){
@@ -479,7 +479,7 @@ void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
   //Log_info("received slot:%d",slot);
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // L10f-prep6p: app_next_ takes janus::Command directly.
+  // app_next_ takes janus::Command directly.
   int status=app_next_(slot,cmd);
   cb();
   if (status==janus::PaxosStatus::STATUS_NOOPS){// if noops
@@ -487,12 +487,12 @@ void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
   }
 }
 
-// Workstream N Phase 4e-26: removed `PaxosServer::OnSyncNoOps`
+// removed `PaxosServer::OnSyncNoOps`
 // (~60 LOC) — only caller was the now-deleted
 // `MultiPaxosServiceImpl::SyncNoOps` handler.
 
 // ============================================================================
-// LOG PERSISTENCE IMPLEMENTATION (Phase 1.4)
+// LOG PERSISTENCE IMPLEMENTATION
 // ============================================================================
 
 // @unsafe - Uses LogStorage which has non-borrow-checked operations
@@ -528,7 +528,7 @@ void PaxosServer::PersistLogEntry(slotid_t slot_id, const PaxosData& data) {
   entry.is_no_op = data.is_no_op;
 
   // Prefer committed_cmd_ if available, otherwise accepted_cmd_.
-  // L10f-prep3a: PaxosData::*_cmd_ are now Command; LogEntry::command
+  // PaxosData::*_cmd_ are now Command; LogEntry::command
   // is also Command — direct copy.
   if (data.committed_cmd_.has_value()) {
     entry.command = data.committed_cmd_;
@@ -621,7 +621,7 @@ bool PaxosServer::RecoverFromStorage() {
       paxos_data->max_ballot_accepted_ = entry.max_ballot_accepted;
       paxos_data->is_no_op = entry.is_no_op;
 
-      // L10f-prep1+3a: both LogEntry::command and
+      // prep1+3a: both LogEntry::command and
       // PaxosData::*_cmd_ are janus::Command — direct copy.
       if (entry.committed) {
         paxos_data->committed_cmd_ = entry.command;
@@ -681,7 +681,7 @@ void PaxosServer::ReplayCommittedEntries() {
   Log_info("[PAXOS-REPLAY] Site par %d loc %d: Replayed %zu entries, max_executed now %lu",
            partition_id_, loc_id_, replayed, max_executed_slot_);
 
-  // Phase 2.3: Log uncommitted entries status
+  // Log uncommitted entries status
   size_t uncommitted = GetUncommittedCount();
   if (uncommitted > 0) {
     Log_info("[PAXOS-RECOVERY] Site par %d loc %d: %zu uncommitted entries (max_accepted=%lu, max_committed=%lu) - will be resolved by consensus",

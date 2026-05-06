@@ -54,7 +54,7 @@ struct LogEntry {
     ballot_t term{0};                 // Raft term or Paxos epoch
     ballot_t max_ballot_seen{0};      // Highest ballot seen (Paxos)
     ballot_t max_ballot_accepted{0};  // Highest accepted ballot (Paxos)
-    // Workstream N L10f-prep1 (2026-05-03): the persistent log's
+    // the persistent log's
     // polymorphic command field migrated from
     // `shared_ptr<Marshallable>` to `janus::Command`
     // (`SerializableEnvelope<MakoCommands>`).  Command's internal
@@ -104,7 +104,7 @@ struct LogEntry {
      * Note: bools are serialized as i8 since the wire format doesn't
      * carry a native bool primitive.
      *
-     * Workstream N Phase 4d-9 (2026-04-30): migrated from the legacy
+     * migrated from the legacy
      * `Marshal& to_marshal(Marshal&) const` / `from_marshal` member
      * pair to `save(BinaryWriteArchive&)` / `load(BinaryReadArchive&)`.
      * Wire format byte-for-byte preserved (the new archive operators
@@ -122,7 +122,7 @@ struct LogEntry {
         ar << static_cast<i8>(committed ? 1 : 0);
         ar << static_cast<i8>(is_no_op ? 1 : 0);
 
-        // L10f-prep1: drive the polymorphic command through Command's
+        // drive the polymorphic command through Command's
         // own archive operator instead of wrapping it in a temporary
         // MarshallDeputy.  Wire format is identical (Command emits
         // `[v32 kind][payload]`, same as MarshallDeputy post-L9).
@@ -136,7 +136,7 @@ struct LogEntry {
     /**
      * Deserialize a log entry from a `BinaryReadArchive`.
      * Required: archive's source must be a `MarshalSource` (the
-     * Phase 3f-prep `operator>>(BinaryReadArchive&, MarshallDeputy&)`
+     * prep `operator>>(BinaryReadArchive&, MarshallDeputy&)`
      * needs a backing `Marshal` to drain into the legacy decode path).
      */
     // @unsafe - delegates to BinaryReadArchive primitive operators

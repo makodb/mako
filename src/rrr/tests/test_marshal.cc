@@ -465,11 +465,11 @@ TEST_F(MarshalTest, RandomizedStressTest) {
     }
 }
 
-// Workstream N Phase 5b-6: removed `CustomMarshallable` class
-// definition and the long-commented-out `MarshallableObjects` test
-// (referenced a `deputy.sp_data_` field that was removed in
-// Phase 3f-1). The class was defined but never exercised; its
-// `entity_size` override targeted a virtual that's also gone now.
+// removed `CustomMarshallable` class definition and the long-
+// commented-out `MarshallableObjects` test (referenced a
+// `deputy.sp_data_` field that was later removed). The class was
+// defined but never exercised; its `entity_size` override targeted
+// a virtual that's also gone now.
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
