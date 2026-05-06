@@ -560,7 +560,7 @@ case "$ACTION" in
                      fi && \
                      if [ ! -f build_docker/CMakeCache.txt ]; then \
                          echo 'Configuring build_docker'; \
-                         cmake -S . -B build_docker ${DOCKER_CMAKE_BORROW_ARG}; \
+                         cmake -S . -B build_docker -DCMAKE_BUILD_TYPE=Release ${DOCKER_CMAKE_BORROW_ARG}; \
                      else \
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \
@@ -751,7 +751,7 @@ case "$ACTION" in
                          fi && \
                          if [ ! -f build_docker/CMakeCache.txt ]; then \
                              echo 'Configuring build_docker'; \
-                             cmake -S . -B build_docker; \
+                             cmake -S . -B build_docker -DCMAKE_BUILD_TYPE=Release; \
                          else \
                              echo 'Reusing existing build_docker CMake cache'; \
                          fi && \
