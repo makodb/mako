@@ -177,10 +177,28 @@ static rusty::Task<void> await_worker(BenchmarkProxy* proxy, int thread_idx, i32
     co_return;
 }
 
-static void prime_task(rusty::Task<void>& task) {
-    rusty::Waker waker{[]() {}};
-    rusty::Context ctx{&waker};
+// Self-referencing waker: when the awaited Future completes, re-poll
+// the task to drive the coroutine forward.  Returns the heap-allocated
+// waker so the caller can keep it alive for the lifetime of the task.
+//
+// Without this, the prior implementation installed a no-op waker —
+// rusty-cpp's `Task::poll` sets `current_context_tls` to the passed
+// context, so `TypedFutureResultAwaiter::await_suspend` registered the
+// no-op as the Future's completion callback.  When the reply arrived,
+// the no-op fired and the coroutine never resumed.
+static std::shared_ptr<rusty::Waker> prime_task(rusty::Task<void>& task) {
+    auto waker = std::make_shared<rusty::Waker>();
+    rusty::Task<void>* task_ptr = &task;
+    std::weak_ptr<rusty::Waker> waker_weak{waker};
+    waker->wake_fn = [task_ptr, waker_weak]() {
+        auto wk = waker_weak.lock();
+        if (!wk) return;
+        rusty::Context ctx{wk.get()};
+        (void)task_ptr->poll(ctx);
+    };
+    rusty::Context ctx{waker.get()};
     (void)task.poll(ctx);
+    return waker;
 }
 
 static void* client_proc(void* arg_ptr) {
@@ -216,13 +234,15 @@ static void* client_proc(void* arg_ptr) {
     BenchmarkProxy proxy(const_cast<Client*>(cl.get()));
     std::vector<rusty::Task<void>> await_tasks;
 
+    std::vector<std::shared_ptr<rusty::Waker>> await_wakers;
     if (await_mode) {
         await_tasks.reserve(outgoing_requests);
+        await_wakers.reserve(outgoing_requests);
         for (int i = 0; i < outgoing_requests; ++i) {
             await_tasks.emplace_back(await_worker(&proxy, thread_idx, rpc_id));
         }
         for (auto& task : await_tasks) {
-            prime_task(task);
+            await_wakers.push_back(prime_task(task));
         }
     }
 
