@@ -246,33 +246,39 @@ static void* client_proc(void* arg_ptr) {
         }
     }
 
-    auto do_work = [cl, &fu_attr, rpc_id, thread_idx] {
-        if (!should_stop) {
-            auto fu_result = cl->request(rpc_id, fu_attr, [rpc_id](rrr::BinaryWriteArchive& m) {
-                if (rpc_id == BenchmarkService::FAST_NOP ||
-                    rpc_id == BenchmarkService::NOP ||
-                    rpc_id == BenchmarkService::ASYNC_NOP) {
-                    m << request_str;
-                } else if (rpc_id == BenchmarkService::FAST_VEC) {
-                    m << rpc_bench_vector_size;
-                } else if (rpc_id == BenchmarkService::DEFERRED_ECHO) {
-                    m << static_cast<rrr::i32>(1);
-                }
-            });
-            if (fu_result.is_err()) {
-                return;
+    // Slim async-callback path: bench callers don't inspect the
+    // returned Future (no `fu->wait()`, no `fu->get_reply()`), so use
+    // `request_async` to skip the Arc<Future> + HashMap allocations.
+    // The callback re-fires `do_work` on each successful reply,
+    // keeping the pipeline full at depth `outgoing_requests`.
+    std::function<void()> do_work_holder;
+    auto do_work = [cl, rpc_id, thread_idx, &do_work_holder] {
+        if (should_stop) return;
+        auto write_fn = [rpc_id](rrr::BinaryWriteArchive& m) {
+            if (rpc_id == BenchmarkService::FAST_NOP ||
+                rpc_id == BenchmarkService::NOP ||
+                rpc_id == BenchmarkService::ASYNC_NOP) {
+                m << request_str;
+            } else if (rpc_id == BenchmarkService::FAST_VEC) {
+                m << rpc_bench_vector_size;
+            } else if (rpc_id == BenchmarkService::DEFERRED_ECHO) {
+                m << static_cast<rrr::i32>(1);
             }
-            g_client_req_counters[thread_idx].fetch_add(1, std::memory_order_relaxed);
-        }
+        };
+        rrr::ClientConnection::AsyncReplyCallback on_reply{
+            [thread_idx, &do_work_holder](rrr::i32 err,
+                                          const std::uint8_t*,
+                                          std::size_t) {
+                if (err != 0) return;
+                do_work_holder();
+            }};
+        auto send_result =
+            cl->request_async(rpc_id, write_fn, std::move(on_reply));
+        if (send_result.is_err()) return;
+        g_client_req_counters[thread_idx].fetch_add(
+            1, std::memory_order_relaxed);
     };
-    fu_attr.callback = [&do_work] (rusty::Arc<Future> fu) {
-        if (fu->get_error_code() != 0) {
-            return;
-        }
-        //thrpool->run_async([&do_work] {
-            do_work();
-        //});
-    };
+    do_work_holder = do_work;
     if (!await_mode) {
         for (int i = 0; i < outgoing_requests; i++) {
             do_work();

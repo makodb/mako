@@ -146,6 +146,13 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
       circuit_breaker_(CircuitBreakerConfig::disabled()),
       callback_manager_(rusty::Arc<CallbackManager>::make()),
       pending_queue_(buffering_config_.to_queue_config()) {
+  // Pre-fill the async-callback slot array with `None`s so
+  // `pending_cb_slots_[xid % N]` is always a valid in-bounds slot.
+  auto guard = pending_cb_slots_.lock().unwrap();
+  guard->reserve(kAsyncSlotCount);
+  for (size_t i = 0; i < kAsyncSlotCount; ++i) {
+    guard->push(rusty::None);
+  }
 }
 
 // @safe - Simple destructor
@@ -157,6 +164,24 @@ ClientConnection::~ClientConnection() {
 
 // @unsafe - Cancels all pending futures with error, protected by SpinMutex
 void ClientConnection::invalidate_pending_futures() {
+  // Drain the slim async-callback slots first.  Move callbacks out
+  // under the lock, then fire them outside the lock with ENOTCONN +
+  // null reply view.
+  rusty::Vec<AsyncReplyCallback> drained_callbacks;
+  {
+    auto cb_guard = pending_cb_slots_.lock().unwrap();
+    for (size_t i = 0; i < cb_guard->len(); ++i) {
+      if ((*cb_guard)[i].is_some()) {
+        drained_callbacks.push(std::move((*cb_guard)[i].unwrap()));
+        (*cb_guard)[i] = rusty::None;
+      }
+    }
+  }
+  for (auto& cb: drained_callbacks) {
+    metrics_.record_request_dropped();
+    cb(ENOTCONN, nullptr, 0);
+  }
+
   list<rusty::Arc<Future>> futures;
   auto guard = pending_fu_.lock().unwrap();
   for (auto it: *guard) {
@@ -920,6 +945,34 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
   size_t parsed_header_size = src.pos();
   size_t response_payload_bytes = size - parsed_header_size;
   heartbeat_manager_.on_pong_received();
+
+  // Fast path: slim async-callback slot (request_async users).
+  // Check first — for callback-only callers this is the dominant
+  // pattern and we can avoid touching the HashMap entirely.
+  {
+    const size_t slot = static_cast<size_t>(v_reply_xid.get())
+                          % kAsyncSlotCount;
+    rusty::Option<AsyncReplyCallback> cb_opt = rusty::None;
+    {
+      auto guard = pending_cb_slots_.lock().unwrap();
+      if ((*guard)[slot].is_some()) {
+        cb_opt = std::move((*guard)[slot]);
+        (*guard)[slot] = rusty::None;
+      }
+    }
+    if (cb_opt.is_some()) {
+      auto cb = std::move(cb_opt.unwrap());
+      const i32 err_code = static_cast<i32>(v_error_code.get());
+      if (err_code == 0) {
+        metrics_.record_request_completed();
+      } else {
+        metrics_.record_request_failed();
+      }
+      record_circuit_result(err_code);
+      cb(err_code, bytes + parsed_header_size, response_payload_bytes);
+      return;
+    }
+  }
 
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
