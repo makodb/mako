@@ -725,7 +725,7 @@ public:
   // }
 
   // XXX(stephentu): tune this
-  static const size_t NMaxCustomerIdxScanElems = 512;
+  static const size_t NMaxCustomerIdxScanElems = 32;  // was 512; TPC-C name scans return ≤15 results; 512 causes ~8KB frame with v_c adjacent to stack canary
 
   void scan_entire_warehouses(int);
   txn_result txn_new_order();

@@ -13,10 +13,8 @@
 #include <sys/types.h>
 #include <netinet/tcp.h>
 
-#ifdef __APPLE__
 #include <mutex>
 #include <unordered_map>
-#endif
 
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
@@ -536,6 +534,7 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   gai_result_ = addr_result.unwrap();
 
   struct addrinfo* rp = nullptr;
+  int last_bind_errno = 0;
   for (rp = gai_result_.get(); rp != nullptr; rp = rp->ai_next) {
     server_sock_ = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (server_sock_ == -1) {
@@ -569,6 +568,7 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
     if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
       break;  // Successfully bound
     } else {
+      last_bind_errno = errno;
       Log_error("port bind error for %s:%s, errno: %d (%s)", host.c_str(), port.c_str(), errno, strerror(errno));
       ::close(server_sock_);
       server_sock_ = -1;

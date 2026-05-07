@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdlib>  // std::abort — required before rusty/function.hpp under C++23
 #include <rusty/rusty.hpp>
 #include <rusty/result.hpp>
 #include <rusty/cell.hpp>

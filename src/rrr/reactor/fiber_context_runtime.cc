@@ -13,14 +13,9 @@
 
 namespace rrr {
 
-#if !defined(__x86_64__)
-extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to) {
-  (void)from;
-  (void)to;
-  verify(0 && "fiber_swap_context is only available on x86_64");
-  std::abort();
-}
-#endif
+// fiber_swap_context is implemented in arch-specific files:
+//   fiber_context_x86_64.cc  (x86_64)
+//   fiber_context_aarch64.cc (AArch64/ARM64)
 
 thread_local boost_coro_task_t* boost_coro_task_t::tls_active_task_ = nullptr;
 
@@ -71,15 +66,23 @@ void boost_coro_task_t::init_context() {
   std::uintptr_t stack_top =
       reinterpret_cast<std::uintptr_t>(static_cast<char*>(stack_mapping_) + stack_mapping_bytes_);
   stack_top &= ~static_cast<std::uintptr_t>(0xF);
-  // SysV x86_64 ABI expects %rsp % 16 == 8 on function entry.
-  stack_top -= sizeof(void*);
-  *reinterpret_cast<void**>(stack_top) = nullptr;
 
   fiber_ctx_ = FiberContext{};
   caller_ctx_ = FiberContext{};
-  fiber_ctx_.rsp = reinterpret_cast<void*>(stack_top);
-  fiber_ctx_.rip =
+  const auto trampoline_addr =
       reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(&boost_coro_task_t::entry_trampoline));
+#if defined(__x86_64__)
+  // SysV x86_64 ABI: %rsp % 16 == 8 on function entry (simulates a call pushing ret addr).
+  stack_top -= sizeof(void*);
+  *reinterpret_cast<void**>(stack_top) = nullptr;
+  fiber_ctx_.rsp = reinterpret_cast<void*>(stack_top);
+  fiber_ctx_.rip = trampoline_addr;
+#elif defined(__aarch64__)
+  // AAPCS64: sp must be 16-byte aligned on function entry. No fake return address needed;
+  // the trampoline address is stored in pc (= lr) and entered via ret.
+  fiber_ctx_.sp = reinterpret_cast<void*>(stack_top);
+  fiber_ctx_.pc = trampoline_addr;
+#endif
 }
 
 void boost_coro_task_t::resume() {

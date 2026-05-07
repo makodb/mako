@@ -39,6 +39,7 @@ class Fiber;
  * Stores callee-saved registers plus stack/instruction pointer.
  */
 struct FiberContext {
+#if defined(__x86_64__)
   void* rsp{nullptr};
   void* rip{nullptr};
   std::uintptr_t rbx{0};
@@ -47,6 +48,22 @@ struct FiberContext {
   std::uintptr_t r13{0};
   std::uintptr_t r14{0};
   std::uintptr_t r15{0};
+#elif defined(__aarch64__)
+  // AAPCS64 callee-saved: x19-x28, x29 (fp), x30 (lr used as pc), sp.
+  void* sp{nullptr};          // offset  0
+  void* pc{nullptr};          // offset  8 (lr on entry = resume address)
+  std::uintptr_t x19{0};      // offset 16
+  std::uintptr_t x20{0};      // offset 24
+  std::uintptr_t x21{0};      // offset 32
+  std::uintptr_t x22{0};      // offset 40
+  std::uintptr_t x23{0};      // offset 48
+  std::uintptr_t x24{0};      // offset 56
+  std::uintptr_t x25{0};      // offset 64
+  std::uintptr_t x26{0};      // offset 72
+  std::uintptr_t x27{0};      // offset 80
+  std::uintptr_t x28{0};      // offset 88
+  std::uintptr_t fp{0};       // offset 96 (x29)
+#endif
 };
 
 extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);

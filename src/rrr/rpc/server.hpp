@@ -1,5 +1,6 @@
 // @unsafe - RPC server module uses raw sockets and mutable spinlocks
 #pragma once
+#include <cstdlib>  // std::abort — required before rusty/function.hpp under C++23
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>

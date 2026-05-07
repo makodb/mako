@@ -354,14 +354,17 @@ public:
       const std::string &value)
   {
     INVARIANT(n < N);
-    //    INVARIANT(arena->manages(&value));
+    // Copy value into arena: the scan callback passes a lambda-local string
+    // that is destroyed after each invocation, so storing &value would dangle.
+    std::string * const v_px = arena->next();
+    *v_px = value;
     if (ignore_key) {
-      values.emplace_back(nullptr, &value);
+      values.emplace_back(nullptr, v_px);
     } else {
       std::string * const s_px = arena->next();
       INVARIANT(s_px && s_px->empty());
       s_px->assign(keyp, keylen);
-      values.emplace_back(s_px, &value);
+      values.emplace_back(s_px, v_px);
     }
     return ++n < N;
   }
