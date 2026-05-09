@@ -61,6 +61,7 @@ LOGS_DIR="${RESULTS_DIR}/logs"
 SUMMARY_FILE="${RESULTS_DIR}/summary.txt"
 CSV_FILE="${RESULTS_DIR}/results.csv"
 LATEST_LINK="${BENCH_ROOT}/scalability_latest"
+FAKE_DISK_COLUMNS="fake_leader_total_bytes,fake_leader_total_writes,fake_cluster_total_bytes,fake_cluster_total_writes,fake_leader_mako_data_bytes,fake_leader_raft_log_bytes,fake_cluster_raft_log_bytes,fake_max_wait_us"
 
 mkdir -p "$LOGS_DIR"
 ln -sfn "$RESULTS_DIR" "$LATEST_LINK"
@@ -86,6 +87,37 @@ extract_replay_batch() {
     if [ -f "$file" ]; then
         grep "replay_batch:" "$file" | tail -1 | sed -n 's/.*replay_batch:\([0-9]*\).*/\1/p'
     fi
+}
+
+extract_fake_disk_stat() {
+    local file="$1" key="$2"
+    if [ -f "$file" ]; then
+        awk -v k="$key" '
+            /\[FakeDiskStats\]/ {
+                for (i = 1; i <= NF; i++) {
+                    split($i, a, "=")
+                    if (a[1] == k) val = a[2]
+                }
+            }
+            END { if (val != "") print val }
+        ' "$file"
+    fi
+}
+
+num_or_zero() {
+    if [ -n "$1" ]; then
+        printf "%s" "$1"
+    else
+        printf "0"
+    fi
+}
+
+sum_values() {
+    awk '{ s += $1 } END { printf "%.0f", s }'
+}
+
+max_values() {
+    awk 'NR == 1 || $1 > m { m = $1 } END { printf "%.0f", (NR > 0 ? m : 0) }'
 }
 
 # ============================================================
@@ -286,7 +318,7 @@ echo ""
 # names matching the bucket pattern (worker_*, replay_*, raft_apply, paxos_*).
 # Thread naming was added in 2026-04 — see ndb_thread::startBind, replay_pool.cc
 # WorkerLoop, raft/server.cc StartApplyThread.
-echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,role_worker_mean,role_worker_peak,role_replay_mean,role_replay_peak,role_apply_peak,role_other_mean,exit_code" > "$CSV_FILE"
+echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,role_worker_mean,role_worker_peak,role_replay_mean,role_replay_peak,role_apply_peak,role_other_mean,exit_code,${FAKE_DISK_COLUMNS}" > "$CSV_FILE"
 
 # Accumulate per-thread-count means for final summary
 declare -A thread_throughputs  # thread_count -> space-separated throughputs
@@ -389,6 +421,39 @@ for trd in $THREADS; do
         fi
         replay_p1=$(extract_replay_batch "$follower_p1_log")
         replay_p2=$(extract_replay_batch "$follower_p2_log")
+
+        fake_leader_total_bytes=$(num_or_zero "$(extract_fake_disk_stat "$leader_log" "total_bytes")")
+        fake_leader_total_writes=$(num_or_zero "$(extract_fake_disk_stat "$leader_log" "total_writes")")
+        fake_leader_mako_data_bytes=$(num_or_zero "$(extract_fake_disk_stat "$leader_log" "mako_data_bytes")")
+        fake_leader_raft_log_bytes=$(num_or_zero "$(extract_fake_disk_stat "$leader_log" "raft_log_bytes")")
+
+        fake_p1_total_bytes=$(num_or_zero "$(extract_fake_disk_stat "$follower_p1_log" "total_bytes")")
+        fake_p2_total_bytes=$(num_or_zero "$(extract_fake_disk_stat "$follower_p2_log" "total_bytes")")
+        fake_learner_total_bytes=$(num_or_zero "$(extract_fake_disk_stat "$learner_log" "total_bytes")")
+        fake_p1_total_writes=$(num_or_zero "$(extract_fake_disk_stat "$follower_p1_log" "total_writes")")
+        fake_p2_total_writes=$(num_or_zero "$(extract_fake_disk_stat "$follower_p2_log" "total_writes")")
+        fake_learner_total_writes=$(num_or_zero "$(extract_fake_disk_stat "$learner_log" "total_writes")")
+        fake_p1_raft_log_bytes=$(num_or_zero "$(extract_fake_disk_stat "$follower_p1_log" "raft_log_bytes")")
+        fake_p2_raft_log_bytes=$(num_or_zero "$(extract_fake_disk_stat "$follower_p2_log" "raft_log_bytes")")
+        fake_learner_raft_log_bytes=$(num_or_zero "$(extract_fake_disk_stat "$learner_log" "raft_log_bytes")")
+
+        fake_leader_max_wait=$(num_or_zero "$(extract_fake_disk_stat "$leader_log" "max_wait_us")")
+        fake_p1_max_wait=$(num_or_zero "$(extract_fake_disk_stat "$follower_p1_log" "max_wait_us")")
+        fake_p2_max_wait=$(num_or_zero "$(extract_fake_disk_stat "$follower_p2_log" "max_wait_us")")
+        fake_learner_max_wait=$(num_or_zero "$(extract_fake_disk_stat "$learner_log" "max_wait_us")")
+
+        fake_cluster_total_bytes=$(printf "%s\n%s\n%s\n%s\n" \
+            "$fake_leader_total_bytes" "$fake_p1_total_bytes" \
+            "$fake_p2_total_bytes" "$fake_learner_total_bytes" | sum_values)
+        fake_cluster_total_writes=$(printf "%s\n%s\n%s\n%s\n" \
+            "$fake_leader_total_writes" "$fake_p1_total_writes" \
+            "$fake_p2_total_writes" "$fake_learner_total_writes" | sum_values)
+        fake_cluster_raft_log_bytes=$(printf "%s\n%s\n%s\n%s\n" \
+            "$fake_leader_raft_log_bytes" "$fake_p1_raft_log_bytes" \
+            "$fake_p2_raft_log_bytes" "$fake_learner_raft_log_bytes" | sum_values)
+        fake_max_wait_us=$(printf "%s\n%s\n%s\n%s\n" \
+            "$fake_leader_max_wait" "$fake_p1_max_wait" \
+            "$fake_p2_max_wait" "$fake_learner_max_wait" | max_values)
 
         # CPU stats from process monitor
         if [ -f "$cpu_log" ]; then
@@ -496,15 +561,16 @@ for trd in $THREADS; do
         fi
 
         # Display
-        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | Workers: mean=%s%% peak=%s%% | Replay: mean=%s%% peak=%s%% | Apply: peak=%s%% | replay_p1: %s replay_p2: %s\n" \
+        printf "    Throughput: %s ops/s | CPU: %s%% | Latency: %s ms | Workers: mean=%s%% peak=%s%% | Replay: mean=%s%% peak=%s%% | Apply: peak=%s%% | replay_p1: %s replay_p2: %s | FakeDisk: leader_bytes=%s cluster_bytes=%s\n" \
             "${throughput:-N/A}" "${avg_cpu:-N/A}" "${avg_latency:-N/A}" \
             "${role_worker_mean:-N/A}" "${role_worker_peak:-N/A}" \
             "${role_replay_mean:-N/A}" "${role_replay_peak:-N/A}" \
             "${role_apply_peak:-N/A}" \
-            "${replay_p1:-N/A}" "${replay_p2:-N/A}"
+            "${replay_p1:-N/A}" "${replay_p2:-N/A}" \
+            "$fake_leader_total_bytes" "$fake_cluster_total_bytes"
 
         # CSV row
-        echo "${trd},${run},${throughput},${per_core_throughput},${avg_cpu},${peak_cpu},${avg_latency},${avg_persist_latency},${abort_rate},${replay_p1},${replay_p2},${active_threads},${worker_mean_cpu},${worker_peak_cpu},${role_worker_mean:-},${role_worker_peak:-},${role_replay_mean:-},${role_replay_peak:-},${role_apply_peak:-},${role_other_mean:-},${exit_code}" >> "$CSV_FILE"
+        echo "${trd},${run},${throughput},${per_core_throughput},${avg_cpu},${peak_cpu},${avg_latency},${avg_persist_latency},${abort_rate},${replay_p1},${replay_p2},${active_threads},${worker_mean_cpu},${worker_peak_cpu},${role_worker_mean:-},${role_worker_peak:-},${role_replay_mean:-},${role_replay_peak:-},${role_apply_peak:-},${role_other_mean:-},${exit_code},${fake_leader_total_bytes},${fake_leader_total_writes},${fake_cluster_total_bytes},${fake_cluster_total_writes},${fake_leader_mako_data_bytes},${fake_leader_raft_log_bytes},${fake_cluster_raft_log_bytes},${fake_max_wait_us}" >> "$CSV_FILE"
 
         # Accumulate for summary
         if [ -n "$throughput" ]; then

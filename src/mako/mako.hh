@@ -28,6 +28,7 @@
 #include "benchmarks/common2.h"
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
+#include "fake_disk.h"
 
 // Runtime replication switching - unified interface
 #include "deptran/replication_helper.h"
@@ -619,6 +620,10 @@ static void wait_for_termination()
              benchConfig.getEndReceived(), benchConfig.getNthreads(),
              sync_util::sync_logger::noops_cnt.load(), benchConfig.getReplayBatch(), wait_count);
 
+    if (wait_count == 1 || (wait_count % 10) == 0) {
+      mako::fake_disk().print_stats(isLearner ? "learner_wait" : "follower_wait");
+    }
+
     // Timeout check: exit gracefully if we've waited too long
     if (wait_count >= max_wait_seconds) {
       Warning("%s timed out waiting for end signal after %d seconds - exiting gracefully",
@@ -627,6 +632,8 @@ static void wait_for_termination()
     }
     //if (benchConfig.getEndReceived() > 0) {std::quick_exit( EXIT_SUCCESS );}
   }
+
+  mako::fake_disk().print_stats(isLearner ? "learner_final" : "follower_final");
 
   // Track and report latency if configured if tracked
   run_latency_tracking();

@@ -327,7 +327,7 @@ std::future<bool> RocksDBPersistence::persistAsync(const char* data, size_t size
     // disk-class cost. Callback runs inline so disk_timestamp advances
     // immediately, just as it would after a real durable ack.
     if (fake_disk().enabled()) {
-        fake_disk().write(data, size);
+        fake_disk().write(FakeDiskSource::MakoData, data, size);
         if (callback) {
             callback(true);
         }

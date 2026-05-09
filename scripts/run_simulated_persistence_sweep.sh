@@ -95,7 +95,7 @@ run_one_backend() {
     local backend_out="$OUT/${label}"
     mkdir -p "$backend_out/logs"
     local backend_csv="$backend_out/results.csv"
-    echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,role_worker_mean,role_worker_peak,role_replay_mean,role_replay_peak,role_apply_peak,role_other_mean,exit_code,replay_threads" > "$backend_csv"
+    echo "threads,run,throughput_ops_sec,per_core_throughput,avg_cpu_pct,peak_cpu_pct,avg_latency_ms,avg_persist_latency_ms,agg_abort_rate,replay_batch_p1,replay_batch_p2,active_threads,worker_mean_cpu_pct,worker_peak_cpu_pct,role_worker_mean,role_worker_peak,role_replay_mean,role_replay_peak,role_apply_peak,role_other_mean,exit_code,fake_leader_total_bytes,fake_leader_total_writes,fake_cluster_total_bytes,fake_cluster_total_writes,fake_leader_mako_data_bytes,fake_leader_raft_log_bytes,fake_cluster_raft_log_bytes,fake_max_wait_us,replay_threads" > "$backend_csv"
 
     for t in $THREADS; do
         echo "--- ${label}, t=$t (MAKO_REPLAY_THREADS=$t, BW=${BW} MB/s, LAT=${LAT} us) ---"

@@ -249,7 +249,8 @@ public:
         // latency for it.
         // @unsafe - reads global fake_disk() singleton, calls nanosleep
         if (mako::fake_disk().enabled()) {
-            mako::fake_disk().sleep_for(key.size() + value.size());
+            mako::fake_disk().sleep_for(
+                mako::FakeDiskSource::RaftLog, key.size() + value.size());
         }
         return true;
     }
@@ -341,6 +342,7 @@ public:
             return false;
         }
 
+        size_t total = 0;
         for (const auto& entry : entries) {
             std::string key = make_log_key(entry.slot_id);
             std::string value;
@@ -349,6 +351,7 @@ public:
                 return false;
             }
             rocksdb_writebatch_put(batch, key.data(), key.size(), value.data(), value.size());
+            total += key.size() + value.size();
         }
 
         char* err = nullptr;
@@ -364,12 +367,7 @@ public:
         // per put_batch invocation.
         // @unsafe - reads global fake_disk() singleton, calls nanosleep
         if (mako::fake_disk().enabled()) {
-            size_t total = 0;
-            for (const auto& e : entries) {
-                total += sizeof(slotid_t);
-                if (e.command) total += 64;  // approx serialized size per entry
-            }
-            mako::fake_disk().sleep_for(total);
+            mako::fake_disk().sleep_for(mako::FakeDiskSource::RaftLog, total);
         }
         return true;
     }
@@ -575,7 +573,8 @@ public:
         // for Raft safety. Charge one fsync.
         // @unsafe - reads global fake_disk() singleton, calls nanosleep
         if (mako::fake_disk().enabled()) {
-            mako::fake_disk().sleep_for(meta_key.size() + value.size());
+            mako::fake_disk().sleep_for(
+                mako::FakeDiskSource::RaftMetadata, meta_key.size() + value.size());
         }
         return true;
     }

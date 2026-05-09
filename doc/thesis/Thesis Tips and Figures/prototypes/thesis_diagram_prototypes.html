@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mako Raft Thesis Diagram Prototypes</title>
+  <style>
+    :root {
+      --ink: #17202a;
+      --muted: #5f6b7a;
+      --blue: #2563eb;
+      --blue-bg: #eaf3ff;
+      --green: #16834a;
+      --green-bg: #ebf8ef;
+      --orange: #d97706;
+      --orange-bg: #fff4df;
+      --red: #c2410c;
+      --red-bg: #fff1ed;
+      --gray: #6b7280;
+      --gray-bg: #f3f5f7;
+      --purple: #6d28d9;
+      --purple-bg: #f2ecff;
+      --line: #334155;
+      --page: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px;
+      color: var(--ink);
+      background: #f8fafc;
+      font-family: "Aptos", "Helvetica Neue", Arial, sans-serif;
+    }
+    header {
+      max-width: 1200px;
+      margin: 0 auto 28px auto;
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+    .note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.45;
+    }
+    .figure {
+      width: 1280px;
+      max-width: 100%;
+      margin: 28px auto;
+      padding: 28px 28px 22px 28px;
+      background: var(--page);
+      border: 1px solid #d8dee8;
+      border-radius: 10px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+    }
+    .figure h2 {
+      margin: 0 0 4px 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+    .takeaway {
+      margin: 0 0 16px 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .caption {
+      margin-top: 10px;
+      color: #1f2937;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #ffffff;
+      border: 1px solid #eef2f7;
+      border-radius: 8px;
+    }
+    .title { font: 700 18px "Aptos", "Helvetica Neue", Arial, sans-serif; fill: var(--ink); }
+    .section { font: 700 15px "Aptos", "Helvetica Neue", Arial, sans-serif; fill: var(--muted); }
+    .label { font: 600 13px "Aptos", "Helvetica Neue", Arial, sans-serif; fill: var(--ink); }
+    .small { font: 500 11px "Aptos", "Helvetica Neue", Arial, sans-serif; fill: var(--muted); }
+    .tiny { font: 500 10px "Aptos", "Helvetica Neue", Arial, sans-serif; fill: var(--muted); }
+    .box { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.7; }
+    .blue-panel { fill: var(--blue-bg); stroke: #69a4ee; stroke-width: 2; }
+    .green-panel { fill: var(--green-bg); stroke: #72b885; stroke-width: 2; }
+    .orange-panel { fill: var(--orange-bg); stroke: #e5a440; stroke-width: 2; }
+    .red-panel { fill: var(--red-bg); stroke: #e07a5f; stroke-width: 2; }
+    .gray-panel { fill: var(--gray-bg); stroke: #a5afbd; stroke-width: 2; }
+    .purple-panel { fill: var(--purple-bg); stroke: #a78bfa; stroke-width: 2; }
+    .blue-stroke { stroke: var(--blue); }
+    .green-stroke { stroke: var(--green); }
+    .orange-stroke { stroke: var(--orange); }
+    .red-stroke { stroke: var(--red); }
+    .line { stroke: var(--line); stroke-width: 2; fill: none; }
+    .heavy { stroke-width: 4; }
+    .dash { stroke-dasharray: 7 6; }
+    .mono { font: 600 11px "SFMono-Regular", Consolas, monospace; fill: var(--ink); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mako Raft Thesis Diagram Prototypes</h1>
+    <p class="note">
+      These are drawing prototypes, not final artwork. Use them as layout and
+      content baselines for manual redraws in Figma, PowerPoint, Keynote, or
+      draw.io. The diagrams only express claims already present in the thesis.
+    </p>
+  </header>
+
+  <section class="figure">
+    <h2>Figure 1: Original Mako Paxos Replication Path</h2>
+    <p class="takeaway">Baseline before Raft: leader-side workers generate transaction logs; Multi-Paxos establishes committed order; followers replay logs.</p>
+    <svg viewBox="0 0 1200 620" role="img" aria-label="Original Mako Paxos replication path">
+      <defs>
+        <marker id="arrow1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#334155"></path>
+        </marker>
+        <marker id="arrow1g" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#16834a"></path>
+        </marker>
+      </defs>
+
+      <text class="section" x="155" y="38">Leader process</text>
+      <text class="section" x="536" y="38">Replication layer</text>
+      <text class="section" x="910" y="38">Follower processes</text>
+
+      <rect class="blue-panel" x="40" y="70" width="435" height="430" rx="18"></rect>
+      <text class="title" x="70" y="105">localhost</text>
+      <text class="small" x="70" y="126">leader replica</text>
+      <text class="label" x="86" y="168">Mako worker threads</text>
+
+      <rect class="box blue-stroke" x="78" y="194" width="120" height="44" rx="8"></rect>
+      <text class="label" x="117" y="222">worker 1</text>
+      <rect class="box blue-stroke" x="78" y="258" width="120" height="44" rx="8"></rect>
+      <text class="label" x="117" y="286">worker 2</text>
+      <rect class="box blue-stroke" x="78" y="322" width="120" height="44" rx="8"></rect>
+      <text class="label" x="117" y="350">worker 3</text>
+      <rect class="box blue-stroke" x="78" y="386" width="120" height="44" rx="8"></rect>
+      <text class="label" x="116" y="414">worker N</text>
+
+      <rect class="box" x="262" y="258" width="175" height="60" rx="8"></rect>
+      <text class="label" x="300" y="282">Mako transaction</text>
+      <text class="label" x="318" y="304">execution</text>
+      <rect class="box" x="274" y="380" width="155" height="66" rx="8"></rect>
+      <text class="label" x="306" y="407">serialized</text>
+      <text class="label" x="296" y="429">transaction logs</text>
+      <rect class="box blue-stroke" x="305" y="468" width="94" height="48" rx="6"></rect>
+      <line class="line" x1="322" y1="484" x2="382" y2="484"></line>
+      <line class="line" x1="322" y1="497" x2="382" y2="497"></line>
+      <line class="line" x1="322" y1="510" x2="368" y2="510"></line>
+      <text class="tiny" x="326" y="536">txn log record</text>
+
+      <path class="line" d="M198 216 C230 216, 230 288, 262 288" marker-end="url(#arrow1)"></path>
+      <path class="line" d="M198 280 C230 280, 230 288, 262 288" marker-end="url(#arrow1)"></path>
+      <path class="line" d="M198 344 C230 344, 230 288, 262 288" marker-end="url(#arrow1)"></path>
+      <path class="line" d="M198 408 C230 408, 230 288, 262 288" marker-end="url(#arrow1)"></path>
+      <path class="line" d="M350 318 L350 380" marker-end="url(#arrow1)"></path>
+      <path class="line" d="M350 446 L350 468" marker-end="url(#arrow1)"></path>
+
+      <rect class="green-panel" x="525" y="115" width="230" height="385" rx="18"></rect>
+      <text class="title" x="568" y="150">Replication interface</text>
+      <rect class="box" x="565" y="205" width="150" height="58" rx="8"></rect>
+      <text class="label" x="599" y="229">common Mako</text>
+      <text class="label" x="590" y="250">replication API</text>
+      <rect class="box" x="565" y="320" width="150" height="58" rx="8"></rect>
+      <text class="label" x="584" y="355">Multi-Paxos backend</text>
+      <path class="line" d="M640 263 L640 320" marker-end="url(#arrow1)"></path>
+      <text class="small" x="586" y="415">ordered log per partition</text>
+      <rect class="box green-stroke" x="575" y="434" width="34" height="32" rx="5"></rect>
+      <text class="label" x="588" y="456">1</text>
+      <rect class="box green-stroke" x="616" y="434" width="34" height="32" rx="5"></rect>
+      <text class="label" x="629" y="456">2</text>
+      <rect class="box green-stroke" x="657" y="434" width="34" height="32" rx="5"></rect>
+      <text class="label" x="670" y="456">3</text>
+      <rect class="box green-stroke" x="698" y="434" width="34" height="32" rx="5"></rect>
+      <text class="label" x="711" y="456">4</text>
+      <text class="small" x="742" y="455">...</text>
+
+      <path class="line" d="M399 492 C460 492, 480 234, 565 234" marker-end="url(#arrow1)"></path>
+      <text class="small" x="464" y="350">submit log</text>
+
+      <rect class="gray-panel" x="855" y="95" width="300" height="210" rx="16"></rect>
+      <text class="title" x="885" y="130">Follower p1</text>
+      <text class="small" x="885" y="151">follower replay</text>
+      <rect class="box" x="890" y="178" width="136" height="44" rx="7"></rect>
+      <text class="label" x="924" y="205">receive logs</text>
+      <rect class="box" x="890" y="248" width="136" height="44" rx="7"></rect>
+      <text class="label" x="916" y="266">replay into</text>
+      <text class="label" x="918" y="286">local state</text>
+      <ellipse class="box" cx="1085" cy="262" rx="46" ry="18"></ellipse>
+      <rect class="box" x="1039" y="202" width="92" height="60"></rect>
+      <ellipse class="box" cx="1085" cy="202" rx="46" ry="18"></ellipse>
+      <text class="label" x="1060" y="235">local DB</text>
+      <text class="label" x="1070" y="255">state</text>
+      <path class="line" d="M958 222 L958 248" marker-end="url(#arrow1)"></path>
+      <path class="line" d="M1026 270 L1039 250" marker-end="url(#arrow1)"></path>
+
+      <rect class="gray-panel" x="855" y="355" width="300" height="210" rx="16"></rect>
+      <text class="title" x="885" y="390">Follower p2</text>
+      <text class="small" x="885" y="411">follower replay</text>
+      <rect class="box" x="890" y="438" width="136" height="44" rx="7"></rect>
+      <text class="label" x="924" y="465">receive logs</text>
+      <rect class="box" x="890" y="508" width="136" height="44" rx="7"></rect>
+      <text class="label" x="916" y="526">replay into</text>
+      <text class="label" x="918" y="546">local state</text>
+      <ellipse class="box" cx="1085" cy="522" rx="46" ry="18"></ellipse>
+      <rect class="box" x="1039" y="462" width="92" height="60"></rect>
+      <ellipse class="box" cx="1085" cy="462" rx="46" ry="18"></ellipse>
+      <text class="label" x="1060" y="495">local DB</text>
+      <text class="label" x="1070" y="515">state</text>
+      <path class="line" d="M958 482 L958 508" marker-end="url(#arrow1)"></path>
+      <path class="line" d="M1026 530 L1039 510" marker-end="url(#arrow1)"></path>
+
+      <path class="line heavy green-stroke" d="M715 349 L815 349" marker-end="url(#arrow1g)"></path>
+      <circle cx="815" cy="349" r="4" fill="#16834a"></circle>
+      <path class="line heavy green-stroke" d="M815 349 C830 349, 830 200, 890 200" marker-end="url(#arrow1g)"></path>
+      <path class="line heavy green-stroke" d="M815 349 C830 349, 830 460, 890 460" marker-end="url(#arrow1g)"></path>
+      <text class="small" x="760" y="334">committed log order</text>
+    </svg>
+    <p class="caption"><strong>Caption draft:</strong> Original Mako replication path. Leader-side Mako worker threads execute transactions and submit serialized transaction logs through a common replication interface. The original backend, Multi-Paxos, establishes the committed log order, which follower replicas replay into their local database state.</p>
+  </section>
+
+  <section class="figure">
+    <h2>Figure 2: Paxos, Multi-Raft, and Single-Raft Topologies</h2>
+    <p class="takeaway">Design comparison: Multi-Raft preserves Paxos-style parallel streams; Single-Raft consolidates commands into one Raft log.</p>
+    <svg viewBox="0 0 1200 560" role="img" aria-label="Replication topology comparison">
+      <defs>
+        <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#334155"></path>
+        </marker>
+      </defs>
+
+      <rect class="orange-panel" x="55" y="80" width="330" height="385" rx="18"></rect>
+      <text class="title" x="155" y="118">Original Paxos</text>
+      <text class="small" x="104" y="143">per-partition replication streams</text>
+      <rect class="box" x="90" y="185" width="120" height="42" rx="7"></rect>
+      <text class="label" x="112" y="211">partition 1</text>
+      <rect class="box" x="235" y="185" width="115" height="42" rx="7"></rect>
+      <text class="label" x="255" y="211">Paxos stream 1</text>
+      <path class="line" d="M210 206 L235 206" marker-end="url(#arrow2)"></path>
+      <rect class="box" x="90" y="265" width="120" height="42" rx="7"></rect>
+      <text class="label" x="112" y="291">partition 2</text>
+      <rect class="box" x="235" y="265" width="115" height="42" rx="7"></rect>
+      <text class="label" x="255" y="291">Paxos stream 2</text>
+      <path class="line" d="M210 286 L235 286" marker-end="url(#arrow2)"></path>
+      <rect class="box" x="90" y="345" width="120" height="42" rx="7"></rect>
+      <text class="label" x="112" y="371">partition N</text>
+      <rect class="box" x="235" y="345" width="115" height="42" rx="7"></rect>
+      <text class="label" x="255" y="371">Paxos stream N</text>
+      <path class="line" d="M210 366 L235 366" marker-end="url(#arrow2)"></path>
+
+      <rect class="green-panel" x="435" y="80" width="330" height="385" rx="18"></rect>
+      <text class="title" x="548" y="118">Multi-Raft</text>
+      <text class="small" x="489" y="143">direct Paxos-shaped Raft baseline</text>
+      <rect class="box" x="470" y="185" width="120" height="42" rx="7"></rect>
+      <text class="label" x="492" y="211">partition 1</text>
+      <rect class="box green-stroke" x="615" y="185" width="115" height="42" rx="7"></rect>
+      <text class="label" x="640" y="211">Raft group 1</text>
+      <path class="line" d="M590 206 L615 206" marker-end="url(#arrow2)"></path>
+      <rect class="box" x="470" y="265" width="120" height="42" rx="7"></rect>
+      <text class="label" x="492" y="291">partition 2</text>
+      <rect class="box green-stroke" x="615" y="265" width="115" height="42" rx="7"></rect>
+      <text class="label" x="640" y="291">Raft group 2</text>
+      <path class="line" d="M590 286 L615 286" marker-end="url(#arrow2)"></path>
+      <rect class="box" x="470" y="345" width="120" height="42" rx="7"></rect>
+      <text class="label" x="492" y="371">partition N</text>
+      <rect class="box green-stroke" x="615" y="345" width="115" height="42" rx="7"></rect>
+      <text class="label" x="640" y="371">Raft group N</text>
+      <path class="line" d="M590 366 L615 366" marker-end="url(#arrow2)"></path>
+
+      <rect class="blue-panel" x="815" y="80" width="330" height="385" rx="18"></rect>
+      <text class="title" x="932" y="118">Single-Raft</text>
+      <text class="small" x="875" y="143">one group per process, commands route by partition ID</text>
+      <rect class="box" x="855" y="180" width="120" height="42" rx="7"></rect>
+      <text class="label" x="877" y="206">partition 1</text>
+      <rect class="box" x="855" y="260" width="120" height="42" rx="7"></rect>
+      <text class="label" x="877" y="286">partition 2</text>
+      <rect class="box" x="855" y="340" width="120" height="42" rx="7"></rect>
+      <text class="label" x="877" y="366">partition N</text>
+      <rect class="box blue-stroke" x="1010" y="244" width="105" height="74" rx="8"></rect>
+      <text class="label" x="1028" y="270">one Raft</text>
+      <text class="label" x="1033" y="291">group</text>
+      <text class="tiny" x="1018" y="308">partition ID in command</text>
+      <path class="line" d="M975 201 C1000 201, 995 260, 1010 260" marker-end="url(#arrow2)"></path>
+      <path class="line" d="M975 281 L1010 281" marker-end="url(#arrow2)"></path>
+      <path class="line" d="M975 361 C1000 361, 995 302, 1010 302" marker-end="url(#arrow2)"></path>
+
+      <text class="small" x="82" y="510">Preserves original Paxos shape</text>
+      <text class="small" x="472" y="510">Same shape, Raft protocol</text>
+      <text class="small" x="858" y="510">Simpler topology, replay path must be engineered</text>
+    </svg>
+    <p class="caption"><strong>Caption draft:</strong> Replication topologies evaluated in this thesis. Multi-Raft keeps the per-partition replication shape of the original Paxos design, whereas Single-Raft consolidates all partition commands into one Raft log.</p>
+  </section>
+
+  <section class="figure">
+    <h2>Figure 3: Preferred Leader Election for Mako</h2>
+    <p class="takeaway">Mako submits transactions through one expected local leader; preferred leader election keeps Raft aligned with that path while preserving failover.</p>
+    <svg viewBox="0 0 1200 610" role="img" aria-label="Preferred leader election for Mako">
+      <defs>
+        <marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#334155"></path>
+        </marker>
+        <marker id="arrow3b" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#2563eb"></path>
+        </marker>
+        <marker id="arrow3o" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#d97706"></path>
+        </marker>
+      </defs>
+
+      <text class="section" x="125" y="44">Mako submission path</text>
+      <text class="section" x="492" y="44">Preferred leader</text>
+      <text class="section" x="850" y="44">Backup replicas</text>
+
+      <rect class="blue-panel" x="65" y="85" width="260" height="185" rx="16"></rect>
+      <text class="title" x="105" y="126">Mako workers</text>
+      <text class="small" x="103" y="152">leader-side transaction submission</text>
+      <rect class="box" x="105" y="184" width="82" height="44" rx="6"></rect>
+      <text class="small" x="125" y="211">worker</text>
+      <rect class="box" x="205" y="184" width="82" height="44" rx="6"></rect>
+      <text class="small" x="225" y="211">worker</text>
+
+      <rect class="green-panel" x="445" y="82" width="270" height="190" rx="18"></rect>
+      <text class="title" x="506" y="122">preferred leader</text>
+      <text class="small" x="532" y="146">localhost</text>
+      <rect class="box green-stroke" x="495" y="172" width="170" height="62" rx="8"></rect>
+      <text class="label" x="522" y="197">receives Mako</text>
+      <text class="label" x="525" y="218">transaction logs</text>
+      <text class="small" x="488" y="252">favored when healthy and caught up</text>
+
+      <rect class="gray-panel" x="835" y="82" width="255" height="120" rx="16"></rect>
+      <text class="title" x="878" y="122">backup replica p1</text>
+      <text class="small" x="884" y="150">can lead if preferred fails</text>
+
+      <rect class="gray-panel" x="835" y="248" width="255" height="120" rx="16"></rect>
+      <text class="title" x="878" y="288">backup replica p2</text>
+      <text class="small" x="884" y="316">can lead if preferred fails</text>
+
+      <path class="line blue-stroke heavy" d="M325 178 L445 178" marker-end="url(#arrow3b)"></path>
+      <text class="small" x="344" y="158">submit transaction logs</text>
+      <path class="line" d="M715 168 C760 168, 780 142, 835 142" marker-end="url(#arrow3)"></path>
+      <text class="small" x="744" y="126">Raft log replication</text>
+      <path class="line" d="M715 198 C760 198, 780 308, 835 308" marker-end="url(#arrow3)"></path>
+      <text class="small" x="745" y="272">Raft log replication</text>
+
+      <rect class="orange-panel" x="95" y="390" width="1010" height="112" rx="16"></rect>
+      <text class="title" x="125" y="424">Leadership placement cases</text>
+      <rect class="box" x="160" y="445" width="240" height="42" rx="7"></rect>
+      <text class="label" x="188" y="471">normal: preferred replica leads</text>
+      <rect class="box" x="480" y="445" width="240" height="42" rx="7"></rect>
+      <text class="label" x="510" y="471">failure: backup can lead</text>
+      <rect class="box" x="800" y="445" width="250" height="42" rx="7"></rect>
+      <text class="label" x="821" y="471">recovery: preferred returns caught up</text>
+
+      <rect class="box" x="380" y="530" width="440" height="48" rx="9" fill="#f8fafc" stroke="#a5afbd" stroke-width="1.5"></rect>
+      <text class="label" x="494" y="552">Raft safety rules unchanged</text>
+      <text class="small" x="435" y="571">preference affects leader placement only, not voting or commit safety</text>
+    </svg>
+    <p class="caption"><strong>Caption draft:</strong> Preferred leader election aligns Raft leadership with Mako's leader-oriented submission path. The preferred replica is favored during startup and safe failback, while ordinary Raft failover remains available.</p>
+    <p class="caption"><strong>Include:</strong> Mako workers, preferred leader, backup replicas, normal log replication, failover/failback behavior, and a safety note. <strong>Avoid:</strong> detailed Raft RPC names, election state machines, timeout constants, and anything that makes preference look like a new consensus protocol.</p>
+  </section>
+
+  <section class="figure">
+    <h2>Figure 4: Single-Raft Replay Bottleneck Before ReplayPool</h2>
+    <p class="takeaway">Many workers feed one Raft log; without replay offload, follower replay can lag behind committed work.</p>
+    <svg viewBox="0 0 1200 560" role="img" aria-label="Single-Raft bottleneck before ReplayPool">
+      <defs>
+        <marker id="arrow4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#334155"></path>
+        </marker>
+        <marker id="arrow4r" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#c2410c"></path>
+        </marker>
+      </defs>
+      <text class="section" x="110" y="52">many submitters</text>
+      <text class="section" x="405" y="52">consolidated ordering</text>
+      <text class="section" x="705" y="52">narrow replay path</text>
+      <text class="section" x="945" y="52">measurement symptom</text>
+
+      <rect class="blue-panel" x="60" y="100" width="210" height="320" rx="18"></rect>
+      <text class="title" x="105" y="135">Mako workers</text>
+      <rect class="box" x="100" y="175" width="130" height="38" rx="6"></rect>
+      <text class="label" x="136" y="199">worker 1</text>
+      <rect class="box" x="100" y="232" width="130" height="38" rx="6"></rect>
+      <text class="label" x="136" y="256">worker 2</text>
+      <rect class="box" x="100" y="289" width="130" height="38" rx="6"></rect>
+      <text class="label" x="136" y="313">worker N</text>
+      <text class="small" x="102" y="366">more workers increase</text>
+      <text class="small" x="115" y="386">submitted log work</text>
+
+      <rect class="green-panel" x="375" y="155" width="225" height="150" rx="18"></rect>
+      <text class="title" x="421" y="200">Single Raft log</text>
+      <text class="small" x="417" y="226">one ordered stream</text>
+      <text class="mono" x="431" y="258">[1] [2] [3] [4] ...</text>
+
+      <rect class="red-panel" x="695" y="150" width="185" height="165" rx="18"></rect>
+      <text class="title" x="735" y="190">apply + replay</text>
+      <text class="title" x="765" y="214">path</text>
+      <text class="small" x="721" y="242">narrow follower replay stage</text>
+      <text class="small" x="724" y="264">heavy replay can queue</text>
+
+      <rect class="gray-panel" x="970" y="150" width="165" height="165" rx="18"></rect>
+      <text class="title" x="1002" y="188">followers</text>
+      <text class="title" x="1015" y="212">fall behind</text>
+      <text class="small" x="1002" y="242">replay progress lags</text>
+      <text class="small" x="993" y="263">leader throughput can look</text>
+      <text class="small" x="1026" y="283">healthy</text>
+
+      <path class="line" d="M270 260 L375 230" marker-end="url(#arrow4)"></path>
+      <text class="small" x="294" y="231">submit logs</text>
+      <path class="line" d="M600 230 L695 230" marker-end="url(#arrow4)"></path>
+      <text class="small" x="620" y="212">committed entries</text>
+      <path class="line red-stroke heavy" d="M880 230 L970 230" marker-end="url(#arrow4r)"></path>
+      <text class="small" x="895" y="210">replay backlog</text>
+    </svg>
+    <p class="caption"><strong>Caption draft:</strong> Naive Single-Raft consolidation risks a replay bottleneck: many workers feed one ordered log, but expensive follower replay can accumulate behind a narrow apply/replay path, so leader-side throughput alone can hide follower replay lag.</p>
+  </section>
+
+  <section class="figure">
+    <h2>Figure 5: Final ReplayPool Pipeline</h2>
+    <p class="takeaway">The final design keeps Raft apply lightweight and parallelizes heavy follower replay with ReplayPool workers.</p>
+    <svg viewBox="0 0 1200 560" role="img" aria-label="Final ReplayPool pipeline">
+      <defs>
+        <marker id="arrow5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#334155"></path>
+        </marker>
+        <marker id="arrow5g" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#16834a"></path>
+        </marker>
+      </defs>
+
+      <rect class="blue-panel" x="45" y="175" width="165" height="105" rx="14"></rect>
+      <text class="title" x="81" y="213">Mako</text>
+      <text class="title" x="58" y="237">worker threads</text>
+      <text class="small" x="82" y="260">submit logs</text>
+
+      <rect class="green-panel" x="270" y="175" width="165" height="105" rx="14"></rect>
+      <text class="title" x="308" y="215">Raft commit</text>
+      <text class="small" x="313" y="242">orders entries</text>
+
+      <rect class="blue-panel" x="505" y="165" width="170" height="125" rx="14"></rect>
+      <text class="title" x="548" y="210">Raft apply</text>
+      <text class="small" x="538" y="238">lightweight staging</text>
+      <text class="small" x="542" y="260">does not replay here</text>
+
+      <rect class="orange-panel" x="745" y="165" width="185" height="125" rx="14"></rect>
+      <text class="title" x="780" y="210">enqueue replay</text>
+      <text class="small" x="786" y="238">copy committed payload</text>
+      <text class="small" x="801" y="260">queue replay work</text>
+
+      <rect class="green-panel" x="990" y="95" width="170" height="285" rx="18"></rect>
+      <text class="title" x="1030" y="132">ReplayPool</text>
+      <text class="small" x="1015" y="154">parallel follower replay</text>
+      <rect class="box green-stroke" x="1025" y="190" width="100" height="38" rx="6"></rect>
+      <text class="label" x="1050" y="214">replay 1</text>
+      <rect class="box green-stroke" x="1025" y="245" width="100" height="38" rx="6"></rect>
+      <text class="label" x="1050" y="269">replay 2</text>
+      <rect class="box green-stroke" x="1025" y="300" width="100" height="38" rx="6"></rect>
+      <text class="label" x="1050" y="324">replay N</text>
+
+      <path class="line" d="M210 228 L270 228" marker-end="url(#arrow5)"></path>
+      <path class="line" d="M435 228 L505 228" marker-end="url(#arrow5)"></path>
+      <path class="line" d="M675 228 L745 228" marker-end="url(#arrow5)"></path>
+      <path class="line green-stroke heavy" d="M930 228 L990 228" marker-end="url(#arrow5g)"></path>
+
+      <rect class="box" x="410" y="405" width="380" height="58" rx="10" fill="#f8fafc" stroke="#a5afbd" stroke-width="1.5"></rect>
+      <text class="label" x="450" y="429">1:1 means replay workers = Mako worker threads</text>
+      <text class="small" x="505" y="449">1:1 refers only to replay workers</text>
+    </svg>
+    <p class="caption"><strong>Caption draft:</strong> Final Single-Raft replay pipeline. The Raft apply path stages committed payloads, while ReplayPool workers perform heavy follower-side replay in parallel.</p>
+  </section>
+
+  <section class="figure">
+    <h2>Figure 6: Persistence and Simulated-Disk Proof Path</h2>
+    <p class="takeaway">Disk experiments are defensible because the simulated disk reports per-source bytes, write counts, and normalized storage work.</p>
+    <svg viewBox="0 0 1200 600" role="img" aria-label="Persistence and simulated disk proof path">
+      <defs>
+        <marker id="arrow6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#334155"></path>
+        </marker>
+        <marker id="arrow6r" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#c2410c"></path>
+        </marker>
+      </defs>
+
+      <text class="section" x="96" y="54">committed work</text>
+      <text class="section" x="348" y="54">persistence sources</text>
+      <text class="section" x="690" y="54">simulated device</text>
+      <text class="section" x="955" y="54">proof counters</text>
+
+      <rect class="blue-panel" x="55" y="220" width="220" height="120" rx="16"></rect>
+      <text class="title" x="103" y="260">committed</text>
+      <text class="title" x="88" y="286">transaction log</text>
+      <text class="small" x="105" y="315">replicated payload</text>
+
+      <rect class="orange-panel" x="360" y="95" width="240" height="88" rx="14"></rect>
+      <text class="title" x="410" y="126">Mako data writes</text>
+      <text class="small" x="425" y="153">tag: mako_data</text>
+
+      <rect class="green-panel" x="360" y="236" width="240" height="88" rx="14"></rect>
+      <text class="title" x="422" y="267">Raft log writes</text>
+      <text class="small" x="433" y="294">tag: raft_log</text>
+
+      <rect class="purple-panel" x="360" y="377" width="240" height="88" rx="14"></rect>
+      <text class="title" x="395" y="408">Raft metadata writes</text>
+      <text class="small" x="414" y="435">tag: raft_metadata</text>
+
+      <path class="line" d="M275 280 C318 280, 318 139, 360 139" marker-end="url(#arrow6)"></path>
+      <path class="line" d="M275 280 L360 280" marker-end="url(#arrow6)"></path>
+      <path class="line" d="M275 280 C318 280, 318 421, 360 421" marker-end="url(#arrow6)"></path>
+
+      <rect class="gray-panel" x="690" y="172" width="230" height="216" rx="18"></rect>
+      <text class="title" x="740" y="212">Simulated disk</text>
+      <text class="small" x="740" y="244">simulated disk model</text>
+      <text class="small" x="722" y="272">bandwidth + latency pressure</text>
+      <text class="small" x="731" y="300">per-source accounting</text>
+      <rect x="745" y="330" width="120" height="22" rx="11" fill="#e5e7eb" stroke="#a5afbd" stroke-width="1.2"></rect>
+      <rect x="745" y="330" width="82" height="22" rx="11" fill="#c2410c"></rect>
+      <text class="tiny" x="767" y="368">modeled write service</text>
+
+      <path class="line" d="M600 139 C648 139, 648 238, 690 238" marker-end="url(#arrow6)"></path>
+      <path class="line" d="M600 280 L690 280" marker-end="url(#arrow6)"></path>
+      <path class="line" d="M600 421 C648 421, 648 322, 690 322" marker-end="url(#arrow6)"></path>
+
+      <rect class="box red-stroke" x="1000" y="100" width="150" height="58" rx="8"></rect>
+      <text class="label" x="1034" y="126">persisted</text>
+      <text class="label" x="1046" y="145">bytes</text>
+
+      <rect class="box red-stroke" x="1000" y="200" width="150" height="58" rx="8"></rect>
+      <text class="label" x="1038" y="226">modeled</text>
+      <text class="label" x="1044" y="245">writes</text>
+
+      <rect class="box red-stroke" x="1000" y="300" width="150" height="58" rx="8"></rect>
+      <text class="label" x="1043" y="326">bytes per</text>
+      <text class="label" x="1038" y="345">transaction</text>
+
+      <rect class="box red-stroke" x="1000" y="400" width="150" height="58" rx="8"></rect>
+      <text class="label" x="1032" y="426">source</text>
+      <text class="label" x="1018" y="445">breakdown</text>
+
+      <path class="line red-stroke heavy" d="M920 280 C955 280, 955 129, 1000 129" marker-end="url(#arrow6r)"></path>
+      <path class="line red-stroke heavy" d="M920 280 C956 280, 956 229, 1000 229" marker-end="url(#arrow6r)"></path>
+      <path class="line red-stroke heavy" d="M920 280 C956 280, 956 329, 1000 329" marker-end="url(#arrow6r)"></path>
+      <path class="line red-stroke heavy" d="M920 280 C955 280, 955 429, 1000 429" marker-end="url(#arrow6r)"></path>
+
+      <rect x="330" y="510" width="540" height="46" rx="12" fill="#f8fafc" stroke="#a5afbd" stroke-width="1.4"></rect>
+      <text class="label" x="386" y="538">Disk curves are interpreted with measured bytes and writes, not throughput alone</text>
+    </svg>
+    <p class="caption"><strong>Caption draft:</strong> Source-tagged simulated-disk instrumentation. Persistence writes are charged to a simulated disk model and reported as bytes, writes, bytes per committed transaction, and source breakdowns, allowing disk throughput changes to be explained with measured storage work.</p>
+  </section>
+</body>
+</html>

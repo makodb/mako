@@ -24,6 +24,7 @@
 #include "benchmarks/sto/sync_util.hh"
 #include "rpc_setup.h"
 #include "cpu_throttler.h"
+#include "../fake_disk.h"
 #include <chrono>
 #include <thread>
 
@@ -727,6 +728,7 @@ bench_runner::run()
     cerr << "avg_persist_latency: " << avg_persist_latency_ms << " ms" << endl;
     cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
     cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
+    mako::fake_disk().print_stats("leader_final");
     //cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
 
     string txn_w1[] = {"NewOrder", "Payment", "Delivery", "OrderStatus", "StockLevel"};

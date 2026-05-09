@@ -23,9 +23,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path("/home/users/mmakadia/mako")
-NODISK = ROOT / "results/benchmarks/non-persistence-results/latest"
-DISK   = ROOT / "results/benchmarks/simulated-persistence-results/latest"
-OUT    = ROOT / "results/benchmarks/disk_compare_replay"
+NODISK   = ROOT / "results/benchmarks/non-persistence-results/latest"
+CLOUDSSD = ROOT / "results/benchmarks/simulated-persistence-results/cloudssd_20260501_071849"
+NVME     = ROOT / "results/benchmarks/simulated-persistence-results/nvme_20260501_162254"
+OUT      = ROOT / "results/benchmarks/disk_compare_replay"
 OUT.mkdir(parents=True, exist_ok=True)
 
 BACKENDS = [
@@ -49,19 +50,20 @@ def load_throughput(path):
 
 
 def plot_one(pretty, sub, ax):
-    n = load_throughput(NODISK / sub / "results.csv")
-    d = load_throughput(DISK   / sub / "results.csv")
+    n = load_throughput(NODISK   / sub / "results.csv")
+    v = load_throughput(NVME     / sub / "results.csv")
+    c = load_throughput(CLOUDSSD / sub / "results.csv")
 
-    threads = sorted(set(n) | set(d))
-    yn = [n.get(t, None) for t in threads]
-    yd = [d.get(t, None) for t in threads]
+    threads = sorted(set(n) | set(v) | set(c))
 
-    yn_k = [(v / 1000) if v is not None else None for v in yn]
-    yd_k = [(v / 1000) if v is not None else None for v in yd]
+    def kseries(d):
+        return [(d[t] / 1000) if t in d else None for t in threads]
 
-    ax.plot(threads, yn_k, marker="o", linewidth=2.4,
+    ax.plot(threads, kseries(n), marker="o", linewidth=2.4,
             label="No disk (in-memory only)", color="#1f77b4")
-    ax.plot(threads, yd_k, marker="^", linewidth=2.4,
+    ax.plot(threads, kseries(v), marker="s", linewidth=2.2,
+            label="NVMe (3 GB/s, 100 µs shared)", color="#2ca02c")
+    ax.plot(threads, kseries(c), marker="^", linewidth=2.2,
             label="Cloud-SSD (1 GB/s, 1 ms shared)", color="#d62728")
 
     ax.set_title(pretty, fontsize=13, fontweight="bold")
@@ -71,50 +73,60 @@ def plot_one(pretty, sub, ax):
     ax.grid(True, alpha=0.3)
     ax.legend(loc="upper left", fontsize=9)
 
-    # annotate t=1, t=mid, t=last
-    common = sorted(set(n) & set(d))
+    # annotate t=1, t=mid, t=last with vs-no-disk deltas for both disks
+    common = sorted(set(n) & set(v) & set(c))
     if common:
         rows = []
         for t in [1, common[len(common)//2], common[-1]]:
-            if t in n and t in d:
-                nv, dv = n[t], d[t]
-                delta = (dv - nv) / nv * 100
-                rows.append(f"t={t:>2}: {nv/1000:>6.0f}k → {dv/1000:>6.0f}k ({delta:+.1f}%)")
+            if t in n and t in v and t in c:
+                nv, vv, cv = n[t], v[t], c[t]
+                d_nvme = (vv - nv) / nv * 100
+                d_cssd = (cv - nv) / nv * 100
+                rows.append(
+                    f"t={t:>2}: nodisk {nv/1000:>3.0f}k  NVMe {vv/1000:>3.0f}k ({d_nvme:+.1f}%)  CSSD {cv/1000:>3.0f}k ({d_cssd:+.1f}%)"
+                )
         txt = "\n".join(rows)
-        ax.text(0.98, 0.02, txt, transform=ax.transAxes, fontsize=8.5,
+        ax.text(0.98, 0.02, txt, transform=ax.transAxes, fontsize=8.0,
                 ha="right", va="bottom",
                 bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
                           edgecolor="gray", alpha=0.9), family="monospace")
 
 
 def write_table_md():
-    lines = ["# Honest committed-work comparison — no-disk vs Cloud-SSD",
+    lines = ["# Honest committed-work comparison — no-disk vs NVMe vs Cloud-SSD",
              "",
              "Metric: `throughput_ops_sec` (leader's commit rate). For single-Raft+pool, "
              "multi-Raft, Paxos every committed entry is replayed, so this IS the honest "
              "committed-and-replayed rate.",
              "",
-             "Cloud-SSD: shared-queue FakeDisk, 1 GB/s bandwidth, 1 ms latency floor.",
+             "Both disks use the shared-queue FakeDisk model:",
+             "- NVMe:       3 GB/s bandwidth, 100 µs latency floor",
+             "- Cloud-SSD:  1 GB/s bandwidth, 1 ms  latency floor",
              "",
              f"- no-disk:    `{NODISK.resolve().relative_to(ROOT)}`",
-             f"- Cloud-SSD:  `{DISK.resolve().relative_to(ROOT)}`",
+             f"- NVMe:       `{NVME.relative_to(ROOT)}`",
+             f"- Cloud-SSD:  `{CLOUDSSD.relative_to(ROOT)}`",
              ""]
     for pretty, sub in BACKENDS:
-        n = load_throughput(NODISK / sub / "results.csv")
-        d = load_throughput(DISK   / sub / "results.csv")
+        n = load_throughput(NODISK   / sub / "results.csv")
+        v = load_throughput(NVME     / sub / "results.csv")
+        c = load_throughput(CLOUDSSD / sub / "results.csv")
         lines.append(f"## {pretty}")
         lines.append("")
-        lines.append("| t | No-disk (ops/s) | Cloud-SSD (ops/s) | Δ |")
-        lines.append("|---|-----------------:|-------------------:|--:|")
-        for t in sorted(set(n) | set(d)):
+        lines.append("| t | No-disk | NVMe | Δ vs no-disk | Cloud-SSD | Δ vs no-disk |")
+        lines.append("|---|--------:|-----:|-------------:|----------:|-------------:|")
+        for t in sorted(set(n) | set(v) | set(c)):
             nv = n.get(t)
-            dv = d.get(t)
-            if nv is None and dv is None: continue
-            if nv is None: lines.append(f"| {t} | — | {dv:,.0f} | — |")
-            elif dv is None: lines.append(f"| {t} | {nv:,.0f} | — | — |")
-            else:
-                delta = (dv - nv) / nv * 100
-                lines.append(f"| {t} | {nv:,.0f} | {dv:,.0f} | {delta:+.1f}% |")
+            vv = v.get(t)
+            cv = c.get(t)
+            cells = []
+            cells.append(str(t))
+            cells.append(f"{nv:,.0f}" if nv is not None else "—")
+            cells.append(f"{vv:,.0f}" if vv is not None else "—")
+            cells.append(f"{(vv-nv)/nv*100:+.1f}%" if (nv and vv) else "—")
+            cells.append(f"{cv:,.0f}" if cv is not None else "—")
+            cells.append(f"{(cv-nv)/nv*100:+.1f}%" if (nv and cv) else "—")
+            lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
     (OUT / "honest_work_table.md").write_text("\n".join(lines))
 
@@ -131,7 +143,7 @@ def main():
     fig, axes = plt.subplots(1, 3, figsize=(20, 5.5))
     for ax, (pretty, sub) in zip(axes, BACKENDS):
         plot_one(pretty, sub, ax)
-    fig.suptitle("Honest committed work — no-disk vs Cloud-SSD (shared 1 GB/s, 1 ms)",
+    fig.suptitle("Honest committed work — no-disk vs NVMe vs Cloud-SSD (shared-queue FakeDisk)",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(OUT / "honest_dashboard.png", dpi=150)

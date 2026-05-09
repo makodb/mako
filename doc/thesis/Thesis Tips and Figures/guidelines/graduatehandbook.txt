@@ -1,0 +1,1611 @@
+GRADUATE STUDENT HANDBOOK
+
+Fall 2025 Edition
+Revision: August 11, 2025
+
+This handbook describes the MS and PhD programs in the Computer Science Department. Information on
+graduate faculty and graduate courses are available on our website.
+The website for Stony Brook students is https:// www.cs.stonybrook.edu
+The website for SUNY Korea students is https:// www.sunykorea.ac.kr/ cs/
+The department’s mail/postal addresses are:
+Stony Brook:
+Graduate Program Director
+Department of Computer Science
+Stony Brook University
+Stony Brook, New York 11794-2424
+Tel: (631) 632-8462, x8470
+Email: gradadvising@ cs.stonybrook.edu
+
+SUNY Korea:
+Graduate Program Director
+Department of Computer Science (Room B-419)
+SUNY Korea
+119-2 Songdo Moonwha-ro, Yeonsu-gu, Incheon, Korea 21985
+Tel: +82-32-626-1354
+Email: csgraduate@ sunykorea.ac.kr
+
+Stony Brook University is an affirmative action/equal opportunity educator and employer.
+
+Contents
+1
+
+Introduction
+
+4
+
+2
+
+Goals of the Programs
+
+4
+
+3
+
+Requirements for Admission to Graduate Study
+3.1 Transfers into the Graduate Program . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+5
+5
+
+4
+
+MS Degree Requirements
+4.1 MS Breadth Requirement . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.2 Basic Project Option . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.3 Advanced Project Option . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.4 Thesis Option . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.5 Choosing an MS Option . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.6 MS Concentration in Data Science and Engineering (MSDSE) . . . . . . . . . . . . . . . .
+4.7 Independent Study . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.8 MS Proficiency Requirements . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4.9 Switching from the MS to the PhD Program . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+6
+7
+8
+8
+9
+9
+10
+10
+10
+11
+
+5
+
+Requirements for the PhD Degree
+5.1 Dissertation Advisor . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.2 PhD Qualifier . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.3 Course Requirements . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.4 Research Proficiency Examination (RPE) . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.5 Advancement to Candidacy . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.6 Research Assessment Meetings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.7 Thesis Proposal (“Prelim” exam) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.8 PhD Dissertation and Defense . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.9 Satisfactory Progress and Time Limit . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.10 Part-Time Students . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.11 Obtaining an MS Degree on the Way to PhD . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.12 Typical PhD Timeline . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+11
+11
+12
+13
+13
+14
+15
+15
+16
+17
+17
+18
+18
+
+6
+
+General Requirements and Processes
+6.1 Ethics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.2 Registration Requirements for Full-Time Status . . . . . . . . . . . . . . . . . . . . . . . .
+6.3 The Need for Full-Time Status . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.4 Grade Requirements . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.5 Academic Standing and Probation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.6 Regulatory Requirements . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.7 Petitions for Late Withdrawal from a Course . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.8 Semester Withdrawal and Leave of Absence . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.9 Incompletes . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.10 Retaking Courses . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.11 Controlling Course Load . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+19
+19
+20
+20
+21
+21
+21
+21
+22
+22
+23
+23
+
+7
+
+Financial Support
+7.1 English Proficiency Requirements for International Students . . . . . . . . . . . . . . . . .
+
+23
+24
+
+2
+
+8
+
+Additional Information Specific to Stony Brook Students
+8.1 Sample Course Schedules for MS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+8.2 Internship . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+8.3 Curricular and Optional Practical Training . . . . . . . . . . . . . . . . . . . . . . . . . . .
+8.4 Financial Support . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+8.5 Summer Registration . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+8.6 Winter Registration . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+8.7 Underload (Reduced Course Load) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+24
+24
+25
+26
+27
+28
+28
+29
+
+9
+
+Additional Information Specific to SUNY Korea Students
+9.1 Financial Support . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+9.2 English Proficiency Requirements for International Students . . . . . . . . . . . . . . . . .
+9.3 Research Visit to Stony Brook University . . . . . . . . . . . . . . . . . . . . . . . . . . .
+9.3.1 Research Visit Requirements for MS Students . . . . . . . . . . . . . . . . . . . . .
+9.3.2 Research Visit Requirements for PhD Students . . . . . . . . . . . . . . . . . . . .
+
+29
+29
+30
+30
+31
+32
+
+3
+
+1
+
+Introduction
+
+This handbook describes the requirements for admission to the Computer Science graduate programs, the
+requirements to earn a graduate degree, and all associated policies and procedures. The handbook also
+contains general information about the MS and PhD programs in Computer Science. (This handbook is not
+for Data Science majors, see https:// www.stonybrook.edu/ commcms/ ams/ graduate/ datascience.php)
+Students in the Computer Science graduate programs are responsible for understanding the material in
+this handbook, the Academic Regulations, Procedures and Degree Requirements in the Graduate Catalog,
+and the Graduate School Policy Manuals.
+The latest Graduate Catalog is available on the Graduate School website: https:// catalog.stonybrook.
+edu/ index.php? catoid=4/ . Exceptions to the requirements to accommodate special circumstances must be
+approved by the student’s academic advisor and the Graduate Program Director. Such exceptions must be
+documented and included in the student’s academic file.
+This handbook is applicable to the Computer Science graduate students in both
+• the Stony Brook campus
+(also referred to as SBU or Stony Brook University in the rest of this handbook), and
+• the SUNY Korea campus
+(also referred to as SUNYK or SUNY Korea in the rest of this handbook).
+Specific information and requirements applicable to students of only one of these campuses are clearly
+marked, in red for SBU students and blue for SUNYK students. Additionally, Section 8 contains material
+applicable only to SBU students, and Section 9 contains material applicable only to SUNY Korea students.
+The graduation requirements for a student are as stated in the handbook that was in effect at the time
+of entry to the program. If the requirements change subsequently, a student may use, if they so choose, the
+latest requirements in effect at the time they apply for graduation. Whichever set of requirements are chosen
+shall be applied in whole. For instance, it will not be possible to apply a part of requirements in effect at the
+time of entry and another part in effect at the time of graduation. In general, students should keep abreast of
+the latest version of the Graduate Student Handbook, which is published on the Departmental website, and
+also the Graduate School Catalog and Policy Manuals available on the Graduate School’s website.
+Students are expected to complete their degree requirements as expeditiously as possible. Students must
+graduate once the minimum degree requirements are satisfied. Once graduation requirements are met, students cannot continue in the program by taking additional courses or for any other reason.
+
+2
+
+Goals of the Programs
+
+The Department of Computer Science offers MS and PhD degrees in Computer Science. The MS program is
+designed primarily to train students with professional goals in business, industry, or government, requiring
+detailed knowledge of computer science concepts and applications. Students are given the experience of
+working on large-scale software or hardware development projects involving analysis, design, evaluation,
+and implementation.
+The PhD program is for students interested in obtaining academic or research positions in colleges and
+universities or in government or industrial research laboratories. The program gives students a rigorous and
+thorough knowledge of a broad range of theoretical and practical research subject areas, and develops the
+ability to recognize and pursue significant research in computer science. The first two years of graduate study
+are devoted to coursework. By the end of the second year, the research phase of a student’s graduate career
+should be underway, with participation in advanced study and preliminary research work. The final years of
+graduate study are devoted to dissertation research. Upon entrance to the program, each student is assigned
+4
+
+an academic advisor. Each PhD student should seek a faculty member to serve as a research or dissertation
+advisor within the first two semesters of the program. The choice may be changed. However, each change
+of advisor may delay a student’s progress. A research advisor is invaluable when it comes to issues such
+as financial support and progress through various examinations. Most faculty members have research group
+meetings and seminars through which new students can become acquainted with their research. Please refer
+to Section 5.1 for the specific rules on choosing or changing an advisor.
+Students who are progressing satisfactorily toward the PhD can earn an MS degree as well, as described
+in Section 5.11. Students enrolled in the MS program can apply for admission to the PhD program as
+described in Section 4.9.
+
+3
+
+Requirements for Admission to Graduate Study
+
+Admission to the MS and PhD programs are handled separately by the departmental Admissions Committee.
+The requirements for admission to graduate study in computer science include:
+A. Bachelor Degree: A bachelor’s degree, usually in a science, mathematics, or engineering discipline is
+required. The transcript should show a grade average of at least B (i.e., 3.0/4.0) in
+(i) all undergraduate course work, and
+(ii) in the science, mathematics, and engineering courses.
+B. Computer Science Background: For the MS program, students with CS or related degrees are preferred.
+Applicants with exceptional promise who lack CS preparation in one or more core areas may be
+admitted, but will be required to take additional CS courses as specified in their offer letter. For
+the PhD program, we mainly consider an applicant’s potential for first-class research, and expect
+applicants to have sufficient academic preparation and strength to succeed in PhD qualifiers.
+C. GRE Examination. All international applicants to the MS program must submit Graduate Record Examination (GRE) scores. GRE is optional for all PhD applicants and domestic MS applicants.
+D. English Proficiency Requirements. All students who are not native or primary speakers of English must
+demonstrate proficiency in English to be admitted to the University’s Graduate School. This is enforced primarily by requiring scores above a specific threshold in standardized English proficiency
+tests such as TOEFL and IELTS. At application time, a questionnaire to evaluate the English language
+background of applicants is used to determine whether to waive the requirement for standardized test
+scores. See the English Proficiency Requirements section of the Graduate Catalog for further details.
+E. Accepted Application. Acceptance by the Computer Science Department and the Graduate School.
+Students of exceptional promise with non-standard background or who lack certain requirements may be
+considered for admission to the program on a conditional or provisional basis. In such cases, the student will
+be informed of the requirements that must be satisfied to move out of the provisional status. Note that this is
+not typical or routine. Students admitted without the minimal background in Computer Science can expect
+to do remedial classes and hence can take longer to graduate.
+
+3.1
+
+Transfers into the Graduate Program
+
+Students pursuing or completing graduate degree programs in other universities must submit a complete
+graduate application. If admitted, a student may be able to transfer graduate credits in computer science
+from another university subject to the following rules:
+5
+
+• Only credits for graduate courses that have not already been used to obtain another graduate degree
+can be transferred. Graduate courses co-scheduled with undergraduate courses, or those that were a
+part of another completed degree cannot be transferred.
+• Only courses with a grade of B or better (or equivalent) can be transferred.
+• The Graduate School permits transferring up to 12 credits.
+• To be counted towards graduation, the courses must be evaluated and approved by a CS faculty member
+who teaches the corresponding graduate course on a regular basis. The evaluation must establish an
+equivalence between a course being transferred from another institution to a regular Computer Science
+course in SBU or SUNY Korea that is accepted as part of the graduation requirements. If a transferred
+course has no equivalent course, it may count only towards overall credit requirements. Students
+wishing to transfer courses must note that such approval is not automatic or guaranteed.
+Students from other programs within SBU wishing to transfer to CS graduate programs should have
+completed at least one semester of graduate coursework at SBU, with excellent performance in multiple
+CSE courses, and have a strong recommendation from a CS faculty member. Students meeting these criteria
+can contact the CS graduate admissions to determine additional materials needed for a complete evaluation.
+
+4
+
+MS Degree Requirements
+
+For successful completion of the MS program, students must fulfill the breadth, credit, project, and graduate
+course requirements.
+1. Credit Requirement: Complete a minimum of 31 graduate credits of CSE courses with a cumulative
+GPA of at least 3.0.
+All individual courses counted in this pool of 31 credits must be completed with a grade of C or
+better for letter-graded courses, or S for S/U-graded courses.
+
+No credits are counted for the following PhD-only courses: CSE 600, 696, 697, 699, 700, and 701.
+Credits from any other CSE course do count towards graduation. Relevant graduate courses in other
+departments may be used towards the 31 credits only with prior approval by the Graduate Program
+Director.
+2. Breadth Requirement: Take graduate courses covering three breadth areas. See Section 4.1 for details.
+3. Project Requirement: Choose one of the following three options:
+Basic Project: Completion of a project-oriented course. See Section 4.2 for details.
+Advanced Project: A more involved, two-semester long project (CSE 523 + CSE 524) under the
+guidance of a faculty advisor. See Section 4.3 for details.
+Thesis: Research project under the guidance of a faculty advisor (typically two or three semesters
+of CSE 599), completed with the submission and defense of a dissertation. See Section 4.4 for
+details.
+4. Lecture Course Requirement: Complete a minimum number of CS graduate lecture courses, depending on the selected project option:
+6
+
+Basic Project: 9 graduate lecture courses, one of which should be in the Basic Project course list
+Advanced Project: 7 graduate lecture courses + CSE 523 + CSE 524
+Thesis: 6 graduate lecture courses + at least 6 credits of CSE 599
+Graduate lecture courses are:
+• 500-level courses except CSE 500, 522, 523, 524, 580–589, 593, 596–599.
+• CSE 601–638.
+For the purposes of this requirement, At most one graduate lecture course may be replaced with 3
+credits of CSE 698 (Teaching Practicum). The 3 credits can be accumulated over multiple semesters.1
+Important: For SUNY Korea students, CSE 516, CSE 517 and CSE 595 are not considered as
+graduate lecture courses.
+
+4.1
+
+MS Breadth Requirement
+
+The MS breadth requirement is designed to ensure that every MS student obtains a broad background in a
+number of different areas of computer science.
+Students must satisfy the MS breadth requirement by the time of graduation regardless of the chosen
+project option. The requirement is that students must complete, with a grade of C or better, courses
+covering all 3 of the following areas:
+
+Theory
+CSE 512: Machine Learning
+CSE 526: Principles of Programming Languages
+CSE 540: Theory of Computation
+CSE 541: Logic in Computer Science
+CSE 544: Probability and Statistics for Data Science
+CSE 546: Cryptography
+CSE 547: Discrete Mathematics
+CSE 548: Analysis of Algorithms
+CSE 549: Computational Biology
+CSE 550: Quantum Computing and Applications
+CSE 555: Computational Geometry
+Systems
+CSE 502: Computer Architecture
+CSE 504: Compiler Design
+CSE 506: Operating Systems
+CSE 508: Network Security
+CSE 509: Computer System Security
+CSE 510: Hybrid Systems
+CSE 532: Database Systems
+1
+
+One graduate credit in a lecture course is typically considered as four hours of effort per week. The same level of effort level is
+assumed for CSE 698 as well (e.g., 3 credits require 12 hours per week).
+
+7
+
+CSE 534: Fundamentals of Computer Networks
+CSE 535: Distributed Systems
+CSE 570: Mobile and Wireless Networks
+Information and Intelligent Systems
+CSE 505: Computing with Logic
+CSE 518: Human-Computer Interaction
+CSE 519: Data Science Fundamentals
+CSE 525: Robotics
+CSE 527: Introduction to Computer Vision
+CSE 528: Computer Graphics
+CSE 537: Artificial Intelligence
+CSE 538: Natural Language Processing
+CSE 564: Visualization
+CSE 566: Virtual Reality
+Students may take more courses from the list of breadth courses, in any sequence. Some of these courses
+may have separate PhD and MS sections. MS students are expected to enroll in the MS section.
+
+4.2
+
+Basic Project Option
+
+(Note: for those familiar with the Basic Project option prior to Fall 2025: this option has been completely
+overhauled and made simpler.)
+Students in this option must register for an additional three-credit lecture course from a list of approved
+courses that include a substantial project component: https:// www.cs.stonybrook.edu/ graduate-programs/
+ms-basic-project-option. Compared to the Advanced Project option (Section 4.3), this extra lecture course
+implies that students opting for the Basic Project option will need a total of nine lecture courses to graduate.
+Students do not have to declare their intention to take the Basic Project option, and there are no forms
+to fill or special permissions required. Students just register for any course from the above Basic Project
+course list during any semester of their studies. At graduation time, students with nine lecture courses, of
+which at least one is included in the above list, will automatically be considered as having satisfied the Basic
+Project option. Students may also optionally register for CSE 522 for zero (0) credits, in case they want their
+transcript to show that they have passed a “project” course. This is now a pass/fail (S/U) course: students
+who passed the Basic Project lecture course will get a grade of (S)astisfactory, else (U)nsatisfactory.
+
+4.3
+
+Advanced Project Option
+
+Students in this option are required to take the two-semester long sequence “Advanced Project in Computer
+Science I and II” (CSE 523 and CSE 524, respectively) under the supervision of a CS faculty member.
+Students must register for CSE 523/524 under the section of this faculty member. Registration in CSE
+523/524 is by permission only. To obtain this permission, students should complete an Advanced Project
+Approval Form signed by the faculty advisor.
+CSE 523 and CSE 524 must involve a substantial two-semester long project under the same advisor,
+not two smaller projects with multiple advisors. CSE 523 and CSE 524 must be taken in two different
+semesters (not necessarily consecutive) and in that sequence.
+
+8
+
+Students must exercise care in choosing a project and advisor. Sometimes, a student may be unwilling or
+unable to continue with the same advisor for CSE 524 after completing CSE 523. In such cases, CSE 523
+must be done a second time with a new advisor.
+
+4.4
+
+Thesis Option
+
+In this option students perform research that results in a written report or thesis. When performing research,
+students must accumulate a total of 6 to 9 credits of CSE 599 (often registering for 3 credits per semester).
+The thesis must be approved by a committee consisting of at least three CS faculty members, including
+the thesis advisor. The advisor(s) cannot chair the committee. At least two members must be core CS
+faculty. The committee must be approved by the Graduate Program. At the discretion of the committee,
+students may be required to defend the thesis by presenting a departmental seminar on the topic of their
+thesis. The thesis approval and defense must be done before the deadline set by the Graduate School for the
+student’s graduating semester. Regardless of a defense, the thesis must be prepared and submitted as per the
+Graduate School’s requirements; see https:// www.stonybrook.edu/ commcms/ grad/ academics/ dissertation
+thesis submission.php.
+
+4.5
+
+Choosing an MS Option
+
+To choose an option, students should carefully consider their existing strengths and future goals. Students
+with a solid undergraduate background in Computer Science and/or good industry experience should normally choose the Advanced Project or Thesis options. These provide the opportunity for more in-depth study
+in a direction of the student’s interest, and the opportunity to work closely with a faculty member and their
+research group. The Basic Project option is meant for students who prefer to take a broad range of basic CS
+courses, instead of a more focused project or research. This option is also appropriate for students who lack
+background on core aspects of Computer Science due to the specific undergraduate preparation they have. In
+the Basic Project option, the minimum project experience needed for graduation is one project-heavy course.
+Students opting for the Advanced Project or Thesis options must select an advisor by the beginning of
+the second semester in the program. The role of the advisor is to guide the student through their MS studies,
+formulate a project or a thesis topic, and supervise the student towards the completion of the assigned task.
+Students in the Basic Project option do not have a faculty advisor, and the Graduate Academic Advisor or
+the Graduate Program Director serves as their default advisor.
+Students do not need to declare in advance the option they choose, and thus students can switch between
+options. Still, planning ahead and sticking to one option would be in the best interest of the student.
+Otherwise, a student may end up taking more courses than really necessary for the degree. In any case,
+at the time of graduation, a student must clearly fall into one of the designated options.
+Students may switch from one option to another, as follows:
+1. Student who switch between Advanced Project and Thesis options with the same advisor may be
+allowed to count their project courses (CSE 523/524) interchangeably with thesis research (CSE 599)
+only if approved by both the advisor and the Graduate Program Director.
+2. In any other case, e.g., a student changing advisors, or changing to/from the basic project option, the
+student has to start from scratch. Credits earned from the previous option count for graduation.
+3. Either way, students have to satisfy the graduation requirements of the new option (in terms of the
+number of lecture courses, etc.).
+9
+
+4.6
+
+MS Concentration in Data Science and Engineering (MSDSE)
+
+MS students can choose to add a concentration to their MS degree. To qualify for the Data Science and
+Engineering Concentration, MS students must take at least 4 of the following courses:
+1. CSE 512: Machine Learning
+2. CSE 519: Data Science Fundamentals
+3. CSE 537: Artificial Intelligence
+4. CSE 544: Probability and Statistics for Data Scientists
+5. CSE 545: Big Data Analytics
+6. CSE 548: Analysis of Algorithms
+7. CSE 564: Visualization
+No other courses will be accepted for the 4-course requirement beyond the ones listed above.
+In addition, students must complete an advanced project sequence (523/524 or equivalent) or an MS
+thesis (599 or equivalent). Where applicable, the courses taken toward the Data Science Concentration can
+be taken as part of the MS breadth requirement.
+Contact the Graduate Program Coordinator about declaring the MSDSE concentration prior to your final
+semester.
+
+4.7
+
+Independent Study
+
+Students who wish to conduct research or participate in a project in connection with, or in addition to and
+separately from, the options described above, can use CSE 593 Independent Study. This requires advance
+concurrence of a faculty member supervising the study. Students can then register for the section of CSE
+593 that corresponds to that faculty member. It is generally recommended that students complete a semester
+of Independent Study with a faculty member before starting their Advanced Project or Thesis.
+
+4.8
+
+MS Proficiency Requirements
+
+MS applicants with a non-CS background may be admitted to the program with the additional requirement
+that they acquire proficiency in specific areas. The admission letter will explicitly list these areas. Proficiency
+requirements can be met by taking specific “bridge” courses (graduate courses specially designed to fill in
+foundational material in an accelerated fashion) or undergraduate courses, as follows:
+Theory of Computation: CSE 581 Computer Science Fundamentals: Theory
+Algorithms: CSE 582: Data Structures and Algorithms
+Programming Languages or Compilers: CSE 583 Computer Science Fundamentals: Programming Abstractions
+Operating Systems: CSE 306 Operating Systems or CSE 320 Systems Fundamentals II
+
+10
+
+Students should clear proficiency courses as soon as possible, i.e., take any required proficiency courses
+offered during a student’s first and second semester (all proficiency courses are offered in either or both
+semesters). The Department will not approve CPT (i.e., internship) requests for students until they have
+completed all proficiencies. Students can take additional non-proficiency courses at the same time—there
+are no restrictions.
+Because graduate students cannot directly register for undergraduate courses, to attend CSE 306 or CSE
+320 students need to request permission for registering in CSE 587 “Proficiency Requirement in Computer
+Science,” which is a special “cover” course co-scheduled with the corresponding undergraduate course.
+Students registering in CSE 587 will attend the lectures of the corresponding undergraduate course and
+fulfill the requirements specified by the CSE 587 instructor.
+Bridge and proficiency courses do not count towards the lecture course requirement. However, credits
+for CSE 580–589 count towards the student’s graduation credit requirement and full-time status. Bridge
+courses (CSE 581–583) and CSE 587 can be taken only if the corresponding proficiencies are listed in the
+student’s MS admission letter. While students are taking a course to satisfy a given proficiency, they cannot
+concurrently register for the equivalent graduate lecture course.
+A grade of B or better is needed in CSE 587 to satisfy a proficiency requirement. Proficiency requirements can be satisfied with a grade of C or better in bridge courses CSE 581–583.
+Under extraordinary circumstances, the Graduate Program Director may permit a student to take a graduate course to fulfill a proficiency requirement after a petition from the student. A grade of C or better is
+needed in an approved graduate course to satisfy a proficiency requirement. An approved graduate course
+will be treated as a regular lecture course for the purposes of the credit and lecture course requirements.
+
+4.9
+
+Switching from the MS to the PhD Program
+
+MS students who wish to transfer to the PhD program must contact the Graduate Program Director. There
+is no automatic transfer mechanism. Students should have excelled in CSE courses, and have strong recommendations from one or more CS faculty members. Preferably, students should have (i) passed at least 2 PhD
+qualifier courses before the application, and (ii) identified a faculty member who is willing to advise them for
+PhD research. Students will be considered for admission to the PhD program following the normal protocols
+of the Computer Science graduate admissions committee. Once admitted to the PhD program, courses taken
+in the MS program can be used for satisfying requirements for the PhD program.
+
+5
+
+Requirements for the PhD Degree
+
+5.1
+
+Dissertation Advisor
+
+A student in the PhD program must have a Computer Science faculty member serve as their dissertation
+advisor by the end of their second semester in the program; the adviser must be a department’s faculty
+member. The role of the dissertation advisor is to guide the student through the PhD studies, help with
+selection of a research topic, and teach the art of doing independent and significant research. Students are
+encouraged to contact individual faculty members to discuss their research interests.
+The Graduate Program Coordinator must be informed upon selection of an advisor. The Coordinator
+must be informed of any changes to the advisor as well, by submission of a new form. The student is
+expected to participate in research activities of the advisor’s group and at the end of each semester (including
+summers, if the student is expected to work during summer semesters) the student will be evaluated by the
+advisor. Two unsatisfactory evaluations in a row or three unsatisfactory evaluations in total will result in the
+dismissal from the program.
+
+11
+
+5.2
+
+PhD Qualifier
+
+The purpose of PhD qualifiers is to ensure that students demonstrate mastery in a broad selection of topics in
+major areas of Computer Science. To meet the qualifier requirement, PhD students must pass a total of five
+graduate courses with a grade of A– or better, with the following conditions:
+1. A total of at least three courses from the list below, with one from each of the following three areas.
+Theory
+CSE 512: Machine Learning
+CSE 526: Principles of Programming Languages
+CSE 540: Theory of Computation
+CSE 541: Logic in Computer Science
+CSE 547: Discrete Mathematics
+CSE 548: Analysis of Algorithms
+CSE 549: Computational Biology
+Systems
+CSE 502: Computer Architecture
+CSE 504: Compiler Design
+CSE 506: Operating Systems
+CSE 508: Network Security
+CSE 509: Computer System Security
+CSE 532: Database Systems
+CSE 534: Fundamentals of Computer Networks
+CSE 535: Distributed Systems
+Information and Intelligent Systems
+CSE 505: Computing with Logic
+CSE 519: Data Science Fundamentals
+CSE 525: Robotics
+CSE 527: Introduction to Computer Vision
+CSE 528: Computer Graphics
+CSE 537: Artificial Intelligence
+CSE 538: Natural Language Processing
+CSE 564: Visualization
+2. At most two graduate courses from:
+(a) Any 5xx course except CSE 500, 522, 523, 524, 580–599.
+(b) Any advanced graduate course from CSE 601–638.
+Important: For SUNY Korea students, CSE 516, CSE 517 and CSE 595 are not considered as
+graduate lecture courses.
+All qualifier courses must be completed within two years after joining the program as a full-time PhD
+student. No course substitutions, exchanges, or pleas for better grades will be accepted.
+We recommend students take at least two qualifier courses per semester because most graduate courses
+are offered only once a year. Note that the above requirements state the bare minimum number of courses to
+qualify. Graduate courses offer an incredible opportunity to learn in-depth about a specific area in a structured
+manner. We encourage students to take as many graduate-level courses as possible before advancing to
+candidacy (see Section 5.5). We also recommend that students complete the qualifier requirement as early
+as possible so that they can take other graduate courses without additional grade pressure.
+12
+
+5.3
+
+Course Requirements
+
+By the time of graduation, students are required to accumulate at least 20 credits of regular lecture courses,
+internships, special topics courses, or seminars. At most 5 credits of seminars and internship can be included
+in the 20 credits required for graduation. Credits from the following courses are not counted towards the 20
+needed: generic courses, such as CSE 593, CSE 600, CSE 698, and CSE 699; and bridge courses covering
+pre-requisite material for graduate courses (CSE 580–589). Only courses completed with grades of C or
+better (for letter-graded courses), P/S (for PNC-graded courses), or S (for S/U-graded courses) will count
+towards this requirement. In addition, the following requirements should be noted:
+• MS-specific courses. Students in the PhD program may not enroll in CSE 522, CSE 523/524 or
+CSE 599. These courses are specific to the MS program.
+• On-going research seminar. The student must register and complete two semesters of CSE 600.
+– Stony Brook University students must complete them in their first year in the PhD program.
+– SUNY Korea students must complete them in their first two years in the PhD program.
+Credits earned in this course cannot be used towards the 20 credits required for the PhD program.
+• Dissertation Research. The course for dissertation research is undertaken only by PhD students who
+have been advanced to candidacy (see Section 5.5). Students should register for CSE 699 for dissertation research, except under the following conditions:
+– Stony Brook University students performing research outside New York State should register for
+CSE 700.
+– Stony Brook University students performing research outside the United States should register
+for CSE 701.
+– SUNY Korea students performing research outside Korea should register for CSE 701.
+Prior to the advancement, students conduct research and participate in projects by taking CSE 593:
+Independent Study.
+• Teaching requirement. University policy requires that all doctoral students participate in an appropriately structured teaching practicum. This requirement can be satisfied by taking CSE 698 in conjunction with a teaching assistantship (TA) in the first year.
+Some PhD students might also be advised by the Graduate Program Director to take courses covering
+undergraduate-level material that is prerequisite to other graduate courses, as part of their preparation for the
+PhD qualifier and/or proficiency requirements. Such courses include the “bridge” courses (CSE 580–589),
+including CSE 587, Proficiency Requirement in Computer Science. However, these courses are considered
+preparatory and are not counted towards the PhD course requirements. See Section 4.8 for information
+on bridge and proficiency courses. Note that registration in bridge and proficiency courses is only with
+permission of the Graduate Program Director.
+
+5.4
+
+Research Proficiency Examination (RPE)
+
+The purpose of the Research Proficiency Examination is to ascertain a student’s preparation to undertake a
+significant original research investigation. Students must pass the RPE within two years of joining the program as a full-time PhD students. The student’s research proficiency will be evaluated by an RPE committee.
+13
+
+RPE Committee. The RPE committee must be formed by the end of the third semester in the PhD program. It should include the:
+• dissertation advisor(s), at least one of whom must be a core/affiliate faculty in the CS department;
+• committee chairperson, a core/affiliate faculty member in the CS department, distinct from the dissertation advisor(s); and
+• an additional core/affiliate CS faculty member.
+At least two members of the committee must be core CS faculty. The committee must be approved by the
+Graduate Program Director.
+RPE Report. The student must submit a report, written in the form of a conference paper or technical
+report, which critically evaluates and integrates the current state of research relevant to a chosen problem and
+presents the student’s progress in solving the problem. Reports based on previously published or submitted
+papers, or on papers in progress, are acceptable provided that they satisfy these requirements.
+Oral Presentation. The student must give an oral presentation open to the Computer Science department,
+describing the work, which will be followed by a session where the RPE committee will ask questions. The
+oral presentation should be about one-hour long. The report should be submitted to the committee at least
+one week before the presentation.
+Deadlines. The student should contact the Graduate Program Coordinator for approval of the the RPE
+committee at least two weeks prior to the examination, and receive an explicit approval of the committee.
+The student should inform the Graduate Program Coordinator of the date of the RPE at least one week
+prior to the exam. Each aspect of the RPE (written report, oral presentation, responses to questions) will be
+separately graded by each member of the Committee using special online forms provided for this purpose.
+Students may take their RPE at any time they are ready during the first two years of the program. There
+is no requirement to take the RPE after completing all qualifying courses: the RPE can be taken while still
+working towards completing one’s qualifying courses.
+Evaluation and Outcomes. The Committee’s decision can be one of the following: pass, retake, fail. A
+student who receives a grade of fail will be dismissed from the PhD program. A student who receives a grade
+of retake must retake the examination within the timeline recommended by the committee and approved by
+the Graduate Program Director. If, on retaking the examination, the student does not pass, the student will
+be dismissed from the PhD program. A student needs a grade of pass to fulfill the research proficiency
+requirement.
+Failure to complete the qualifier requirements and research proficiency examination within the specified
+time frame is considered evidence of unsatisfactory progress. In particular, students who have not met these
+requirements within 4 semesters of their admission to the PhD program will lose financial support and may
+be dismissed from the PhD program.
+
+5.5
+
+Advancement to Candidacy
+
+A student advances to candidacy after meeting the qualifier requirements, the course requirements, and
+passing the RPE. This status, also called G5, is conferred by the Dean of the Graduate School upon recommendation of the Department.
+
+14
+
+Students must advance to candidacy at least one year before defending their dissertations. In exceptional
+circumstances, the Graduate Program Director may submit a written petition for a waiver of this requirement
+to the Dean of the Graduate School. A student who has advanced to candidacy would normally register for
+9 credits of CSE 699, CSE 700, or CSE 701, as appropriate. Candidates may enroll in one graduate (e.g.,
+lecture) course, without requiring explicit permission from the graduate program. Enrollment in non-CS
+courses will continue to require prior approval from the graduate program.
+
+5.6
+
+Research Assessment Meetings
+
+All PhD students who have not yet met qualifier/course/RPE requirements will be reviewed each semester,
+in semi-annual Research Assessment Meetings. This review is conducted by the entire faculty, which determines the status of each student. (Some students may be reviewed additionally during a summer session.)
+This review is comprehensive, and includes at least the following items:
+• Qualifier courses taken and passed with A− or better.
+• All other courses taken, grades received, and GPA.
+• Performance as Teaching Assistant.
+• Research productivity: publications, talks, software, systems, etc.
+• Faculty input, especially from advisors.
+• Student’s own input.
+• Cumulative history of the student’s progress.
+The outcome of the review will be a formal letter given to the student and placed in the student’s file. A
+student can be placed in one of the following categories:
+In Good Standing: There are three categories within which a student in good standing may fall:
+OK: The student meets the milestones for timely progress.
+Concern: The student is close to meeting the milestones for timely progress, and, is reasonably expected to meet the milestones in the following semester.
+Warning: The student is missing some important milestones for timely progress, and, without significant changes, is in danger of being not in good standing in the following semester.
+Not in Good Standing: The student had not performed sufficiently well in the previous semester. The student may be placed under probation for a semester, may lose RA/GA/TA funding, may lose an advisor,
+or may even be dismissed from the program immediately. Being under probation for two consecutive
+semesters will likely lead to dismissal from the program.
+In addition to the outcome, the letter may also make specific recommendations, as to what will be expected in the following semester (e.g., pass 2 more qualifier courses, pass the RPE, etc.).
+
+5.7
+
+Thesis Proposal (“Prelim” exam)
+
+After advancing to candidacy, and as a part of undertaking dissertation research, the student must complete
+a thesis proposal, also known as a “Prelim exam.” The thesis proposal consists of a written report and an
+oral presentation, and is assessed by a Thesis Proposal Committee. The purpose of the thesis proposal is to
+assess a student’s progress towards the PhD thesis.
+The student must complete all aspects of the thesis proposal requirement within two years of advancing
+to candidacy. Failure to fulfill this requirement by that time without a formal extension may be considered
+evidence of unsatisfactory progress towards the PhD degree.
+15
+
+Thesis Proposal Committee.
+
+The thesis proposal committee should consist of:
+
+• dissertation advisor(s), at least one of whom must be a core/affiliate faculty in the CS department
+• committee chairperson, a core/affiliate faculty member in the CS department, distinct from the dissertation advisor(s)
+• an additional core/affiliate CS faculty member
+At least two members of the committee should be CS core faculty. At least one member must have no conflict
+of interest with the student (e.g., intellectual, personal, financial). Additional members, including members
+external to the CS department or the University, may be added to the committee. Typically, members of the
+RPE committee proceed to serve on the thesis proposal committee.
+The student should contact the Graduate Program Coordinator at least two weeks prior to the date of
+the oral presentation for approval of the committee, and obtain explicit approval.
+Thesis Proposal Report. A written thesis proposal must be submitted to the student’s Thesis Proposal
+Committee at least one week before the oral presentation.
+The major requirements of the thesis proposal are as follows:
+1. The student must be thoroughly familiar with the background and current status of the intended research area.
+2. The student must have clear and well-defined plans for pursuing the research objectives.
+3. The student must offer evidence of progress in achieving these objectives.
+The student must be prepared to justify the effort to be expended in the research in terms of the value of the
+results expected, and to justify the extent and challenge of that research as evidence of research competence
+at the PhD level.
+Oral Presentation of Thesis Proposal. The student must present the thesis proposal as a seminar presentation to the thesis proposal committee. The student should inform the Graduate Program Coordinator of the
+date of the thesis proposal oral presentation at least one week before the date of the presentation.
+The Thesis Proposal Committee, at its discretion, may make the oral proposal presentation open to all
+faculty and students in the Computer Science Department, or the university community. The committee may
+question the student on any topics that they feel are relevant to the student’s objectives and career preparation.
+The student will be expected to show complete familiarity with the current and past literature of this area. If
+a thesis proposal is lacking in any essential aspect, the committee may direct the student to redo the proposal
+in whole or in part. The findings of the committee will be communicated to the student as soon as possible.
+Timeline. Thesis proposal must be successfully completed at least 6 months before the student’s PhD
+defense. Any exceptions must be requested explicitly with detailed justification by the student, supported by
+the thesis proposal committee, and approved by the Graduate Program Director.
+
+5.8
+
+PhD Dissertation and Defense
+
+An important requirement of the PhD program is the completion of a dissertation which must be an original
+scholarly investigation. The dissertation shall represent a significant contribution to the scientific literature,
+and its quality shall be compatible with the publication standards of appropriate reputable scholarly journals.
+16
+
+Dissertation Examination Committee.
+
+The dissertation examination committee should consist of:
+
+• dissertation advisor(s), at least one of whom must be a core/affiliate faculty in the CS department
+• committee chairperson, a core/affiliate faculty member in the CS department, distinct from the dissertation advisor(s)
+• an additional core/affiliate CS faculty member
+• a member external to the CS department or University
+At least two members of the committee should be CS core faculty. At least one member must have no conflict
+of interest with the student (e.g., intellectual, personal, financial).
+Formally, the committee is appointed by the Dean of the Graduate School on the recommendation of the
+Graduate Program Director. The committee appointment form must be filled out with the Graduate Program
+Coordinator at least five weeks prior to the defense.
+Dissertation Defense. The dissertation must be orally defended before the Dissertation Examination Committee, and the candidate must obtain approval of the dissertation from this committee. The oral defense of
+the dissertation is open to all members of the university community. The final draft of the dissertation must
+be submitted to the committee no later than three weeks prior to the date of the defense.
+Four weeks before the defense, the student must fill out the Doctoral Defense Announcement Form
+(available from the graduate school’s website https:// www.stonybrook.edu/ commcms/ grad/ academics/ student
+resources.php). This form must be sent to the Graduate Program Coordinator who submits it to the Graduate
+School to make a public announcement of the event.
+Dissertation Submission. Upon successful completion of the dissertation defense, a final copy of the
+dissertation must be submitted to the Graduate School. The Graduate School posts deadlines for dissertation
+submission for each semester. The deadline for the dissertation submission is the posted date, or 90 days after
+the date of the defense, whichever is later. The Graduate School may ask for corrections to the dissertation.
+It is the candidate’s responsibility to be responsive and make the necessary corrections.
+
+5.9
+
+Satisfactory Progress and Time Limit
+
+A student who does not meet the target dates for the PhD Qualifier, the Research Proficiency Examination,
+and the Thesis Proposal, or who does not make satisfactory progress towards completing thesis research may
+lose financial support. The candidate must satisfy all requirements for the PhD degree within seven years
+after completing 24 credit hours of graduate courses. In rare instances, the Dean of the Graduate School will
+entertain a petition to extend this time limit, provided it bears the endorsement of the Department’s Graduate
+Program Director. A petition for extension must be submitted before the time limit has been exceeded. The
+Dean or the Department may require evidence that the student is still properly prepared for the completion
+of work.
+
+5.10
+
+Part-Time Students
+
+Students admitted into the PhD program for part-time study are bound by all the rules set out in this section.
+In particular, part-time students should adhere to the schedule for the Qualifying Examination, Research
+Proficiency Examination, and Thesis Proposal, as explained in Sections 5.2, 5.4, and 5.7, unless a different
+schedule has been approved in writing by the Graduate Director.
+
+17
+
+5.11
+
+Obtaining an MS Degree on the Way to PhD
+
+A PhD student who has been engaged in at least one year of full-time research after completing the qualifier,
+course, and RPE requirements, and, in addition, meets the requirements for an MS degree can apply for the
+MS degree while remaining in the PhD program.
+Teaching Practicum (CSE 698) taken during PhD will not count towards the MS program. Credits
+for dissertation research (CSE 699/700/701) and/or CSE 593 (Independent study) can be counted as those
+equivalent to MS Thesis Research (CSE 599). Together with the RPE, this will be considered to satisfy the
+Thesis requirement in the Thesis Option of the MS program. The remaining courses/credits required for
+the MS degree must be satisfied based on graduate courses in Computer Science, subject to the restrictions
+stated in Section 4.
+MS degrees on the way to PhD are awarded to PhD students in good standing and who are making
+satisfactory progress towards their PhD dissertation research, and are expected to complete the PhD program.
+The student’s dissertation advisor must attest to this via a letter.
+
+5.12
+
+Typical PhD Timeline
+
+By the End of Year 1: Choose a Dissertation Advisor.
+Complete the Advisor Selection form and submit to the Graduate Program Coordinator.
+By the End of Year 2: Complete Qualifier and RPE requirements.
+For RPE:
+• Submit the RPE committee for approval to the Graduate Program Coordinator at least two weeks
+before the oral presentation.
+• Inform the Graduate Program Coordinator of the date of RPE presentation, at least one week
+prior to the examination.
+• Submit the written RPE report to RPE committee at least one week before the oral presentation.
+By the End of Year 4: Complete Thesis Proposal requirements.
+• Submit the Thesis Proposal committee for approval to the Graduate Program Coordinator at least
+two weeks before the oral presentation.
+• Inform the Graduate Program Coordinator of the date of Thesis Proposal presentation, at least
+one week prior to the examination.
+• Submit the written proposal report to Committee at least one week before the oral presentation.
+By the End of Year 5: Submit and Defend PhD Dissertation.
+• In the semester of graduation, apply for graduation.
+• If graduating in Fall/Spring, register for at least 1 credit; if graduating in summer, register for 0
+credits of CSE 800.
+• Submit the Dissertation Examination Committee to the Graduate Program Coordinator (for approval by the Graduate School) at least 5 weeks before the planned date of defense.
+• Submit the Doctoral Defense Announcement form at least 4 weeks before the planned date of
+defense.
+
+18
+
+• Submit the dissertation (along with the original signatures of the dissertation examination committee approving the dissertation) to the graduate school by the published deadline. See Graduate
+School website for the deadlines for each semester.
+Note: Failure to submit the above on time to the Graduate School may delay your defense and/or
+graduation.
+
+6
+
+General Requirements and Processes
+
+6.1
+
+Ethics
+
+A computer science professional is in a position to develop products upon which the health, wealth, and well
+being of the entire society rests. Graduate students are expected to exhibit highest ethical behavior, in terms
+of maintaining academic honesty, scholarly conduct, and professional standards. Instances of academic
+dishonesty range from cheating in exams, plagiarism in projects and homeworks, to unauthorized use of
+material. Consequences for unethical behavior can be severe. Penalties for academic dishonesty include
+lower course grade, failure in a course, loss of good standing, and expulsion from the graduate program. The
+department’s graduate program website has a separate detailed document regarding academic honesty and
+department’s policies.
+Violation of professional standards, such as falsifying resumes in job applications and reneging alreadyaccepted offers for employment, internship or assistantship will entail significant penalties, including loss of
+good standing, lower course grades, and delays in graduation.
+Policies and Processes for Addressing Academic Dishonesty: Charges of academic dishonesty may be
+brought by course instructors. Consistent with the Graduate School’s policies, these charges are brought to
+the Graduate Program Director (GPD). A typical penalty for academic dishonesty such as plagiarism in a
+graduate course is an “F” in that course. When charged with academic dishonesty, a student has the right to
+view the evidence underlying the charge, and appeal the finding to the department’s Graduate Grievances and
+Appeals Committee (G-GAC) for review. The G-GAC will conduct a formal proceeding to determine the
+validity of the charges and the appropriateness of the penalty, and submit a recommendation to the Graduate
+Program Director. The G-GAC’s recommendation and the Graduate Program Director’s decision may be
+appealed to the Dean of the Graduate School.
+The GPD will advise the students on their rights. A student, upon reviewing the charges and penalties,
+may plead guilty, thus forgoing the appeal to G-GAC. A guilty plea involves accepting the penalty, and signing a statement pledging academic integrity with an explicit understanding that future incidents of academic
+dishonesty will be grounds for dismissal from the graduate program.
+While a charge is under investigation, a mark of “pending academic judiciary charges” will be placed
+on a students record (i.e., it shows up on a student’s transcripts). This mark will be removed when the
+investigations (e.g., G-GAC proceedings) are complete. Findings of academic dishonesty or a guilty plea
+will form a part of the student’s academic record, and can be viewed by any CS faculty member. Only those
+charges confirmed by the G-GAC or the guilty pleas will be placed on a student’s record.
+Other Violations: Charges of ethical violations outside of courses may be brought by respective campus
+units. Examples include (but are not limited to) cheating on employer programming tests, reneging on
+internship, job offers, any employment or lab/project offer (inside or outside the university), and more.
+When these charges involve plagiarism, the academic dishonesty processes described above will be followed
+to resolve these charges as well. Other charges, such as those involving harassment, classroom disruptions,
+etc. will be referred to Office of Community Standards for resolution.
+
+19
+
+6.2
+
+Registration Requirements for Full-Time Status
+
+Every graduate student is assigned a level, which is one of G1, G2, G3, G4, or G5. The first two, G1
+and G2, apply to MS students, and G3 through G5 to PhD students. An MS student typically enters the
+graduate program with level G1 and a PhD student enters with level G3. After completing 24 graduate
+credits the student is assigned levels G2 and G4, respectively. Note: credits for incomplete courses are not
+counted towards the 24 credits required for the G2 and G4 levels. PhD students who have been advanced to
+candidacy are designated as G5 (see Section 5.5). Students who enter the graduate program after obtaining
+a graduate degree or having completed 24 graduate credits at Stony Brook University, SUNY Korea, or
+at another institution in any discipline (not necessarily Computer Science related) can request G2 or G4
+designation (whichever applies) from the Graduate School.
+Students in all academic levels must register for at least 9 credits in regular Fall and Spring semesters in
+order to attain full-time status.2
+Note for Students with Full Graduate Tuition Scholarship (GTS): There is a limit to the number of
+credits of tuition support given to PhD students with full tuition scholarship (informally called as “tuition
+waiver” or GTS). This limit differs by campus and level, as follows:
+• For Stony Brook University G1/G3 students, full tuition scholarship will cover up to 12 credits of
+tuition. The tuition charge for 13–18 credits is the same as for 12 credits. As a result, the whole tuition
+for a G1/G3 student registered for 12–18 credits will be covered by the scholarship.
+• For Stony Brook University G2/G4 and G5 students, a full scholarship will cover only 9 credits of
+tuition. Students will be liable for the tuition for any excess credits. As a result, G4 and G5 students
+are advised to limit their registration to a total of 9 credits. Note: G4 students with pending English
+Language requirements may request additional tuition to cover the required courses.
+• Stony Brook University G5 students who are in good standing and have been supported by an RA,
+TA, or GA in all prior semesters, continue to receive GTS from the Graduate School—even if they are
+currently not supported by an RA, TA, or GA. Self-funded students, however, do not receive GTS.
+• For SUNYK students, if a student is supported by a full-time TA-ship or RA-ship, the support covers
+up to 12 credits for G1 and G3 students. For all other levels (G2, G4, and G5) a full-time support
+covers 9 credits. For anything above 12 credits or 9 credits, respectively, the student will be liable for
+the tuition for any excess credits.
+
+6.3
+
+The Need for Full-Time Status
+
+International students (i.e., non-US residents in Stony Brook University; non-Korean students in SUNY
+Korea) must maintain full-time status throughout their course of studies in order to maintain legal immigration status. Domestic students (i.e., US citizens/residents in Stony Brook University; Korean students
+in SUNY Korea) are not required to maintain full-time status, but they must register for at least one credit
+each semester. However, all students receiving financial assistance are required to maintain full-time status.
+Full-time status may also be needed for on-campus housing.
+Important Note: Consult Visa and Immigration Services (VIS) Office regarding immigration and related
+questions. The Computer Science graduate program staff is not equipped to answer visa-related questions.
+But they can assist in getting various departmental approvals as needed by the VIS office.
+2
+
+Prior to Spring 2022, G1 and G3 students at Stony Brook University were required to register for 12 credits to attain full-time
+status.
+
+20
+
+Graduating Students Special considerations apply for the semester a student is graduating. Students need
+to be registered for the semester they plan to graduate. The Graduate School permits Summer graduates to
+register for 0 credits. Graduates in other semesters must register for at least 1 credit. Registration requirements to maintain full-time status in their graduating semester vary by campus, as described below.
+For SUNYK Students: International students may enroll less than full-time in their last semester by
+registering only the credits needed to graduate that semester.
+For Stony Brook University Students: Students who may not be able to take a full-time load due to
+documented medical reasons, or MS students in their graduating semester may petition to maintain full-time
+status despite enrolling only for the necessary credits (see “Underload” in Section 8.7).
+
+6.4
+
+Grade Requirements
+
+All courses taken in Stony Brook, regardless of whether they are counted for their degree requirement,
+appear in the student’s transcript and are used to compute the cumulative grade point average (GPA) on the
+transcript. The only exception is when a course is repeated in order to improve the GPA (see Section 6.10).
+To be certified for graduation, the Graduate School requires a cumulative grade point average (GPA)
+of 3.0/4.0 or better over all graduate courses. In addition, the Computer Science Department requires a
+cumulative GPA of 3.0/4.0 for the set of courses that specifically satisfy the MS or PhD degree requirements
+in Computer Science.
+
+6.5
+
+Academic Standing and Probation
+
+Students who do not maintain a cumulative graduate GPA of 3.0 or better will be placed on graduate probation by the Graduate School. Students on probation may not be eligible for research, teaching, or graduate
+assistantships. Students on probation must bring their GPA to 3.0 or above within one semester (or 12 credits) after being placed on probation Otherwise, they will be subject to dismissal by the Graduate School.
+Students will receive notifications about their probation status. Students on probation are required to meet
+with the Graduate Academic Advisor or Graduate Program Director to discuss their academic plan. Satisfactory progress will be determined by the requirements written in the Graduate Catalog and this Handbook in
+effect at the time the student entered graduate studies in the Department, or, at the discretion of the student,
+the requirements stated in the current editions of the Catalog and Handbook.
+
+6.6
+
+Regulatory Requirements
+
+In addition to the academic requirements listed above, students may be asked to meet certain requirements
+to be eligible for specific benefits or acquire and periodically renew certain credentials during their study.
+For instance, every student appointed as a TA is expected to undergo mandatory TA training. Every student
+appointed as a federally-funded RA is required to undergo specific modules of “Responsible Conduct in Research and Scholarship” (RCRS) training. In addition, students working on projects involving sensitive data
+or human subjects may be required to undergo specific training (e.g., human-subject training). Credentials
+for RCRS and human subjects training will need to be renewed at specified intervals to maintain eligibility
+for RA appointments.
+
+6.7
+
+Petitions for Late Withdrawal from a Course
+
+The Graduate School enforces the following policy with respect to petitions for late withdrawal from a
+course. After the 15th day (10th day for SUNYK students) of classes, no course may be added or dropped.
+Should it become impossible for a student to complete a course for a reason such as illness or accident, they
+
+21
+
+may petition the Dean of the college for a waiver of the deadline. Such a petition must be approved by both
+the Chairperson and the Graduate Program Director of the Department.
+A petition for a waiver of the deadline can be approved only if one of the following conditions is met:
+1. Employment requires a student to be elsewhere at the same time that the class meets. This must be
+documented by the employer.
+2. Illness or injury prevents class attendance. Since illness generally is not selective and normally incapacitates a person equally for all courses, it would be expected that the student would withdraw for all
+academic work, unless special circumstances can be demonstrated.
+Students must have a statement from the instructor affirming that they are in good standing at the time the
+petition is presented, and that they have been in regular attendance at classes and are up to date with all
+assignments.
+The Graduate Program Director is bound by pledge not to send up a petition that does not satisfy the
+spirit of these requirements. Note that the Dean reserves the right to review and reject a weak petition.
+It is the responsibility of the student to remain alert to the approach of the add-drop deadline if in doubt
+about his or her ability to complete the requirements for a course. Please consult the Graduate School
+Catalog for more information about regulations: https:// catalog.stonybrook.edu/ content.php? catoid=4&
+navoid=191 .
+
+6.8
+
+Semester Withdrawal and Leave of Absence
+
+A student may petition to the Graduate School to withdraw from all courses in a semester. For international
+students, this process starts at the VIS office. Usual tuition penalties apply. The student will get a “W” on
+the transcript for the currently-enrolled courses.
+A student may apply to go on leave from the program by petitioning to the Graduate School. Generally,
+leave of absence petitions must be submitted within the first 15 days (10 days for SUNYK students) of a
+semester. In rare cases, such as emergency medical conditions, leave of absence may be granted after the
+15th day (10th day for SUNYK students) of classes. Applications for medical leave must be accompanied by
+a doctor’s note substantiating the reason. A semester withdrawal petition must be submitted with the petition
+for leave.
+A returning student should file for readmission at least 2 months before the semester of re-entry. A
+student returning from an approved leave of absence will be waived the readmission fee. Students returning
+from leave will also retain their campus housing privileges. A student returning from a medical leave must
+present a doctor’s note certifying the readiness of the student to return to school.
+Please consult the Graduate School Catalog for more information about leaves and withdrawals: https:
+// catalog.stonybrook.edu/ content.php? catoid=4& navoid=195 .
+
+6.9
+
+Incompletes
+
+Students with serious documented issues that prevented them from completing all course requirements during
+a semester, may, at the discretion of the course instructor, receive an “Incomplete” or “I” grade at the end
+of the semester. Students who receive an “I” grade for a course must complete that course’s requirements
+within a timeline determined by the instructor. After that time, the “I” will become an “I/F” (for a lettergraded course), resulting in a significant hit to the GPA (same as an “F” grade). Note that the Registrar
+automatically turns all unresolved “I” grades into “I/F” after one semester typically.
+Registering but not attempting a course (receiving the NR grade) is treated the same way as if the course
+was never registered for. It is particularly harmful for international students who need to maintain full-time
+registration status.
+22
+
+6.10
+
+Retaking Courses
+
+According to the current Graduate School policy, courses designated as “may be repeated for credit” may
+be taken more than once for credit and all grades earned will be used to calculate the GPA. These courses
+include: CSE 522–24, 587, 590–96, 599, 600 and all course numbers above and including 640.
+All other courses may be repeated only once, at the discretion of the Instructor and the Graduate Program
+Director. In this case, the most recent attempt/grade will count towards the GPA, but both attempts and both
+grades will appear on the official transcript. Students may retake a course they did not pass (C- grade or
+worse) only by special permission, only after priority has been given to new students who have not taken that
+course, and only if there are still available seats. To retake a course, students should submit the “Graduate
+Course Retake Approval Form” available on the Graduate School website.
+
+6.11
+
+Controlling Course Load
+
+Graduate courses and projects tend to require a substantial amount of work, so students are advised to plan
+carefully. Students are advised to take a judicious combination of lecture courses, CSE 523/524/599 (MS
+Project or Thesis, whichever applies), CSE 593 (Independent Study), CSE 698 (Teaching Practicum) and
+1-credit CS seminars.
+A schedule that includes more than 3 regular lecture courses in one semester is strongly discouraged.
+In fact, depending on the selection of courses, and other factors including student’s ability, even 3 regular
+lecture courses in one semester may be a high load. The sample schedule in Figure 1 shows 3 courses in the
+first semester for MS students. This is our default advice for MS students, given the effort needed to adjust
+to a new environment (academic or otherwise), and the potential impact that such high workloads may have
+on a student’s overall academic performance and GPA.
+
+7
+
+Financial Support
+
+This section, in its entirety, applies only to Stony Brook University students.
+PhD students are generally supported on teaching or research assistantships. Some MS students are
+also supported in this way. A number of other support opportunities in other academic or administrative
+departments within the University become available to Computer Science students each year.
+Teaching or research assistants are assigned part-time duties in the undergraduate or graduate instructional program or in faculty-supervised research projects, but are still able to carry a full academic program.
+Beyond the first year, PhD students are typically supported as research assistants by their dissertation advisor.
+Note that research assistantships are funded almost entirely from sponsored research grants, and the actual
+amount and availability may vary from year to year depending on the student’s research area and advisor.
+A student must be registered full time in order to qualify for teaching or research assistantship. PhD
+students receiving assistantship will also receive tuition scholarship to cover the number of credits needed
+to maintain full-time status. After a PhD student advances to candidacy, the university provides tuition
+scholarship for full-time students regardless of other financial support. At this time, the university does not
+award tuition scholarships to MS students.
+Renewal of financial assistance each academic year depends upon the student making satisfactory progress
+towards the degree, and satisfactory fulfillment of the duties and responsibilities of any assistantship. The
+University limits renewals of annual teaching assistantships to three after the first year, for a total of four
+years. Beyond the fourth year, support is dependent on financial aid other than university assistantships,
+such as research grants or fellowships. All offers and renewals of financial assistance are subject to Graduate
+School approval and the availability of funds.
+
+23
+
+All assistants who receive a stipend perform their assigned duties as follows. A student on a full assistantship devotes no more than 20 hours/week to his/her assigned duties during the academic year and 40
+hours/week during the summer. A student on a fractional assistantship must give the corresponding fraction
+of full service each week.
+Graduate students assigned to teaching duties (teaching assistants) are responsible to the faculty member
+in charge of the course to which they have been assigned. Duties will be specified by that faculty member
+and will usually include some or all of the following: lecturing to students on any subject pertinent to the
+course that will amplify the faculty member’s lectures; answering student’s questions concerning the course
+work; proctoring examinations; preparing solutions; grading of examinations; correction of homework assignments; supervision of laboratory sections; and holding regular office hours. A document that describes
+the responsibilities of a teaching assistant appears on the CS Graduate Program Web site (see under Graduate
+Programs/TA responsibilities).
+PhD students with teaching duties may register for CSE 698 (Practicum in Teaching), for up to three
+credits. Note that CSE 698 does not count towards the credit requirements for PhD students.
+
+7.1
+
+English Proficiency Requirements for International Students
+
+All international students and those who have taken their higher education in a non-English speaking country
+must demonstrate proficiency in English, as described in Section 3. The award of a Teaching Assistantship
+is contingent on the candidate’s ability to speak English proficiently. All non-native English speakers will
+be required to have TOEFL/SPEAK score 23 or above, or IELTS/SPEAK score of 7 or above, before being
+assigned to classroom or other teaching duties. Students who do not meet these requirements must take
+remedial courses OAE 594, and possibly OAE 592, depending on their TOEFL/IELTS SPEAK scores. Firstyear international students are advised to take full advantage of every opportunity to improve their fluency in
+English through frequent conversation with other English speakers, and by enrolling in appropriate English
+language courses.
+Students on assistantship who cannot fulfill their obligations may not have their assistantships renewed;
+students who entered without support or with partial support will not be considered for full support the
+second year if they cannot assume the obligations of a teaching assistant.
+
+8
+
+Additional Information Specific to Stony Brook Students
+
+This section, in its entirety, applies only to Stony Brook University students.
+
+8.1
+
+Sample Course Schedules for MS
+
+Important: Every student has different strengths, preparation, interests, and goals. The schedule below
+is shown only as a sample, and as a point of discussion. Many students’ schedule may vary significantly
+from that. Students are strongly advised to formulate a schedule that suits them best, helps them build
+a strong academic background in terms of coursework, experiential projects and grades, and prepares
+them for success in their future careers.
+An example course schedule for MS with Advanced Project Option is shown in Figure 1. This schedule
+assumes the student had a good undergraduate CS preparation.
+Note: Credits for the last semester add up to only 3. A student with a strong academic record and who is
+confident of successfully completing the requirements can then take an “underload”; other students may add
+any combination of courses to meet full-time status requirements.
+24
+
+Year 1
+
+Year 2
+
+FALL #1
+Breadth #1
+Breadth #2
+Elective #1
+Term Total
+
+Credits
+3
+3
+3
+9
+
+SPRING #1
+Breadth #3
+Elective #2
+CSE 593
+Term Total
+
+Credits
+3
+3
+3
+9
+
+FALL #2
+Elective #3
+Elective #4
+CSE 523
+Term Total
+
+Credits
+3
+3
+3
+9
+
+SPRING #2
+CSE 524
+Term Total
+
+Credits
+3
+3
+
+SUMMER #1
+CSE 596
+Term Total
+
+Credits
+1
+1
+
+Figure 1: Sample MS Course Schedule
+Alternative Schedules. Students with excellent academic preparation may be able to complete all requirements in three semesters (excluding Summer). Such an accelerated schedule may require more than 9 credits
+in a Fall/Spring, and/or graduate coursework or project over a Summer semester.
+Note that one lecture course among those required—depending on your project track/option—can be
+met with 3 or more credits of CSE 698, Teaching Practicum. Credits for CSE 698 can be accumulated
+over multiple semesters. This may provide some flexibility in arranging an accelerated schedule without
+significant overload in any semester. However, CSE 698 also involves significant time commitment, and
+caution is advised when choosing this higher workload.
+
+8.2
+
+Internship
+
+Some of the course credits required for the MS and PhD degrees can be satisfied with industrial internships.
+International students need special approval to work off-campus on internships (see Section 8.3). Note that
+internships or practical training is not necessary for completing the graduate program.
+• MS Program: Credits for internship can be earned via CSE 596 (off-campus internship project) or
+CSE 597 (on-campus internship project).
+• PhD Program: Credits for internship can be earned via CSE 696 (off-campus internship project) or
+CSE 697 (on-campus internship project).
+The difference between the on-campus (597/697) vs. off-campus (596/696) courses is that students registering only for CSE 596/696 will not be assessed fees such as the “transportation fee,” which are associated
+with on-campus activities.
+Internship projects must have sufficient core Computer Science components requiring graduate-level
+work. To claim credit for an internship project, the student must provide a description of the duties to be
+performed as part of the internship and emphasize the educational/research value of the employment, and
+the internship’s relevance to the student’s course of study.
+At the conclusion of their internship duties, the student should supply a letter from the place of internship
+that briefly describes the work performed. The letter does not need to reveal confidential information but
+rather should outline the work performed and its relevance to the student’s degree. It should be the same
+level of detail one might put on a resume/CV (so that students can indeed describe the work briefly on their
+25
+
+CV, which is helpful for gaining full-time employment). This letter may be submitted as email to the graduate
+director/adviser. The letter should include a note on whether the student’s performance in the project was
+satisfactory or not, and briefly summarize the intern’s duties so they can be assessed by the graduate program
+at the conclusion of the internship, for the student to receive full credit for the internship; a detailed evaluation
+is not needed. Such a letter is essential for the student to receive grades in the accompanying course.
+
+8.3
+
+Curricular and Optional Practical Training
+
+Due to U.S. government regulations related to work permits, international students must do internships
+through Curricular Practical Training (CPT) or Optional Practical Training (OPT).
+Curricular Practical Training: CPT allows international students studying in the U.S. to go on an offcampus internship during their studies. It is described in detail by the Visa and Immigration Services (VIS)
+office here: https:// www.stonybrook.edu/ commcms/ visa/ immigration-status/ f1-students/ Employment-and-Training/
+CPT# Overview. The rules require that employment be an “integral” part of the student’s established curriculum (i.e., to ensure that the internship is highly related to the student’s course of study).
+CPT can be taken only in conjunction with a course, as specified below, and certain restrictions apply.
+• MS Program: CPT can be taken in conjunction with CSE 596 (Internship in Research), CSE 523/524
+(Advanced Project in Computer Science I and II), or CSE 599 (MS Thesis Research).
+– CPT can be taken in conjunction with CSE 596. Consistent with the requirements of CSE 596,
+the student must provide a description of the duties to be performed as part of the internship and
+emphasize the educational/research value of the employment, and the internship’s relevance to
+the student’s course of study.
+– If CPT is taken in conjunction with CSE 523/524 or CSE 599, the work to be performed as part of
+the training must be an integral part of the student’s MS project or thesis, whichever applies. The
+student must submit a description of the work to be performed during the training and explain
+how it is integral to the project or thesis.
+• PhD program: CPT can be taken in conjunction with CSE 696 (PhD Internship in Research) or CSE
+699 (PhD Dissertation Research).
+– CPT can be taken in conjunction with CSE 696. The student must provide a description of the
+duties to be performed as part of the internship and emphasize the educational/research value of
+the employment.
+– If CPT is taken in conjunction with CSE 699, it must be an integral part of the student’s PhD
+thesis work. The student must submit a description of the work to be performed as part of the
+training and explain how it is integral to the dissertation research.
+Whether CPT is taken in conjunction with CSE 596/696 or CSE 523/524/599/699, the aforesaid description
+must be filed with the Visa and Immigration Services (VIS) office. Endorsements by the student’s project or
+thesis advisor, the employer, and the Graduate Program Director may be needed as per the current policy in
+force in the VIS office.
+Procedure for applying for CPT: CPT application starts with the VIS portal. Upon completion of their
+application, the CS department gets a notification to clear the student for internship; the CS department
+
+26
+
+verifies that the student meets the departmental requirements to receive a CPT. The VIS office resumes
+processing upon receiving an approval from the CS department.
+Every student who accepts an offer for internship should declare their intent to go for internship with
+a specific employer to the department within 7 days of accepting the offer. CPTs will be approved only
+to the declared employer. Failure to declare accepted offer in a timely manner will result in denial of
+CPT. Any substantiated report of reneging on internships, despite these mechanisms, will result in an
+unsatisfactory (“U”) grade in the internship course and denial of additional/future CPTs.
+Requirements for CPT: The VIS office at Stony Brook University does not approve CPT requests for
+international students unless the student (i) has completed two full regular semesters (i.e., Fall or Spring)
+in residence, (ii) has a GPA of 3.0 or above and is otherwise in good standing, and (iii) has no incomplete
+grades. In addition, the Computer Science Department does not normally approve CPT requests until the
+student has completed proficiency requirements (if any) stated in the offer of admission.
+A student may apply for CPT during Fall and Spring semesters under certain special circumstances:
+• If the student’s PhD thesis, or MS advanced project or thesis require this internship; then a CPT may
+be taken in conjunction with CSE 523/524, CSE 599, or CSE 699.
+• If an MS student is pursuing an internship not directly related to their MS thesis or project, the student’s
+advisor approves of the internship, and certifies that the internship work is not expected to impede the
+normal academic progress of the student.
+See the Fall/Spring CPT document for more details on the constraints that apply to internship in Fall/Spring
+semesters. Note that any internship, regardless of the semester/summer it is taken, must still be related to a
+student’s course of study (i.e., Computer Science).
+Optional Practical Training: This matter concerns only international students. International students are
+typically granted certain period when they can work in the U.S. during and after completion of their degree.
+This opportunity is known as Optional Practical Training (OPT). OPT is not part of the Computer Science
+graduate program. However, an international student who wishes do an internship (CSE 596/597/696/697)
+can do so in conjunction with OPT, if for some reason this internship cannot be done as part of CPT. However,
+using OPT for an internship before completing a degree comes with significant downsides. Please consult
+the specialists of the VIS office regarding the rules governing the OPT option.
+
+8.4
+
+Financial Support
+
+General information regarding financial support appears in Section 7.
+PhD students in Stony Brook who are appointed as Teaching/Research/Graduate Assistants and/or as
+fellows receive tuition awards. Out-of-state residents who are able to do so (U.S. citizens and permanent
+residents) must become New York residents after twelve months of their graduate studies in order to remain
+eligible for tuition awards. Full information and requirements can be found here: https:// www.stonybrook.
+edu/ commcms/ bursar/ residency/ index.php. A full tuition award generally covers tuition for 9 credits, which
+is required for the student’s full-time status. G3 student’s tuition award covers up to 12 credits of tuition.
+Students with English Language requirements may request additional tuition to cover the required English
+courses.
+
+27
+
+8.5
+
+Summer Registration
+
+While the summer session is just as long as any fall/spring semesters, the rules for summer registrations are
+different.
+New students: New students who were admitted for full-time studies must register full-time during their
+first semester on campus. For Stony Brook University students, this means that summer admits must register
+for at least 9 credits for the summer session to which they were admitted. The 9 credits can be distributed
+over Summer sessions I and II as needed.
+Continuing students: Continuing students who have a GA or RA during the Summer must register for
+either of the two summer sessions. If no appropriate courses are available, students may register for 0 credits
+of CSE 800. (Note that CSE 800 does not count towards any degree.) The Graduate School advises this
+for reasons related to tracking federal grants, tax issues, and Homeland Security. Summer registrations
+are required to ensure continuation of fellowships. However, summer registrations are not required for
+determining full-time status of continuing students.
+Some students students desire to prove to visa authorities, funding agencies, and others, that they are
+continuing to study in the coming fall semester. The best way to achieve this is to simply register for
+something for the fall ahead of time. If this is not possible, students may register for zero (0) credits of CSE
+800 during the summer session.
+Graduating MS students: MS students who plan to graduate in the summer can register for any available
+course for any credits required to graduate. There are no full-time requirements during summer sessions, so
+a minimum of one credit is required but sufficient. Note that rarely do we offer lecture courses during the
+summer; summer registrations are often for project, thesis, or independent study (as well as GRD 700).
+Graduating PhD students: PhD students who plan to graduate and defend in a summer session must
+register for one (1) credit of GRD 800 (not CSE 800). The Graduate School covers the tuition for this one
+credit.
+
+8.6
+
+Winter Registration
+
+Because the winter session is very short (just 4–6 weeks), it is rare for students to register for any courses
+during the winter, and the options are quite limited.
+New students: New students who were admitted for full-time studies must register full-time during their
+first semester on campus. For Stony Brook University students, this means that winter admits must register
+for at least 3 credits for the winter session to which they were admitted.
+Continuing students: Students who continue to study in a Spring semester following a Fall semester are
+not required to register to anything during the winter. A limited choice of project, thesis, and independent
+study courses are available upon request and approval of advisers and the Graduate Program Director.
+Graduating MS students: MS students who plan to graduate in the winter can register for any project,
+thesis, or independent study course (or GRD 700) for the credits required to graduate. There are no full-time
+requirements during winter sessions, so a minimum of one credit is required but sufficient. The minimum
+of one credit is required to satisfy international students’ visa status; domestic MS students, however, may
+register for zero (0) credits.
+28
+
+Graduating PhD students: PhD students who plan to graduate and defend in a winter session must register for one (1) credit of GRD 800 (not CSE 800). The Graduate School covers the tuition for this one
+credit.
+
+8.7
+
+Underload (Reduced Course Load)
+
+An international graduate student with a documented medical condition (in any semester), or in their graduation semester, may petition to be considered for full-time status despite enrolling in fewer credits than
+otherwise required to maintain that status. This is called “Reduced Course Load” (RCL) status. Students
+must contact the VIS office directly if they want to be considered for this due to medical reasons. For students in their graduating semester petitioning for this full-time certification, they must be registered for the
+credits and courses sufficient to satisfy the graduation requirements. Note that the certification is not automatic. Students have to submit a petition for an “reduced course load” via the VIS office, which must then
+be approved by the Department, then routed back to VIS for final checks and approvals.
+Domestic students who need this certification should contact the Graduate Program Coordinator.
+Important, please read: “Underloading” in the final semester may seriously affect international students.
+The student must graduate at the end of the semester in which an underload is granted. Otherwise, there
+could be a violation of the legal immigration status. Thus, underload should be selected prudently. A
+student on underload who does not meet the requirements to graduation may have no visa, no CPT or job,
+and no degree—and will be forced to leave the country. See https:// www.stonybrook.edu/ commcms/ visa/
+immigration-status/ f1-students/ reduced-course-load.php# Overview for details.
+The department may deny underload petitions for “at risk” students such as those with borderline GPAs
+or a history of probation.
+
+9
+
+Additional Information Specific to SUNY Korea Students
+
+This section, in its entirety, is applicable to SUNY Korea students only.
+
+9.1
+
+Financial Support
+
+PhD students are generally supported on teaching or research assistantships. Some MS students are also
+supported in this way. Other support opportunities in other academic or administrative departments within
+the University may become available to Computer Science students during the year.
+Teaching or research assistants are assigned part-time duties in the undergraduate or graduate instructional program or in faculty-supervised research projects, but are still able to carry a full academic program.
+PhD students are typically supported as research assistants by their dissertation advisor. Note that research
+assistantships are funded almost entirely from sponsored research grants, and the actual amount and availability may vary from year to year depending on the student’s research area and advisor.
+A student must be registered full-time in order to qualify for a teaching or research assistantship. Teaching assistants are appointed only during regular semesters (Spring/Fall) and may work up to 20 hours per
+week during the semester. Research assistants who receive more than 60% of their stipend/salary from their
+advisor’s grant(s) and have a GPA of 3.5 or higher will also receive tuition scholarship to cover the number
+of credits needed to maintain full-time status. Research assistants may work up to 20 hours per week during
+the semester and up to 40 hours per week during the summer or winter break. A student on a fractional
+assistantship must give the corresponding fraction of full service each week.
+Teaching assistantships and research assistantships are determined on a semester-by-semester basis unless any assistantship has already been granted differently. The University may limit the number of years
+
+29
+
+that a student is granted teaching assistantships to four years. All offers of financial assistance are subject to
+Graduate School approval and the availability of funds.
+A graduate student who is assigned to teaching duties (teaching assistant) is responsible to the faculty
+member in charge of the course to which s/he has been assigned. Duties will be specified by that faculty
+member and will usually include some or all of the following: lecturing to students on any subject pertinent to the course that will amplify the faculty member’s lectures; answering student’s questions concerning
+the course work; proctoring examinations; preparing solutions; grading of examinations; correction of homework assignments; supervision of laboratory sections; holding regular office hours. A document outlining the
+responsibilities of a teaching assistant is available on the CS Graduate Program website at SBU (see Graduate
+Programs/TA Responsibilities). You can access it here: https:// www.cs.stonybrook.edu/ graduate-programs/
+ta-evaluationresponsibilities. If and when there is a difference between the guidelines on the CS Graduate
+Program website at SBU and the guidelines at SUNY Korea, the ones at SUNY Korea take precedence.
+PhD students with teaching duties may register for CSE 698 (Practicum in Teaching), for up to 3 credits.
+Note that CSE 698 does not count towards the credit requirements for PhD students.
+SUNY Korea students visiting SBU will follow the financial support policy of SBU while at SBU. Refer
+to the SBU financial support policy in Section 7.
+
+9.2
+
+English Proficiency Requirements for International Students
+
+All international students and those who have taken their higher education in a non-English speaking country
+must demonstrate proficiency in English, as described in Section 3. The award of a Teaching Assistantship
+is contingent on the candidate’s ability to speak English proficiently. All non-native English speakers will
+be required to have TOEFL/SPEAK score 23 or above, or IELTS/SPEAK score of 7 or above, before being
+assigned to classroom or other teaching duties. Students who do not meet these requirements must take
+remedial courses OAE 594, and possibly OAE 592, depending on their TOEFL/IELTS SPEAK scores. Firstyear international students, in particular, are advised to take full advantage of every opportunity to improve
+their fluency in English through frequent conversation with other English speakers, and by enrolling in
+appropriate English language courses.
+Students on assistantship who cannot fulfill their obligations may not have their assistantships renewed.
+
+9.3
+
+Research Visit to Stony Brook University
+
+The Computer Science programs at SUNY Korea and Stony Brook University (SBU) are tightly integrated
+academically. This enables graduate students of both campuses to spend one or more semesters at the other
+institution to gain valuable multi-cultural experiences of how computer science technology is developed and
+applied. The research visit is optional for both MS and PhD students. The implementations and requirements
+vary as described in the subsections below.
+A SUNY Korea student may be able to graduate at Stony Brook rather than returning to SUNY Korea to
+graduate at SUNY Korea. A student who has been at SBU for at least two consecutive semesters leading to
+graduation will be able to apply for Optional Practical Training (OPT). Even without subsequent graduation
+at SBU, a 2-semester residence at SBU affords the student the opportunity of Curricular Practical Training
+(CPT).
+Applications for a research visit must be filed with the SUNY Korea Computer Science Department.
+Forms and guidelines are available at the department website. There are strict deadlines to file these applications:
+• For a visit starting in Fall: apply by March 31st of that year.
+• For a visit starting in Spring: apply by September 30th of the previous year.
+30
+
+After the application is approved, the student will be contacted by the Stony Brook Visa and Immigration
+Services to start the I-20 process.
+Note that the cost of living in New York is higher than in Songdo. Students are encouraged to refer to
+the following official websites for detailed and up-to-date information on living expenses, tuition, and health
+insurance while at SBU:
+• Graduate housing: https:// www.stonybrook.edu/ commcms/ studentaffairs/ res/ GraduateHousing.php
+• Tuition and Fees: https:// www.stonybrook.edu/ bursar/ tuition/
+• Health Insurance: https:// www.stonybrook.edu/ commcms/ studentaffairs/ shs/ insurance/ international.
+php
+Self-funded students will be requested by Stony Brook University Visa and Immigration Services to provide
+proof of personal funds to cover these expenses. These will be in addition to tuition and fees which are
+somewhat higher than the tuition and fees charged at SUNY Korea and will depend on how many credits
+the student is taking at Stony Brook. Students, PhD students in particular, should secure financial support
+at Stony Brook before s/he applies for the visit. Students covered by research grants in the form of research
+assistantships or scholarships will need to provide evidence for these at the time of application. Even while
+at SBU, students should include the affiliation of SUNY Korea in all published articles until graduation.
+Ideally, students will include affiliations of both SBU and SUNY Korea.
+9.3.1
+
+Research Visit Requirements for MS Students
+
+An MS student wishing to visit SBU to study must meet the following requirements:
+• The student’s GPA must be 3.5 or higher.
+• All course grades earned in the SUNY Korea CS department must be B+ or better.
+• The visit is only permitted after two or more semesters at SUNY Korea and a minimum of 18 CSE
+course credits (excluding ESL credits). With 31 required MS credits this results in the following two
+options:
+– Spending one semester in Stony Brook: The student will not be eligible to apply for OPT.
+– Spending two semesters in Stony Brook: The student will be eligible to apply for OPT.
+In order to justify a duration of two semesters at Stony Brook the student should have exactly 18 CSE
+credits taken at SUNY Korea before visiting SBU. (This would satisfy the minimum of 18 CSE course
+credits needed at SUNY Korea and two semesters needed at SBU to do OPT.) ESL credits do not
+count. If a student plans to begin an Advanced Project at Stony Brook, they need to secure an advisor
+at Stony Brook or SUNY Korea before they get there. Otherwise, the student can opt for the Basic
+Project option or begin a project or thesis already at SUNY Korea—the student’s SUNY Korea advisor
+will then either continue to advise the student remotely or recommend a colleague at Stony Brook.
+The required documents when filing the application are:
+1. Completed application form.
+2. Unofficial SUNY Korea transcript (must show courses enrolled in the 2nd term).
+3. Curriculum Vitae (CV): examples of projects done at SUNY Korea and elsewhere should be presented.
+31
+
+4. Personal statement: a list of academic objectives should describe what the student hopes to achieve by
+visiting SBU.
+5. Two reference letters from SUNY Korea CS faculty members: the form should list their names and the
+student should ask them to send their letters by email to the department coordinator by the deadline.
+In the typical case an MS student will have taken 18 credits at SUNY Korea and wishes to spend 2 semesters
+at Stony Brook. This student would then take 12 credits in semester I and 3 credits in semester II at SBU.
+With 18 credits taken at SUNY Korea the student will be visiting as a G1 student (unless s/he already has an
+MS degree taken at a prior institution). Contrary to SUNY Korea, G1 students at Stony Brook are required
+to take 12 credits to gain the full-time student status required for the F-1 visa.
+Once the application is received, it will be reviewed by a research visit admission committee at Stony
+Brook and the applicant will be informed about the outcome within one month after the deadline.
+9.3.2
+
+Research Visit Requirements for PhD Students
+
+A PhD student may make a research visit to SBU for a year. Before filing an application for a visit, the student
+must get an approval from his/her dissertation advisor. The student must meet the following requirements to
+apply for such a visit:
+• The student’s GPA must be 3.5 or higher.
+• The student must have passed the thesis proposal before the anticipated visit date.
+• The student should have found a co-advisor (or a secondary advisor) at SBU, who can be an SBU
+faculty member listed on the following webpage: https:// www.cs.stonybrook.edu/ people/ faculty. The
+dissertation advisor from SUNY Korea continues to remain as the dissertation advisor for the entire
+duration of the visit.
+• There should be some evidence that the student has been working with the co-advisor (or the secondary
+advisor) on a research topic of common interest between them. If they have written or plan to write a
+joint research proposal to NSF, for example, it would be good to include something about that in the
+application.
+• The student should have financial support secured at SBU prior to application.
+The required documents when filing the application are:
+1. Completed application form.
+2. Unofficial SUNY Korea transcript.
+3. Curriculum Vitae (CV).
+4. Personal statement that addresses the academic objectives of the research visit and describes a research
+plan that will be conducted at SBU. It should also outline what roles the Stony Brook co-advisor (or
+secondary advisor) and the SUNY Korea dissertation advisor will play in achieving the academic
+objectives.
+5. Information on the student’s source of funding (research grants, scholarships, personal funds, etc.).
+Some additional important points to keep in mind during the visit at SBU are the following:
+
+32
+
+• The initial period of a research visit is to be one year, but the student may apply for an extension for
+another year. The application must be approved by both CS Department Chairs at SBU and SUNY
+Korea in addition to the Graduate Program Director of the SBU CS Department.
+• The student’s affiliation remains with SUNY Korea until graduation.
+• The student’s dissertation advisor must still be a core faculty member in the Computer Science Department at SUNY Korea until graduation.
+• If applicable, students are still required to acknowledge the funding support that they received while
+at SUNY Korea, e.g., ICTCCP support, until graduation.
+• A student supported by a research grant at SUNY Korea must follow the regulations enforced by
+SUNY Korea and the grant agency.
+
+33
+
+

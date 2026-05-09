@@ -78,3 +78,5 @@ cmake-build/*
 # Misc build/test artifacts
 /Testing/
 config
+# Generated / local raft config variants
+config/1leader_2followers/raft*.yml

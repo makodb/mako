@@ -25,8 +25,15 @@
 #include <chrono>
 #include <mutex>
 #include <thread>
+#include <inttypes.h>
 
 namespace mako {
+
+enum class FakeDiskSource : int {
+    MakoData = 0,
+    RaftLog = 1,
+    RaftMetadata = 2
+};
 
 class FakeDisk {
 public:
@@ -51,7 +58,7 @@ public:
 
     // Layer 2 entry: real memcpy into rolling buffer + sleep. Used when we
     // bypass RocksDB completely so the simulator pays the byte-copy cost.
-    void write(const char* data, size_t size) {
+    void write(FakeDiskSource source, const char* data, size_t size) {
         if (!buffer_.empty() && data != nullptr && size > 0) {
             const size_t cap = buffer_.size();
             const size_t copy_size = std::min(size, cap);
@@ -62,19 +69,61 @@ public:
                 std::memcpy(buffer_.data(), data + first, copy_size - first);
             }
         }
-        sleep_for(size);
+        sleep_for(source, size);
     }
 
     // Layer 1 entry: sleep only. Used after the underlying rocksdb_flush
     // (which we keep so consensus reads still work). The flush already moved
     // the bytes; we just add the simulated disk latency on top.
-    void sleep_for(size_t bytes) {
-        const int64_t wait_us = reserve_delay_us(bytes);
+    void sleep_for(FakeDiskSource source, size_t bytes) {
+        const auto reservation = reserve_delay_us(bytes);
+        record(source, bytes, reservation.service_us, reservation.wait_us);
+        const int64_t wait_us = reservation.wait_us;
         if (wait_us <= 0) return;
         std::this_thread::sleep_for(std::chrono::microseconds(wait_us));
     }
 
+    void print_stats(const char* label) const {
+        const uint64_t mako_data_writes = source_writes_[idx(FakeDiskSource::MakoData)].load();
+        const uint64_t mako_data_bytes = source_bytes_[idx(FakeDiskSource::MakoData)].load();
+        const uint64_t raft_log_writes = source_writes_[idx(FakeDiskSource::RaftLog)].load();
+        const uint64_t raft_log_bytes = source_bytes_[idx(FakeDiskSource::RaftLog)].load();
+        const uint64_t raft_metadata_writes = source_writes_[idx(FakeDiskSource::RaftMetadata)].load();
+        const uint64_t raft_metadata_bytes = source_bytes_[idx(FakeDiskSource::RaftMetadata)].load();
+        std::fprintf(stderr,
+            "[FakeDiskStats] label=%s enabled=%d total_writes=%" PRIu64
+            " total_bytes=%" PRIu64 " total_service_us=%" PRIu64
+            " total_wait_us=%" PRIu64 " max_wait_us=%" PRIu64
+            " mako_data_writes=%" PRIu64 " mako_data_bytes=%" PRIu64
+            " raft_log_writes=%" PRIu64 " raft_log_bytes=%" PRIu64
+            " raft_metadata_writes=%" PRIu64 " raft_metadata_bytes=%" PRIu64 "\n",
+            label ? label : "unknown",
+            enabled_ ? 1 : 0,
+            total_writes_.load(),
+            total_bytes_.load(),
+            total_service_us_.load(),
+            total_wait_us_.load(),
+            max_wait_us_.load(),
+            mako_data_writes,
+            mako_data_bytes,
+            raft_log_writes,
+            raft_log_bytes,
+            raft_metadata_writes,
+            raft_metadata_bytes);
+    }
+
 private:
+    static constexpr size_t kSourceCount = 3;
+
+    struct Reservation {
+        int64_t service_us{0};
+        int64_t wait_us{0};
+    };
+
+    static constexpr size_t idx(FakeDiskSource source) {
+        return static_cast<size_t>(source);
+    }
+
     int64_t service_time_us(size_t bytes) const {
         int64_t target_us = latency_us_;
         if (bw_mbps_ > 0) {
@@ -89,9 +138,9 @@ private:
         return target_us;
     }
 
-    int64_t reserve_delay_us(size_t bytes) {
+    Reservation reserve_delay_us(size_t bytes) {
         const int64_t target_us = service_time_us(bytes);
-        if (target_us <= 0) return 0;
+        if (target_us <= 0) return Reservation{target_us, 0};
 
         using clock = std::chrono::steady_clock;
         const auto now = clock::now();
@@ -101,8 +150,30 @@ private:
             next_available_ = now;
         }
         next_available_ += std::chrono::microseconds(target_us);
-        return std::chrono::duration_cast<std::chrono::microseconds>(
+        const int64_t wait_us = std::chrono::duration_cast<std::chrono::microseconds>(
             next_available_ - now).count();
+        return Reservation{target_us, wait_us};
+    }
+
+    void record(FakeDiskSource source, size_t bytes, int64_t service_us, int64_t wait_us) {
+        const size_t source_idx = idx(source);
+        if (source_idx >= kSourceCount) return;
+
+        total_writes_.fetch_add(1, std::memory_order_relaxed);
+        total_bytes_.fetch_add(bytes, std::memory_order_relaxed);
+        total_service_us_.fetch_add(service_us > 0 ? static_cast<uint64_t>(service_us) : 0,
+                                    std::memory_order_relaxed);
+        total_wait_us_.fetch_add(wait_us > 0 ? static_cast<uint64_t>(wait_us) : 0,
+                                 std::memory_order_relaxed);
+        source_writes_[source_idx].fetch_add(1, std::memory_order_relaxed);
+        source_bytes_[source_idx].fetch_add(bytes, std::memory_order_relaxed);
+
+        uint64_t observed = wait_us > 0 ? static_cast<uint64_t>(wait_us) : 0;
+        uint64_t current = max_wait_us_.load(std::memory_order_relaxed);
+        while (observed > current &&
+               !max_wait_us_.compare_exchange_weak(current, observed,
+                                                    std::memory_order_relaxed,
+                                                    std::memory_order_relaxed)) {}
     }
 
     bool enabled_{false};
@@ -112,6 +183,13 @@ private:
     std::atomic<size_t> offset_{0};
     std::mutex schedule_mu_;
     std::chrono::steady_clock::time_point next_available_{};
+    std::atomic<uint64_t> total_writes_{0};
+    std::atomic<uint64_t> total_bytes_{0};
+    std::atomic<uint64_t> total_service_us_{0};
+    std::atomic<uint64_t> total_wait_us_{0};
+    std::atomic<uint64_t> max_wait_us_{0};
+    std::atomic<uint64_t> source_writes_[kSourceCount]{};
+    std::atomic<uint64_t> source_bytes_[kSourceCount]{};
 };
 
 inline FakeDisk& fake_disk() {

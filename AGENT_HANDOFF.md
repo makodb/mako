@@ -1,6 +1,6 @@
 # Agent Handoff - Current Mako Replication State
 
-**Last updated:** 2026-05-01  
+**Last updated:** 2026-05-04  
 **Branch:** `mako-krish-new`
 
 This file is the fast onboarding note for agents and engineers working in this repository.
@@ -15,6 +15,12 @@ Before making claims about the replication architecture, read:
 4. `docs/performance/benchmark-sweeps.md`
 5. `docs/user-manual.md`
 6. `CLAUDE.md`
+
+For thesis writing, start with the new paper-style draft and evidence tracker:
+
+1. `doc/thesis/paper_style_thesis.md`
+2. `doc/thesis/evaluation_artifacts.md`
+3. `results/benchmarks/disk_compare_replay/thesis_followup_latest_paths.txt` once the thesis follow-up sweeps finish
 
 If a thesis note or old migration doc disagrees with the current code, trust:
 
@@ -120,6 +126,12 @@ Useful current directories:
 - `results/benchmarks/final_sweeps.log`
 
 `final_sweeps.log` is the fastest way to see what long-running scripts recently did.
+
+Active thesis/evaluation jobs as of 2026-05-04:
+
+- `mako_proof_sweep_20260504_230526` is the focused disk-proof sweep for no-disk, NVMe, and Cloud-SSD at `t=1,6,11`.
+- `mako_thesis_followup_20260504_234603` waits for the proof sweep to finish, then runs the four-way no-disk sweep and ReplayPool sensitivity sweep.
+- Follow logs under `sweep_logs/`, especially `sweep_logs/mako_proof_sweep_20260504_230526.log` and `sweep_logs/mako_thesis_followup_20260504_234603.log`.
 
 ## How to Read the Current CSVs
 
