@@ -1,0 +1,56 @@
+\pdfminorversion=7
+\documentclass[12pt,letterpaper]{report}
+\usepackage[a-2b]{pdfx}
+\usepackage{thesis}
+\usepackage[
+  backend=biber,
+  style=numeric,
+  sorting=none,
+  maxbibnames=99
+]{biblatex}
+\addbibresource{bibliography/references.bib}
+
+\input{metadata}
+
+\begin{document}
+\pagenumbering{roman}
+\pagestyle{plain}
+
+\maketitlepage
+\makesignaturepage
+\makeabstractpage
+
+\clearpage
+\tableofcontents
+\clearpage
+\listoffigures
+\clearpage
+\listoftables
+
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{chapters/01_introduction}
+\input{chapters/02_background}
+\input{chapters/03_raft_backend}
+\input{chapters/04_preferred_leader}
+\input{chapters/05_single_raft_replaypool}
+\input{chapters/06_persistence}
+\input{chapters/07_validation}
+\input{chapters/08_evaluation}
+\input{chapters/09_discussion}
+\input{chapters/10_related_work}
+\input{chapters/11_conclusion}
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{References}
+\printbibliography[title={References}]
+
+\appendix
+\input{appendices/appendix_figures}
+\input{appendices/appendix_artifacts}
+\input{appendices/appendix_terminology}
+
+\end{document}

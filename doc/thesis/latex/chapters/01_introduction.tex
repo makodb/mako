@@ -1,0 +1,186 @@
+\chapter{Introduction}
+
+Replication is necessary for fault tolerance, but in a high-throughput
+transaction system it can easily become the limiting stage. A database can use
+many CPU cores to execute transactions, yet still lose scalability if every
+completed transaction must wait behind one slow replication or replay step.
+This is the setting of \Mako{}, a geo-replicated transactional key-value store
+whose original replication backend was Multi-Paxos \cite{mako-osdi25}.
+
+\Mako{} was designed around a pipeline. A leader-side process accepts
+transaction work and uses worker threads to execute many transactions in
+parallel. The effects of those transactions are recorded as transaction log
+records. A replication backend orders the records, and follower replicas replay
+the committed records into their local database state. Chapter 2 defines these
+terms in detail; the important point for the introduction is that \Mako{}'s
+performance depends on all three stages staying healthy: leader execution,
+replication commit, and follower replay.
+
+This thesis studies a practical systems question:
+
+\begin{center}
+\emph{Can Raft replace Paxos in Mako while preserving high throughput?}
+\end{center}
+
+Raft is attractive because it packages leader election, log replication, and
+leader changes into a protocol that is easier to understand and operate than
+Paxos \cite{raft-atc14}. Paxos and production Multi-Paxos systems provide the
+baseline consensus background for this comparison
+\cite{paxos-made-simple,paxos-made-live}. Raft's understandability advantage
+is useful only if Raft can fit \Mako{}'s performance shape. \Mako{} is not a
+small replicated service with one command stream. Its replication path
+interacts with worker threads, partitioned transaction lanes, follower replay,
+leader placement, and benchmark measurements that report leader-side
+throughput.
+
+The hard part is that consensus correctness and end-to-end system performance
+are different properties. A Raft backend can order commands correctly and
+still be a poor replacement if it funnels too much work through one narrow
+apply path, elects a leader that does not match \Mako{}'s transaction
+submission path, or lets followers replay committed work too slowly. The
+measured throughput must represent real replicated progress, not only records
+accepted at the leader.
+
+The central argument of this thesis is that Raft can replace \Mako{}'s Paxos
+backend without leaving Paxos's performance class, but only when the
+integration preserves the pipeline around the consensus protocol. Multi-Raft
+keeps the original Paxos-like parallel structure by using separate Raft groups
+for separate transaction lanes. Single-Raft reduces the replication topology by
+routing all partition commands through one consolidated Raft log, with one
+replica of that group running in each process, but then follower replay becomes
+the bottleneck that must be engineered explicitly. ReplayPool repairs that
+bottleneck by moving heavy follower replay work out of the narrow Raft apply
+path. Preferred leader election is used by the Raft integration more
+generally: both Multi-Raft and Single-Raft must align Raft leadership with the
+process where this \Mako{} benchmark submits and first executes transactions.
+
+\section{Why a Straight Protocol Swap Is Not Enough}
+
+It is tempting to describe this work as replacing one consensus protocol with
+another. That description is too small. \Paxos{} and \Raft{} both provide a
+way for replicas to agree on an ordered log, but the protocol is only one part
+of \Mako{}'s execution path. The surrounding system decides where transaction
+work is submitted, how many worker lanes produce log records, how committed
+records are delivered back into \Mako{}, and whether followers can apply those
+records fast enough.
+
+This distinction matters because a benchmark can otherwise be misleading. If
+the leader process accepts and commits records quickly, the reported
+leader-side throughput can look strong. But if follower replicas replay those
+records much more slowly, the system is accumulating replicated work faster
+than followers can absorb it. A thesis about replacing \Paxos{} in \Mako{}
+therefore needs more than a throughput curve. It needs evidence about topology,
+leader placement, replay progress, CPU use, and persistence work.
+
+\section{Design Overview}
+
+The first design point is Multi-Raft. Multi-Raft is the conservative
+replacement because it preserves the original shape of the Paxos path. Each
+worker/partition lane has its own Raft group, so independent streams of
+transaction records can still be ordered independently. Multi-Raft answers the
+baseline question: if Raft is given a Paxos-like topology, can it stay in the
+same performance class?
+
+The second design point is Single-Raft. Single-Raft asks whether the
+replication topology can be simplified to one consolidated Raft log for all
+partition commands, with one replica of that log running in each process. This
+reduces replication structure, but it also concentrates committed work into
+one ordered Raft path. The apply path is the code path that handles a committed
+Raft entry after consensus has ordered it. Replay work is the heavier
+follower-side step of applying that committed transaction record to local
+database state. Single-Raft is useful only if consolidation does not turn
+apply or follower replay into a hidden serial bottleneck.
+
+The third design point is preferred leader election. \Mako{}'s transaction
+submission path expects a particular process to be the leader-side producer of
+transaction records. Standard Raft can elect any eligible replica. Preferred
+leader election biases leadership toward the process that owns the Mako
+submission path while preserving normal Raft safety and failover rules. This
+placement mechanism is needed to align this leader-oriented Mako integration
+and evaluation with the expected submission process; it is not a new safety
+condition for Raft. It applies to the Raft integration as a whole, not only to
+Single-Raft. Chapter 4 explains this mechanism in depth.
+
+The fourth design point is ReplayPool. ReplayPool makes Single-Raft viable by
+keeping Raft apply lightweight. The apply path stages committed payloads and
+dispatches replay work; parallel replay workers perform the heavier
+follower-side database application. In this thesis, ``1:1'' replay
+configuration means the number of replay workers matches the number of Mako
+worker threads. It does not mean one Raft group per worker.
+
+\section{Contributions}
+
+This work makes five contributions.
+
+First, it adds a runtime-selectable Raft backend for Mako. The transaction
+layer submits transaction logs through a shared replication interface, allowing
+Paxos, Multi-Raft, and Single-Raft to run under the same workload, benchmark
+harness, and metric extraction path. This makes the comparison a systems
+comparison rather than a collection of unrelated experiments.
+
+Second, it implements preferred leader election for Mako. The mechanism biases
+Raft leadership toward the process that owns leader-side transaction
+submission for both Multi-Raft and Single-Raft, while preserving normal Raft
+voting, log matching, and failover. This is a placement mechanism around Raft,
+not a change to Raft's safety rules.
+
+Third, it evaluates Multi-Raft and Single-Raft as two different Raft
+integration strategies. Multi-Raft preserves Paxos-like partition-level
+parallelism. Single-Raft consolidates partition commands into one process-wide
+Raft log and tests whether a simpler topology can still support Mako's
+execute-replicate-replay pipeline.
+
+Fourth, it adds ReplayPool offload for Single-Raft. ReplayPool keeps Raft
+apply lightweight and moves heavy follower replay work into parallel Mako
+replay workers. This makes follower replay throughput part of the design
+evidence, not an afterthought hidden behind leader-side throughput.
+
+Fifth, it adds source-tagged simulated-disk instrumentation. The simulated-disk
+counters report bytes, writes, and normalized storage work so persistence
+results are tied to measured work rather than only to throughput curves. The
+simulated storage model is intentional: real SSD and cloud-storage behavior
+varies by device, service, and configuration. This thesis therefore evaluates
+representative NVMe and Cloud-SSD conditions with controlled bandwidth,
+latency, and queueing assumptions, then checks whether the backends performed
+comparable measured storage work.
+
+\section{Evidence Preview}
+
+The evaluation follows the same story. In the in-memory experiments, Multi-Raft
+tracks the original Paxos backend closely, and Single-Raft with ReplayPool
+stays in the same throughput class while keeping follower replay much closer
+to leader-side committed throughput. Single-Raft without ReplayPool is an
+important negative result: it can report high leader-side throughput while
+followers replay much more slowly. Under simulated Cloud-SSD persistence, the
+backends flatten near the same throughput, and the byte/write counters show
+comparable modeled storage work. These results support the thesis claim that
+Raft is viable in \Mako{} when topology, leader placement, replay parallelism,
+and persistence accounting are treated as part of the replication design.
+
+The persistence experiments include both simulated NVMe and simulated
+Cloud-SSD settings. The NVMe setting checks whether a faster storage model
+leaves the replication backends close to their in-memory behavior. The
+Cloud-SSD setting applies a slower, more restrictive storage model and is the
+case where the throughput curves flatten most clearly. In both cases, the
+interpretation depends on the measured bytes and writes, not on the shape of a
+throughput curve alone.
+
+The evaluation is intentionally organized around claims rather than around
+implementation files. The no-disk scalability experiments test whether Raft
+can stay in \Paxos{}'s performance class when storage is removed from the
+critical path. The worker CPU measurements check whether \Mako{} workers are
+still doing useful transaction work. The replay measurements check whether
+followers keep up with committed records. The simulated-disk measurements
+attach byte and write-count evidence to the persistence results so storage
+claims are not based on throughput shape alone.
+
+\section{Thesis Roadmap}
+
+The rest of the thesis follows the structure of that argument. Chapter 2
+describes the Mako pipeline and original Paxos path. Chapter 3 explains the
+Raft backend and the topology choices. Chapter 4 presents preferred leader
+election. Chapter 5 explains the Single-Raft replay bottleneck and ReplayPool.
+Chapter 6 describes persistence and simulated disk. Chapter 7 summarizes
+validation. Chapter 8 evaluates the implementation. Chapter 9 discusses
+limitations and tradeoffs. Chapter 10 relates the work to prior systems, and
+Chapter 11 concludes.

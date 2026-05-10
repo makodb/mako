@@ -1,0 +1,135 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{thesis}[2026/05/09 Mako thesis formatting]
+
+\RequirePackage[margin=1in]{geometry}
+\RequirePackage{newtxtext}
+\RequirePackage{newtxmath}
+\RequirePackage{setspace}
+\RequirePackage{graphicx}
+\RequirePackage{booktabs}
+\RequirePackage{tabularx}
+\RequirePackage{array}
+\RequirePackage{caption}
+\RequirePackage{xcolor}
+\RequirePackage{csquotes}
+\RequirePackage{microtype}
+\RequirePackage{etoolbox}
+\RequirePackage{titlesec}
+\RequirePackage{tocloft}
+\RequirePackage{needspace}
+
+\hypersetup{hidelinks}
+
+\singlespacing
+\captionsetup{font={small,singlespacing},labelfont=bf}
+\setlength{\parindent}{1.5em}
+\setlength{\parskip}{0pt}
+\raggedbottom
+
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\Large}
+  {\chaptername\ \thechapter}
+  {1.1em}
+  {\LARGE}
+\titlespacing*{\chapter}{0pt}{0.15in}{0.35in}
+
+\titleformat{\section}
+  {\normalfont\bfseries\large}
+  {\thesection}
+  {0.75em}
+  {}
+\titlespacing*{\section}{0pt}{2.2ex plus 0.6ex minus 0.2ex}{0.9ex plus 0.2ex}
+
+\titleformat{\subsection}
+  {\normalfont\bfseries\normalsize}
+  {\thesubsection}
+  {0.75em}
+  {}
+\titlespacing*{\subsection}{0pt}{1.8ex plus 0.5ex minus 0.2ex}{0.7ex plus 0.2ex}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\metric}[1]{\texttt{#1}}
+\newcommand{\figref}[1]{Figure~\ref{#1}}
+\newcommand{\tabref}[1]{Table~\ref{#1}}
+\newcommand{\Mako}{Mako}
+\newcommand{\Raft}{Raft}
+\newcommand{\Paxos}{Paxos}
+\newcommand{\ReplayPool}{ReplayPool}
+
+\renewcommand{\cftfigpresnum}{Figure~}
+\renewcommand{\cfttabpresnum}{Table~}
+\setlength{\cftfignumwidth}{6.5em}
+\setlength{\cfttabnumwidth}{6.0em}
+\renewcommand{\cfttoctitlefont}{\normalfont\bfseries\LARGE}
+\renewcommand{\cftloftitlefont}{\normalfont\bfseries\LARGE}
+\renewcommand{\cftlottitlefont}{\normalfont\bfseries\LARGE}
+\renewcommand{\cftaftertoctitle}{\par\vspace{0.35in}}
+\renewcommand{\cftafterloftitle}{\par\vspace{0.35in}}
+\renewcommand{\cftafterlottitle}{\par\vspace{0.35in}}
+\setlength{\cftbeforetoctitleskip}{0.15in}
+\setlength{\cftbeforeloftitleskip}{0.15in}
+\setlength{\cftbeforelottitleskip}{0.15in}
+\setlength{\cftbeforechapskip}{0.45em}
+
+\newcommand{\maketitlepage}{%
+  \begin{titlepage}
+  \thispagestyle{empty}
+  \begin{center}
+  \vspace*{0.8in}
+  {\Large\bfseries \ThesisTitle\par}
+  \vspace{0.7in}
+  A \ThesisDocumentType{} Presented\\
+  by\\
+  \ThesisAuthor\\
+  to\\
+  The Graduate School\\
+  in Partial Fulfillment of the\\
+  Requirements\\
+  for the Degree of\\
+  \ThesisDegree\\
+  in\\
+  \ThesisProgram\\
+  \vfill
+  Stony Brook University\\
+  \ThesisDiplomaDate
+  \end{center}
+  \end{titlepage}
+}
+
+\newcommand{\makesignaturepage}{%
+  \clearpage
+  \setcounter{page}{2}
+  \thispagestyle{plain}
+  \begin{center}
+  \ThesisAuthor\\[1.5em]
+  This \ThesisDocumentType{} has been accepted by the Graduate School\\
+  in partial fulfillment of the requirements for the degree of\\
+  \ThesisDegree\\[2.5em]
+  \ThesisAdvisor\\
+  Advisor\\[2em]
+  \ThesisChair\\
+  Chairperson of Defense\\[2em]
+  \ThesisCommitteeMember\\
+  Committee Member\\[4em]
+  \GraduateDean\\
+  Dean of the Graduate School
+  \end{center}
+}
+
+\newcommand{\makeabstractpage}{%
+  \clearpage
+  \thispagestyle{plain}
+  \begin{center}
+  Abstract of the \ThesisDocumentType{}\\
+  \ThesisTitle\\
+  by\\
+  \ThesisAuthor\\
+  \ThesisDegree\\
+  in\\
+  \ThesisProgram\\
+  Stony Brook University\\
+  \ThesisAwardYear
+  \end{center}
+  \vspace{1em}
+  \input{frontmatter/abstract}
+}

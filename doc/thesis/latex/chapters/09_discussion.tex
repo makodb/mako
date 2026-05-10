@@ -1,0 +1,30 @@
+\chapter{Discussion and Limitations}
+
+The results should not be read as "Raft is always faster than Paxos." That is
+not the thesis claim. The claim is that Raft can replace Paxos in Mako without
+falling out of the same performance class, provided the integration preserves
+the pipeline that Mako depends on.
+
+Multi-Raft is the conservative design. It keeps the original per-partition
+parallelism and is easier to compare against Paxos. It is the right design
+when preserving topology matters more than reducing replication structure.
+
+Single-Raft is the consolidation design. It is attractive because it reduces
+the number of Raft groups in a process, but it shifts pressure onto apply and
+replay. The design becomes compelling only after ReplayPool moves heavy replay
+off the apply path.
+
+Preferred leader election is a Mako-specific contribution rather than a new
+consensus protocol. It does not change Raft safety. It makes Raft leadership
+compatible with the process that Mako expects to submit leader-side
+transaction logs.
+
+The simulated-disk model is useful but limited. It lets the thesis connect
+throughput changes to measured bytes, writes, and normalized storage work. It
+does not model every aspect of SSD firmware, filesystems, Linux block
+scheduling, or RocksDB compaction. Production persistence claims would require
+a separate storage evaluation.
+
+The thesis also does not claim a complete failure-recovery performance
+evaluation. Preferred leader tests and Raft correctness tests validate the
+mechanism, but recovery throughput under failures is separate work.

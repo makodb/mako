@@ -1,0 +1,31 @@
+\chapter{Correctness and Validation}
+
+The validation chapter answers why the reader should trust the performance
+results.
+
+It should not become a test manual. The body needs a compact validation matrix
+that connects test evidence to the thesis claims.
+
+\begin{table}[htbp]
+\centering
+\caption[Validation evidence]{Validation evidence used to support the thesis claims.}
+\label{tab:validation-matrix}
+\small
+\begin{tabularx}{\linewidth}{@{}XXX@{}}
+\toprule
+Evidence class & What it checks & Thesis role \\
+\midrule
+Standalone Raft tests & election, agreement, failure, rejoin, concurrent starts & protocol sanity \\
+Preferred leader tests & startup placement, safe failback, log replication & Mako-compatible leadership \\
+Mako end-to-end tests & replicated transaction execution through the benchmark path & integration correctness \\
+Persistence smoke tests & simulated-disk lines and CSV counters populate & disk-evaluation validity \\
+Benchmark harness checks & throughput, worker CPU, replay, and disk metrics parse consistently & measurement credibility \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The most important validation rule is metric discipline. The thesis uses
+\code{throughput\_ops\_sec} as the leader-side benchmark rate. The \code{replay\_batch\_p1}
+and \code{replay\_batch\_p2} counters are follower-progress sanity counters. They
+are essential for interpreting Single-Raft, but they are not the headline
+metric.

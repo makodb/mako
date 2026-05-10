@@ -1,0 +1,241 @@
+\chapter{Raft as a Pluggable Mako Backend}
+
+Chapter 2 described the execution and replication shape that the original
+Paxos path gave to Mako. This chapter explains how Raft is placed behind that
+same replication boundary. The goal is not to retell the Raft protocol. The
+goal is to explain the systems integration: how Mako continues to submit
+transaction log records through the same helper interface, how those records
+enter Raft, and why the implementation evaluates both Multi-Raft and
+Single-Raft topologies.
+
+\section{Integration Goals}
+
+The first goal is API compatibility. Mako's transaction execution layer should
+not need to know whether Paxos or Raft orders a transaction log record. Worker
+threads still call the same replication helper functions to set up replication,
+register callbacks, submit log records, wait for submission, and shut down the
+backend. The Raft integration therefore sits behind the existing helper
+boundary rather than replacing Mako's transaction execution engine.
+
+The second goal is experimental comparability. A Paxos/Raft comparison is only
+useful if the outer experiment is held constant. The Raft backend runs under
+the same benchmark driver, worker-thread counts, TPC-C workload, CPU
+measurement path, and result extraction scripts as the Paxos backend. The
+replication backend changes, but the workload generator and the thesis metrics
+remain the same.
+
+The third goal is pipeline preservation. Raft is not used as an opaque log
+placed after Mako. It participates in the same execution path: Mako workers
+produce transaction log records, the replication helper submits them to the
+configured backend, the consensus layer commits them, and committed entries
+are delivered back through callbacks. The integration is successful only if
+this path preserves both leader-side submission and follower-side replay
+progress.
+
+\section{Runtime Replication Boundary}
+
+The codebase uses a dispatch layer to keep Mako protocol-agnostic. The shared
+replication helper stores a runtime replication type and forwards each helper
+operation to either the Paxos implementation or the Raft implementation. From
+Mako's point of view, the important operations still have the same outer
+meaning: initialize the replication backend, register the leader-side and
+follower-side callbacks, submit a transaction log record, wait for outstanding
+submissions when needed, and shut the backend down.
+
+This boundary is important because it keeps the comparison honest. The
+transaction layer does not special-case Raft. The benchmark can select the
+replication backend at startup, and the helper dispatches every later call to
+the selected implementation. In the Raft case, the selected implementation
+creates Raft-side workers that submit transaction log records into Raft. In
+the Paxos case, the selected implementation uses the original Paxos workers.
+
+The same boundary also limits what Chapter 3 needs to explain. The body of the
+thesis does not need a file-by-file inventory of every helper function. The
+relevant architectural point is simpler: Mako submits and receives committed
+work through one stable replication interface, while the backend behind that
+interface can be Paxos, Multi-Raft, or Single-Raft.
+
+\section{Topology Choices: Multi-Raft and Single-Raft}
+
+Using the worker-lane terminology from Chapter 2, the Raft integration has two
+topology choices. Multi-Raft keeps the original Paxos-shaped structure:
+separate partition lanes are backed by separate Raft groups. Single-Raft
+consolidates those lanes into one ordered Raft log and carries partition
+identity inside each replicated command.
+
+\figref{fig:replication-topologies} shows the difference. The left panel is
+the original Multi-Paxos shape. The middle panel is Multi-Raft: each partition
+lane maps to its own Raft group, so the replication topology preserves the
+same broad parallelism as the original backend. The right panel is
+Single-Raft: partition lanes submit into one consolidated Raft group, with one
+local replica of that group running in each benchmark process. After commit,
+the partition-lane identifier inside the command tells Mako which lane should
+receive the committed record.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{figures/manual/fig02_replication_topologies.pdf}
+\caption[Replication topologies]{Replication topologies evaluated in this thesis. Multi-Raft preserves the original per-partition parallelism with one Raft group per partition lane. Single-Raft consolidates partition commands into one Raft log, with one replica of the consolidated group running in each process.}
+\label{fig:replication-topologies}
+\end{figure}
+
+Multi-Raft is the conservative design. It asks whether Raft can remain in
+Paxos's performance class when it is given a topology that matches the
+original system. Each local partition lane has a corresponding
+Raft-side worker and local Raft replica. Work from different lanes does not
+share one Raft log, so the design preserves the same kind of replication
+parallelism that made the original Multi-Paxos path a natural fit for Mako.
+
+Single-Raft asks a different question. One consolidated Raft group spans the
+replica processes, and each process hosts one local replica for that group.
+All partition commands from a process pass through that shared log. This
+reduces the amount of Raft machinery, but it changes the pressure point.
+Instead of many independently ordered partition logs, the process now has one
+ordered path. Because many Mako lanes share that path, each committed record
+must carry enough information to be delivered back to the lane that produced
+it. That makes callback routing and follower replay engineering central to
+the Single-Raft design.
+
+\section{Raft Worker Setup}
+
+The Raft-side worker is the bridge between Mako's transaction-log pipeline and
+the Raft protocol implementation. It occupies the same architectural position
+as the original Paxos worker: Mako hands it serialized transaction log records,
+the worker submits those records to consensus, and committed records come back
+through an application callback.
+
+Raft worker setup has four conceptual steps. First, the worker creates the
+Raft protocol stack for its local replica. The replica is configured with the
+local site information and the partition lane it serves, so it can join the
+right group. Second, the worker starts the RPC service used by Raft. This
+service receives election messages and replicated-log messages from other
+replicas. Third, the worker creates the communication path used to send Raft
+messages to peers. Fourth, the worker starts supporting control paths, such as
+heartbeat handling, and starts the background submission thread that drains
+pending Mako log records.
+
+Multi-Raft and Single-Raft differ in how many workers are created. In
+Multi-Raft, setup creates one worker for each local partition lane. In
+Single-Raft, setup creates one worker from the first local site configuration
+and stores the other site bindings so the process can preserve the network
+shape expected by the rest of the configuration. The Single-Raft path creates
+stub RPC servers for the extra partition ports; these stubs preserve expected
+connections for the existing configuration, but they do not own a replicated
+log, vote as independent Raft replicas, or apply committed commands. The
+single real local Raft replica owns the consolidated Raft log.
+
+Both designs also configure preferred leadership during setup. Chapter 4 gives
+the full design and safety argument. For this chapter, the important point is
+that preferred leader configuration is part of making Raft fit Mako's
+leader-oriented submission path, and it applies to both Multi-Raft and
+Single-Raft.
+
+\section{Log Submission Path}
+
+The log submission path answers a simple question: after a Mako worker finishes
+a transaction, how does the resulting transaction log record enter Raft? At
+this point the transaction has already been executed by Mako. The Raft backend
+does not rerun the transaction. Its job is to take the record that Mako
+produced, put that record into a replicated Raft log, and later tell Mako when
+the record has committed.
+
+A concrete example helps. Suppose the worker for lane 3 finishes a transaction
+and produces a transaction log record. In Multi-Raft, lane 3 has its own Raft
+group, so the record is submitted to the lane-3 Raft group. The group itself
+remembers where the record came from: any committed record from that group
+belongs to lane 3. In Single-Raft, there is only one consolidated Raft group
+for all lanes, so the backend submits the same record to the shared Raft log.
+Because the shared log contains records from many lanes, the record must carry
+an explicit lane label saying that it came from lane 3.
+
+Before the backend accepts the record, it checks leadership. Raft only accepts
+new client commands at the leader of the group that will order the record. In
+Multi-Raft, the relevant leader is the leader of the lane-3 Raft group. In
+Single-Raft, the relevant leader is the leader of the one consolidated group.
+If the local process is not that leader, the backend refuses the local
+submission instead of pretending that a follower can accept leader-side work.
+For the benchmark, that refusal means the operation is not counted as committed
+work. Chapter 4 explains how preferred leader election makes the intended
+leader-side process hold leadership in the normal case.
+
+Once the leader check passes, the backend makes its own copy of the transaction
+log bytes and places that copy in an internal submission queue. This copy is a
+practical ownership step: the Mako worker can return and reuse its temporary
+buffer, while Raft keeps a stable copy to replicate. A background submission
+thread drains the queue and feeds records into the local Raft replica. This
+keeps the worker-facing path short and prevents Mako worker threads from doing
+all of the Raft append work inline.
+
+The last step before Raft sees the record is packaging. Raft replicates
+commands, so the backend wraps the transaction log bytes as a Raft command. In
+Multi-Raft, the command only needs the transaction log bytes because the Raft
+group already identifies the lane. In Single-Raft, the command contains both
+the transaction log bytes and the partition-lane identifier. That extra label
+is what makes the later callback delivery in Section~\ref{sec:commit-callback}
+possible: when the shared log commits the command, the backend can still route
+the committed record back to lane 3.
+
+\section{Commit and Callback Delivery}
+\label{sec:commit-callback}
+
+Commit and callback delivery are easier to understand if they are separated
+into two questions. First, when does Raft decide that a submitted record is
+committed? Second, after that decision, which Mako path receives the committed
+record?
+
+For the first question, consider a Mako worker that produced a transaction log
+record for lane 3. The local Raft leader receives the wrapped command for that
+record and appends it to its own Raft log. At this moment the record has a
+position in the leader's log, but it is still only proposed work. Mako should
+not replay it yet, because the record has not been accepted by enough replicas
+to survive a leader change.
+
+The leader then sends the log entry to follower replicas. Each follower checks
+that the new entry is consistent with the log prefix it already has. Once a
+majority of replicas has accepted entries far enough for Raft's commit rule,
+the leader can advance its commit point. In Raft, committing an entry from the
+current term can also make earlier entries committed indirectly. For this
+thesis, the important idea is simple: the record becomes committed only after
+Raft has enough replicated evidence that the record belongs in the agreed log.
+
+The second question is routing the committed record back into Mako. Raft has
+chosen the order, but the Raft backend still has to deliver the committed
+transaction log record to the correct part of Mako's database pipeline. This
+delivery happens through a callback registered by Mako. On the leader replica,
+the callback is used for leader-side completion: it tells the leader path that
+the submitted record has become committed. On follower replicas, the callback
+is used for follower-side replay: it passes the committed record to the replay
+path so the follower's local database state can catch up.
+
+The routing rule differs between Multi-Raft and Single-Raft. In Multi-Raft,
+lane 3 has its own Raft group, so a committed record from that group already
+identifies lane 3. In Single-Raft, all lanes share one consolidated Raft log,
+so the group alone is not enough information. The committed command must carry
+the partition-lane identifier that was attached during submission. When the
+Single-Raft apply path receives the committed command, it reads that identifier
+and delivers the record to the matching Mako callback for lane 3.
+
+This is the boundary of Chapter 3: Raft commits an ordered record and hands it
+back to Mako through the correct callback. What happens inside the callback is
+the next design question. It may be lightweight staging, or it may trigger
+heavier follower replay work. Chapter 5 explains why Single-Raft needed
+ReplayPool to keep that heavier replay work out of the narrow Raft apply path.
+
+\section{What Chapter 3 Establishes}
+
+The Raft integration is a pluggable backend, not a separate benchmark path.
+Mako still submits transaction log records through the shared replication
+interface, and the selected backend determines whether those records are
+ordered by Paxos, by per-partition Raft groups, or by a consolidated Raft log.
+
+Multi-Raft is the direct Paxos-shaped replacement. It keeps one Raft group per
+partition lane and therefore preserves the original replication parallelism.
+Single-Raft is the consolidation experiment. It uses one process-wide worker
+and one consolidated Raft log to order all partition commands, so it must route
+committed entries back to their original partition lanes and must handle
+follower replay carefully.
+
+These two designs set up the next two chapters. Chapter 4 explains why both
+Raft designs need preferred leader election to match Mako's leader-side
+submission path. Chapter 5 explains why Single-Raft also needs ReplayPool to
+preserve follower replay progress after consolidation.

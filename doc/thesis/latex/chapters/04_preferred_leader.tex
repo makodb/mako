@@ -1,0 +1,81 @@
+\chapter{Preferred Leader Election for Mako}
+
+Preferred leader election solves a real mismatch between standard Raft and
+Mako's execution model. Standard Raft can elect any replica whose log is safe
+to lead. That is correct for Raft safety, but Mako's benchmark and transaction
+path are leader-oriented: the throughput-producing process is expected to
+submit transaction logs through the leader-side replication path.
+
+If Raft elects a different process, the benchmark no longer measures the
+intended system. The local workers may submit into a non-leader, or the result
+may depend on accidental timeout timing. That is not a fair Paxos/Raft
+comparison and not a clean deployment story.
+
+Preferred leader election makes leadership placement explicit.
+
+\section{Motivation}
+
+In the benchmark configuration, \code{localhost} is the leader-side process. Its
+workers execute transactions, build replicated logs, and submit those logs.
+Follower processes such as \code{p1} and \code{p2} primarily replay committed logs. This
+asymmetry matches the original Paxos setup.
+
+Raft's default election mechanism does not know about this Mako role. It only
+knows which servers are alive, which logs are up to date, and which candidate
+can win a majority. Preferred leader election adds placement policy around
+Raft without changing Raft safety.
+
+The benchmark motivation is immediate, but the same design issue appears in
+real deployments. A system may want leaders near clients, near transaction
+coordinators, or on machines provisioned for leader-side CPU and network load.
+Mako makes placement especially visible because leadership is connected to
+transaction execution and log generation.
+
+\section{Design}
+
+The implementation assigns a preferred replica for each Raft group. During
+startup, the preferred replica uses a shorter election timeout, while
+non-preferred replicas use longer startup/failover timeouts. This biases the
+common startup case toward the desired leader.
+
+If the preferred replica is unavailable, normal Raft failover still works.
+Another replica can time out, become a candidate, collect votes, and lead. The
+system does not sacrifice availability to preserve placement.
+
+When the preferred replica returns, leadership can transfer back only after
+the preferred replica has caught up enough to lead safely. Preference is not
+authority. The preferred replica still has to satisfy Raft's normal election
+and log-safety conditions.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{figures/manual/fig03_preferred_leader_election.pdf}
+\caption[Preferred leader election]{Preferred leader election aligns Raft leadership with Mako's leader-oriented submission path while preserving ordinary Raft failover.}
+\label{fig:preferred-leader-election}
+\end{figure}
+
+\section{Safety Boundary}
+
+Preferred leader election changes placement policy, not consensus safety. A
+server still grants at most one vote per term. Candidates still satisfy Raft's
+log up-to-date checks. Committed entries still require the normal majority
+rule. A preferred replica cannot lead unless it wins a valid Raft election.
+
+The additional engineering condition is safe catch-up before failback. A
+non-preferred leader should not step aside merely because the preferred
+replica is alive. It should transfer only when the preferred replica has the
+committed prefix needed to lead safely. If the preferred replica is behind,
+the current leader continues to serve.
+
+This boundary is central to the contribution. Preferred leader election biases
+leadership toward a Mako-compatible process. It does not guarantee that the
+preferred replica is always leader, and it does not weaken Raft's safety
+rules.
+
+\section{Validation}
+
+Preferred leader validation is placement and safety evidence, not a throughput
+graph. The relevant tests cover preferred startup, preferred log replication,
+no-op/watermark behavior, and failover/failback when available. In the thesis
+body, these tests belong in a compact validation matrix rather than a
+line-by-line walkthrough.

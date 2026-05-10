@@ -1,0 +1,26 @@
+\chapter{Conclusion}
+
+Raft can be integrated into Mako as a high-performance replication backend,
+but the consensus protocol is only one part of the system. Mako's throughput
+depends on preserving parallelism across worker execution, consensus commit,
+apply staging, follower replay, and persistence.
+
+Multi-Raft shows the direct replacement path: keep the Paxos-shaped
+per-partition topology and implement Raft behind the existing replication
+interface. Single-Raft shows the consolidation path: reduce replication
+structure, but then engineer the replay path so the apply thread does not
+become the bottleneck. ReplayPool is the mechanism that makes the Single-Raft
+design credible as replicated execution rather than only high leader-side log
+submission.
+
+Preferred leader election solves a separate mismatch between Raft and Mako.
+Raft may elect any safe leader, but Mako's benchmark and deployment model
+expect leader-side workers to submit transaction logs through a chosen
+process. Preferred leader election biases leadership toward that process
+while preserving ordinary Raft failover.
+
+The final answer is therefore bounded but strong: Raft is a viable replacement
+for Paxos in Mako when the integration respects Mako's pipeline. The successful
+unit of design is not the consensus protocol alone, but the full path from
+leader-side transaction execution through consensus, replay, leadership
+placement, and persistence accounting.

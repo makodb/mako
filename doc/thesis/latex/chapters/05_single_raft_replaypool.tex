@@ -1,0 +1,85 @@
+\chapter{Single-Raft and ReplayPool}
+
+Multi-Raft is the direct replacement for Paxos, but Single-Raft is the more
+interesting systems design. It reduces replication structure by placing all
+partitions in one Raft group per process. That consolidation is attractive,
+but it creates a new pressure point: one ordered log can feed one apply path
+faster than follower database replay can consume entries.
+
+The thesis separates three concepts that are easy to conflate:
+
+\begin{table}[htbp]
+\centering
+\caption[Single-Raft pipeline stages]{Single-Raft pipeline stages and their roles.}
+\label{tab:replay-stages}
+\small
+\begin{tabularx}{\linewidth}{@{}XX@{}}
+\toprule
+Stage & Meaning \\
+\midrule
+Raft commit & consensus decides that a log entry is safe \\
+Apply staging & \code{raft\_apply} dispatches committed entries into Mako \\
+Follower replay & Mako replays transaction effects into database state \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The final implementation does not make \code{raft\_apply} perform all heavy replay.
+Instead, \code{raft\_apply} is kept lightweight. It stages committed entries and
+invokes callbacks. The Mako callback copies the committed payload and enqueues
+heavy work into ReplayPool. Replay workers then execute follower-side replay
+in parallel.
+
+\section{The Bottleneck}
+
+Without replay offload, Single-Raft risks a fan-in bottleneck. Many Mako
+workers can submit work, and one Raft group can order the work, but the
+apply/replay path can become narrow. As worker count increases, follower
+replay work accumulates. A benchmark may report high leader-side throughput
+while followers make much less replay progress.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{figures/manual/fig04_single_raft_replay_bottleneck.pdf}
+\caption[Single-Raft replay bottleneck]{Single-Raft replay bottleneck before ReplayPool. Many worker threads feed one ordered Raft log, but follower replay can accumulate backlog without replay offload.}
+\label{fig:single-raft-replay-bottleneck}
+\end{figure}
+
+The important claim is not that Single-Raft is fundamentally slow. The claim
+is that Single-Raft changes where parallelism must be preserved. If replay is
+kept serial, Single-Raft can look healthy from leader throughput alone while
+follower state lags behind. If replay is parallelized, the design can recover
+useful replicated progress.
+
+\section{ReplayPool Design}
+
+ReplayPool moves heavy follower-side replay out of the Raft apply staging
+thread. The pipeline becomes Raft commit \(\rightarrow\) \code{raft\_apply}
+staging \(\rightarrow\) Mako callback \(\rightarrow\) ReplayPool queue
+\(\rightarrow\) replay workers.
+
+The benchmark configuration called 1:1 means that
+\code{MAKO\_REPLAY\_THREADS} equals the Mako worker-thread count.
+
+It does not mean one Raft group per worker. It does not mean one process per
+worker. It does not mean one apply thread per worker.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{figures/manual/fig05_replay_pool_pipeline.pdf}
+\caption[ReplayPool pipeline]{Final Single-Raft replay pipeline. The Raft apply path stages committed payloads, while ReplayPool workers perform heavy follower-side replay in parallel.}
+\label{fig:replaypool-pipeline}
+\end{figure}
+
+\section{Why ReplayPool Is a Systems Contribution}
+
+Consensus protocols are often evaluated as if state-machine application cost
+were small. Mako makes that assumption unsafe. The replicated command is a
+transaction log, and follower replay updates database state. That work can be
+substantial.
+
+ReplayPool is therefore not a cosmetic optimization. It is the mechanism that
+allows Single-Raft to preserve Mako's multicore structure after consolidating
+the consensus log. The evaluation supports this by comparing leader-side
+throughput with follower replay progress and by showing that larger replay
+pools let follower replay catch up to the leader-side rate.

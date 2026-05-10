@@ -1,0 +1,26 @@
+\chapter{Related Work}
+
+This thesis is closest to three lines of work: high-throughput replicated
+transactions, consensus protocols, and storage-aware replicated logs.
+
+ROLIS and Mako motivate the performance model \cite{rolis-eurosys22,mako-osdi25}. They show that replicated
+transaction systems must treat replication as part of a multicore pipeline,
+not as a small final step after execution. This thesis follows that lesson:
+the question is not only whether Raft is correct, but whether Raft can fit
+into the transaction/replay pipeline without destroying parallelism.
+
+Paxos and Raft provide the consensus background. Paxos is the original backend
+in Mako. Raft provides a leader-based protocol with election and log
+replication \cite{paxos-made-simple,paxos-made-live,raft-atc14}. This thesis does not introduce a new consensus protocol. It
+adapts Raft to a specific high-throughput transaction system and studies the
+systems issues around that adaptation.
+
+Work on leader placement and leadership transfer is also relevant. Preferred
+leader election is related to operational leader placement, but its motivation
+here is specifically Mako's leader-oriented submission path. The preferred
+replica is favored only when Raft safety allows it.
+
+Finally, persistence evaluation relates to work on durable replicated logs and
+storage bottlenecks. The thesis uses a simulated disk to model disk pressure
+and expose byte/write statistics, while keeping the claim narrower than a full
+storage-stack evaluation.

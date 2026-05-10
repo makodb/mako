@@ -1,0 +1,215 @@
+\chapter{Background: Mako and the Original Paxos Path}
+
+\Mako{} is a geo-replicated transactional key-value store designed for high
+throughput under strong consistency \cite{mako-osdi25}. The system is built for
+online transaction processing workloads, where a server must execute many small
+transactions per second while still making each transaction durable and
+replicated. The central tension is that transaction execution can use many CPU
+cores, but replication can easily become a narrow point if all completed work
+has to pass through one serial path.
+
+This chapter focuses on the part of \Mako{} that matters for this thesis: the
+execute-replicate-replay pipeline. It does not attempt to re-explain all of
+\Mako{}'s storage engine, concurrency-control protocol, or geo-replication
+policy. The goal is narrower. A reader should leave this chapter understanding
+what work the original \Paxos{} backend performed, why its shape was good for a
+multicore transaction system, and what must remain true if \Raft{} replaces it.
+
+\section{Transactions, Commit, and Replay}
+
+A transaction is a group of reads and writes that the database treats as one
+logical operation. In a simple example, transferring money between two accounts
+requires deducting from one account and adding to another. The database should
+not expose only half of that operation. Either the whole transaction becomes
+part of the database history, or none of it does.
+
+In \Mako{}, transaction work is first submitted to a leader replica. The leader
+is the process that accepts the benchmark or client-side transaction work. Its
+worker threads execute transactions in parallel: they run the transaction
+logic, check the database state needed by the transaction, and produce the
+resulting update. The important artifact for replication is not a copy of the
+entire database. It is a transaction log record: a compact serialized record
+describing the effects that must become visible once the transaction is made
+official.
+
+Commit is the point where the replication protocol makes a transaction log
+record part of the agreed ordered history. This does not mean every follower has
+already replayed the transaction into its local database. In a replicated log
+protocol, commit means the log record has been accepted according to the
+protocol's rules, such as a quorum agreement in \Paxos{} or \Raft{}. Once a
+record is committed, replicas must apply the same committed history in the same
+order for the relevant stream.
+
+Replay is the follower-side application of an already committed log record.
+The follower reads the committed record and applies its effects to the
+follower's local database state. Replay is therefore different from transaction
+execution. The leader has already decided what the transaction's effects are.
+The follower is not re-running the full transaction as a new speculative
+operation; it is applying a committed description of that operation's effects.
+
+This distinction is important for the evaluation later in the thesis. A system
+can report high leader-side committed throughput while followers are not keeping
+up with replay. That result is not healthy end-to-end replication. For this
+reason, the thesis reports both leader-side committed throughput and follower
+replay throughput when evaluating the \Raft{} designs.
+
+\section{Worker Lanes and Replication Streams}
+
+\Mako{} inherits the broad systems idea that appears in ROLIS: multicore
+transaction execution should not be forced through one global replication lane
+when independent worker lanes can make progress in parallel
+\cite{rolis-eurosys22}. In this thesis, a partition means the execution and
+replication lane associated with a worker thread and its transaction-log
+stream. The term is used from the perspective of the benchmark and replication
+architecture: it identifies the lane whose committed records must be ordered
+consistently.
+
+A worker lane is the path of work produced by one Mako worker thread: the
+worker executes transactions and emits a sequence of transaction log records.
+A replication stream is the ordered sequence of records for that lane. The
+consensus backend decides the order within each stream, so record 1 in a lane
+precedes record 2 in that same lane, and replicas replay the committed records
+in that order. Different lanes can still progress independently when the
+replication backend gives them separate streams. The original Multi-Paxos path
+does not require every lane to wait behind one global order; it preserves the
+order that matters within each lane while allowing other lanes to advance.
+
+This organization gives the original system its performance shape. Many worker
+threads can execute transactions, and the replication layer can preserve that
+parallelism by ordering different partition streams independently. The point is
+not merely that \Paxos{} is the original protocol. The point is that the
+original backend gave \Mako{} multiple ordered streams rather than forcing all
+worker-generated records through one stream.
+
+This distinction is the easiest way to understand the Multi-Raft and
+Single-Raft designs later in the thesis. Multi-Raft keeps the same idea:
+separate worker lanes continue to have separate ordered replication streams.
+Single-Raft deliberately changes the shape by routing all lanes through one
+consolidated Raft log. That simpler shape can still be correct, but it must be
+measured carefully because one shared stream can create pressure in the apply
+and replay stages even when leader-side commit throughput looks high.
+
+That shape is the baseline that the \Raft{} implementation must confront. A
+direct replacement should ask whether \Raft{} can preserve the same
+per-partition parallelism. A more consolidated replacement can simplify the
+replication structure, but then it must show that the single ordered path does
+not hide another bottleneck in apply or replay.
+
+\section{Original Multi-Paxos Path}
+
+The original \Mako{} implementation used a Multi-Paxos backend to order
+transaction log records. The leader-side workers produced log records, the
+replication interface submitted those records to the \Paxos{} backend, and
+followers replayed committed records into their local database state.
+
+\figref{fig:mako-baseline-replication} shows this path at the level needed for
+the rest of the thesis. The left side is the leader process. Its Mako worker
+threads execute transactions and produce serialized transaction log records.
+Those records are submitted through a common replication interface rather than
+being hard-coded directly to one consensus implementation. The center of the
+figure is the original Multi-Paxos backend. It establishes the committed log
+order for each partition stream. The right side shows follower processes. They
+receive committed log records and replay them into their own local database
+state.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{figures/manual/fig01_mako_baseline_replication.pdf}
+\caption[Original Mako replication path]{Original Mako replication path. Leader workers submit transaction log records through the shared replication interface, and follower replicas replay committed logs into local database state.}
+\label{fig:mako-baseline-replication}
+\end{figure}
+
+The figure also shows why this thesis is not simply swapping one library call
+for another. The replication backend sits in the middle of the transaction
+pipeline. If it changes the ordering shape or slows replay, the change affects
+the end-to-end system. The thesis therefore treats \Raft{} integration as a
+systems problem: preserve the useful parts of \Mako{}'s original pipeline while
+changing the consensus protocol behind the replication boundary.
+
+\section{The Replication Boundary}
+
+The ability to replace \Paxos{} comes from \Mako{}'s replication boundary. The
+transaction execution layer does not need to know whether \Paxos{} or \Raft{}
+orders a log record. It submits a record to a helper layer, and the configured
+backend handles leader election, log replication, commit advancement, and
+delivery of committed records.
+
+This boundary is valuable for two reasons. First, it makes the implementation
+tractable: \Raft{} can be integrated as a backend rather than by rewriting
+\Mako{}'s transaction execution engine. Second, it makes the evaluation fair.
+The benchmark workload, worker-thread counts, CPU accounting, and result
+extraction can remain the same while the replication backend changes. When the
+evaluation later compares \Paxos{}, Multi-Raft, and Single-Raft, it is comparing
+different backend designs under a shared outer transaction workload.
+
+The boundary is not a performance guarantee by itself. A backend can satisfy
+the interface and still have the wrong shape for \Mako{}. For example, a
+backend that serializes too much work through one apply or replay stage can
+look acceptable at the point where the leader commits records, while follower
+replay falls behind. This is why the thesis evaluates both the protocol shape
+and the replay path.
+
+\section{Modes Evaluated in This Thesis}
+
+\tabref{tab:modes} summarizes the replication modes used throughout the
+evaluation. The table is included here because the names appear repeatedly in
+the rest of the thesis.
+
+\begin{table}[htbp]
+\centering
+\caption[Replication modes]{Replication modes evaluated in this thesis.}
+\label{tab:modes}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.28\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Mode & Meaning and role in the thesis \\
+\midrule
+\Paxos{} & Original Multi-Paxos backend. It is the baseline because it is the replication path that \Mako{} previously used. \\
+Multi-Raft & Direct Paxos-shaped \Raft{} replacement. Each partition lane has its own \Raft{} group, preserving the original parallel replication shape. \\
+Single-Raft without \ReplayPool{} & Consolidated \Raft{} design that routes all partition commands through one process-wide \Raft{} log, with no follower replay offload. It exposes the bottleneck created when committed work feeds a narrow replay path. \\
+Single-Raft with \ReplayPool{} & Consolidated \Raft{} design with the same process-wide \Raft{} log, but with follower replay moved into parallel replay workers. This is the engineered Single-Raft design evaluated as a viable replacement. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\Needspace{6\baselineskip}
+The last two modes require the most care. Single-Raft without \ReplayPool{} is
+not included because it is the final design. It is included because it isolates
+the bottleneck that appears when all partition commands are consolidated into
+one process-wide \Raft{} log and replay remains too narrow. Single-Raft with
+\ReplayPool{} then tests the actual fix: keep \Raft{} apply lightweight and
+move heavy follower replay into a parallel pool.
+
+\section{What This Background Establishes}
+
+The original \Mako{} path imposes three requirements on any Raft replacement
+backend. First, the backend must preserve the transaction pipeline.
+The leader should still be able to execute transactions, produce compact log
+records, and submit those records for replication without turning consensus
+into the transaction execution engine itself. \Raft{} should order records; it
+should not force a redesign of how \Mako{} workers execute transactions.
+
+Second, the backend must respect \Mako{}'s parallelism. The original
+Multi-Paxos design was not only a correctness mechanism. It was also a
+performance structure that allowed multiple worker lanes to produce and
+replicate work in parallel. Multi-Raft preserves this structure directly by
+using separate \Raft{} groups. Single-Raft changes the structure, so it must be
+judged not only by the number of committed records at the leader, but also by
+whether follower replay keeps up with those records.
+
+Third, every Raft backend must fit the way \Mako{} submits work. In the
+experiments used in this thesis, the benchmark drives transaction work through
+the leader-side process. If \Raft{} elects a different process as leader, the
+consensus protocol may still be correct, but the system no longer matches the
+leader-oriented submission path being evaluated; local submissions at the
+benchmark process may be refused or fail to represent the intended Paxos/Raft
+comparison. This is the motivation for the preferred leader mechanism
+discussed later, and it applies to both Multi-Raft and Single-Raft.
+
+These requirements explain the structure of the remaining chapters. Chapter 3
+shows how \Raft{} is placed behind the same replication boundary. Chapter 4
+explains why leadership placement matters for \Mako{}'s leader-oriented
+submission path. Chapter 5 explains why Single-Raft needs replay offload. The
+evaluation then checks the same basic question from several angles: does the
+\Raft{} backend preserve committed throughput, worker CPU use, and follower
+replay progress well enough to remain in \Paxos{}'s performance class?

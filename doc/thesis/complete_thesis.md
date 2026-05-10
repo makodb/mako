@@ -30,14 +30,15 @@ failover and safety rules.
 
 The evaluation shows that Raft can stay in Paxos's performance class when the
 topology and replay path are engineered around Mako's execution model. In the
-no-disk `t=11` experiment, Single-Raft with ReplayPool reaches about `526k`
-operations per second with follower replay progress near `499k` operations per
-second; Multi-Raft reaches about `510k`, and Paxos reaches about `472k`.
-Single-Raft without ReplayPool reports higher leader-side throughput at about
-`593k`, but follower replay progress is only about `143k`, showing why leader
-throughput alone is not enough to validate the consolidated design. Under the
-Cloud-SSD FakeDisk model, all three backends flatten near `340k` operations
-per second while recording about `7.49 GB`, `24.6k` writes, and `733` bytes
+no-disk `t=11` experiment, Single-Raft with ReplayPool reaches about 526K
+transactions/s with follower replay progress near 499K transactions/s;
+Multi-Raft reaches about 510K transactions/s, and Paxos reaches about 472K
+transactions/s. Single-Raft without ReplayPool reports higher leader-side
+throughput at about 593K transactions/s, but follower replay progress is only
+about 143K transactions/s, showing why leader throughput alone is not enough to
+validate the consolidated design. Under the Cloud-SSD FakeDisk model, all three
+backends flatten near 340K transactions/s while recording about `7.49 GB`,
+24.6K writes, and `733` bytes
 per committed transaction. These storage counters provide the evidence needed
 to explain the simulated persistence results without overclaiming real SSD
 behavior.
@@ -484,15 +485,16 @@ be viable if the replay path is engineered correctly.
 **Figure 7:** `doc/thesis/Thesis Tips and Figures/figures/graphs/fig07_no_disk_scalability.pdf`
 
 The left panel reports leader-side throughput. At `t=11`, Single-Raft without
-ReplayPool reports about `593k` operations per second, Single-Raft with
-ReplayPool reports about `526k`, Multi-Raft reports about `510k`, and Paxos
-reports about `472k`. A throughput-only reading would make the no-ReplayPool
+ReplayPool reports about 593K transactions/s, Single-Raft with ReplayPool
+reports about 526K transactions/s, Multi-Raft reports about 510K transactions/s,
+and Paxos reports about 472K transactions/s. A throughput-only reading would make the no-ReplayPool
 configuration look best.
 
 The right panel shows why that reading is wrong. At `t=11`, Single-Raft
-without ReplayPool reaches only about `143k` operations per second of follower
-replay progress. Single-Raft with ReplayPool reaches about `499k`; Multi-Raft
-reaches about `484k`; Paxos reaches about `450k`. ReplayPool therefore makes
+without ReplayPool reaches only about 143K transactions/s of follower replay
+progress. Single-Raft with ReplayPool reaches about 499K transactions/s;
+Multi-Raft reaches about 484K transactions/s; Paxos reaches about
+450K transactions/s. ReplayPool therefore makes
 Single-Raft much closer to a fully replayed replicated path. The result is not
 that ReplayPool maximizes leader-side throughput. The result is that
 ReplayPool makes the Single-Raft measurement credible as replicated execution.
@@ -535,18 +537,18 @@ not whether more replay threads monotonically increase leader-side throughput.
 
 The matrix shows that leader-side throughput stays in a relatively narrow band
 at high thread counts, even when the replay pool is too small. At `t=11`,
-throughput ranges from about `563k` to `584k` operations per second across
+throughput ranges from about 563K transactions/s to 584K transactions/s across
 the tested replay-pool sizes. A leader-throughput-only graph would therefore
 miss the actual mechanism.
 
 The replay panels show the missing evidence. At `t=11`, zero replay threads
-produce about `137k` operations per second of follower replay progress, or
+produce about 137K transactions/s of follower replay progress, or
 about `23.5%` of the leader-side throughput. One replay thread is similar at
-about `133k` operations per second and `22.8%` completeness. Two replay
-threads improve follower progress to about `257k` operations per second, but
+about 133K transactions/s and `22.8%` completeness. Two replay
+threads improve follower progress to about 257K transactions/s, but
 that is still only about `44.6%` completeness. Four replay threads reach
-about `461k` operations per second and `81.5%` completeness. Eight and eleven
-replay threads reach about `541k` and `534k` operations per second,
+about 461K transactions/s and `81.5%` completeness. Eight and eleven
+replay threads reach about 541K transactions/s and 534K transactions/s,
 respectively, and both stay near `95%` completeness.
 
 The same pattern appears before the largest endpoint. At `t=6`, zero and one
@@ -581,15 +583,15 @@ Cloud-SSD-like FakeDisk model.
 **Figure 11:** `doc/thesis/Thesis Tips and Figures/figures/graphs/fig11_disk_persistence_throughput.pdf`
 
 The NVMe model stays close to the no-disk curves. At `t=11`, Single-Raft with
-ReplayPool reaches about `545k` operations per second under NVMe, Multi-Raft
-about `509k`, and Paxos about `475k`. Those values are close to the no-disk
+ReplayPool reaches about 545K transactions/s under NVMe, Multi-Raft about
+509K transactions/s, and Paxos about 475K transactions/s. Those values are close to the no-disk
 ordering and support the interpretation that this disk model does not dominate
 the high-thread runs.
 
 The Cloud-SSD model behaves differently. At high thread counts, all three
-backends converge near `340k` operations per second. At `t=11`, Single-Raft
-with ReplayPool reports about `340,525` operations per second, Multi-Raft
-about `340,600`, and Paxos about `340,676`. This convergence is important: it
+backends converge near 340K transactions/s. At `t=11`, Single-Raft
+with ReplayPool reports about 340K transactions/s, Multi-Raft about
+341K transactions/s, and Paxos about 341K transactions/s. This convergence is important: it
 does not distinguish the consensus backends. It suggests that, under the
 Cloud-SSD FakeDisk model, the storage path becomes the shared limiting factor.
 
@@ -604,10 +606,10 @@ recording the bytes and writes charged during the benchmark.
 
 **Figure 12:** `doc/thesis/Thesis Tips and Figures/figures/graphs/fig12_simulated_disk_proof_cloudssd.pdf`
 
-At high thread counts, the Cloud-SSD throughput curves flatten near `340k`
-operations per second while the FakeDisk counters report real measured storage
+At high thread counts, the Cloud-SSD throughput curves flatten near
+340K transactions/s while the FakeDisk counters report real measured storage
 work. At `t=11`, all three backends write about `7.49 GB` through FakeDisk and
-perform about `24.6k` writes. The normalized value is about `733` FakeDisk
+perform about 24.6K writes. The normalized value is about `733` FakeDisk
 bytes per committed transaction.
 
 **Figure 13:** `doc/thesis/Thesis Tips and Figures/figures/graphs/fig13_cloudssd_bytes_per_txn.pdf`
@@ -637,7 +639,7 @@ benchmark workers are active, and ReplayPool moves replay work out of the
 apply path.
 
 Fourth, disk claims require Simulated-disk proof statistics. The Cloud-SSD model
-flattens near `340k` operations per second, and that flattening is accompanied
+flattens near 340K transactions/s, and that flattening is accompanied
 by measured bytes, writes, and bytes per committed transaction. The thesis can
 therefore explain the disk result without pretending that FakeDisk is a full
 production storage evaluation.

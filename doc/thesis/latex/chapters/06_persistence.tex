@@ -1,0 +1,33 @@
+\chapter{Persistence and Simulated Disk}
+
+A production consensus system must persist enough state to recover safely
+after crashes. For Raft, that includes term, vote, and log state. The Mako
+Raft integration includes persistence hooks for Raft log storage and metadata.
+This thesis discusses those hooks only as much as needed to explain the
+evaluation. It does not claim a full production storage-stack evaluation.
+
+The evaluation uses simulated persistence through the FakeDisk implementation,
+which models a queued device with configurable bandwidth and latency. It does
+not model every detail of SSD firmware, filesystems, Linux block scheduling, RocksDB
+compaction, or device-level writeback. Its purpose is narrower: when
+persistence is enabled, it records how much storage work the benchmark
+generates.
+
+The instrumentation reports total simulated-disk writes, total simulated-disk bytes,
+source-tagged payload bytes, modeled service time, and wait-time diagnostics.
+For the thesis body, the most useful metrics are aggregate bytes, write count,
+and bytes per committed transaction. Max wait is retained as a diagnostic
+counter, but it is a worst-case statistic and is expected to be noisier than
+aggregate byte/write counters.
+
+These counters are needed because disk throughput curves alone are not enough.
+If Cloud-SSD-like persistence flattens as worker count increases, the thesis
+must show whether the benchmark also generated measured persisted data and
+write work. Otherwise the result could be dismissed as a benchmark artifact.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{figures/manual/fig06_simulated_disk_proof_path.pdf}
+\caption[Simulated-disk proof path]{Source-tagged simulated-disk instrumentation. Persistence writes are charged to a simulated disk model and reported as bytes, writes, normalized bytes per transaction, and source breakdowns.}
+\label{fig:simulated-disk-proof-path}
+\end{figure}
