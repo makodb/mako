@@ -1,81 +1,237 @@
 \chapter{Preferred Leader Election for Mako}
 
-Preferred leader election solves a real mismatch between standard Raft and
-Mako's execution model. Standard Raft can elect any replica whose log is safe
-to lead. That is correct for Raft safety, but Mako's benchmark and transaction
-path are leader-oriented: the throughput-producing process is expected to
-submit transaction logs through the leader-side replication path.
+Chapters 2 and 3 established that the Raft backend must fit an existing
+Mako execution model. Mako's worker threads run on a leader-side process,
+produce transaction log records, and submit those records into the replication
+layer. Follower processes receive committed records and replay them into their
+local state. The original Mako/Paxos path fit this shape naturally because the
+leader-side role was fixed by the benchmark and deployment setup. There was no
+independent Raft-style election that could move the active submission role to a
+different process.
 
-If Raft elects a different process, the benchmark no longer measures the
-intended system. The local workers may submit into a non-leader, or the result
-may depend on accidental timeout timing. That is not a fair Paxos/Raft
-comparison and not a clean deployment story.
+Raft changes that assumption. In ordinary Raft, any replica with a safe enough
+log may become leader if it wins an election. That is correct for Raft, but it
+creates a placement problem for Mako: the process that Raft chooses as leader
+must line up with the process where Mako is submitting transaction work.
+Preferred leader election is the mechanism used in this thesis to solve that
+integration problem. It is not a new consensus protocol. It is a leader-placement
+policy around Raft that makes Raft leadership compatible with Mako's
+leader-oriented transaction submission path while preserving ordinary Raft
+safety and failover behavior.
 
-Preferred leader election makes leadership placement explicit.
+\section{The Placement Problem}
 
-\section{Motivation}
+Consider the three-replica setup used throughout this thesis: one submission
+replica and two backup replicas. In the benchmark configuration, the submission
+replica is the process that runs the throughput-producing Mako worker threads.
+Those workers execute transactions, serialize the resulting transaction log
+records, and submit the records into the local replication backend. The backup
+replicas are follower replicas in the normal case. They receive the committed
+records and replay them into their own database state.
 
-In the benchmark configuration, \code{localhost} is the leader-side process. Its
-workers execute transactions, build replicated logs, and submit those logs.
-Follower processes such as \code{p1} and \code{p2} primarily replay committed logs. This
-asymmetry matches the original Paxos setup.
+This arrangement is not an accident of naming. It is part of how the Mako
+benchmark path is organized. The local process is the one producing the
+leader-side work whose throughput is reported. The follower processes are the
+evidence that the committed work is replicated and replayable elsewhere. In the
+original Paxos integration, this did not require a separate leader-placement
+mechanism because the Paxos path was wired around that fixed leader-side role.
+Mako submitted work through the expected process, and the comparison did not
+depend on a separate election choosing among replicas with different Mako roles.
 
-Raft's default election mechanism does not know about this Mako role. It only
-knows which servers are alive, which logs are up to date, and which candidate
-can win a majority. Preferred leader election adds placement policy around
-Raft without changing Raft safety.
+This is also why the issue cannot be solved by simply letting Raft elect any
+safe leader and leaving the rest of Mako unchanged. The benchmark workers run in
+the leader-side submission role, and the transaction log records they generate
+enter the replication layer through the local backend attached to that role.
+The integration does not include a second path that moves workload generation
+or forwards every generated log record to whichever remote replica Raft happens
+to elect.
 
-The benchmark motivation is immediate, but the same design issue appears in
-real deployments. A system may want leaders near clients, near transaction
-coordinators, or on machines provisioned for leader-side CPU and network load.
-Mako makes placement especially visible because leadership is connected to
-transaction execution and log generation.
+With Raft, the same setup has a new degree of freedom. Standard Raft is allowed
+to elect either backup replica if that replica is eligible and can obtain a
+majority. From Raft's point of view, such a leader can be perfectly safe. From
+Mako's point of view, however, it is the wrong placement for the normal
+benchmark path. The Mako workers on the submission replica would be submitting
+transaction log records to a local replica that is not the Raft leader. A
+non-leader replica cannot accept those records as the source of a new committed
+log order, so the run would no longer measure the intended leader-side
+Mako/Raft pipeline.
 
-\section{Design}
+The issue is therefore not that Raft elects unsafe leaders. The issue is that
+Raft's default election policy is unaware of Mako's role assignment. Mako needs
+the leader-side submission process and the Raft leader process to be the same
+replica during the normal case. Preferred leader election makes that placement
+choice explicit.
 
-The implementation assigns a preferred replica for each Raft group. During
-startup, the preferred replica uses a shorter election timeout, while
-non-preferred replicas use longer startup/failover timeouts. This biases the
-common startup case toward the desired leader.
+\section{Why Mako Needs Preferred Leadership}
 
-If the preferred replica is unavailable, normal Raft failover still works.
-Another replica can time out, become a candidate, collect votes, and lead. The
-system does not sacrifice availability to preserve placement.
+Preferred leadership is required by the Mako/Raft integration, not by Raft
+correctness. A standalone Raft service can usually accept client requests at
+whichever replica is currently leader, or it can redirect clients to that
+leader. Mako's benchmark path is more structured. As described in Chapter 2, the
+worker lanes on the leader-side process execute transactions and produce log
+records. As described in Chapter 3, the Raft backend sits behind Mako's existing
+replication boundary. The local Mako workers expect that boundary to lead to a
+leader-side replication path.
 
-When the preferred replica returns, leadership can transfer back only after
-the preferred replica has caught up enough to lead safely. Preference is not
-authority. The preferred replica still has to satisfy Raft's normal election
-and log-safety conditions.
+This requirement applies to both Raft topologies evaluated in the thesis. In
+Multi-Raft, each worker-lane partition has its own Raft group, and the local
+replica of each group must be the normal leader for that lane's transaction
+submissions. In Single-Raft, all partition commands share one consolidated Raft
+log, and the local replica of that consolidated group must be the normal leader
+for all worker-lane submissions. Single-Raft later needs ReplayPool to keep
+follower replay from becoming the bottleneck, but both Multi-Raft and
+Single-Raft need preferred leadership to align Raft with Mako's leader-oriented
+submission path.
+
+The mechanism also makes the evaluation fairer. The goal is to compare Paxos,
+Multi-Raft, and Single-Raft as replication backends for the same Mako execution
+pipeline. If Raft leadership lands on a follower process while Paxos uses the
+fixed leader-side process, the experiment is no longer comparing equivalent
+paths. Preferred leader election removes that accidental difference. It lets the
+Raft runs use the same leader-side execution and submission role that the Paxos
+runs use.
+
+\section{Design: Preference, Not Authority}
+
+The design principle is preference, not authority. The preferred replica is the
+replica that should lead in the normal case because it is where Mako submits
+leader-side transaction work. Preference does not give that replica permission
+to ignore Raft's rules. It only biases leadership placement toward the replica
+that matches Mako's execution model.
+
+Figure~\ref{fig:preferred-leader-election} shows the normal arrangement. Mako
+workers submit transaction log records to the preferred leader, which is the
+submission replica in the normal case. That leader replicates the Raft log to
+the backup replicas. The backup replicas are not passive storage devices: they
+remain ordinary Raft replicas that can participate in elections and can lead if
+the preferred replica is unavailable. The figure is intentionally about
+placement. It shows where leadership should live in the common case, not a new
+set of consensus rules.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/manual/fig03_preferred_leader_election.pdf}
-\caption[Preferred leader election]{Preferred leader election aligns Raft leadership with Mako's leader-oriented submission path while preserving ordinary Raft failover.}
+\caption[Preferred leader election]{Preferred leader election for Mako. The local transaction-submitting process is favored as leader when healthy, while backup replicas remain available for ordinary Raft failover.}
 \label{fig:preferred-leader-election}
 \end{figure}
 
+This distinction matters during failures. If the preferred replica is
+unavailable, the system should not stop merely because the normal submission
+replica cannot lead. Raft availability still comes from allowing a majority of
+replicas to elect a leader. In that case, a backup replica may become leader
+using the ordinary Raft election rules. When the preferred replica later
+returns, preference can help move leadership back only after the returning
+replica is safe enough to lead. The preferred replica does not become leader
+simply because it has a preferred label.
+
+\FloatBarrier
+
+\section{Mechanism}
+
+The mechanism can be understood as three phases: startup bias, failover, and
+safe failback.
+
+At startup, the Raft configuration marks the Mako submission process as the
+preferred replica for each relevant Raft group. For Multi-Raft, that means the
+local replica is preferred for each worker-lane Raft group. For Single-Raft,
+that means the local replica is preferred for the consolidated Raft group. The
+purpose is to make the normal startup case choose the same process that Mako
+uses for leader-side transaction execution and log submission.
+
+During failover, preference gives way to availability. If the preferred replica
+is unavailable, the backup replicas continue to run ordinary Raft elections.
+They can vote, win leadership, replicate entries, and commit records according
+to Raft's normal rules. This is important because a leader-placement policy that
+prevented backups from leading would make the system less available than Raft
+itself.
+
+Safe failback handles the opposite direction. Suppose a backup replica is
+currently leader because the preferred replica was unavailable. When the
+preferred replica returns, the backup leader cannot simply hand over leadership
+immediately. First, the current leader must believe that the preferred replica
+has caught up with the committed prefix of the log. In simple terms, the
+preferred replica must have the committed history that a leader is responsible
+for preserving. Once that condition holds, the current leader can send a
+best-effort transfer hint through the normal Raft communication path and step
+aside. The preferred replica must still become leader through Raft's election
+rules; the hint does not install it as leader by itself.
+
+This mechanism is deliberately modest. It does not add a second leader role and
+does not create a special path for client commands. It only makes leader
+placement cooperate with Mako's existing execution structure.
+
 \section{Safety Boundary}
 
-Preferred leader election changes placement policy, not consensus safety. A
-server still grants at most one vote per term. Candidates still satisfy Raft's
-log up-to-date checks. Committed entries still require the normal majority
-rule. A preferred replica cannot lead unless it wins a valid Raft election.
+Preferred leader election changes placement policy, not consensus safety. The
+ordinary Raft safety rules remain the boundary around the mechanism. A replica
+still grants at most one vote in a term. Terms still identify newer leadership
+attempts and prevent older leaders from continuing after they are superseded.
+Candidates still have to satisfy Raft's log up-to-date voting rule. Committed
+entries still require majority replication. A preferred replica that is stale
+cannot safely become leader merely because it is preferred.
 
-The additional engineering condition is safe catch-up before failback. A
-non-preferred leader should not step aside merely because the preferred
-replica is alive. It should transfer only when the preferred replica has the
-committed prefix needed to lead safely. If the preferred replica is behind,
-the current leader continues to serve.
+The catch-up condition is the key engineering guard for failback. The current
+leader should attempt transfer only when it believes the preferred replica has
+the committed prefix of the log. That condition does not replace Raft's election
+rules; it prevents the implementation from encouraging a stale replica to seek
+leadership. If the preferred replica is behind, if the transfer hint is lost, or
+if another election happens first, the system falls back to ordinary Raft
+behavior.
 
-This boundary is central to the contribution. Preferred leader election biases
-leadership toward a Mako-compatible process. It does not guarantee that the
-preferred replica is always leader, and it does not weaken Raft's safety
-rules.
+This is why the chapter's claim is narrow. Preferred leader election makes Raft
+usable in Mako's leader-oriented submission model. It does not make Raft safer,
+and it does not weaken Raft to obtain placement.
+
+\section{What It Does Not Claim}
+
+Preferred leader election should not be read as a stronger protocol than it is.
+It does not promise that the preferred replica is always leader. It does not
+bypass voting, term checks, or log freshness checks. It does not make a stale
+preferred replica safe to lead. It does not replace normal Raft failover. It
+also does not, by itself, claim a complete production failure-recovery
+evaluation.
+
+Those limits are important for the thesis argument. The contribution is not
+``Raft with a new safety rule.'' The contribution is a Mako-specific integration
+mechanism: keep ordinary Raft failover available, but bias normal leadership
+toward the process where Mako can actually submit leader-side transaction work.
 
 \section{Validation}
 
-Preferred leader validation is placement and safety evidence, not a throughput
-graph. The relevant tests cover preferred startup, preferred log replication,
-no-op/watermark behavior, and failover/failback when available. In the thesis
-body, these tests belong in a compact validation matrix rather than a
-line-by-line walkthrough.
+The validation evidence for preferred leader election is placement and
+integration evidence rather than a throughput graph. Table~\ref{tab:preferred-validation}
+summarizes the tests and checks that support the mechanism.
+
+\begin{table}[htbp]
+\centering
+\caption[Preferred leader validation]{Preferred leader validation evidence.}
+\label{tab:preferred-validation}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.37\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Evidence} & \textbf{What it checks} & \textbf{Claim supported} \\
+\midrule
+Preferred startup placement &
+The configured preferred replica becomes the normal startup leader. &
+Raft leadership can be aligned with Mako's leader-side submission process in the common case. \\
+\addlinespace
+Preferred-leader replication &
+Records submitted through the preferred leader replicate to the other replicas. &
+The placement mechanism does not break ordinary log replication. \\
+\addlinespace
+No-op and watermark propagation &
+Synchronization records used by Mako still move through the replicated log. &
+Preferred leadership remains compatible with Mako's replicated progress tracking. \\
+\addlinespace
+Standard Raft election and log tests &
+Replica voting, leadership changes, and log agreement continue to follow ordinary Raft behavior. &
+The preferred-leader policy sits around Raft rather than replacing the safety rules. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+These tests are enough to support the thesis-level claim made here: preferred
+leader election aligns Raft leadership with Mako's submission path while
+preserving the normal Raft safety boundary. They should not be overstated as a
+full production failover and failback benchmark. A stronger failure-recovery
+study would explicitly kill, restart, and measure preferred-replica failback
+under load; that is outside the evaluated performance claims of this thesis.
