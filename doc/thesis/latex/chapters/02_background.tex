@@ -199,12 +199,15 @@ whether follower replay keeps up with those records.
 
 Third, every Raft backend must fit the way \Mako{} submits work. In the
 experiments used in this thesis, the benchmark drives transaction work through
-the leader-side process. If \Raft{} elects a different process as leader, the
-consensus protocol may still be correct, but the system no longer matches the
-leader-oriented submission path being evaluated; local submissions at the
-benchmark process may be refused or fail to represent the intended Paxos/Raft
-comparison. This is the motivation for the preferred leader mechanism
-discussed later, and it applies to both Multi-Raft and Single-Raft.
+the leader-side process. The original Paxos path did not expose a separate
+dynamic leader-placement problem to Mako because the benchmark and replication
+setup already used a fixed leader-side role. Raft does introduce that problem:
+if \Raft{} elects a different process as leader, the consensus protocol may
+still be correct, but the system no longer matches the leader-oriented
+submission path being evaluated; local submissions at the benchmark process may
+be refused or fail to represent the intended Paxos/Raft comparison. This is
+the motivation for the preferred leader mechanism discussed later, and it
+applies to both Multi-Raft and Single-Raft.
 
 These requirements explain the structure of the remaining chapters. Chapter 3
 shows how \Raft{} is placed behind the same replication boundary. Chapter 4

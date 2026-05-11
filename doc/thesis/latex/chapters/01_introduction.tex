@@ -95,11 +95,15 @@ The third design point is preferred leader election. \Mako{}'s transaction
 submission path expects a particular process to be the leader-side producer of
 transaction records. Standard Raft can elect any eligible replica. Preferred
 leader election biases leadership toward the process that owns the Mako
-submission path while preserving normal Raft safety and failover rules. This
-placement mechanism is needed to align this leader-oriented Mako integration
-and evaluation with the expected submission process; it is not a new safety
-condition for Raft. It applies to the Raft integration as a whole, not only to
-Single-Raft. Chapter 4 explains this mechanism in depth.
+submission path while preserving normal Raft safety and failover rules. It is a
+full integration mechanism rather than a cosmetic preference: startup
+placement makes the normal Raft leader match Mako's submission process, backup
+replicas can still lead if that process is unavailable, and leadership can move
+back only after the preferred replica has caught up. This placement mechanism
+is needed to align this leader-oriented Mako integration and evaluation with
+the expected submission process; it is not a new safety condition for Raft. It
+applies to the Raft integration as a whole, not only to Single-Raft. Chapter 4
+explains this mechanism in depth.
 
 The fourth design point is ReplayPool. ReplayPool makes Single-Raft viable by
 keeping Raft apply lightweight. The apply path stages committed payloads and
@@ -121,8 +125,11 @@ comparison rather than a collection of unrelated experiments.
 Second, it implements preferred leader election for Mako. The mechanism biases
 Raft leadership toward the process that owns leader-side transaction
 submission for both Multi-Raft and Single-Raft, while preserving normal Raft
-voting, log matching, and failover. This is a placement mechanism around Raft,
-not a change to Raft's safety rules.
+voting, log matching, and failover. It also supports the failure case that
+matters for a leader-placement policy: if the preferred replica is unavailable,
+a backup replica can lead, and leadership is moved back only after the preferred
+replica catches up. This is a placement mechanism around Raft, not a change to
+Raft's safety rules.
 
 Third, it evaluates Multi-Raft and Single-Raft as two different Raft
 integration strategies. Multi-Raft preserves Paxos-like partition-level
@@ -173,6 +180,14 @@ still doing useful transaction work. The replay measurements check whether
 followers keep up with committed records. The simulated-disk measurements
 attach byte and write-count evidence to the persistence results so storage
 claims are not based on throughput shape alone.
+
+The preferred-leader mechanism is validated separately from the headline
+throughput graphs. Dedicated tests check startup placement, log replication
+through the preferred leader, ordinary backup leadership while the preferred
+replica is absent, and safe return to the preferred replica after it catches
+up. A fresh Single-Raft and Multi-Raft sweep over 1 through 11 worker threads
+was also run as a no-regression check. Those checks support the leader-placement
+claim without replacing the frozen evaluation results used in Chapter 8.
 
 \section{Thesis Roadmap}
 

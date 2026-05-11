@@ -125,10 +125,12 @@ log, vote as independent Raft replicas, or apply committed commands. The
 single real local Raft replica owns the consolidated Raft log.
 
 Both designs also configure preferred leadership during setup. Chapter 4 gives
-the full design and safety argument. For this chapter, the important point is
-that preferred leader configuration is part of making Raft fit Mako's
-leader-oriented submission path, and it applies to both Multi-Raft and
-Single-Raft.
+the full design, failure behavior, and safety argument. For this chapter, the
+important point is that preferred leader configuration is part of making Raft
+fit Mako's leader-oriented submission path, and it applies to both Multi-Raft
+and Single-Raft. The setup marks the submission replica as the preferred leader
+for the relevant Raft group or groups; later failover and failback still follow
+ordinary Raft rules rather than giving that replica special authority.
 
 \section{Log Submission Path}
 

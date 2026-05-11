@@ -26,7 +26,6 @@ make check
 - [ ] Fix the existing Chapter 7 underfull box warning if it is visually noticeable in the PDF.
 - [ ] Audit and revise the phrase “one Raft group per process” for Single-Raft in Chapter 5 onward. The abstract and Chapters 1-3 now use more precise wording, but later chapters and captions still need the same pass.
 - [ ] Search Chapter 6 and Chapter 8 for persistence wording and make sure NVMe is mentioned alongside Cloud-SSD where appropriate. Avoid implying the thesis only evaluated Cloud-SSD.
-- [ ] If the thesis needs stronger preferred-leader failure evidence, add an explicit preferred-down/rejoin/failback validation experiment. Chapter 4 currently states the mechanism and safety boundary without claiming a full production failover/failback benchmark.
 
 ## General Audit Checklist
 
@@ -73,3 +72,4 @@ make check
 - 2026-05-10: Rewrote Chapter 3.6 again around a novice-friendly commit-then-route lifecycle, including a lane-3 example to explain Multi-Raft group routing versus Single-Raft partition-lane-id routing.
 - 2026-05-10: Rewrote Chapter 4 as a full preferred-leader chapter: placement problem, Mako/Paxos contrast, preference-not-authority design, startup/failover/failback mechanism, safety boundary, non-claims, and validation matrix.
 - 2026-05-10: Applied Chapter 4 preferred-leader cleanup: replaced lab process names with submission/preferred/backup replica terminology and added the missing motivation that Mako's generated logs enter a local submission path without remote elected-leader forwarding.
+- 2026-05-11: Updated abstract through Chapter 4 for the preferred-leader recovery work: startup placement remains limited, backups can lead during ordinary failover, failback is guarded by preferred-replica catch-up, and Chapter 4 now cites the preferred-leader audit/failback tests plus the fresh Single-Raft/Multi-Raft no-regression sweep without replacing Chapter 8 result data.
