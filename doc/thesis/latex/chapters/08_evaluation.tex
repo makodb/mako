@@ -1,66 +1,87 @@
 \chapter{Evaluation}
 
-The evaluation is organized around claims. Each graph answers one question and
-is interpreted immediately.
+This chapter evaluates the thesis claim through a sequence of focused
+questions. First, can Raft stay in the same performance class as Mako's
+original Paxos backend when persistence is disabled? Second, does Single-Raft
+remain credible as a replicated design when follower replay is measured, not
+only leader-side throughput? Third, does ReplayPool explain the Single-Raft
+result by improving follower replay progress? Finally, when persistence cost is
+modeled, are the disk results backed by measured storage work rather than by
+throughput curves alone?
 
-All numeric claims in this chapter come from the frozen data snapshot in
-\code{data/snapshot/}. The snapshot records the exact CSV and Markdown files
-used to generate the current graph set. This avoids quoting numbers from
-mutable \code{latest} symlinks.
+The figures and the numbers quoted in this chapter come from the same archived
+result data. This keeps the prose and graphs tied to the same benchmark runs.
 
 \section{Methodology}
 
-All backends run under the same outer benchmark harness. The workload is
-TPC-C. The sweep varies Mako worker thread count from \(t=1\) to \(t=11\). The
-main no-disk comparison includes Single-Raft without ReplayPool, Single-Raft
-with 1:1 ReplayPool, Multi-Raft, and Paxos.
+All evaluated backends run under the same benchmark harness and the same TPC-C
+workload. The sweep varies the number of Mako worker threads from one to eleven.
+The main in-memory comparison includes four modes: Single-Raft without
+ReplayPool, Single-Raft with ReplayPool, Multi-Raft, and the original Paxos
+backend.
 
-The headline metric is \code{throughput\_ops\_sec}, extracted from the leader-side
-benchmark process. Worker CPU metrics show whether transaction workers are
-active. Replay counters show follower progress. The simulated-disk counters are used
-only for persistence experiments.
+The headline throughput metric is leader-side committed throughput. It measures
+how many transactions per second the submission-side benchmark process reports
+as committed. That number is necessary, but it is not sufficient for this
+thesis. A replicated system can look fast at the leader while followers lag
+behind, so the evaluation also reports follower replay progress. Worker CPU is
+used as supporting evidence that Mako's transaction workers are active. In the
+persistence experiments, simulated-disk counters report modeled bytes, modeled
+writes, and normalized bytes per committed transaction.
 
 \section{No-Disk Scalability}
 
-This experiment asks whether Raft can stay in Paxos's performance class when
-disk persistence is disabled. Multi-Raft tests the conservative hypothesis:
-Raft should match Paxos when given a similar partition-level topology.
-Single-Raft tests the consolidation hypothesis: one consolidated Raft log,
-with one local replica running in each process, can be viable if the replay
-path is engineered correctly.
+The first experiment asks whether Raft can match Paxos when simulated disk
+persistence is disabled. This isolates the replication and replay path from
+modeled storage costs. Multi-Raft is the direct Paxos-shaped replacement: it
+keeps partition-level replication parallelism. Single-Raft is the consolidated
+design: it uses one consolidated Raft log and depends on the replay path to keep
+followers close to the committed history.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/graphs/fig07_no_disk_scalability.pdf}
-\caption[No-disk scalability]{No-disk scalability. The left panel reports leader-side committed throughput; the right panel reports follower replay throughput.}
+\caption[No-disk scalability]{No-disk scalability. Panel (a) reports leader-side committed throughput. Panel (b) removes the Single-Raft ReplayPool line, exposing the no-ReplayPool replay bottleneck against Multi-Raft and Paxos. Panel (c) adds Single-Raft with ReplayPool back against the same baselines.}
 \label{fig:no-disk-scalability}
 \end{figure}
+\FloatBarrier
 
-Figure~\ref{fig:no-disk-scalability} separates leader-side committed
-throughput from follower replay throughput. At \(t=11\), Single-Raft without
-ReplayPool reports about 593K transactions/s, Single-Raft with ReplayPool
-reports about 526K transactions/s, Multi-Raft reports about
-510K transactions/s, and Paxos reports about 472K transactions/s. A throughput-only reading would make the no-ReplayPool
-configuration look best.
+\figref{fig:no-disk-scalability}(a) shows the headline throughput view. At the
+11-worker endpoint, Single-Raft without ReplayPool reports about 593K
+leader-side transactions/s. If the evaluation stopped there, the no-ReplayPool
+design would look like the best configuration. \figref{fig:no-disk-scalability}(b)
+removes the Single-Raft ReplayPool line and shows why that interpretation is
+wrong: the no-ReplayPool Single-Raft replay line flattens around 140K
+transactions/s, while Multi-Raft and Paxos continue to scale. At the 11-worker
+endpoint, no-ReplayPool Single-Raft reaches only about 143K follower replayed
+transactions/s. The leader is committing far more work than the follower side
+is replaying.
 
-The right panel shows why that reading is wrong. At \(t=11\), Single-Raft
-without ReplayPool reaches only about 143K transactions/s of follower replay
-progress. Single-Raft with ReplayPool reaches about 499K transactions/s;
-Multi-Raft reaches about 484K transactions/s; Paxos reaches about
-450K transactions/s. ReplayPool therefore makes
-Single-Raft much closer to a fully replayed replicated path. The result is not
-that ReplayPool maximizes leader-side throughput. The result is that
-ReplayPool makes the Single-Raft measurement credible as replicated execution.
+The credible configurations keep leader throughput and follower replay progress
+much closer together. \figref{fig:no-disk-scalability}(c) shows the replay path
+after ReplayPool is enabled: instead of flattening, the Single-Raft replay line
+scales with the worker count and remains close to the same Multi-Raft and Paxos
+baselines. At the 11-worker endpoint, Single-Raft with ReplayPool reports about 526K leader-side
+transactions/s and about 499K follower replayed transactions/s. Multi-Raft
+reports about 510K leader-side transactions/s and about 484K follower replayed
+transactions/s. Paxos reports about 472K leader-side transactions/s and about
+450K follower replayed transactions/s.
 
-This distinction is central to the thesis. Leader-side throughput is the
-headline benchmark metric, but follower replay progress determines whether
-the replicated system is actually keeping up with the committed history.
+This is the first main evaluation result. Raft is in Paxos's performance class
+when the Mako pipeline is preserved. Multi-Raft gets there by preserving the
+Paxos-shaped parallel replication structure. Single-Raft gets there only when
+ReplayPool prevents follower replay from falling far behind leader-side commit
+throughput. Follower replay progress is a progress metric, not a standalone
+correctness proof; the correctness argument for parallel replay is the
+same-lane ordering, watermark, and atomic-update argument from Chapters 5 and 7.
 
 \section{Worker CPU}
 
-The next question is whether the benchmark workers are doing real work or
-whether the replication path causes the system to idle. Worker CPU does not
-prove correctness by itself, but it helps interpret throughput results.
+The second experiment asks whether the benchmark is doing real transaction
+work. CPU utilization does not prove correctness, and it does not replace the
+replay checks above. It is useful because very low worker CPU would suggest that
+the benchmark is measuring an idle or blocked harness rather than active Mako
+transaction execution.
 
 \begin{figure}[htbp]
 \centering
@@ -68,65 +89,59 @@ prove correctness by itself, but it helps interpret throughput results.
 \caption[Worker CPU utilization]{Worker CPU utilization across the no-disk scalability sweep.}
 \label{fig:worker-cpu-utilization}
 \end{figure}
+\FloatBarrier
 
-Figure~\ref{fig:worker-cpu-utilization} shows that worker CPU remains above
-one full core per active worker through the high-thread part of the sweep. At
-\(t=11\), the mean worker CPU is about 166\% for Single-Raft with ReplayPool,
-253\% for Multi-Raft, and 222\% for Paxos. These numbers support the interpretation that the benchmark
-is exercising Mako's transaction workers rather than measuring an idle
-replication harness.
-
-The CPU curves also explain why throughput comparisons should not be reduced
-to one line. Multi-Raft and Paxos spend more CPU per active worker at high
-thread counts, while Single-Raft with ReplayPool keeps the consolidated Raft
-path competitive. The thesis claim is not that one backend is universally
-faster. The claim is that Raft can remain in the same performance class when
-the pipeline is preserved.
+\figref{fig:worker-cpu-utilization} shows that worker CPU remains high through
+the upper end of the sweep. At the 11-worker endpoint, the mean worker CPU is
+about 166\% for Single-Raft with ReplayPool, about 253\% for Multi-Raft, and
+about 222\% for Paxos. The exact CPU values should not be read as a correctness
+claim. They support a narrower interpretation: the throughput curves are
+produced while Mako's transaction workers are active, not while the system is
+mostly idle.
 
 \section{ReplayPool Mechanism}
 
-This experiment isolates the ReplayPool mechanism by varying both Mako worker
-threads and \code{MAKO\_REPLAY\_THREADS}. The replay thread counts are 0, 1, 2,
-4, 8, and 11, and each configuration is swept from \(t=1\) to \(t=11\).
-The question is whether replay parallelism changes useful follower progress,
-not whether more replay threads monotonically increase leader-side throughput.
+The no-disk result shows that ReplayPool matters. This experiment isolates why
+it matters. It keeps the Single-Raft design fixed and varies the number of
+follower replay workers. The question is not whether adding replay workers
+always increases leader-side throughput. The question is whether enough replay
+workers are needed for followers to keep up with the committed history.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/graphs/fig09_replay_pool_matrix.pdf}
-\caption[ReplayPool sensitivity]{ReplayPool sensitivity across worker counts and replay-pool sizes.}
+\caption[ReplayPool sensitivity]{ReplayPool sensitivity across worker counts and replay-pool sizes. Panel (a) reports leader-side throughput, panel (b) reports follower replay progress, and panel (c) normalizes replay progress by leader throughput.}
 \label{fig:replaypool-matrix}
 \end{figure}
+\FloatBarrier
 
-Figure~\ref{fig:replaypool-matrix} shows that leader-side throughput stays in a
-relatively narrow band at high thread counts, even when the replay pool is too small. At \(t=11\),
-throughput ranges from about 563K transactions/s to 584K transactions/s across
-the tested replay-pool sizes. A leader-throughput-only graph would therefore
-miss the actual mechanism.
+\figref{fig:replaypool-matrix}(a) shows the first key pattern. At the 11-worker
+endpoint, leader-side throughput stays high across the tested replay-pool
+sizes, ranging from about 563K to 584K transactions/s. A graph that only showed
+leader throughput would therefore miss the bottleneck.
 
-The replay panels show the missing evidence. At \(t=11\), zero replay threads
-produce about 137K transactions/s of follower replay progress, or
-about 23.5\% of the leader-side throughput. One replay thread is similar at
-about 133K transactions/s and 22.8\% completeness. Two replay
-threads improve follower progress to about 257K transactions/s, but
-that is still only about 44.6\% completeness. Four replay threads reach
-about 461K transactions/s and 81.5\% completeness. Eight and eleven
-replay threads reach about 541K transactions/s and 534K transactions/s,
-respectively, and both stay near 95\% completeness.
+\figref{fig:replaypool-matrix}(b) reveals the bottleneck. With zero replay
+workers, the 11-worker run reaches only about 137K follower replayed
+transactions/s. With two replay workers, replay progress improves to about 257K
+transactions/s. With four replay workers, it reaches about 461K transactions/s.
+With eight and eleven replay workers, it reaches about 541K and 534K
+transactions/s, respectively. The useful effect of ReplayPool is therefore
+replay completeness: followers track the leader's committed history much more
+closely when enough replay workers are available.
 
-The same pattern appears before the largest endpoint. At \(t=6\), zero and one
-replay thread keep only about 40\% of the leader's committed history replayed
-on the follower. Two replay threads reach about 79\%. Four, eight, and eleven
-replay threads are all near 95\%. The threshold therefore grows with worker
-parallelism: a small replay pool may look adequate at low thread counts, but
-falls behind as the leader submits more committed work.
+\figref{fig:replaypool-matrix}(c) shows the same mechanism below the largest
+endpoint. At six Mako worker threads, zero or one replay worker keeps only
+about 40\% of the leader's committed work replayed on the follower. Two replay
+workers raise that to about 79\%, while four or more replay workers keep replay
+progress near 95\%. The needed replay parallelism grows with leader-side worker
+parallelism.
 
-This is the reason the thesis uses the 1:1 ReplayPool configuration for the
-main Single-Raft comparison. Here, 1:1 means \code{MAKO\_REPLAY\_THREADS} equals the Mako
-worker-thread count. It is a conservative setting that keeps follower replay
-close to leader-side commit throughput across the tested sweep. ReplayPool is
-therefore best understood as a replay-completeness mechanism, not as a
-monotonic leader-throughput optimization.
+This is why the main Single-Raft result uses a 1:1 ReplayPool setting. In this
+thesis, 1:1 means the number of follower replay workers equals the number of
+Mako transaction workers in the run. It does not mean one Raft group per worker
+or one Raft apply thread per worker. It is a conservative setting that keeps
+follower replay close to leader-side committed throughput across the tested
+sweep.
 
 \begin{figure}[htbp]
 \centering
@@ -134,63 +149,68 @@ monotonic leader-throughput optimization.
 \caption[Follower replay completeness]{Follower replay completeness across worker counts and replay-pool sizes.}
 \label{fig:replaypool-heatmap}
 \end{figure}
+\FloatBarrier
 
-Figure~\ref{fig:replaypool-heatmap} is a compact way to read the same result. The dark low-completeness
-region is concentrated where worker count is high and replay-pool size is too
-small. The high-completeness region appears when the replay pool is large
-enough to track the leader's committed history. This figure is the mechanism
-evidence behind the statement that Single-Raft is viable only after replay
-parallelism is engineered explicitly.
+\figref{fig:replaypool-heatmap} summarizes the same evidence as replay
+completeness. The low-completeness region appears when worker count is high and
+the replay pool is too small. The high-completeness region appears when the
+replay pool is large enough to absorb follower-side replay work. The mechanism
+claim is therefore precise: ReplayPool does not make leader throughput
+monotonically increase; it makes Single-Raft credible by preventing follower
+replay from becoming the hidden bottleneck.
 
 \section{Simulated Persistence Throughput}
 
-This experiment asks how the backends behave when persistence cost is modeled.
-The three conditions are no disk, an NVMe-like simulated-disk model, and a
-Cloud-SSD-like simulated-disk model.
+The next experiment adds modeled persistence cost. The goal is not to claim the
+absolute performance of a particular physical SSD. Chapter 6 explained why the
+thesis uses controlled simulated-disk models. Here, the question is how Paxos,
+Multi-Raft, and Single-Raft behave under the same no-disk, NVMe-like, and
+Cloud-SSD-like conditions.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/graphs/fig11_disk_persistence_throughput.pdf}
-\caption[Simulated persistence throughput]{Simulated persistence throughput under no-disk, NVMe-like, and Cloud-SSD-like settings.}
+\caption[Simulated persistence throughput]{Simulated persistence throughput under no-disk, NVMe-like, and Cloud-SSD-like settings. Panels (a), (b), and (c) show Single-Raft with ReplayPool, Multi-Raft, and Paxos, respectively.}
 \label{fig:disk-persistence-throughput}
 \end{figure}
+\FloatBarrier
 
-Figure~\ref{fig:disk-persistence-throughput} shows that the NVMe model stays
-close to the no-disk curves. At \(t=11\), Single-Raft with
-ReplayPool reaches about 545K transactions/s under NVMe, Multi-Raft about
-509K transactions/s, and Paxos about 475K transactions/s. Those values are close to the no-disk
-ordering and support the interpretation that this disk model does not dominate
-the high-thread runs.
+\figref{fig:disk-persistence-throughput}(a)--(c) show two different regimes for
+the three backends. Under the NVMe-like model, the curves remain close to the
+no-disk results. At the 11-worker endpoint, Single-Raft with ReplayPool reaches
+about 545K transactions/s, Multi-Raft reaches about 509K transactions/s, and
+Paxos reaches about 475K transactions/s. This suggests that the NVMe-like
+modeled cost does not dominate the high-thread runs.
 
-The Cloud-SSD model behaves differently. At high thread counts, all three
-backends converge near 340K transactions/s. At \(t=11\), Single-Raft
-with ReplayPool reports about 340K transactions/s, Multi-Raft about
-341K transactions/s, and Paxos about 341K transactions/s. This convergence is important: it
-does not distinguish the consensus backends. It suggests that, under the
-Cloud-SSD simulated-disk model, the storage path becomes the shared limiting factor.
-
-This is a simulated persistence result. It should be read as evidence about
-the modeled storage pressure, not as a claim about production SSD behavior.
+The Cloud-SSD-like model behaves differently. At high worker counts, all three
+backends converge near 340K transactions/s. At the 11-worker endpoint,
+Single-Raft with ReplayPool, Multi-Raft, and Paxos all report approximately
+340K transactions/s. The convergence matters because it is not a separation
+between Raft and Paxos. Under this model, the shared storage pressure becomes
+the limiting factor.
 
 \section{Simulated-Disk Proof}
 
-The disk-throughput graph is only persuasive if it is paired with storage-work
-evidence. The simulated-disk instrumentation provides that evidence by
-recording the bytes and writes charged during the benchmark.
+The Cloud-SSD result would be weak if the thesis only showed a flattening
+throughput curve. A flat line could come from a benchmark artifact, a parsing
+mistake, or an unrelated bottleneck. The simulated-disk proof statistics make
+the result defensible by showing how much modeled storage work was charged.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/graphs/fig12_simulated_disk_proof_cloudssd.pdf}
-\caption[Cloud-SSD simulated-disk proof]{Cloud-SSD flattening with simulated-disk proof statistics.}
+\caption[Cloud-SSD simulated-disk proof]{Cloud-SSD flattening with simulated-disk proof statistics. Panel (a) shows Cloud-SSD throughput, panel (b) shows persisted bytes, and panel (c) shows bytes per committed transaction.}
 \label{fig:simulated-disk-proof-cloudssd}
 \end{figure}
+\FloatBarrier
 
-Figure~\ref{fig:simulated-disk-proof-cloudssd} shows that, at high thread
-counts, the Cloud-SSD throughput curves flatten near 340K transactions/s while
-the simulated-disk counters report real measured storage work. At \(t=11\),
+\figref{fig:simulated-disk-proof-cloudssd} pairs the Cloud-SSD throughput
+flattening with measured storage counters. \figref{fig:simulated-disk-proof-cloudssd}(a)
+shows the flattening, while \figref{fig:simulated-disk-proof-cloudssd}(b) shows
+that the backends write comparable persisted bytes. At the 11-worker endpoint,
 all three backends write about 7.49 GB through the simulated disk and perform
-about 24.6K writes. The normalized value is about 733 simulated-disk
-bytes per committed transaction.
+about 24.6K modeled writes. The storage work is therefore comparable across the
+backends when their throughput curves converge.
 
 \begin{figure}[htbp]
 \centering
@@ -198,37 +218,39 @@ bytes per committed transaction.
 \caption[Cloud-SSD bytes per transaction]{Cloud-SSD simulated-disk bytes per committed transaction.}
 \label{fig:cloudssd-bytes-per-txn}
 \end{figure}
+\FloatBarrier
 
-Figure~\ref{fig:cloudssd-bytes-per-txn} shows that the storage work per
-committed transaction is stable across backends and rises modestly at high
-thread counts. This supports the explanation that the Cloud-SSD flattening is
-consistent with measured persistence work. It does not prove real SSD
-behavior; it proves that the controlled simulated-disk model was doing comparable
-measured work across the three backends when the throughput curves converged.
+\figref{fig:cloudssd-bytes-per-txn} normalizes the same storage work by useful
+committed transactions. At the 11-worker endpoint, each backend records about
+733 simulated-disk bytes per committed transaction. This supports the storage
+interpretation: the Cloud-SSD-like flattening occurs while the model is
+charging comparable bytes, comparable writes, and comparable normalized storage
+work across the three backends.
+
+The claim remains intentionally narrow. These graphs show that the controlled
+simulated-storage model was doing measured work and that the three backends
+were charged similarly when the Cloud-SSD curves flattened. They do not claim
+that every production SSD, filesystem, or cloud storage stack will produce the
+same absolute throughput.
 
 \section{Evaluation Summary}
 
-The evaluation supports four conclusions.
+The evaluation supports the thesis in four steps. Multi-Raft validates the
+direct Paxos-shaped Raft replacement: when Raft is given similar partition-level
+parallelism, it remains in the same performance class as Paxos. Both Raft
+topologies rely on preferred leader placement to align Raft leadership with
+Mako's leader-side submission path. Single-Raft then has one additional
+requirement: ReplayPool must keep follower replay close to the committed
+history after replication has been consolidated into one Raft log.
 
-First, Raft can replace Paxos in Mako without falling out of Paxos's
-performance class. Multi-Raft is the direct Paxos-shaped replacement and
-tracks the original backend closely.
+The most important measurement lesson is that leader throughput alone is not
+enough. Single-Raft without ReplayPool looks fast at the leader but falls far
+behind on follower replay. ReplayPool should therefore be judged by follower
+replay progress and replay completeness, not by leader throughput alone.
 
-Second, Single-Raft can be competitive, but only if interpreted with follower
-replay progress. Without ReplayPool, high leader-side throughput hides the
-fact that followers replay much more slowly. With ReplayPool, follower replay
-progress approaches leader-side throughput.
-
-Third, worker CPU and replay CPU counters make the mechanism visible. The
-benchmark workers are active, and ReplayPool moves replay work out of the
-apply path.
-
-Fourth, disk claims require simulated-disk proof statistics. The Cloud-SSD model
-flattens near 340K transactions/s, and that flattening is accompanied
-by measured bytes, writes, and bytes per committed transaction. The thesis can
-therefore explain the disk result without pretending that simulated disk is a full
-production storage evaluation.
-
-Three no-disk \(t=11\) reruns had coefficient of variation below 0.6\% for
-Single-Raft, Multi-Raft, and Paxos. This repeatability result is supporting
-evidence, not a main thesis figure.
+The persistence experiments add a separate lesson: disk claims need storage
+proof. Under the Cloud-SSD-like model, throughput flattens near 340K
+transactions/s for all three backends, and the simulated-disk counters show
+about 7.49 GB, about 24.6K writes, and about 733 bytes per committed
+transaction at the 11-worker endpoint. That is the evidence needed to explain
+the disk result without overstating it as a production SSD evaluation.

@@ -118,9 +118,9 @@ def plot_lines(rows, outdir):
     replay_sizes = sorted({r["replay_threads"] for r in rows})
     fig, axes = plt.subplots(1, 3, figsize=(13.2, 3.8))
     specs = [
-        ("throughput", "Leader-side throughput", "Throughput (K txns/s)", FuncFormatter(kops)),
-        ("replay_progress", "Follower replay progress", "Throughput-equivalent (K txns/s)", FuncFormatter(kops)),
-        ("replay_ratio", "Replay progress / leader throughput", "Replay completeness", FuncFormatter(pct)),
+        ("throughput", "(a) Leader-side throughput", "Throughput (K txns/s)", FuncFormatter(kops)),
+        ("replay_progress", "(b) Follower replay progress", "Throughput-equivalent (K txns/s)", FuncFormatter(kops)),
+        ("replay_ratio", "(c) Replay progress / leader throughput", "Replay completeness", FuncFormatter(pct)),
     ]
     for ax, (key, title, ylabel, formatter) in zip(axes, specs):
         for replay_threads in replay_sizes:

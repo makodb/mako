@@ -275,7 +275,11 @@ def plot_replay_pool_sensitivity(summary_rows, outdir):
 
 def plot_disk_throughput(disk_data, outdir):
     fig, axes = plt.subplots(1, 3, figsize=(10.8, 3.7), sharey=True)
-    backend_order = [("single_raft", "Single-Raft + ReplayPool"), ("multi_raft", "Multi-Raft"), ("paxos", "Paxos")]
+    backend_order = [
+        ("single_raft", "(a) Single-Raft + ReplayPool"),
+        ("multi_raft", "(b) Multi-Raft"),
+        ("paxos", "(c) Paxos"),
+    ]
     for ax, (backend_key, title) in zip(axes, backend_order):
         for disk_key in ("no_disk", "nvme", "cloudssd"):
             rows = disk_data[disk_key][backend_key]
@@ -314,21 +318,21 @@ def plot_fakedisk_work(disk_data, outdir):
         line(axes[2], xs, bytes_per_txn, style_key, label=BACKENDS[style_key]["short"])
     axes[0].set_xlabel("Worker threads")
     axes[0].set_ylabel("Throughput (K txns/s)")
-    axes[0].set_title("Cloud-SSD throughput")
+    axes[0].set_title("(a) Cloud-SSD throughput")
     axes[0].yaxis.set_major_formatter(FuncFormatter(kops_formatter))
     axes[0].set_xticks(threads(disk_data["cloudssd"]["single_raft"]))
     axes[0].set_ylim(bottom=0)
 
     axes[1].set_xlabel("Worker threads")
-    axes[1].set_ylabel("Cluster FakeDisk bytes (GB)")
-    axes[1].set_title("Measured persisted bytes")
+    axes[1].set_ylabel("Cluster simulated-disk bytes (GB)")
+    axes[1].set_title("(b) Measured persisted bytes")
     axes[1].yaxis.set_major_formatter(FuncFormatter(gb_formatter))
     axes[1].set_xticks(threads(disk_data["cloudssd"]["single_raft"]))
     axes[1].set_ylim(bottom=0)
 
     axes[2].set_xlabel("Worker threads")
-    axes[2].set_ylabel("FakeDisk bytes per committed txn")
-    axes[2].set_title("Normalized storage work")
+    axes[2].set_ylabel("Simulated-disk bytes per committed txn")
+    axes[2].set_title("(c) Normalized storage work")
     axes[2].set_xticks(threads(disk_data["cloudssd"]["single_raft"]))
     if right_panel_values:
         low = min(right_panel_values)
@@ -336,7 +340,7 @@ def plot_fakedisk_work(disk_data, outdir):
         pad = max((high - low) * 1.2, 8.0)
         axes[2].set_ylim(low - pad, high + pad)
     shared_legend(fig, axes[0], ncol=3, y=-0.02)
-    fig.suptitle("Cloud-SSD flattening and FakeDisk proof", fontweight="bold", y=1.03)
+    fig.suptitle("Cloud-SSD flattening and simulated-disk proof", fontweight="bold", y=1.03)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     return save(fig, outdir, "fig10_fakedisk_proof_cloudssd")
 
@@ -356,7 +360,7 @@ def plot_bytes_per_txn(disk_data, outdir):
         all_values.extend(bytes_per_txn)
         line(ax, xs, bytes_per_txn, style_key, label=BACKENDS[style_key]["short"])
     ax.set_xlabel("Worker threads")
-    ax.set_ylabel("FakeDisk bytes per committed txn")
+    ax.set_ylabel("Simulated-disk bytes per committed txn")
     ax.set_title("Normalized persistence work, Cloud-SSD model")
     ax.set_xticks(threads(disk_data["cloudssd"]["single_raft"]))
     if all_values:
