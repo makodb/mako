@@ -1,31 +1,147 @@
 \chapter{Correctness and Validation}
 
-The validation chapter answers why the reader should trust the performance
-results.
+The performance results in Chapter 8 matter only if the system being measured is
+doing the right work. For this thesis, correctness and measurement credibility
+have several parts. Raft must order records correctly. Preferred leader election
+must place leadership where Mako can submit work without weakening Raft safety.
+Mako must receive committed records and replay them on followers. ReplayPool
+must move replay work to parallel workers without changing the committed order.
+Finally, the benchmark must report metrics that describe committed work,
+follower progress, CPU use, and simulated-disk work consistently.
 
-It should not become a test manual. The body needs a compact validation matrix
-that connects test evidence to the thesis claims.
+This chapter summarizes the validation evidence behind those claims. It is not
+a test manual. Individual test names and helper details are less important than
+the question each validation class answers.
 
-\begin{table}[htbp]
-\centering
-\caption[Validation evidence]{Validation evidence used to support the thesis claims.}
-\label{tab:validation-matrix}
+\section{What Validation Must Establish}
+
+The first question is whether the Raft backend behaves like a consensus backend,
+not just like a fast message path. It must elect leaders, replicate records,
+commit only after enough replicas have accepted the record, and continue to make
+progress across ordinary leader changes.
+
+The second question is whether Raft fits Mako's execution model. Chapters 2 and
+3 explained that Mako workers submit transaction log records through the
+leader-side path, and Chapter 4 explained why Raft leadership must normally be
+placed on that submission replica. Validation therefore needs to check both the
+ordinary Raft behavior and the preferred-leader behavior added for Mako.
+
+The third question is whether Single-Raft remains a real replicated design after
+ReplayPool is added. ReplayPool should improve follower replay progress, but it
+must not change the order Raft committed. It is valid only if committed records
+are still delivered to the correct replay lane and replay preserves the ordering
+required by that lane.
+
+\section{Consensus and Leader Placement}
+
+Standalone Raft validation covers the protocol-level behavior expected from the
+backend: initial election, re-election, agreement on log entries, behavior
+during failures, rejoin after a replica returns, and concurrent submissions.
+Those tests do not prove the entire Mako system correct by themselves, but they
+establish that the Raft layer is not merely a benchmark shortcut.
+
+Preferred-leader validation covers the Mako-specific placement mechanism. The
+tests and audits check that the submission replica is favored at startup, that a
+backup replica can lead while the preferred replica is unavailable, and that
+leadership is moved back only after the preferred replica has caught up. They
+also check that preferred leadership remains compatible with log replication and
+with the no-op and watermark behavior used to reason about committed progress.
+The key point is the same as in Chapter 4: preference affects leader placement,
+not Raft's voting or commit safety rules.
+
+\section{Mako Integration and Replay}
+
+End-to-end Mako validation checks the path that matters for this thesis:
+leader-side workers produce transaction log records, the replication backend
+orders those records, and follower replicas replay the committed records into
+their local state. This catches integration bugs that standalone Raft tests
+cannot see, such as delivering a committed record to the wrong Mako lane or
+measuring leader-side work while followers are not keeping up.
+
+ReplayPool validation focuses on Single-Raft. The expected behavior is that Raft
+decides the order, a lightweight delivery path hands committed records to Mako,
+and follower replay workers perform the expensive database replay in parallel.
+The validation checks are aimed at the boundary between those steps: records
+from the same replay lane must remain ordered, records that cannot yet be safely
+applied must wait, and follower replay counters must show whether replay is
+actually progressing.
+
+Chapter 5 also described the main caveat of parallel replay: records from
+different replay lanes may finish in a different wall-clock order than their
+global Raft log order. The validation therefore relies on Mako's replay safety
+rules, including watermark checks and atomic state-update checks, to ensure that
+parallel replay is safe for Mako's transaction records rather than assuming that
+ReplayPool preserves one global replay completion order.
+
+\section{Persistence and Measurement}
+
+Persistence validation is narrower than functional database recovery. It checks
+that simulated-disk instrumentation is present and interpretable. Runs with
+simulated persistence disabled should report disabled or zero storage work.
+Runs with the NVMe-like or Cloud-SSD-like model enabled should report nonzero
+persisted bytes and modeled writes. The sweep scripts must also carry those
+values into the result CSV files so the graph data and the thesis text quote the
+same measured work.
+
+This validation supports the disk interpretation in Chapter 8. If a throughput
+curve changes under simulated storage pressure, the thesis can point to the
+corresponding bytes, writes, and bytes per committed transaction instead of
+relying on throughput alone.
+
+\section{Validation Matrix}
+
+\tabref{tab:validation-matrix} summarizes the validation evidence used in the
+thesis. The table intentionally groups tests by the claim they support rather
+than listing every test helper.
+
+\begingroup
 \small
-\begin{tabularx}{\linewidth}{@{}XXX@{}}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{0.96}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.24\linewidth}
+>{\raggedright\arraybackslash}p{0.46\linewidth}
+>{\raggedright\arraybackslash}p{0.24\linewidth}@{}}
+\caption[Validation evidence]{Validation evidence used to support the thesis claims.}
+\label{tab:validation-matrix}\\
 \toprule
 Evidence class & What it checks & Thesis role \\
 \midrule
-Standalone Raft tests & election, agreement, failure, rejoin, concurrent starts & protocol sanity \\
-Preferred leader tests & startup placement, safe failback, log replication & Mako-compatible leadership \\
-Mako end-to-end tests & replicated transaction execution through the benchmark path & integration correctness \\
-Persistence smoke tests & simulated-disk lines and CSV counters populate & disk-evaluation validity \\
-Benchmark harness checks & throughput, worker CPU, replay, and disk metrics parse consistently & measurement credibility \\
+\endfirsthead
+\toprule
+Evidence class & What it checks & Thesis role \\
+\midrule
+\endhead
+Standalone Raft behavior & Leader election, re-election, agreement, failure cases, replica rejoin, and concurrent submissions. & Protocol sanity for the Raft backend. \\
+\addlinespace
+Preferred leader behavior & Startup placement, backup leadership while the preferred replica is absent, safe return after catch-up, log replication, and no-op progress. & Mako-compatible leader placement without changing Raft safety. \\
+\addlinespace
+Mako integration & Mako transaction logs are ordered, delivered, and replayed by follower replicas. & End-to-end replication correctness. \\
+\addlinespace
+ReplayPool behavior & Replay work moves to replay workers while same-lane ordering and deferred replay rules are preserved. & Single-Raft replay correctness and progress evidence. \\
+\addlinespace
+Persistence counters & Disabled-storage runs report no modeled work; simulated-storage runs report persisted bytes, modeled writes, and source breakdowns. & Disk-result interpretability. \\
+\addlinespace
+Benchmark harness & Leader throughput, worker CPU, follower replay progress, and simulated-disk counters are archived with the plotted results. & Measurement credibility. \\
 \bottomrule
-\end{tabularx}
-\end{table}
+\end{longtable}
+\endgroup
 
-The most important validation rule is metric discipline. The thesis uses
-\code{throughput\_ops\_sec} as the leader-side benchmark rate. The \code{replay\_batch\_p1}
-and \code{replay\_batch\_p2} counters are follower-progress sanity counters. They
-are essential for interpreting Single-Raft, but they are not the headline
-metric.
+\section{Metric Discipline}
+
+The evaluation uses leader-side committed throughput as the headline throughput
+metric because it is the rate at which the benchmark completes committed
+transactions on the submission side. That number is necessary, but it is not
+sufficient. Single-Raft without enough replay parallelism can show high
+leader-side throughput while follower replay falls behind, so follower replay
+progress is reported as a separate sanity metric.
+
+Worker CPU is interpreted similarly. High worker CPU helps show that Mako's
+transaction workers are doing real work, but CPU utilization alone does not
+prove replication correctness. Simulated-disk bytes and writes are also
+separate from throughput: they explain how much modeled storage work the run
+generated.
+
+For reproducibility, the plotted figures and the numbers quoted in the text are
+tied to the same archived result data. This keeps the evaluation internally
+consistent: a throughput number in the prose refers to the same run that
+generated the corresponding graph.

@@ -1,33 +1,129 @@
 \chapter{Persistence and Simulated Disk}
 
-A production consensus system must persist enough state to recover safely
-after crashes. For Raft, that includes term, vote, and log state. The Mako
-Raft integration includes persistence hooks for Raft log storage and metadata.
-This thesis discusses those hooks only as much as needed to explain the
-evaluation. It does not claim a full production storage-stack evaluation.
+The earlier chapters explained how Mako produces transaction log records, how
+Raft orders those records, and how followers replay them. This chapter explains
+what happens when the experiment also asks the replication backend to pay a
+storage cost.
 
-The evaluation uses simulated persistence through the FakeDisk implementation,
-which models a queued device with configurable bandwidth and latency. It does
-not model every detail of SSD firmware, filesystems, Linux block scheduling, RocksDB
-compaction, or device-level writeback. Its purpose is narrower: when
-persistence is enabled, it records how much storage work the benchmark
-generates.
+The basic idea is simple. A replicated system should not only send committed
+records to other replicas; it should also remember enough information on stable
+storage to recover after a crash. For Raft, that durable information includes
+the replicated log, the current term, and voting metadata. The replicated log
+tells a restarted replica what records were accepted. The term and vote
+metadata prevent the replica from forgetting earlier election decisions.
 
-The instrumentation reports total simulated-disk writes, total simulated-disk bytes,
-source-tagged payload bytes, modeled service time, and wait-time diagnostics.
-For the thesis body, the most useful metrics are aggregate bytes, write count,
-and bytes per committed transaction. Max wait is retained as a diagnostic
-counter, but it is a worst-case statistic and is expected to be noisier than
-aggregate byte/write counters.
+The thesis does not try to prove that the implementation is a complete
+production storage stack. Instead, it asks a narrower evaluation question: when
+storage persistence is enabled, how much modeled disk work does each backend
+generate? That question matters because a disk-throughput curve is hard to
+defend without proof of the storage work behind it.
 
-These counters are needed because disk throughput curves alone are not enough.
-If Cloud-SSD-like persistence flattens as worker count increases, the thesis
-must show whether the benchmark also generated measured persisted data and
-write work. Otherwise the result could be dismissed as a benchmark artifact.
+\section{Why Use a Simulated Disk}
+
+Real storage devices differ a lot. A local NVMe drive, a cloud block device,
+and a cloud SSD volume can have different latency, bandwidth, queueing, and
+writeback behavior. If the thesis used one physical device directly, a result
+could be caused by that specific device rather than by the replication backend.
+
+To keep the comparison controlled, the evaluation uses a simulated disk. The
+simulated disk charges each persistence operation for two costs:
+
+\begin{itemize}
+  \item a fixed latency cost for issuing a write, and
+  \item a bandwidth cost based on how many bytes are written.
+\end{itemize}
+
+The model also queues writes, so later writes can wait behind earlier writes.
+The evaluation uses two settings: an NVMe-like model and a Cloud-SSD-like
+model. These settings are not meant to reproduce every detail of a real device.
+They provide repeatable storage pressure so Paxos, Multi-Raft, and Single-Raft
+can be compared under the same assumptions.
+
+\section{What Gets Counted}
+
+When persistence is enabled, the benchmark records where the modeled storage
+work came from. Table~\ref{tab:simulated-disk-counters} gives the plain-English
+meaning of the main counters.
+
+\begin{table}[htbp]
+\centering
+\caption[Simulated-disk counters]{Simulated-disk counters used to interpret persistence results.}
+\label{tab:simulated-disk-counters}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}
+>{\raggedright\arraybackslash}X
+>{\raggedright\arraybackslash}p{0.25\linewidth}@{}}
+\toprule
+\textbf{Counter} & \textbf{Plain meaning} & \textbf{Why it matters} \\
+\midrule
+Persisted bytes &
+Total bytes charged to the simulated disk. &
+Shows the amount of modeled storage traffic. \\
+\addlinespace
+Modeled writes &
+Number of write operations charged to the simulated disk. &
+Distinguishes many small writes from fewer large writes. \\
+\addlinespace
+Bytes per committed transaction &
+Persisted bytes normalized by useful committed work. &
+Shows whether each backend pays similar storage cost per transaction. \\
+\addlinespace
+Source breakdown &
+Separates Mako transaction data, Raft log storage, and Raft metadata. &
+Shows what kind of work caused the storage traffic. \\
+\addlinespace
+Maximum modeled wait &
+Largest modeled queueing delay seen by a write. &
+Useful as a diagnostic, but noisier than aggregate bytes and writes. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\FloatBarrier
+
+The source breakdown needs one more explanation. Mako transaction-data writes
+are the serialized transaction records produced by leader-side execution. Raft
+log writes are the consensus records that let Raft recover the ordered history.
+Raft metadata writes are smaller records such as term and vote state. The
+evaluation does not treat all of these as one black-box number; it records them
+separately so the disk results can be explained.
+
+\section{Why These Counters Are Needed}
+
+The disk results in Chapter 8 show that the Cloud-SSD-like model flattens at
+high worker counts. Throughput alone is not enough to explain that behavior.
+If a graph flattens but the system did not actually write much data, the result
+could be a benchmark artifact. If the graph flattens while the simulated disk
+records comparable bytes, comparable writes, and comparable bytes per
+transaction across backends, then the interpretation is stronger: the storage
+model was doing real measured work.
+
+This is why the thesis reports both throughput and simulated-disk counters.
+Throughput says how fast the benchmark completed committed transactions. The
+storage counters say how much modeled persistence work was charged while doing
+that work.
+
+\section{Instrumentation Path}
+
+\figref{fig:simulated-disk-proof-path} shows the accounting path. A committed
+transaction log can create Mako data writes, Raft log writes, and Raft metadata
+writes. The simulated disk charges those writes using the same latency and
+bandwidth model, then reports the aggregate counters used in the evaluation.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.96\linewidth]{figures/manual/fig06_simulated_disk_proof_path.pdf}
-\caption[Simulated-disk proof path]{Source-tagged simulated-disk instrumentation. Persistence writes are charged to a simulated disk model and reported as bytes, writes, normalized bytes per transaction, and source breakdowns.}
+\caption[Simulated-disk proof path]{Source-tagged simulated-disk instrumentation. Persistence writes are charged to a controlled disk model and reported as persisted bytes, modeled writes, normalized bytes per transaction, and source breakdowns.}
 \label{fig:simulated-disk-proof-path}
 \end{figure}
+\FloatBarrier
+
+\section{Scope of the Claim}
+
+The persistence claim is intentionally limited. The thesis shows that, under a
+controlled simulated-storage model, the disk-throughput curves are backed by
+measured bytes and writes. It does not claim that every production SSD,
+filesystem, or cloud block device will produce the same absolute throughput. It
+also does not replace a full crash-recovery certification effort. Within this
+scope, the simulated disk is still useful because it lets the evaluation
+compare the replication backends under repeatable NVMe-like and Cloud-SSD-like
+pressure.

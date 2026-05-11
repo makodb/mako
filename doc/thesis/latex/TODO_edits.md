@@ -19,13 +19,14 @@ make check
 ## Inbox
 
 - [x] Review Chapter 5 for repeated definitions now that Chapters 1-4 explain the core Mako/Raft terminology.
-- [ ] Check Chapter 5 onward for the same preferred-leader wording used in the abstract and Chapters 1-4: preferred leader election is used to align Raft leadership with Mako's leader-oriented submission path for both Multi-Raft and Single-Raft, not as a new Raft safety requirement.
+- [x] Check Chapter 5 onward for the same preferred-leader wording used in the abstract and Chapters 1-4: preferred leader election is used to align Raft leadership with Mako's leader-oriented submission path for both Multi-Raft and Single-Raft, not as a new Raft safety requirement.
 - [x] Check Chapter 5 onward for the same ReplayPool wording used in the abstract and Chapters 1-4: ReplayPool is the Single-Raft replay-path fix, not a Multi-Raft requirement.
 - [ ] Confirm all figure references are introduced before the figure appears or immediately near it.
 - [ ] Figure 3.1 manual PDF still visually says “One group per process” inside the Single-Raft panel. The LaTeX prose and caption are corrected, but the manual source/export should be updated to say “one consolidated Raft group” and “one local replica per process.”
-- [ ] Fix the existing Chapter 7 underfull box warning if it is visually noticeable in the PDF.
+- [ ] Figure 6.1 manual PDF contains typo text in the diagram: “per-soruce” and “soruce” should be corrected to “per-source” and “source.”
+- [x] Fix the existing Chapter 7 underfull box warning if it is visually noticeable in the PDF.
 - [x] Audit and revise the phrase “one Raft group per process” for Single-Raft in Chapter 5 onward. The abstract and Chapters 1-3 now use more precise wording, but later chapters and captions still need the same pass.
-- [ ] Search Chapter 6 and Chapter 8 for persistence wording and make sure NVMe is mentioned alongside Cloud-SSD where appropriate. Avoid implying the thesis only evaluated Cloud-SSD.
+- [x] Search Chapter 6 and Chapter 8 for persistence wording and make sure NVMe is mentioned alongside Cloud-SSD where appropriate. Avoid implying the thesis only evaluated Cloud-SSD.
 
 ## General Audit Checklist
 
@@ -74,3 +75,6 @@ make check
 - 2026-05-10: Applied Chapter 4 preferred-leader cleanup: replaced lab process names with submission/preferred/backup replica terminology and added the missing motivation that Mako's generated logs enter a local submission path without remote elected-leader forwarding.
 - 2026-05-11: Updated abstract through Chapter 4 for the preferred-leader recovery work: startup placement remains limited, backups can lead during ordinary failover, failback is guarded by preferred-replica catch-up, and Chapter 4 now cites the preferred-leader audit/failback tests plus the fresh Single-Raft/Multi-Raft no-regression sweep without replacing Chapter 8 result data.
 - 2026-05-11: Rewrote Chapter 5 as a detailed Single-Raft replay chapter: clarified the fan-in bottleneck, separated commit/apply/replay, explained no-ReplayPool as a negative control, described ReplayPool routing and deferred replay, and removed imprecise Single-Raft wording.
+- 2026-05-11: Rewrote Chapter 6 and Chapter 7: Chapter 6 now explains persistence scope, simulated NVMe/Cloud-SSD models, source-tagged storage work, and proof counters; Chapter 7 now gives a broader validation argument with a cleaner validation matrix and metric-discipline section.
+- 2026-05-11: Added the ReplayPool ordering caveat as its own Chapter 5 subsection: parallel replay preserves lane-level order but can complete records from different lanes out of global Raft-log order, so the design relies on Mako's watermark and atomic compare-and-swap style safety checks.
+- 2026-05-11: Simplified Chapter 6 into a table-driven explanation of simulated disk persistence, with plain-English definitions for persisted bytes, modeled writes, bytes per committed transaction, source breakdown, and maximum modeled wait.
