@@ -18,13 +18,13 @@ make check
 
 ## Inbox
 
-- [ ] Review Chapter 5 for repeated definitions now that Chapters 1-4 explain the core Mako/Raft terminology.
+- [x] Review Chapter 5 for repeated definitions now that Chapters 1-4 explain the core Mako/Raft terminology.
 - [ ] Check Chapter 5 onward for the same preferred-leader wording used in the abstract and Chapters 1-4: preferred leader election is used to align Raft leadership with Mako's leader-oriented submission path for both Multi-Raft and Single-Raft, not as a new Raft safety requirement.
-- [ ] Check Chapter 5 onward for the same ReplayPool wording used in the abstract and Chapters 1-4: ReplayPool is the Single-Raft replay-path fix, not a Multi-Raft requirement.
+- [x] Check Chapter 5 onward for the same ReplayPool wording used in the abstract and Chapters 1-4: ReplayPool is the Single-Raft replay-path fix, not a Multi-Raft requirement.
 - [ ] Confirm all figure references are introduced before the figure appears or immediately near it.
 - [ ] Figure 3.1 manual PDF still visually says “One group per process” inside the Single-Raft panel. The LaTeX prose and caption are corrected, but the manual source/export should be updated to say “one consolidated Raft group” and “one local replica per process.”
 - [ ] Fix the existing Chapter 7 underfull box warning if it is visually noticeable in the PDF.
-- [ ] Audit and revise the phrase “one Raft group per process” for Single-Raft in Chapter 5 onward. The abstract and Chapters 1-3 now use more precise wording, but later chapters and captions still need the same pass.
+- [x] Audit and revise the phrase “one Raft group per process” for Single-Raft in Chapter 5 onward. The abstract and Chapters 1-3 now use more precise wording, but later chapters and captions still need the same pass.
 - [ ] Search Chapter 6 and Chapter 8 for persistence wording and make sure NVMe is mentioned alongside Cloud-SSD where appropriate. Avoid implying the thesis only evaluated Cloud-SSD.
 
 ## General Audit Checklist
@@ -48,7 +48,7 @@ make check
 - [x] Chapter 3.6 Commit and Callback Delivery: rewrite the section in deeper but simpler terms around replication, majority commit, Mako callback delivery, and role-aware behavior.
 - [x] Chapter 3.6 second pass: rewrite commit/callback delivery as a novice-friendly two-question lifecycle with a concrete lane-3 example for Multi-Raft versus Single-Raft routing.
 - [x] Audit Chapter 4 to give preferred leader enough credit without overclaiming safety changes.
-- [ ] Audit Chapter 5 to make the Single-Raft replay bottleneck and ReplayPool story easy to follow.
+- [x] Audit Chapter 5 to make the Single-Raft replay bottleneck and ReplayPool story easy to follow.
 
 ## Batch 3: Opening Precision Edits
 
@@ -73,3 +73,4 @@ make check
 - 2026-05-10: Rewrote Chapter 4 as a full preferred-leader chapter: placement problem, Mako/Paxos contrast, preference-not-authority design, startup/failover/failback mechanism, safety boundary, non-claims, and validation matrix.
 - 2026-05-10: Applied Chapter 4 preferred-leader cleanup: replaced lab process names with submission/preferred/backup replica terminology and added the missing motivation that Mako's generated logs enter a local submission path without remote elected-leader forwarding.
 - 2026-05-11: Updated abstract through Chapter 4 for the preferred-leader recovery work: startup placement remains limited, backups can lead during ordinary failover, failback is guarded by preferred-replica catch-up, and Chapter 4 now cites the preferred-leader audit/failback tests plus the fresh Single-Raft/Multi-Raft no-regression sweep without replacing Chapter 8 result data.
+- 2026-05-11: Rewrote Chapter 5 as a detailed Single-Raft replay chapter: clarified the fan-in bottleneck, separated commit/apply/replay, explained no-ReplayPool as a negative control, described ReplayPool routing and deferred replay, and removed imprecise Single-Raft wording.

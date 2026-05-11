@@ -4,8 +4,8 @@
 
 \textbf{Multi-Raft:} one Raft group per partition.
 
-\textbf{Single-Raft:} one Raft group per process, with partition identity carried in
-each command.
+\textbf{Single-Raft:} one consolidated Raft log, with one local replica running in
+each process and partition identity carried in each command.
 
 \textbf{ReplayPool:} pool of Mako replay workers that execute heavy follower replay
 outside the Raft apply staging thread.
