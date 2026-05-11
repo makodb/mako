@@ -1103,6 +1103,8 @@ if(MAKO_USE_RAFT)
   add_apps(testPreferredReplicaStartup examples/mako-raft-tests/testPreferredReplicaStartup.cc)
   add_apps(testPreferredReplicaLogReplication examples/mako-raft-tests/testPreferredReplicaLogReplication.cc)
   add_apps(testNoOps examples/mako-raft-tests/testNoOps.cc)
+  add_apps(testPreferredLeaderAudit examples/mako-raft-tests/testPreferredLeaderAudit.cc)
+  add_apps(testPreferredLeaderFailbackAudit examples/mako-raft-tests/testPreferredLeaderFailbackAudit.cc)
 endif()
 
 # Borrow checking for dbtest DISABLED - uses STO (Software Transactional Objects)

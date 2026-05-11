@@ -26,7 +26,10 @@ PROCESSES=("localhost" "p1" "p2" "p3" "p4")
 # Get absolute paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-BUILD_DIR="${PROJECT_ROOT}/build"
+BUILD_DIR="${BUILD_DIR:-${PROJECT_ROOT}/build}"
+if [[ "${BUILD_DIR}" != /* ]]; then
+    BUILD_DIR="${PROJECT_ROOT}/${BUILD_DIR}"
+fi
 TEST_EXEC="${BUILD_DIR}/testNoOps"
 LOG_DIR="${SCRIPT_DIR}/logs_noops_test"
 

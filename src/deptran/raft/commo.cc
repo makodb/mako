@@ -47,6 +47,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
                              ) {
   // verify(par_id == 0);                          
   auto ret = Reactor::create_sp_event<IntEvent>();
+  EnsureClientConnected(site_id);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -119,6 +120,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
   shared_ptr<SendAppendEntriesResults> res;
   // @unsafe
   { res = shared_ptr<SendAppendEntriesResults>(new SendAppendEntriesResults()); }
+  EnsureClientConnected(site_id);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;

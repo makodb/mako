@@ -47,6 +47,7 @@ const int STARTUP_TIME_SEC = 2;       // Wait for cluster stabilization
 const int LEADER_WAIT_SEC = 3;        // Wait for preferred leader election
 const int NOOPS_WAIT_SEC = 5;         // Wait for NO-OPS propagation
 const int LOGS_WAIT_SEC = 5;          // Wait for regular logs
+const int FINAL_STABILITY_WAIT_SEC = 3; // Keep leader alive after local completion
 const int NUM_NOOPS = 5;              // Number of NO-OPS to send (epochs 0-4)
 const int NUM_REGULAR_LOGS = 10;      // Number of regular logs after NO-OPS
 const int BATCH_SIZE = 1;             // NO-OPS should not be batched
@@ -129,6 +130,8 @@ int main(int argc, char **argv) {
     safe_print("Preferred leader: localhost");
     safe_print("=================================================================");
     safe_print("");
+
+    janus::set_replication_type(janus::ReplicationType::RAFT);
 
     // =========================================================================
     // Step 1: Setup Configuration
@@ -440,7 +443,23 @@ int main(int argc, char **argv) {
     safe_print("");
 
     // =========================================================================
-    // Step 12: Final Results and Verification
+    // Step 12: Final Stability Window
+    // =========================================================================
+    //
+    // The leader can apply its own committed records before every follower has
+    // caught up.  If the leader exits immediately after its local check passes,
+    // the remaining replicas can legitimately start a failover election and the
+    // test may report a missing final record even though the no-op path works.
+    // Keep all replicas alive briefly so the last regular records can be
+    // delivered under the same leader before final verification.
+    safe_print("[" + proc_name + "] Step 12: Final stability wait (" +
+               to_string(FINAL_STABILITY_WAIT_SEC) + "s)...");
+    this_thread::sleep_for(chrono::seconds(FINAL_STABILITY_WAIT_SEC));
+    safe_print("[" + proc_name + "] ✓ Final stability wait complete");
+    safe_print("");
+
+    // =========================================================================
+    // Step 13: Final Results and Verification
     // =========================================================================
     safe_print("=================================================================");
     safe_print("[" + proc_name + "] FINAL TEST RESULTS");
@@ -517,7 +536,7 @@ int main(int argc, char **argv) {
     safe_print("=================================================================");
 
     // =========================================================================
-    // Step 13: Fast Exit
+    // Step 14: Fast Exit
     // =========================================================================
     int exit_code = overall_pass ? 0 : 1;
 

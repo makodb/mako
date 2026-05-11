@@ -163,6 +163,8 @@ class RaftServer : public TxLogServer {
   std::atomic<bool> leadership_monitor_stop_{false};       // Signal to stop monitoring thread
   std::thread leadership_monitor_thread_;                   // Background thread monitoring for transfer
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
+  uint64_t preferred_election_suppressed_until_ = 0;        // Cooldown while preferred is catching up
+  std::map<siteid_t, uint64_t> last_reconnect_attempt_us_{}; // Throttle async reconnect attempts
 
 
   // @safe - simple comparison of member fields
@@ -179,6 +181,12 @@ class RaftServer : public TxLogServer {
     // We've caught up if our commitIndex >= leader's last known commitIndex
     // Note: leader_last_commit_index_ is updated from AppendEntries heartbeats
     return commitIndex >= leader_last_commit_index_;
+  }
+
+  // @safe - simple comparison of member fields and current time
+  bool ShouldDeferPreferredElection(uint64_t now) const {
+    return AmIPreferredLeader() &&
+           preferred_election_suppressed_until_ > now;
   }
 
   // ============================================================================
@@ -316,7 +324,9 @@ class RaftServer : public TxLogServer {
       auto prev_time = last_heartbeat_time_;
       last_heartbeat_time_ = Time::now();
       // Log only important timer resets (elections, votes), not routine heartbeats
-      if (strcmp(why, "granted vote") == 0 || strcmp(why, "start election timer") == 0) {
+      if (strcmp(why, "granted vote") == 0 ||
+          strcmp(why, "start election timer") == 0 ||
+          strcmp(why, "started election") == 0) {
         Log_info("[TIMER_RESET] Site %d: reset timer (%s) - prev_hb_time=%lu new_hb_time=%lu delta=%lu",
                  site_id_, why, prev_time, last_heartbeat_time_, last_heartbeat_time_ - prev_time);
       }
@@ -335,14 +345,18 @@ class RaftServer : public TxLogServer {
   }
 
   /**
-   * Get dynamic election timeout based on preferred replica role and grace period
+   * Get election timeout with startup placement bias only.
    *
    * Returns:
-   * - Preferred replica: 150-300ms (short timeout to win elections quickly)
-   * - Non-preferred during grace period (0-5s after startup): 1-2s (long timeout to allow preferred to win)
-   * - Non-preferred after grace period: 500ms-1s (medium timeout to enable failover)
+   * - Preferred replica during startup grace: normal timeout, 500ms-1s
+   * - Non-preferred replica during startup grace: delayed timeout, 2-3s
+   * - All replicas after startup grace: normal timeout, 500ms-1s
    *
-   * This implements startup election bias for preferred replica system.
+   * The preferred replica does not receive a shorter election timeout. The
+   * startup advantage comes only from delaying non-preferred replicas during
+   * the initial grace period. After startup, failback to the preferred replica
+   * is driven by the explicit leadership transfer path once the preferred
+   * replica is caught up.
    */
   // @safe - election timeout calculation (external calls wrapped in @unsafe blocks)
   uint64_t GetElectionTimeout();
