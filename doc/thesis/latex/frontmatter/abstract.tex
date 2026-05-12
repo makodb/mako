@@ -1,5 +1,6 @@
-Mako is a high-throughput, strongly consistent, geo-replicated transactional
-key-value store. It keeps transaction processing fast by separating three
+Mako is a high-throughput, geo-replicated transactional key-value store that
+preserves the transactional semantics of the original Mako design. It keeps
+transaction processing fast by separating three
 steps that many replicated systems can accidentally serialize: leader-side
 transaction execution, replication of the resulting transaction log records,
 and follower-side replay of committed records into local database state. This

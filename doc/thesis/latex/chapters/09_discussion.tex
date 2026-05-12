@@ -47,9 +47,11 @@ parallelism after the consensus topology is changed.
 Neither design dominates in all settings. Multi-Raft is easier to defend when
 the priority is preserving Mako's original performance shape. Single-Raft is
 more attractive when reducing replication structure matters, but it requires
-extra evidence that follower replay is keeping up. That is why the evaluation
-treats follower replay progress as a first-class metric rather than as an
-implementation detail.
+extra evidence that follower replay is making comparable progress. That is why
+the evaluation treats follower replay progress as a first-class metric rather
+than as an implementation detail. This thesis does not measure a maximum
+per-entry replay-lag bound or post-run drain time, so it avoids claiming a
+formal bounded-lag result.
 
 \section{Preferred Leadership as a Placement Mechanism}
 
@@ -138,3 +140,8 @@ Finally, ReplayPool sizing could become adaptive. The thesis uses a simple
 1:1 setting where follower replay workers match leader-side Mako workers, but
 a production system could adjust replay workers dynamically based on backlog,
 CPU pressure, and memory behavior.
+
+Additional baselines would also sharpen the interpretation. Future work should
+include an unreplicated Mako upper bound, a consensus-only microbenchmark, and
+a remote-leader forwarding baseline to separate application execution,
+consensus overhead, and submission-placement cost more cleanly.

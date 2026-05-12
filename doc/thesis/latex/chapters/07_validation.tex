@@ -9,9 +9,9 @@ must move replay work to parallel workers without changing the committed order.
 Finally, the benchmark must report metrics that describe committed work,
 follower progress, CPU use, and simulated-disk work consistently.
 
-This chapter summarizes the validation evidence behind those claims. It is not
-a test manual. Individual test names and helper details are less important than
-the question each validation class answers.
+This chapter summarizes the validation evidence behind those claims. It avoids
+a source-code walkthrough, but it does identify the scenarios that were tested
+and the invariant each scenario is meant to support.
 
 \section{System and Fault Model}
 
@@ -23,12 +23,13 @@ replicas on one machine and communicate over local TCP/IP. That choice keeps
 the focus on Mako's replication backend, but it also means the validation is
 not a wide-area network or datacenter-failure study.
 
-The failure model is ordinary crash-stop and crash-recovery behavior for the
-replication layer. A replica may be unavailable and later rejoin. The tests do
-not assume Byzantine behavior, malicious replicas, disk corruption, or arbitrary
-network partitions. The persistence work in Chapter 6 is also narrower than a
-complete durable-recovery proof: it validates that modeled persistence work is
-counted and reported, not that every possible storage failure has been tested.
+The failure model is ordinary crash-stop and rejoin behavior for the
+replication layer. A replica may be unavailable and later rejoin the Raft group.
+The tests do not assume Byzantine behavior, malicious replicas, disk
+corruption, or arbitrary network partitions. The persistence work in Chapter 6
+is also narrower than a complete durable-restart proof: it validates that
+modeled persistence work is counted and reported, not that every possible
+storage failure has been tested by restarting from physical media.
 
 One availability boundary is especially important for preferred leader
 election. If the submission replica is unavailable, backup replicas can still
@@ -86,7 +87,8 @@ leader-side workers produce transaction log records, the replication backend
 orders those records, and follower replicas replay the committed records into
 their local state. This catches integration bugs that standalone Raft tests
 cannot see, such as delivering a committed record to the wrong Mako lane or
-measuring leader-side work while followers are not keeping up.
+measuring leader-side work while followers are making much less replay
+progress.
 
 ReplayPool validation focuses on Single-Raft. The expected behavior is that Raft
 decides the order, a lightweight delivery path hands committed records to Mako,
@@ -123,7 +125,70 @@ same measured work.
 This validation supports the disk interpretation in Chapter 8. If a throughput
 curve changes under simulated storage pressure, the thesis can point to the
 corresponding bytes, writes, and bytes per committed transaction instead of
-relying on throughput alone.
+relying on throughput alone. The evidence is an accounting and fairness check
+for the controlled model; it is not a full proof of physical SSD saturation.
+
+\section{Concrete Validation Scenarios}
+
+\tabref{tab:validation-scenarios} lists the main validation scenarios in
+reader-facing terms. The table is meant to make the evidence auditable without
+turning the thesis into a test-script reference.
+
+\begingroup
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{0.98}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.28\linewidth}
+>{\raggedright\arraybackslash}p{0.42\linewidth}
+>{\raggedright\arraybackslash}p{0.24\linewidth}@{}}
+\caption[Concrete validation scenarios]{Concrete validation scenarios behind the main claims.}
+\label{tab:validation-scenarios}\\
+\toprule
+Scenario & What the run checks & Supported claim \\
+\midrule
+\endfirsthead
+\toprule
+Scenario & What the run checks & Supported claim \\
+\midrule
+\endhead
+Raft election and agreement &
+Replicas elect a leader, append records, replicate them to a quorum, and agree on committed entries across ordinary leader changes. &
+Raft backend protocol sanity. \\
+\addlinespace
+Preferred startup placement &
+The configured submission replica becomes the normal Raft leader for the groups used by the benchmark. &
+Mako can submit transaction records through the intended leader-side role. \\
+\addlinespace
+Backup leadership while preferred is absent &
+When the preferred replica is unavailable, backup replicas can still elect a leader and preserve the replicated log. &
+Preference does not disable ordinary Raft failover. \\
+\addlinespace
+Safe return after catch-up &
+A backup leader attempts return to the preferred replica only after observing that the preferred replica has caught up to the leader's log. &
+Failback is placement policy guarded by Raft state, not a safety bypass. \\
+\addlinespace
+Preferred-leader log replication &
+Records submitted through the preferred leader are replicated and delivered to followers. &
+Preferred placement remains compatible with normal log replication. \\
+\addlinespace
+No-op and watermark progress &
+Control records used for watermark synchronization propagate through the Raft path. &
+Mako's replay-safety bookkeeping works with the Raft backend. \\
+\addlinespace
+Single-Raft command routing &
+Commands from multiple worker lanes pass through the consolidated Raft log and are delivered to the correct Mako replay lane after commit. &
+Single-Raft preserves lane identity even with one consolidated log. \\
+\addlinespace
+ReplayPool replay safety &
+Same-lane records stay on the same replay path; records ahead of the safe watermark are deferred and retried. &
+Parallel replay respects Mako's replay ordering rules. \\
+\addlinespace
+Simulated-disk accounting smoke checks &
+No-storage runs report zero modeled work, while NVMe-like and Cloud-SSD-like runs report nonzero bytes and writes that appear in the plotted data. &
+Persistence results are backed by measured modeled work. \\
+\bottomrule
+\end{longtable}
+\endgroup
 
 \section{Validation Matrix}
 
@@ -178,8 +243,7 @@ prove replication correctness. Simulated-disk bytes and writes are also
 separate from throughput: they explain how much modeled storage work the run
 generated.
 
-The plotted figures and the numbers quoted in the text are taken from the same
-frozen result set. This matters because benchmark directories can be regenerated
-as experiments are rerun. By freezing the result set used for the thesis, the
-prose and graphs remain internally consistent: a throughput value discussed in
-the text refers to the same measurement that produced the corresponding figure.
+The plotted figures and the numbers quoted in the text are taken from one
+archived set of measurements. This keeps the evaluation internally consistent:
+a throughput value discussed in the prose refers to the same measurement that
+produced the corresponding graph.

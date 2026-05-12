@@ -52,7 +52,7 @@ Network path &
 Local TCP/IP through the benchmark RPC stack; no WAN latency is injected. \\
 \addlinespace
 Run length &
-Each plotted sweep point is a 30-second timed benchmark run after startup and loading. Unless explicitly noted, the plotted sweep uses one run per point. \\
+Each plotted sweep point is a 30-second timed benchmark run after startup and loading. The plotted sweeps use one run per point, so close differences between nearby curves should not be treated as statistically significant rankings. \\
 \addlinespace
 CPU measurement &
 CPU statistics are sampled from Linux process and thread accounting. They are role/activity indicators, not a replacement for throughput or correctness metrics. \\
@@ -91,6 +91,9 @@ One warehouse, ten districts, 30K customers, 30K orders, 30K history rows, 9K ne
 Concurrency and batching &
 The benchmark configuration uses 400 concurrent transactions and a replication batch size of 400. \\
 \addlinespace
+Client pacing &
+The benchmark is a saturated server-throughput experiment; it does not model user think time or wide-area client delays. \\
+\addlinespace
 ReplayPool setting &
 The main Single-Raft ReplayPool run uses one replay worker per Mako transaction worker. \\
 \bottomrule
@@ -107,30 +110,10 @@ used as supporting evidence that Mako's transaction workers are active. In the
 persistence experiments, simulated-disk counters report modeled bytes, modeled
 writes, and normalized bytes per committed transaction. The simulated-disk
 settings used for those experiments are the No simulated disk, NVMe-like, and
-Cloud-SSD-like settings listed in Table~\ref{tab:simulated-disk-models}.
-
-The thesis also includes a small repeatability check for the 11-worker no-disk
-headline point. Table~\ref{tab:headline-repeatability} reports the mean,
-standard deviation, and coefficient of variation across three reruns. These
-numbers support the stability of the main endpoint, but they do not turn small
-differences between backends into universal rankings.
-
-\begin{table}[htbp]
-\centering
-\caption[Headline repeatability]{Repeatability check for the 11-worker no-disk headline point.}
-\label{tab:headline-repeatability}
-\small
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{Backend} & \textbf{Mean transactions/s} & \textbf{Std. dev.} & \textbf{CV} \\
-\midrule
-Single-Raft with ReplayPool & 566,758 & 366 & 0.064\% \\
-Multi-Raft & 530,455 & 1,777 & 0.335\% \\
-Paxos & 481,693 & 2,747 & 0.570\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-\FloatBarrier
+Cloud-SSD-like settings listed in Table~\ref{tab:simulated-disk-models}. The
+evaluation therefore emphasizes large shape differences, replay progress, and
+storage-accounting evidence rather than treating small point-to-point
+throughput differences as statistically significant.
 
 \section{No-Disk Scalability}
 
@@ -177,6 +160,9 @@ ReplayPool prevents follower replay from falling far behind leader-side commit
 throughput. Follower replay progress is a progress metric, not a standalone
 correctness proof; the correctness argument for parallel replay is the
 same-lane ordering, watermark, and atomic-update argument from Chapters 5 and 7.
+The metric also does not report a maximum per-entry lag or post-run drain time,
+so the evaluation treats replay progress as evidence of practical tracking
+rather than as a formal bounded-lag guarantee.
 
 \section{Worker CPU}
 
@@ -298,8 +284,8 @@ The Cloud-SSD-like model behaves differently. At high worker counts, all three
 backends converge near 340K transactions/s. At the 11-worker endpoint,
 Single-Raft with ReplayPool, Multi-Raft, and Paxos all report approximately
 340K transactions/s. The convergence matters because it is not a separation
-between Raft and Paxos. Under this model, the shared storage pressure becomes
-the limiting factor.
+between Raft and Paxos. Under this model, the throughput shape is consistent
+with the same simulated-storage pressure affecting all three backends.
 
 \section{Simulated-Disk Proof}
 
@@ -326,10 +312,11 @@ backends when their throughput curves converge.
 
 Panel (c) normalizes the same storage work by useful committed transactions.
 At the 11-worker endpoint, each backend records about 733 simulated-disk bytes
-per committed transaction. This supports the storage interpretation: the
-Cloud-SSD-like flattening occurs while the model is charging comparable bytes,
-comparable writes, and comparable normalized storage work across the three
-backends.
+per committed transaction. This supports the storage interpretation in a
+bounded sense: the Cloud-SSD-like flattening occurs while the model is charging
+comparable bytes, comparable writes, and comparable normalized storage work
+across the three backends. The counters make the disk comparison fair and
+auditable, but they are not by themselves a physical-device saturation proof.
 
 The claim remains intentionally narrow. These graphs show that the controlled
 simulated-storage model was doing measured work and that the three backends

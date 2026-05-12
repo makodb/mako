@@ -95,10 +95,10 @@ does the follower's local state reflect the committed record?
 
 Conflating these stages creates misleading conclusions. A backend can commit
 records quickly but replay them slowly. In that case, the leader appears to
-make progress, but the follower copies are not keeping up with the committed
-history. The thesis therefore treats follower replay throughput as a separate
-sanity metric. A healthy replicated design needs both committed work and
-replayed follower work to move at compatible rates.
+make progress, but the follower copies may fall behind the committed history.
+The thesis therefore treats follower replay throughput as a separate sanity
+metric. A healthy replicated design needs both committed work and replayed
+follower work to move at compatible rates.
 
 \section{Naive Single-Raft Without ReplayPool}
 
@@ -172,10 +172,11 @@ Parallel replay has to be disciplined. It is not enough to place committed
 records into a thread pool and let any worker apply any record. Mako's state is
 partitioned into lanes, and each lane has an ordered history of committed
 records. ReplayPool preserves that lane order by routing all records for the
-same lane to the same replay worker. That worker processes the lane's records
-in order. At the same time, different lanes can be replayed by different
-workers, which recovers the parallelism that Single-Raft removed from the
-consensus topology.
+same lane to the same replay worker. In implementation terms, the lane
+identifier chooses the replay worker, so records for one lane are queued behind
+earlier records for that same lane. At the same time, different lanes can be
+replayed by different workers, which recovers the parallelism that Single-Raft
+removed from the consensus topology.
 
 The design relies on a simple invariant. Raft decides the committed sequence of
 records. Mako then applies each committed record only on a replay path that is
@@ -200,8 +201,9 @@ records visible, and does not change the Raft commit rule. It only changes the
 execution placement of follower-side database replay. Heavy replay work moves
 from a narrow apply path into parallel replay workers, while lane-level order
 and safety checks remain in force. The evaluation's replay-throughput counters
-show whether followers are keeping up; they are interpreted together with this
-ordering argument, not as a standalone proof of replay correctness.
+show whether followers make comparable replay progress; they are interpreted
+together with this ordering argument, not as a standalone proof of replay
+correctness or bounded per-record lag.
 
 \section{Caveat: Global Replay Completion Order}
 
@@ -222,7 +224,9 @@ parallel replay.
 
 Mako can tolerate this parallelism because records carry the partition-lane and
 timestamp information needed by the replay path. Replay workers use Mako's
-watermark checks to decide whether a committed record is safe to apply. Mako's
+watermark checks to decide whether a committed record is safe to apply. If the
+record is ahead of the follower's safe watermark, the replay worker keeps it in
+a deferred queue and retries it later instead of applying it early. Mako's
 underlying concurrency-control mechanisms also use atomic compare-and-swap
 style checks to avoid blindly overwriting state when another thread has changed
 the expected version first. In other words, Raft supplies the committed order,
@@ -246,7 +250,7 @@ This is also why the evaluation in Chapter 8 reports more than leader-side
 throughput. The thesis compares committed throughput with follower replay
 throughput and CPU role measurements. Those metrics show whether a backend is
 only committing records at the leader or whether follower replicas are also
-keeping up with the committed stream. ReplayPool is successful when the
+making comparable replay progress. ReplayPool is successful when the
 Single-Raft run looks healthy under that stricter interpretation.
 
 \section{What Chapter 5 Establishes}

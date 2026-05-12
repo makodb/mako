@@ -156,13 +156,15 @@ Safe failback handles the opposite direction. Suppose a backup replica is
 currently leader because the preferred replica was unavailable. When the
 preferred replica returns, the backup leader cannot simply hand over leadership
 immediately. First, the current leader must observe that the preferred replica
-has caught up with the committed history the leader is responsible for
-preserving. In simple terms, the preferred replica must already have the
-committed prefix it would need in order to lead safely. Once that condition
-holds, the current leader can send a best-effort transfer hint through the
-normal Raft communication path. The preferred replica must still become leader
-through Raft's election rules; the hint does not install it as leader by itself.
-If the preferred replica is still too far behind to satisfy Raft's ordinary
+has caught up with the leader's log. The implementation uses the leader's
+per-follower replication progress for this check and waits until the preferred
+replica has reached the leader's current last log index. This is stronger than
+checking only the committed index, because Raft's voting rule also cares
+whether a candidate's log is up to date. Once that condition holds, the current
+leader can send a best-effort immediate-election hint through the normal Raft
+communication path. The preferred replica must still become leader through
+Raft's election rules; the hint does not install it as leader by itself. If the
+preferred replica is still too far behind to satisfy Raft's ordinary
 up-to-date voting rule, the transfer attempt fails safely and the current
 leader remains in charge.
 
@@ -182,12 +184,13 @@ cannot safely become leader merely because it is preferred.
 
 The catch-up condition is the key engineering guard for failback. The current
 leader should attempt transfer only when it believes the preferred replica has
-the committed prefix of the log. That condition does not replace Raft's election
-rules; it prevents the implementation from encouraging a stale replica to seek
-leadership. Raft's normal vote checks remain the final protection, including
-the rule that a candidate's log must be sufficiently up to date. If the
-preferred replica is behind, if the transfer hint is lost, or if another
-election happens first, the system falls back to ordinary Raft behavior.
+the leader's current log prefix through the latest known entry. That condition
+does not replace Raft's election rules; it prevents the implementation from
+encouraging a stale replica to seek leadership. Raft's normal vote checks
+remain the final protection, including the rule that a candidate's log must be
+sufficiently up to date. If the preferred replica is behind, if the transfer
+hint is lost, or if another election happens first, the system falls back to
+ordinary Raft behavior.
 
 This is why the chapter's claim is narrow. Preferred leader election makes Raft
 usable in Mako's leader-oriented submission model. It does not make Raft safer,

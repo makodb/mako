@@ -1,12 +1,17 @@
 \chapter{Background: Mako and the Original Paxos Path}
 
 \Mako{} is a geo-replicated transactional key-value store designed for high
-throughput under strong consistency \cite{mako-osdi25}. The system is built for
-online transaction processing workloads, where a server must execute many small
-transactions per second while still making each transaction durable and
-replicated. The central tension is that transaction execution can use many CPU
-cores, but replication can easily become a narrow point if all completed work
-has to pass through one serial path.
+throughput while preserving the transactional semantics described by the Mako
+paper \cite{mako-osdi25}. This thesis does not re-prove Mako's concurrency
+control or transaction isolation protocol. It assumes that transaction records
+produced by Mako are valid records, and studies whether a new replication
+backend can order, deliver, and replay those records without destroying Mako's
+performance shape. The system is built for online transaction processing
+workloads, where a server must execute many small transactions per second while
+still making each transaction durable and replicated. The central tension is
+that transaction execution can use many CPU cores, but replication can easily
+become a narrow point if all completed work has to pass through one serial
+path.
 
 This chapter focuses on the part of \Mako{} that matters for this thesis: the
 execute-replicate-replay pipeline. It does not attempt to re-explain all of
@@ -195,7 +200,8 @@ performance structure that allowed multiple worker lanes to produce and
 replicate work in parallel. Multi-Raft preserves this structure directly by
 using separate \Raft{} groups. Single-Raft changes the structure, so it must be
 judged not only by the number of committed records at the leader, but also by
-whether follower replay keeps up with those records.
+whether follower replay tracks those records closely enough to avoid becoming a
+hidden bottleneck.
 
 Third, every Raft backend must fit the way \Mako{} submits work. In the
 experiments used in this thesis, the benchmark drives transaction work through
