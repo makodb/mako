@@ -14,11 +14,89 @@ result data. This keeps the prose and graphs tied to the same benchmark runs.
 
 \section{Methodology}
 
-All evaluated backends run under the same benchmark harness and the same TPC-C
-workload. The sweep varies the number of Mako worker threads from one to eleven.
-The main in-memory comparison includes four modes: Single-Raft without
-ReplayPool, Single-Raft with ReplayPool, Multi-Raft, and the original Paxos
-backend.
+All evaluated backends run under the same benchmark harness and the same
+TPC-C-style Mako workload. The sweep varies the number of Mako worker threads
+from one to eleven. The main in-memory comparison includes four modes:
+Single-Raft without ReplayPool, Single-Raft with ReplayPool, Multi-Raft, and
+the original Paxos backend. In this chapter, ``same performance class'' means
+that a Raft configuration reaches the same broad throughput range as Paxos
+under the same benchmark and does not hide a collapsing follower replay path.
+It is not a claim that every small ranking difference between curves is
+fundamental.
+
+Table~\ref{tab:evaluation-platform} gives the execution environment. The
+experiments are local controlled experiments: the three benchmark processes run
+on the same machine and communicate through local TCP/IP. This setup is useful
+for isolating replication-backend overhead, but it is not a wide-area
+geo-replication experiment.
+
+\begin{table}[htbp]
+\centering
+\caption[Evaluation platform]{Evaluation platform and harness configuration.}
+\label{tab:evaluation-platform}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.28\linewidth}X@{}}
+\toprule
+\textbf{Item} & \textbf{Configuration} \\
+\midrule
+Machine &
+Host \code{zoo-002}, AMD EPYC 7702P, 64 physical cores, 128 logical CPUs, one NUMA node, and 503 GiB memory. \\
+\addlinespace
+Operating system and compiler &
+Ubuntu Linux kernel 5.15.0-170-generic with GCC/G++ 12.3.0. \\
+\addlinespace
+Replica placement &
+Three \code{dbtest} processes are used: the submission replica and two backup replicas. For these experiments, all are colocated on the same host and configured through loopback addresses. \\
+\addlinespace
+Network path &
+Local TCP/IP through the benchmark RPC stack; no WAN latency is injected. \\
+\addlinespace
+Run length &
+Each plotted sweep point is a 30-second timed benchmark run after startup and loading. Unless explicitly noted, the plotted sweep uses one run per point. \\
+\addlinespace
+CPU measurement &
+CPU statistics are sampled from Linux process and thread accounting. They are role/activity indicators, not a replacement for throughput or correctness metrics. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\FloatBarrier
+
+Table~\ref{tab:evaluation-workload} summarizes the workload. The benchmark is
+the Mako TPC-C-style workload used by the existing harness, not a claim of full
+TPC-C certification. The important point for this thesis is that every backend
+is evaluated with the same transaction mix, worker-count range, and batching
+configuration.
+
+\begin{table}[htbp]
+\centering
+\caption[Evaluation workload]{Evaluation workload used by the scalability and persistence sweeps.}
+\label{tab:evaluation-workload}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.28\linewidth}X@{}}
+\toprule
+\textbf{Item} & \textbf{Configuration} \\
+\midrule
+Workload &
+Mako TPC-C-style benchmark, sharded by warehouse. \\
+\addlinespace
+Worker/thread range &
+One through eleven Mako worker threads. In this benchmark setup, each worker lane is associated with a partitioned transaction-log stream. \\
+\addlinespace
+Transaction mix &
+New-order 44\%, payment 44\%, delivery 4\%, order-status 4\%, and stock-level 4\%. \\
+\addlinespace
+Per-partition population &
+One warehouse, ten districts, 30K customers, 30K orders, 30K history rows, 9K new-order rows, 100K item rows, 100K stock rows, and 300K order-line rows. \\
+\addlinespace
+Concurrency and batching &
+The benchmark configuration uses 400 concurrent transactions and a replication batch size of 400. \\
+\addlinespace
+ReplayPool setting &
+The main Single-Raft ReplayPool run uses one replay worker per Mako transaction worker. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\FloatBarrier
 
 The headline throughput metric is leader-side committed throughput. It measures
 how many transactions per second the submission-side benchmark process reports
@@ -30,6 +108,29 @@ persistence experiments, simulated-disk counters report modeled bytes, modeled
 writes, and normalized bytes per committed transaction. The simulated-disk
 settings used for those experiments are the No simulated disk, NVMe-like, and
 Cloud-SSD-like settings listed in Table~\ref{tab:simulated-disk-models}.
+
+The thesis also includes a small repeatability check for the 11-worker no-disk
+headline point. Table~\ref{tab:headline-repeatability} reports the mean,
+standard deviation, and coefficient of variation across three reruns. These
+numbers support the stability of the main endpoint, but they do not turn small
+differences between backends into universal rankings.
+
+\begin{table}[htbp]
+\centering
+\caption[Headline repeatability]{Repeatability check for the 11-worker no-disk headline point.}
+\label{tab:headline-repeatability}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Backend} & \textbf{Mean transactions/s} & \textbf{Std. dev.} & \textbf{CV} \\
+\midrule
+Single-Raft with ReplayPool & 566,758 & 366 & 0.064\% \\
+Multi-Raft & 530,455 & 1,777 & 0.335\% \\
+Paxos & 481,693 & 2,747 & 0.570\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\FloatBarrier
 
 \section{No-Disk Scalability}
 
@@ -97,7 +198,9 @@ transaction execution.
 the upper end of the sweep. At the 11-worker endpoint, the mean worker CPU is
 about 166\% for Single-Raft with ReplayPool, about 253\% for Multi-Raft, and
 about 222\% for Paxos. The exact CPU values should not be read as a correctness
-claim. They support a narrower interpretation: the throughput curves are
+claim or as a hardware-efficiency number. The metric is derived from sampled
+Linux thread accounting and role grouping, so it is best read as an activity
+indicator. It supports a narrower interpretation: the throughput curves are
 produced while Mako's transaction workers are active, not while the system is
 mostly idle.
 
@@ -108,6 +211,12 @@ it matters. It keeps the Single-Raft design fixed and varies the number of
 follower replay workers. The question is not whether adding replay workers
 always increases leader-side throughput. The question is whether enough replay
 workers are needed for followers to keep up with the committed history.
+
+This sensitivity sweep is a separate archived run from the four-way no-disk
+comparison above. Its purpose is mechanism evidence: it shows how follower
+replay changes as replay parallelism changes. The absolute throughput values
+should therefore be read as part of this controlled sensitivity experiment, not
+as a replacement for the headline four-way comparison.
 
 \begin{figure}[htbp]
 \centering

@@ -21,7 +21,12 @@
 \RequirePackage{placeins}
 \RequirePackage{indentfirst}
 
-\hypersetup{hidelinks}
+\hypersetup{
+  hidelinks,
+  linktoc=all,
+  bookmarksnumbered=true,
+  bookmarksopen=true
+}
 
 \singlespacing
 \captionsetup{font={small,singlespacing},labelfont=bf}
@@ -66,13 +71,13 @@
 \renewcommand{\cfttoctitlefont}{\normalfont\bfseries\LARGE}
 \renewcommand{\cftloftitlefont}{\normalfont\bfseries\LARGE}
 \renewcommand{\cftlottitlefont}{\normalfont\bfseries\LARGE}
-\renewcommand{\cftaftertoctitle}{\par\vspace{0.35in}}
+\renewcommand{\cftaftertoctitle}{\par\vspace{0.22in}}
 \renewcommand{\cftafterloftitle}{\par\vspace{0.35in}}
 \renewcommand{\cftafterlottitle}{\par\vspace{0.35in}}
 \setlength{\cftbeforetoctitleskip}{0.15in}
 \setlength{\cftbeforeloftitleskip}{0.15in}
 \setlength{\cftbeforelottitleskip}{0.15in}
-\setlength{\cftbeforechapskip}{0.45em}
+\setlength{\cftbeforechapskip}{0.25em}
 
 \newcommand{\maketitlepage}{%
   \begin{titlepage}

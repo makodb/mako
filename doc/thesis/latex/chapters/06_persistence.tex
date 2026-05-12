@@ -128,6 +128,17 @@ Raft metadata writes are smaller records such as term and vote state. The
 evaluation does not treat all of these as one black-box number; it records them
 separately so the disk results can be explained.
 
+These counters are accounting counters, not a byte-for-byte trace of a
+particular SSD. A modeled write corresponds to a persistence operation observed
+by the instrumentation and charged to the simulated disk. It may not match a
+physical device's final sector layout, filesystem writeback behavior, or
+firmware batching. The cluster totals used in Chapter 8 sum the modeled work
+reported by the leader and follower processes whose logs are available for the
+run. The normalized bytes-per-transaction value divides cluster persisted bytes
+by the committed transactions implied by the 30-second throughput measurement.
+This gives a consistent comparison across backends without pretending to be a
+complete hardware storage trace.
+
 \section{Why These Counters Are Needed}
 
 The disk results in Chapter 8 show that the Cloud-SSD-like model flattens at
@@ -164,7 +175,10 @@ The persistence claim is intentionally limited. The thesis shows that, under a
 controlled simulated-storage model, the disk-throughput curves are backed by
 measured bytes and writes. It does not claim that every production SSD,
 filesystem, or cloud block device will produce the same absolute throughput. It
-also does not replace a full crash-recovery certification effort. Within this
-scope, the simulated disk is still useful because it lets the evaluation
-compare the replication backends under repeatable NVMe-like and Cloud-SSD-like
-pressure.
+also does not prove every durable-recovery property of the storage layer. In
+particular, the simulated disk is used to model persistence cost and to audit
+how much storage work each backend generates; it is not a substitute for a full
+crash-recovery certification effort with real devices and filesystem failure
+modes. Within this scope, the simulated disk is still useful because it lets the
+evaluation compare the replication backends under repeatable NVMe-like and
+Cloud-SSD-like pressure.

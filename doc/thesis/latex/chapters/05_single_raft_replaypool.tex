@@ -177,6 +177,15 @@ in order. At the same time, different lanes can be replayed by different
 workers, which recovers the parallelism that Single-Raft removed from the
 consensus topology.
 
+The design relies on a simple invariant. Raft decides the committed sequence of
+records. Mako then applies each committed record only on a replay path that is
+allowed to update the affected local state. For records in the same lane, that
+means preserving their lane order. For records in different lanes, parallel
+execution is allowed only because Mako already has replay checks that decide
+whether a record is safe to apply. ReplayPool is safe in this thesis because it
+uses those Mako rules; it is not a generic rule that every Raft application can
+apply committed entries in arbitrary parallel order.
+
 ReplayPool also handles records that are committed but not yet safe for the
 local replay state to apply. Mako uses progress checks to avoid applying a
 record before the local replay path is ready for it. When such a record
@@ -190,7 +199,9 @@ log order. ReplayPool does not reorder the Raft log, does not make uncommitted
 records visible, and does not change the Raft commit rule. It only changes the
 execution placement of follower-side database replay. Heavy replay work moves
 from a narrow apply path into parallel replay workers, while lane-level order
-and safety checks remain in force.
+and safety checks remain in force. The evaluation's replay-throughput counters
+show whether followers are keeping up; they are interpreted together with this
+ordering argument, not as a standalone proof of replay correctness.
 
 \section{Caveat: Global Replay Completion Order}
 

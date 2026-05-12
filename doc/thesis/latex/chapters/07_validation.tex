@@ -13,6 +13,33 @@ This chapter summarizes the validation evidence behind those claims. It is not
 a test manual. Individual test names and helper details are less important than
 the question each validation class answers.
 
+\section{System and Fault Model}
+
+The validation assumes the same three-replica structure used by the evaluation:
+one submission replica and two backup replicas. Raft safety and availability
+are based on a majority quorum, so two of the three replicas are enough to elect
+a leader and commit new records. The experiments in this thesis colocate those
+replicas on one machine and communicate over local TCP/IP. That choice keeps
+the focus on Mako's replication backend, but it also means the validation is
+not a wide-area network or datacenter-failure study.
+
+The failure model is ordinary crash-stop and crash-recovery behavior for the
+replication layer. A replica may be unavailable and later rejoin. The tests do
+not assume Byzantine behavior, malicious replicas, disk corruption, or arbitrary
+network partitions. The persistence work in Chapter 6 is also narrower than a
+complete durable-recovery proof: it validates that modeled persistence work is
+counted and reported, not that every possible storage failure has been tested.
+
+One availability boundary is especially important for preferred leader
+election. If the submission replica is unavailable, backup replicas can still
+elect a Raft leader and preserve the replicated log according to Raft's normal
+rules. That does not automatically mean the original Mako benchmark workload
+continues unchanged, because the benchmark workers submit through the
+leader-side submission role. Serving new transaction workload from a backup
+leader would require the workload to be redirected or started there. This
+thesis validates the Raft placement and recovery mechanism; it does not claim a
+complete client redirection and production availability layer.
+
 \section{What Validation Must Establish}
 
 The first question is whether the Raft backend behaves like a consensus backend,
@@ -47,7 +74,10 @@ leadership is moved back only after the preferred replica has caught up. They
 also check that preferred leadership remains compatible with log replication and
 with the no-op and watermark behavior used to reason about committed progress.
 The key point is the same as in Chapter 4: preference affects leader placement,
-not Raft's voting or commit safety rules.
+not Raft's voting or commit safety rules. The failback check is intentionally
+guarded: the current leader attempts return to the preferred replica only after
+observing that it has the committed prefix needed for safe leadership, and
+Raft's ordinary voting rules remain the final guard.
 
 \section{Mako Integration and Replay}
 
@@ -72,6 +102,13 @@ global Raft log order. The validation therefore relies on Mako's replay safety
 rules, including watermark checks and atomic state-update checks, to ensure that
 parallel replay is safe for Mako's transaction records rather than assuming that
 ReplayPool preserves one global replay completion order.
+
+The practical invariant is that Raft still decides the committed order, while
+Mako decides when each committed record is safe to apply to local state. Records
+from the same lane are kept on the same replay path, so their lane order is
+preserved. Records from different lanes may execute in parallel only under
+Mako's existing replay checks. If a record is not yet safe for the local state,
+it waits instead of being applied early.
 
 \section{Persistence and Measurement}
 
@@ -141,7 +178,8 @@ prove replication correctness. Simulated-disk bytes and writes are also
 separate from throughput: they explain how much modeled storage work the run
 generated.
 
-For reproducibility, the plotted figures and the numbers quoted in the text are
-tied to the same archived result data. This keeps the evaluation internally
-consistent: a throughput number in the prose refers to the same run that
-generated the corresponding graph.
+The plotted figures and the numbers quoted in the text are taken from the same
+frozen result set. This matters because benchmark directories can be regenerated
+as experiments are rerun. By freezing the result set used for the thesis, the
+prose and graphs remain internally consistent: a throughput value discussed in
+the text refers to the same measurement that produced the corresponding figure.
