@@ -1,26 +1,121 @@
 \chapter{Related Work}
 
-This thesis is closest to three lines of work: high-throughput replicated
-transactions, consensus protocols, and storage-aware replicated logs.
+This thesis sits at the boundary between replicated transaction systems and
+consensus engineering. It asks whether an existing high-throughput transaction
+system can use Raft as its replication backend without losing the performance
+shape that made the original system fast. The closest related work therefore
+falls into five groups: Mako and ROLIS, replicated transaction systems,
+consensus protocols, leader placement and replay parallelism, and
+storage-aware evaluation.
 
-ROLIS and Mako motivate the performance model \cite{rolis-eurosys22,mako-osdi25}. They show that replicated
-transaction systems must treat replication as part of a multicore pipeline,
-not as a small final step after execution. This thesis follows that lesson:
-the question is not only whether Raft is correct, but whether Raft can fit
-into the transaction/replay pipeline without destroying parallelism.
+\section{Mako, ROLIS, and Execute-Replicate-Replay}
 
-Paxos and Raft provide the consensus background. Paxos is the original backend
-in Mako. Raft provides a leader-based protocol with election and log
-replication \cite{paxos-made-simple,paxos-made-live,raft-atc14}. This thesis does not introduce a new consensus protocol. It
-adapts Raft to a specific high-throughput transaction system and studies the
-systems issues around that adaptation.
+Mako is the system extended in this thesis \cite{mako-osdi25}. It is a
+geo-replicated transactional key-value store whose original replication
+backend is Paxos-based. Its performance depends on the
+execute-replicate-replay pipeline used throughout this thesis: leader-side
+workers execute transactions and produce log records, the replication layer
+orders those records, and follower replicas replay committed records into
+their local state.
 
-Work on leader placement and leadership transfer is also relevant. Preferred
-leader election is related to operational leader placement, but its motivation
-here is specifically Mako's leader-oriented submission path. The preferred
-replica is favored only when Raft safety allows it.
+ROLIS provides the closest conceptual predecessor for this pipeline
+\cite{rolis-eurosys22}. Its central lesson is that high-throughput replicated
+transactions cannot treat replication as a small final step after execution.
+Replication, replay, and multicore execution must be engineered together. This
+thesis applies that lesson to a concrete backend substitution inside Mako:
+replacing the original Paxos path with Raft while preserving the surrounding
+pipeline.
 
-Finally, persistence evaluation relates to work on durable replicated logs and
-storage bottlenecks. The thesis uses a simulated disk to model disk pressure
-and expose byte/write statistics, while keeping the claim narrower than a full
-storage-stack evaluation.
+That makes Mako and ROLIS different from generic consensus references in this
+thesis. They define the performance problem. The relevant question is not
+only whether replicas agree on a log, but whether agreement can happen without
+collapsing the multicore execution and replay structure above it.
+
+\section{Replicated and Geo-Distributed Transactions}
+
+Several distributed transaction systems also study how to combine strong
+consistency, replication, and high throughput. Spanner is a landmark
+geo-distributed database that uses synchronous replication and TrueTime to
+provide externally consistent distributed transactions at global scale
+\cite{spanner-osdi12}. Spanner's design center is a complete global database
+architecture with time-based consistency and production-scale operation; this
+thesis focuses on a narrower backend replacement inside Mako.
+
+Calvin uses deterministic transaction ordering to reduce distributed
+coordination costs in partitioned databases \cite{calvin-sigmod12}. It is
+relevant because it also treats ordering as part of transaction processing,
+but it orders transaction inputs ahead of execution. Mako instead executes
+speculatively and replicates transaction log records afterward.
+
+TAPIR and Janus revisit the boundary between transaction processing and
+replication. TAPIR builds a transaction protocol over inconsistent
+replication, moving the consistency burden into the transaction layer
+\cite{tapir-sosp15}. Janus consolidates concurrency control and consensus for
+contended wide-area transactions \cite{janus-osdi16}. These systems show that
+the transaction/replication boundary is often where important performance
+decisions live.
+
+This thesis is more conservative than those systems. It does not replace
+Mako's transaction protocol or redesign concurrency control. Instead, it keeps
+the transaction layer fixed and asks how far a standard leader-based consensus
+protocol can go when the surrounding integration is engineered carefully.
+
+\section{Consensus Protocols and Consensus Engineering}
+
+Paxos and Raft are the main consensus protocols behind this thesis
+\cite{paxos-made-simple,raft-atc14}. Paxos is the original Mako backend. Raft
+is attractive because it packages leader election, log replication, and leader
+changes in a protocol designed to be easier to understand and implement. This
+thesis compares them as systems backends rather than as abstract protocols.
+
+Paxos Made Live is especially relevant because it argues, from engineering
+experience, that turning a consensus algorithm into a working replicated
+system requires many practical decisions beyond the pseudocode
+\cite{paxos-made-live}. This thesis is in the same spirit: the integration
+must decide where leaders should be placed, how commands should be routed, how
+followers should replay, and how persistence costs should be measured.
+
+Other consensus protocols, such as EPaxos, improve the protocol structure
+itself by reducing reliance on a single stable leader and balancing load
+across replicas \cite{epaxos-sosp13}. This thesis takes a different path: it
+keeps ordinary Raft as the consensus protocol and adapts the surrounding Mako
+integration through topology, leader placement, and replay offload.
+
+This contrast is useful because it separates two ways to address bottlenecks.
+One approach is to change the consensus protocol. The approach here is to keep
+Raft understandable and change the system around it so that Raft fits the
+application pipeline.
+
+\section{Leader Placement and Replay Parallelism}
+
+Leader placement and replay parallelism are systems issues that consensus
+alone does not solve. A leader-based protocol may be safe no matter which
+eligible replica leads, but application performance can still depend on where
+that leader is located. Similarly, a consensus protocol can decide an order
+for commands while leaving the application responsible for applying committed
+work efficiently.
+
+ROLIS and Mako both show that replay must be treated as part of the
+performance pipeline \cite{rolis-eurosys22,mako-osdi25}. This thesis extends
+that lesson to Single-Raft: after many worker lanes feed one consolidated Raft
+log, follower replay has to be parallelized outside the consensus protocol.
+
+The preferred-leader mechanism fits the same pattern. Raft safety does not
+require a particular eligible leader, but Mako's submission path performs best
+when leadership is placed where transaction records are produced. The
+mechanism is therefore best understood as application-aware leader placement
+around Raft, not as a new consensus rule.
+
+\section{Persistence and Storage-Aware Evaluation}
+
+Durability is also an engineering concern rather than only a protocol detail.
+Replicated systems must persist enough state to recover safely, and the cost
+of that persistence can dominate throughput. Paxos Made Live highlights the
+practical complexity of durable consensus state \cite{paxos-made-live}, and
+Spanner illustrates that replication, durability, and production storage
+behavior are part of a complete database system \cite{spanner-osdi12}.
+
+This thesis uses controlled simulated-disk settings and records bytes, writes,
+and normalized storage work charged to each backend. The goal is not to model
+every storage-stack detail, but to make persistence results explainable rather
+than relying on throughput curves alone.

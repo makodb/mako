@@ -1,69 +1,45 @@
 Mako is a high-throughput, strongly consistent, geo-replicated transactional
-key-value store. Its goal is to process many transactions per second while
-replicating the effects of those transactions across machines for fault
-tolerance. The system is fast because it does not treat transaction execution
-and replication as one large serial step. A leader replica executes
-transactions with many worker threads, records the effects of those
-transactions as compact log records, replicates the records, and lets follower
-replicas replay the committed records into their own local database state.
+key-value store. It keeps transaction processing fast by separating three
+steps that many replicated systems can accidentally serialize: leader-side
+transaction execution, replication of the resulting transaction log records,
+and follower-side replay of committed records into local database state. This
+thesis asks whether Mako can keep that execute-replicate-replay pipeline if
+its original Paxos-based replication backend is replaced with Raft.
 
-This thesis studies whether Mako can keep that execution style if its original
-Paxos-based replication backend is replaced with Raft. The question is not
-whether Raft is an appropriate consensus protocol in isolation; Raft provides
-the protocol basis for a replicated log under its normal assumptions. The
-question is whether Raft can be integrated without destroying the parallel
-execution, replication, leadership, and replay structure that made Mako fast.
-Mako depends on parallel worker threads, multiple replication lanes,
-predictable leadership placement for the benchmark submission process, and
-follower replay that keeps up with committed work. A Raft backend that orders
-commands correctly but pushes too much work through one narrow apply or replay
-path can appear fast at the leader while followers fall behind.
+The question is a systems-integration question, not only a consensus-protocol
+question. Raft provides an understandable replicated-log protocol, but Mako's
+performance depends on how that log is connected to worker threads, partition
+lanes, leader placement, and follower replay. A Raft backend can order commands
+correctly and still be a poor fit if too much work is forced through one narrow
+apply or replay path, or if Raft elects a leader at a replica where Mako is not
+submitting transaction work.
 
-The thesis evaluates two Raft designs. Multi-Raft is the direct replacement:
-it preserves the original Paxos-shaped structure by assigning separate Raft
-groups to separate worker/replication lanes. This design asks whether Raft can
-match Paxos when it is given the same broad parallel shape. Single-Raft is the
-consolidated design: it routes all worker/replication lanes through one
-process-wide Raft log, with one replica of that consolidated Raft group running
-in each process. Each command carries routing information so committed entries
-can be delivered to the correct Mako worker/replication lane after commit. This
-design is simpler, but it also creates a sharper replay bottleneck because many
-worker threads feed one ordered Raft path.
+This thesis evaluates two Raft designs. Multi-Raft is the direct,
+Paxos-shaped replacement: separate worker/replication lanes use separate Raft
+groups, preserving the parallel structure of the original backend. Single-Raft
+is the consolidated design: all worker/replication lanes share one Raft log,
+with one replica of that consolidated group running in each process and routing
+information carried inside each command. Multi-Raft tests whether Raft can
+match Paxos when given the same broad topology; Single-Raft tests whether a
+simpler topology can remain fast without hiding replay bottlenecks.
 
-Two mechanisms make the Raft integration fit Mako's execution model. First,
-preferred leader election aligns Raft leadership with the process where this
-Mako benchmark submits and first executes transaction work. This placement
-mechanism is used by both Raft backends: Multi-Raft needs each worker-lane
-Raft group to lead at the submission replica, and Single-Raft needs the
-consolidated Raft group to lead there as well. The implementation favors that
-placement at startup, still allows backup replicas to lead during ordinary
-Raft failover, and can move leadership back to the preferred replica after it
-has caught up. These behaviors preserve ordinary Raft voting, log matching,
-commit, failover, and safety rules. Second, ReplayPool is needed by the
-consolidated Single-Raft design. It moves heavy follower replay work out of
-the narrow Raft apply path and into parallel replay workers. With ReplayPool,
-applying a Raft entry means staging and dispatching committed work, not
-performing all follower database replay inline on the apply path.
+Two additional mechanisms are required. Preferred leader election is used by
+both Raft designs to align Raft leadership with Mako's leader-side transaction
+submission path. It favors the intended submission replica during normal
+startup, still allows ordinary Raft failover to backup replicas, and permits
+leadership to return only after the preferred replica has caught up. ReplayPool
+is needed by Single-Raft: it keeps the Raft apply path lightweight by moving
+expensive follower replay into parallel replay workers.
 
-The evaluation shows why these systems choices matter. In the in-memory
-11-worker-thread experiment, where simulated disk persistence is disabled,
-Single-Raft with ReplayPool reaches about 526K committed transactions/s and
-about 499K follower replayed transactions/s. Multi-Raft reaches about 510K
-committed transactions/s, and the original Paxos backend reaches about 472K
-transactions/s. By contrast, Single-Raft without ReplayPool reports about 593K
-leader-side committed transactions/s but only about 143K follower replayed
-transactions/s. That gap shows that leader throughput alone is not enough
-evidence for a healthy replicated design. The evaluation also uses simulated
-NVMe and Cloud-SSD persistence models because real storage behavior varies
-across devices and cloud storage stacks. Under the simulated Cloud-SSD model,
-all three backends flatten near 340K transactions/s while recording comparable
-modeled storage work: about 7.49 GB of persisted data, about 24.6K modeled
-writes, and about 733 persisted bytes per committed transaction.
-
-The main conclusion is that Raft can replace Mako's Paxos-based replication
-backend without leaving Paxos's performance class, but only when the
-integration preserves Mako's pipeline. Multi-Raft preserves Paxos-like
-replication parallelism, and both Raft designs rely on preferred leader
-placement to match Mako's leader-oriented submission path. Single-Raft
-additionally becomes viable only when ReplayPool keeps Raft application and
-follower replay aligned with Mako's original execute-replicate-replay design.
+The evaluation shows that these choices keep Raft in Paxos's performance
+class. In the in-memory 11-worker-thread experiment, Single-Raft with
+ReplayPool reaches about 526K committed transactions/s and about 499K follower
+replayed transactions/s. Multi-Raft reaches about 510K committed transactions/s,
+and the original Paxos backend reaches about 472K transactions/s. By contrast,
+Single-Raft without ReplayPool reports about 593K leader-side committed
+transactions/s but only about 143K follower replayed transactions/s, showing
+that leader throughput alone can be misleading. Under a simulated Cloud-SSD
+persistence model, all three backends flatten near 340K transactions/s while
+recording comparable modeled storage work. Overall, Raft can replace Mako's
+Paxos backend when topology, leader placement, and replay preserve Mako's
+pipeline.

@@ -19,6 +19,7 @@
 \RequirePackage{tocloft}
 \RequirePackage{needspace}
 \RequirePackage{placeins}
+\RequirePackage{indentfirst}
 
 \hypersetup{hidelinks}
 
@@ -33,7 +34,7 @@
   {\chaptername\ \thechapter}
   {1.1em}
   {\LARGE}
-\titlespacing*{\chapter}{0pt}{0.15in}{0.35in}
+\titlespacing*{\chapter}{0pt}{0.15in}{0.85in}
 
 \titleformat{\section}
   {\normalfont\bfseries\large}
@@ -103,16 +104,19 @@
   \setcounter{page}{2}
   \thispagestyle{plain}
   \begin{center}
-  \ThesisAuthor\\[1.5em]
-  This \ThesisDocumentType{} has been accepted by the Graduate School\\
-  in partial fulfillment of the requirements for the degree of\\
-  \ThesisDegree\\[2.5em]
-  \ThesisAdvisor\\
-  Advisor\\[2em]
-  \ThesisChair\\
-  Chairperson of Defense\\[2em]
-  \ThesisCommitteeMember\\
-  Committee Member\\[4em]
+  Stony Brook University\\[1.5em]
+  The Graduate School\\[2em]
+  \ThesisAuthor\\[2em]
+  We, the thesis committee for the above candidate for the\\
+  \ThesisDegree{} degree, hereby recommend\\
+  Acceptance of this thesis.\\[2.5em]
+  \ThesisAdvisor{} -- Thesis Advisor\\
+  \ThesisAdvisorAffiliation\\[2em]
+  \ThesisChair{} -- Committee Chair\\
+  \ThesisChairAffiliation\\[2em]
+  \ThesisCommitteeMember{} -- Committee Member\\
+  \ThesisCommitteeMemberAffiliation\\[3em]
+  This thesis is accepted by the Graduate School\\[2.5em]
   \GraduateDean\\
   Dean of the Graduate School
   \end{center}

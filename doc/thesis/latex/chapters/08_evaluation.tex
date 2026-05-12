@@ -215,20 +215,12 @@ all three backends write about 7.49 GB through the simulated disk and perform
 about 24.6K modeled writes. The storage work is therefore comparable across the
 backends when their throughput curves converge.
 
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.96\linewidth]{figures/graphs/fig13_cloudssd_bytes_per_txn.pdf}
-\caption[Cloud-SSD bytes per transaction]{Cloud-SSD simulated-disk bytes per committed transaction.}
-\label{fig:cloudssd-bytes-per-txn}
-\end{figure}
-\FloatBarrier
-
-\figref{fig:cloudssd-bytes-per-txn} normalizes the same storage work by useful
-committed transactions. At the 11-worker endpoint, each backend records about
-733 simulated-disk bytes per committed transaction. This supports the storage
-interpretation: the Cloud-SSD-like flattening occurs while the model is
-charging comparable bytes, comparable writes, and comparable normalized storage
-work across the three backends.
+Panel (c) normalizes the same storage work by useful committed transactions.
+At the 11-worker endpoint, each backend records about 733 simulated-disk bytes
+per committed transaction. This supports the storage interpretation: the
+Cloud-SSD-like flattening occurs while the model is charging comparable bytes,
+comparable writes, and comparable normalized storage work across the three
+backends.
 
 The claim remains intentionally narrow. These graphs show that the controlled
 simulated-storage model was doing measured work and that the three backends
@@ -237,6 +229,7 @@ that every production SSD, filesystem, or cloud storage stack will produce the
 same absolute throughput.
 
 \section{Evaluation Summary}
+\enlargethispage{2\baselineskip}
 
 The evaluation supports the thesis in four steps. Multi-Raft validates the
 direct Paxos-shaped Raft replacement: when Raft is given similar partition-level
@@ -253,7 +246,7 @@ replay progress and replay completeness, not by leader throughput alone.
 
 The persistence experiments add a separate lesson: disk claims need storage
 proof. Under the Cloud-SSD-like model, throughput flattens near 340K
-transactions/s for all three backends, and the simulated-disk counters show
+transactions/s for all three backends while the simulated-disk counters show
 about 7.49 GB, about 24.6K writes, and about 733 bytes per committed
-transaction at the 11-worker endpoint. That is the evidence needed to explain
-the disk result without overstating it as a production SSD evaluation.
+transaction at the 11-worker endpoint. These counters explain the disk result
+without turning it into a production-SSD claim.
