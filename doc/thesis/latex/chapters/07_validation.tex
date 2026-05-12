@@ -112,6 +112,12 @@ preserved. Records from different lanes may execute in parallel only under
 Mako's existing replay checks. If a record is not yet safe for the local state,
 it waits instead of being applied early.
 
+The final replay-lag validation adds a more direct accounting check. It counts
+records submitted by the leader and records replayed by the slower follower at
+the end of the run. This is stronger than a throughput-rate comparison alone:
+it checks whether leader-accepted records accumulated unreplayed, and whether the
+ReplayPool queue drained after the workload stopped submitting new records.
+
 \section{Persistence and Measurement}
 
 Persistence validation is narrower than functional database recovery. It checks
@@ -183,6 +189,10 @@ ReplayPool replay safety &
 Same-lane records stay on the same replay path; records ahead of the safe watermark are deferred and retried. &
 Parallel replay respects Mako's replay ordering rules. \\
 \addlinespace
+Replay lag and drain accounting &
+Leader-submitted records are compared with records replayed by the slower follower, and ReplayPool queue state is checked after the run. &
+ReplayPool prevents leader-accepted records from accumulating unreplayed in the measured Single-Raft run. \\
+\addlinespace
 Simulated-disk accounting smoke checks &
 No-storage runs report zero modeled work, while NVMe-like and Cloud-SSD-like runs report nonzero bytes and writes that appear in the plotted data. &
 Persistence results are backed by measured modeled work. \\
@@ -220,6 +230,8 @@ Preferred leader behavior & Startup placement, backup leadership while the prefe
 Mako integration & Mako transaction logs are ordered, delivered, and replayed by follower replicas. & End-to-end replication correctness. \\
 \addlinespace
 ReplayPool behavior & Replay work moves to replay workers while same-lane ordering and deferred replay rules are preserved. & Single-Raft replay correctness and progress evidence. \\
+\addlinespace
+Replay-lag proof & End-of-run leader-submitted records, follower-replayed records, replay gap, queue peak, and drain time are recorded. & Direct evidence that 1:1 ReplayPool drains the follower work counted by the benchmark's replay accounting path. \\
 \addlinespace
 Persistence counters & Disabled-storage runs report no modeled work; simulated-storage runs report persisted bytes, modeled writes, and source breakdowns. & Disk-result interpretability. \\
 \addlinespace

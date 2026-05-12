@@ -49,9 +49,10 @@ the priority is preserving Mako's original performance shape. Single-Raft is
 more attractive when reducing replication structure matters, but it requires
 extra evidence that follower replay is making comparable progress. That is why
 the evaluation treats follower replay progress as a first-class metric rather
-than as an implementation detail. This thesis does not measure a maximum
-per-entry replay-lag bound or post-run drain time, so it avoids claiming a
-formal bounded-lag result.
+than as an implementation detail. The replay-lag proof in Chapter 8 adds a
+stronger end-of-run check: in the measured benchmark, 1:1 ReplayPool drains the
+records counted by the leader-side accounting path, while the no-ReplayPool
+design leaves a large unreplayed gap at high worker counts.
 
 \section{Preferred Leadership as a Placement Mechanism}
 
@@ -122,4 +123,6 @@ load is separate work.
 Finally, the results are tied to the evaluated workload, machine, thread
 range, and benchmark harness. They are strong evidence for the thesis claim in
 this setting, but they should not be generalized to every transaction workload
-or hardware platform without additional measurement.
+or hardware platform without additional measurement. The replay-lag proof shows
+end-of-run drain behavior for this benchmark; it is not a formal per-entry
+latency bound for all possible workloads.

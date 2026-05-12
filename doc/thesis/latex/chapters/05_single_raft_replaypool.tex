@@ -119,8 +119,10 @@ less work.
 This negative control is important for the thesis. It prevents the evaluation
 from treating a high leader-side number as enough proof. Chapter 8 uses the
 no-ReplayPool result to show that Single-Raft must be judged by both commit
-throughput and replay progress. The design is not considered healthy merely
-because the leader can append and commit records quickly.
+throughput and replay progress. It also measures end-of-run replay lag and
+drain behavior, so the evaluation can check whether followers actually finish
+the records accepted by the leader. The design is not considered healthy
+merely because the leader can append and commit records quickly.
 
 \section{ReplayPool Design}
 

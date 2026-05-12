@@ -9,6 +9,11 @@
   sorting=none,
   maxbibnames=99
 ]{biblatex}
+\AtBeginBibliography{%
+  \singlespacing
+  \setlength{\bibitemsep}{\baselineskip}%
+  \setlength{\bibparsep}{0pt}%
+}
 \addbibresource{bibliography/references.bib}
 
 \input{metadata}

@@ -5,9 +5,9 @@ questions. First, can Raft stay in the same performance class as Mako's
 original Paxos backend when persistence is disabled? Second, does Single-Raft
 remain credible as a replicated design when follower replay is measured, not
 only leader-side throughput? Third, does ReplayPool explain the Single-Raft
-result by improving follower replay progress? Finally, when persistence cost is
-modeled, are the disk results backed by measured storage work rather than by
-throughput curves alone?
+result by improving follower replay progress and draining the measured
+end-of-run replay backlog? Finally, when persistence cost is modeled, are the disk results
+backed by measured storage work rather than by throughput curves alone?
 
 The figures and the numbers quoted in this chapter come from the same archived
 result data. This keeps the prose and graphs tied to the same benchmark runs.
@@ -160,9 +160,8 @@ ReplayPool prevents follower replay from falling far behind leader-side commit
 throughput. Follower replay progress is a progress metric, not a standalone
 correctness proof; the correctness argument for parallel replay is the
 same-lane ordering, watermark, and atomic-update argument from Chapters 5 and 7.
-The metric also does not report a maximum per-entry lag or post-run drain time,
-so the evaluation treats replay progress as evidence of practical tracking
-rather than as a formal bounded-lag guarantee.
+The next ReplayPool experiments strengthen this progress-rate evidence by
+measuring replay completeness and end-of-run drain behavior directly.
 
 \section{Worker CPU}
 
@@ -174,7 +173,7 @@ transaction execution.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.96\linewidth]{figures/graphs/fig08_worker_cpu_utilization.pdf}
+\includegraphics[width=0.96\linewidth]{figures/graphs/fig08_worker_cpu_utilization.png}
 \caption[Worker CPU utilization]{Worker CPU utilization across the no-disk scalability sweep.}
 \label{fig:worker-cpu-utilization}
 \end{figure}
@@ -228,7 +227,7 @@ closely when enough replay workers are available.
 
 \figref{fig:replaypool-matrix}(c) shows the same mechanism below the largest
 endpoint. At six Mako worker threads, zero or one replay worker keeps only
-about 40\% of the leader's committed work replayed on the follower. Two replay
+about 40\% of the leader-side records replayed on the follower. Two replay
 workers raise that to about 79\%, while four or more replay workers keep replay
 progress near 95\%. The needed replay parallelism grows with leader-side worker
 parallelism.
@@ -242,7 +241,7 @@ sweep.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.96\linewidth]{figures/graphs/fig10_replay_pool_matrix_heatmap.pdf}
+\includegraphics[width=0.96\linewidth]{figures/graphs/fig10_replay_pool_matrix_heatmap.png}
 \caption[Follower replay completeness]{Follower replay completeness across worker counts and replay-pool sizes.}
 \label{fig:replaypool-heatmap}
 \end{figure}
@@ -255,6 +254,47 @@ replay pool is large enough to absorb follower-side replay work. The mechanism
 claim is therefore precise: ReplayPool does not make leader throughput
 monotonically increase; it makes Single-Raft credible by preventing follower
 replay from becoming the hidden bottleneck.
+
+\section{Replay Lag and End-of-Run Accounting}
+
+The ReplayPool matrix shows replay throughput, but throughput rates are still
+an indirect signal. This experiment adds exact end-of-run accounting for the
+Single-Raft case. A leader-submitted record is a transaction-log record accepted
+into the leader-side replication path. A follower-replayed record is the same
+kind of committed record after a follower has actually applied it to local
+state. The difference between those two counts is the unreplayed gap. If the
+gap is large, the leader accepted more records than the slower follower
+finished replaying. In this benchmark, the counted leader-submitted records are
+the records that enter the measured commit-and-replay accounting path, so the
+leader/replay gap is treated as unreplayed follower work for this experiment.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{figures/graphs/fig14_replay_lag_drain_proof.pdf}
+\caption[Replay-lag accounting proof]{Replay-lag accounting proof for Single-Raft. Panel (a) reports the end-of-run unreplayed record gap across worker counts. Panel (b) shows exact leader-submitted and follower-replayed record counts at the 11-worker endpoint.}
+\label{fig:replay-lag-drain-proof}
+\end{figure}
+\FloatBarrier
+
+\figref{fig:replay-lag-drain-proof}(a) shows the clearest version of the
+Single-Raft bottleneck. With no ReplayPool, the unreplayed gap grows as the
+worker count increases. At one and two workers the follower keeps up by the end
+of the run, but from three workers onward the gap grows steadily. With 1:1
+ReplayPool, the measured end-of-run gap remains zero across the full
+one-to-eleven-worker sweep.
+
+\figref{fig:replay-lag-drain-proof}(b) gives the exact 11-worker accounting.
+Without ReplayPool, the leader submitted 39,644 records while the slower
+follower replayed only 10,500 records, leaving 29,144 records unreplayed at the
+end of the run. With 1:1 ReplayPool, the leader submitted 38,743 records and
+the slower follower replayed 38,743 records. The ReplayPool queue was empty at
+the end of the run, and the measured drain time was about 1 ms.
+
+This proof is stronger than replay throughput alone because it directly checks
+whether the follower finished the records counted by the leader-side
+accounting path. It does not claim a formal per-entry latency bound for every
+workload, but it does show that, in this benchmark, ReplayPool prevents
+leader-accepted records from accumulating unreplayed on followers.
 
 \section{Simulated Persistence Throughput}
 
