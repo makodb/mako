@@ -27,7 +27,9 @@ thesis. A replicated system can look fast at the leader while followers lag
 behind, so the evaluation also reports follower replay progress. Worker CPU is
 used as supporting evidence that Mako's transaction workers are active. In the
 persistence experiments, simulated-disk counters report modeled bytes, modeled
-writes, and normalized bytes per committed transaction.
+writes, and normalized bytes per committed transaction. The simulated-disk
+settings used for those experiments are the No simulated disk, NVMe-like, and
+Cloud-SSD-like settings listed in Table~\ref{tab:simulated-disk-models}.
 
 \section{No-Disk Scalability}
 
@@ -163,9 +165,10 @@ replay from becoming the hidden bottleneck.
 
 The next experiment adds modeled persistence cost. The goal is not to claim the
 absolute performance of a particular physical SSD. Chapter 6 explained why the
-thesis uses controlled simulated-disk models. Here, the question is how Paxos,
-Multi-Raft, and Single-Raft behave under the same no-disk, NVMe-like, and
-Cloud-SSD-like conditions.
+thesis uses controlled simulated-disk models, and
+Table~\ref{tab:simulated-disk-models} gives their parameters. Here, the
+question is how Paxos, Multi-Raft, and Single-Raft behave under the same
+no-disk, NVMe-like, and Cloud-SSD-like conditions.
 
 \begin{figure}[htbp]
 \centering

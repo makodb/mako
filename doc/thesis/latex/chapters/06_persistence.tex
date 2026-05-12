@@ -33,11 +33,52 @@ simulated disk charges each persistence operation for two costs:
   \item a bandwidth cost based on how many bytes are written.
 \end{itemize}
 
-The model also queues writes, so later writes can wait behind earlier writes.
-The evaluation uses two settings: an NVMe-like model and a Cloud-SSD-like
-model. These settings are not meant to reproduce every detail of a real device.
-They provide repeatable storage pressure so Paxos, Multi-Raft, and Single-Raft
-can be compared under the same assumptions.
+For a write of size \(B\) bytes, the simulator charges a service time equal to
+the fixed latency plus the time needed to transfer \(B\) bytes at the configured
+bandwidth. The model also queues writes, so later writes can wait behind
+earlier writes. This is important because a storage device is not just a
+per-write delay; it is also a shared resource when many threads issue writes.
+
+Table~\ref{tab:simulated-disk-models} gives the exact settings used in the
+evaluation. The labels are intentionally written as ``NVMe-like'' and
+``Cloud-SSD-like'' because the model is controlled and repeatable, not a claim
+that every physical NVMe drive or cloud volume behaves exactly this way.
+
+\begin{table}[htbp]
+\centering
+\caption[Simulated-disk model parameters]{Simulated-disk model parameters used in the persistence evaluation.}
+\label{tab:simulated-disk-models}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.22\linewidth}
+>{\raggedright\arraybackslash}p{0.18\linewidth}
+>{\raggedright\arraybackslash}p{0.20\linewidth}
+>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Setting} & \textbf{Bandwidth limit} & \textbf{Fixed write latency} & \textbf{Purpose in the evaluation} \\
+\midrule
+No simulated disk &
+None &
+None &
+Disables modeled persistence cost so the evaluation can isolate replication and replay overhead. \\
+\addlinespace
+NVMe-like model &
+3000 MB/s &
+100 \(\mu\)s per write &
+Models a fast local datacenter SSD setting where persistence exists but should not dominate the benchmark. \\
+\addlinespace
+Cloud-SSD-like model &
+1000 MB/s &
+1000 \(\mu\)s per write &
+Models a slower cloud-block-storage setting with lower bandwidth and a higher per-write latency floor. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\FloatBarrier
+
+These parameters are deliberately simple: each backend is charged by the same
+formula, with the same queueing rule, under each setting. That makes the
+comparison fair even though the model does not capture every detail of real
+device firmware, filesystem behavior, or cloud-storage scheduling.
 
 \section{What Gets Counted}
 
