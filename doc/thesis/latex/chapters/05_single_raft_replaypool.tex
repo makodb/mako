@@ -231,7 +231,8 @@ underlying concurrency-control mechanisms also use atomic compare-and-swap
 style checks to avoid blindly overwriting state when another thread has changed
 the expected version first. In other words, Raft supplies the committed order,
 while Mako is responsible for making parallel replay safe for its own
-partitioned data model.
+partitioned data model. This thesis inherits those Mako transaction semantics;
+it does not re-prove Mako's concurrency-control protocol.
 
 \section{Why ReplayPool Is a Systems Contribution}
 

@@ -80,7 +80,7 @@ Workload &
 Mako TPC-C-style benchmark, sharded by warehouse. \\
 \addlinespace
 Worker/thread range &
-One through eleven Mako worker threads. In this benchmark setup, each worker lane is associated with a partitioned transaction-log stream. \\
+One through eleven Mako worker threads. In this benchmark setup, increasing the worker count also increases the number of warehouse-sized partition lanes; each worker lane is associated with one partitioned transaction-log stream. \\
 \addlinespace
 Transaction mix &
 New-order 44\%, payment 44\%, delivery 4\%, order-status 4\%, and stock-level 4\%. \\
