@@ -123,25 +123,3 @@ Finally, the results are tied to the evaluated workload, machine, thread
 range, and benchmark harness. They are strong evidence for the thesis claim in
 this setting, but they should not be generalized to every transaction workload
 or hardware platform without additional measurement.
-
-\section{Future Work}
-
-Future evaluation should cover more workload mixes, higher worker counts, and
-machines with different memory and NUMA behavior. Once replication and replay
-are no longer the main bottleneck, profiling the next limiting stage becomes
-important.
-
-A second direction is production storage and failure-recovery evaluation. The
-same Raft/Paxos comparisons should be run on real physical and cloud storage,
-and failure scenarios should measure leader loss, follower restart, catch-up,
-and failback under active transaction load.
-
-Finally, ReplayPool sizing could become adaptive. The thesis uses a simple
-1:1 setting where follower replay workers match leader-side Mako workers, but
-a production system could adjust replay workers dynamically based on backlog,
-CPU pressure, and memory behavior.
-
-Additional baselines would also sharpen the interpretation. Future work should
-include an unreplicated Mako upper bound, a consensus-only microbenchmark, and
-a remote-leader forwarding baseline to separate application execution,
-consensus overhead, and submission-placement cost more cleanly.

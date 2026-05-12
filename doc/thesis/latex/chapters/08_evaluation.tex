@@ -325,7 +325,6 @@ that every production SSD, filesystem, or cloud storage stack will produce the
 same absolute throughput.
 
 \section{Evaluation Summary}
-\enlargethispage{2\baselineskip}
 
 The evaluation supports the thesis in four steps. Multi-Raft validates the
 direct Paxos-shaped Raft replacement: when Raft is given similar partition-level
@@ -342,7 +341,5 @@ replay progress and replay completeness, not by leader throughput alone.
 
 The persistence experiments add a separate lesson: disk claims need storage
 proof. Under the Cloud-SSD-like model, throughput flattens near 340K
-transactions/s for all three backends while the simulated-disk counters show
-about 7.49 GB, about 24.6K writes, and about 733 bytes per committed
-transaction at the 11-worker endpoint. These counters explain the disk result
-without turning it into a production-SSD claim.
+transactions/s for all three backends, and the matching simulated-disk
+counters explain that result without making a production-SSD claim.

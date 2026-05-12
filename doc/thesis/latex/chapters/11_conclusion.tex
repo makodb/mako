@@ -29,3 +29,24 @@ the consensus layer must be matched to the application's topology, placement,
 replay, and persistence pipeline. With those pieces engineered together, Raft
 can serve as a high-performance replication backend for Mako in the evaluated
 setting.
+
+\section{Future Work}
+
+Future evaluation should cover more workload mixes, higher worker counts, and
+machines with different memory and NUMA behavior. Once replication and replay
+are no longer the main bottleneck, profiling the next limiting stage becomes
+important.
+
+A second direction is production storage and failure-recovery evaluation. The
+same Raft/Paxos comparisons should be run on real physical and cloud storage,
+and failure scenarios should measure leader loss, follower restart, catch-up,
+and failback under active transaction load.
+
+ReplayPool sizing could also become adaptive. The thesis uses a simple 1:1
+setting where follower replay workers match leader-side Mako workers, but a
+production system could adjust replay workers dynamically based on backlog,
+CPU pressure, and memory behavior.
+
+Useful extra baselines include unreplicated Mako, consensus-only Raft/Paxos,
+and remote-leader forwarding to isolate execution, consensus, and placement
+cost.
