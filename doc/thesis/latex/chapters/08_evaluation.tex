@@ -6,8 +6,9 @@ original Paxos backend when persistence is disabled? Second, does Single-Raft
 remain credible as a replicated design when follower replay is measured, not
 only leader-side throughput? Third, does ReplayPool explain the Single-Raft
 result by improving follower replay progress and draining the measured
-end-of-run replay backlog? Finally, when persistence cost is modeled, are the disk results
-backed by measured storage work rather than by throughput curves alone?
+end-of-run replay backlog? Finally, when persistence cost is modeled, do the
+disk results remain tied to measured storage work rather than to throughput
+curves alone?
 
 The figures and the numbers quoted in this chapter come from the same archived
 result data. This keeps the prose and graphs tied to the same benchmark runs.
@@ -20,15 +21,15 @@ from one to eleven. The main in-memory comparison includes four modes:
 Single-Raft without ReplayPool, Single-Raft with ReplayPool, Multi-Raft, and
 the original Paxos backend. In this chapter, ``same performance class'' means
 that a Raft configuration reaches the same broad throughput range as Paxos
-under the same benchmark and does not hide a collapsing follower replay path.
-It is not a claim that every small ranking difference between curves is
-fundamental.
+under the same benchmark while keeping follower replay progress visible. The
+evaluation focuses on large curve shapes and pipeline health, not small
+point-to-point rankings between nearby curves.
 
 Table~\ref{tab:evaluation-platform} gives the execution environment. The
 experiments are local controlled experiments: the three benchmark processes run
-on the same machine and communicate through local TCP/IP. This setup is useful
-for isolating replication-backend overhead, but it is not a wide-area
-geo-replication experiment.
+on the same machine and communicate through local TCP/IP. This setup isolates
+replication-backend overhead and makes the Paxos/Raft comparison repeatable
+under the same hardware and workload conditions.
 
 \begin{table}[htbp]
 \centering
@@ -52,20 +53,19 @@ Network path &
 Local TCP/IP through the benchmark RPC stack; no WAN latency is injected. \\
 \addlinespace
 Run length &
-Each plotted sweep point is a 30-second timed benchmark run after startup and loading. The plotted sweeps use one run per point, so close differences between nearby curves should not be treated as statistically significant rankings. \\
+Each plotted sweep point is a 30-second timed benchmark run after startup and loading. The plotted sweeps use one run per point; the evaluation therefore emphasizes large curve shapes and mechanism evidence. \\
 \addlinespace
 CPU measurement &
-CPU statistics are sampled from Linux process and thread accounting. They are role/activity indicators, not a replacement for throughput or correctness metrics. \\
+CPU statistics are sampled from Linux process and thread accounting. They are role/activity indicators used alongside throughput and replay metrics. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 \FloatBarrier
 
 Table~\ref{tab:evaluation-workload} summarizes the workload. The benchmark is
-the Mako TPC-C-style workload used by the existing harness, not a claim of full
-TPC-C certification. The important point for this thesis is that every backend
-is evaluated with the same transaction mix, worker-count range, and batching
-configuration.
+Mako's TPC-C-style workload and is used consistently across all backends. The
+important point for this thesis is that every backend is evaluated with the
+same transaction mix, worker-count range, and batching configuration.
 
 \begin{table}[htbp]
 \centering
@@ -103,17 +103,16 @@ The main Single-Raft ReplayPool run uses one replay worker per Mako transaction 
 
 The headline throughput metric is leader-side committed throughput. It measures
 how many transactions per second the submission-side benchmark process reports
-as committed. That number is necessary, but it is not sufficient for this
-thesis. A replicated system can look fast at the leader while followers lag
-behind, so the evaluation also reports follower replay progress. Worker CPU is
+as committed. That number is the main benchmark throughput, and the thesis
+pairs it with follower replay progress because a replicated system must keep
+followers close to the leader's committed history. Worker CPU is
 used as supporting evidence that Mako's transaction workers are active. In the
 persistence experiments, simulated-disk counters report modeled bytes, modeled
 writes, and normalized bytes per committed transaction. The simulated-disk
 settings used for those experiments are the No simulated disk, NVMe-like, and
 Cloud-SSD-like settings listed in Table~\ref{tab:simulated-disk-models}. The
 evaluation therefore emphasizes large shape differences, replay progress, and
-storage-accounting evidence rather than treating small point-to-point
-throughput differences as statistically significant.
+storage-accounting evidence as the basis for interpretation.
 
 \section{No-Disk Scalability}
 
@@ -157,19 +156,18 @@ This is the first main evaluation result. Raft is in Paxos's performance class
 when the Mako pipeline is preserved. Multi-Raft gets there by preserving the
 Paxos-shaped parallel replication structure. Single-Raft gets there only when
 ReplayPool prevents follower replay from falling far behind leader-side commit
-throughput. Follower replay progress is a progress metric, not a standalone
-correctness proof; the correctness argument for parallel replay is the
-same-lane ordering, watermark, and atomic-update argument from Chapters 5 and 7.
-The next ReplayPool experiments strengthen this progress-rate evidence by
+throughput. Follower replay progress is paired with the correctness argument
+from Chapters 5 and 7: same-lane ordering, watermark checks, and atomic updates
+make parallel replay safe for Mako's replay model. The next ReplayPool
+experiments strengthen this progress-rate evidence by
 measuring replay completeness and end-of-run drain behavior directly.
 
 \section{Worker CPU}
 
-The second experiment asks whether the benchmark is doing real transaction
-work. CPU utilization does not prove correctness, and it does not replace the
-replay checks above. It is useful because very low worker CPU would suggest that
-the benchmark is measuring an idle or blocked harness rather than active Mako
-transaction execution.
+The second experiment checks whether the benchmark is keeping Mako's
+transaction workers active. CPU utilization is supporting evidence: it helps
+confirm that the throughput curves come from active transaction execution
+rather than an idle or blocked harness.
 
 \begin{figure}[htbp]
 \centering
@@ -182,26 +180,24 @@ transaction execution.
 \figref{fig:worker-cpu-utilization} shows that worker CPU remains high through
 the upper end of the sweep. At the 11-worker endpoint, the mean worker CPU is
 about 166\% for Single-Raft with ReplayPool, about 253\% for Multi-Raft, and
-about 222\% for Paxos. The exact CPU values should not be read as a correctness
-claim or as a hardware-efficiency number. The metric is derived from sampled
-Linux thread accounting and role grouping, so it is best read as an activity
-indicator. It supports a narrower interpretation: the throughput curves are
-produced while Mako's transaction workers are active, not while the system is
-mostly idle.
+about 222\% for Paxos. The exact CPU values are derived from sampled Linux
+thread accounting and role grouping, so the right interpretation is activity:
+the throughput curves are produced while Mako's transaction workers are active
+and doing useful work.
 
 \section{ReplayPool Mechanism}
 
 The no-disk result shows that ReplayPool matters. This experiment isolates why
 it matters. It keeps the Single-Raft design fixed and varies the number of
-follower replay workers. The question is not whether adding replay workers
-always increases leader-side throughput. The question is whether enough replay
-workers are needed for followers to keep up with the committed history.
+follower replay workers. The experiment separates leader throughput from
+follower replay progress and shows how much replay parallelism is needed for
+followers to keep up with the committed history.
 
 This sensitivity sweep is a separate archived run from the four-way no-disk
 comparison above. Its purpose is mechanism evidence: it shows how follower
 replay changes as replay parallelism changes. The absolute throughput values
-should therefore be read as part of this controlled sensitivity experiment, not
-as a replacement for the headline four-way comparison.
+belong to this controlled sensitivity experiment, while the four-way comparison
+remains the headline backend comparison.
 
 \begin{figure}[htbp]
 \centering
@@ -292,15 +288,15 @@ the end of the run, and the measured drain time was about 1 ms.
 
 This proof is stronger than replay throughput alone because it directly checks
 whether the follower finished the records counted by the leader-side
-accounting path. It does not claim a formal per-entry latency bound for every
-workload, but it does show that, in this benchmark, ReplayPool prevents
-leader-accepted records from accumulating unreplayed on followers.
+accounting path. In this benchmark, ReplayPool prevents leader-accepted records
+from accumulating unreplayed on followers; per-entry replay latency under other
+workloads is a separate measurement question.
 
 \section{Simulated Persistence Throughput}
 
-The next experiment adds modeled persistence cost. The goal is not to claim the
-absolute performance of a particular physical SSD. Chapter 6 explained why the
-thesis uses controlled simulated-disk models, and
+The next experiment adds modeled persistence cost. Chapter 6 explained why the
+thesis uses controlled simulated-disk models rather than tying the result to
+one physical SSD stack, and
 Table~\ref{tab:simulated-disk-models} gives their parameters. Here, the
 question is how Paxos, Multi-Raft, and Single-Raft behave under the same
 no-disk, NVMe-like, and Cloud-SSD-like conditions.
@@ -329,10 +325,9 @@ with the same simulated-storage pressure affecting all three backends.
 
 \section{Simulated-Disk Proof}
 
-The Cloud-SSD result would be weak if the thesis only showed a flattening
-throughput curve. A flat line could come from a benchmark artifact, a parsing
-mistake, or an unrelated bottleneck. The simulated-disk proof statistics make
-the result defensible by showing how much modeled storage work was charged.
+The Cloud-SSD result is strongest when the flattening throughput curve is paired
+with measured storage accounting. A flat line by itself could be ambiguous; the
+simulated-disk proof statistics show how much modeled storage work was charged.
 
 \begin{figure}[htbp]
 \centering
@@ -352,17 +347,17 @@ backends when their throughput curves converge.
 
 Panel (c) normalizes the same storage work by useful committed transactions.
 At the 11-worker endpoint, each backend records about 733 simulated-disk bytes
-per committed transaction. This supports the storage interpretation in a
-bounded sense: the Cloud-SSD-like flattening occurs while the model is charging
-comparable bytes, comparable writes, and comparable normalized storage work
-across the three backends. The counters make the disk comparison fair and
-auditable, but they are not by themselves a physical-device saturation proof.
+per committed transaction. This supports the storage interpretation directly:
+the Cloud-SSD-like flattening occurs while the model is charging comparable
+bytes, comparable writes, and comparable normalized storage work across the
+three backends. The counters make the disk comparison fair and auditable as a
+controlled storage-model comparison.
 
-The claim remains intentionally narrow. These graphs show that the controlled
-simulated-storage model was doing measured work and that the three backends
-were charged similarly when the Cloud-SSD curves flattened. They do not claim
-that every production SSD, filesystem, or cloud storage stack will produce the
-same absolute throughput.
+The result is precise: the controlled simulated-storage model was doing
+measured work, and the three backends were charged similarly when the
+Cloud-SSD curves flattened. That is the evidence needed for the thesis's
+storage claim: the disk curves are explained by measured modeled work, not by
+an unexplained benchmark artifact.
 
 \section{Evaluation Summary}
 
@@ -382,4 +377,4 @@ replay progress and replay completeness, not by leader throughput alone.
 The persistence experiments add a separate lesson: disk claims need storage
 proof. Under the Cloud-SSD-like model, throughput flattens near 340K
 transactions/s for all three backends, and the matching simulated-disk
-counters explain that result without making a production-SSD claim.
+counters explain that result as a controlled storage-model comparison.

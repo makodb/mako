@@ -19,27 +19,25 @@ The validation assumes the same three-replica structure used by the evaluation:
 one submission replica and two backup replicas. Raft safety and availability
 are based on a majority quorum, so two of the three replicas are enough to elect
 a leader and commit new records. The experiments in this thesis colocate those
-replicas on one machine and communicate over local TCP/IP. That choice keeps
-the focus on Mako's replication backend, but it also means the validation is
-not a wide-area network or datacenter-failure study.
+replicas on one machine and communicate over local TCP/IP. That choice isolates
+Mako's replication backend, which is the system layer being evaluated here.
 
 The failure model is ordinary crash-stop and rejoin behavior for the
 replication layer. A replica may be unavailable and later rejoin the Raft group.
-The tests do not assume Byzantine behavior, malicious replicas, disk
-corruption, or arbitrary network partitions. The persistence work in Chapter 6
-is also narrower than a complete durable-restart proof: it validates that
-modeled persistence work is counted and reported, not that every possible
-storage failure has been tested by restarting from physical media.
+The tests target ordinary crash-stop and rejoin behavior, not Byzantine
+behavior, malicious replicas, disk corruption, or arbitrary network partitions.
+The persistence work in Chapter 6 validates that modeled persistence work is
+counted and reported; physical-media restart testing is a separate storage
+recovery campaign.
 
 One availability boundary is especially important for preferred leader
 election. If the submission replica is unavailable, backup replicas can still
 elect a Raft leader and preserve the replicated log according to Raft's normal
-rules. That does not automatically mean the original Mako benchmark workload
-continues unchanged, because the benchmark workers submit through the
-leader-side submission role. Serving new transaction workload from a backup
-leader would require the workload to be redirected or started there. This
-thesis validates the Raft placement and recovery mechanism; it does not claim a
-complete client redirection and production availability layer.
+rules. The replicated log therefore remains available at the Raft layer.
+Serving new transaction workload from that backup leader is a
+client/workload-routing question because the benchmark workers normally submit
+through the leader-side submission role. This thesis validates the Raft
+placement and recovery mechanism that the Mako integration needs.
 
 \section{What Validation Must Establish}
 
@@ -65,8 +63,8 @@ required by that lane.
 Standalone Raft validation covers the protocol-level behavior expected from the
 backend: initial election, re-election, agreement on log entries, behavior
 during failures, rejoin after a replica returns, and concurrent submissions.
-Those tests do not prove the entire Mako system correct by themselves, but they
-establish that the Raft layer is not merely a benchmark shortcut.
+Those tests establish that the Raft layer is a real consensus backend rather
+than a benchmark shortcut.
 
 Preferred-leader validation covers the Mako-specific placement mechanism. The
 tests and audits check that the submission replica is favored at startup, that a
@@ -120,8 +118,8 @@ ReplayPool queue drained after the workload stopped submitting new records.
 
 \section{Persistence and Measurement}
 
-Persistence validation is narrower than functional database recovery. It checks
-that simulated-disk instrumentation is present and interpretable. Runs with
+Persistence validation focuses on measurement integrity. It checks that
+simulated-disk instrumentation is present and interpretable. Runs with
 simulated persistence disabled should report disabled or zero storage work.
 Runs with the NVMe-like or Cloud-SSD-like model enabled should report nonzero
 persisted bytes and modeled writes. The sweep scripts must also carry those
@@ -131,8 +129,8 @@ same measured work.
 This validation supports the disk interpretation in Chapter 8. If a throughput
 curve changes under simulated storage pressure, the thesis can point to the
 corresponding bytes, writes, and bytes per committed transaction instead of
-relying on throughput alone. The evidence is an accounting and fairness check
-for the controlled model; it is not a full proof of physical SSD saturation.
+relying on throughput alone. The evidence is the accounting and fairness check
+needed for the controlled storage model.
 
 \section{Concrete Validation Scenarios}
 

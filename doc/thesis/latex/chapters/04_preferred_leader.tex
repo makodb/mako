@@ -192,28 +192,21 @@ sufficiently up to date. If the preferred replica is behind, if the transfer
 hint is lost, or if another election happens first, the system falls back to
 ordinary Raft behavior.
 
-This is why the chapter's claim is narrow. Preferred leader election makes Raft
-usable in Mako's leader-oriented submission model. It does not make Raft safer,
-and it does not weaken Raft to obtain placement.
+\section{Scope of the Mechanism}
 
-\section{What It Does Not Claim}
+The chapter's claim is precise. Preferred leader election makes Raft usable in
+Mako's leader-oriented submission model by placing leadership where Mako
+normally submits transaction work. It preserves Raft's safety boundary: voting,
+term checks, log freshness checks, majority commit, and ordinary failover remain
+the rules that decide whether a replica can lead.
 
-Preferred leader election should not be read as a stronger protocol than it is.
-It does not promise that the preferred replica is always leader. It does not
-bypass voting, term checks, or log freshness checks. It does not make a stale
-preferred replica safe to lead. It does not replace normal Raft failover. It
-also should not be read as an exhaustive evaluation of every production failure
-mode. The implemented and tested recovery path covers preferred-replica
-absence, backup leadership, preferred catch-up, and safe failback; broader
-crash, storage, and network-fault campaigns are outside this thesis.
-
-Those limits are important for the thesis argument. The contribution is not
-``Raft with a new safety rule.'' The contribution is a Mako-specific integration
-mechanism: keep ordinary Raft failover available, but bias normal leadership
-toward the process where Mako can actually submit leader-side transaction work.
-If the preferred submission replica is down, Raft can still keep the replicated
-log available through a backup leader; accepting new Mako workload at that
-backup is a separate client/workload-routing question outside this thesis.
+The implemented recovery path covers the important integration cases for this
+thesis: preferred-replica absence, backup leadership, preferred catch-up, and
+safe failback. That is exactly the behavior needed to use Raft as Mako's
+replication backend without turning placement into a new consensus rule. If the
+preferred submission replica is down, Raft can still keep the replicated log
+available through a backup leader; accepting new Mako workload at that backup is
+a separate client/workload-routing layer.
 
 \section{Validation}
 

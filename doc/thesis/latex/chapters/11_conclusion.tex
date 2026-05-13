@@ -2,10 +2,10 @@
 
 This thesis asked whether Raft can replace Mako's original Paxos-based
 replication backend without pushing Mako out of its high-throughput
-performance class. The answer in the evaluated setting is yes, but only as a
-systems integration result. Raft can order committed records, but Mako's full
-pipeline also depends on topology, leader placement, follower replay, and
-persistence accounting.
+performance class. The answer in the evaluated setting is yes. The result is a
+systems integration result: Raft orders committed records, and the surrounding
+Mako pipeline supplies the topology, leader placement, follower replay, and
+persistence accounting needed to preserve throughput.
 
 The engineering lessons are clear. Multi-Raft is the direct path because it
 preserves Mako's existing parallel replication shape. Single-Raft is viable

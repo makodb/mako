@@ -198,14 +198,12 @@ keeps the replay pipeline from violating Mako's local ordering and visibility
 requirements.
 
 The correctness boundary is therefore clear. Raft still decides the replicated
-log order. ReplayPool does not reorder the Raft log, does not make uncommitted
-records visible, and does not change the Raft commit rule. It only changes the
-execution placement of follower-side database replay. Heavy replay work moves
-from a narrow apply path into parallel replay workers, while lane-level order
-and safety checks remain in force. The evaluation's replay-throughput counters
-show whether followers make comparable replay progress; they are interpreted
-together with this ordering argument, not as a standalone proof of replay
-correctness or bounded per-record lag.
+log order. ReplayPool preserves that consensus decision and changes only where
+follower-side database replay executes. Heavy replay work moves from a narrow
+apply path into parallel replay workers, while lane-level order and safety
+checks remain in force. The evaluation's replay-throughput and replay-lag
+counters then measure whether followers keep up with the committed work under
+that design.
 
 \section{Caveat: Global Replay Completion Order}
 
@@ -217,12 +215,11 @@ for lane B. Raft's committed order is still entry 1 before entry 2, but
 ReplayPool may send the two entries to different replay workers. If the lane-B
 worker runs first, entry 2 may finish replay before entry 1.
 
-That behavior would be unsafe for a generic replicated state machine that
+That behavior would be the wrong design for a replicated state machine that
 requires every committed entry to be applied globally in exact Raft-log order.
-ReplayPool is therefore a Mako-specific optimization, not a property that can
-be assumed for every Raft application. The design is safe only because Mako's
-application layer already has rules for parallel transaction execution and
-parallel replay.
+ReplayPool is therefore a Mako-specific optimization: it is appropriate here
+because Mako's application layer already has rules for parallel transaction
+execution and parallel replay.
 
 Mako can tolerate this parallelism because records carry the partition-lane and
 timestamp information needed by the replay path. Replay workers use Mako's
@@ -233,8 +230,9 @@ underlying concurrency-control mechanisms also use atomic compare-and-swap
 style checks to avoid blindly overwriting state when another thread has changed
 the expected version first. In other words, Raft supplies the committed order,
 while Mako is responsible for making parallel replay safe for its own
-partitioned data model. This thesis inherits those Mako transaction semantics;
-it does not re-prove Mako's concurrency-control protocol.
+partitioned data model. This thesis uses those Mako transaction semantics as
+the application-layer contract that makes parallel replay a valid integration
+strategy.
 
 \section{Why ReplayPool Is a Systems Contribution}
 

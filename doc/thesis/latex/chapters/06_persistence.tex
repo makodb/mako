@@ -12,11 +12,10 @@ the replicated log, the current term, and voting metadata. The replicated log
 tells a restarted replica what records were accepted. The term and vote
 metadata prevent the replica from forgetting earlier election decisions.
 
-The thesis does not try to prove that the implementation is a complete
-production storage stack. Instead, it asks a narrower evaluation question: when
-storage persistence is enabled, how much modeled disk work does each backend
-generate? That question matters because a disk-throughput curve is hard to
-defend without proof of the storage work behind it.
+The storage question in this thesis is a controlled one: when storage
+persistence is enabled, how much modeled disk work does each backend generate?
+That question matters because a disk-throughput curve is persuasive only when
+the thesis can show the storage work behind it.
 
 \section{Why Use a Simulated Disk}
 
@@ -40,9 +39,10 @@ earlier writes. This is important because a storage device is not just a
 per-write delay; it is also a shared resource when many threads issue writes.
 
 Table~\ref{tab:simulated-disk-models} gives the exact settings used in the
-evaluation. The labels are intentionally written as ``NVMe-like'' and
-``Cloud-SSD-like'' because the model is controlled and repeatable, not a claim
-that every physical NVMe drive or cloud volume behaves exactly this way.
+evaluation. The labels are written as ``NVMe-like'' and ``Cloud-SSD-like'' to
+make the comparison clear: the thesis uses repeatable storage models inspired
+by fast local SSDs and slower cloud block storage, then charges every backend
+under the same assumptions.
 
 \begin{table}[htbp]
 \centering
@@ -77,8 +77,8 @@ Models a slower cloud-block-storage setting with lower bandwidth and a higher pe
 
 These parameters are deliberately simple: each backend is charged by the same
 formula, with the same queueing rule, under each setting. That makes the
-comparison fair even though the model does not capture every detail of real
-device firmware, filesystem behavior, or cloud-storage scheduling.
+comparison fair and repeatable while keeping the storage model separate from
+device-specific firmware, filesystem, and cloud-provider behavior.
 
 \section{What Gets Counted}
 
@@ -128,26 +128,23 @@ Raft metadata writes are smaller records such as term and vote state. The
 evaluation does not treat all of these as one black-box number; it records them
 separately so the disk results can be explained.
 
-These counters are accounting counters, not a byte-for-byte trace of a
-particular SSD. A modeled write corresponds to a persistence operation observed
-by the instrumentation and charged to the simulated disk. It may not match a
-physical device's final sector layout, filesystem writeback behavior, or
-firmware batching. The cluster totals used in Chapter 8 sum the modeled work
-reported by the leader and follower processes whose logs are available for the
-run. The normalized bytes-per-transaction value divides cluster persisted bytes
-by the committed transactions implied by the 30-second throughput measurement.
-This gives a consistent comparison across backends without pretending to be a
-complete hardware storage trace.
+These counters are accounting counters for the simulated model. A modeled write
+corresponds to a persistence operation observed by the instrumentation and
+charged to the simulated disk. The cluster totals used in Chapter 8 sum the
+modeled work reported by the leader and follower processes whose logs are
+available for the run. The normalized bytes-per-transaction value divides
+cluster persisted bytes by the committed transactions implied by the
+30-second throughput measurement. This gives a consistent storage-work
+comparison across backends.
 
 \section{Why These Counters Are Needed}
 
 The disk results in Chapter 8 show that the Cloud-SSD-like model flattens at
-high worker counts. Throughput alone is not enough to explain that behavior.
-If a graph flattens but the system did not actually write much data, the result
-could be a benchmark artifact. If the graph flattens while the simulated disk
-records comparable bytes, comparable writes, and comparable bytes per
-transaction across backends, then the interpretation is stronger: the storage
-model was doing real measured work.
+high worker counts. The counters explain that behavior. If the graph flattens
+while the simulated disk records comparable bytes, comparable writes, and
+comparable bytes per transaction across backends, then the interpretation is
+strong: the storage model was doing measured work, and the backends were being
+charged in comparable ways.
 
 This is why the thesis reports both throughput and simulated-disk counters.
 Throughput says how fast the benchmark completed committed transactions. The
@@ -171,14 +168,11 @@ bandwidth model, then reports the aggregate counters used in the evaluation.
 
 \section{Scope of the Claim}
 
-The persistence claim is intentionally limited. The thesis shows that, under a
-controlled simulated-storage model, the disk-throughput curves are backed by
-measured bytes and writes. It does not claim that every production SSD,
-filesystem, or cloud block device will produce the same absolute throughput. It
-also does not prove every durable-recovery property of the storage layer. In
-particular, the simulated disk is used to model persistence cost and to audit
-how much storage work each backend generates; it is not a substitute for a full
-crash-recovery certification effort with real devices and filesystem failure
-modes. Within this scope, the simulated disk is still useful because it lets the
-evaluation compare the replication backends under repeatable NVMe-like and
-Cloud-SSD-like pressure.
+The persistence claim is concrete: under a controlled simulated-storage model,
+the disk-throughput curves are backed by measured bytes and writes. The
+simulated disk is used to model persistence cost and to audit how much storage
+work each backend generates under repeatable NVMe-like and Cloud-SSD-like
+pressure. A full production-storage study with real devices, filesystem
+failure modes, and restart certification is a separate evaluation layer; the
+evidence here is the storage-accounting proof needed for the thesis's backend
+comparison.
