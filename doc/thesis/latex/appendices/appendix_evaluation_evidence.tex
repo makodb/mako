@@ -1,0 +1,153 @@
+\chapter*{Appendix A: Evaluation Evidence and Terminology}
+\phantomsection
+\addcontentsline{toc}{chapter}{Appendix A: Evaluation Evidence and Terminology}
+\markboth{Appendix A: Evaluation Evidence and Terminology}{Appendix A: Evaluation Evidence and Terminology}
+\setcounter{chapter}{1}
+\setcounter{section}{0}
+\setcounter{table}{0}
+
+This appendix summarizes how to read the evaluation evidence in the thesis. It
+does not include source code, benchmark commands, raw logs, or raw measurement
+files. Its purpose is to connect each major claim to the figure, table, or
+metric that supports it.
+
+\section{Evidence Map}
+
+\tabref{tab:appendix-evidence-map} maps the main thesis claims to the evidence
+used in Chapters 6 through 8. The table is intentionally compact: the
+interpretation of each result remains in the main body.
+
+\begin{table}[htbp]
+\centering
+\caption[Evidence map]{Evidence map for the main thesis claims.}
+\label{tab:appendix-evidence-map}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.34\linewidth}
+>{\raggedright\arraybackslash}p{0.28\linewidth}
+X@{}}
+\toprule
+\textbf{Claim} & \textbf{Primary evidence} & \textbf{What to check} \\
+\midrule
+Raft can remain in Paxos's performance class inside Mako. &
+\figref{fig:no-disk-scalability} &
+Multi-Raft and Single-Raft with ReplayPool reach the same broad throughput
+range as the original Paxos backend while follower replay remains close to
+leader-side committed throughput. \\
+\addlinespace
+Single-Raft requires replay parallelism to be credible. &
+\figref{fig:no-disk-scalability} and \figref{fig:replaypool-matrix} &
+Single-Raft without ReplayPool can report high leader throughput while follower
+replay falls behind; adding replay workers restores follower replay progress. \\
+\addlinespace
+ReplayPool prevents end-of-run follower backlog in the measured Single-Raft run. &
+\figref{fig:replay-lag-drain-proof} &
+The unreplayed record gap grows without ReplayPool and remains zero with the
+1:1 ReplayPool setting across the measured worker range. \\
+\addlinespace
+Worker threads are active in the successful configurations. &
+\figref{fig:worker-cpu-utilization} &
+Worker CPU is high at the upper end of the sweep, supporting that the benchmark
+is doing real transaction work rather than measuring an idle harness. \\
+\addlinespace
+Simulated persistence results are tied to measured modeled storage work. &
+\tabref{tab:simulated-disk-models}, \tabref{tab:simulated-disk-counters}, and
+\figref{fig:simulated-disk-proof-cloudssd} &
+The persistence curves are interpreted together with modeled bytes, modeled
+writes, and bytes per committed transaction. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Metric Definitions}
+
+\tabref{tab:appendix-metric-definitions} defines the metrics that appear in the
+evaluation. These definitions are reader-facing; they describe how the thesis
+uses each number rather than how the benchmark stores it internally.
+
+\begin{table}[htbp]
+\centering
+\caption[Evaluation metric definitions]{Evaluation metric definitions.}
+\label{tab:appendix-metric-definitions}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.30\linewidth}X@{}}
+\toprule
+\textbf{Metric} & \textbf{Meaning in this thesis} \\
+\midrule
+Leader-side committed throughput &
+The main throughput number: committed transactions per second reported by the
+submission-side benchmark process. \\
+\addlinespace
+Follower replay progress &
+The rate at which a follower applies committed transaction records to its local
+state. It is used to check whether followers are keeping up with leader-side
+work. \\
+\addlinespace
+Replay gap &
+The difference between leader-submitted records and records replayed by the
+slower follower at the end of the run. A large gap means follower work has
+accumulated unreplayed. \\
+\addlinespace
+Worker CPU &
+An activity indicator for Mako transaction workers. It helps show whether the
+benchmark is keeping worker threads busy, but it is not a correctness metric. \\
+\addlinespace
+Simulated-disk bytes &
+The modeled number of bytes charged to the controlled simulated-storage model. \\
+\addlinespace
+Modeled writes &
+The modeled number of write operations charged to the simulated disk. \\
+\addlinespace
+Bytes per committed transaction &
+The simulated-disk bytes normalized by useful committed work. It helps compare
+storage pressure across backends. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Experiment Summary}
+
+\tabref{tab:appendix-experiment-summary} summarizes the experiments used for
+the thesis claims. Each experiment is designed to answer one question rather
+than to exhaustively characterize every possible deployment.
+
+\begin{table}[htbp]
+\centering
+\caption[Experiment summary]{Experiment summary for the evaluation chapter.}
+\label{tab:appendix-experiment-summary}
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.24\linewidth}
+>{\raggedright\arraybackslash}p{0.32\linewidth}
+X@{}}
+\toprule
+\textbf{Experiment} & \textbf{Backends or settings} & \textbf{Purpose} \\
+\midrule
+No-disk scalability &
+Paxos, Multi-Raft, Single-Raft without ReplayPool, and Single-Raft with
+ReplayPool; one through eleven workers &
+Tests whether Raft remains in Paxos's performance class when simulated
+persistence is disabled, and whether followers keep up. \\
+\addlinespace
+ReplayPool sensitivity &
+Single-Raft with different replay-pool sizes; one through eleven workers &
+Shows that replay parallelism mainly improves follower replay progress and
+completeness, not simply leader-side throughput. \\
+\addlinespace
+Replay-lag accounting &
+Single-Raft without ReplayPool and Single-Raft with 1:1 ReplayPool; one through
+eleven workers &
+Checks whether leader-submitted records remain unreplayed at the end of the
+run. \\
+\addlinespace
+Simulated persistence &
+Paxos, Multi-Raft, and Single-Raft with ReplayPool under no-disk, NVMe-like,
+and Cloud-SSD-like settings; one through eleven workers &
+Compares throughput under controlled modeled storage pressure. \\
+\addlinespace
+Simulated-disk proof &
+Cloud-SSD-like persistence runs with source-accounted storage counters; one
+through eleven workers &
+Checks whether the throughput flattening is accompanied by comparable modeled
+bytes, writes, and normalized storage work. \\
+\bottomrule
+\end{tabularx}
+\end{table}
