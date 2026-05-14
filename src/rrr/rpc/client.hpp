@@ -1260,6 +1260,33 @@ public:
         last_activity_time_.set(current_time_ms);
     }
 
+    /// Monotonic millisecond clock used by the instrumentation hooks.
+    /// @unsafe { std::chrono is not borrow-checked but is memory-safe }
+    static uint64_t monotonic_ms_now() {
+        auto now = std::chrono::steady_clock::now();
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count());
+    }
+
+    /// Record one outbound frame's body size + bump the activity clock.
+    /// Called from the send-side dispatch path so the metrics counters
+    /// and `is_idle()` reflect real I/O. `bytes` is the body length the
+    /// channel layer accepted (the 4-byte size prefix is excluded — it
+    /// is added by the channel and is constant per send).
+    void on_request_dispatched(size_t bytes) const {
+        metrics_.record_bytes_sent(static_cast<uint64_t>(bytes));
+        update_last_activity(monotonic_ms_now());
+    }
+
+    /// Record one inbound frame's body size + bump the activity clock.
+    /// Called from `decode_response_and_notify`; `bytes` is the body
+    /// length the framing layer delivered.
+    void on_response_received(size_t bytes) const {
+        metrics_.record_bytes_received(static_cast<uint64_t>(bytes));
+        update_last_activity(monotonic_ms_now());
+    }
+
     /**
      * Get the last activity timestamp (milliseconds since epoch).
      */
@@ -1435,15 +1462,65 @@ private:
             return FutureResult::Err(EBUSY);
         }
 
+        // Lazy expiration sweep: keeps the queued-request TTL contract
+        // honored without a background timer. Callbacks installed
+        // below resolve the corresponding Future with
+        // kRequestQueueExpiredError and bump `queue_dropped_requests`.
+        pending_queue_.expire_stale();
+
         // Channel-mode connection state is owned by the channel
-        // wrapper; if it reports closed, fail-fast. The legacy
-        // `state_machine_` is intentionally not consulted here —
-        // sub-leaf 4d/4e re-introduces reconnect / buffering hooks
-        // through channel callbacks.
+        // wrapper; if it reports closed, fail-fast. We also short-
+        // circuit on the legacy state machine before reaching the
+        // channel proxy: `Client::close` schedules the proxy close
+        // asynchronously on the poll thread, so for a brief window
+        // the proxy still reports `is_closed() == false` while the
+        // state machine has transitioned out of CONNECTED. Requests
+        // landing in that window would otherwise succeed against a
+        // closing channel; consulting the state machine first
+        // guarantees the rejection (and the circuit-breaker
+        // transition) the integration tests assert on.
         // 4g1c: check both bindings — direct_channel_ takes
         // precedence over fiber_channel_ when both are present
         // (in practice only one is bound per ClientConnection
         // lifecycle).
+        if (!state_machine_.is_connected()) {
+            // Buffering: when the user enabled QUEUE behavior we
+            // accept the request, park a Future in the pending
+            // queue, and let `expire_stale()` or a future
+            // replay-on-reconnect path resolve it. The queue's
+            // overflow policy (DROP_OLDEST / DROP_NEWEST /
+            // FAIL_FAST) decides which entry to drop when
+            // `max_pending` is reached.
+            if (buffering_config_.enabled &&
+                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
+                auto fu = Future::create(xid_counter_.next(), attr);
+                auto fu_for_cb = fu;  // Arc clone for the callback.
+                QueuedRequest qr;
+                qr.xid     = fu->xid_;
+                qr.rpc_id  = rpc_id;
+                qr.ttl_ms  = buffering_config_.default_ttl_ms;
+                qr.callback = rusty::Function<void(int)>(
+                    [fu_for_cb, this](int err) mutable {
+                        // Queue overflow / TTL expiry both count
+                        // toward `queue_dropped_requests`. The
+                        // future resolves with the queue error
+                        // code so callers can distinguish from
+                        // ENOTCONN if they care.
+                        metrics_.record_queue_drop();
+                        fu_for_cb->error_code_.set(err);
+                        fu_for_cb->notify_ready(fu_for_cb);
+                    });
+                if (pending_queue_.enqueue(std::move(qr))) {
+                    return FutureResult::Ok(std::move(fu));
+                }
+                // The queue's overflow callback already fired,
+                // resolving the rejected future and bumping the
+                // metric. Surface the error to the caller.
+                return FutureResult::Err(kRequestQueueRejectedError);
+            }
+            record_circuit_result(ENOTCONN);
+            return FutureResult::Err(ENOTCONN);
+        }
         {
             auto direct_guard = direct_channel_.lock().unwrap();
             if (direct_guard->is_some()) {
@@ -1498,6 +1575,7 @@ private:
         }
 
         metrics_.record_request_sent();
+        on_request_dispatched(body_sink.bytes.len());
         return FutureResult::Ok(fu);
     }
 
@@ -1526,7 +1604,14 @@ public:
         if (!allow_request_with_circuit_metrics()) {
             return rusty::Result<void, i32>::Err(EBUSY);
         }
-        // Liveness check (mirrors request_via_channel).
+        // Liveness check (mirrors request_via_channel). The state-
+        // machine check runs first to close the
+        // `Client::close()`-schedules-async-proxy-close race; see the
+        // explanatory comment in `request_via_channel`.
+        if (!state_machine_.is_connected()) {
+            record_circuit_result(ENOTCONN);
+            return rusty::Result<void, i32>::Err(ENOTCONN);
+        }
         {
             auto direct_guard = direct_channel_.lock().unwrap();
             if (direct_guard->is_some()) {
@@ -1582,6 +1667,7 @@ public:
             return rusty::Result<void, i32>::Err(EIO);
         }
         metrics_.record_request_sent();
+        on_request_dispatched(body_sink.bytes.len());
         return rusty::Result<void, i32>::Ok();
     }
 

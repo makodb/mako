@@ -399,9 +399,12 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
       // Record reconnection in metrics
       metrics_.record_reconnect();
 
-      // 4g3c2: replay_pending_requests() removed — the queue
-      // (queue_request<F>) was deleted in 4g3b, so the queue is
-      // always empty in channel mode.
+      // Sweep the disconnect-buffering queue. Entries that ran past
+      // their TTL while the connection was down resolve their
+      // futures with `kRequestQueueExpiredError` and bump
+      // `queue_dropped_requests`. Non-stale entries remain in the
+      // queue for a future replay path.
+      pending_queue_.expire_stale();
       return complete_callback(0);
     } else {
       if (result == ECANCELED) {
@@ -683,6 +686,18 @@ int ClientConnection::connect_via_factory(const char* addr) {
   if (!state_machine_.transition_to(ConnectionState::CONNECTED)) {
     state_machine_.force_state(ConnectionState::CONNECTED);
   }
+  // Record connect timestamp so `metrics_.connect_time_ms()` is
+  // non-zero from the moment a request can be issued. The metric
+  // tests assert `> 0`; the absolute value (steady-clock-relative)
+  // is informational.
+  {
+    uint64_t now = current_time_ms();
+    metrics_.record_connect(now);
+    // Seed `last_activity_time_` so `is_idle()` measures time since
+    // connect (or since the most recent send/recv) rather than
+    // returning false forever because no I/O has happened yet.
+    update_last_activity(now);
+  }
   invoke_connected_callback();
   return 0;
 }
@@ -922,6 +937,10 @@ void ClientConnection::run_recv_loop() {
 // surfaced through `ChannelFrame`.
 void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
                                                   std::size_t size) {
+  // Account for every inbound frame body byte and bump the activity
+  // clock so `metrics_.bytes_received()` and `is_idle()` reflect real
+  // I/O regardless of which dispatch slot the reply maps onto.
+  on_response_received(size);
   // parse the response header directly from
   // the input bytes via BufferSource + BinaryReadArchive — no
   // intermediate `Marshal body` allocation.  The payload tail (if
