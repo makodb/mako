@@ -1,15 +1,3 @@
-
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
-
 #include <rusty/box.hpp>
 #include <rusty/rc.hpp>
 #include <rusty/option.hpp>
@@ -17,12 +5,14 @@
 #include <rusty/refcell.hpp>
 #include <rusty/function.hpp>
 
-
 #include <sys/mman.h>
 #include <unistd.h>
 
-
 #include "../rrr.hpp"
+
+// `import std;` after every textual `#include` — libc++ rejects
+// textual STL emitted after the import.
+import std;
 
 /**
  * @file fiber_context_runtime.cc

@@ -1,18 +1,13 @@
-
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
-#include <cstdint>
-
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 
 #include "fiber_channel.hpp"
-
 #include "../rrr.hpp"
+
+// `import std;` after every textual `#include` — libc++ rejects
+// textual STL emitted after the import.
+import std;
 
 namespace rrr {
 

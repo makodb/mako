@@ -1,15 +1,9 @@
-
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
-
 #include "frame_codec.hpp"
-
 #include "../rrr.hpp"
+
+// `import std;` after every textual `#include` — libc++ rejects
+// textual STL emitted after the import.
+import std;
 
 namespace rrr {
 
