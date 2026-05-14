@@ -1,13 +1,11 @@
 
 // import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
+#include <stdint.h>
+#include <errno.h>
+#include <stdlib.h>
+
 
 // @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <cerrno>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -25,6 +23,8 @@
 #include "tcp_channel.hpp"
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 

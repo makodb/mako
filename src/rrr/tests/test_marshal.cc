@@ -1,4 +1,6 @@
-#include <std_compat.hpp>
+#include <stdint.h>
+#include <stddef.h>
+
 #include <optional>
 #include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
@@ -6,6 +8,8 @@
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 

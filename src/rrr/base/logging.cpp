@@ -1,15 +1,11 @@
 
 // import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
+#include <stdio.h>
+#include <stdlib.h>
+
 
 // @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
 #include <pthread.h>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
 #include <assert.h>
 
@@ -25,6 +21,8 @@
 
 
 #include "../rrr.hpp"
+
+import std;
 
 // External safety annotations for functions used in this module
 // @external: {

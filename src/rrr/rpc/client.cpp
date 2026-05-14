@@ -1,14 +1,13 @@
 
 // import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <time.h>
+#include <limits.h>
+
 
 // @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
 #include <rusty/rusty.hpp>
 #include <rusty/result.hpp>
@@ -32,6 +31,8 @@
 
 
 #include "../rrr.hpp"
+
+import std;
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
 // Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types

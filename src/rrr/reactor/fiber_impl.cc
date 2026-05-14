@@ -1,14 +1,9 @@
 
 // import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
+#include <stdint.h>
+
 
 // @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
 #include <rusty/box.hpp>
 #include <rusty/rc.hpp>
@@ -24,6 +19,8 @@
 
 
 #include "../rrr.hpp"
+
+import std;
 
 /**
  * @file fiber_impl.cc

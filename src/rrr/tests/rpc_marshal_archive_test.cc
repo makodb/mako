@@ -11,15 +11,15 @@
 // encode via Archive, decode via Marshal — is implicitly verified by
 // the byte-equality test plus Marshal's existing tests.)
 
-#include <std_compat.hpp>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <time.h>
+
 
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <limits>
 #include <string>
 #include <thread>
@@ -31,6 +31,8 @@
 #include "../misc/serializable.hpp"
 #include "../misc/serializable.hpp"
 #include "../misc/serializable_envelope.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

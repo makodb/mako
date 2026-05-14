@@ -1,14 +1,7 @@
 
 // import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
 
 // @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
 #include <sys/types.h>
 #include <stdarg.h>
@@ -37,6 +30,8 @@
 
 
 #include "../rrr.hpp"
+
+import std;
 
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
 // No external annotations needed here - utils.cpp doesn't use atomics directly

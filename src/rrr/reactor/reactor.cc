@@ -1,14 +1,11 @@
 
 // import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 
 // @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
@@ -34,6 +31,8 @@
 
 
 #include "../rrr.hpp"
+
+import std;
 
 // @external: {
 //   rrr::Log::debug: [safe],

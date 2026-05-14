@@ -1,16 +1,9 @@
-
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
-#include <string>
-#include <vector>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #include <rusty/rusty.hpp>
 
@@ -20,9 +13,12 @@
 #endif
 
 #include "rand.hpp"
-
-
 #include "../rrr.hpp"
+
+// `import std;` after every textual `#include` — libc++ rejects
+// textual STL emitted after the import. Conditional `<mach/...>` is
+// platform-specific and doesn't pull in C++ STL, so it's safe.
+import std;
 
 // @external: {
 //   pthread_key_create: [unsafe],

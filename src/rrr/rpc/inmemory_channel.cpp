@@ -1,8 +1,8 @@
 // in-memory channel backend implementation.
 
-#include <std_compat.hpp>
+#include <stdint.h>
 
-#include <cstdint>
+
 #include <mutex>
 #include <string>
 #include <utility>
@@ -15,6 +15,8 @@
 #include "inmemory_channel.hpp"
 
 #include "../base/all.hpp"  // Log_*
+
+import std;
 
 namespace rrr {
 

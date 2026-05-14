@@ -1,14 +1,10 @@
 
 // import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
+#include <stdint.h>
+#include <stdio.h>
+
 
 // @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -26,6 +22,8 @@
 
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 
