@@ -27,7 +27,7 @@ RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(
 //  verify(poll != nullptr);
 }
 
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 // Returns shared_ptr<AppendEntriesResponse> - callback captures this to ensure memory validity
 shared_ptr<AppendEntriesResponse>
 RaftCommo::SendAppendEntries2(siteid_t site_id,
@@ -40,7 +40,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
                              uint64_t prevLogIndex,
                              uint64_t prevLogTerm,
                              uint64_t commitIndex,
-                             shared_ptr<Marshallable> cmd,
+                             const janus::Command& cmd,
                              uint64_t cmdLogTerm
                              ) {
   // Allocate response data with shared_ptr - callback captures this to keep memory valid
@@ -72,7 +72,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
       response->event->set(1);
     };
 
-    if (cmd == nullptr) {
+    if (!cmd.has_value()) {
       // send a heartbeat AppendEntries
       Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld", site_id, prevLogIndex);
       RaftProxy::RpcEmptyAppendEntriesRequest req{};
@@ -91,8 +91,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
       }
     } else {
       // send a regular AppendEntries
-      MarshallDeputy md(cmd);
-      verify(md.sp_data_ != nullptr);
+      verify(cmd.has_value());
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
       RaftProxy::RpcAppendEntriesRequest req{};
@@ -103,7 +102,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
       req.leaderPrevLogIndex = prevLogIndex;
       req.leaderPrevLogTerm = prevLogTerm;
       req.leaderCommitIndex = commitIndex;
-      req.cmd = md;
+      req.cmd = cmd;
       req.leaderNextLogTerm = cmdLogTerm;
       auto f = proxy->async_AppendEntries(req, fuattr);
       _RPC_COUNT();
@@ -115,7 +114,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
   return response;
 }
 
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 shared_ptr<SendAppendEntriesResults>
 RaftCommo::SendAppendEntries(siteid_t site_id,
                              parid_t par_id,
@@ -127,7 +126,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
                              uint64_t prevLogIndex,
                              uint64_t prevLogTerm,
                              uint64_t commitIndex,
-                             shared_ptr<Marshallable> cmd,
+                             const janus::Command& cmd,
                              uint64_t cmdLogTerm,
                              bool trigger_election_now) {
   // verify(par_id == 0);
@@ -156,7 +155,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       fu->get_reply() >> res->followerTerm;
       fu->get_reply() >> res->followerLastLogIndex;
       fu->get_reply() >> res->followerAckType;
-      res->empty = (cmd == nullptr);
+      res->empty = !cmd.has_value();
       // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
       // only set res->done if it's not a lost RPC
       if (res->ok == false && res->followerTerm == 0 && res->followerLastLogIndex == 0) {
@@ -166,7 +165,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       }
     };
 
-    if (cmd == nullptr) {
+    if (!cmd.has_value()) {
       // send a heartbeat AppendEntries
       Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld trigger_election=%d",
                 site_id, prevLogIndex, trigger_election_now);
@@ -186,8 +185,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       }
     } else {
       // send a regular AppendEntries
-      MarshallDeputy md(cmd);
-      verify(md.sp_data_ != nullptr);
+      verify(cmd.has_value());
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
       RaftProxy::RpcAppendEntriesRequest req{};
@@ -198,7 +196,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       req.leaderPrevLogIndex = prevLogIndex;
       req.leaderPrevLogTerm = prevLogTerm;
       req.leaderCommitIndex = commitIndex;
-      req.cmd = md;
+      req.cmd = cmd;
       req.leaderNextLogTerm = cmdLogTerm;
       auto f = proxy->async_AppendEntries(req, fuattr);
       _RPC_COUNT();
@@ -210,7 +208,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
   return res;
 }
 
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 shared_ptr<RaftVoteQuorumEvent>
 RaftCommo::BroadcastVote(parid_t par_id,
                          slotid_t lst_log_idx,
@@ -274,7 +272,7 @@ RaftCommo::BroadcastVote(parid_t par_id,
  * - RPC succeeds but target rejects → callback(false, follower_term)
  * - RPC succeeds and target starts election → callback(true, follower_term)
  */
-// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+// @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 void RaftCommo::SendTimeoutNow(siteid_t site_id,
                                parid_t par_id,
                                uint64_t leader_term,
@@ -357,7 +355,7 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
  * Called after a follower has durably persisted its vote to disk.
  * This notifies the candidate that this vote is now durable.
  */
-// @safe
+// @unsafe
 void RaftCommo::SendVoteDurable(siteid_t candidate_id,
                                  parid_t par_id,
                                  ballot_t term,
@@ -368,7 +366,8 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
   RaftProxy* proxy = nullptr;
   for (auto& p : proxies) {
     if (p.first == candidate_id) {
-      proxy = (RaftProxy*) p.second;
+      // @unsafe
+      { proxy = (RaftProxy*) p.second; }
       break;
     }
   }
@@ -412,7 +411,7 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
  * Called after a follower has durably persisted log entries to disk.
  * This notifies the leader that entries up to lastLogIndex are now durable.
  */
-// @safe
+// @unsafe
 void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
                                           parid_t par_id,
                                           ballot_t term,
@@ -424,7 +423,8 @@ void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
   RaftProxy* proxy = nullptr;
   for (auto& p : proxies) {
     if (p.first == leader_id) {
-      proxy = (RaftProxy*) p.second;
+      // @unsafe
+      { proxy = (RaftProxy*) p.second; }
       break;
     }
   }
@@ -475,7 +475,7 @@ void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
  * - acknowledged=false → DOWN (peer is down, will reconnect when it restarts)
  * - error/timeout      → PENDING (should retry)
  */
-// @safe
+// @unsafe
 void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
   auto proxies = rpc_par_proxies_[par_id];
 
@@ -503,7 +503,9 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
       continue;  // Don't notify self
     }
 
-    auto proxy = (RaftProxy*) p.second;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
 
     // Capture 'this' to update status map
@@ -719,6 +721,133 @@ void RaftCommo::SendInstallSnapshot(siteid_t site_id,
            site_id);
   if (callback) {
     callback(0);
+  }
+}
+
+// ============================================================================
+// callback-shaped quorum RPCs
+// ============================================================================
+
+// @unsafe - C-style casts, std::function captures
+void RaftCommo::SendAppendEntriesCb(
+    siteid_t site_id,
+    parid_t par_id,
+    slotid_t slot_id,
+    ballot_t ballot,
+    bool isLeader,
+    siteid_t leader_site_id,
+    uint64_t currentTerm,
+    uint64_t prevLogIndex,
+    uint64_t prevLogTerm,
+    uint64_t commitIndex,
+    const janus::Command& cmd,
+    uint64_t cmdLogTerm,
+    bool trigger_election_now,
+    std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply) {
+  auto proxies = rpc_par_proxies_[par_id];
+  WAN_WAIT;
+  for (auto& p : proxies) {
+    if (p.first != site_id)
+      continue;
+    auto follower_id = p.first;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
+    FutureAttr fuattr;
+    auto cmd_keep = cmd;  // keep alive across the async boundary
+    fuattr.callback = [on_reply, cmd_keep, follower_id](rusty::Arc<Future> fu) {
+      if (fu->get_error_code() != 0) {
+        Log_debug("[APPEND_RPC_CB] Error from site %d code=%d",
+                  follower_id, fu->get_error_code());
+        return;
+      }
+      raft::AppendEntriesReply r{};
+      fu->get_reply() >> r.follower_append_ok;
+      fu->get_reply() >> r.follower_current_term;
+      fu->get_reply() >> r.follower_last_log_index;
+      fu->get_reply() >> r.follower_ack_type;
+      on_reply(follower_id, r);
+    };
+
+    if (!cmd.has_value()) {
+      RaftProxy::RpcEmptyAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.trigger_election_now = trigger_election_now;
+      auto f = proxy->async_EmptyAppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
+    } else {
+      verify(cmd.has_value());
+      RaftProxy::RpcAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.cmd = cmd;
+      req.leaderNextLogTerm = cmdLogTerm;
+      auto f = proxy->async_AppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
+    }
+    return;
+  }
+}
+
+// @unsafe - C-style casts, std::function captures
+void RaftCommo::BroadcastVoteCb(
+    parid_t par_id,
+    slotid_t lst_log_idx,
+    ballot_t lst_log_term,
+    siteid_t self_id,
+    ballot_t cur_term,
+    std::function<void(siteid_t, raft::VoteReply)> on_reply) {
+  auto proxies = rpc_par_proxies_[par_id];
+  WAN_WAIT;
+  for (auto& p : proxies) {
+    auto site_id = p.first;
+    if (site_id == self_id) continue;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
+    FutureAttr fuattr;
+    fuattr.callback = [on_reply, site_id](rusty::Arc<Future> fu) {
+      if (fu->get_error_code() != 0) {
+        Log_debug("[VOTE_RPC_CB] Error from site %d code=%d",
+                  site_id, fu->get_error_code());
+        return;
+      }
+      raft::VoteReply r{};
+      ballot_t term = 0;
+      bool_t vote = false;
+      fu->get_reply() >> term;
+      fu->get_reply() >> vote;
+      r.max_ballot = term;
+      r.vote_granted = vote;
+      on_reply(site_id, r);
+    };
+    RaftProxy::RpcVoteRequest req{};
+    req.lst_log_idx = lst_log_idx;
+    req.lst_log_term = lst_log_term;
+    req.site_id = self_id;
+    req.cur_term = cur_term;
+    auto f = proxy->async_Vote(req, fuattr);
+    _RPC_COUNT();
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 

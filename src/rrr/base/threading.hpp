@@ -1,22 +1,28 @@
 #pragma once
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+#include <rusty/arc.hpp>
 #include <rusty/box.hpp>
+#include <rusty/fn.hpp>
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
+#include <rusty/vecdeque.hpp>
 
-#include <list>
-#include <queue>
-#include <vector>
-#include <functional>
 #include <pthread.h>
-#include <atomic>
-#include <mutex>
-#include <condition_variable>
-#include <memory>
 
-#include "basetypes.hpp"
-#include "misc.hpp"
 
 // External safety annotations for pthread and std functions used in this module
 // @external: {
@@ -53,23 +59,77 @@
 //   std::condition_variable::wait_for: [unsafe, (std::unique_lock<std::mutex>&, duration) -> std::cv_status]
 // }
 
-#define Pthread_spin_init(l, pshared) verify(pthread_spin_init(l, (pshared)) == 0)
-#define Pthread_spin_lock(l) verify(pthread_spin_lock(l) == 0)
-#define Pthread_spin_unlock(l) verify(pthread_spin_unlock(l) == 0)
-#define Pthread_spin_destroy(l) verify(pthread_spin_destroy(l) == 0)
-#define Pthread_mutex_init(m, attr) verify(pthread_mutex_init(m, attr) == 0)
-#define Pthread_mutex_lock(m) verify(pthread_mutex_lock(m) == 0)
-#define Pthread_mutex_unlock(m) verify(pthread_mutex_unlock(m) == 0)
-#define Pthread_mutex_destroy(m) verify(pthread_mutex_destroy(m) == 0)
-#define Pthread_cond_init(c, attr) verify(pthread_cond_init(c, attr) == 0)
-#define Pthread_cond_destroy(c) verify(pthread_cond_destroy(c) == 0)
-#define Pthread_cond_signal(c) verify(pthread_cond_signal(c) == 0)
-#define Pthread_cond_broadcast(c) verify(pthread_cond_broadcast(c) == 0)
-#define Pthread_cond_wait(c, m) verify(pthread_cond_wait(c, m) == 0)
-#define Pthread_create(th, attr, func, arg) verify(pthread_create(th, attr, func, arg) == 0)
-#define Pthread_join(th, attr) verify(pthread_join(th, attr) == 0)
+
+
+
+#include "basetypes.hpp"
+#include "debugging.hpp"
+#include "misc.hpp"
 
 namespace rrr {
+
+inline void Pthread_spin_init(pthread_spinlock_t* lock, int pshared) {
+    verify(pthread_spin_init(lock, pshared) == 0);
+}
+
+inline void Pthread_spin_lock(pthread_spinlock_t* lock) {
+    verify(pthread_spin_lock(lock) == 0);
+}
+
+inline void Pthread_spin_unlock(pthread_spinlock_t* lock) {
+    verify(pthread_spin_unlock(lock) == 0);
+}
+
+inline void Pthread_spin_destroy(pthread_spinlock_t* lock) {
+    verify(pthread_spin_destroy(lock) == 0);
+}
+
+inline void Pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
+    verify(pthread_mutex_init(mutex, attr) == 0);
+}
+
+inline void Pthread_mutex_lock(pthread_mutex_t* mutex) {
+    verify(pthread_mutex_lock(mutex) == 0);
+}
+
+inline void Pthread_mutex_unlock(pthread_mutex_t* mutex) {
+    verify(pthread_mutex_unlock(mutex) == 0);
+}
+
+inline void Pthread_mutex_destroy(pthread_mutex_t* mutex) {
+    verify(pthread_mutex_destroy(mutex) == 0);
+}
+
+inline void Pthread_cond_init(pthread_cond_t* cond, const pthread_condattr_t* attr) {
+    verify(pthread_cond_init(cond, attr) == 0);
+}
+
+inline void Pthread_cond_destroy(pthread_cond_t* cond) {
+    verify(pthread_cond_destroy(cond) == 0);
+}
+
+inline void Pthread_cond_signal(pthread_cond_t* cond) {
+    verify(pthread_cond_signal(cond) == 0);
+}
+
+inline void Pthread_cond_broadcast(pthread_cond_t* cond) {
+    verify(pthread_cond_broadcast(cond) == 0);
+}
+
+inline void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
+    verify(pthread_cond_wait(cond, mutex) == 0);
+}
+
+inline void Pthread_create(pthread_t* thread,
+                           const pthread_attr_t* attr,
+                           void* (*func)(void*),
+                           void* arg) {
+    verify(pthread_create(thread, attr, func, arg) == 0);
+}
+
+inline void Pthread_join(pthread_t thread, void** value_ptr) {
+    verify(pthread_join(thread, value_ptr) == 0);
+}
 
 class Lockable: public NoCopy {
 public:
@@ -77,6 +137,7 @@ public:
 
     virtual void lock() = 0;
     virtual void unlock() = 0;
+    virtual ~Lockable() = default;
 //    virtual Lockable::type whatami() = 0;
 };
 
@@ -85,6 +146,7 @@ class SpinLock: public Lockable {
 public:
     // @safe - Initializes to unlocked state
     SpinLock(): locked_(false) { }
+    ~SpinLock() override = default;
 
     // Delete copy and move constructors (atomic is not copyable)
     SpinLock(const SpinLock&) = delete;
@@ -93,7 +155,38 @@ public:
     SpinLock& operator=(SpinLock&&) = delete;
 
     // @unsafe - Uses address-of operator for nanosleep call
-    void lock();
+    // SAFETY: Only takes address of stack-allocated timespec which remains valid throughout nanosleep
+    void lock() override {
+        // Fast path: try to acquire lock immediately
+        bool expected = false;
+        if (locked_.compare_exchange_strong(expected, true,
+                                            std::memory_order_acquire,
+                                            std::memory_order_relaxed)) {
+            return;
+        }
+
+        // Spin for a short while before sleeping
+        int wait = 1000;
+        while ((wait-- > 0) && locked_.load(std::memory_order_relaxed)) {
+            // CPU-specific pause instruction to reduce contention
+#if defined(__i386__) || defined(__x86_64__)
+            asm volatile("pause");
+#endif
+        }
+
+        // Fall back to sleeping if still contended
+        struct timespec t;
+        t.tv_sec = 0;
+        t.tv_nsec = 50000;  // 50 microseconds
+
+        expected = false;
+        while (!locked_.compare_exchange_weak(expected, true,
+                                              std::memory_order_acquire,
+                                              std::memory_order_relaxed)) {
+            nanosleep(&t, nullptr);
+            expected = false;
+        }
+    }
 
     // @unsafe - Calls std::atomic::store
     void unlock() {
@@ -394,13 +487,13 @@ public:
  */
 template<class T>
 class Queue: public NoCopy {
-    rusty::Box<std::list<T>> q_;
+    rusty::Box<rusty::VecDeque<T>> q_;
     pthread_cond_t not_empty_;
     pthread_mutex_t m_;
 
 public:
     // @unsafe - Initializes pthread primitives
-    Queue(): q_(rusty::Box<std::list<T>>::make(std::list<T>())), not_empty_(), m_() {
+    Queue(): q_(rusty::Box<rusty::VecDeque<T>>::make(rusty::VecDeque<T>())), not_empty_(), m_() {
         Pthread_mutex_init(&m_, nullptr);
         Pthread_cond_init(&not_empty_, nullptr);
     }
@@ -425,10 +518,9 @@ public:
     bool try_pop(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
-        if (!q_->empty()) {
+        if (!q_->is_empty()) {
             ret = true;
-            *t = std::move(q_->front());
-            q_->pop_front();
+            *t = q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
         return ret;
@@ -440,10 +532,9 @@ public:
     bool try_pop_but_ignore_invalid(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
-        if (!q_->empty() && q_->front().is_valid()) {
+        if (!q_->is_empty() && q_->front().is_valid()) {
             ret = true;
-            *t = std::move(q_->front());
-            q_->pop_front();
+            *t = q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
         return ret;
@@ -453,40 +544,55 @@ public:
     // SAFETY: Returns by value (move), not by reference. Borrow checker false positive.
     T pop() {
         Pthread_mutex_lock(&m_);
-        while (q_->empty()) {
+        while (q_->is_empty()) {
             Pthread_cond_wait(&not_empty_, &m_);
         }
-        auto result = std::move(q_->front());
-        q_->pop_front();
+        auto result = q_->pop_front();
         Pthread_mutex_unlock(&m_);
         return result;
     }
 };
 
-class ThreadPool: public RefCounted {
+class ThreadPool: public NoCopy {
     int n_;
     Counter round_robin_;
-    std::vector<pthread_t> th_;
-    std::vector<Queue<rusty::Box<std::function<void()>>>> q_;
+    rusty::Vec<pthread_t> th_;
+    // Queue owns pthread primitives (mutex/cond) with stable addresses, so it
+    // is not move-constructible. rusty::Vec needs a moveable T for push(),
+    // so use std::vector here (resize() constructs in place).
+    std::vector<Queue<rusty::Box<rusty::Function<void()>>>> q_;
     bool should_stop_{false};
 
     static void* start_thread_pool(void*);
     void run_thread(int id_in_pool);
 
-protected:
-    ~ThreadPool();
+public:
+    ~ThreadPool() noexcept;
 
 public:
     ThreadPool(int n = 1 /*get_ncpu() * 2*/);
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
 
-    // return 0 when queuing ok, otherwise EPERM
-    int run_async(const std::function<void()>&);
+    // return 0 when queuing ok, otherwise EPERM. Takes ownership of the
+    // callable; rusty::Function is move-only so callers pass a lambda
+    // (which converts implicitly) or std::move an existing Function.
+    int run_async(rusty::Function<void()> f);
+
+    // @unsafe - Factory uses rusty::Arc::make (non-borrow-checked)
+    template<typename... Args>
+    static rusty::Arc<ThreadPool> make(Args&&... args) {
+        // @unsafe { rusty::Arc::make is not borrow-checked }
+        return rusty::Arc<ThreadPool>::make(std::forward<Args>(args)...);
+    }
 };
 
-class RunLater: public RefCounted {
-    typedef std::pair<double, std::function<void()>*> job_t;
+class RunLater: public NoCopy {
+    // The Option<Box<Function>> payload is None for the death-pill
+    // (former `nullptr`) and Some(box) for real jobs. Box owns the
+    // heap-allocated rusty::Function (former `new std::function(f)`).
+    typedef std::pair<double,
+                      rusty::Option<rusty::Box<rusty::Function<void()>>>> job_t;
 
     pthread_t th_;
     pthread_mutex_t m_;
@@ -496,20 +602,28 @@ class RunLater: public RefCounted {
     SpinLock latest_l_{};
     double latest_{};
 
-    std::priority_queue<job_t, std::vector<job_t>, std::greater<job_t>> jobs_{};
+    rusty::Vec<job_t> jobs_{};
 
     static void* start_run_later(void*);
     void run_later_loop();
     void try_one_job();
 public:
     RunLater();
+    ~RunLater() noexcept;
 
-    // return 0 when queuing ok, otherwise EPERM
-    int run_later(double sec, const std::function<void()>&);
+    // return 0 when queuing ok, otherwise EPERM. Takes ownership of the
+    // callable; rusty::Function is move-only so callers pass a lambda
+    // (which converts implicitly) or std::move an existing Function.
+    int run_later(double sec, rusty::Function<void()> f);
 
     double max_wait() const;
-protected:
-    ~RunLater();
+
+    // @unsafe - Factory uses rusty::Arc::make (non-borrow-checked)
+    template<typename... Args>
+    static rusty::Arc<RunLater> make(Args&&... args) {
+        // @unsafe { rusty::Arc::make is not borrow-checked }
+        return rusty::Arc<RunLater>::make(std::forward<Args>(args)...);
+    }
 };
 
 } // namespace base

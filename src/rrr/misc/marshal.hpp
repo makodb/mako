@@ -1,27 +1,65 @@
 #pragma once
 
-#include <list>
-#include <vector>
-#include <string>
-#include <map>
-#include <set>
-#include <unordered_map>
-#include <unordered_set>
-#include <limits>
-#include <chrono>
-#include<iostream>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
-#include <memory>
 
-#include "base/all.hpp"
-#include "rusty/arc.hpp"
+#include <rusty/arc.hpp>
+#include <rusty/fn.hpp>
+
+#ifdef RR
+#pragma push_macro("RR")
+#undef RR
+#define RRR_RESTORE_RR_MACRO 1
+#endif
+#include <proxy/proxy.h>
+#include <proxy/proxy_macros.h>
+#ifdef RRR_RESTORE_RR_MACRO
+#pragma pop_macro("RR")
+#undef RRR_RESTORE_RR_MACRO
+#endif
 
 // External safety annotations for pure functions
 // @external: {
 //   std::min: [safe]
 // }
+
+
+
+
+#include "../base/all.hpp"
+
+// pull in `serializable.hpp` for
+// `SerializableProxy` / `SerializableFacade` definitions used by
+// `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` — the
+// templates dispatch transparently to the `wrap_typed_marshallable`
+// bridge overload (declared below) for migrated Serializable types
+// (any non-Marshallable T) — call sites need no updates.
+//
+// the `SerializableConcept<T>` constraint was
+// dropped from the bridge overloads here; templates now dispatch on
+// `!std::is_base_of_v<Marshallable, T>` alone and trust the proxy
+// library to reject wrong-shaped T at instantiation / runtime.  See
+// `serializable.hpp` for the retirement rationale.
+//
+// `serializable.hpp` forward-declares `class Marshal` rather than
+// including this file, so this is acyclic. The archive's MarshalSink/
+// MarshalSource use `Marshal*` only; method bodies live in the .cpp.
+#include "serializable.hpp"
+
 
 namespace rrr {
 
@@ -32,208 +70,29 @@ inline T safe_min(const T& a, const T& b) {
   { return std::min(a, b); }
 }
 
-#ifdef RPC_STATISTICS
-void stat_marshal_in(int fd, const void* buf, size_t nbytes, ssize_t ret);
-void stat_marshal_out(int fd, const void* buf, size_t nbytes, ssize_t ret);
-#endif // RPC_STATISTICS
+// removed the entire `RPC_STATISTICS` block
+// and `stat_marshal_in` declaration. After Phase 5b-7/5b-8 deleted
+// the marshal-out side, the marshal-in side became dead too once
+// 11 confirmed `Marshal::read_from_fd` /
+// `Marshal::chnk_read_from_fd` / `chunk::read_from_fd` had no
+// production callers anywhere in the codebase. The receive path
+// uses `FdSource` (`serializable.hpp`) instead.
 
 // not thread safe, for better performance
 class Marshal;
 
-class Marshallable {
- public:
-  int32_t kind_{0};
-  bool bypass_to_socket_ = false;
-  size_t written_to_socket = 0;
-//  int32_t __debug_{10};
-  Marshallable() = delete;
-  explicit Marshallable(int32_t k): kind_(k) {};
-  virtual ~Marshallable() {
-//    if (__debug_ != 10) {
-//      verify(0);
-//    }
-//    __debug_ = 30;
-//    Log_debug("destruct marshallable.");
-  };
-  // @safe
-  // @lifetime: (&'a, &'b mut) -> &'b mut
-  virtual Marshal& to_marshal(Marshal& m) const;
-  // @safe
-  // @lifetime: (&'a mut, &'b mut) -> &'b mut
-  virtual Marshal& from_marshal(Marshal& m);
-  virtual size_t entity_size() const {
-    verify(0);
-    return 0;
-  }
-  // @unsafe
-  virtual size_t write_to_fd(int fd, size_t written_to_socket) const {
-    verify(0);
-    return 0;
-  }
-
-  // virtual size_t need_to_write(){
-  //   return entity_size() ; - written_to_socket;
-  // }
-
-  // virtual void reset_write_offsets(){
-  //    written_to_socket = 0;
-  // }
-};
-
-// @safe - Type-erasing wrapper for polymorphic Marshallable objects
-// NOTE: Uses std::shared_ptr<Marshallable> for polymorphism support:
-//   1. Polymorphism requirement - Marshallable is abstract base with many derived types
-//   2. Type erasure pattern - kind_ determines actual type at runtime
-//   3. Shared ownership needed across serialization/deserialization boundary
-class MarshallDeputy {
-  public:
-    typedef std::unordered_map<int32_t, std::function<Marshallable*()>> MarContainer;
-    // @safe - Returns reference to global factory registry
-    // SAFETY: Protected by mutex, returns reference to static container
-    // @lifetime: () -> &'static
-    static MarContainer& get_initializers();
-    // @unsafe - Registers initializer with mutex locking
-    static int reg_initializer(int32_t, std::function<Marshallable*()>);
-    static std::function<Marshallable*()> get_initializer(int32_t);
-
-  public:
-    bool bypass_to_socket_ = false;
-    // size_t written_to_socket = 0;
-    // @safe - Uses shared_ptr<Marshallable> for polymorphic type erasure
-    // SAFETY: Reference counting with built-in polymorphism support
-    std::shared_ptr<rrr::Marshallable> sp_data_;
-    int32_t kind_{0};
-    enum Kind {
-      UNKNOWN=0,
-      EMPTY_GRAPH=1,
-      RCC_GRAPH=2,
-      CONTAINER_CMD=3,
-      CMD_TPC_PREPARE=4,
-      CMD_TPC_COMMIT=5,
-      CMD_VEC_PIECE=6,
-      CMD_BLK_PXS=7,
-      CMD_BLK_PREP_PXS=8,
-      CMD_HRTBT_PXS=9,
-      CMD_SYNCREQ_PXS=10,
-      CMD_SYNCRESP_PXS=11,
-      CMD_SYNCNOOP_PXS=12,
-      CMD_PREP_PXS=13,
-      CMD_TPC_EMPTY=14,
-      CMD_NOOP=15,
-      CMD_TPC_BATCH=16,
-      CMD_TPC_PREPARE_CAROUSEL=17,
-      CMD_MULTI_STRING=18,
-      CMD_REC_VEC=19,
-      CMD_VIEW_DATA=20,
-      CMD_KV=21,
-      CMD_KEY_CMD_BATCH=22
-    };
-    /**
-     * This should be called by the rpc layer.
-     */
-    MarshallDeputy() : kind_(UNKNOWN){}
-    /**
-     * This should be called by inherited class as instructor.
-     * @param kind
-     */
-    // @safe - Constructor accepts shared_ptr<Marshallable> with polymorphism support
-    // SAFETY: Moves ownership, proper null checking in usage
-    explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
-      kind_ = sp_data_->kind_;
-      if(sp_data_->bypass_to_socket_){
-        bypass_to_socket_ = true;
-      }
-      //written_to_socket = 0;
-    }
-
-    // @unsafe - Template constructor for derived types
-    // Uses raw pointer dereference through shared_ptr->member
-    template<typename T>
-    explicit MarshallDeputy(std::shared_ptr<T> sp_m)
-      requires std::is_base_of_v<rrr::Marshallable, T>
-    {
-      sp_data_ = sp_m;
-      kind_ = sp_data_->kind_;
-      if(sp_data_->bypass_to_socket_){
-        bypass_to_socket_ = true;
-      }
-    }
-
-    // virtual void reset_write_offsets(){
-    //   written_to_socket = 0;
-    //   sp_data_->reset_write_offsets();
-    // }
-
-    rrr::Marshal& create_actual_object_from(rrr::Marshal& m);
-    // @unsafe - Setter accepts shared_ptr<Marshallable> with polymorphism support
-    // SAFETY: Validates nullptr before setting, updates kind_ atomically, calls std::shared_ptr::operator=
-    void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
-      verify(sp_data_ == nullptr);
-      sp_data_ = m;
-      kind_ = m->kind_;
-    }
-
-    virtual size_t entity_size() const {
-      return sizeof(int32_t) + sp_data_->entity_size();
-    }
-
-    // @unsafe
-    size_t track_write_2(int fd, const void* p, size_t len, size_t offset){
-      const char* x = (const char*)p;
-      // @unsafe {
-      size_t sz = ::write(fd, x + offset, len - offset);
-      // }
-      if(sz > len - offset || sz <= 0){
-         return 0;
-      }
-      return sz;
-    }
-
-    // virtual size_t need_to_write(){
-    //   // for marshalldeputy we only write headers. The rest is handled by Marshallable
-    //   return entity_size() - written_to_socket;
-    // }
-
-    // @unsafe
-    virtual size_t write_to_fd(int fd, int written_to_socket) {
-        size_t sz = 0, prev = written_to_socket;
-        if(written_to_socket < sizeof(kind_)){
-          sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
-          //Log_info("Writing the kind of MarshallDeputy %d %d", sz, written_to_socket);
-          written_to_socket += sz;
-          if(written_to_socket < sizeof(kind_))return sz;
-        }
-        //Log_info("Written bytes of ghost chunk 1 %d %d %d", sz, kind_, written_to_socket);
-        // sp_data_->reset_write_offset();
-        // @unsafe {
-        // Safety check: sp_data_ must not be null when writing
-        if (sp_data_ == nullptr) {
-          Log_error("MarshallDeputy::write_to_fd called with null sp_data_ (kind=%d)", kind_);
-          return 0;
-        }
-        sz = sp_data_->write_to_fd(fd, written_to_socket - sizeof(kind_));
-        // }
-	      //std::cout << sz << std::endl;
-        //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
-        written_to_socket += sz;
-        //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, entity_size());
-        //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
-        return written_to_socket - prev;
-    }
-
-    ~MarshallDeputy() = default;
-};
 
 class Marshal: public NoCopy {
 private:
   // Migrated from RefCounted to std::shared_ptr for automatic reference counting
+  // removed `marshallable_entity`,
+  // `shared_data`, `written_to_socket` fields and the
+  // `raw_bytes(MarshallDeputy, sz)` ctor — they backed the dead
+  // bypass-to-socket fast path.
   struct raw_bytes {
     char *ptr = nullptr;
     size_t size = 0;
     static const size_t min_size;
-    MarshallDeputy marshallable_entity;
-    bool shared_data = false;
-    size_t written_to_socket = 0;
 
     raw_bytes(size_t sz = min_size) {
       size = std::max(sz, min_size);
@@ -243,13 +102,6 @@ private:
       size = std::max(n, min_size);
       ptr = new char[size];
       memcpy(ptr, p, n);
-    }
-
-    raw_bytes(MarshallDeputy md, size_t sz){
-      marshallable_entity = md;
-      size = sz;
-      shared_data = true;
-      //Log_info("Creating a ghost chunk here of size %d of kind %d", sz, md.kind_);
     }
 
     size_t resize_to(size_t new_sz){
@@ -285,13 +137,11 @@ private:
     size_t write_idx;
     chunk *next;
 
-    // Updated constructors to use std::make_shared instead of new
+    // Updated constructors to use std::make_shared instead of new.
+    // removed `chunk(MarshallDeputy, sz)`
+    // ctor (backed dead bypass-to-socket fast path).
     chunk() : data(std::make_shared<raw_bytes>()),
               read_idx(0), write_idx(0), next(nullptr) { }
-
-    chunk(MarshallDeputy md, size_t sz)
-        : data(std::make_shared<raw_bytes>(md, sz)),
-          read_idx(0), write_idx(sz), next(nullptr) {}
 
     chunk(size_t sz)
         : data(std::make_shared<raw_bytes>(sz)),
@@ -311,7 +161,9 @@ private:
     }
 
     size_t resize_to_current() {
-      verify(data->shared_data == false);
+      // removed
+      // `verify(data->shared_data == false)` — `shared_data` no
+      // longer exists on raw_bytes.
       size_t sz = data->resize_to(write_idx);
       verify(data->size == write_idx);
       return sz;
@@ -372,9 +224,8 @@ private:
       return n_read;
     }
 
-    bool is_shared_data_chunk(){
-      return data->shared_data;
-    }
+    // removed `is_shared_data_chunk()` —
+    // `data->shared_data` no longer exists.
 
     // @safe - Peeks at data in chunk buffer
     // SAFETY: Internal @unsafe block handles raw pointer arithmetic and memcpy
@@ -404,77 +255,16 @@ private:
       return n_discard;
     }
 
-    // @safe - Writes to file descriptor (I/O system call)
-    // SAFETY: Internal @unsafe block handles I/O system calls and raw pointer operations
-    int write_to_fd(int fd) {
-      // @unsafe
-      {
-        assert(write_idx <= data->size);
-        struct timespec begin2, begin2_cpu, end2, end2_cpu;
-        /*clock_gettime(CLOCK_MONOTONIC, &begin2);
-        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin2_cpu);*/
-        int cnt;
-        if(data->shared_data){
-          // Safety check: marshallable_entity must have valid sp_data_
-          if (data->marshallable_entity.sp_data_ == nullptr) {
-            Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
-            return -1;
-          }
-          cnt = data->marshallable_entity.write_to_fd(fd, data->written_to_socket);
-          data->written_to_socket += cnt;
-          //Log_info("wrote %d bytes of ghost %d", cnt, fd);
-        }
-        else{
-          cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
-          //Log_info("wrote %d bytes of normal %d", cnt, fd);
-        }
-#ifdef RPC_STATISTICS
-        if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
-        else{
-          Log_debug("Missed RPC stats, shared data used in raw_bytes");
-        }
-#endif // RPC_STATISTICS
-        //if(cnt == -1)verify(0);
-        if (cnt > 0) {
-          /*clock_gettime(CLOCK_MONOTONIC, &end2);
-          clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end2_cpu);
-          long total_cpu2 = (end2_cpu.tv_sec - begin2_cpu.tv_sec)*1000000000 + (end2_cpu.tv_nsec - begin2_cpu.tv_nsec);
-          long total_time2 = (end2.tv_sec - begin2.tv_sec)*1000000000 + (end2.tv_nsec - begin2.tv_nsec);
-          double util2 = (double) total_cpu2/total_time2;
-          Log_info("elapsed CPU time (fd write of %d): %f", write_idx - read_idx, util2);*/
-          read_idx += cnt;
-        }
+    // removed `chunk::write_to_fd(int)` —
+    // its only caller was `Marshal::write_to_fd(int)` which went
+    // away in the same commit (no production callers).
 
-        assert(write_idx <= data->size);
-        return cnt;
-      }
-    }
-
-    // @unsafe - Reads from file descriptor (I/O system call)
-    int read_from_fd(int fd, size_t bytes = -1) {
-      if(bytes == -1)bytes = data->size - write_idx;
-      assert(write_idx <= data->size);
-      assert(read_idx <= write_idx);
-
-      int cnt = 0;
-      if (write_idx < data->size) {
-        cnt = ::read(fd, data->ptr + write_idx, bytes);
-        if (cnt<=0){
-          return cnt;
-        }
-#ifdef RPC_STATISTICS
-        stat_marshal_in(fd, data->ptr + write_idx, bytes, cnt);
-#endif // RPC_STATISTICS
-
-        if (cnt > 0) {
-          write_idx += cnt;
-        }
-      }
-
-      assert(write_idx <= data->size);
-      assert(read_idx <= write_idx);
-      return cnt;
-    }
+    // removed `chunk::read_from_fd(int,
+    // size_t)`. Its only callers were `Marshal::read_from_fd` and
+    // `Marshal::chnk_read_from_fd` — both of which were unreferenced
+    // by any production caller and went away in the same commit.
+    // The receive path uses `FdSource` (`serializable.hpp`) for
+    // direct fd reads.
 
     // check if it is not possible to write to the chunk anymore.
     bool fully_written() const {
@@ -606,12 +396,10 @@ private:
     }
   }
 
-  // @safe - Reads from file descriptor (I/O system call)
-  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
-  size_t read_from_fd(int fd);
-
-  // @unsafe - Reads from file descriptor into chunk (I/O system call)
-  size_t chnk_read_from_fd(int fd, size_t bytes);
+  // removed `read_from_fd(int)` and
+  // `chnk_read_from_fd(int, size_t)`. Neither had any production
+  // callers; the receive path uses `FdSource`
+  // (`serializable.hpp`) instead.
 
   // @unsafe - Reuses chunks from another marshal (uses raw pointer members)
   size_t read_reuse_chnk(Marshal& m, size_t nbytes);
@@ -627,9 +415,9 @@ private:
   // SAFETY: Internal @unsafe block wraps raw pointer operations (head_, tail_, chunk*)
   size_t read_from_marshal(Marshal &m, size_t n);
 
-  // @safe - Writes to file descriptor (I/O system call)
-  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
-  size_t write_to_fd(int fd);
+  // removed `write_to_fd(int)`. It had no
+  // callers; new code uses `FdSink` (serializable.hpp) to write
+  // archive bytes directly to a file descriptor.
 
   void reset(){
     head_->reset();
@@ -663,8 +451,9 @@ private:
     return cnt;
   }
 
-  // @safe - Bypasses copying by sharing chunk pointers
-  size_t bypass_copying(rrr::MarshallDeputy, size_t);
+  // removed `bypass_copying` — the dead
+  // bypass-to-socket fast path that no production type ever
+  // enabled (no caller set `bypass_to_socket_=true`).
 };
 
 // @unsafe
@@ -811,18 +600,32 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::pair<T1, T2> &v) {
 }
 
 // @unsafe
-// @lifetime: (&'a, const std::vector<T>&) -> &'a
+// @lifetime: (&'a, const rusty::Vec<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::Vec<T> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
+    for (typename rusty::Vec<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
       m << *it;
     }
     return m;
   // }
+}
+
+// @unsafe
+// @lifetime: (&'a, const std::vector<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
+  // Keep std::vector support for non-rrr call sites while rrr internals move to rusty containers.
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
+       ++it) {
+    m << *it;
+  }
+  return m;
 }
 
 // @unsafe
@@ -841,15 +644,46 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
 }
 
 // @unsafe
-// @lifetime: (&'a, const std::set<T>&) -> &'a
+// @lifetime: (&'a, const rusty::BTreeSet<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeSet<T> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
+    for (typename rusty::BTreeSet<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
       m << *it;
+    }
+    return m;
+  // }
+}
+
+// @unsafe
+// @lifetime: (&'a, const std::set<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
+       ++it) {
+    m << *it;
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, const rusty::BTreeMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v) {
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    // rusty::BTreeMap iter `operator*()` returns
+    // `std::tuple<const K&, const V&>` (post-2026-04 API).
+    for (typename rusty::BTreeMap<K, V>::const_iterator it = v.begin(); it != v.end();
+         ++it) {
+      auto kv = *it;
+      m << std::get<0>(kv) << std::get<1>(kv);
     }
     return m;
   // }
@@ -859,12 +693,26 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
 // @lifetime: (&'a, const std::map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
+       ++it) {
+    m << it->first << it->second;
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, const rusty::HashSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator<<(rrr::Marshal &m,
+                                const rusty::HashSet<T> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
-         ++it) {
-      m << it->first << it->second;
+    for (typename rusty::HashSet<T>::const_iterator it = v.begin();
+         it != v.end(); ++it) {
+      m << *it;
     }
     return m;
   // }
@@ -875,12 +723,29 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_set<T> &v) {
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::unordered_set<T>::const_iterator it = v.begin();
+       it != v.end(); ++it) {
+    m << *it;
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, const rusty::HashMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator<<(rrr::Marshal &m,
+                                const rusty::HashMap<K, V> &v) {
   // @unsafe {
     v64 v_len = v.size();
     m << v_len;
-    for (typename std::unordered_set<T>::const_iterator it = v.begin();
+    // rusty::HashMap iter `operator*()` returns
+    // `std::tuple<const K&, const V&>` (post-2026-04 API).
+    for (typename rusty::HashMap<K, V>::const_iterator it = v.begin();
          it != v.end(); ++it) {
-      m << *it;
+      auto kv = *it;
+      m << std::get<0>(kv) << std::get<1>(kv);
     }
     return m;
   // }
@@ -891,15 +756,13 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_map<K, V> &v) {
-  // @unsafe {
-    v64 v_len = v.size();
-    m << v_len;
-    for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
-         it != v.end(); ++it) {
-      m << it->first << it->second;
-    }
-    return m;
-  // }
+  v64 v_len = v.size();
+  m << v_len;
+  for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
+       it != v.end(); ++it) {
+    m << it->first << it->second;
+  }
+  return m;
 }
 
 // @unsafe
@@ -1030,6 +893,22 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::pair<T1, T2> &v) {
 }
 
 // @unsafe
+// @lifetime: (&'a, rusty::Vec<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::Vec<T> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  v.reserve(v_len.get());
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    m >> elem;
+    v.push_back(elem);
+  }
+  return m;
+}
+
+// @unsafe
 // @lifetime: (&'a, std::vector<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::vector<T> &v) {
@@ -1061,6 +940,21 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::list<T> &v) {
 }
 
 // @unsafe
+// @lifetime: (&'a, rusty::BTreeSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::BTreeSet<T> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    m >> elem;
+    v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
 // @lifetime: (&'a, std::set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::set<T> &v) {
@@ -1071,6 +965,22 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::set<T> &v) {
     T elem;
     m >> elem;
     v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, rusty::BTreeMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::BTreeMap<K, V> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    m >> key >> value;
+    insert_into_map(v, key, value);
   }
   return m;
 }
@@ -1092,6 +1002,21 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::map<K, V> &v) {
 }
 
 // @unsafe
+// @lifetime: (&'a, rusty::HashSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::HashSet<T> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    m >> elem;
+    v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
 // @lifetime: (&'a, std::unordered_set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_set<T> &v) {
@@ -1102,6 +1027,22 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_set<T> &v) {
     T elem;
     m >> elem;
     v.insert(elem);
+  }
+  return m;
+}
+
+// @unsafe
+// @lifetime: (&'a, rusty::HashMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::HashMap<K, V> &v) {
+  v64 v_len;
+  m >> v_len;
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    m >> key >> value;
+    insert_into_map(v, key, value);
   }
   return m;
 }
@@ -1122,29 +1063,9 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
   return m;
 }
 
-// @unsafe
-// @lifetime: (&'a, MarshallDeputy&) -> &'a
-inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
-  m >> rhs.kind_;
-  rhs.create_actual_object_from(m);
-  return m;
-}
-
-// SAFETY: Proper null checking and virtual method call
-// @unsafe
-// @lifetime: (&'a, const MarshallDeputy&) -> &'a
-inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) {
-  verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
-  verify(rhs.sp_data_ != nullptr);
-  if(rhs.bypass_to_socket_){
-    m.bypass_copying(rhs, rhs.entity_size());
-  }else{
-    //Log_info("size is %d", rhs.entity_size());
-    m << rhs.kind_;
-    verify(rhs.sp_data_ != nullptr); // must be non-empty
-    rhs.sp_data_->to_marshal(m);
-  }
-  return m;
-}
+// 2 step 5 (2026-05-05): Marshal& operators for MarshallDeputy
+// retired with the class.  janus::Command (SerializableEnvelope<
+// MakoCommands>) has its own Marshal& archive operators in
+// serializable_envelope.hpp.
 
 } // namespace rrr

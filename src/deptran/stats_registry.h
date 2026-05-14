@@ -2,6 +2,7 @@
 #define STATS_REGISTRY_H_
 
 #include "__dep__.h"
+#include <rusty/mutex.hpp>
 
 namespace janus {
 
@@ -36,11 +37,9 @@ public:
     // Record a statistic value
     void do_statistics(const char* key, int64_t value_delta);
 
-    // Set the recorder
-    void set_recorder(Recorder* recorder);
-
-    // Get the recorder
-    Recorder* get_recorder();
+    // removed `set_recorder(Recorder*)` /
+    // `get_recorder()` declarations — see stats_registry.cc retirement
+    // comment.
 
     // Get all stats (for heartbeat response)
     std::map<std::string, AvgStat*> get_all_stats();

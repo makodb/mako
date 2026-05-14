@@ -40,7 +40,7 @@ RaftFrame::~RaftFrame() {
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-rusty::Option<rusty::Rc<Fiber>> RaftFrame::raft_test_coro_;
+rusty::Option<rusty::Rc<Fiber>> RaftFrame::raft_test_fiber_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
@@ -133,15 +133,15 @@ TxLogServer *RaftFrame::CreateScheduler() {
   return svr_.get();
 }
 
-// @safe - returns raw pointer to owned member, external calls marked @external [safe]
+// @unsafe - returns raw pointer to owned member, external calls marked @external [safe]
 Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
   // clients of this method.
   Log_info("CreateCommo: Thread ID = %lu", std::this_thread::get_id());
   {
-    auto guard = Reactor::sp_running_coro_th_.borrow();
-    Log_info("CreateCommo: sp_running_coro_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+    auto guard = Reactor::sp_running_fiber_th_.borrow();
+    Log_info("CreateCommo: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
   }
   if (commo_ == nullptr) {
     Log_info("CreateCommo: Creating new RaftCommo");
@@ -174,27 +174,27 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
     Log_info("CreateCommo: n_commo_ now = %d", n_commo_created_);
     raft_test_mutex_.unlock();
 
-    // Only site 0 creates and manages the test coroutine
+    // Only site 0 creates and manages the test fiber
     if (site_info_->locale_id == 0) {
-      Log_info("CreateCommo: About to create test coroutine");
-      verify(raft_test_coro_.is_none());
-      Log_info("Creating Raft test coroutine");
+      Log_info("CreateCommo: About to create test fiber");
+      verify(raft_test_fiber_.is_none());
+      Log_info("Creating Raft test fiber");
 
-      raft_test_coro_ = rusty::Some(Fiber::create_run([this] () {
-        Log_info("Test coroutine: Starting execution");
-        Log_info("Test coroutine: Thread ID = %lu", std::this_thread::get_id());
+      raft_test_fiber_ = rusty::Some(Fiber::create_run([this] () {
+        Log_info("Test fiber: Starting execution");
+        Log_info("Test fiber: Thread ID = %lu", std::this_thread::get_id());
         {
-          auto guard = Reactor::sp_running_coro_th_.borrow();
-          Log_info("Test coroutine: sp_running_coro_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+          auto guard = Reactor::sp_running_fiber_th_.borrow();
+          Log_info("Test fiber: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
         }
 
         // Yield until all 5 communicators are initialized
-        Log_info("Test coroutine: About to yield");
-        auto current_coro = Fiber::current_coroutine();
-        if (current_coro.is_some()) {
-          current_coro.unwrap()->yield_();
+        Log_info("Test fiber: About to yield");
+        auto current_fiber = Fiber::current_fiber();
+        if (current_fiber.is_some()) {
+          current_fiber.unwrap()->yield_();
         }
-        Log_info("Test coroutine: Resumed after yield");
+        Log_info("Test fiber: Resumed after yield");
 
         // Run tests
         verify(n_replicas_ == 5);
@@ -202,14 +202,14 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
         RaftLabTest test(testconfig);
         test.Run();
         test.Cleanup();
-        Log_info("Test coroutine: Tests completed, turning off reactor loop");
+        Log_info("Test fiber: Tests completed, turning off reactor loop");
         // Turn off Reactor loop
         Reactor::get_reactor()->looping_.set(false);
         return;
       }));
-      Log_info("raft_test_coro_ id=%d", raft_test_coro_.as_ref().unwrap()->id);
+      Log_info("raft_test_fiber_ id=%d", raft_test_fiber_.as_ref().unwrap()->id);
 
-      // wait until n_commo_created_ == 5, then resume the coroutine
+      // wait until n_commo_created_ == 5, then resume the fiber
       raft_test_mutex_.lock();
       while (n_commo_created_ < 5) {
         raft_test_mutex_.unlock();
@@ -217,7 +217,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
         raft_test_mutex_.lock();
       }
       raft_test_mutex_.unlock();
-      Reactor::get_reactor()->continue_coro(raft_test_coro_.as_ref().unwrap().clone());
+      Reactor::get_reactor()->continue_fiber(raft_test_fiber_.as_ref().unwrap().clone());
     }
   }
   #endif
@@ -226,17 +226,17 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   return commo_.get();
 }
 
-// @safe - external calls marked @external [safe]
-vector<rusty::Box<rrr::Service>>
+// @unsafe - external calls marked @external [safe]
+vector<rrr::ServiceProxy>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
                                    rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<rusty::Box<Service>>();
+  auto result = std::vector<rrr::ServiceProxy>();
   switch (config->replica_proto_) {
     // Fix 2: Pass poll_thread_worker to RaftServiceImpl so it can be
     // retrieved during Restart() to ensure inbound/outbound use same thread
-    case MODE_RAFT:result.push_back(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone()));
+    case MODE_RAFT:result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone())));
     default:break;
   }
   return result;

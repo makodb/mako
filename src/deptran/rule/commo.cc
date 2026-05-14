@@ -103,7 +103,6 @@ std::vector<int> CommunicatorRule::LeadersForPartition(parid_t par_id) const {
   switch (config->replica_proto_) {
     case MODE_RAFT:
     case MODE_FPGA_RAFT:
-    case MODE_MONGODB:
       leaders.push_back(0);
       break;
     case MODE_COPILOT:
@@ -139,7 +138,7 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
   
   shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
   sp_vpd->sp_vec_piece_data_ = vec_piece_data;
-  MarshallDeputy md(sp_vpd);
+  janus::Command md(sp_vpd);
 
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   int n_leaders = Config::GetConfig()->get_num_leaders(par_id);
@@ -206,12 +205,12 @@ void CommunicatorRule::BroadcastDispatch(
         int32_t ret;
         TxnOutput outputs;
         uint64_t coro_id = 0;
-        MarshallDeputy view_md;
+        janus::Command view_md;
         fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
         
         // Handle WRONG_LEADER response with view data
-        if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-          auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+        if (ret == WRONG_LEADER && view_md.has_value()) {
+          auto sp_view_data = marshallable_cast<ViewData>(view_md);
           if (sp_view_data) {
             UpdatePartitionView(par_id, sp_view_data);
           }
@@ -226,7 +225,7 @@ void CommunicatorRule::BroadcastDispatch(
   // Record Time
   sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
 
-  MarshallDeputy md(sp_vpd); // ????
+  janus::Command md(sp_vpd); // ????
 
 	DepId di;
 	di.str = "dep";

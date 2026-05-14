@@ -19,8 +19,10 @@ const status_t CLR_FLAG_TAKEOVER = (~FLAG_TAKEOVER);
 enum Status : status_t { NOT_ACCEPTED = 0, FAST_ACCEPTED, FAST_ACCEPTED_EQ, ACCEPTED, COMMITED, EXECUTED };
 const size_t n_status = 5;
 
+// polymorphic command field
+// migrated from `shared_ptr<Marshallable>` to `janus::Command`.
 struct CopilotData {
-  shared_ptr<Marshallable>  cmd{nullptr};  // command
+  Command                   cmd{};   // command
   slotid_t                  dep_id;  // dependency
   uint8_t                   is_pilot;
   slotid_t                  slot_id;  // position
@@ -69,7 +71,7 @@ class CopilotServer : public TxLogServer {
 
  public:
   CopilotServer(Frame *frame);
-  ~CopilotServer() {}
+  ~CopilotServer() noexcept override {}
 
   shared_ptr<CopilotData> GetInstance(slotid_t slot, uint8_t is_pilot);
   std::pair<slotid_t, uint64_t> PickInitSlotAndDep();
@@ -96,24 +98,29 @@ class CopilotServer : public TxLogServer {
   void WaitForPingPong();
   bool WillWait(int& time_to_wait) const;
 
-  void OnForward(shared_ptr<Marshallable>& cmd,
-                 rusty::Function<void()> cb);
+  // removed `OnForward` declaration —
+  // only caller was the deleted `CopilotServiceImpl::Forward`
+  // handler; the matching Copilot::Forward RPC was dropped from
+  // rcc_rpc.rpc.
 
   void OnPrepare(const uint8_t& is_pilot,
                  const uint64_t& slot,
                  const ballot_t& ballot,
                  const struct DepId& dep_id,
-                 MarshallDeputy* ret_cmd,
+                 janus::Command* ret_cmd,
                  ballot_t* max_ballot,
                  uint64_t* dep,
                  status_t* status,
                  rusty::Function<void()> cb);
 
+  // handlers take
+  // const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
   void OnFastAccept(const uint8_t& is_pilot,
                     const uint64_t& slot,
                     const ballot_t& ballot,
                     const uint64_t& dep,
-                    shared_ptr<Marshallable>& cmd,
+                    const janus::Command& cmd,
                     const struct DepId& dep_id,
                     ballot_t* max_ballot,
                     uint64_t* ret_dep,
@@ -123,7 +130,7 @@ class CopilotServer : public TxLogServer {
                 const uint64_t& slot,
                 const ballot_t& ballot,
                 const uint64_t& dep,
-                shared_ptr<Marshallable>& cmd,
+                const janus::Command& cmd,
                 const struct DepId& dep_id,
                 ballot_t* max_ballot,
                 rusty::Function<void()> cb);
@@ -131,7 +138,7 @@ class CopilotServer : public TxLogServer {
   void OnCommit(const uint8_t& is_pilot,
                 const uint64_t& slot,
                 const uint64_t& dep,
-                shared_ptr<Marshallable>& cmd);
+                const janus::Command& cmd);
   
   void Print(std::string log);
   void Print();
@@ -151,10 +158,13 @@ class CopilotServer : public TxLogServer {
   copilot_stack_t stack_;
 
   bool isExecuted(shared_ptr<CopilotData>& ins);
-  bool allCmdComitted(shared_ptr<Marshallable> batch_cmd);
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  bool allCmdComitted(const janus::Command& batch_cmd);
 
 #ifdef ZERO_OVERHEAD
-  bool ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) override;
+  bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) override;
 #endif
 };
 

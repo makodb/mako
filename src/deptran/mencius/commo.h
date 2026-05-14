@@ -48,28 +48,28 @@ class MenciusCommo : public Communicator {
   MenciusCommo() = delete;
   MenciusCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
 
-  shared_ptr<MenciusPrepareQuorumEvent>
-  BroadcastPrepare(parid_t par_id,
-                   slotid_t slot_id,
-                   ballot_t ballot);
-  void BroadcastPrepare(parid_t par_id,
-                        slotid_t slot_id,
-                        ballot_t ballot,
-                        const function<void(rusty::Arc<Future>)> &callback);
+  // removed `BroadcastPrepare(parid, slot,
+  // ballot)` declaration — only call site was the now-deleted
+  // `CoordinatorMencius::Prepare()`; body was a `verify(0)` shell.
+  // removed deprecated callback-style
+  // `void BroadcastPrepare(parid_t, slotid_t, ballot_t, callback)`.
+  // Body started with `verify(0); // deprecated function`, and the
+  // only call site was a commented-out line in
+  // `coordinator.cc:80`.
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   shared_ptr<MenciusSuggestQuorumEvent>
   BroadcastSuggest(parid_t par_id,
                   slotid_t slot_id,
                   ballot_t ballot,
-                  shared_ptr<Marshallable> cmd);
-  void BroadcastSuggest(parid_t par_id,
-                       slotid_t slot_id,
-                       ballot_t ballot,
-                       shared_ptr<Marshallable> cmd,
-                       const function<void(rusty::Arc<Future>)> &callback);
+                  const janus::Command& cmd);
+  // removed deprecated callback-style
+  // `void BroadcastSuggest(parid_t, slotid_t, ballot_t, cmd, callback)`.
+  // Same shape as above — body had `verify(0);` and no live callers.
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
                        const ballot_t ballot,
-                       const shared_ptr<Marshallable> cmd);
+                       const janus::Command& cmd);
 };
 
 } // namespace janus

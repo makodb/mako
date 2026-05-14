@@ -10,6 +10,7 @@
 #include "procedure.h"
 #include "rcc_rpc.h"
 #include <typeinfo>
+#include <rusty/vec.hpp>
 #include "RW_command.h"
 
 namespace janus {
@@ -126,17 +127,14 @@ void Communicator::WaitConnectClientLeaders() {
   Log_info("Done waiting to connect to client leaders.");
 }
 
-void Communicator::ResetProfiles(){
-	index = 0;
-	total = 0;
-	for(int i = 0; i < 100; i++){
-		window[i] = 0;
-	}
-	window_time = 0;
-	total_time = 0;
-	window_avg = 0;
-	total_avg = 0;
-}
+// removed `Communicator::ResetProfiles()`
+// — reset all of the now-deleted CPU-utilization / RPC-latency
+// profiling fields (`index`, `total`, `window`, `window_time`,
+// `total_time`, `window_avg`, `total_avg`). Its only callers were
+// inside `if(false && ...)` short-circuited re-elect branches in
+// `classic/coordinator.cc:494, 675`, both of which were removed
+// alongside.
+
 Communicator::~Communicator() {
   verify(rpc_clients_.size() > 0);
   for (auto& pair : rpc_clients_) {
@@ -354,17 +352,15 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       rpc_clients_.insert(std::make_pair(site.id, rpc_cli));
       rpc_proxies_.insert(std::make_pair(site.id, rpc_proxy));
 
-			// Store the underlying ClientConnection (which inherits from Pollable)
-			// instead of Client (which no longer inherits from Pollable)
-			auto conn_opt = rpc_cli->connection();
-			if (conn_opt.is_some()) {
-				auto it = Reactor::clients_.find(rpc_cli->host());
-				if (it == Reactor::clients_.end()) {
-					std::vector<rusty::Arc<rrr::Pollable>> clients{};
-					Reactor::clients_[rpc_cli->host()] = clients;
-				}
-				Reactor::clients_[rpc_cli->host()].push_back(conn_opt.as_ref().unwrap().clone());
-			}
+      // Keep a host-scoped reference to the connection through PollableProxy.
+      auto conn_opt = rpc_cli->connection();
+      if (conn_opt.is_some()) {
+        if (!Reactor::clients_.contains_key(rpc_cli->host())) {
+          Reactor::clients_.insert(rpc_cli->host(), rusty::Vec<rrr::PollableProxy>{});
+        }
+        auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
+        Reactor::clients_.get(rpc_cli->host()).unwrap()->push(std::move(conn_proxy));
+      }
       Log_info("connect to site: %s success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);
     } else {
@@ -525,12 +521,12 @@ void Communicator::BroadcastDispatch(
         int32_t ret;
         TxnOutput outputs;
         uint64_t coro_id = 0;
-        MarshallDeputy view_md;
+        janus::Command view_md;
         fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
         
         // Handle WRONG_LEADER response with view data
-        if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-          auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+        if (ret == WRONG_LEADER && view_md.has_value()) {
+          auto sp_view_data = marshallable_cast<ViewData>(view_md);
           if (sp_view_data) {
             UpdatePartitionView(par_id, sp_view_data);
           }
@@ -564,7 +560,7 @@ void Communicator::BroadcastDispatch(
   // Record Time
   sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
 
-  MarshallDeputy md(sp_vpd);
+  janus::Command md(sp_vpd);
 
   DepId di;
   di.str = "dep";
@@ -578,7 +574,7 @@ void Communicator::BroadcastDispatch(
 
   WAN_WAIT;
 #ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md.sp_data_).first, SimpleRWCommand::GetCmdID(md.sp_data_).second);
+  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
 #endif
 #ifdef LATENCY_LOG_DEBUG
   Log_info("!!!!!!!! Before proxy->async_Dispatch(cmd_id, di, md, fuattr);");
@@ -593,85 +589,11 @@ void Communicator::BroadcastDispatch(
   }
 }
 
-void Communicator::SyncBroadcastDispatch(
-    shared_ptr<vector<shared_ptr<TxPieceData>>> sp_vec_piece,
-    Coordinator* coo,
-    const function<void(int, TxnOutput&)> & callback) {
-
-  Log_debug("Do a dispatch on client worker");
-  cmdid_t cmd_id = sp_vec_piece->at(0)->root_id_;
-  verify(!sp_vec_piece->empty());
-  auto par_id = sp_vec_piece->at(0)->PartitionId();
-
-  std::pair<siteid_t, ClassicProxy*> pair_leader_proxy;
-  if (Config::GetConfig()->replica_proto_==MODE_MENCIUS) {
-    // The logic here is: Mencius have multiple proposor, if the client is co-locate with a proposer, it give all commands to this proposor.
-    // If not, round-robin with all proposors.
-    auto server_infos = Config::GetConfig()->GetMyServers();
-    if (server_infos.size() == 1) {
-      int n = rpc_par_proxies_.find(par_id)->second.size();
-      pair_leader_proxy = LeaderProxyForPartition(par_id, server_infos[0].id);
-    } else {
-      int n = rpc_par_proxies_.find(par_id)->second.size();
-      pair_leader_proxy = LeaderProxyForPartition(par_id, coo->coo_id_ % n);
-    }
-  } else {
-    pair_leader_proxy = LeaderProxyForPartition(par_id);
-  }
-  
-  SetLeaderCache(par_id, pair_leader_proxy);
-  Log_debug("send dispatch to site %ld, par %d",
-            pair_leader_proxy.first, par_id);
-  auto proxy = pair_leader_proxy.second;
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-
-  // Record Time
-  sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
-
-  MarshallDeputy md(sp_vpd); // ????
-
-	DepId di;
-	di.str = "dep";
-	di.id = Communicator::global_id++;
-
-#ifdef COPILOT_TIME_DEBUG
-  struct timeval tp;
-  gettimeofday(&tp, NULL);
-  Log_info("[Jetpack] [C-] BroadcastDispatch at Communicator %.3f", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
-#endif
-
-  WAN_WAIT;
-#ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md.sp_data_).first, SimpleRWCommand::GetCmdID(md.sp_data_).second);
-#endif
-  int32_t ret;
-  TxnOutput outputs;
-  uint64_t coro_id;
-  MarshallDeputy view_md;
-  ClassicProxy::RpcDispatchRequest dispatch_req;
-  dispatch_req.tid = cmd_id;
-  dispatch_req.dep_id = di;
-  dispatch_req.cmd = md;
-  auto dispatch_result = proxy->Dispatch(dispatch_req);
-	verify(dispatch_result.is_ok());
-  auto dispatch_response = dispatch_result.unwrap();
-  ret = dispatch_response.res;
-  outputs = dispatch_response.output;
-  coro_id = dispatch_response.coro_id;
-  view_md = dispatch_response.view_data;
-  
-  // Handle WRONG_LEADER response with view data
-  if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-    auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
-    if (sp_view_data) {
-      UpdatePartitionView(par_id, sp_view_data);
-    }
-  }
-  
-  callback(ret, outputs);
-}
-
+// removed `Communicator::SyncBroadcastDispatch`
+// (~78 LOC) — only call site was the now-deleted
+// `CoordinatorClassic::DispatchSync`.  This was the
+// synchronous (blocking `proxy->Dispatch(req)`) twin of the live
+// async `BroadcastDispatch` path; no surviving caller anywhere.
 
 //need to change this code to solve the quorum info in the graphs
 //either create another event here or inside the coordinator.
@@ -685,7 +607,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 	e->value_ = 0;
 	e->target_ = total;
   std::unordered_set<int> leaders{};
-  auto src_coroid = e->get_coro_id();
+  auto src_coroid = e->get_fiber_id();
   coo->coro_id_ = src_coroid;
   Log_info("The size of cmds_by_par is %d", cmds_by_par.size());
 
@@ -715,7 +637,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
           int32_t ret;
           TxnOutput outputs;
           uint64_t coro_id = 0;
-          MarshallDeputy view_md;
+          janus::Command view_md;
 	  			double cpu = 0.0;
 	  			double net = 0.0;
           fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
@@ -727,8 +649,8 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 	  			}
           else{
             // Handle WRONG_LEADER response with view data
-            if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
-              auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+            if (ret == WRONG_LEADER && view_md.has_value()) {
+              auto sp_view_data = marshallable_cast<ViewData>(view_md);
               if (sp_view_data) {
                 UpdatePartitionView(par_id, sp_view_data);
               }
@@ -760,7 +682,10 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
               classic_coo->DispatchAsync(false);
             }
               //e->add_dep(coo->cli_id_, src_coroid, leader_id, coro_id);
-            coo->ids_.push_back(leader_id);
+            // removed
+            // `coo->ids_.push_back(leader_id);` — the
+            // `Coordinator::ids_` vector had no readers anywhere, so
+            // the field went away in the same commit.
             e->test();
 	  			}
       };
@@ -770,14 +695,14 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
     auto proxy = pair_leader_proxy.second;
     shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
     sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-    MarshallDeputy md(sp_vpd); // ????
+    janus::Command md(sp_vpd); // ????
     CoordinatorClassic* classic_coo = (CoordinatorClassic*) coo;
     //classic_coo->debug_cnt++;
 
-    struct timespec start_;
-    clock_gettime(CLOCK_REALTIME, &start_);
-
-    outbound_[src_coroid] = make_pair((rrr::i64)start_.tv_sec, (rrr::i64)start_.tv_nsec);
+    // removed the `outbound_[src_coroid]` start-time
+    // record + the matching `clock_gettime(CLOCK_REALTIME, &start_)` — the
+    // recorded start times were only consumed by the dead window-tracking
+    // blocks in the Commit / Abort callbacks below, also removed.
 
 		DepId di;
 		di.str = "dep";
@@ -806,7 +731,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
                 int32_t ret;
                 TxnOutput outputs;
                 uint64_t coro_id = 0;
-                MarshallDeputy view_md;
+                janus::Command view_md;
                 fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
                 //e->add_dep(coo->cli_id_, src_coroid, follower_id, coro_id);
                 //coo->ids_.push_back(follower_id);
@@ -857,7 +782,7 @@ Communicator::SendPrepare(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
     e->add_event(qe);
-    auto src_coroid = qe->get_coro_id();
+    auto src_coroid = qe->get_fiber_id();
       
     qe->id_ = Communicator::global_id;
     qe->par_id_ = quorum_id++;
@@ -982,7 +907,7 @@ Communicator::SendCommit(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
     qe->id_ = Communicator::global_id;
-    auto src_coroid = qe->get_coro_id();
+    auto src_coroid = qe->get_fiber_id();
 
     e->add_event(qe);
 
@@ -998,19 +923,18 @@ Communicator::SendCommit(Coordinator* coo,
 			bool_t slow;
       uint64_t coro_id = 0;
 			Profiling profile;
-      MarshallDeputy view_md;
+      janus::Command view_md;
       fu->get_reply() >> res >> slow >> coro_id >> profile >> view_md;
 			this->slow = slow;
-			if(profile.cpu_util >= 0.0){
-				cpu = profile.cpu_util;
-				//Log_info("cpu: %f and network: %f and memory: %f", profile.cpu_util, profile.tx_util, profile.mem_util);
-			}
+			// removed `cpu = profile.cpu_util;`
+			// — the `cpu` field was deleted alongside the rest of the
+			// dead CPU / RPC-latency profiling subsystem.
       // Propagate the result status (including WRONG_LEADER) back to the coordinator
       cmd->reply_.res_ = res;
       
       // Extract and attach view data if present
-      if (view_md.sp_data_ != nullptr) {
-        auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+      if (view_md.has_value()) {
+        auto sp_view_data = marshallable_cast<ViewData>(view_md);
         if (sp_view_data) {
           cmd->reply_.sp_view_data_ = sp_view_data;
           Log_info("[VIEW_PROPAGATE] Received view data in Commit response for tx_id=%lu: %s", 
@@ -1018,32 +942,14 @@ Communicator::SendCommit(Coordinator* coo,
         }
       }
 
-      struct timespec end_;
-	  	clock_gettime(CLOCK_REALTIME,&end_);
-
-	  	rrr::i64 start_sec = this->outbound_[src_coroid].first;
-	  	rrr::i64 start_nsec = this->outbound_[src_coroid].second;
-
-	  	rrr::i64 curr = ((rrr::i64)end_.tv_sec - start_sec)*1000000000 + ((rrr::i64)end_.tv_nsec - start_nsec);
-	  	curr /= 1000;
-	  	this->total_time += curr;
-	  	this->total++;
-      if(this->index < 200){
-	    	this->window[this->index] = curr;
-	    	this->index++;
-	    	this->window_time = this->total_time;
-	  	}
-      else{
-	    	this->window_time = 0;
-	    	for(int i = 0; i < 199; i++){
-	      	this->window[i] = this->window[i+1];
-	      	this->window_time += this->window[i];
-	    	}
-	    	this->window[199] = curr;
-	    	this->window_time += curr;
-	  	}
-			this->window_avg = this->window_time/this->index;
-			this->total_avg = this->total_time/this->total;
+      // removed the rolling-window
+      // RPC-latency tracking block that read
+      // `outbound_[src_coroid]`, computed `curr` in microseconds,
+      // and updated `total_time` / `window_time` / `window_avg`
+      // / `total_avg` / `total` / `index` / `window[200]`.  The
+      // averages were never read outside commented-out
+      // `Log_info` lines and `if(false && ...)` short-circuited
+      // re-elect branches in `classic/coordinator.cc`.
 
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
 
@@ -1085,7 +991,8 @@ Communicator::SendCommit(Coordinator* coo,
       }
     }
 
-    coo->site_commit_[rp]++;
+    // removed `coo->site_commit_[rp]++;` —
+    // counter was write-only; field gone.
 
   }
   return e;
@@ -1123,7 +1030,7 @@ Communicator::SendAbort(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
     qe->id_ = Communicator::global_id;
-    auto src_coroid = qe->get_coro_id();
+    auto src_coroid = qe->get_fiber_id();
 
     e->add_event(qe);
 
@@ -1139,7 +1046,7 @@ Communicator::SendAbort(Coordinator* coo,
       bool_t slow;
       uint64_t coro_id = 0;
       Profiling profile;
-      MarshallDeputy view_md;
+      janus::Command view_md;
       fu->get_reply() >> res >> slow >> coro_id >> profile >> view_md;
       this->slow = slow;
 
@@ -1147,8 +1054,8 @@ Communicator::SendAbort(Coordinator* coo,
       cmd->reply_.res_ = res;
 
       // Extract and attach view data if present
-      if (view_md.sp_data_ != nullptr) {
-        auto sp_view_data = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+      if (view_md.has_value()) {
+        auto sp_view_data = marshallable_cast<ViewData>(view_md);
         if (sp_view_data) {
           cmd->reply_.sp_view_data_ = sp_view_data;
           Log_info("[VIEW_PROPAGATE] Received view data in Abort response for tx_id=%lu: %s",
@@ -1156,38 +1063,13 @@ Communicator::SendAbort(Coordinator* coo,
         }
       }
 
-      if(profile.cpu_util != -1.0){
-        Log_info("cpu: %f and network: %f", profile.cpu_util, profile.tx_util);
-        this->cpu = profile.cpu_util;
-        this->tx = profile.tx_util;
-      }
-
-      struct timespec end_;
-      clock_gettime(CLOCK_REALTIME,&end_);
-
-      rrr::i64 start_sec = this->outbound_[src_coroid].first;
-      rrr::i64 start_nsec = this->outbound_[src_coroid].second;
-
-      rrr::i64 curr = ((rrr::i64)end_.tv_sec - start_sec)*1000000000 + ((rrr::i64)end_.tv_nsec - start_nsec);
-      curr /= 1000;
-      this->total_time += curr;
-      this->total++;
-      if(this->index < 100){
-        this->window[this->index];
-        this->index++;
-        this->window_time = this->total_time;
-      }
-      else{
-        this->window_time = 0;
-        for(int i = 0; i < 99; i++){
-          this->window[i] = this->window[i+1];
-          this->window_time += this->window[i];
-        }
-        this->window[99] = curr;
-        this->window_time += curr;
-      }
-      //Log_info("average time of RPC is: %d", this->total_time/this->total);
-      //Log_info("window time of RPC is: %d", this->window_time/this->index);
+      // removed the CPU-utilization /
+      // network-utilization snapshot (`profile.cpu_util` /
+      // `profile.tx_util` writes into `this->cpu` / `this->tx`)
+      // and the rolling-window RPC-latency tracking block that
+      // updated `total_time` / `window_time` / `window` / `total`
+      // / `index`.  Same dead-state cleanup as the Commit-callback
+      // path above.
 
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
 
@@ -1229,7 +1111,8 @@ Communicator::SendAbort(Coordinator* coo,
       }
 
     }
-    coo->site_abort_[rp]++;
+    // removed `coo->site_abort_[rp]++;` —
+    // counter was write-only; field gone.
   }
   return e;
 }
@@ -1384,7 +1267,7 @@ Communicator::SendMessage(siteid_t site_id,
 
 
 void Communicator::AddMessageHandler(
-    function<bool(const MarshallDeputy&, MarshallDeputy&)> f) {
+    function<bool(const janus::Command&, janus::Command&)> f) {
    msg_marshall_handlers_.push_back(f);
 }
 
@@ -1563,9 +1446,8 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
 
-  MarshallDeputy old_view_deputy, new_view_deputy;
-  old_view_deputy.set_marshallable(std::make_shared<ViewData>(old_view));
-  new_view_deputy.set_marshallable(std::make_shared<ViewData>(new_view));
+  janus::Command old_view_deputy = std::make_shared<ViewData>(old_view);
+  janus::Command new_view_deputy = std::make_shared<ViewData>(new_view);
   
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
@@ -1607,12 +1489,12 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
     //     // Local call - call OnJetpackPullIdSet directly
     //     bool_t ok;
     //     epoch_t reply_jepoch, reply_oepoch;
-    //     MarshallDeputy reply_old_view, reply_new_view;
+    //     janus::Command reply_old_view, reply_new_view;
     //     auto id_set = std::make_shared<VecRecData>();
     //     dtxn_sched_->OnJetpackPullIdSet(jepoch, oepoch, &ok, &reply_jepoch, &reply_oepoch, 
     //                                    &reply_old_view, &reply_new_view, id_set);
-    //     MarshallDeputy id_set_deputy;
-    //     id_set_deputy.set_marshallable(id_set);
+    //     janus::Command id_set_deputy;
+    //     id_set_deputy = id_set;
     //     e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set_deputy);
     //     continue;
     // }
@@ -1625,7 +1507,7 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view, id_set;
+      janus::Command reply_old_view, reply_new_view, id_set;
       fu->get_reply() >> ok >> reply_jepoch >> reply_oepoch >> reply_old_view >> reply_new_view >> id_set;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, id_set);
     };
@@ -1662,8 +1544,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
   vector<rusty::Arc<Future>> fus;
   auto key_batch = std::make_shared<VecRecData>();
   key_batch->key_data_ = std::make_shared<vector<key_t>>(keys.begin(), keys.end());
-  MarshallDeputy key_batch_md;
-  key_batch_md.set_marshallable(key_batch);
+  janus::Command key_batch_md = key_batch;
 	WAN_WAIT;
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
@@ -1671,12 +1552,12 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
     //     // Local call - call OnJetpackPullCmd directly
     //     bool_t ok;
     //     epoch_t reply_jepoch, reply_oepoch;
-    //     MarshallDeputy reply_old_view, reply_new_view;
+    //     janus::Command reply_old_view, reply_new_view;
     //     auto cmd = std::make_shared<TpcCommitCommand>();
     //     dtxn_sched_->OnJetpackPullCmd(jepoch, oepoch, key, &ok, &reply_jepoch, &reply_oepoch, 
     //                                  &reply_old_view, &reply_new_view, cmd);
-    //     MarshallDeputy cmd_deputy;
-    //     cmd_deputy.set_marshallable(cmd);
+    //     janus::Command cmd_deputy;
+    //     cmd_deputy = cmd;
     //     e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd_deputy);
     //     continue;
     // }
@@ -1694,7 +1575,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view, cmd;
+      janus::Command reply_old_view, reply_new_view, cmd;
       fu->get_reply() >> ok >> reply_jepoch >> reply_oepoch >> reply_old_view >> reply_new_view >> cmd;
       e->FeedResponse(ok, reply_jepoch, reply_oepoch, cmd);
     };
@@ -1718,12 +1599,12 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
 }
 
 shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
-                                                               epoch_t jepoch, epoch_t oepoch, 
-                                                               int sid, int rid, 
-                                                               const std::vector<std::pair<key_t, shared_ptr<Marshallable>>>& cmds) {
-  // Log_info("[JETPACK-DEBUG] JetpackBroadcastRecordCmd called: par_id=%d, loc_id=%d, sid=%d, rid=%d", 
+                                                               epoch_t jepoch, epoch_t oepoch,
+                                                               int sid, int rid,
+                                                               const std::vector<std::pair<key_t, janus::Command>>& cmds) {
+  // Log_info("[JETPACK-DEBUG] JetpackBroadcastRecordCmd called: par_id=%d, loc_id=%d, sid=%d, rid=%d",
   //          par_id, loc_id, sid, rid);
-  
+
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<QuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
@@ -1734,8 +1615,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
   for (const auto& entry : cmds) {
     batch_data->AddEntry(entry.first, entry.second);
   }
-  MarshallDeputy cmd_deputy;
-  cmd_deputy.set_marshallable(batch_data);
+  janus::Command cmd_deputy = batch_data;
   
   // Log_info("[JETPACK-DEBUG] Broadcasting RecordCmd to %zu sites, need %d votes", proxies.size(), n/2+1);
   
@@ -1788,7 +1668,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
     //     // Local call - call OnJetpackPrepare directly
     //     bool_t ok;
     //     epoch_t reply_jepoch, reply_oepoch;
-    //     MarshallDeputy reply_old_view, reply_new_view;
+    //     janus::Command reply_old_view, reply_new_view;
     //     ballot_t accepted_ballot;
     //     int replied_sid, replied_set_size;
     //     dtxn_sched_->OnJetpackPrepare(jepoch, oepoch, max_seen_ballot, &ok, &reply_jepoch, &reply_oepoch,
@@ -1805,7 +1685,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view;
+      janus::Command reply_old_view, reply_new_view;
       ballot_t reply_max_seen_ballot;
       ballot_t accepted_ballot;
       int replied_sid, replied_set_size;
@@ -1843,7 +1723,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view;
+      janus::Command reply_old_view, reply_new_view;
       ballot_t reply_max_seen_ballot;
       fu->get_reply() >> ok;
       fu->get_reply() >> reply_jepoch;
@@ -1912,7 +1792,7 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
       }
       bool_t ok;
       epoch_t reply_jepoch, reply_oepoch;
-      MarshallDeputy reply_old_view, reply_new_view, cmd;
+      janus::Command reply_old_view, reply_new_view, cmd;
       fu->get_reply() >> ok;
       fu->get_reply() >> reply_jepoch;
       fu->get_reply() >> reply_oepoch;

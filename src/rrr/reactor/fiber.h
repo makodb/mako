@@ -1,8 +1,20 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /**
  * @file fiber.h
  * @brief Modern fiber API following Boost.Fiber conventions.
  *
- * This file provides a cleaner API for working with stackful coroutines,
+ * This file provides a cleaner API for working with stackful fibers,
  * using "fiber" terminology that aligns with industry conventions.
  *
  * Key differences from C++20 coroutines:
@@ -23,21 +35,24 @@
  * Note: This header uses rrr::Time for timing, NOT std::chrono.
  */
 
-#pragma once
 
-#include "coroutine.h"
-#include "event.h"  // For Event types
-#include "future.h"  // For Future/Promise
-#include "../base/basetypes.hpp"  // For rrr::Time
 #include <rusty/option.hpp>
 #include <rusty/rc.hpp>
+
+
+
+
+#include "fiber_impl.h"
+#include "event.h"
+#include "future.h"
+#include "../base/basetypes.hpp"
 
 namespace rrr {
 
 // =============================================================================
-// Fiber is the primary class for stackful coroutines
+// Fiber is the primary class for stackful fibers
 // =============================================================================
-// Fiber class is defined in fiber_impl.h (included via coroutine.h)
+// Fiber class is defined in fiber_impl.h.
 // WaitAll, WaitAny, WaitN are defined in event.h
 
 // =============================================================================

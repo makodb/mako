@@ -1,16 +1,23 @@
 #pragma once
 
-#include <vector>
-#include <queue>
-#include <random>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
 #include <inttypes.h>
-#include <atomic>
-#include <memory>
 
 #include <time.h>
 #include <sys/time.h>
 
-#include "debugging.hpp"
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -25,6 +32,11 @@
 //   std::mt19937::operator(): [unsafe]
 // }
 // Note: struct types like 'timeval' are not functions - they're filtered out in the AST parser
+
+
+
+
+#include "debugging.hpp"
 
 namespace rrr {
 
@@ -139,9 +151,11 @@ public:
  * This prevents accidentally deleting the object.
  * You are only allowed to cleanup with release() call.
  * This is thread safe.
- * 
- * SAFETY: Uses atomic reference counting for thread-safe memory management.
- * The protected destructor pattern ensures controlled deallocation.
+ *
+ * DEPRECATED: This class is here for compatibility only.
+ * New code should use rusty::Arc<T> for shared ownership.
+ * The ref_copy()/release() pattern is replaced by Arc::clone() and implicit drop.
+ * Existing subclasses (Row, snapshot_group, RowData in threading.hpp) are being migrated.
  */
 // @safe - Thread-safe reference counting with atomics
 class RefCounted {
@@ -306,29 +320,31 @@ class MergedEnumerator: public Enumerator<T> {
         }
     };
 
-    std::priority_queue<merge_helper, std::vector<merge_helper>> q_;
+    rusty::Vec<merge_helper> q_;
 
 public:
     // @unsafe
     void add_source(Enumerator<T>* src) {
         if (src && src->has_next()) {
             q_.push(merge_helper(src->next(), src));
+            std::push_heap(q_.begin(), q_.end());
         }
     }
     //TODO
     void reset() override {
     }
     bool has_next() override {
-        return !q_.empty();
+        return !q_.is_empty();
     }
     T next() override {
-        verify(!q_.empty());
-        const merge_helper& mh = q_.top();
+        verify(!q_.is_empty());
+        std::pop_heap(q_.begin(), q_.end());
+        merge_helper mh = q_.pop();
         T ret = mh.data;
         Enumerator<T>* src = mh.src;
-        q_.pop();
         if (src->has_next()) {
             q_.push(merge_helper(src->next(), src));
+            std::push_heap(q_.begin(), q_.end());
         }
         return ret;
     }

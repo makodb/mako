@@ -7,10 +7,8 @@ CopilotServiceImpl::CopilotServiceImpl(TxLogServer *sched)
     : sched_((CopilotServer *)sched) {
 }
 
-void CopilotServiceImpl::Forward(const CopilotService::RpcForwardRequest& req, CopilotService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
-  (void)resp;
-  this->Forward(req.cmd, std::move(defer));
-}
+// removed `Forward` typed-rpc override
+// (and matching N-arg overload further below).
 
 void CopilotServiceImpl::Prepare(const CopilotService::RpcPrepareRequest& req, CopilotService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
   this->Prepare(req.is_pilot, req.slot, req.ballot, req.dep_id, &resp.ret_cmd, &resp.max_ballot, &resp.dep, &resp.status, std::move(defer));
@@ -29,20 +27,15 @@ void CopilotServiceImpl::Commit(const CopilotService::RpcCommitRequest& req, Cop
   this->Commit(req.is_pilot, req.slot, req.dep, req.cmd, std::move(defer));
 }
 
-void CopilotServiceImpl::Forward(const MarshallDeputy& cmd,
-                                 rrr::DeferredReply defer) {
-  verify(sched_);
-  Fiber::create_run([this, cmd, defer = std::move(defer)]() mutable {
-    sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
-                      [defer = std::move(defer)]() mutable { defer.reply(); });
-  });
-}
+// removed `Forward(janus::Command, ...)`
+// N-arg overload — only caller was the deleted typed-rpc shim above;
+// the receiver `CopilotServer::OnForward` is also gone.
 
 void CopilotServiceImpl::Prepare(const uint8_t& is_pilot,
                                  const uint64_t& slot,
                                  const ballot_t& ballot,
                                  const DepId& dep_id,
-                                 MarshallDeputy* ret_cmd,
+                                 janus::Command* ret_cmd,
                                  ballot_t* max_ballot,
                                  uint64_t* dep,
                                  status_t* status,
@@ -63,7 +56,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                                     const uint64_t& slot,
                                     const ballot_t& ballot,
                                     const uint64_t& dep,
-                                    const MarshallDeputy& cmd,
+                                    const janus::Command& cmd,
                                     const DepId& dep_id,
                                     ballot_t* max_ballot,
                                     uint64_t* ret_dep,
@@ -73,14 +66,14 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
   struct timeval tp;
   gettimeofday(&tp, NULL);
   Log_info("[1+] [tx=%d] on FastAccept %.3f",
-           dynamic_pointer_cast<TpcBatchCommand>(const_cast<MarshallDeputy&>(cmd).sp_data_)->cmds_.at(0)->tx_id_,
+           marshallable_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_,
            tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   sched_->OnFastAccept(is_pilot,
                        slot,
                        ballot,
                        dep,
-                       const_cast<MarshallDeputy&>(cmd).sp_data_,
+                       cmd,
                        dep_id,
                        max_ballot,
                        ret_dep,
@@ -91,7 +84,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                                 const uint64_t& slot,
                                 const ballot_t& ballot,
                                 const uint64_t& dep,
-                                const MarshallDeputy& cmd,
+                                const janus::Command& cmd,
                                 const DepId& dep_id,
                                 ballot_t* max_ballot,
                                 rrr::DeferredReply defer) {
@@ -100,7 +93,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                    slot,
                    ballot,
                    dep,
-                   const_cast<MarshallDeputy&>(cmd).sp_data_,
+                   cmd,
                    dep_id,
                    max_ballot,
                    [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -109,10 +102,10 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
 void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const uint64_t& slot,
                                 const uint64_t& dep,
-                                const MarshallDeputy& cmd,
+                                const janus::Command& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_);
-  sched_->OnCommit(is_pilot, slot, dep, const_cast<MarshallDeputy&>(cmd).sp_data_);
+  sched_->OnCommit(is_pilot, slot, dep, cmd);
   defer.reply();
 }
 

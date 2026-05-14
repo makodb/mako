@@ -41,7 +41,7 @@ TxLogServer *FrameRococo::CreateScheduler() {
   return sched;
 }
 
-vector<rusty::Box<rrr::Service>>
+vector<rrr::ServiceProxy>
 FrameRococo::CreateRpcServices(uint32_t site_id,
                                TxLogServer *sched,
                                rusty::Arc<rrr::PollThread> poll_thread_worker) {

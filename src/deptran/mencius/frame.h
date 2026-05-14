@@ -24,7 +24,7 @@ class MenciusFrame : public Frame {
                                  shared_ptr<TxnRegistry> txn_reg) override;
   TxLogServer *CreateScheduler() override;
   Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None) override;
-  vector<rusty::Box<rrr::Service>> CreateRpcServices(uint32_t site_id,
+  vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
                                            rusty::Arc<rrr::PollThread> poll_thread_worker) override;
 };

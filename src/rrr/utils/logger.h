@@ -1,129 +1,94 @@
-/*
- * logger.h
- *
- *  Created on: Nov 9, 2012
- *      Author: frog
- */
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
 
-#ifndef LOGGER_H_
-#define LOGGER_H_
 
-#include <stdio.h>
-#include <apr_time.h>
 
-#define LOG_LEVEL_OFF    0
-#define LOG_LEVEL_FATAL  1
-#define LOG_LEVEL_ERROR  2
-#define LOG_LEVEL_WARN   3
-#define LOG_LEVEL_INFO   4
-#define LOG_LEVEL_DEBUG  5
-#define LOG_LEVEL_TRACE  6
-#define LOG_LEVEL_ALL    6
 
-#ifndef LOG_LEVEL
+inline constexpr int LOG_LEVEL_OFF = 0;
+inline constexpr int LOG_LEVEL_FATAL = 1;
+inline constexpr int LOG_LEVEL_ERROR = 2;
+inline constexpr int LOG_LEVEL_WARN = 3;
+inline constexpr int LOG_LEVEL_INFO = 4;
+inline constexpr int LOG_LEVEL_DEBUG = 5;
+inline constexpr int LOG_LEVEL_TRACE = 6;
+inline constexpr int LOG_LEVEL_ALL = 6;
+
 #ifdef NDEBUG
-#define LOG_LEVEL LOG_LEVEL_INFO
+inline constexpr int LOG_LEVEL = LOG_LEVEL_INFO;
 #else
-#define LOG_LEVEL LOG_LEVEL_DEBUG
-#endif // NDEBUG
-#endif // LOG_LEVEL
+inline constexpr int LOG_LEVEL = LOG_LEVEL_DEBUG;
+#endif
 
-/* Change this to change log level */
-//#define LOG_LEVEL        LOG_LEVEL_TRACE
-//#define LOG_LEVEL        LOG_LEVEL_DEBUG
-//#define LOG_LEVEL        LOG_LEVEL_INFO
-
-
-#define LOG_FATAL_ENABLED (LOG_LEVEL >= LOG_LEVEL_FATAL)
-#define LOG_ERROR_ENABLED (LOG_LEVEL >= LOG_LEVEL_ERROR)
-#define LOG_WARN_ENABLED  (LOG_LEVEL >= LOG_LEVEL_WARN)
-#define LOG_INFO_ENABLED  (LOG_LEVEL >= LOG_LEVEL_INFO)
-#define LOG_DEBUG_ENABLED (LOG_LEVEL >= LOG_LEVEL_DEBUG)
-#define LOG_TRACE_ENABLED (LOG_LEVEL >= LOG_LEVEL_TRACE)
-
-#if LOG_FATAL_ENABLED
-#define LOG_FATAL(format, args...) \
-  do { \
-    log_msg("FATAL", __FILE__, __LINE__, __FUNCTION__, ##args); \
-  } while (0)
-#else /* LOG_FATAL_ENABLED */
-#define LOG_FATAL(args...) /* nothing */
-#endif /* LOG_FATAL_ENABLED */
-
-#if LOG_ERROR_ENABLED
-#define LOG_ERROR(args...) \
-  do { \
-    log_msg("ERROR", __FILE__, __LINE__, __FUNCTION__, ##args); \
-  } while (0);\
-  fflush(stdout)
-#else /* LOG_ERROR_ENABLED */
-#define LOG_ERROR(args...) /* nothing */
-#endif /* LOG_ERROR_ENABLED */
-
-#if LOG_WARN_ENABLED
-#define LOG_WARN(args...) \
-  do { \
-    log_msg("WARN", __FILE__, __LINE__, __FUNCTION__, ##args); \
-  } while (0)
-#else /* LOG_WARN_ENABLED */
-#define LOG_WARN(args...) /* nothing */
-#endif /* LOG_WARN_ENABLED */
-
-#if LOG_INFO_ENABLED
-#define LOG_INFO(args...) \
-  do { \
-    log_msg("INFO", __FILE__, __LINE__, __FUNCTION__, ##args); \
-  } while (0)
-#else /* LOG_INFO_ENABLED */
-#define LOG_INFO(args...) /* nothing */
-#endif /* LOG_INFO_ENABLED */
-
-#if LOG_DEBUG_ENABLED
-#define LOG_DEBUG(args...) \
-  do { \
-    log_msg("DEBUG", __FILE__, __LINE__, __FUNCTION__, ##args); \
-  } while (0)
-#else /* LOG_DEBUG_ENABLED */
-#define LOG_DEBUG(args...) /* nothing */
-#endif /* LOG_DEBUG_ENABLED */
-
-#if LOG_TRACE_ENABLED
-#define LOG_TRACE(args...) \
-  do { \
-    log_msg("TRACE", __FILE__, __LINE__, __FUNCTION__, ##args); \
-  } while (0)
-#else /* LOG_TRACE_ENABLED */
-#define LOG_TRACE(args...) /* nothing */
-#endif /* LOG_TRACE_ENABLED */
-
-
-#include <string.h>
-#include <stdarg.h>
-#include <stdlib.h>
-
-#include "mtime.h"
-
-static void log_msg(const char *sz_level, const char* file, int line,
-		const char* func, const char* fmt, ...) {
-    // printf is thread safe.
-    apr_time_t t = apr_time_now();
-    int ti = (int)(t / 1000);
-    char *buf = (char*) calloc((strlen(fmt) + 30), sizeof(char));
-    char timebuf[20];
-    sprintf(timebuf, "%d", ti);
-    strcat(buf, sz_level);
-    strcat(buf, " ");
-    strcat(buf, timebuf);
-    strcat(buf, " ");
-    strcat(buf, fmt);
-    strcat(buf, "\n");
-
-	va_list args;
-	va_start(args, fmt);
-	vprintf(buf, args);
-	va_end(args);
-    free(buf);
+inline void log_msg_impl(const char* level, const char* fmt, va_list args) {
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::printf("%s %lld ", level, static_cast<long long>(now_ms));
+    std::vprintf(fmt, args);
+    std::printf("\n");
+    std::fflush(stdout);
 }
 
-#endif /* LOGGER_H_ */
+inline void LOG_FATAL(const char* fmt, ...) {
+    if constexpr (LOG_LEVEL >= LOG_LEVEL_FATAL) {
+        va_list args;
+        va_start(args, fmt);
+        log_msg_impl("FATAL", fmt, args);
+        va_end(args);
+    }
+}
+
+inline void LOG_ERROR(const char* fmt, ...) {
+    if constexpr (LOG_LEVEL >= LOG_LEVEL_ERROR) {
+        va_list args;
+        va_start(args, fmt);
+        log_msg_impl("ERROR", fmt, args);
+        va_end(args);
+    }
+}
+
+inline void LOG_WARN(const char* fmt, ...) {
+    if constexpr (LOG_LEVEL >= LOG_LEVEL_WARN) {
+        va_list args;
+        va_start(args, fmt);
+        log_msg_impl("WARN", fmt, args);
+        va_end(args);
+    }
+}
+
+inline void LOG_INFO(const char* fmt, ...) {
+    if constexpr (LOG_LEVEL >= LOG_LEVEL_INFO) {
+        va_list args;
+        va_start(args, fmt);
+        log_msg_impl("INFO", fmt, args);
+        va_end(args);
+    }
+}
+
+inline void LOG_DEBUG(const char* fmt, ...) {
+    if constexpr (LOG_LEVEL >= LOG_LEVEL_DEBUG) {
+        va_list args;
+        va_start(args, fmt);
+        log_msg_impl("DEBUG", fmt, args);
+        va_end(args);
+    }
+}
+
+inline void LOG_TRACE(const char* fmt, ...) {
+    if constexpr (LOG_LEVEL >= LOG_LEVEL_TRACE) {
+        va_list args;
+        va_start(args, fmt);
+        log_msg_impl("TRACE", fmt, args);
+        va_end(args);
+    }
+}

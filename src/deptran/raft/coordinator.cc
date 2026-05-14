@@ -51,8 +51,8 @@ bool CoordinatorRaft::IsFPGALeader() {
    }
 }
 
-// @safe - external calls marked @external [safe], pointer ops in @unsafe blocks
-void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
+// @unsafe - external calls marked @external [safe], pointer ops in @unsafe blocks
+void CoordinatorRaft::Submit(const janus::Command& cmd_env,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
   if (!IsLeader()) {
@@ -67,8 +67,8 @@ void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
     }
 
     // Handle WRONG_LEADER case
-    if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-      auto tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+    if (cmd_env.kind_ == TpcCommitCommand::static_kind()) {
+      auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd_env);
       if (tpc_cmd) {
         // Set WRONG_LEADER error code
         tpc_cmd->ret_ = WRONG_LEADER;
@@ -112,26 +112,26 @@ void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
     // Pass 0 as log index since we're not actually committing (WRONG_LEADER error path)
     // @unsafe
     {
-    svr_->app_next_(0, cmd);
+    svr_->app_next_(0, cmd_env);
     }
     return;
   } else {
-    // Log_info("[YYYYY] Submit to loc_id %d, which is leader. Command kind=%d, is_recovery=%d", 
-    //          loc_id_, cmd ? cmd->kind_ : -1, SimpleRWCommand(cmd).IsRecoveryCommand());
+    // Log_info("[YYYYY] Submit to loc_id %d, which is leader. Command kind=%d, is_recovery=%d",
+    //          loc_id_, cmd_env.has_value() ? cmd_env.kind_ : -1, SimpleRWCommand(cmd_env.inner_marshallable()).IsRecoveryCommand());
   }
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   verify(!in_submission_);
-  verify(cmd_ == nullptr);
+  verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
-  cmd_ = cmd;
-  verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
+  cmd_ = cmd_env;
+  verify(cmd_.has_value());
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 
-// @safe - external calls marked @external [safe], address-of ops in @unsafe blocks
+// @unsafe - external calls marked @external [safe], address-of ops in @unsafe blocks
 void CoordinatorRaft::AppendEntries() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     verify(!in_append_entries);
@@ -191,10 +191,11 @@ void CoordinatorRaft::LeaderLearn() {
     commit_callback_();
     }
     verify(phase_ == Phase::COMMIT);
-    GotoNextPhase();
+    // @unsafe
+    { GotoNextPhase(); }
 }
 
-// @safe - calls @safe AppendEntries and @safe LeaderLearn
+// @unsafe - calls @safe AppendEntries and @safe LeaderLearn
 void CoordinatorRaft::GotoNextPhase() {
   int n_phase = 4;
   int current_phase = phase_ % n_phase;

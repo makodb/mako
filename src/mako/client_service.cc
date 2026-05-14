@@ -1,9 +1,15 @@
 // @safe - RRR RPC service implementation for Mako client API
 #include "client_service.h"
 #include "lib/common.h"
-#include "rrr/misc/marshal.hpp"
+#include "rrr/rrr.hpp"
 
 namespace mako {
+
+using rrr::Log_debug;
+using rrr::Log_info;
+using rrr::Log_warn;
+using rrr::Log_error;
+
 
 // @safe - Register RPC handlers with server
 int MakoClientService::__reg_to__(rrr::Server& server, size_t svc_index) {
@@ -76,7 +82,7 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
-        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::Marshal& m) {
+        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
             m << static_cast<rrr::i64>(txn_id);
             m << status;
         });
@@ -98,7 +104,7 @@ void MakoClientService::HandleCommit(rusty::Box<rrr::Request> req,
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
-        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::Marshal& m) {
+        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
             m << status;
         });
     }
@@ -119,7 +125,7 @@ void MakoClientService::HandleRollback(rusty::Box<rrr::Request> req,
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
-        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::Marshal& m) {
+        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
             m << status;
         });
     }
@@ -159,7 +165,7 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
-        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::Marshal& m) {
+        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
             m << status;
         });
     }
@@ -202,7 +208,7 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
-        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::Marshal& m) {
+        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
             m << status;
             m << value;
         });
@@ -243,7 +249,7 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
-        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::Marshal& m) {
+        sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
             m << status;
         });
     }

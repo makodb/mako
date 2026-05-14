@@ -236,6 +236,11 @@ public:
     ITable* GetTable(const std::string& name) override;
 
     /**
+     * List all tables in this DB.
+     */
+    std::vector<std::string> ListTables() override;
+
+    /**
      * Connect to the database (no-op for local DB)
      * Implements IDatabase interface - always returns OK
      */
@@ -457,6 +462,16 @@ inline ITable* DB::GetTable(const std::string& name) {
     LocalTable* ptr = table.get();
     tables_[name] = std::move(table);
     return ptr;
+}
+
+inline std::vector<std::string> DB::ListTables() {
+    std::lock_guard<std::mutex> lock(tables_mutex_);
+    std::vector<std::string> names;
+    names.reserve(tables_.size());
+    for (const auto& kv : tables_) {
+        names.push_back(kv.first);
+    }
+    return names;
 }
 
 #endif  // _MAKO_COMMON_H_

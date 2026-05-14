@@ -4,10 +4,17 @@
  */
 
 #include "config_store.h"
-#include "../rrr/base/logging.hpp"
 #include <cstring>
 
+#include "rrr/rrr.hpp"
+
 namespace janus {
+
+using rrr::Log_debug;
+using rrr::Log_info;
+using rrr::Log_warn;
+using rrr::Log_error;
+
 
 namespace {
 

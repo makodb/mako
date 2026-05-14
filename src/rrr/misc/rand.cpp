@@ -1,12 +1,28 @@
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
+
+#include <rusty/rusty.hpp>
+
+#include <pthread.h>
 #if defined(__APPLE__)
 #include <mach/mach_time.h>
 #endif
 
-#include "base/all.hpp"
 #include "rand.hpp"
+
+
+#include "../rrr.hpp"
 
 // @external: {
 //   pthread_key_create: [unsafe],

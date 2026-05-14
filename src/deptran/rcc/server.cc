@@ -79,16 +79,9 @@ int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
       Log_info("dispatch ret graph size: %d", graph->size());
   }
 #endif
-//  };
-//
-//  static bool do_record = Config::GetConfig()->do_logging();
-//  if (do_record) {
-//    Marshal m;
-//    m << cmd;
-//    recorder_->submit(m, job);
-//  } else {
-//    job();
-//  }
+  // removed commented-out
+  // `do_logging() / recorder_->submit(m, job)` block — both
+  // `do_logging` and `recorder_` are gone.
   return 0;
 }
 

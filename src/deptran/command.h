@@ -1,11 +1,16 @@
 #pragma once
 #include "__dep__.h"
 #include "constants.h"
-#include "../rrr/misc/marshal.hpp"
+
+#include "rrr/rrr.hpp"
 
 
 namespace janus {
-class CmdData : public rrr::Marshallable {
+// CmdData no longer inherits
+// Marshallable.  The metadata fields + virtuals stay; the
+// Marshallable-based polymorphism (kind_, to_marshal/from_marshal)
+// was vestigial.
+class CmdData {
  public:
   cmdid_t id_ = 0;
   cmdtype_t type_ = 0;
@@ -40,14 +45,28 @@ class CmdData : public rrr::Marshallable {
   virtual void Reset() {
     verify(0);
   }
-  virtual CmdData* Clone() const  {
-    // deprecated.
-    verify(0);
-  };
+  // removed `virtual CmdData* Clone() const`
+  // (and the matching `SimpleCommand::Clone` override).  The method
+  // was annotated `// deprecated.` and `verify(0)`-stubbed; no caller
+  // anywhere in the codebase invoked it (`grep "->Clone()"` /
+  // `".Clone()"` across src/ returns zero production hits — only the
+  // two definitions themselves).  Same Phase 4e-3 removal covered
+  // `SimpleCommand::RootCmd()` and the `SimpleCommand::root_`
+  // back-pointer it returned: both were unused (`root_` was written
+  // by `TxData::GetReadyPiecesData` / `TxData::GetNextReadySubCmd`
+  // but never read by anything).
 
-  CmdData() : rrr::Marshallable(rrr::MarshallDeputy::CONTAINER_CMD) {}
-  virtual ~CmdData() {};
-  virtual rrr::Marshal& to_marshal(rrr::Marshal&) const override;
-  virtual rrr::Marshal& from_marshal(rrr::Marshal&) override;
+  CmdData() = default;
+  virtual ~CmdData() = default;
+  // removed `to_marshal` / `from_marshal`
+  // overrides. CmdData is never registered with
+  // `MarshallDeputy::reg_initializer` and never instantiated directly
+  // (no `make_shared<CmdData>` / `new CmdData` callers); its only
+  // subclasses are `SimpleCommand` (serialized via free `operator<<`
+  // overloads on `Marshal&` / `BinaryWriteArchive&` in
+  // `command_marshaler.cc`, never via virtual dispatch) and `TxData`
+  //. The base
+  // `Marshallable::to_marshal` / `from_marshal` `verify(0)` defaults
+  // remain in place.
 };
 } // namespace janus

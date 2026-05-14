@@ -12,7 +12,8 @@ class SimpleCommand;
 class TxData;
 class Executor {
  public:
-  Recorder* recorder_ = nullptr;
+  // removed `Recorder* recorder_ = nullptr;`
+  // — declared but never written or read on this class.
   TxnRegistry* txn_reg_ = nullptr;
   mdb::Txn *mdb_txn_ = nullptr;
   TxLogServer* sched_ = nullptr;

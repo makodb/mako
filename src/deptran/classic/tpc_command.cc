@@ -1,146 +1,116 @@
 #include "tpc_command.h"
 #include "../command.h"
 #include "../command_marshaler.h"
+#include "rrr/misc/serializable.hpp"
 
 using namespace janus;
 
-static int volatile x1 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_PREPARE,
-                                     [] () -> Marshallable* {
-                                       return new TpcPrepareCommand();
-                                     });
-
-static int volatile x2 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_COMMIT,
-                                     [] () -> Marshallable* {
-                                       return new TpcCommitCommand();
-                                     });
-
-static int volatile x3 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_EMPTY,
-                                     [] () -> Marshallable* {
-                                       return new TpcEmptyCommand;
-                                     });
-
-static int volatile x4 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_NOOP,
-                                     [] () -> Marshallable* {
-                                       return new TpcNoopCommand;
-                                     });
-
-static int volatile x5 =
-    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_BATCH,
-                                      [] () -> Marshallable* {
-                                       return new TpcBatchCommand;
-                                     });
+// registrations switched to the no-arg
+// `SerializableRegistry::reg<T>()` overload — kind is auto-derived
+// from each type's `static_kind()` method (provided by the
+// `Serializable<T, MakoCommands>` CRTP base, which returns the type's
+// 1-indexed position in the `MakoCommands` TypeList).
+static int volatile x1 = rrr::SerializableRegistry::reg<TpcPrepareCommand>();
+static int volatile x2 = rrr::SerializableRegistry::reg<TpcCommitCommand>();
+static int volatile x3 = rrr::SerializableRegistry::reg<TpcEmptyCommand>();
+static int volatile x4 = rrr::SerializableRegistry::reg<TpcNoopCommand>();
+static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>();
 
 
-Marshal& TpcPrepareCommand::to_marshal(Marshal& m) const {
-  m << tx_id_;
-  m << ret_;
-//  m << (int32_t) cmd_.size();
-//  for (auto o : cmd_) {
-//    m << *o;
-//  }
-  // Pass shared_ptr directly to MarshallDeputy
-  MarshallDeputy md(cmd_);
-  m << md;
-  return m;
+// TpcPrepareCommand serialization via
+// BinaryWriteArchive / BinaryReadArchive. The nested
+// `shared_ptr<Marshallable> cmd_` field is wrapped/unwrapped through
+// a MarshallDeputy on each save/load — the Phase 3f-prep
+// `operator<<>>(BinaryWriteArchive/BinaryReadArchive, MarshallDeputy)`
+// overloads make this byte-for-byte equivalent to the legacy
+// Marshal encoding.
+void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
+  ar << tx_id_;
+  ar << ret_;
+  // cmd_ is janus::Command — drive its archive op
+  // directly instead of wrapping it in a temporary MarshallDeputy.
+  // Wire format identical (`[v32 kind][payload]`).
+  ar << cmd_;
 }
 
-Marshal& TpcPrepareCommand::from_marshal(Marshal& m) {
-  m >> tx_id_;
-  m >> ret_;
-//  int32_t sz;
-//  m >> sz;
-//  verify(cmd_.empty());
-//  for (int i = 0; i < sz; i++) {
-//    auto o = make_shared<SimpleCommand>();
-//    m >> *o;
-//    cmd_.push_back(o);
-//  }
-  MarshallDeputy md;
-  m >> md;
-  if (!cmd_) {
-    // Use the shared_ptr directly from MarshallDeputy
-    if (md.sp_data_ != nullptr) {
-      cmd_ = md.sp_data_;
-    }
+void TpcPrepareCommand::load(BinaryReadArchive& ar) {
+  ar >> tx_id_;
+  ar >> ret_;
+  // cmd_ load through Command's archive op.
+  if (!cmd_.has_value()) {
+    ar >> cmd_;
   } else {
     verify(0);
   }
-  return m;
 }
 
-Marshal& TpcCommitCommand::to_marshal(Marshal& m) const {
-  m << tx_id_;
-  m << ret_;
-  m << term;  // Marshal the term field
-  MarshallDeputy md(cmd_);
-  m << md;
-  // Marshal view data if present
+// TpcCommitCommand serialization via
+// BinaryWriteArchive / BinaryReadArchive. Both nested
+// `cmd_` (shared_ptr<Marshallable>) and optional
+// `sp_view_data_` (shared_ptr<ViewData>) are wrapped/unwrapped through
+// MarshallDeputy on each save/load — the Phase 3f-prep
+// `operator<<>>(BinaryWriteArchive/BinaryReadArchive, MarshallDeputy)`
+// overloads make this byte-for-byte equivalent to the legacy
+// Marshal encoding.
+void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
+  ar << tx_id_;
+  ar << ret_;
+  ar << term;
+  // drive cmd_ through Command's archive op directly.
+  ar << cmd_;
   bool_t has_view_data = (sp_view_data_ != nullptr) ? 1 : 0;
-  m << has_view_data;
+  ar << has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md(sp_view_data_);
-    m << view_md;
+    // was MarshallDeputy view_md(sp_view_data_) — Command
+    // produces identical wire bytes via the same registry-dispatched
+    // save/load path.
+    janus::Command view_md = sp_view_data_;
+    ar << view_md;
   }
-  return m;
 }
 
-Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
-  m >> tx_id_;
-  m >> ret_;
-  m >> term;  // Unmarshal the term field
-  MarshallDeputy md;
-  m >> md;
-  if (!cmd_)
-    cmd_ = md.sp_data_;
+void TpcCommitCommand::load(BinaryReadArchive& ar) {
+  ar >> tx_id_;
+  ar >> ret_;
+  ar >> term;
+  // cmd_ load through Command's archive op.
+  if (!cmd_.has_value())
+    ar >> cmd_;
   else
     verify(0);
-  // Unmarshal view data if present
   bool_t has_view_data;
-  m >> has_view_data;
+  ar >> has_view_data;
   if (has_view_data) {
-    MarshallDeputy view_md;
-    m >> view_md;
-    sp_view_data_ = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+    janus::Command view_md;
+    ar >> view_md;
+    sp_view_data_ = marshallable_cast<ViewData>(view_md);
   }
-  return m;
 }
 
-Marshal& TpcEmptyCommand::to_marshal(Marshal& m) const {
-  return m;
-}
+// (TpcEmptyCommand's Marshal-based serialization removed in Phase
+// 4a-2; see save/load methods inline in tpc_command.h.)
 
-Marshal& TpcEmptyCommand::from_marshal(Marshal& m) {
-  return m;
-}
+// (TpcNoopCommand's Marshal-based serialization removed in Phase 4a-1;
+// see save/load methods inline in tpc_command.h.)
 
-Marshal& TpcNoopCommand::to_marshal(Marshal& m) const {
-  return m;
-}
-
-Marshal& TpcNoopCommand::from_marshal(Marshal& m) {
-  return m;
-}
-
-Marshal& TpcBatchCommand::to_marshal(Marshal& m) const {
+// TpcBatchCommand serialization via
+// BinaryWriteArchive / BinaryReadArchive. Iterates each commit and
+// delegates to its save/load. uint32_t size prefix matches the
+// legacy encoding.
+void TpcBatchCommand::save(BinaryWriteArchive& ar) const {
   verify(size_ == cmds_.size());
-  m << size_;
+  ar << size_;
   for (auto it = cmds_.begin(); it != cmds_.end(); ++it) {
-    (*it)->to_marshal(m);
+    (*it)->save(ar);
   }
-  return m;
 }
 
-Marshal& TpcBatchCommand::from_marshal(Marshal& m) {
-  m >> size_;
+void TpcBatchCommand::load(BinaryReadArchive& ar) {
+  ar >> size_;
   for (uint32_t i = 0; i < size_; i++) {
     cmds_.emplace_back(std::make_shared<TpcCommitCommand>());
-    cmds_[i]->from_marshal(m);
+    cmds_[i]->load(ar);
   }
-  return m;
 }
 
 void TpcBatchCommand::AddCmd(shared_ptr<TpcCommitCommand> cmd) {

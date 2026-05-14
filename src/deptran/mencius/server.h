@@ -13,16 +13,17 @@
 #include <unordered_map>
 
 namespace janus {
-class Command;
 class CmdData;
 
+// polymorphic command fields
+// migrated from `shared_ptr<Marshallable>` to `janus::Command`.
 struct MenciusData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_suggested_ = 0;
   bool is_skip = false;
-  shared_ptr<Marshallable> cmd_{nullptr};
-  shared_ptr<Marshallable> accepted_cmd_{nullptr};
-  shared_ptr<Marshallable> committed_cmd_{nullptr};
+  Command cmd_{};
+  Command accepted_cmd_{};
+  Command committed_cmd_{};
   bool executed_ = false;
 };
 
@@ -45,7 +46,11 @@ class MenciusServer : public TxLogServer {
   bool in_applying_logs_{false};
 
   MenciusServer() {
-    witness_.set_belongs_to_leader(true);
+    // removed
+    // `witness_.set_belongs_to_leader(true);` — the
+    // `belongs_to_leader_` field on Witness was never read and was
+    // already commented `// discard`; the setter went away in the
+    // same commit.
   }
 
   ~MenciusServer() {
@@ -76,20 +81,23 @@ class MenciusServer : public TxLogServer {
                  uint64_t* coro_id,
                  rusty::Function<void()> cb);
 
+  // handlers take
+  // const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
   void OnSuggest(const slotid_t slot_id,
 		            const uint64_t time,
                 const ballot_t ballot,
                 const uint64_t sender,
-                const std::vector<uint64_t>& skip_commits, 
+                const std::vector<uint64_t>& skip_commits,
                 const std::vector<uint64_t>& skip_potentials,
-                shared_ptr<Marshallable> &cmd,
+                const janus::Command& cmd,
                 ballot_t *max_ballot,
                 uint64_t* coro_id,
                 rusty::Function<void()> cb);
 
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd,
+                const janus::Command& cmd,
                 bool is_skip=false);
 
   void Setup();
@@ -101,7 +109,7 @@ class MenciusServer : public TxLogServer {
   };
 
 #ifdef ZERO_OVERHEAD
-  bool ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) override;
+  bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) override;
 #endif
 };
 } // namespace janus

@@ -41,7 +41,7 @@ bool CopilotFastAcceptQuorumEvent::FastNo() {
 inline void CopilotPrepareQuorumEvent::FeedRetCmd(ballot_t ballot,
                                                   uint64_t dep,
                                                   uint8_t is_pilot, slotid_t slot,
-                                                  shared_ptr<Marshallable> cmd,
+                                                  const janus::Command& cmd,
                                                   enum Status status) {
   uint32_t int_status = GET_STATUS(static_cast<uint32_t>(status));
   // int_status &= CLR_FLAG_TAKEOVER;
@@ -114,7 +114,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
         Log_info("Get a error message in reply");
         return;
       }
-      MarshallDeputy md;
+      janus::Command md;
       ballot_t b;
       uint64_t dep;
       status_t status;
@@ -125,7 +125,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
         e->FeedRetCmd(ballot,
                       dep,
                       is_pilot, slot_id,
-                      const_cast<MarshallDeputy&>(md).sp_data_,
+                      md,
                       static_cast<enum Status>(status));
       } // Feed command before feeding response, since if there is a committed command,
         // the prepare event will be ready in advance without waiting for a quorum.
@@ -155,13 +155,13 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
                                   slotid_t slot_id,
                                   ballot_t ballot,
                                   uint64_t dep,
-                                  shared_ptr<Marshallable> cmd) {
+                                  const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CopilotCommo::BroadcastFastAccept", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
+  Log_info("cmd<%d, %d> entered site %d CopilotCommo::BroadcastFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
 #endif
   WAN_WAIT;
   for (auto& p : proxies) {
@@ -175,12 +175,12 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
       ballot_t b;
       slotid_t sgst_dep;
       static_cast<CopilotServer *>(rep_sched_)->OnFastAccept(
-        is_pilot, slot_id, ballot, dep, cmd, di, &b, &sgst_dep, nullptr);
+        is_pilot, slot_id, ballot, dep, cmd_env, di, &b, &sgst_dep, nullptr);
       e->FeedResponse(true, true);
       e->FeedRetDep(dep);
     } else {
       FutureAttr fuattr;
-      fuattr.callback = [e, dep, ballot, site, cmd](rusty::Arc<Future> fu) {
+      fuattr.callback = [e, dep, ballot, site, cmd_env](rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
           Log_info("Get a error message in reply");
           return;
@@ -191,7 +191,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         fu->get_reply() >> b >> sgst_dep;
         bool ok = (ballot == b);
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> sgst_dep=%" PRId64 " dep=%" PRId64 "", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, sgst_dep, dep);
+  Log_info("cmd<%d, %d> sgst_dep=%" PRId64 " dep=%" PRId64 "", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
 #endif
         e->FeedResponse(ok, sgst_dep == dep);
         if (ok) {
@@ -201,20 +201,19 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         e->remove_xid(site);
       };
 
-      verify(cmd);
-      MarshallDeputy md(cmd);
+      verify(cmd_env.has_value());
 
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[1-] [tx=%d] async_FastAccept called by Submit %.3f", dynamic_pointer_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[1-] [tx=%d] async_FastAccept called by Submit %.3f", marshallable_cast<TpcBatchCommand>(cmd_env)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
       CopilotProxy::RpcFastAcceptRequest req;
       req.is_pilot = is_pilot;
       req.slot = slot_id;
       req.ballot = ballot;
       req.dep = dep;
-      req.cmd = md;
+      req.cmd = cmd_env;
       req.dep_id = di;
       auto fu_result = proxy->async_FastAccept(req, fuattr);
       if (fu_result.is_ok()) {
@@ -233,7 +232,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
                               slotid_t slot_id,
                               ballot_t ballot,
                               uint64_t dep,
-                              shared_ptr<Marshallable> cmd) {
+                              const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<CopilotAcceptQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
@@ -250,7 +249,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
     if (site == loc_id_) {
       ballot_t b;
       static_cast<CopilotServer *>(rep_sched_)->OnAccept(
-        is_pilot, slot_id, ballot, dep, cmd, di, &b, nullptr);
+        is_pilot, slot_id, ballot, dep, cmd_env, di, &b, nullptr);
       e->FeedResponse(true);
     } else {
       FutureAttr fuattr;
@@ -266,13 +265,12 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
         e->remove_xid(site);
       };
 
-      MarshallDeputy md(cmd);
       CopilotProxy::RpcAcceptRequest req;
       req.is_pilot = is_pilot;
       req.slot = slot_id;
       req.ballot = ballot;
       req.dep = dep;
-      req.cmd = md;
+      req.cmd = cmd_env;
       req.dep_id = di;
       auto fu_result = proxy->async_Accept(req, fuattr);
       if (fu_result.is_ok()) {
@@ -290,11 +288,11 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
                                    uint8_t is_pilot,
                                    slotid_t slot_id,
                                    uint64_t dep,
-                                   shared_ptr<Marshallable> cmd) {
+                                   const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<CopilotFakeQuorumEvent>(n);
   auto proxies = rpc_par_proxies_[par_id];
-  
+
   // WAN_WAIT;
   for (auto& p : proxies) {
     auto proxy = (CopilotProxy*) p.second;
@@ -307,12 +305,11 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
     fuattr.callback = [e, site](rusty::Arc<Future> fu) {
       e->remove_xid(site);
     };
-    MarshallDeputy md(cmd);
     CopilotProxy::RpcCommitRequest req;
     req.is_pilot = is_pilot;
     req.slot = slot_id;
     req.dep = dep;
-    req.cmd = md;
+    req.cmd = cmd_env;
     auto fu_result = proxy->async_Commit(req, fuattr);
     if (fu_result.is_ok()) {
       auto f = fu_result.unwrap().raw_future();

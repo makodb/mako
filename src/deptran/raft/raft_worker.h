@@ -12,6 +12,7 @@
 #include "server.h"
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <thread>
 
 // @external: {
@@ -44,11 +45,9 @@ void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
 // @unsafe - uses raw global std::function, unbounded callback invocation
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
 
-#ifdef SINGLE_RAFT_INSTANCE
 // Watermark callback type used for per-partition leader/follower routing
 using watermark_callback_t = std::function<int(const char*&, int, int, int,
     std::queue<std::tuple<int, int, int, int, const char*>>&)>;
-#endif
 
 // @unsafe - class contains raw pointers and manual memory management
 class RaftWorker {
@@ -64,14 +63,12 @@ private:
   std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
     follower_callback_par_id_return_ = nullptr;
 
-#ifdef SINGLE_RAFT_INSTANCE
   // SINGLE-RAFT: Per-partition callback maps for routing apply callbacks
   // When a single RaftWorker handles all partitions, Next() extracts par_id
   // from the committed entry and routes to the correct partition's callback.
   std::map<uint32_t, watermark_callback_t> leader_callbacks_by_partition_;
   std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
   std::map<uint32_t, std::queue<std::tuple<int, int, int, int, const char*>>> un_replay_logs_by_partition_;
-#endif
 
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
@@ -93,13 +90,17 @@ public:
   std::atomic<int> n_current{0};   // Current in-flight requests
   std::atomic<int> n_submit{0};    // Total submitted
   std::atomic<int> n_tot{0};       // Total processed
-  std::atomic<int> submit_num{0};  // For microbench
+  // removed `std::atomic<int> submit_num{0};`
+  // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
+  // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
+  // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place
+  // alongside its PaxosWorker counterpart.
   int tot_num = 0;
-  int submit_tot_sec_ = 0;
-  int submit_tot_usec_ = 0;
 
   // Configuration
   Config::SiteInfo* site_info_ = nullptr;
+  // When true, this worker accepts and serves all partitions.
+  bool handles_all_partitions_ = false;
 
   // Raft protocol components
   Frame* rep_frame_ = nullptr;
@@ -110,13 +111,13 @@ public:
   rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
   rrr::Server* rpc_server_ = nullptr;
-  base::ThreadPool* thread_pool_g = nullptr;
+  rusty::Arc<base::ThreadPool> thread_pool_g{nullptr};
 
   // Heartbeat/control RPC
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   rrr::Server* hb_rpc_server_ = nullptr;
-  base::ThreadPool* hb_thread_pool_g = nullptr;
+  rusty::Arc<base::ThreadPool> hb_thread_pool_g{nullptr};
 
   // Queue for unreplayed logs (follower only)
   std::queue<std::tuple<int, int, int, int, const char*>> un_replay_logs_;
@@ -193,14 +194,12 @@ public:
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
   );
 
-#ifdef SINGLE_RAFT_INSTANCE
   // SINGLE-RAFT: Per-partition callback registration
   // Used when a single RaftWorker handles all partitions
   // @safe - stores callback in per-partition map for later invocation
   void register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb);
   // @safe - stores callback in per-partition map for later invocation
   void register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb);
-#endif
 
   // Legacy method for compatibility (deprecated - use leader/follower specific methods)
   // @safe - delegates to register_follower_callback_par_id_return
@@ -211,7 +210,10 @@ public:
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy
-  int Next(int slot, shared_ptr<Marshallable> cmd);
+  // take janus::Command (matches RegLearnerAction
+  // signature in deptran/scheduler.h).  Body unwraps via `md.inner()` /
+  // `marshallable_cast<T>(md)` overload as needed.
+  int Next(int slot, janus::Command md);
 
   // @safe
   rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {
@@ -227,18 +229,11 @@ public:
   }
 
   // @unsafe - uses std::make_shared, raw pointers
-#ifdef SINGLE_RAFT_INSTANCE
   std::shared_ptr<TpcCommitCommand> CreateRaftLogCommand(
       const char* log_entry,
       int length,
       txnid_t tx_id,
       uint32_t par_id);
-#else
-  std::shared_ptr<TpcCommitCommand> CreateRaftLogCommand(
-      const char* log_entry,
-      int length,
-      txnid_t tx_id);
-#endif
 
 private:
   // @safe - mutex/condvar operations are bounded

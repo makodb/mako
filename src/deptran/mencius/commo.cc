@@ -16,82 +16,25 @@ MenciusCommo::MenciusCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communi
 //  verify(poll != nullptr);
 }
 
-void MenciusCommo::BroadcastPrepare(parid_t par_id,
-                                       slotid_t slot_id,
-                                       ballot_t ballot,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  auto leader_id = LeaderProxyForPartition(par_id).first;
+// removed deprecated callback-style
+// `void MenciusCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,
+// callback)`.  See companion comment in commo.h.
 
-  WAN_WAIT
-  for (auto& p : proxies) {
-    auto proxy = (MenciusProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    MenciusProxy::RpcPrepareRequest req{};
-    req.slot = slot_id;
-    req.ballot = ballot;
-    auto f = proxy->async_Prepare(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-}
-
-shared_ptr<MenciusPrepareQuorumEvent>
-MenciusCommo::BroadcastPrepare(parid_t par_id,
-                                  slotid_t slot_id,
-                                  ballot_t ballot) {
-  verify(0);
-  int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<MenciusPrepareQuorumEvent>(n, n/2+1);
-  auto src_coroid = e->get_coro_id();
-  auto proxies = rpc_par_proxies_[par_id];
-  auto leader_id = LeaderProxyForPartition(par_id).first;
-
-  WAN_WAIT
-  for (auto& p : proxies) {
-    auto proxy = (MenciusProxy*) p.second;
-    auto follower_id = p.first;
-    // e->add_dep(leader_id, src_coroid, follower_id, -1);
-
-    FutureAttr fuattr;
-    fuattr.callback = [e, ballot, leader_id, src_coroid, follower_id](rusty::Arc<Future> fu) {
-      if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
-        return;
-      }
-      ballot_t b = 0;
-      uint64_t coro_id = 0;
-      fu->get_reply() >> b >> coro_id;
-      e->FeedResponse(b==ballot);
-      // e->deps[leader_id][src_coroid][follower_id].erase(-1);
-      // e->deps[leader_id][src_coroid][follower_id].insert(coro_id);
-      // TODO add max accepted value.
-    };
-    MenciusProxy::RpcPrepareRequest req{};
-    req.slot = slot_id;
-    req.ballot = ballot;
-    auto f = proxy->async_Prepare(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-  return e;
-}
+// removed `MenciusCommo::BroadcastPrepare`
+// (parid, slot, ballot) — body was a `verify(0);` shell.  Only call
+// site was the now-deleted `CoordinatorMencius::Prepare()`.
 
 shared_ptr<MenciusSuggestQuorumEvent>
 MenciusCommo::BroadcastSuggest(parid_t par_id,
                                  slotid_t slot_id,
                                  ballot_t ballot,
-                                 shared_ptr<Marshallable> cmd) {
+                                 const janus::Command& cmd) {
   //Log_info("invoke BroadcastSuggest, slot_id:%d", slot_id);
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n/2+1);
 //  auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n);
 
-  auto src_coroid = e->get_coro_id();
+  auto src_coroid = e->get_fiber_id();
   auto proxies = rpc_par_proxies_[par_id];
   auto leader_id = LeaderProxyForPartition(par_id, (slot_id-1)%n).first;
   vector<rusty::Arc<Future>> fus;
@@ -184,7 +127,6 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
       // e->deps[leader_id][src_coroid][follower_id].erase(-1);
       // e->deps[leader_id][src_coroid][follower_id].insert(coro_id);
     };
-    MarshallDeputy md(cmd);
     auto start1 = chrono::system_clock::now();
     uint64_t sender = loc_id_;
     // time_t tstart = chrono::system_clock::to_time_t(start);
@@ -206,7 +148,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
     req.sender = sender;
     req.skip_commits = skip_commits;
     req.skip_potentials = skip_potentials;
-    req.cmd = md;
+    req.cmd = cmd;
     auto f = proxy->async_Suggest(req, fuattr);
     auto end1 = chrono::system_clock::now();
     auto duration = chrono::duration_cast<chrono::microseconds>(end1-start1).count();
@@ -217,34 +159,15 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
   return e;
 }
 
-void MenciusCommo::BroadcastSuggest(parid_t par_id,
-                                      slotid_t slot_id,
-                                      ballot_t ballot,
-                                      shared_ptr<Marshallable> cmd,
-                                      const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  // auto proxies = rpc_par_proxies_[par_id];
-  // auto leader_id = LeaderProxyForPartition(par_id).first;
-  // vector<Future*> fus;
-  // for (auto& p : proxies) {
-  //   auto proxy = (MenciusProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = cb;
-  //   MarshallDeputy md(cmd);
-  //   uint64_t time = 0; // compiles the code
-  //   std::vector<uint64_t> skip_commits(1);
-  //   skip_commits.push_back(100);
-  //   std::vector<uint64_t> skip_potentials(1);
-  //   skip_potentials.push_back(200);
-  //   auto f = proxy->async_Suggest(slot_id, time,ballot, skip_commits, skip_potentials, md, fuattr);
-  //   Future::safe_release(f);
-  // }
-}
+// removed deprecated callback-style
+// `void MenciusCommo::BroadcastSuggest(parid_t, slotid_t, ballot_t,
+// cmd, callback)`.  Body had `verify(0);` and was mostly already
+// commented out.  See companion comment in commo.h.
 
 void MenciusCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,
                                       const ballot_t ballot,
-                                      const shared_ptr<Marshallable> cmd) {
+                                      const janus::Command& cmd) {
   //Log_info("invoke BroadcastDecide, slot_id:%d", slot_id);
   auto proxies = rpc_par_proxies_[par_id];
   int n = proxies.size();
@@ -256,11 +179,10 @@ void MenciusCommo::BroadcastDecide(const parid_t par_id,
     auto proxy = (MenciusProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
-    MarshallDeputy md(cmd);
     MenciusProxy::RpcDecideRequest req{};
     req.slot = slot_id;
     req.ballot = ballot;
-    req.cmd = md;
+    req.cmd = cmd;
     auto f = proxy->async_Decide(req, fuattr);
     //sp_quorum_event->add_dep(leader_id, p.first);
     if (f.is_ok()) {

@@ -8,18 +8,8 @@ namespace janus {
 
 class TxData;
 
-class FpgaRaftForwardQuorumEvent: public QuorumEvent {
- public:
-  using QuorumEvent::QuorumEvent;
-  uint64_t CommitIdx()
-  {
-    return cmt_idx_ ;
-  }
-  void FeedResponse(uint64_t cmt_idx) {
-    vote_yes();
-    cmt_idx_ = cmt_idx ;
-  }
-};
+// removed `class FpgaRaftForwardQuorumEvent`
+// — only constructed by the now-deleted `FpgaRaftCommo::SendForward`.
 
 class FpgaRaftPrepareQuorumEvent: public QuorumEvent {
  public:
@@ -130,14 +120,17 @@ friend class FpgaRaftProxy;
 	
   FpgaRaftCommo() = delete;
   FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>>);
-  shared_ptr<FpgaRaftForwardQuorumEvent>
-  SendForward(parid_t par_id, parid_t self_id, shared_ptr<Marshallable> cmd);  
+  // removed `SendForward(par_id, self_id,
+  // cmd)` declaration — only call site was the now-deleted
+  // `CoordinatorFpgaRaft::Forward`.
 	void BroadcastHeartbeat(parid_t par_id,
 													uint64_t logIndex);
 	void SendHeartbeat(parid_t par_id,
 										 siteid_t site_id,
 										 uint64_t logIndex);
 	//ONLY FOR SIMULATION
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   void SendAppendEntriesAgain(siteid_t site_id,
 															parid_t par_id,
 															slotid_t slot_id,
@@ -147,49 +140,34 @@ friend class FpgaRaftProxy;
 															uint64_t prevLogIndex,
 															uint64_t prevLogTerm,
 															uint64_t commitIndex,
-															shared_ptr<Marshallable> cmd);
-  shared_ptr<FpgaRaftPrepareQuorumEvent>
-  BroadcastPrepare(parid_t par_id,
-                   slotid_t slot_id,
-                   ballot_t ballot);
-  void BroadcastPrepare(parid_t par_id,
-                        slotid_t slot_id,
-                        ballot_t ballot,
-                        const function<void(rusty::Arc<Future>)> &callback);
+															const janus::Command& cmd);
+  // removed dead `BroadcastPrepare` and
+  // `BroadcastAccept` declarations (both shared_ptr-returning and
+  // callback-style overloads).  Neither had any implementation in
+  // `commo.cc` — they were declared but never defined, and no caller
+  // anywhere invoked them (calls would have been link errors).  The
+  // FpgaRaft path has its own `BroadcastAppendEntries` /
+  // `BroadcastVote` / `BroadcastVote2FPGA` machinery instead.
   shared_ptr<FpgaRaftVoteQuorumEvent>
   BroadcastVote(parid_t par_id,
                         slotid_t lst_log_idx,
                         ballot_t lst_log_term,
                         parid_t self_id,
                         ballot_t cur_term );
-  void BroadcastVote(parid_t par_id,
-                        slotid_t lst_log_idx,
-                        ballot_t lst_log_term,
-                        parid_t self_id,
-                        ballot_t cur_term,
-                        const function<void(rusty::Arc<Future>)> &callback);
+  // removed deprecated callback-style
+  // `void BroadcastVote(... callback)` — body had `verify(0);` and
+  // no callers.
   shared_ptr<FpgaRaftVote2FPGAQuorumEvent>
   BroadcastVote2FPGA(parid_t par_id,
                         slotid_t lst_log_idx,
                         ballot_t lst_log_term,
                         parid_t self_id,
                         ballot_t cur_term );
-  void BroadcastVote2FPGA(parid_t par_id,
-                        slotid_t lst_log_idx,
-                        ballot_t lst_log_term,
-                        parid_t self_id,
-                        ballot_t cur_term,
-                        const function<void(rusty::Arc<Future>)> &callback);  
-  shared_ptr<FpgaRaftAcceptQuorumEvent>
-  BroadcastAccept(parid_t par_id,
-                  slotid_t slot_id,
-                  ballot_t ballot,
-                  shared_ptr<Marshallable> cmd);
-  void BroadcastAccept(parid_t par_id,
-                       slotid_t slot_id,
-                       ballot_t ballot,
-                       shared_ptr<Marshallable> cmd,
-                       const function<void(rusty::Arc<Future>)> &callback);
+  // removed deprecated callback-style
+  // `void BroadcastVote2FPGA(... callback)` — body had `verify(0);`
+  // and no callers.
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   shared_ptr<FpgaRaftAppendQuorumEvent>
   BroadcastAppendEntries(parid_t par_id,
                          siteid_t leader_site_id,
@@ -201,22 +179,17 @@ friend class FpgaRaftProxy;
                          uint64_t prevLogIndex,
                          uint64_t prevLogTerm,
                          uint64_t commitIndex,
-                         shared_ptr<Marshallable> cmd);
-  void BroadcastAppendEntries(parid_t par_id,
-                              slotid_t slot_id,
-															i64 dep_id,
-                              ballot_t ballot,
-                              uint64_t currentTerm,
-                              uint64_t prevLogIndex,
-                              uint64_t prevLogTerm,
-                              uint64_t commitIndex,
-                              shared_ptr<Marshallable> cmd,
-                              const function<void(rusty::Arc<Future>)> &callback);
+                         const janus::Command& cmd);
+  // removed deprecated callback-style
+  // `void BroadcastAppendEntries(... callback)` — body had
+  // `verify(0);` and no callers.
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert.
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
 											 const i64 dep_id,
                        const ballot_t ballot,
-                       const shared_ptr<Marshallable> cmd);
+                       const janus::Command& cmd);
 };
 
 } // namespace janus

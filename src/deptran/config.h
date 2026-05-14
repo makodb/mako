@@ -4,6 +4,7 @@
 #include "__dep__.h"
 #include "constants.h"
 #include "sharding.h"
+#include <deque>
 
 namespace janus {
 extern size_t bulkBatchCount;
@@ -60,7 +61,10 @@ class Config {
   bool batch_start_;
   bool early_return_;
   bool retry_wait_;
-  string logging_path_;
+  // removed `string logging_path_;` field
+  // — only readers (`do_logging` and `log_path`) were already
+  // deleted in Phase 4e-41; only writer was the `-r` CLI flag (also
+  // removed in this phase).
   single_server_t single_server_;
   uint16_t n_concurrent_;
   int32_t max_retry_;
@@ -90,8 +94,6 @@ class Config {
   uint32_t sid_;
   uint32_t cid_;
 
-  // carousel mode choice
-  bool carousel_basic_mode_ = false;
 
   // Jetpack fast path mode
   int jetpack_fastpath_attempt_rate_ = 0;
@@ -175,7 +177,8 @@ class Config {
          uint32_t duration,
          bool heart_beat,
          single_server_t single_server,
-         string logging_path,
+         // removed `string logging_path,`
+         // ctor parameter — field gone.
          int jetpack_fastpath_attempt_rate
   );
   int GetClientPort(std::string site_name);
@@ -268,7 +271,8 @@ class Config {
   uint64_t get_txn_timeout() const { return txn_timeout_us_; }
   bool get_batch_start();
   bool do_early_return();
-  bool do_logging();
+  // removed `bool do_logging();` declaration
+  // — see config.cc retirement comment.
   bool IsReplicated();
   int32_t get_tot_req();
   bool get_failover() { return failover_; }
@@ -277,9 +281,9 @@ class Config {
   int32_t get_failover_srv_idx() { return failover_srv_idx_; }
   bool get_failover_random() { return failover_random_; }
   bool get_failover_leader() { return failover_leader_; }
-  bool carousel_basic_mode() { return carousel_basic_mode_; }
 
-  const char *log_path();
+  // removed `const char *log_path();`
+  // declaration — no callers anywhere.
 
   bool retry_wait();
 

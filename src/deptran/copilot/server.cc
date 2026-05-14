@@ -1,6 +1,7 @@
 #include "server.h"
 #include "frame.h"
 #include "coordinator.h"
+#include "rrr/misc/serializable.hpp"  // wrap_serializable
 
 // #define DEBUG
 #define WAIT_AT_UNCOMMIT
@@ -22,7 +23,9 @@ CopilotServer::CopilotServer(Frame* frame) : log_infos_(2) {
   id_ = frame->site_info_->id;
   setIsPilot(frame_->site_info_->locale_id == 0);
   setIsCopilot(frame_->site_info_->locale_id == 1);
-  witness_.set_belongs_to_leader(frame_->site_info_->locale_id == 0 || frame_->site_info_->locale_id == 1);
+  // removed
+  // `witness_.set_belongs_to_leader(...);` — see the companion
+  // comment on the deleted field/setter in scheduler.h.
   Setup();
 }
 
@@ -34,7 +37,8 @@ shared_ptr<CopilotData> CopilotServer::GetInstance(slotid_t slot, uint8_t is_pil
   auto& sp_instance = log_infos_[is_pilot].logs[slot];
   if (!sp_instance)
     sp_instance = std::make_shared<CopilotData>(
-      CopilotData{nullptr,
+      // cmd field is now Command — default-construct.
+      CopilotData{Command{},
                   0,
                   is_pilot, slot,
                   0,
@@ -81,10 +85,11 @@ bool CopilotServer::WaitMaxCommittedGT(uint8_t is_pilot, slotid_t slot, int time
   return (event.value_ >= slot);
 }
 
-bool CopilotServer::allCmdComitted(shared_ptr<Marshallable> batch_cmd) {
-  auto cmds = dynamic_pointer_cast<TpcBatchCommand>(batch_cmd);
+bool CopilotServer::allCmdComitted(const janus::Command& batch_cmd) {
+  auto cmds = marshallable_cast<TpcBatchCommand>(batch_cmd);
+  verify(cmds != nullptr);
   for (auto& c : cmds->cmds_) {
-    if (!tx_sched_->CheckCommitted(*c))
+    if (!tx_sched_->CheckCommitted(janus::Command{c}))
       return false;
   }
   return true;
@@ -99,7 +104,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
     return true;
   }
-  if (likely(cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH)) {
+  if (likely(cmd.kind_ == TpcBatchCommand::static_kind())) {
     // check if cmd committed in tx scheduler, which virtually means cmd is executed
     if (allCmdComitted(cmd)) {
       Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
@@ -112,7 +117,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     } else {
       return false;
     }
-  } else if (cmd->kind_ == MarshallDeputy::CMD_NOOP) {
+  } else if (cmd.kind_ == TpcNoopCommand::static_kind()) {
     // I don't think this case is possible
     Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
      ins->status = Status::EXECUTED;
@@ -188,28 +193,16 @@ bool CopilotServer::WillWait(int &time_to_wait) const {
   }
 }
 
-void CopilotServer::OnForward(shared_ptr<Marshallable>& cmd,
-                              rusty::Function<void()> cb) {
-  verify(isPilot_ || isCopilot_);
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_info("This Copilot server is: %d", id_);
-  rep_frame_ = frame_;
-
-  if (!isPilot_ && !isCopilot_) {
-    verify(0);
-    // TODO: forward to pilot server
-  }
-  auto coord = (CoordinatorCopilot *)CreateRepCoord();
-  coord->Submit(cmd);
-
-  cb();
-}
+// removed `CopilotServer::OnForward`
+// (~17 LOC) — only caller was the deleted
+// `CopilotServiceImpl::Forward` handler; the matching
+// Copilot::Forward RPC declaration is gone from rcc_rpc.rpc.
 
 void CopilotServer::OnPrepare(const uint8_t& is_pilot,
                               const uint64_t& slot,
                               const ballot_t& ballot,
                               const struct DepId& dep_id,
-                              MarshallDeputy* ret_cmd,
+                              janus::Command* ret_cmd,
                               ballot_t* max_ballot,
                               uint64_t* dep,
                               status_t* status,
@@ -219,7 +212,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
   log_infos_[is_pilot].current_slot = std::max(slot, log_infos_[is_pilot].current_slot);
   if (!ins) {
     // this entry is too old that it's already freed
-    ret_cmd->set_marshallable(make_shared<TpcNoopCommand>());
+    *ret_cmd = make_shared<TpcNoopCommand>();
     *dep = 0;
     *status = Status::EXECUTED;
     *max_ballot = ballot;
@@ -244,10 +237,12 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
    * an id of the dependency's proposing pilot.
    */
   *max_ballot = ins->ballot;
-  if (ins->cmd)
-    ret_cmd->set_marshallable(ins->cmd);
+  // ins->cmd is Command; *ret_cmd = ... uses Command's
+  // default operator= directly.
+  if (ins->cmd.has_value())
+    *ret_cmd = ins->cmd;
   else
-    ret_cmd->set_marshallable(make_shared<TpcNoopCommand>());
+    *ret_cmd = make_shared<TpcNoopCommand>();
   *dep = ins->dep_id;
   *status = ins->status;
 
@@ -263,7 +258,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
                                  const uint64_t& slot,
                                  const ballot_t& ballot,
                                  const uint64_t& dep,
-                                 shared_ptr<Marshallable>& cmd,
+                                 const janus::Command& cmd_env,
                                  const struct DepId& dep_id,
                                  ballot_t* max_ballot,
                                  uint64_t* ret_dep,
@@ -276,7 +271,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
+  Log_info("cmd<%d, %d> entered site %d CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
 #endif
 
   auto ins = GetInstance(slot, is_pilot);
@@ -316,7 +311,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
          */
 #ifdef FULL_LOG_DEBUG
         Log_info("cmd<%d, %d> entered site %d for j(%d) dep_id(%d)<slot(%d) thus set suggest_dep(%d) log_info.max_accepted_slot(%d)",
-          SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, j, dep_id, slot, suggest_dep, log_info.max_accepted_slot);
+          SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_, j, dep_id, slot, suggest_dep, log_info.max_accepted_slot);
 #endif
         // Log_info("loc_id_=%d isPilot_=%d slot=%d j=%d dep_id=%d, dep_id!=0 && dep_id<slot suggest_dep(%d->%d)", loc_id_, isPilot_, slot, j, dep_id, suggest_dep, log_info.max_accepted_slot);
         suggest_dep = log_info.max_accepted_slot;
@@ -332,7 +327,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
   if (ins->ballot <= ballot) {
     ins->ballot = ballot;
     ins->dep_id = dep;
-    ins->cmd = cmd;
+    ins->cmd = cmd_env;
     log_infos_[is_pilot].max_active_slot = std::max(log_infos_[is_pilot].max_active_slot, slot);
     // still set the cmd here, to prevent PREPARE from getting an empty cmd
     ins->status = Status::FAST_ACCEPTED;
@@ -349,7 +344,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[2-] [tx=%d] Before on FastAccept cb() %.3f", dynamic_pointer_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[2-] [tx=%d] Before on FastAccept cb() %.3f", marshallable_cast<TpcBatchCommand>(cmd_env)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   // Print("loc_id_ = " + std::to_string(loc_id_) + " After OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
@@ -365,7 +360,7 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
                              const uint64_t& slot,
                              const ballot_t& ballot,
                              const uint64_t& dep,
-                             shared_ptr<Marshallable>& cmd,
+                             const janus::Command& cmd_env,
                              const struct DepId& dep_id,
                              ballot_t* max_ballot,
                              rusty::Function<void()> cb) {
@@ -383,7 +378,7 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
   if (ins->ballot <= ballot) {
     ins->ballot = ballot;
     ins->dep_id = dep;
-    ins->cmd = cmd;
+    ins->cmd = cmd_env;
     ins->status = Status::ACCEPTED;
     updateMaxAcptSlot(log_info, slot);
   } else {  // ins->ballot > ballot
@@ -406,7 +401,7 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
 void CopilotServer::OnCommit(const uint8_t& is_pilot,
                              const uint64_t& slot,
                              const uint64_t& dep,
-                             shared_ptr<Marshallable>& cmd) {
+                             const janus::Command& cmd_env) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnCommit is_pilot=" + std::to_string(is_pilot) +
@@ -422,14 +417,14 @@ void CopilotServer::OnCommit(const uint8_t& is_pilot,
      * This case only happens when: this instance is fast-takovered on
      * another server and that server sent a COMMIT for that instance
      * to all replicas
-     * 
+     *
      * We can return even if it's committed but yet executed, since a committed
      * command is bound to get executed.
      */
     return;
   }
-  
-  ins->cmd = cmd;
+
+  ins->cmd = cmd_env;
   ins->status = Status::COMMITED;
 #ifdef WAIT_AT_UNCOMMIT
   ins->cmit_evt.set(1);
@@ -510,7 +505,7 @@ void CopilotServer::Print(std::string log) {
         auto const& data_ptr = entry.second;
         // Log_info("555 %d", key);
         // if (data_ptr->cmd != nullptr) {
-        //   Log_info("cmd_type %d", data_ptr->cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH);
+        //   Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
         //   SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
         // } else {
         //   Log_info("nullptr");
@@ -523,8 +518,8 @@ void CopilotServer::Print(std::string log) {
           // << " key=" << key // key is the same as slot id
           << " slot_id=" << data_ptr->slot_id;
 
-        if (data_ptr->cmd != nullptr) {
-          // Log_info("cmd_type %d", data_ptr->cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH);
+        if (data_ptr->cmd.has_value()) {
+          // Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
           SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
           oss << " cmd_id=<" << parsed_cmd.cmd_id_.first << ", " << parsed_cmd.cmd_id_.second << "> ";
         } else {
@@ -600,12 +595,14 @@ void CopilotServer::updateMaxCmtdSlot(CopilotLogInfo& log_info, slotid_t slot) {
 }
 
 void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
+  // cmd deduces to Command; kind_ is the public field;
+  // marshallable_cast<T>(Command&) overload handles the cast.
   auto cmd = log_info.logs[slot]->cmd;
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+  if (cmd.kind_ == TpcCommitCommand::static_kind()) {
+    auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
     tx_sched_->DestroyTx(tpc_cmd->tx_id_);
-  } else if (cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH) {
-    auto batch_cmd = dynamic_pointer_cast<TpcBatchCommand>(cmd);
+  } else if (cmd.kind_ == TpcBatchCommand::static_kind()) {
+    auto batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
     for (auto& c : batch_cmd->cmds_)
       tx_sched_->DestroyTx(c->tx_id_);
   }
@@ -613,8 +610,11 @@ void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
 }
 
 bool CopilotServer::executeCmd(shared_ptr<CopilotData>& ins) {
-  if (likely((bool)(ins->cmd))) {
-    if (likely(ins->cmd->kind_ != MarshallDeputy::CMD_NOOP)) {
+  // ins->cmd is Command; RuleWitnessGC still takes
+  // shared_ptr<Marshallable>; app_next_ takes Command directly;
+  // kind_ is Command's public field.
+  if (likely(ins->cmd.has_value())) {
+    if (likely(ins->cmd.kind_ != TpcNoopCommand::static_kind())) {
       // WAN_WAIT
       // Log_info("loc_id %d execute cmd <%d, %d>", loc_id_, SimpleRWCommand::GetCmdID(ins->cmd).first, SimpleRWCommand::GetCmdID(ins->cmd).second);
       RuleWitnessGC(ins->cmd);
@@ -636,7 +636,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
   if (ins->status == Status::EXECUTED)
     return true;
   
-  if (unlikely(ins->dep_id == 0 || ins->cmd->kind_ == MarshallDeputy::CMD_NOOP)) {
+  if (unlikely(ins->dep_id == 0 || ins->cmd.kind_ == TpcNoopCommand::static_kind())) {
     return executeCmd(ins);
   } else {
 #ifdef DEBUG
@@ -675,7 +675,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
 
     // case 1: no dependency, no-op, or dependency has been executed
     if (unlikely(w->dep_id == 0 ||
-        w->cmd->kind_ == MarshallDeputy::CMD_NOOP) ||
+        w->cmd.kind_ == TpcNoopCommand::static_kind()) ||
         GET_STATUS(dep->status) == Status::EXECUTED) {
       executeCmd(w);
       continue;
@@ -705,7 +705,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
       if (GET_STATUS(d->status) >= Status::EXECUTED)
         // case 2.1: d already executed else where
         continue;
-      else if (d->dep_id == 0 || d->cmd->kind_ == MarshallDeputy::CMD_NOOP) {
+      else if (d->dep_id == 0 || d->cmd.kind_ == TpcNoopCommand::static_kind()) {
         // case 2.2: d has no dep or d is no-op
         executeCmd(d);
       } else if (d->dep_id >= i) {
@@ -978,19 +978,23 @@ bool CopilotServer::strongConnect(shared_ptr<CopilotData>& ins, int* index) {
 #endif
 
 #ifdef ZERO_OVERHEAD
-bool CopilotServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) {
+bool CopilotServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_env) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   if (!(isPilot_ || isCopilot_)) return false;
   // Log_info("[Begin] isPilot_ %d isCopilot_ %d from %d to %d", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
   for (slotid_t id = log_infos_[isPilot_].max_executed_slot + 1; id <= log_infos_[isPilot_].max_active_slot; id++) {
     // Log_info("id=%d", id);
     shared_ptr<CopilotData> ins = GetInstance(id, isPilot_);
-    if (ins && ins->cmd) {
+    if (ins && ins->cmd.has_value()) {
       // Copilots use batch cmds in copilot instance
-      verify(ins->cmd->kind_ == MarshallDeputy::CMD_TPC_BATCH);
-      shared_ptr<TpcBatchCommand> batch_cmd = dynamic_pointer_cast<TpcBatchCommand>(ins->cmd);
+      verify(ins->cmd.kind_ == TpcBatchCommand::static_kind());
+      shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(ins->cmd);
       for (int i = 0; i < batch_cmd->Size(); i++)
-        if (SimpleRWCommand::Conflict(batch_cmd->cmds_[i], cmd))
+        // passing Command to second arg forces
+        // Conflict's (Command, Command) overload — first arg
+        // (shared_ptr<TpcCommitCommand>) auto-converts via Command's
+        // templated ctor, second arg is already Command.
+        if (SimpleRWCommand::Conflict(batch_cmd->cmds_[i], cmd_env))
           return true;
     }
       

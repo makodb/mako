@@ -1,7 +1,24 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
 #ifndef RANDOM_GENERATOR_H_
 #define RANDOM_GENERATOR_H_
 
 #include <pthread.h>
+
+
+
 
 namespace rrr {
 

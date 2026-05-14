@@ -201,9 +201,8 @@ int shutdown_paxos() {
     DISPATCH_RAFT_OR_PAXOS(shutdown_paxos);  // @unsafe
 }
 
-void microbench_paxos() {
-    DISPATCH_VOID_RAFT_OR_PAXOS(microbench_paxos);  // @unsafe
-}
+// removed `microbench_paxos()` dispatcher
+// — no callers anywhere; both impls (paxos + raft) deleted.
 
 void register_for_follower(std::function<void(const char*, int)> cb, uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(register_for_follower, cb, par_id);  // @unsafe
@@ -267,9 +266,8 @@ void wait_for_submit(uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(wait_for_submit, par_id);  // @unsafe
 }
 
-void microbench_paxos_queue() {
-    DISPATCH_VOID_RAFT_OR_PAXOS(microbench_paxos_queue);  // @unsafe
-}
+// removed `microbench_paxos_queue()`
+// dispatcher — no callers anywhere; both impls deleted.
 
 void pre_shutdown_step() {
     DISPATCH_VOID_RAFT_OR_PAXOS(pre_shutdown_step);  // @unsafe
@@ -295,33 +293,14 @@ void nc_setup_server(int port, std::string host) {
     DISPATCH_VOID_RAFT_OR_PAXOS(nc_setup_server, port, host);  // @unsafe
 }
 
-std::vector<std::vector<int>>* nc_get_new_order_requests(int i) {
-    DISPATCH_RAFT_OR_PAXOS(nc_get_new_order_requests, i);  // @unsafe
-}
-
-std::vector<std::vector<int>>* nc_get_payment_requests(int i) {
-    DISPATCH_RAFT_OR_PAXOS(nc_get_payment_requests, i);  // @unsafe
-}
-
-std::vector<std::vector<int>>* nc_get_delivery_requests(int i) {
-    DISPATCH_RAFT_OR_PAXOS(nc_get_delivery_requests, i);  // @unsafe
-}
-
-std::vector<std::vector<int>>* nc_get_order_status_requests(int i) {
-    DISPATCH_RAFT_OR_PAXOS(nc_get_order_status_requests, i);  // @unsafe
-}
-
-std::vector<std::vector<int>>* nc_get_stock_level_requests(int i) {
-    DISPATCH_RAFT_OR_PAXOS(nc_get_stock_level_requests, i);  // @unsafe
-}
-
-std::vector<std::vector<int>>* nc_get_read_requests(int i) {
-    DISPATCH_RAFT_OR_PAXOS(nc_get_read_requests, i);  // @unsafe
-}
-
-std::vector<std::vector<int>>* nc_get_rmw_requests(int i) {
-    DISPATCH_RAFT_OR_PAXOS(nc_get_rmw_requests, i);  // @unsafe
-}
+// removed seven `nc_get_*_requests`
+// dispatcher functions (~25 lines) and their underlying impls in
+// `paxos_main_helper.cc` / `raft_main_helper.cc`.  The Paxos-side
+// getters returned `&nc_services[par_id]->...` against an
+// unpopulated `nc_services` global (UB), and the only external
+// caller in `nc_main.cc` line 381 was already a single-line `//`
+// comment.  Both implementations + their declarations in
+// `replication_helper.h` were dropped alongside.
 
 // Raft-specific function - no-op for Paxos
 void set_preferred_leader(int site_id) {

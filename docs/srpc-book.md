@@ -2,7 +2,7 @@
 
 A comprehensive developer guide for RRR — the **S**imple **RPC** framework powering Mako.
 
-RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, stackful coroutines (fibers), an event-driven reactor, and binary serialization — all with Rust-inspired memory safety.
+RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, stackful fibers, an event-driven reactor, and binary serialization — all with Rust-inspired memory safety.
 
 ---
 
@@ -10,7 +10,7 @@ RRR stands for "Repeatable Research Runtime." It provides high-performance RPC, 
 
 1. [Introduction](#1-introduction)
 2. [Architecture Overview](#2-architecture-overview)
-3. [Fibers (Stackful Coroutines)](#3-fibers-stackful-coroutines)
+3. [Fibers (Stackful)](#3-fibers-stackful)
 4. [The Reactor Pattern](#4-the-reactor-pattern)
 5. [Event System](#5-event-system)
 6. [I/O Layer: Polling and Connections](#6-io-layer-polling-and-connections)
@@ -47,7 +47,7 @@ Off-the-shelf RPC frameworks (gRPC, Thrift) are designed for general-purpose use
 
 | Feature | Description |
 |---------|-------------|
-| **Stackful Coroutines** | Lightweight fibers with custom x86_64 assembly context switching |
+| **Stackful Fibers** | Lightweight fibers with custom x86_64 assembly context switching |
 | **Reactor Pattern** | Event-driven I/O via epoll (Linux) / kqueue (macOS) |
 | **Binary RPC** | Compact wire format with code generation from `.rpc` definitions |
 | **Connection Pooling** | Health-aware pools with load balancing |
@@ -119,15 +119,15 @@ src/rrr/
     reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
     request_options.hpp # Per-request configuration
+    pollable_proxy.h    # Pollable proxy facade + typed Arc adapter helpers
     errors.hpp          # Error code definitions
     utils.hpp/cpp       # RPC utilities
 
-  reactor/            # Event loop and coroutine system
+  reactor/            # Event loop and fiber system
     reactor.h           # Core event loop scheduler (482 lines)
     fiber.h             # Modern fiber API (this_fiber namespace)
     fiber_impl.h/cc     # Fiber implementation + context switching
     fiber_context_x86_64.cc # Assembly context switching
-    coroutine.h         # Legacy coroutine interface (alias for Fiber)
     event.h             # Event synchronization primitives
     future.h            # Async result container
     epoll_wrapper.h     # Linux epoll / macOS kqueue abstraction
@@ -153,9 +153,9 @@ src/rrr/
 
 ---
 
-## 3. Fibers (Stackful Coroutines)
+## 3. Fibers (Stackful)
 
-Fibers are the fundamental concurrency primitive in RRR. They are **stackful coroutines** — lightweight execution contexts that can pause and resume from any function depth.
+Fibers are the fundamental concurrency primitive in RRR. They are **stackful execution contexts** that can pause and resume from any function depth.
 
 ### Why Fibers Instead of Threads?
 
@@ -204,7 +204,7 @@ auto fiber = Fiber::create_run([]() {
 });
 ```
 
-**Backward compatibility:** `Coroutine` is an alias for `Fiber`. Use `Fiber` in new code — it more accurately describes our stackful execution model (C++20 "coroutines" are stackless).
+**Backward compatibility:** Legacy aliases still exist for older APIs. Use `Fiber` naming in new code.
 
 ### Fiber Lifecycle
 
@@ -223,7 +223,7 @@ Running  (executing user function)
 Finished (function returns)
   |
   v
-Recycled (if REUSE_CORO enabled) or Destroyed
+Recycled (if fiber reuse is enabled) or Destroyed
 ```
 
 ### Implementation Details
@@ -261,26 +261,26 @@ The **Reactor** is the event loop that manages all fibers and I/O within a threa
 
 ```cpp srpc-no-compile
 // Get the thread-local reactor
-auto reactor = Reactor::GetReactor();
+auto reactor = Reactor::get_reactor();
 
 // Create fibers
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_fiber([]() {
     // Your concurrent task
     this_fiber::yield();  // Let others run
 });
 
 // Run event loop
-reactor->Loop(true);   // Run forever
-reactor->Loop(false);  // Process once
+reactor->loop(true);   // Run forever
+reactor->loop(false);  // Process once
 ```
 
 ### Event Loop Operation
 
-Each iteration of `Reactor::Loop()`:
+Each iteration of `Reactor::loop()`:
 
 1. **Process commands** from other threads (add/remove Pollables, Jobs)
 2. **epoll_wait()** to get ready file descriptors
-3. **Handle I/O** on ready FDs (call `Pollable::handle_read/write`)
+3. **Handle I/O** on ready FDs (proxy-dispatch `handle_read/write` by FD)
 4. **Check events** — collect ready events from the waiting queue
 5. **Check timeouts** — move expired events to ready queue
 6. **Process composite events** (WaitAll, WaitAny, QuorumEvent)
@@ -292,13 +292,13 @@ Each iteration of `Reactor::Loop()`:
 ```cpp srpc-no-compile
 // WRONG - undefined behavior!
 std::thread t([reactor]() {
-    reactor->CreateRunCoroutine([]() { /* ... */ });  // BAD!
+    reactor->create_run_fiber([]() { /* ... */ });  // BAD!
 });
 
 // RIGHT - each thread has its own reactor
 std::thread t([]() {
-    auto reactor = Reactor::GetReactor();  // Thread-local
-    reactor->CreateRunCoroutine([]() { /* ... */ });
+    auto reactor = Reactor::get_reactor();  // Thread-local
+    reactor->create_run_fiber([]() { /* ... */ });
 });
 ```
 
@@ -317,7 +317,7 @@ class PollThread {
     Reactor* reactor_;
     void Run() {
         while (running_) {
-            reactor_->Loop(false);  // Process pending events
+            reactor_->loop(false);  // Process pending events
         }
     }
 };
@@ -348,7 +348,7 @@ class Event {
 #### IntEvent — Integer-based condition
 
 ```cpp srpc-no-compile
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 event->target_ = 42;  // Ready when value_ == 42
 
 // In another fiber:
@@ -361,7 +361,7 @@ event->Wait();  // Resumes when value_ == target_
 #### TimeoutEvent — Time-based trigger
 
 ```cpp srpc-no-compile
-auto timeout = Reactor::CreateSpEvent<TimeoutEvent>(1000000);  // 1 second
+auto timeout = Reactor::create_sp_event<TimeoutEvent>(1000000);  // 1 second
 timeout->Wait();
 std::cout << "1 second elapsed!" << std::endl;
 ```
@@ -369,18 +369,18 @@ std::cout << "1 second elapsed!" << std::endl;
 #### WaitAny (OrEvent) — Any of multiple events
 
 ```cpp srpc-no-compile
-auto e1 = Reactor::CreateSpEvent<IntEvent>();
-auto e2 = Reactor::CreateSpEvent<IntEvent>();
-auto any = Reactor::CreateSpEvent<WaitAny>(e1, e2);
+auto e1 = Reactor::create_sp_event<IntEvent>();
+auto e2 = Reactor::create_sp_event<IntEvent>();
+auto any = Reactor::create_sp_event<WaitAny>(e1, e2);
 any->Wait();  // Continues when EITHER event triggers
 ```
 
 #### WaitAll (AndEvent) — All events must be ready
 
 ```cpp srpc-no-compile
-auto e1 = Reactor::CreateSpEvent<IntEvent>();
-auto e2 = Reactor::CreateSpEvent<IntEvent>();
-auto all = Reactor::CreateSpEvent<WaitAll>(e1, e2);
+auto e1 = Reactor::create_sp_event<IntEvent>();
+auto e2 = Reactor::create_sp_event<IntEvent>();
+auto all = Reactor::create_sp_event<WaitAll>(e1, e2);
 all->Wait();  // Continues when BOTH events trigger
 ```
 
@@ -388,14 +388,14 @@ all->Wait();  // Continues when BOTH events trigger
 
 ```cpp srpc-no-compile
 auto events = {e1, e2, e3, e4, e5};
-auto quorum = Reactor::CreateSpEvent<WaitN>(events, 3);
+auto quorum = Reactor::create_sp_event<WaitN>(events, 3);
 quorum->Wait();  // Continues when 3 of 5 events trigger
 ```
 
 ### Wait with Timeout
 
 ```cpp srpc-no-compile
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 event->Wait(1000000);  // 1 second timeout
 
 if (event->status_ == Event::TIMEOUT) {
@@ -417,7 +417,7 @@ if (event->status_ == Event::TIMEOUT) {
 
 ### Pollable Interface
 
-Any object that needs I/O multiplexing implements `Pollable`:
+Legacy path: objects can still implement `Pollable` directly:
 
 ```cpp srpc-no-compile
 class Pollable {
@@ -430,16 +430,24 @@ class Pollable {
 };
 ```
 
+Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
+(`PollableFacade` and typed-arc adapter support). Poll-thread
+command payloads, storage, and event dispatch run through proxy-backed state
+(`pro::proxy<PollableFacade>`), and epoll integration is fd-based (no
+`Pollable*` userdata/update assumptions). `ServerListener`, `ServerConnection`,
+and `ClientConnection` now use direct typed-proxy construction and no longer
+inherit `Pollable`.
+
 ### Epoll Abstraction
 
 RRR wraps Linux epoll and macOS kqueue behind a unified `Epoll` class:
 
 ```cpp srpc-no-compile
 class Epoll {
-    void add(Pollable* p);        // Register FD for monitoring
-    void remove(Pollable* p);     // Unregister FD
-    void update(Pollable* p);     // Change poll mode
-    int wait(epoll_event* events, int maxevents, int timeout_ms);
+    void add(int fd, int mode);                    // Register FD for monitoring
+    void remove(int fd);                           // Unregister FD
+    void update(int fd, int new_mode, int old_mode); // Change poll mode
+    void wait(fn(int fd, int ready_events));       // Report readiness by FD
 };
 ```
 
@@ -449,9 +457,8 @@ class Epoll {
 
 ```cpp srpc-no-compile
 Arc<PollThread> pt = PollThread::create();
-pt->add(Arc<Pollable>(connection));     // Register for I/O
-pt->remove(*connection);                // Unregister
-pt->request_close(fd);                  // Close and drop
+pt->add_proxy(make_pollable_proxy_from_typed_arc(connection)); // Direct proxy path
+pt->request_close(connection->fd());    // Unregister + close
 pt->shutdown();                         // Stop poll loop
 ```
 
@@ -460,7 +467,7 @@ pt->shutdown();                         // Stop poll loop
 ```cpp srpc-no-compile
 class PollThreadWorker {
     Epoll poll_;
-    unordered_map<int, Arc<Pollable>> fd_to_pollable_;
+    unordered_map<int, PollableProxy> fd_to_pollable_;
     mpsc::Receiver<PollCommand> receiver_;  // Commands from main thread
 
     void poll_loop() {
@@ -468,7 +475,7 @@ class PollThreadWorker {
             process_channel_commands();  // Add/remove/close/update_mode
             epoll_wait(...);
             for each ready fd:
-                call handle_read() / handle_write();
+                lookup proxy by fd, then call handle_read() / handle_write();
             trigger_jobs();
         }
     }
@@ -481,10 +488,10 @@ The poll thread and main thread communicate via an mpsc (multi-producer, single-
 
 | Command | Description |
 |---------|-------------|
-| `CmdAddPollable` | Register new Pollable with epoll |
-| `CmdRemovePollable` | Remove from epoll (keep Arc alive) |
-| `CmdClosePollable` | Remove + drop Arc |
-| `CmdUpdateMode` | Change poll_mode for an FD |
+| `CmdAddPollable` | Register new Pollable proxy with epoll |
+| `CmdRemovePollable` | Remove from epoll and worker ownership without forcing `close()` |
+| `CmdClosePollable` | Remove + close via proxy dispatch, then drop ownership |
+| `CmdUpdateMode` | Change poll_mode for an FD (fd-based lookup, no raw pointer payload) |
 | `CmdAddJob` / `CmdRemoveJob` | Periodic job management |
 | `CmdShutdown` | Stop poll loop |
 
@@ -555,11 +562,138 @@ Client                           Network                          Server
   |                                  Handler processes request      |
   |                                                                 |
   |                              <-- [size|xid|error|rets] --------|
-  |-- ClientConnection.handle_read()                                |
+  |-- TcpConnection on_frame -> ClientConnection                    |
+  |   .decode_response_and_notify(bytes, size)                      |
   |-- Match xid to Future                                           |
   |-- Set reply data, signal fiber                                  |
   |-- Fiber resumes with result                                     |
 ```
+
+Workstream K, sub-leaf 4g3c3 — `ClientConnection` no longer owns
+the socket fd or the `Pollable` I/O methods. The channel layer's
+`TcpConnection` registers with the poll thread, drives
+`handle_read` / `handle_write`, and forwards decoded frames to
+`ClientConnection::decode_response_and_notify` via the
+`bind_channel_direct(...)` `on_frame` callback. The legacy
+`ClientConnection::handle_read` body, the `socket_` / `in_` / `out_`
+fields, the `pending_write_update_` flag, and the
+`apply_keepalive_options` / `validate_connection` socket probes
+have all been removed; the `Pollable` overrides remain as no-op
+stubs only because deptran's host-scoped retention map
+(`Reactor::clients_`) still wraps `ClientConnection` in
+`PollableProxy`.
+
+Workstream K, sub-leaf 4g3d — `Client::fd()` (the public RPC
+client's file-descriptor accessor) is gone. Users that need a
+peer identifier should use `Client::host()` instead.
+`ClientConnection::fd()` survives only as a no-op (returns -1)
+to keep `PollableTypedArcAdapter<ClientConnection>` compilable
+for the deptran retention proxy. The RPC client's translation
+unit also dropped its socket-path system headers
+(`<sys/socket.h>`, `<sys/un.h>`, `<unistd.h>`, `<netdb.h>`,
+`<netinet/tcp.h>`, `<sys/types.h>`, `<string.h>`) — none of
+their symbols are reachable from the RPC layer post-4g3c3.
+
+Workstream K, sub-leaf 4g4 — the `SRPC_USE_CHANNEL` /
+`SRPC_DISABLE_CHANNEL` migration env vars and the
+`srpc_use_channel()` / `srpc_set_use_channel_for_testing(...)` /
+`srpc_reset_use_channel_for_testing()` helpers are deleted.
+Channel mode is unconditional; `Client::connect(addr, ...)`
+auto-installs a default TCP `ChannelFactoryProxy` whenever the
+caller hasn't already bound one via
+`set_channel_factory(...)`. The standalone migration-switch test
+(`test_rpc_client_channel_switch`) is removed. External callers
+that set the env vars or invoked the helpers should remove
+those references.
+
+Workstream K, server sub-leaves 5a–5g3 — RPC server migrated to
+the channel layer end-to-end. `Server` now exposes
+`set_channel_factory(ChannelFactoryProxy)` and
+`is_channel_factory_bound()` (5a). `ServerConnection` exposes
+`bind_channel(ChannelConnectionProxy)` and `is_channel_mode()`
+(5b–5d): `reply<F>(req, error_code, write_fn)` builds the
+response body in a scratch `Marshal` and dispatches via
+`proxy->send_frame(...)` (5b); the proxy's `on_frame` callback
+calls `decode_request_and_dispatch(bytes, size)` which mirrors
+the legacy per-packet dispatch path (5c); `on_closed` /
+`on_error` route to the existing `close()` path (5d).
+
+`Server::start(addr)` calls `factory->make_listener()`,
+installs an `on_accept(ChannelConnectionProxy)` callback that
+constructs a `ServerConnection` bound to the new proxy and parks
+it in `channel_sconns_`, then calls `listener->listen(addr)`
+(5e). When no factory is explicitly bound, `Server::start`
+auto-installs a default `TcpFactory(poll_thread_)` (5f), so
+channel mode is the only path. `~Server` actively closes each
+accepted channel-mode `ServerConnection` (driving the bound
+proxy's `close()`) before clearing `channel_sconns_`, then
+schedules the channel listener's close on the poll thread via a
+`OneTimeJob` to avoid the `CmdAddPollable` race (5f).
+
+The legacy `ServerListener` class is gone (5g1) along with
+`Server::server_listener_`, the `ServerListener` socket fallback
+in `start()`, and the legacy listener cleanup branches in
+`~Server` / `stop_accepting`. `Server::get_bound_port()` is
+re-implemented atop `ChannelListenerProxy::local_address()`.
+`ServerConnection`'s legacy fd-path Pollable methods
+(`handle_read` / `handle_write` / `handle_error` / `poll_mode` /
+`content_size` / `check_pending_write_update` / `fd`) are
+stubbed to no-ops (kept for `PollableProxy` facade ABI
+conformance) and the underlying fields (`Marshal in_`,
+`SpinMutex<Marshal> out_`, `int socket_`,
+`Cell<bool> pending_write_update_`) are deleted (5g2). Unused
+socket-path system headers (`<sys/socket.h>`, `<netdb.h>`,
+`<sys/un.h>`, `<sys/select.h>`, `<sys/types.h>`,
+`<netinet/tcp.h>`, `<unistd.h>`, `<pthread.h>`, `<string.h>`)
+are dropped from `server.{hpp,cpp}` (5g3); only `<errno.h>`
+remains (for `EINVAL` / `ENOENT` constants in the dispatch
+path). `Server` is now reduced to its dispatch + lifecycle
+state plus the channel binding.
+
+Workstream K, sub-leaves 6a–6d — in-memory channel backend.
+`src/rrr/rpc/inmemory_channel.{hpp,cpp}` adds a deterministic
+in-process channel implementation conforming to the same
+`ChannelConnectionFacade` / `ChannelListenerFacade` /
+`ChannelFactoryFacade` contracts as the TCP backend. Components:
+
+  * `InMemorySwitchboard` — thread-safe address → `Weak<InMemoryListener>`
+    map. Thin lookup surface (`bind`, `unbind`, `lookup`); the address
+    space is whatever string the caller chooses (e.g.
+    `"inmemory://server-1"`).
+  * `InMemoryConnectionState` — shared `Arc<>` state between the two
+    sides of an in-memory channel pair: per-side callback storage
+    (`on_frame` / `on_closed` / `on_error`), closed flags, and
+    test-only fault-injection counters (drop / error). Mutated under
+    a single `SpinMutex`.
+  * `InMemoryChannel` — one side of a pair. `send_frame(...)` copies
+    the bytes (the channel-layer contract requires the buffer to be
+    valid only during the callback) and synchronously invokes the
+    *peer's* `on_frame` callback. `close()` fires the peer's
+    `on_closed` (not self's, mirroring TCP's "remote saw FIN"
+    semantics). `is_closed()` reports the joint state
+    (`a_closed || b_closed`).
+  * `InMemoryListener` — registers itself with the switchboard at
+    `listen(addr)` and unregisters at `close()`. `on_accept` fires
+    synchronously inside `connect(...)` after the channel pair is
+    constructed.
+  * `InMemoryFactory` — `connect(addr)` looks up the listener for
+    `addr`, builds a fresh `Arc<InMemoryConnectionState>`, splits it
+    into two `InMemoryChannel`s with a synthesized client peer
+    address, fires the listener's `on_accept` with the server-side
+    proxy, and returns the client-side proxy. If no listener is
+    registered, returns `ChannelError::ConnectionRefused`.
+
+Fault-injection knobs (`inject_drop_next_sends(N)`,
+`inject_send_error(err, N)`, `clear_fault_injection()`) live on
+`InMemoryChannel` and are exposed through a test-only
+`make_channel_pair_for_testing(a_addr, b_addr)` helper. Drops fire
+before errors when both are queued; `closed` always wins.
+
+The end-to-end test `src/rrr/tests/rpc_inmemory_channel_e2e_test.cc`
+drives a real `Server` + `Client` through the `InMemoryFactory`
+without any real sockets — useful as a deterministic foundation for
+RPC-layer reliability tests (reconnect coverage, partition-induced
+timeout coverage) that previously had to rely on TCP timing.
 
 ### Error Codes
 
@@ -590,7 +724,7 @@ if (rc != 0) {
 }
 
 // Synchronous-style call using FutureResult
-auto fu_result = client->request(RPC_METHOD_ID, [&](Marshal& m) {
+auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
     m << arg1 << arg2;
 });
 
@@ -605,7 +739,7 @@ if (fu_result.is_ok()) {
 ### Async RPC
 
 ```cpp srpc-compile-client
-auto fu_result = client->request(RPC_METHOD_ID, [&](Marshal& m) {
+auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
     m << arg1;
 });
 // ... do other work ...
@@ -693,12 +827,29 @@ public:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
                 out << result;
             });
         }
     }
 };
+```
+
+Migration note: `Server` now stores services internally as `pro::proxy<ServiceFacade>`.
+Legacy `Service` inheritance remains fully supported via a compatibility adapter,
+so existing generated/handwritten services continue to work unchanged.
+The server also accepts non-inheritance typed services, as long as they expose
+`__reg_to__(Server&, size_t)` and `__dispatch__(i32, rusty::Box<Request>, WeakServerConnection)`.
+
+```cpp srpc-no-compile
+class MyTypedService {
+public:
+    int __reg_to__(Server& svr, size_t svc_index);
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn);
+};
+
+Server server(rusty::None);
+server.reg_service(rusty::make_box<MyTypedService>());
 ```
 
 ### Server Lifecycle
@@ -746,9 +897,9 @@ The `RpcServiceContext` maps RPC IDs to service implementations:
 
 ```cpp srpc-no-compile
 class RpcServiceContext {
-    // Map rpc_id -> Service implementation
-    // Uses rusty::Arc for thread-safe sharing
-    // Uses rusty::RefCell for single-threaded dispatch
+    // Map rpc_id -> service index (rpc_id_sp_map)
+    // Services are stored as Vec<RefCell<ServiceProxy>>
+    // (legacy Service subclasses are adapted to ServiceProxy on registration)
 };
 ```
 
@@ -797,26 +948,85 @@ v32 small_val(5);    // Encoded in 1 byte
 v32 large_val(1000); // Encoded in 2 bytes
 ```
 
-### Custom Types (Marshallable)
+### Custom Types (Serializable)
 
-To serialize custom types, implement `Marshallable`:
+To serialize a custom type, define three things on it: a `kind()`
+discriminator, `save(BinaryWriteArchive&)`, and `load(BinaryReadArchive&)`.
+No inheritance is required — the type stays a plain struct/class, and
+the `pro::proxy<SerializableFacade>` machinery (the proxy library
+facade in `third-party/proxy/`) does the type erasure at registration
+time:
 
 ```cpp srpc-no-compile
-struct MyData : public Marshallable {
+struct MyTypedData {
+    static constexpr int32_t kMarshallKind = 420999;
     i32 id;
     std::string name;
 
-    Marshal& to_marshal(Marshal& m) const override {
-        m << id << name;
-        return m;
+    int32_t kind() const { return kMarshallKind; }
+
+    void save(rrr::BinaryWriteArchive& ar) const {
+        ar << id << name;
     }
 
-    Marshal& from_marshal(Marshal& m) override {
-        m >> id >> name;
-        return m;
+    void load(rrr::BinaryReadArchive& ar) {
+        ar >> id >> name;
     }
 };
+
+// Register so the `SerializableEnvelope` factory path can recover the
+// type by kind on the receive side. Lives in any .cc file:
+static int volatile reg_my_typed_data =
+    rrr::SerializableRegistry::reg<MyTypedData>(MyTypedData::kMarshallKind);
 ```
+
+For closed-set command types (the in-tree `MakoCommands` TypeList) the
+kind is derived from the type's TypeList position — drop the
+`kMarshallKind` constant + manual `kind()` method and inherit
+`Serializable<T, MakoCommands>` instead.  See the "Closed-set
+polymorphism" subsection below for the full pattern.
+
+All in-tree deptran payload types (`VecRecData`, `ViewData`,
+`KeyCmdBatchData`, `VecPieceData`, `TpcPrepareCommand`,
+`TpcCommitCommand`, `TpcEmptyCommand`, `TpcNoopCommand`,
+`TpcBatchCommand`, `ReplicatedDBCommand`, `EmptyGraph`, `RccGraph`,
+`BulkPrepareLog`, `PaxosPrepCmd`, `HeartBeatLog`, `SyncLogRequest`,
+`SyncLogResponse`, `SyncNoOpRequest`, `LogEntry`, `BulkPaxosCmd`,
+`SimpleRWCommand`) use the Serializable path.  Wire format is
+`[v32 kind][payload bytes]` for closed-set types and
+`[v32 ANY_MESSAGE][v64-prefixed type_name][payload bytes]` for the
+open-set `AnyMessage` envelope.
+
+> **Historical note** — the prior abstract base classes
+> `rrr::Marshallable` (virtual `to_marshal`/`from_marshal`) and
+> `rrr::MarshallDeputy` (kind-tagged envelope around
+> `shared_ptr<Marshallable>`) are gone as of Workstream N L10f-2 step 5
+> (2026-05-05).  Production code uses `janus::Command`
+> (`SerializableEnvelope<MakoCommands>`) for closed-set commands and
+> `rrr::AnyMessage` for open-set graph payloads; both serialize
+> through `pro::proxy<SerializableFacade>` value members with no
+> intermediate adapter or `shared_ptr<Marshallable>` storage.
+
+When extracting a typed payload from a `Command` envelope, use
+`Command::unpack<T>()` (returns `T*` or `nullptr` on type mismatch)
+or `Command::unpack_shared<T>()` (returns a `shared_ptr<T>` aliased
+into the envelope's storage so the receiver can pin lifetime):
+
+```cpp srpc-no-compile
+janus::Command cmd;
+m >> cmd;  // wire decode populates kind + payload via factory + load
+
+if (auto* view = cmd.unpack<ViewData>()) {
+    // use view
+}
+
+// Aliased shared_ptr — extends the envelope's storage refcount.
+auto sp = cmd.unpack_shared<ViewData>();
+```
+
+For RCC graph envelopes (`RccGraph`, `EmptyGraph`) the access pattern
+uses `AnyMessage` directly (Workstream N L7).  See the AnyMessage
+subsection below.
 
 ### Bookmarks
 
@@ -829,6 +1039,334 @@ m << data1 << data2 << data3;
 i32 payload_size = m.get_and_reset_write_cnt();
 m.write_bookmark(bookmark, &payload_size);  // Fill in size
 ```
+
+### Sink/Source Archive (Workstream N — in-flight)
+
+A new serde / cereal-style serialization layer is being introduced in
+parallel to `Marshal`. It decouples **format** (how bytes are laid out)
+from **target** (where bytes go), so the same `BinaryWriteArchive` can
+write into a memory buffer, an fd, a TCP channel, or a hash without
+copying through `Marshal` first.
+
+```cpp srpc-no-compile
+#include <rrr/misc/serializable.hpp>
+
+// Sink: holds the bytes (Layer 1 — concrete; Layer 2 — `pro::proxy`)
+rrr::BufferSink sink;
+
+// Archive: knows the wire format (Layer 3)
+rrr::BinaryWriteArchive writer(&sink);
+writer << (rrr::i32)42 << std::string("hello");
+
+// Source: drains from a byte view
+rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
+rrr::BinaryReadArchive reader(&source);
+rrr::i32 x; std::string s;
+reader >> x >> s;
+```
+
+The archive supports the same primitive set as `Marshal`
+(`int8..int64`, `uint8..uint64`, `double`, `v32`, `v64`, `std::string`,
+`std::string_view`) plus the same containers (`std::pair`,
+`rusty::Vec`, `std::vector`, `std::list`, `std::set`,
+`std::unordered_set`, `std::map`, `std::unordered_map`, plus
+`rusty::BTreeSet`, `rusty::HashSet`, `rusty::BTreeMap`,
+`rusty::HashMap`).
+
+Wire format is **byte-for-byte identical** to `Marshal`'s output for
+all overlapping types — switching transports does not change the
+on-the-wire bytes.
+
+Sinks ship for in-memory buffers (`BufferSink`) and for raw file
+descriptors (`FdSink` / `FdSource`). The fd variants drive a
+synchronous full-write / full-read loop with EINTR retry — useful for
+log replay paths, snapshots, or any consumer that wants to bypass the
+`Marshal`-based intermediate buffer:
+
+```cpp srpc-no-compile
+int fd = ::open("/tmp/snap.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+{
+  rrr::FdSink sink(fd);
+  rrr::BinaryWriteArchive writer(&sink);
+  writer << (rrr::i32)42 << std::string("snapshot payload");
+}
+::close(fd);
+```
+
+#### Polymorphic command types — `SerializableProxy` + registry
+
+For tag-dispatched polymorphism — the role formerly filled by
+`Marshallable` + `MarshallDeputy::reg_initializer` before L10f-2
+step 5 — Layer 4 of the archive system is `SerializableProxy`:
+
+```cpp srpc-no-compile
+struct MyCommand {
+  int32_t id;
+  std::string name;
+
+  // Required by SerializableFacade.
+  static constexpr int32_t kKind = 0xCAFE;
+  int32_t kind() const { return kKind; }
+  void save(rrr::BinaryWriteArchive& ar) const { ar << id << name; }
+  void load(rrr::BinaryReadArchive& ar) { ar >> id >> name; }
+};
+
+// Static-initializer registration.
+static int _reg =
+    rrr::SerializableRegistry::reg<MyCommand>(MyCommand::kKind);
+
+// Read-side: factory create + load.
+rrr::SerializableProxy proxy =
+    rrr::SerializableRegistry::create(kind_from_wire);
+proxy->load(reader);
+```
+
+`SerializableProxy::save` emits only the payload bytes (no kind
+prefix); the kind tag is framed by the enclosing envelope —
+`SerializableEnvelope<TypeList>` (e.g. `janus::Command`) for
+closed-set commands, or `rrr::AnyMessage` for open-set graph
+payloads.  Both envelopes wrap the proxy as a value member; there is
+no `shared_ptr<Marshallable>` storage layer.
+
+#### Open-set polymorphism — `AnyMessage` (Workstream N L7)
+
+For payload types where the universe of values is open (callers may
+not know about every possible carried type at compile time, or the
+type set evolves independently of a central registry), the open-set
+counterpart to the closed-set TypeList pattern lives in
+`misc/any_message.hpp`:
+
+```cpp srpc-no-compile
+struct GraphPayload {
+  int32_t node_count;
+  std::string label;
+  void save(rrr::BinaryWriteArchive& ar) const { ar << node_count << label; }
+  void load(rrr::BinaryReadArchive& ar) { ar >> node_count >> label; }
+  int32_t kind() const { return 0; }  // unused — AnyMessage owns the tag
+};
+
+// Register under a stable string name (anywhere, at static init).
+static int _reg = rrr::reg_any_message_as<GraphPayload>("my.GraphPayload");
+
+// Sender: pack typed value into AnyMessage and ride it directly on
+// an RPC field of type `rrr::AnyMessage`.
+auto val = std::make_shared<GraphPayload>();
+val->node_count = 42;
+val->label = "x";
+rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(val);
+
+// Receiver: dispatch by carried type.
+if (incoming.is_a<GraphPayload>()) {
+  auto p = incoming.unpack<GraphPayload>();
+  // ... use p ...
+}
+```
+
+Wire layout: `[v32: ANY_MESSAGE=24] [v64-prefixed string: type_name]
+[payload bytes]`.  The `ANY_MESSAGE` discriminator (24) is the fixed
+kind; `type_name` is the runtime discriminator.  After Workstream N L9,
+the kind itself rides in 1 byte (v32 single-byte range covers values
+0-63), so the envelope's framing overhead is 1 byte (v32 kind) +
+length-prefixed type_name string.  Aliasing semantics: mutations on
+the caller's `shared_ptr<T>` after `pack` remain visible to the
+encoded payload (the holder-shaped proxy retains the original
+refcount).
+
+When to choose AnyMessage vs. closed-set TypeList:
+- **AnyMessage** for graph / data payloads (`RccGraph`, `EmptyGraph`),
+  versioned schemas, or any case where a service that doesn't know
+  about a new type can still receive and dispatch the envelope. The
+  Rust analogue is `typetag` (string tags via the `inventory` pattern);
+  the protobuf analogue is `google.protobuf.Any` (type-URL).
+- **Closed-set TypeList** for command types where the full set is
+  known up-front and wire compactness matters. The Rust analogue is
+  `enum Foo { ... }` + bincode (declaration-order discriminants); the
+  protobuf analogue is `oneof` (field numbers).
+
+#### Closed-set polymorphism — TypeList + MakoCommands (Workstream N L8/L9)
+
+Command types where the universe is closed (the receiver knows the
+full set at compile time, and wire compactness matters more than
+extensibility) live in the `janus::MakoCommands` TypeList in
+`src/deptran/mako_commands.h`. Each type's wire kind = its 1-indexed
+position in the list, derived via the `Serializable<T, MakoCommands>`
+CRTP base — no per-type kind constant, no central int enum, no
+hashing.
+
+```cpp srpc-no-compile
+// Inherit Serializable<T, MakoCommands> for kind() / static_kind()
+// from the TypeList position.
+class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
+                                                  janus::MakoCommands> {
+ public:
+  txnid_t tx_id_ = 0;
+  janus::Command cmd_{};   // nested polymorphic field rides Command directly
+
+  void save(rrr::BinaryWriteArchive& ar) const;
+  void load(rrr::BinaryReadArchive& ar);
+};
+
+// Register at static init — the no-arg overload picks up the kind
+// from `T::static_kind()` (the TypeList position).
+static int _reg = rrr::SerializableRegistry::reg<TpcCommitCommand>();
+```
+
+Adding a new closed-set Command type:
+1. Add a forward declaration to `src/deptran/mako_commands.h`.
+2. Append the type at the END of the `MakoCommands` TypeList there
+   (appending preserves existing types' kind values; reordering or
+   inserting in the middle is a wire-format break).
+3. Define `class T : public rrr::Serializable<T, janus::MakoCommands>`.
+4. Add `static int _reg = rrr::SerializableRegistry::reg<T>();` in
+   T's .cc.
+
+After Workstream N L9, the `Command::kind_` field serializes as
+`rrr::v32` (variable-length SparseInt) on the wire instead of raw
+4-byte int32.  SparseInt's first-byte encoding has a 6-bit signed
+payload, so values in [-64, 63] fit in 1 byte.  With closed-set kinds
+in [1, 19] and ANY_MESSAGE=24, every production polymorphic envelope
+saves 3 bytes for the kind prefix vs. the pre-L9 4-byte encoding —
+non-trivial savings on the Paxos LogEntry / TpcCommit / heartbeat
+hot path.
+
+#### Marshal ↔ Archive bridges (transitional)
+
+For incremental migration, the new system bridges the existing
+`Marshal` buffer abstraction. `MarshalSink` lets new
+`BinaryWriteArchive`-based code emit bytes directly into a Marshal
+that legacy code is also writing to:
+
+```cpp srpc-no-compile
+rrr::Marshal m;
+m << static_cast<rrr::i32>(1);   // legacy
+
+{
+  rrr::MarshalSink sink(&m);
+  rrr::BinaryWriteArchive writer(&sink);
+  writer << static_cast<rrr::i32>(2);  // new code, same buffer
+}
+
+m << std::string("trailing");  // legacy
+```
+
+`MarshalSource` is the dual: a `BinaryReadArchive` over a
+`Marshal` that was filled by the legacy `operator<<` path decodes
+the bytes exactly as `Marshal::operator>>` would (Phase 1's
+byte-for-byte commitment). Use these adapters when integrating the
+new archive layer with the existing TCP TX/RX path.
+
+#### Marshallable ↔ Serializable bridge adapter (retired)
+
+The `marshal_serializable_bridge.hpp` header (528 LOC) carried a
+`SerializableMarshallableAdapter` that wrapped a
+`pro::proxy<SerializableFacade>` so it satisfied the legacy
+`Marshallable` virtual interface; together with
+`as_marshallable`, `wrap_typed_marshallable`,
+`wrap_serializable[_aliased]`, `marshallable_cast<T>` /
+`serializable_cast<T>` overloads, and
+`reg_serializable_in_deputy<T>`, it was the migration-period glue
+that let Serializable types flow through APIs typed against
+`shared_ptr<Marshallable>`.  Workstream N L10f-2 step 5 retired the
+entire bridge — every production payload registers via
+`SerializableRegistry::reg<T>()` and rides `janus::Command` /
+`rrr::AnyMessage` directly.
+
+If you encounter a stale reference to one of these names in third-
+party docs or comments, the modern equivalent is:
+
+| Retired symbol                         | Replacement                                      |
+|----------------------------------------|--------------------------------------------------|
+| `reg_serializable_in_deputy<T>(kind)`  | `SerializableRegistry::reg<T>(kind)`             |
+| `reg_serializable_in_deputy<T>()`      | `SerializableRegistry::reg<T>()` (TypeList kind) |
+| `wrap_typed_marshallable<T>(sp)`       | `Command{sp}` or `Command::pack_aliased<T>(sp)`  |
+| `wrap_serializable_aliased(proxy)`     | `Command::pack_aliased<T>(sp)`                   |
+| `as_marshallable(proxy)`               | (gone — use `Command` value type)                |
+| `marshallable_cast<T>(md)`             | `cmd.unpack<T>()` / `unpack_shared<T>()`         |
+| `serializable_cast<T>(md)`             | `cmd.unpack<T>()`                                |
+| `MarshallDeputy(shared_ptr<T>)`        | `Command{sp}`                                    |
+| `md.set_marshallable(sp)`              | `cmd = sp` (Command's templated `operator=`)     |
+| `Command::inner_marshallable()`        | `cmd.unpack_shared<T>()` (typed)                 |
+
+#### `rpcgen --archive` emission (default ON)
+
+`bin/rpcgen` emits BinaryWriteArchive / BinaryReadArchive operator<<>>
+overloads alongside the existing Marshal& ones for generated headers.
+Both forms compile and produce identical wire bytes.  As of Phase 3e
+(2026-04-29) this is the default — every in-tree `.rpc` file now
+references types with archive operators (`janus::Command` /
+`rrr::AnyMessage` via the L10c/L10f migrations, `Value` /
+`SimpleCommand` / `TxWorkspace` via Phase 4d-6, `TxReply` and
+`ParentEdge<RccTx>` via Phase 3e), so the additive emission compiles
+cleanly.  Use `--no-archive` to opt out (e.g. when generating against
+a custom `.rpc` that uses user types without archive overloads).
+
+The four in-tree generated headers (`rcc_rpc.h`, `helloworld.h`,
+`network.h`, `benchmark_service.h`) all carry archive operators;
+`rpcgen_compile_test.py` exercises both modes.
+
+Status: the archive layer landed in five broad strokes.
+
+1. **Foundation (Phases 1–3)** — primitive / container archive ops,
+   `SerializableProxy` + registry, `rpcgen --archive` (now the
+   default), `Marshal↔Archive` adapters (`MarshalSink` / `MarshalSource`),
+   archive ops on `Value` / `SimpleCommand` / `TxWorkspace` /
+   `TxReply` / `ParentEdge<RccTx>` so every in-tree `.rpc` references
+   archive-aware types.
+2. **Reactor TX/RX migration (Phase 3d)** — channel-mode response
+   demux moved to `BufferSource`, request/reply lambdas typed as
+   `BinaryWriteArchive&`, `DeferredReply`'s stored callback flipped
+   to `rusty::Function<void(BinaryWriteArchive&)>`, the Python C
+   extension migrated, and `if constexpr` dual-signature dispatch
+   collapsed back to a single archive-only path.  Every write-side
+   caller in the production path now uses `BinaryWriteArchive&`.
+3. **Per-payload Serializable migration (Phase 4)** — every in-tree
+   deptran payload (`EmptyGraph`, the simple paxos control types,
+   `procedure.h` types, `SyncLogResponse`, `RccGraph`, `VecPieceData`,
+   `LogEntry`, `BulkPaxosCmd`, `SimpleRWCommand`,
+   `ReplicatedDBCommand`, the TPC commands) defines `save` / `load` /
+   `kind` directly with no `Marshallable` inheritance.
+4. **Dead-code sweep (Phase 5)** — the bypass-to-socket fast path,
+   `MarshallableProxy` / `MarshallableSharedPtrAdapter`,
+   `TypedMarshallableAdapter`, the `Marshallable::entity_size` /
+   `write_to_fd` virtuals, the `RPC_STATISTICS` marshal-out / marshal-
+   in counters, `MarInitializerState`, and dead
+   `CmdData::to_marshal` / `from_marshal` overrides — ~1410 LOC of
+   transitional / dead infrastructure removed.
+5. **Workstream N L10 — Marshallable + MarshallDeputy retirement.**
+   - **L10c** retired the `MarshallDeputy` envelope from production
+     polymorphic command fields: graphs migrated to `AnyMessage`
+     (L10c-graphs), and the closed-set `[v32 kind][payload]` envelope
+     became `janus::Command` (`SerializableEnvelope<MakoCommands>`).
+   - **L10d-prep** deleted the lazy `MarshallDeputy::serializable()`
+     cache and the `MarshallableSerializableAdapter` reverse-direction
+     bridge (~622 LOC).
+   - **L10f-2 step 5** (the final cut, 2026-05-05) flipped
+     `Command::inner_` and `AnyMessage::payload_` from
+     `shared_ptr<Marshallable>` to `pro::proxy<SerializableFacade>`
+     value members; retired `marshal_serializable_bridge.hpp` (528
+     LOC); deleted the `Marshallable` abstract base and the
+     `MarshallDeputy` concrete envelope from `marshal.hpp` /
+     `marshal.cpp` (~500 LOC); migrated every
+     `reg_serializable_in_deputy<T>` callsite to
+     `SerializableRegistry::reg<T>()`; flipped raft's in-process
+     `AppendEntriesReq.cmd` field type from `MarshallDeputy` to
+     `::janus::Command`.
+
+Result: every payload type in the tree implements `save` / `load` /
+`kind` directly; closed-set polymorphism rides
+`SerializableEnvelope<TypeList>` (typed as `janus::Command` for
+Mako); open-set polymorphism rides `rrr::AnyMessage`; both envelopes
+back their storage with `pro::proxy<SerializableFacade>` value
+members and have no `shared_ptr<Marshallable>` layer.  The only
+`Marshal&` references that remain in source are the intentional
+byte-format-parity tests in `rpc_marshal_archive_test.cc` and the
+`Marshal` buffer abstraction itself (still used as the underlying
+storage that `MarshalSink` / `MarshalSource` adapt to the archive
+API).
+
+For deeper background see
+[`docs/dev/marshal_archive_design.md`](dev/marshal_archive_design.md)
+and [`docs/dev/l10f-2-command-inner-design.md`](dev/l10f-2-command-inner-design.md).
 
 ---
 
@@ -963,6 +1501,8 @@ enum class RpcError {
 ```
 
 `TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in `request_options.hpp`.
+SRPC handles failures through `RpcError` values and helper predicates rather
+than an RPC-specific exception class.
 
 ---
 
@@ -984,7 +1524,7 @@ struct UserInfo {
 
 // Service definition
 service MyService {
-    // 'defer' = dispatched to thread pool
+    // 'defer' = deferred reply API (you decide when to reply)
     defer get_user(i32 id | UserInfo user);
 
     // 'fast' = handled on network thread (low latency)
@@ -992,13 +1532,69 @@ service MyService {
 };
 ```
 
+### RPC Execution Attributes (`fast`, `defer`, `fiber`, `async`)
+
+These are server-side execution attributes in `.rpc` files. They control how
+the generated server wrapper runs your handler.
+
+Important distinction:
+- Server-side `async` (IDL attribute) is about handler execution style.
+- Client-side `async_Method(...)` / `await_Method(...)` proxy APIs are generated
+  for non-raw RPCs regardless of server attribute.
+
+```srpc-no-compile
+service ExecModes {
+    fast   ping(| i32 ok);
+    defer  write(i64 key, string val | i32 status);
+    fiber  lock_then_read(i64 key | string val);
+    async  fetch_remote(i64 key | string val);
+    read_local(i64 key | string val);  // default (no attribute)
+};
+```
+
+Generated server handler signatures:
+
+```cpp srpc-no-compile
+// fast / default / fiber
+virtual Result<RpcPingResponse, i32> ping(const RpcPingRequest& req);
+virtual Result<RpcReadLocalResponse, i32> read_local(const RpcReadLocalRequest& req);
+virtual Result<RpcLockThenReadResponse, i32> lock_then_read(const RpcLockThenReadRequest& req);
+
+// defer
+virtual void write(const RpcWriteRequest& req,
+                   RpcWriteResponse& resp,
+                   rrr::DeferredReply defer);
+
+// async (server-side stackless task)
+virtual rusty::Task<Result<RpcFetchRemoteResponse, i32>>
+fetch_remote(const RpcFetchRemoteRequest& req);
+```
+
+Execution model summary:
+
+| Attribute | Registration path | Handler runtime model | Reply model | Typical use |
+|-----------|-------------------|-----------------------|-------------|-------------|
+| `fast` | `reg_fast_rpc` | Runs directly on network/poll thread | Immediate typed `Result` | Very small, non-blocking handlers; minimum overhead |
+| `defer` | `reg_rpc` | Entered from regular RPC path; handler receives `DeferredReply` token | Explicit `defer.reply()` / `defer.reply_error()` when ready | Work whose reply is naturally delayed (callbacks, external completion) |
+| `fiber` | `reg_rpc` + generated `Fiber::create_run(...)` in wrapper | Runs in a stackful fiber context | Immediate typed `Result` from that fiber | Logic that benefits from `this_fiber::yield()` / event waits |
+| `async` | `reg_fast_rpc` + `spawn_stackless_task_with_result(...)` | C++20 stackless coroutine (`rusty::Task`) polled by reactor | Reply when task becomes ready | `co_await`-style flow without stackful fiber overhead |
+
+Notes:
+- In current implementation, both `fast` and `async` enter from the fast
+  dispatch path (network thread), while default / `defer` / `fiber` enter from
+  the regular RPC dispatch path.
+- `async` handlers that complete on first poll can reply inline; pending tasks
+  are resumed by reactor wakeups.
+- `defer` provides deferred reply semantics; it does not implicitly guarantee
+  thread-pool offload by itself.
+
 ### Code Generation
 
 The `rpcgen` tool generates client and server stubs:
 
-```bash
+```bash srpc-no-compile
 # Generate C++ code from .rpc definition
-python3 pylib/simplerpc/rpcgen.py my_service.rpc
+bin/rpcgen --cpp my_service.rpc
 ```
 
 This produces:
@@ -1010,43 +1606,52 @@ This produces:
 - Typed proxy sync/async APIs for non-raw methods:
   `Method(const MethodRequest&)` and
   `async_Method(const MethodRequest&, const FutureAttr&)`
+- Typed proxy coroutine APIs for non-raw methods:
+  `await_Method(const MethodRequest&, const FutureAttr&)` and
+  `co_await` support on `MethodTypedFuture`
 
-Current codegen is typed-first for non-raw RPC methods:
+Current codegen is typed-only for non-raw RPC methods:
 - Generated service wrappers decode `MethodRequest`, call the typed handler, and
   map `Err(i32)` to RPC error replies.
 - Generated proxy sync/async methods use typed request/response objects end-to-end.
-- The old generated pointer-style (`T* out`) non-raw service/proxy wrappers and
-  the generated `ENOTSUP` fallback bridge have been removed.
 - `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
+- Generated service classes do not inherit `rrr::Service`. They register via
+  `Server::reg_service(Box<T>)` using the `ServiceLike` concept.
+- All in-tree generated headers (`rcc_rpc.h`, `network.h`, `helloworld.h`) use
+  typed-only mode and all callsites use typed APIs.
 
 ### Generated Client Usage
 
-```cpp srpc-compile-codegen
+```cpp srpc-no-compile
 MyServiceProxy proxy(client.get());
 
-// Synchronous call
-UserInfo user{};
-rrr::i32 rc = proxy.get_user(1001, &user);
-if (rc == 0) {
-    // user populated
+// Synchronous typed call
+MyServiceProxy::RpcGetUserRequest req;
+req.id = 1001;
+auto result = proxy.get_user(req);
+if (result.is_ok()) {
+    auto resp = result.unwrap();
+    // resp.user populated
 }
 
-// Asynchronous call
-auto fu_result = proxy.async_get_user(1001);
+// Asynchronous typed call
+auto fu_result = proxy.async_get_user(req);
 if (fu_result.is_ok()) {
-    auto fu = fu_result.unwrap();
-    if (fu->get_error_code() == 0) {
-        UserInfo user2{};
-        auto reply = fu->get_reply();
-        reply >> user2;
-        (void)user2;
-    } else {
-        auto err = fu->get_error_code();
-        (void)err;
+    auto resolved = fu_result.unwrap().resolve();
+    if (resolved.is_ok()) {
+        auto resp = resolved.unwrap();
+        // resp.user populated
     }
-} else {
-    auto err = fu_result.unwrap_err();
-    (void)err;
+}
+
+// Coroutine typed call (C++20 co_await)
+rusty::Task<void> get_user_async(MyServiceProxy& proxy, const MyServiceProxy::RpcGetUserRequest& req) {
+    auto awaited = co_await proxy.await_get_user(req);
+    if (awaited.is_ok()) {
+        auto resp = awaited.unwrap();
+        (void)resp;
+    }
+    co_return;
 }
 ```
 
@@ -1071,7 +1676,7 @@ struct GetUserResponse {
 template <typename T>
 using RpcResult = rusty::Result<T, rrr::i32>;
 
-class MyServiceService: public rrr::Service {
+class MyServiceService {
 public:
     // Service boundary (no output pointers)
     virtual RpcResult<GetUserResponse> get_user(const GetUserRequest& req) = 0;
@@ -1185,16 +1790,173 @@ Events hold weak references to fibers to avoid reference cycles:
 ### RPC Benchmark Tool
 
 ```bash
-# Start server
-./build/rpc_bench -s -p 8100
+# Build benchmark binary
+cmake --build build --target rpcbench -j
 
-# Run client benchmark
-./build/rpc_bench -c -h 127.0.0.1 -p 8100 \
-    -t 4           \  # 4 threads
-    -n 100         \  # 100 outstanding requests per thread
-    -m 64          \  # 64 byte messages
-    -d 30             # 30 second duration
+# Terminal 1: start one server
+./build/rpcbench -s 127.0.0.1:18848 -f
+
+# Terminal 2 (topology A): one client process with 10 client threads
+./build/rpcbench -c 127.0.0.1:18848 -f -t 10 -n 10 -o 1000
+
+# Terminal 2 (topology B): 10 independent client processes
+for i in $(seq 1 10); do
+  ./build/rpcbench -c 127.0.0.1:18848 -f -t 1 -n 10 -o 1000 &
+done
+wait
 ```
+
+### Measured Run (1 Server, 10 Clients, Fast Mode)
+
+Run date (UTC): `2026-04-18T01:04:56Z`
+
+Environment:
+
+| Parameter | Value |
+|-----------|-------|
+| Host kernel | Linux 6.17.4-2-pve x86_64 |
+| CPU | AMD Ryzen Threadripper 2990WX 32-Core Processor |
+| Logical CPUs | 64 |
+| Benchmark binary | `build/rpcbench` |
+
+Benchmark config from `rpcbench` logs:
+
+| Parameter | Value |
+|-----------|-------|
+| Server address | `127.0.0.1:18848` |
+| Duration (`-n`) | 10 seconds |
+| Packet byte size (`-b`) | 10 |
+| Epoll instances (`-e`) | 2 |
+| Outgoing requests (`-o`) | 1000 |
+| Worker threads (`-w`) | 16 |
+| Fast mode (`-f`) | true |
+| Vector mode (`-v`) | 0 |
+
+Throughput results:
+
+1. One client process, 10 client threads (`-t 10`)
+- Per-second QPS samples: `2355764, 2184594, 2335724, 2253167, 2124776, 2209057, 2148797, 2161505, 2213496`
+- Average QPS: `2220764.50`
+- Min/Max sampled QPS: `2124776 / 2355764`
+- Server max CPU (`pidstat`, `%CPU`): `82.00`
+
+2. Ten client processes, each with one client thread (`10 x (-t 1)`)
+- Aggregate average QPS (sum of 10 client averages): `2323925.64`
+- Per-client average QPS range: `229820.88 .. 235125.00`
+- Server max CPU (`pidstat`, `%CPU`): `86.00`
+
+Result summary:
+- After the fiber-reuse fix in the client callback path, single-process (`-t 10`)
+  is close to multi-process throughput (~4.7% lower), indicating the prior process-local
+  bottleneck is largely removed.
+
+### Await API Benchmark (`-t 10`, `-o 1`, 60s Trials)
+
+Run date (UTC): `2026-04-18`
+
+Measured topology:
+- One server process (`rpcbench -s ... -f`)
+- One client process with 10 client threads (`-t 10`)
+- Single outstanding RPC per client thread (`-o 1`)
+- Duration per trial (`-n`) = 60s
+- Compared client modes:
+  - callback mode (default)
+  - await mode (`-a`)
+
+Server CPU measurement:
+- `pidstat -u -p <server_pid> 1`
+- Reported as average/max `%CPU` over the run
+
+| Mode | Trial | Throughput (avg qps) | Server CPU avg % | Server CPU max % |
+|------|-------|-----------------------|------------------|------------------|
+| callback | 1 | `69842.22` | `96.79` | `101.00` |
+| callback | 2 | `75653.46` | `96.77` | `101.00` |
+| await (`-a`) | 1 | `70659.36` | `96.77` | `101.00` |
+| await (`-a`) | 2 | `72430.24` | `96.76` | `101.00` |
+
+Aggregate summary:
+- Callback mean throughput: `72747.84 qps`
+- Await mean throughput: `71544.80 qps`
+- Await vs callback: `-1.65%`
+- Server CPU utilization is effectively identical between modes in this setup.
+
+### Await API Benchmark (`-t 10`, `-o 1000`, 60s Trials)
+
+Run date (UTC): `2026-04-18`
+Code commit (HEAD): `3080e880e17f685b04bb72d9e930ae318191bcdd`
+
+Measured topology:
+- One server process (`rpcbench -s ... -f`)
+- One client process with 10 client threads (`-t 10`)
+- 1000 outstanding RPC per client thread (`-o 1000`)
+- Duration per trial (`-n`) = 60s
+- Compared client modes:
+  - callback mode (default)
+  - await mode (`-a`)
+
+Server CPU measurement:
+- `pidstat -u -p <server_pid> 1`
+- Reported as average/max `%CPU` over the run
+
+| Mode | Trial | Throughput (avg qps) | Server CPU avg % | Server CPU max % |
+|------|-------|-----------------------|------------------|------------------|
+| callback | 1 | `2401442.25` | `96.81` | `101.00` |
+| callback | 2 | `2375803.75` | `96.79` | `101.00` |
+| await (`-a`) | 1 | `2347543.00` | `96.60` | `101.00` |
+| await (`-a`) | 2 | `2406166.25` | `96.63` | `101.00` |
+
+Aggregate summary:
+- Callback mean throughput: `2388623.00 qps`
+- Await mean throughput: `2376854.63 qps`
+- Await vs callback: `-0.49%`
+- Server CPU utilization is effectively identical between modes in this setup.
+
+### Mode Comparison Update (10 Client Processes, `-e 1`)
+
+Run date (UTC): `2026-04-18T20:20:06Z`  
+Code commit (HEAD): `e3d65943cda0a5b3be014dea35095a6060ab4d02`
+
+Measured topology:
+- One server process (`rpcbench -s ... -e 1`)
+- Ten independent client processes (`10 x rpcbench -c ... -t 1 -e 1`)
+- Modes compared via `-m fast|fiber|async`
+- Packet size `-b 10` (default), worker threads `-w 16` (default)
+- Duration per trial (`-n`) = 20s
+- Server CPU measured with `pidstat -u -p <server_pid> 1`
+
+#### `-o 1` (single outstanding RPC per client process)
+
+| Mode | Trial | Throughput (avg qps, sum of 10 clients) | Server CPU avg % | Server CPU max % |
+|------|-------|-------------------------------------------|------------------|------------------|
+| fast | 1 | `74095.57` | `99.90` | `101.00` |
+| fast | 2 | `70273.97` | `99.85` | `101.00` |
+| fiber | 1 | `73691.00` | `99.90` | `101.00` |
+| fiber | 2 | `69536.29` | `99.90` | `101.00` |
+| async | 1 | `64415.00` | `99.95` | `101.00` |
+| async | 2 | `75005.19` | `99.95` | `101.00` |
+
+Aggregate summary (`-o 1`):
+- Fast mean: `72184.77 qps`
+- Fiber mean: `71613.64 qps` (`-0.79%` vs fast)
+- Async mean: `69710.10 qps` (`-3.43%` vs fast, `-2.66%` vs fiber)
+- Server CPU is saturated for all modes (~100% avg/max).
+
+#### `-o 1000` (1000 outstanding RPCs per client process)
+
+| Mode | Trial | Throughput (avg qps, sum of 10 clients) | Server CPU avg % | Server CPU max % |
+|------|-------|-------------------------------------------|------------------|------------------|
+| fast | 1 | `2327315.34` | `99.90` | `101.00` |
+| fast | 2 | `2329882.27` | `99.90` | `101.00` |
+| fiber | 1 | `1283867.41` | `100.00` | `101.00` |
+| fiber | 2 | `1322332.60` | `99.95` | `101.00` |
+| async | 1 | `1971063.29` | `99.95` | `101.00` |
+| async | 2 | `1987283.78` | `99.95` | `101.00` |
+
+Aggregate summary (`-o 1000`):
+- Fast mean: `2328598.80 qps`
+- Fiber mean: `1303100.00 qps` (`-44.04%` vs fast)
+- Async mean: `1979173.54 qps` (`-15.01%` vs fast, `+51.88%` vs fiber)
+- Server CPU is saturated for all modes (~100% avg/max).
 
 ### Tuning Parameters
 
@@ -1211,8 +1973,8 @@ Events hold weak references to fibers to avoid reference cycles:
 ### Fast vs Defer Dispatch
 
 In service definitions:
-- **`fast`**: Handler runs on the network thread. Use for trivial operations (ping, status) to avoid thread pool overhead.
-- **`defer`**: Handler runs in a thread pool. Use for anything that might block or take significant time.
+- **`fast`**: Handler runs on the network thread. Use for trivial operations (ping, status) to minimize scheduling overhead.
+- **`defer`**: Handler gets a `DeferredReply` token and decides when to reply (`defer.reply()` / `defer.reply_error()`). Use when completion is delayed by external work.
 
 ### Connection Pooling
 
@@ -1232,19 +1994,19 @@ pool.health_check_interval_ms = 10000;  // Check health every 10s
 
 ```cpp srpc-no-compile
 class Reactor {
-    static Reactor* GetReactor();        // Thread-local main reactor
-    static Reactor* GetDiskReactor();    // Thread-local disk reactor
+    static Rc<Reactor> get_reactor();    // Thread-local main reactor
+    static Rc<Reactor> get_disk_reactor(); // Thread-local disk reactor
 
     // Fiber management
-    Rc<Fiber> CreateRunCoroutine(Func&& f);
-    void ContinueCoro(Rc<Fiber> fiber);
+    Rc<Fiber> create_run_fiber(Function<void()> f);
+    void continue_fiber(Rc<Fiber> fiber);
 
     // Event creation
     template<typename T, typename... Args>
-    static shared_ptr<T> CreateSpEvent(Args&&... args);
+    static shared_ptr<T> create_sp_event(Args&&... args);
 
     // Event loop
-    void Loop(bool forever = false);
+    void loop(bool forever = false);
 };
 ```
 
@@ -1258,9 +2020,6 @@ class Fiber {
     void continue_() const;
     bool finished() const;
 };
-
-// Alias
-using Coroutine = Fiber;
 ```
 
 ### this_fiber Namespace
@@ -1322,7 +2081,7 @@ class Future {
 ```cpp srpc-no-compile
 class PollThread {
     static Arc<PollThread> create();
-    void add(Arc<Pollable> p);
+    void add_proxy(PollableProxy p);
     void remove(Pollable& p);
     void request_close(int fd);
     void update_mode(int fd, int new_mode);
@@ -1336,11 +2095,11 @@ class PollThread {
 
 ### Do
 
-- **One reactor per thread** — always use `Reactor::GetReactor()`
+- **One reactor per thread** — always use `Reactor::get_reactor()`
 - **Yield in long loops** — let other fibers run
 - **Use events for coordination** — don't busy-wait
 - **Use RAII guards** — `SpinMutexGuard`, `RefCell::borrow()`, etc.
-- **Prefer `Fiber` over `Coroutine`** — in new code
+- **Use `Fiber` naming consistently** — in new code
 - **Use `this_fiber::sleep_ms()`** — never `std::this_thread::sleep_for()`
 - **Close connections gracefully** — use the shutdown phases
 
@@ -1359,14 +2118,14 @@ class PollThread {
 **Fiber starvation:**
 ```cpp srpc-no-compile
 // BAD - blocks all other fibers
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_fiber([]() {
     while (true) {
         compute();  // Never yields!
     }
 });
 
 // GOOD - cooperative
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_fiber([]() {
     while (true) {
         compute();
         this_fiber::yield();  // Let others run
@@ -1377,7 +2136,7 @@ reactor->CreateRunCoroutine([]() {
 **Cross-thread event access:**
 ```cpp srpc-no-compile
 // BAD
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 std::thread t([event]() {
     event->Set(1);  // CRASH - wrong thread!
 });
@@ -1388,12 +2147,12 @@ std::thread t([event]() {
 **Forgetting the event loop:**
 ```cpp srpc-no-compile
 // BAD - fiber never executes
-reactor->CreateRunCoroutine([]() { /* ... */ });
+reactor->create_run_fiber([]() { /* ... */ });
 // No loop() call!
 
 // GOOD
-reactor->CreateRunCoroutine([]() { /* ... */ });
-reactor->Loop(true);
+reactor->create_run_fiber([]() { /* ... */ });
+reactor->loop(true);
 ```
 
 ---
@@ -1404,7 +2163,7 @@ reactor->Loop(true);
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Fibers never run | No event loop running | Call `reactor->Loop()` |
+| Fibers never run | No event loop running | Call `reactor->loop()` |
 | Fiber hangs forever | Event never triggered | Add timeout to `Wait()` |
 | Segfault in event | Cross-thread access | Keep events thread-local |
 | Connection refused | Server not listening | Check port and host config |

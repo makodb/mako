@@ -1,7 +1,8 @@
-
 #pragma once
 
 #include <apr_hash.h>
+#include <pthread.h>
+
 
 typedef struct {
     apr_hash_t *ht_v;

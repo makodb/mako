@@ -1,3 +1,17 @@
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+
+
 #include <stdio.h>
 #include <time.h>
 #include <limits.h>
@@ -5,7 +19,13 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
+
+
+
 #include "misc.hpp"
+
+
+#include "../rrr.hpp"
 
 // External safety annotations for system functions used in this module
 // @external: {

@@ -14,7 +14,7 @@ CoordinatorMencius::CoordinatorMencius(uint32_t coo_id,
     : Coordinator(coo_id, benchmark, std::move(client_status), thread_id) {
 }
 
-void CoordinatorMencius::Submit(shared_ptr<Marshallable>& cmd,
+void CoordinatorMencius::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
@@ -29,86 +29,24 @@ void CoordinatorMencius::Submit(shared_ptr<Marshallable>& cmd,
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  verify(cmd_ == nullptr);
+  // cmd_ is now janus::Command.
+  verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
   cmd_ = cmd;
-  verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_.has_value());
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 
-ballot_t CoordinatorMencius::PickBallot() {
-  return curr_ballot_ + 1;
-}
-
-void CoordinatorMencius::Prepare() {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  verify(0); // for debug;
-  verify(!in_prepare_);
-  in_prepare_ = true;
-  curr_ballot_ = PickBallot();
-  verify(slot_id_ > 0);
-  //rpc_event->add_dep(commo()->LeaderProxyForPartition(par_id_).first);
-  //rpc_event->log();
-  Log_debug("mencius coordinator broadcasts prepare, "
-                "par_id_: %lx, slot_id: %llx",
-            par_id_,
-            slot_id_);
-  verify(n_prepare_ack_ == 0);
-  int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
-  auto sp_quorum = commo()->BroadcastPrepare(par_id_, slot_id_, curr_ballot_);
-  auto start = chrono::steady_clock::now();
-  Log_info("Time before Wait() is: %d", chrono::duration_cast<chrono::milliseconds>(start.time_since_epoch()).count());
-  sp_quorum->wait();
-  auto end = chrono::steady_clock::now();
-
-  auto duration = chrono::duration_cast<chrono::milliseconds>(end-start);
-  Log_info("Duration of Wait() in Prepare() is: %d", duration.count());
-  sp_quorum->log();
-  if (sp_quorum->yes()) {
-    verify(!sp_quorum->HasSuggestedValue());
-    // TODO use the previously suggested value.
-
-  } else if (sp_quorum->no()) {
-    // TODO restart prepare?
-    verify(0);
-  } else {
-    // TODO timeout
-    verify(0);
-  }
-//  commo()->BroadcastPrepare(par_id_,
-//                            slot_id_,
-//                            curr_ballot_,
-//                            std::bind(&CoordinatorMencius::PrepareAck,
-//                                      this,
-//                                      phase_,
-//                                      std::placeholders::_1));
-//}
-//
-//void CoordinatorMencius::PrepareAck(phase_t phase, Future* fu) {
-//  std::lock_guard<std::recursive_mutex> lock(mtx_);
-//  if (phase_ != phase) return;
-//  ballot_t max_ballot;
-//  fu->get_reply() >> max_ballot;
-//  if (max_ballot == curr_ballot_) {
-//    n_prepare_ack_++;
-//    verify(n_prepare_ack_ <= n_replica_);
-//    if (n_prepare_ack_ >= GetQuorum()) {
-//      GotoNextPhase();
-//    }
-//  } else {
-//    if (max_ballot > curr_ballot_) {
-//      curr_ballot_ = max_ballot + 1;
-//      Log_debug("%s: saw greater ballot increment to %d",
-//                __FUNCTION__, curr_ballot_);
-//      phase_ = Phase::INIT_END;
-//      GotoNextPhase();
-//    } else {
-////       max_ballot < curr_ballot ignore
-//    }
-//  }
-}
+// removed `CoordinatorMencius::PickBallot()`
+// — only call site was the now-deleted `Prepare()`.
+// removed `CoordinatorMencius::Prepare()`
+// (~67 LOC) — body started with `verify(0); // for debug;`, and the
+// only path that could reach it was via `GotoNextPhase()`'s
+// `Phase::PREPARE` case which is unreachable: `INIT_END` jumps
+// directly to `Suggest`.  Companion `BroadcastPrepare(parid, slot,
+// ballot)` shell on `MenciusCommo` removed in this phase.
 
 void CoordinatorMencius::Suggest() {
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -121,7 +59,7 @@ void CoordinatorMencius::Suggest() {
   commo()->svr_workers_g = svr_workers_g;
   auto sp_quorum = commo()->BroadcastSuggest(par_id_, slot_id_, curr_ballot_, cmd_);
   sp_quorum->id_ = dep_id_;
-	//Log_info("current coroutine's dep_id: %d", Fiber::current_coroutine()->dep_id_);
+	//Log_info("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
   //Log_info("Suggest(): dep_id:%d, slot_id:%d, site: %d", dep_id_, slot_id_, frame_->site_info_->id);
 
   sp_quorum->wait();
@@ -140,38 +78,10 @@ void CoordinatorMencius::Suggest() {
     // TODO process timeout.
     verify(0);
   }
-//  commo()->BroadcastSuggest(par_id_,
-//                           slot_id_,
-//                           curr_ballot_,
-//                           cmd_,
-//                           std::bind(&CoordinatorMencius::SuggestAck,
-//                                     this,
-//                                     phase_,
-//                                     std::placeholders::_1));
-//}
-//
-//void CoordinatorMencius::SuggestAck(phase_t phase, Future* fu) {
-//  std::lock_guard<std::recursive_mutex> lock(mtx_);
-//  if (phase_ > phase) return;
-//  ballot_t max_ballot;
-//  fu->get_reply() >> max_ballot;
-//  if (max_ballot == curr_ballot_) {
-//    n_finish_ack_++;
-//    if (n_finish_ack_ >= GetQuorum()) {
-//      committed_ = true;
-//      GotoNextPhase();
-//    }
-//  } else {
-//    if (max_ballot > curr_ballot_) {
-//      curr_ballot_ = max_ballot + 1;
-//      Log_debug("%s: saw greater ballot increment to %d",
-//                __FUNCTION__, curr_ballot_);
-//      phase_ = Phase::INIT_END;
-//      GotoNextPhase();
-//    } else {
-//      // max_ballot < curr_ballot ignore
-//    }
-//  }
+// removed ~30 LOC of commented-out
+// `BroadcastSuggest(..., SuggestAck-callback)` legacy + companion
+// `SuggestAck(phase_t, Future*)` body — same shape as the also-gone
+// AcceptAck variant in paxos/coordinator.cc.
 }
 
 void CoordinatorMencius::Commit() {

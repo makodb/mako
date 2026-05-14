@@ -1,9 +1,29 @@
 
-#include <thread>
-#include <cstring>  // for std::memcpy
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <pthread.h>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <thread>
 #include <functional>
+
+#include <inttypes.h>
+#include <time.h>
+#include <sys/time.h>
+
 #include "basetypes.hpp"
+
+
+#include "../rrr.hpp"
+
+
+
 
 // External safety annotations for atomic operations
 // @external: {

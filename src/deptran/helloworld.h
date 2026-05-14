@@ -1,6 +1,10 @@
 #pragma once
 
-#include "rrr.hpp"
+#include "rrr/rrr.hpp"
+#include <rusty/async.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/result.hpp>
 
 #include <errno.h>
 #include <memory>
@@ -8,39 +12,39 @@
 
 namespace helloworld_client {
 
-class HelloworldClientService: public rrr::Service {
+class HelloworldClientService {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcTxnReadRequest {
         std::vector<rrr::i64> _req;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnReadRequest& o) {
-        m << o._req;
-        return m;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) {
+        ar << o._req;
+        return ar;
     }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnReadRequest& o) {
-        m >> o._req;
-        return m;
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) {
+        ar >> o._req;
+        return ar;
     }
 
     struct RpcTxnReadResponse {
         rrr::i32 val;
     };
-    friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const RpcTxnReadResponse& o) {
-        m << o.val;
-        return m;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) {
+        ar << o.val;
+        return ar;
     }
-    friend inline rrr::Marshal& operator >>(rrr::Marshal& m, RpcTxnReadResponse& o) {
-        m >> o.val;
-        return m;
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) {
+        ar >> o.val;
+        return ar;
     }
 
     enum {
-        TXN_READ = 0x18a64b98,
+        TXN_READ = 0x4e5916a6,
     };
     // Registers RPC IDs with server using service index
-    // @safe
-    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
+    int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
         if ((ret = svr.reg_rpc(TXN_READ, svc_index)) != 0) {
             goto err;
@@ -50,8 +54,8 @@ public:
         svr.unreg(TXN_READ);
         return ret;
     }
-    // @safe - Virtual dispatch for RPC requests
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
+    // @safe - Dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         switch (rpc_id) {
         case TXN_READ: __txn_read__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
@@ -68,17 +72,17 @@ private:
         // @unsafe
         {
             RpcTxnReadRequest __typed_req__;
-            req->m >> __typed_req__._req;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](rrr::Marshal& m) {
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->val;
                 },
-                [__typed_resp__]() mutable {
-                    __typed_resp__.reset();
-                });
+                []() {});
             this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
@@ -115,18 +119,27 @@ public:
                 return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(__ret__);
             }
             RpcTxnReadResponse __typed_resp__;
-            __fu__->get_reply() >> __typed_resp__.val;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            __reply_ar__ >> __typed_resp__.val;
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
         }
     };
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::Marshal& __m__) {
+        auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
             __m__ << req._req;
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_readTypedFuture, rrr::i32>::Ok(txn_readTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<txn_readTypedFuture> await_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_txn_read(req, __fu_attr__));
     }
     rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
         auto __typed_fu_result__ = this->async_txn_read(req);

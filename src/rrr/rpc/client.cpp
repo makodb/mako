@@ -1,37 +1,46 @@
-#include <string>
-#include <memory>
-#include <chrono>
-#include <mutex>
-#include <climits>
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+#include <rusty/result.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/refcell.hpp>
+#include <rusty/async.hpp>
+
+
+// 4g3d: socket-path system headers (`<sys/socket.h>`, `<sys/un.h>`,
+// `<unistd.h>`, `<netdb.h>`, `<netinet/tcp.h>`, `<sys/types.h>`,
+// `<string.h>`) removed — no `socket(2)` / `connect(2)` / `bind(2)` /
+// `setsockopt(2)` / `getaddrinfo(3)` / `::close(fd)` calls remain in
+// the RPC client; the channel layer's `TcpConnection` owns the fd
+// and the syscalls. `<errno.h>` is kept for the errno-shaped error
+// codes (`EINVAL`, `ENOTCONN`, `ECONNRESET`, `ETIMEDOUT`, ...) the
+// RPC layer still surfaces through `invoke_error_callback`.
 #include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
 
-#include "reactor/coroutine.h"
-#include "reactor/reactor.h"
+
 #include "client.hpp"
-#include "internal_protocol.hpp"
-#include "utils.hpp"
+
+
+#include "../rrr.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
-// Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
 // now have in-place annotations in their respective headers.
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
 //
 // @external: {
 //   const_cast: [unsafe]
 //   std::__cxx11::basic_string::basic_string: [safe]
-//   std::map::find: [safe]
-//   std::map::erase: [safe]
-//   std::map::end: [safe]
-//   std::unordered_map::find: [safe]
-//   std::unordered_map::erase: [safe]
-//   std::unordered_map::end: [safe]
 // }
 
 
@@ -47,11 +56,18 @@ static uint64_t current_time_ms() {
             now.time_since_epoch()).count());
 }
 
+// 4g4: the migration switch (`srpc_use_channel()` and the test-only
+// `srpc_set_use_channel_for_testing` / `srpc_reset_use_channel_for_testing`
+// helpers) and its env-var triggers (`SRPC_USE_CHANNEL`,
+// `SRPC_DISABLE_CHANNEL`) are gone. Channel mode is unconditional;
+// `Client::connect` auto-installs a default TCP `ChannelFactoryProxy`
+// when none has been bound via `set_channel_factory(...)`.
+
 // ============================================================================
 // Future implementation
 // ============================================================================
 
-// @safe - Uses rusty::Mutex and rusty::Condvar together
+// @unsafe - Uses rusty::Mutex and rusty::Condvar together
 void Future::wait() const {
   auto guard = state_.lock().unwrap();
   // wait_while: waits WHILE condition is TRUE, stops when FALSE
@@ -86,23 +102,33 @@ void Future::timed_wait(double sec) const {
 // @unsafe - rusty-cpp false positive: should_callback IS initialized
 void Future::notify_ready(rusty::Arc<Future> self) const {
   bool should_callback = false;  // Initialized here
+  rusty::Vec<rusty::Function<void()>> completion_callbacks;
   {
     auto guard = state_.lock().unwrap();
     if (!guard->timed_out) {
       guard->ready = true;
     }
     should_callback = guard->ready;
+    completion_callbacks = std::move(guard->completion_callbacks);
   }  // Guard dropped here, releasing lock before notify
 
   ready_cond_.notify_all();
 
-  // Execute callback outside lock to avoid deadlock
-  if (should_callback && attr_.callback != nullptr) {
+  // rusty::Function::operator bool() reports presence; iterate by
+  // mutable ref so we can call non-const operator().
+  for (auto& callback : completion_callbacks) {
+    if (callback) {
+      callback();
+    }
+  }
+
+  // Execute callback outside lock to avoid deadlock.  The wrapper is
+  // copyable (Arc clone = refcount++); we hold a local copy `x` so the
+  // user callable stays alive across the invocation even if the
+  // FutureAttr field is dropped concurrently.
+  if (should_callback && attr_.callback) {
     auto x = attr_.callback;
-    // Fiber::CreateRun is now @safe
-    Fiber::create_run([x, self]() {
-      x(self);
-    }, __FILE__, __LINE__);
+    x(self);
   }
 }
 
@@ -114,12 +140,18 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 // State machine defaults to NEW state
 ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
-      socket_(-1),
       state_machine_(),
       heartbeat_manager_(HeartbeatConfig::disabled()),
       circuit_breaker_(CircuitBreakerConfig::disabled()),
-      callback_manager_(std::make_shared<CallbackManager>()),
+      callback_manager_(rusty::Arc<CallbackManager>::make()),
       pending_queue_(buffering_config_.to_queue_config()) {
+  // Pre-fill the async-callback slot array with `None`s so
+  // `pending_cb_slots_[xid % N]` is always a valid in-bounds slot.
+  auto guard = pending_cb_slots_.lock().unwrap();
+  guard->reserve(kAsyncSlotCount);
+  for (size_t i = 0; i < kAsyncSlotCount; ++i) {
+    guard->push(rusty::None);
+  }
 }
 
 // @safe - Simple destructor
@@ -129,11 +161,29 @@ ClientConnection::~ClientConnection() {
   invalidate_pending_futures();
 }
 
-// @safe - Cancels all pending futures with error, protected by SpinMutex
+// @unsafe - Cancels all pending futures with error, protected by SpinMutex
 void ClientConnection::invalidate_pending_futures() {
+  // Drain the slim async-callback slots first.  Move callbacks out
+  // under the lock, then fire them outside the lock with ENOTCONN +
+  // null reply view.
+  rusty::Vec<AsyncReplyCallback> drained_callbacks;
+  {
+    auto cb_guard = pending_cb_slots_.lock().unwrap();
+    for (size_t i = 0; i < cb_guard->len(); ++i) {
+      if ((*cb_guard)[i].is_some()) {
+        drained_callbacks.push(std::move((*cb_guard)[i].unwrap()));
+        (*cb_guard)[i] = rusty::None;
+      }
+    }
+  }
+  for (auto& cb: drained_callbacks) {
+    metrics_.record_request_dropped();
+    cb(ENOTCONN, nullptr, 0);
+  }
+
   list<rusty::Arc<Future>> futures;
   auto guard = pending_fu_.lock().unwrap();
-  for (auto& it: *guard) {
+  for (auto it: *guard) {
     futures.push_back(it.second);  // Copy Arc
   }
   guard->clear();  // Clear map (releases its Arc references)
@@ -147,15 +197,15 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
-// @safe - Fails one pending future if it still exists in the pending map
+// @unsafe - Fails one pending future if it still exists in the pending map
 void ClientConnection::fail_pending_future(i64 xid, int err) const {
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
     auto pending_guard = pending_fu_.lock().unwrap();
-    auto it = pending_guard->find(xid);
-    if (it != pending_guard->end()) {
-      fu_opt = rusty::Some(it->second);  // Copy Arc before erase
-      pending_guard->erase(it);
+    auto fu_ptr = pending_guard->get(xid);
+    if (fu_ptr.is_some()) {
+      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());  // Copy Arc before remove
+      pending_guard->remove(xid);
     }
   }  // Drop lock before notifying callback/future waiters
 
@@ -168,7 +218,14 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
   }
 }
 
-// @unsafe - Closes socket and invalidates futures (call from poll thread only)
+// @unsafe - Drives channel proxy close + invalidates futures.
+//
+// 4g3c3: The legacy `if (socket_ >= 0) ::close(socket_)` block has
+// been removed; channel mode is unconditional and the channel layer
+// (TcpConnection) owns its own fd. We instead drive `close()` on the
+// bound channel proxy(ies). Close is idempotent (channel-layer
+// contract), so it's fine if `on_channel_closed_fan_out` then fires
+// `on_closed` after this method returns.
 void ClientConnection::close() {
   ConnectionState prev_state = state_machine_.state();
   const bool was_connected = state_machine_.is_connected();
@@ -177,13 +234,25 @@ void ClientConnection::close() {
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
   }
 
-  // Always close the socket when it is valid, regardless of state.
-  if (socket_ >= 0) {
-    // @unsafe - system call
-    {
-      ::close(socket_);
+  // Tear down the channel proxy(ies). The channel layer's `close()`
+  // is idempotent and thread-safe per the facade contract.
+  // @unsafe { SpinMutex::lock + proxy method dispatch }
+  {
+    auto guard = direct_channel_.lock().unwrap();
+    if (guard->is_some()) {
+      auto* proxy = const_cast<ChannelConnectionProxy*>(
+          guard->as_ref().unwrap().get());
+      (*proxy)->close();
     }
-    socket_ = -1;
+  }
+  // @unsafe { SpinMutex::lock + FiberChannel::close }
+  {
+    auto guard = fiber_channel_.lock().unwrap();
+    if (guard->is_some()) {
+      auto* fc = const_cast<FiberChannel*>(
+          guard->as_ref().unwrap().get());
+      fc->close();
+    }
   }
 
   if (was_connected) {
@@ -202,7 +271,7 @@ void ClientConnection::close() {
   }
 }
 
-// @safe - Mark connection as closing without closing socket
+// @unsafe - Mark connection as closing without closing socket
 // Used by Client::close() to update state before poll thread closes socket
 void ClientConnection::mark_closing() {
   reconnect_abort_.store(true, std::memory_order_release);
@@ -214,12 +283,10 @@ void ClientConnection::mark_closing() {
   invalidate_pending_futures();
 }
 
-// @safe - Jetpack: handle_free for explicit future cleanup
+// @unsafe - Jetpack: handle_free for explicit future cleanup
 void ClientConnection::handle_free(i64 xid) const {
   auto guard = pending_fu_.lock().unwrap();
-  auto it = guard->find(xid);
-  if (it != guard->end()) {
-    guard->erase(it);
+  if (guard->remove(xid).is_some()) {
     metrics_.record_request_dropped();
     // Arc auto-released when removed from map
   }
@@ -238,136 +305,31 @@ int ClientConnection::connect(const char* addr) {
     invoke_error_callback(EINVAL, "invalid state for connect");
     return EINVAL;
   }
-  string addr_str(addr);
-  size_t idx = addr_str.find(":");
-  if (idx == string::npos) {
-    Log_error("rrr::ClientConnection: bad connect address: %s", addr);
+
+  // channel mode is the only path.
+  //
+  // Channel mode is non-negotiable post-4g3a, and `Client::connect`
+  // always installs a default TCP factory before calling this method
+  // (see `Client::connect` for the auto-install logic). The legacy
+  // socket(2) + connect(2) + register-pollable path has been deleted.
+  //
+  // `connect_via_factory` issues `factory->connect(addr)`, hands the
+  // returned proxy to `bind_channel_direct(...)`, and records
+  // `reconnect_address_` for the close-side reconnect spawn.
+  if (!is_factory_bound()) {
+    Log_error("rrr::ClientConnection::connect: factory not bound. "
+              "Channel mode requires a ChannelFactoryProxy installed via "
+              "Client::set_channel_factory(...) or auto-installed by "
+              "Client::connect (the latter happens unconditionally now).");
     state_machine_.transition_to(ConnectionState::FAILED);
-    invoke_error_callback(EINVAL, "invalid connect address");
+    invoke_error_callback(EINVAL, "no channel factory bound");
     return EINVAL;
   }
-  // @unsafe { - string operations
-  string host = addr_str.substr(0, idx);
-  host_ = host;
-  string port = addr_str.substr(idx + 1);
-  // }
-
-#ifdef USE_IPC
-    // @unsafe { - IPC socket creation and connect syscalls
-    struct sockaddr_un saun;
-    saun.sun_family = AF_UNIX;
-    string ipc_addr = "rsock" + port;
-    strcpy(saun.sun_path, ipc_addr.data());
-    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0) {
-      Log_error("rrr::ClientConnection: socket() failed: %s", strerror(errno));
-      return errno;
-    }
-    socket_ = sock;
-    auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-    if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
-      int err = errno;
-      Log_error("rrr::ClientConnection: connect() failed: %s", strerror(err));
-      ::close(socket_);
-      socket_ = -1;
-      return err;
-    }
-    // }
-#else
-    struct addrinfo hints;
-    // @unsafe { - memset
-    memset(&hints, 0, sizeof(struct addrinfo));
-    // }
-
-    hints.ai_family = AF_INET; // ipv4
-    hints.ai_socktype = SOCK_STREAM; // tcp
-
-    // Use AddrInfo RAII wrapper - automatically frees on scope exit
-    auto addr_result = AddrInfo::resolve(host.c_str(), port.c_str(), &hints);
-    if (addr_result.is_err()) {
-      Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
-      return EINVAL;
-    }
-    auto addr_info = addr_result.unwrap();
-
-    // @unsafe { - TCP socket creation, options, and connect syscalls
-    struct addrinfo* rp = nullptr;
-    for (rp = addr_info.get(); rp != nullptr; rp = rp->ai_next) {
-      int sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-      if (sock == -1) {
-        continue;
-      }
-      socket_ = sock;
-
-      const int yes = 1;
-      verify(setsockopt(socket_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
-      verify(setsockopt(socket_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
-      int buf_len = 1024 * 1024;
-      setsockopt(socket_, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
-      setsockopt(socket_, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
-
-      if (::connect(socket_, rp->ai_addr, rp->ai_addrlen) == 0) {
-        break;
-      }
-      ::close(socket_);
-      socket_ = -1;
-    }
-    // AddrInfo automatically freed when addr_info goes out of scope
-    // }
-
-  if (rp == nullptr) {
-    // failed to connect
-    state_machine_.transition_to(ConnectionState::FAILED);
-    invoke_error_callback(ENOTCONN, "connect failed");
-    return ENOTCONN;
-  }
-#endif
-  // @unsafe - set_nonblocking syscall
-  {
-#ifdef __APPLE__
-    // Prevent SIGPIPE termination on write() to closed sockets.
-    const int yes = 1;
-    (void)setsockopt(socket_, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
-#endif
-    verify(set_nonblocking(socket_, true) == 0);
-  }
-
-  // Apply TCP keepalive options after socket is connected
-  // @unsafe { setsockopt system calls }
-  apply_keepalive_options();
-
-  // Initialize last activity time and record connection in metrics
-  auto now_ms = current_time_ms();
-  update_last_activity(now_ms);
-  metrics_.record_connect(now_ms);
-
-  Log_debug("rrr::ClientConnection: connected to %s", addr);
-
-  // Transition to CONNECTED state
-  state_machine_.transition_to(ConnectionState::CONNECTED);
-  heartbeat_manager_.reset();
-
-  // Register with poll thread using weak_self_
-  // @unsafe { - Weak::upgrade and PollThread::add
-  auto self = weak_self_.upgrade();
-  if (self.is_some()) {
-    poll_thread_worker_->add(self.unwrap());
-  // }
-  } else {
-    Log_error("rrr::ClientConnection: weak_self_ upgrade failed - connection may not have been created properly");
-    invoke_error_callback(EINVAL, "connection registration failed");
-    return EINVAL;
-  }
-
-  // Store address for potential reconnection
-  reconnect_address_ = addr;
-  invoke_connected_callback();
-
-  return 0;
+  return connect_via_factory(addr);
 }
 
 // @unsafe - Attempts to reconnect to the last connected address
-int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
+int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   auto complete_callback = [&](int result) -> int {
     if (on_complete) on_complete(result == 0);
     return result;
@@ -385,7 +347,7 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
       if (state_machine_.is_connected()) {
         return 0;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      rusty::thread::sleep(std::chrono::milliseconds(5));
     }
 
     if (state_machine_.is_connected()) {
@@ -437,11 +399,9 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
       // Record reconnection in metrics
       metrics_.record_reconnect();
 
-      // Replay any queued requests
-      size_t replayed = replay_pending_requests();
-      if (replayed > 0) {
-        Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
-      }
+      // 4g3c2: replay_pending_requests() removed — the queue
+      // (queue_request<F>) was deleted in 4g3b, so the queue is
+      // always empty in channel mode.
       return complete_callback(0);
     } else {
       if (result == ECANCELED) {
@@ -459,8 +419,10 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
     if (reconnect_abort_.load(std::memory_order_acquire)) {
       return ECANCELED;
     }
-    // Reset socket for each reconnect attempt.
-    socket_ = -1;
+    // 4g3c2: `socket_ = -1` reset removed. socket_ is unused in
+    // channel mode (the channel proxy's TcpConnection owns the fd);
+    // the `connect()` call below routes through `connect_via_factory`
+    // which produces a fresh proxy + fresh fd internally.
     return connect(reconnect_address_.c_str());
   };
 
@@ -493,7 +455,7 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
 
     uint32_t delay_ms = calc.next_delay_ms();
     if (delay_ms > 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+      rusty::thread::sleep(std::chrono::milliseconds(delay_ms));
     }
 
     if (reconnect_abort_.load(std::memory_order_acquire)) {
@@ -538,7 +500,7 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
   }
 }
 
-// @safe - Configure heartbeat manager and timeout callback.
+// @unsafe - Configure heartbeat manager and timeout callback.
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
   heartbeat_manager_.set_config(config);
   WeakClientConnection weak_conn;
@@ -561,99 +523,612 @@ void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const
   });
 }
 
-// @safe - Returns heartbeat config snapshot.
+// @unsafe - Returns heartbeat config snapshot.
 HeartbeatConfig ClientConnection::heartbeat_config() const {
   return heartbeat_manager_.config();
 }
 
-// @safe - Configure circuit breaker and reset state.
+// @unsafe - Configure circuit breaker and reset state.
 void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
   circuit_breaker_.set_config(config);
 }
 
-// @safe - Returns circuit breaker config snapshot.
+// @unsafe - Returns circuit breaker config snapshot.
 CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
   return circuit_breaker_.config();
 }
 
 // @unsafe - Uses RequestQueue methods (not borrow-checked)
+// 4g3c2: replay_pending_requests() reduced to a no-op stub. The
+// underlying queue (`pending_queue_`) is always empty in channel mode
+// because `queue_request<F>(...)` was deleted in 4g3b. The function
+// itself is kept for the test-only accessor
+// `replay_pending_requests_for_test()` (used by 3 DISABLED_*
+// buffering tests as documentation of prior behavior). It returns
+// the dequeue count, which is 0 by construction now.
 size_t ClientConnection::replay_pending_requests() {
-  size_t replayed = 0;
-
-  while (true) {
-    auto req_opt = pending_queue_.dequeue();
-    if (req_opt.is_none()) break;
-
-    auto req = req_opt.unwrap();
-
-    // Check if expired
-    if (req.is_expired()) {
-      metrics_.record_queue_drop();
-      if (req.callback) req.callback(kRequestQueueExpiredError);
-      continue;
-    }
-
-    // Check if still connected
-    if (!state_machine_.is_connected()) {
-      // Connection lost during replay, re-queue
-      // Note: This could lead to infinite loop if connection keeps failing
-      // The TTL will eventually expire stale requests
-      i64 replay_xid = req.xid;
-      req.callback = [this, replay_xid](int err) {
-        if (err != 0) {
-          fail_pending_future(replay_xid, err);
-        }
-      };
-      if (!pending_queue_.enqueue(std::move(req))) {
-        // Explicit fallback: even if queue policy rejects without invoking
-        // callback, do not leave the pending future orphaned.
-        metrics_.record_queue_drop();
-        fail_pending_future(replay_xid, kRequestQueueRejectedError);
-        Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy (xid=%lld)",
-                 static_cast<long long>(replay_xid));
-      }
-      break;
-    }
-
-    // Copy payload to output buffer
-    if (req.payload && req.payload->content_size() > 0) {
-      size_t payload_size = req.payload->content_size();
-      std::string payload_bytes;
-      payload_bytes.resize(payload_size);
-      verify(req.payload->read(payload_bytes.data(), payload_size) == payload_size);
-
-      auto guard = out_.lock().unwrap();
-      verify(guard->write(payload_bytes.data(), payload_size) == payload_size);
-      // Reset write_cnt_ so that subsequent set_bookmark() calls work
-      // The replayed payload already contains the packet size
-      guard->get_and_reset_write_cnt();
-      replayed++;
-    }
-  }
-
-  // Trigger write if we replayed any requests
-  if (replayed > 0) {
-    if (PollThreadWorker::is_on_poll_thread()) {
-      pending_write_update_.set(true);
-    } else {
-      poll_thread_worker_->update_mode(*this, PollMode::READ | PollMode::WRITE);
-    }
-  }
-
-  return replayed;
+  return 0;
 }
 
-// @safe - Enqueue one internal heartbeat probe into the output buffer.
+// @unsafe - Enqueue one internal heartbeat probe through the bound
+// channel proxy.
+//
+// 4g3c3: legacy fd path removed. Channel mode is the only path; the
+// `out_` Marshal that backed the fd path is gone. Callers (the
+// poll-loop tick) only fire heartbeats on connected clients, which
+// always have a bound channel by construction.
 void ClientConnection::enqueue_heartbeat_probe() const {
-  auto guard = out_.lock().unwrap();
-  Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
-  *guard << v64(xid_counter_.next());
-  *guard << static_cast<i32>(kInternalHeartbeatRpcId);
-  i32 packet_size = guard->get_and_reset_write_cnt();
-  guard->write_bookmark(bmark, packet_size);
+  // Build the heartbeat frame body and dispatch through the channel
+  // proxy. The channel layer adds the 4-byte size prefix internally;
+  // the body bytes match what the legacy fd path's
+  // `set_bookmark` / `write_bookmark` produced, so the wire format
+  // is unchanged.
+  Marshal body;
+  body << v64(xid_counter_.next());
+  body << static_cast<i32>(kInternalHeartbeatRpcId);
+  const std::size_t body_size = body.content_size();
+  std::vector<std::uint8_t> body_bytes;
+  if (body_size > 0) {
+    body_bytes.resize(body_size);
+    verify(body.read(body_bytes.data(), body_size) == body_size);
+  }
+  // Errors here are observable via the `on_error` callback when
+  // sub-leaf 4d wires it; for now we ignore the return code, same
+  // as the legacy fd path which never surfaced send-side errors
+  // from the heartbeat probe.
+  (void)dispatch_frame_via_channel(body_bytes.data(), body_size);
 }
 
-// @safe - Route allow_request through metrics (rejections + state transitions).
+// @unsafe - Reset channel-mode state for a factory-driven reconnect
+//. Drops the closed FiberChannel,
+// flips `channel_mode_` off, and forces the state machine to
+// DISCONNECTED so `connect()`'s `verify(!is_connected())` passes.
+// Caller: the spawn body inside `on_channel_closed_fan_out` when a
+// factory is bound.
+void ClientConnection::reset_channel_mode_for_reconnect() {
+  // @unsafe { SpinMutex::lock + Option::take }
+  {
+    auto guard = fiber_channel_.lock().unwrap();
+    *guard = rusty::None;
+  }
+  // 4g1c: also drop the direct-channel slot so reconnect can rebind
+  // a fresh proxy with fresh callbacks.
+  // @unsafe { SpinMutex::lock + Option::take }
+  {
+    auto guard = direct_channel_.lock().unwrap();
+    *guard = rusty::None;
+  }
+  channel_mode_.set(false);
+  state_machine_.force_state(ConnectionState::DISCONNECTED);
+}
+
+// @unsafe - Channel-factory connect path.
+//
+// Calls the bound `ChannelFactoryProxy::connect(addr)` to obtain a
+// `ChannelConnectionProxy`, then hands it to `bind_channel(...)`.
+// Mirrors the legacy fd-path's bookkeeping: records the address for
+// reconnect, transitions the state machine to CONNECTED on success,
+// invokes the connected callback, and reports errors through the
+// usual `invoke_error_callback` path. Caller is `connect(addr)`,
+// which already transitioned the state to CONNECTING and verified
+// the factory binding.
+int ClientConnection::connect_via_factory(const char* addr) {
+  ChannelFactoryProxy factory;
+  // Take a *clone* of the bound factory so we can call `connect` on
+  // it without holding the RefCell guard across what may be a
+  // blocking syscall (TCP handshake, address resolution). The
+  // ChannelFactoryProxy's underlying type (e.g. TcpFactory wrapped in
+  // an Arc<TcpFactory> adapter) is reference-counted, so copying the
+  // proxy is cheap. We don't have a generic clone() on
+  // pro::proxy<F>, so we copy through the Option's Arc-equivalent
+  // semantics by re-binding via std::move from a fresh borrow.
+  // @unsafe { SpinMutex::lock + ChannelFactoryProxy copy }
+  {
+    auto guard = factory_.lock().unwrap();
+    if (guard->is_none()) {
+      Log_error(
+          "rrr::ClientConnection::connect_via_factory: factory unbound at "
+          "the moment of connect (race against bind_factory)");
+      state_machine_.transition_to(ConnectionState::FAILED);
+      invoke_error_callback(ENOTCONN, "factory unbound");
+      return ENOTCONN;
+    }
+    // pro::proxy is move-only; we can't clone. Use the proxy in
+    // place via the Box wrapper. The SpinMutex guard is held across
+    // the connect() syscall — the caller's perspective is that
+    // connect is synchronous (channel-layer contract), and the
+    // factory itself is read-only (bind_factory is essentially
+    // one-shot per Client lifecycle), so holding the lock briefly
+    // while we issue the syscall doesn't introduce contention with
+    // the dispatch path (which locks `fiber_channel_`, not
+    // `factory_`).
+    auto* bound = const_cast<ChannelFactoryProxy*>(
+        guard->as_ref().unwrap().get());
+    ConnectResult result = (*bound)->connect(std::string_view(addr));
+    if (result.error != ChannelError::None || !result.connection.has_value()) {
+      const auto err_str = std::string("factory connect failed: ")
+          + channel_error_to_string(result.error);
+      Log_error("rrr::ClientConnection: %s (addr=%s)", err_str.c_str(), addr);
+      state_machine_.transition_to(ConnectionState::FAILED);
+      // Map the channel error onto an errno-shaped value the legacy
+      // call sites expect.
+      const int rc = (result.error == ChannelError::ConnectionRefused)
+                       ? ECONNREFUSED
+                     : (result.error == ChannelError::AddressInvalid)
+                       ? EINVAL
+                       : ENOTCONN;
+      invoke_error_callback(rc, err_str);
+      return rc;
+    }
+    // Sub-leaf 4g1c: bypass FiberChannel + recv-loop fiber entirely.
+    // Install on_frame/on_closed callbacks directly on the channel
+    // proxy. on_frame runs on the poll thread (where the channel
+    // layer fires it) and calls decode_response_and_notify inline —
+    // no IntEvent, no fiber yield, no waiting_events_ churn. This
+    // works around the deeper reactor/fiber wedge documented in 4g1b.
+    bind_channel_direct(std::move(result.connection));
+  }
+
+  // Record address for the close fan-out's reconnect spawn — it
+  // re-runs the factory connect with the same target.
+  // @unsafe { std::string assignment }
+  { reconnect_address_ = addr; }
+
+  // Mirror the fd path's terminal transition: the channel layer's
+  // own state (proxy.is_closed()) becomes the source of truth, but
+  // we still drive the legacy state machine through CONNECTED so
+  // existing health-check / metric APIs (`connected()`,
+  // `connection_state()`) keep working.
+  if (!state_machine_.transition_to(ConnectionState::CONNECTED)) {
+    state_machine_.force_state(ConnectionState::CONNECTED);
+  }
+  invoke_connected_callback();
+  return 0;
+}
+
+// @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
+//
+//   - 4a flipped the `channel_mode_` latch.
+//   - 4b routed outbound frames through the proxy.
+//   - 4c2 wraps the proxy in a `FiberChannel` and spawns a recv-loop
+//     fiber that drives response demux from `recv_frame()` calls.
+//
+// The fiber is spawned on the *current* thread's reactor. Per the
+// channel-layer threading contract, the proxy's callbacks fire on the
+// reactor that owns the underlying connection — typically the poll
+// thread for production TCP, or the test thread for fake channels.
+// Calling `bind_channel` from any other thread leaves the recv-loop
+// fiber on the wrong reactor and would race the IntEvent signaling
+// path. Cross-thread scheduling of the spawn is sub-leaf 4e's
+// concern; for 4c2 we document the constraint and rely on the
+// caller.
+void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
+  if (!channel.has_value()) return;
+
+  // Move the proxy into a heap-allocated `FiberChannel` so the
+  // recv-loop fiber can hold a stable pointer to the wrapper across
+  // its parking lifetime. `FiberChannel` is move-deleted (its
+  // callbacks capture `this`), so we use `make_box` which constructs
+  // in-place via perfect-forwarded `new` rather than moving.
+  // @unsafe { make_box + SpinMutex mutation }
+  {
+    auto guard = fiber_channel_.lock().unwrap();
+    *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
+  }
+  channel_mode_.set(true);
+
+  // Capture a Weak<> so the parked fiber doesn't extend the
+  // connection's lifetime (which would create a cycle via
+  // `fiber_channel_` ownership).
+  WeakClientConnection weak_self;
+  // @unsafe { Weak copy is currently treated as non-safe. }
+  { weak_self = weak_self_; }
+
+  // Spawn the recv-loop fiber on the *current* thread's reactor.
+  // Per the channel-layer threading contract, the recv-loop fiber
+  // must live on the same reactor that fires the proxy's
+  // `on_frame` / `on_closed` callbacks (so the `IntEvent` it parks
+  // on can be signaled cross-fiber within one thread —
+  // cross-thread `IntEvent::set` is unsafe). Caller is responsible
+  // for choosing the right thread:
+  //   - Fake-channel unit tests call `bind_channel(...)` from the
+  //     test thread, where they also drive `deliver()` /
+  //     `deliver_closed()`. The recv-loop fiber lives on the test
+  //     thread; everything stays single-threaded.
+  //   - Production TCP / factory paths use
+  //     `bind_channel_via_poll_thread(...)` (sub-leaf 4f) which
+  //     submits a `OneTimeJob` to the poll thread, where the
+  //     spawn — and therefore the resulting fiber — lands on the
+  //     same reactor that fires `TcpConnection::handle_read`'s
+  //     `on_frame` callback.
+  Fiber::create_run([weak_self]() mutable {
+    auto conn_opt = weak_self.upgrade();
+    if (conn_opt.is_none()) return;
+    auto conn = conn_opt.unwrap();
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    mut_conn->run_recv_loop();
+  }, __FILE__, __LINE__);
+}
+
+// @unsafe - Channel-mode bind that schedules the recv-loop fiber
+// spawn onto the *poll thread*.
+//
+// Used by production code paths (factory-driven `connect` /
+// reconnect) that run on the user thread but need the recv-loop
+// fiber on the poll thread — same thread the channel proxy's
+// callbacks fire on. Submits a `OneTimeJob` whose `Work()` runs
+// `run_recv_loop()` from a fiber that the poll thread's
+// `trigger_job` spawns on its own reactor.
+void ClientConnection::bind_channel_via_poll_thread(
+    ChannelConnectionProxy channel) {
+  if (!channel.has_value()) return;
+
+  // Move the proxy into the heap-allocated FiberChannel and flip
+  // the latch on the calling thread — these are pure data
+  // mutations and the recv-loop fiber doesn't observe them until
+  // after we submit the OneTimeJob below.
+  // @unsafe { make_box + SpinMutex mutation }
+  {
+    auto guard = fiber_channel_.lock().unwrap();
+    *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
+  }
+  channel_mode_.set(true);
+
+  WeakClientConnection weak_self;
+  // @unsafe { Weak copy }
+  { weak_self = weak_self_; }
+
+  // Schedule the recv-loop fiber spawn onto the poll thread. The
+  // poll thread's `trigger_job` calls `Fiber::create_run` from
+  // its own reactor, so the resulting fiber's IntEvent waits and
+  // the `on_frame` callback's signal both land on the same
+  // thread.
+  // @unsafe { Arc::new_ + rusty::Function + cross-thread queue }
+  auto recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([weak_self]() {
+    auto conn_opt = weak_self.upgrade();
+    if (conn_opt.is_none()) return;
+    auto conn = conn_opt.unwrap();
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    mut_conn->run_recv_loop();
+  }));
+  // Upcast Arc<OneTimeJob> -> Arc<Job> for the PollThread queue.
+  auto recv_job_base = rusty::Arc<Job>(recv_job);
+  poll_thread_worker_->add(std::move(recv_job_base));
+}
+
+// @unsafe - Direct on_frame / on_closed callback binding.
+//
+// Bypasses FiberChannel + recv-loop fiber entirely. Installs the
+// callbacks directly on the channel proxy:
+//   - on_frame: builds a copy of the frame bytes (the channel-layer
+//     contract makes the frame.payload pointer valid only during the
+//     callback) and calls decode_response_and_notify on the same
+//     thread the channel layer fires on. For TCP, that's the poll
+//     thread — same thread that handles_read parses frames.
+//   - on_closed: invokes on_channel_closed_fan_out on the same
+//     thread.
+//
+// The proxy's other thread-safety properties carry over: send_frame
+// is callable from any thread (we use it that way from
+// dispatch_frame_via_channel in user threads).
+//
+// Stores the proxy in `direct_channel_`. The connection's
+// `Arc<ClientConnection>` lifetime is captured weakly in the
+// callbacks, so the connection can be torn down without leaving a
+// dangling pointer in the proxy's installed callbacks. When
+// `direct_channel_` is destroyed, the proxy's destructor drops the
+// callbacks, so any in-flight callback dispatch from the channel
+// layer must complete before drop is allowed (this matches the
+// FiberChannel destructor's contract).
+void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
+  if (!channel.has_value()) return;
+
+  // Capture a weak ref so the proxy's installed callbacks don't
+  // extend the ClientConnection's lifetime (avoids a refcount cycle
+  // through `direct_channel_` + the callbacks).
+  WeakClientConnection weak_self;
+  // @unsafe { Weak copy is currently treated as non-safe }
+  { weak_self = weak_self_; }
+
+  // Install callbacks BEFORE moving the proxy into the slot. After
+  // the move, the proxy lives in `direct_channel_`; the lambdas
+  // capture only the weak self-ref.
+  // @unsafe { lambda capture, channel proxy mutator }
+  channel->set_on_frame([weak_self](const ChannelFrame& f) {
+    auto conn_opt = weak_self.upgrade();
+    if (conn_opt.is_none()) return;
+    auto conn = conn_opt.unwrap();
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    mut_conn->decode_response_and_notify(f.payload, f.size);
+  });
+  channel->set_on_closed([weak_self](ChannelError /*reason*/) {
+    auto conn_opt = weak_self.upgrade();
+    if (conn_opt.is_none()) return;
+    auto conn = conn_opt.unwrap();
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    mut_conn->on_channel_closed_fan_out();
+  });
+  // on_error is not surfaced to the RPC layer in this binding mode
+  // (the channel-layer contract follows fatal errors with on_closed,
+  // so on_channel_closed_fan_out covers the recovery path).
+  channel->set_on_error([](ChannelError, std::string_view) {});
+
+  // Move the proxy into the slot and flip the channel-mode latch.
+  // @unsafe { make_box + SpinMutex mutation }
+  {
+    auto guard = direct_channel_.lock().unwrap();
+    *guard = rusty::Some(rusty::make_box<ChannelConnectionProxy>(std::move(channel)));
+  }
+  channel_mode_.set(true);
+}
+
+// @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
+//
+// Recv-loop body: blocks on `FiberChannel::recv_frame()` and forwards
+// each frame's body to `decode_response_and_notify`. Returns when
+// the channel closes (recv_frame returns None) or when the wrapper
+// goes away.
+//
+// We resolve the FiberChannel raw pointer ONCE under a brief lock
+// and then drop the SpinMutex guard — `recv_frame()` yields the
+// fiber (parking on an `IntEvent`), and holding a lock across the
+// yield would block other threads racing on `dispatch_frame_via_channel`
+// (or, on the same reactor, prevent other fibers from running). The
+// raw pointer stays valid because the spawning lambda keeps an
+// `Arc<ClientConnection>` alive for the fiber's lifetime, and the
+// connection owns the `Box<FiberChannel>`.
+void ClientConnection::run_recv_loop() {
+  FiberChannel* fc = nullptr;
+  {
+    auto guard = fiber_channel_.lock().unwrap();
+    if (guard->is_none()) return;
+    // @unsafe { Box::get returns raw pointer }
+    fc = const_cast<FiberChannel*>(guard->as_ref().unwrap().get());
+  }
+  while (true) {
+    rusty::Option<OwnedFrame> frame_opt = fc->recv_frame();
+    if (frame_opt.is_none()) {
+      // Channel closed. Run the close-side fan-out (sub-leaf 4d):
+      // cancel pending futures with ENOTCONN, fire error /
+      // disconnected callbacks, and trigger auto-reconnect if the
+      // policy allows. The fiber then exits, dropping its
+      // Arc<ClientConnection> capture so the connection can finish
+      // teardown if no other strong refs remain.
+      on_channel_closed_fan_out();
+      return;
+    }
+    auto frame = std::move(frame_opt).unwrap();
+    decode_response_and_notify(frame.bytes.data(), frame.bytes.size());
+  }
+}
+
+// @unsafe - Marshal operators, Future::notify_ready, pending_fu_ map.
+//
+// Decode one response frame body and resolve the matching pending
+// future. The body layout mirrors the legacy fd path's payload (i.e.,
+// what arrives after the 4-byte size prefix in `client.cpp::handle_read`):
+//
+//     [v64 reply_xid][v32 error_code][v64 server_instance_id][user-marshaled reply]
+//
+// The channel layer consumes the size prefix (and with it the
+// `kResponseHeaderExtFlag` bit), so we lose the runtime signal that
+// distinguishes legacy responses (no instance ID) from extended
+// responses (with instance ID). The current SRPC server always emits
+// the extended form (`server.hpp::reply` sets
+// `include_instance_id = true`), so channel mode unconditionally
+// reads the instance ID. Sub-leaf 4f's migration switch / parity
+// pass will revisit if a legacy-server interop path needs the bit
+// surfaced through `ChannelFrame`.
+void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
+                                                  std::size_t size) {
+  // parse the response header directly from
+  // the input bytes via BufferSource + BinaryReadArchive — no
+  // intermediate `Marshal body` allocation.  The payload tail (if
+  // any) is written into the matching Future's `reply_` Marshal via
+  // a single byte-copy.  BufferSource bounds reads to `size`, so a
+  // truncated frame aborts inside `BinaryReadArchive::read_exact`
+  // (matches the legacy `Marshal::operator>>` behaviour on short
+  // reads).
+  BufferSource src(bytes, size);
+  BinaryReadArchive ar(&src);
+
+  v64 v_reply_xid;
+  v32 v_error_code;
+  // See the function-header note: in channel mode the extended-header
+  // flag is consumed by the framing layer.  We assume the server
+  // always emits the extended form (matches `server.hpp` today).
+  v64 v_server_instance_id;
+  ar >> v_reply_xid >> v_error_code >> v_server_instance_id;
+  check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
+
+  size_t parsed_header_size = src.pos();
+  size_t response_payload_bytes = size - parsed_header_size;
+  heartbeat_manager_.on_pong_received();
+
+  // Fast path: slim async-callback slot (request_async users).
+  // Check first — for callback-only callers this is the dominant
+  // pattern and we can avoid touching the HashMap entirely.
+  {
+    const size_t slot = static_cast<size_t>(v_reply_xid.get())
+                          % kAsyncSlotCount;
+    rusty::Option<AsyncReplyCallback> cb_opt = rusty::None;
+    {
+      auto guard = pending_cb_slots_.lock().unwrap();
+      if ((*guard)[slot].is_some()) {
+        cb_opt = std::move((*guard)[slot]);
+        (*guard)[slot] = rusty::None;
+      }
+    }
+    if (cb_opt.is_some()) {
+      auto cb = std::move(cb_opt.unwrap());
+      const i32 err_code = static_cast<i32>(v_error_code.get());
+      if (err_code == 0) {
+        metrics_.record_request_completed();
+      } else {
+        metrics_.record_request_failed();
+      }
+      record_circuit_result(err_code);
+      cb(err_code, bytes + parsed_header_size, response_payload_bytes);
+      return;
+    }
+  }
+
+  rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
+  {
+    auto guard = pending_fu_.lock().unwrap();
+    auto fu_ptr = guard->get(v_reply_xid.get());
+    if (fu_ptr.is_some()) {
+      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());
+      guard->remove(v_reply_xid.get());
+    }
+  }
+
+  if (fu_opt.is_some()) {
+    auto fu = fu_opt.unwrap();
+    verify(fu->xid_ == v_reply_xid.get());
+    fu->error_code_.set(v_error_code.get());
+    if (response_payload_bytes > 0) {
+      fu->reply_.borrow_mut()->write(bytes + parsed_header_size,
+                                     response_payload_bytes);
+    }
+
+    if (v_error_code.get() == 0) {
+      metrics_.record_request_completed();
+    } else {
+      metrics_.record_request_failed();
+    }
+    record_circuit_result(v_error_code.get());
+
+    fu->notify_ready(fu);
+  }
+  // No matching future (timed out or replaced) → drop the payload.
+  // The legacy fd path drained the bytes through a throwaway Marshal
+  // to keep its chunk list balanced, but that was an idiom of the
+  // legacy fd reader; with channel-mode framing the input bytes are
+  // owned by the caller and freed on return — nothing to drain.
+}
+
+// @unsafe - Channel-mode close fan-out.
+//
+// Mirrors the legacy fd path's `handle_error` for channel-mode
+// connections: when the recv-loop fiber sees `recv_frame()` return
+// None (channel closed by peer or transport fault), this method
+// runs the same reliability fan-out:
+//
+//   1. Force the connection state to FAILED (unless the user
+//      already initiated the close — DISCONNECTING/DISCONNECTED).
+//   2. Invoke the error callback with ECONNRESET (only on
+//      non-user-initiated paths).
+//   3. Reset the heartbeat manager so a future reconnect starts
+//      from a clean baseline.
+//   4. Invalidate every pending future (`ENOTCONN`).
+//   5. Invoke the disconnected callback (only on
+//      non-user-initiated paths, matching `close()`'s contract).
+//   6. If `reconnect_policy_.auto_reconnect` is set and a
+//      `reconnect_address_` was recorded, increment the
+//      `channel_reconnect_attempts_` counter and spawn a thread
+//      that will call `reconnect()`. Sub-leaf 4e replaces the
+//      legacy `reconnect()` body with a factory-driven path; for
+//      4d the spawn is observable through the counter without
+//      requiring tests to actually drive the fd reconnect.
+//
+// Skips the socket-close half of `close()` (`::close(socket_)`,
+// state transitions through DISCONNECTING) — channel mode never
+// owned the fd, and the channel layer has already torn down its
+// underlying transport.
+void ClientConnection::on_channel_closed_fan_out() {
+  ConnectionState prev_state = state_machine_.state();
+  const bool user_initiated_closing =
+      prev_state == ConnectionState::DISCONNECTING ||
+      prev_state == ConnectionState::DISCONNECTED ||
+      reconnect_abort_.load(std::memory_order_acquire);
+
+  if (!user_initiated_closing) {
+    invoke_error_callback(ECONNRESET, "channel closed");
+    state_machine_.force_state(ConnectionState::FAILED);
+  }
+
+  heartbeat_manager_.reset();
+  invalidate_pending_futures();
+
+  if (!user_initiated_closing) {
+    invoke_disconnected_callback();
+  }
+
+  // Trigger auto-reconnect if the policy allows. Channel-mode
+  // reconnect is wired in sub-leaf 4e (factory-based); for 4d we
+  // bump an observable counter the moment the fan-out reaches the
+  // reconnect-policy branch, then conditionally spawn the legacy
+  // fd reconnect path. The counter is the observability signal:
+  // tests verify it incremented by setting
+  // `reconnect_abort_=true` (so the spawn short-circuits without
+  // actually calling `reconnect()`). Production callers that want
+  // a real reconnect leave the abort flag false and rely on the
+  // spawn.
+  if (reconnect_policy_.auto_reconnect &&
+      // @unsafe { std::string::empty }
+      !reconnect_address_.empty()) {
+    channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
+
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      // Caller requested no reconnect (typically: connection
+      // tearing down). Counter is still bumped for observability.
+      return;
+    }
+    auto weak_conn = weak_self_;
+    rusty::thread::spawn([weak_conn]() {
+      auto conn_opt = weak_conn.upgrade();
+      if (conn_opt.is_none()) {
+        return;
+      }
+      auto conn = conn_opt.unwrap();
+      if (!conn->reconnect_policy_.auto_reconnect ||
+          conn->reconnect_abort_.load(std::memory_order_acquire)) {
+        return;
+      }
+      auto state = conn->connection_state();
+      if (state == ConnectionState::FAILED ||
+          state == ConnectionState::DISCONNECTED) {
+        // factory-driven reconnect.
+        //
+        // When a `ChannelFactoryProxy` is bound, the fan-out's
+        // reconnect spawn re-runs the same factory connect path
+        // that the original `connect(addr)` took (factory ->
+        // connect -> bind_channel) instead of the legacy fd
+        // `reconnect()` (which re-opens a raw socket). The
+        // factory-aware path also re-arms the recv-loop fiber via
+        // `bind_channel`, so a successful reconnect resumes
+        // request demux without a manual setup step.
+        auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+        if (mut_conn == nullptr) {
+          return;
+        }
+        if (conn->is_factory_bound()) {
+          Log_info(
+              "rrr::ClientConnection: channel-mode auto-reconnect "
+              "(factory) triggered after on_closed");
+          // Reset the channel-mode latch + drop the stale
+          // FiberChannel before calling connect again — connect's
+          // verify(!is_connected()) requires the state machine to
+          // be non-CONNECTED, and the new bind_channel needs the
+          // option slot empty so it can install fresh callbacks.
+          mut_conn->reset_channel_mode_for_reconnect();
+          // `connect` reads `reconnect_address_` itself (set by
+          // the original connect call), so we just call it.
+          (void)mut_conn->connect(conn->reconnect_address_.c_str());
+          return;
+        }
+        Log_info(
+            "rrr::ClientConnection: channel-mode auto-reconnect (legacy) "
+            "triggered after on_closed");
+        // @unsafe - reconnect mutates socket/state and performs network I/O.
+        mut_conn->reconnect();
+      }
+    }).detach();
+  }
+}
+
+// @unsafe - Route allow_request through metrics (rejections + state transitions).
 bool ClientConnection::allow_request_with_circuit_metrics() const {
   CircuitState before = circuit_breaker_.state();
   bool allowed = circuit_breaker_.allow_request();
@@ -707,7 +1182,7 @@ void ClientConnection::record_circuit_state_transition(
   }
 }
 
-// @safe - Records success/failure in circuit breaker.
+// @unsafe - Records success/failure in circuit breaker.
 void ClientConnection::record_circuit_result(i32 err) const {
   CircuitState before = circuit_breaker_.state();
   if (err == 0) {
@@ -753,7 +1228,7 @@ RpcError ClientConnection::map_system_error(i32 err) {
   }
 }
 
-// @safe - Invoke callback manager error hooks.
+// @unsafe - Invoke callback manager error hooks.
 void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const {
   if (!callback_manager_) {
     return;
@@ -761,7 +1236,7 @@ void ClientConnection::invoke_error_callback(i32 err, const std::string& message
   callback_manager_->invoke_on_error(map_system_error(err), message);
 }
 
-// @safe - Invoke callback manager disconnected hooks.
+// @unsafe - Invoke callback manager disconnected hooks.
 void ClientConnection::invoke_disconnected_callback() const {
   if (!callback_manager_) {
     return;
@@ -769,7 +1244,7 @@ void ClientConnection::invoke_disconnected_callback() const {
   callback_manager_->invoke_on_disconnected();
 }
 
-// @safe - Invoke callback manager reconnecting hooks.
+// @unsafe - Invoke callback manager reconnecting hooks.
 void ClientConnection::invoke_reconnecting_callback() const {
   if (!callback_manager_) {
     return;
@@ -777,7 +1252,7 @@ void ClientConnection::invoke_reconnecting_callback() const {
   callback_manager_->invoke_on_reconnecting();
 }
 
-// @safe - Invoke callback manager reconnected hooks.
+// @unsafe - Invoke callback manager reconnected hooks.
 void ClientConnection::invoke_reconnected_callback(bool success) const {
   if (!callback_manager_) {
     return;
@@ -785,7 +1260,7 @@ void ClientConnection::invoke_reconnected_callback(bool success) const {
   callback_manager_->invoke_on_reconnected(success);
 }
 
-// @safe - Invoke callback manager connected hooks.
+// @unsafe - Invoke callback manager connected hooks.
 void ClientConnection::invoke_connected_callback() const {
   if (!callback_manager_) {
     return;
@@ -793,7 +1268,7 @@ void ClientConnection::invoke_connected_callback() const {
   callback_manager_->invoke_on_connected();
 }
 
-// @safe - Error handler - transitions to FAILED state
+// @unsafe - Error handler - transitions to FAILED state
 void ClientConnection::handle_error() {
   ConnectionState prev_state = state_machine_.state();
   const bool user_initiated_closing =
@@ -823,7 +1298,7 @@ void ClientConnection::handle_error() {
         return;
       }
       auto weak_conn = weak_self_;
-      std::thread([weak_conn]() {
+      rusty::thread::spawn([weak_conn]() {
         auto conn_opt = weak_conn.upgrade();
         if (conn_opt.is_none()) {
           return;
@@ -849,7 +1324,20 @@ void ClientConnection::handle_error() {
   }
 }
 
-// @safe - Poll-loop heartbeat tick and pending write-update handling.
+// @unsafe - Poll-loop heartbeat tick.
+//
+// 4g3c3: ClientConnection is no longer registered as a Pollable on
+// the poll thread, so this method is unreachable from the poll loop
+// itself. The heartbeat manager is still driven from internal
+// timers; this method is preserved on the Pollable facade for ABI
+// compatibility (deptran's `Reactor::clients_` still wraps
+// ClientConnection in `PollableProxy` for host-scoped lifetime
+// retention — see `src/deptran/communicator.cc`). The body retains
+// the heartbeat probe so any caller that does drive it (e.g. tests
+// invoking through the proxy) keeps working. The
+// `pending_write_update_` flag has been removed: it gated the
+// legacy fd-path's write-mode flip, which the channel layer now
+// owns internally.
 bool ClientConnection::check_pending_write_update() const {
   if (state_machine_.is_connected() && !paused_.get()) {
     if (heartbeat_manager_.check_timeout()) {
@@ -862,176 +1350,66 @@ bool ClientConnection::check_pending_write_update() const {
       return true;
     }
   }
-
-  if (pending_write_update_.get()) {
-    pending_write_update_.set(false);
-    return true;
-  }
   return false;
 }
 
-// @safe - Writes buffered data to socket, protected by SpinMutex
+// 4g3c3: ClientConnection no longer implements the Pollable role.
+// The channel layer's TcpConnection owns the fd and the
+// handle_read/write/error duty. These overrides remain for ABI
+// compatibility (PollableProxy facade conformance via the templated
+// adapter) but their bodies are no-ops.
 int ClientConnection::handle_write() {
-  if (!state_machine_.is_connected()) {
-    return PollMode::NO_CHANGE;
-  }
-  // Jetpack: respect pause state
-  if (paused_.get()) return PollMode::NO_CHANGE;
-
-  int result = PollMode::NO_CHANGE;
-  auto guard = out_.lock().unwrap();
-  size_t before_size = guard->content_size();
-  guard->write_to_fd(socket_);
-  size_t after_size = guard->content_size();
-
-  // Update activity timestamp and metrics if we wrote any data
-  if (after_size < before_size) {
-    size_t bytes_written = before_size - after_size;
-    update_last_activity(current_time_ms());
-    metrics_.record_bytes_sent(bytes_written);
-  }
-
-  if (guard->empty()) {
-    // Return READ-only mode - PollThreadWorker will update epoll
-    result = PollMode::READ;
-  }
-  // Guard auto-unlocks here
-  return result;
+  return PollMode::NO_CHANGE;
 }
 
-// @unsafe - Calls Future::notify_ready (uses interior mutability)
 bool ClientConnection::handle_read() {
-  if (!state_machine_.is_connected()) {
-    return false;
-  }
-
-  int bytes_read = in_.read_from_fd(socket_);
-  if (bytes_read == 0) {
-    return false;
-  }
-
-  // Update activity timestamp and metrics on successful read
-  update_last_activity(current_time_ms());
-  if (bytes_read > 0) {
-    metrics_.record_bytes_received(static_cast<uint64_t>(bytes_read));
-  }
-
-  // Process all available packets
-  while (state_machine_.is_connected()) {
-    i32 encoded_packet_size = 0;
-    int n_peek = in_.peek(encoded_packet_size);
-    if (n_peek != sizeof(i32)) {
-      break;
-    }
-    i32 packet_size = response_payload_size(encoded_packet_size);
-    if (in_.content_size() >= static_cast<size_t>(packet_size) + sizeof(i32)) {
-
-      verify(in_.read(&encoded_packet_size, sizeof(i32)) == sizeof(i32));
-
-      const bool has_extended_header = response_has_extended_header(encoded_packet_size);
-      packet_size = response_payload_size(encoded_packet_size);
-
-      v64 v_reply_xid;
-      v32 v_error_code;
-      size_t parsed_header_size = 0;
-
-      in_ >> v_reply_xid >> v_error_code;
-      parsed_header_size += v_reply_xid.val_size() + v_error_code.val_size();
-
-      if (has_extended_header) {
-        v64 v_server_instance_id;
-        in_ >> v_server_instance_id;
-        parsed_header_size += v_server_instance_id.val_size();
-        check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
-      }
-
-      if (packet_size < static_cast<i32>(parsed_header_size)) {
-        invoke_error_callback(EPROTO, "response header larger than packet payload");
-        handle_error();
-        return false;
-      }
-
-      size_t response_payload_size_bytes = static_cast<size_t>(packet_size) - parsed_header_size;
-      heartbeat_manager_.on_pong_received();
-
-      rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
-      {
-        auto guard = pending_fu_.lock().unwrap();
-        auto it = guard->find(v_reply_xid.get());
-        if (it != guard->end()) {
-          fu_opt = rusty::Some(it->second);  // Copy Arc (refcount still 2)
-          guard->erase(it);  // Remove from map (refcount 2→1)
-        }
-      }  // Guard dropped here, releasing lock
-
-      if (fu_opt.is_some()) {
-        auto fu = fu_opt.unwrap();
-        verify(fu->xid_ == v_reply_xid.get());
-
-        fu->error_code_.set(v_error_code.get());
-        fu->reply_.borrow_mut()->read_from_marshal(in_, response_payload_size_bytes);
-
-        // Record request completion in metrics
-        if (v_error_code.get() == 0) {
-          metrics_.record_request_completed();
-        } else {
-          metrics_.record_request_failed();
-        }
-        record_circuit_result(v_error_code.get());
-
-        fu->notify_ready(fu);  // Pass Arc to self for callback safety
-
-        // Arc auto-released when scope exits (refcount 1→0 if user released theirs)
-      } else {
-        // the future might have timed out - consume data anyway
-        Marshal reply;
-        reply.read_from_marshal(in_, response_payload_size_bytes);
-      }
-    } else {
-      // No complete packet available
-      break;
-    }
-  }
-
-  Reactor::get_reactor()->loop();
-
-  return true;
+  return false;
 }
 
-// @safe - Determines polling mode based on output buffer, protected by SpinMutex
 int ClientConnection::poll_mode() const {
-  int mode = PollMode::READ;
-  auto guard = out_.lock().unwrap();
-  if (!guard->empty()) {
-    mode |= PollMode::WRITE;
-  }
-  // Guard auto-unlocks here
-  return mode;
+  return PollMode::READ;
 }
 
 // ============================================================================
 // Client implementation (facade that delegates to ClientConnection)
 // ============================================================================
 
-// @safe - Cleanup destructor, uses request_close() for thread-safe close
+// @unsafe - Cleanup destructor, uses request_close() for thread-safe close
 Client::~Client() {
   close();  // Delegate to close() which uses request_close()
 }
 
-// @safe - Sets connection validity using RefCell
+// @safe - 4g3c3: legacy `out_` Marshal removed; `valid_id` was a flag
+// on the (now-deleted) outbound buffer used by the Python jetpack
+// bindings. In channel mode, outbound framing is owned by the
+// channel layer and there's no per-connection `valid_id` flag to
+// flip. Kept on the API surface for binding compatibility; behavior
+// is now a no-op.
 void Client::set_valid(bool valid) const {
-  auto guard = connection_.borrow_mut();
-  if (guard->is_some()) {
-    auto out_guard = guard->as_mut().unwrap()->out_.lock().unwrap();
-    out_guard->valid_id = valid;
-  }
+  (void)valid;
 }
 
-// @safe - Closes socket via request_close() for thread-safe cleanup
-// Note: Does NOT clear the connection object so reconnect() can work.
+// @unsafe - 4g3c3: schedules ClientConnection::close on the poll thread.
+//
+// The legacy `request_close(fd)` path was for fd-path teardown
+// ordering: the close() body needed to run on the poll thread to
+// avoid racing with pending `CmdAddPollable` commands. The same
+// ordering constraint exists in channel mode — the TcpConnection's
+// `add_proxy` call is asynchronous (it queues `CmdAddPollable` to
+// the poll thread). If `Client::close` were to drive
+// `TcpConnection::close()` from the user thread, the proxy's `fd()`
+// could read -1 by the time the poll thread processed the still-
+// queued `CmdAddPollable`, tripping `Epoll::Add`'s fd>=0 verify.
+//
+// We instead submit a `OneTimeJob` to the poll thread; by the time
+// it runs, every `CmdAddPollable` queued before the job has already
+// been processed (the MPSC queue + per-thread reactor preserves
+// command ordering). The job drives `ClientConnection::close()`
+// which closes the channel proxy synchronously on the poll thread
+// (no further enqueue).
+//
+// Note: does NOT clear the connection object so reconnect() can work.
 // The connection object retains the address for reconnection.
-// IMPORTANT: Does NOT call conn.close() directly! The socket close must happen
-// in the poll thread to avoid race conditions with pending CmdAddPollable commands.
 void Client::close() const {
   auto guard = connection_.borrow_mut();
   if (guard->is_some()) {
@@ -1039,16 +1417,20 @@ void Client::close() const {
     const bool was_connected = conn.connected();
     conn.mark_closing();
     if (was_connected) {
-      // Request poll thread to close the connection
-      // The poll thread will call ClientConnection::close() via do_close_pollable()
-      // @unsafe - PollThread::request_close
-      { poll_thread_worker_->request_close(conn.fd()); }
+      // @unsafe - schedules channel proxy close on poll thread
+      auto conn_arc = guard->as_ref().unwrap().clone();
+      auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
+        auto* mut_conn = const_cast<ClientConnection*>(conn_arc.get());
+        mut_conn->close();
+      }));
+      auto close_job_base = rusty::Arc<Job>(close_job);
+      poll_thread_worker_->add(std::move(close_job_base));
     }
     // Don't clear connection to None - we need it for reconnect()
   }
 }
 
-// @safe - Jetpack: handle_free for explicit future cleanup
+// @unsafe - Jetpack: handle_free for explicit future cleanup
 void Client::handle_free(i64 xid) const {
   auto guard = connection_.borrow();
   if (guard->is_some()) {
@@ -1056,7 +1438,7 @@ void Client::handle_free(i64 xid) const {
   }
 }
 
-// @safe - Pauses the connection
+// @unsafe - Pauses the connection
 void Client::pause() const {
   auto guard = connection_.borrow();
   if (guard->is_some()) {
@@ -1064,7 +1446,7 @@ void Client::pause() const {
   }
 }
 
-// @safe - Resumes the connection
+// @unsafe - Resumes the connection
 void Client::resume() const {
   auto guard = connection_.borrow();
   if (guard->is_some()) {
@@ -1072,7 +1454,7 @@ void Client::resume() const {
   }
 }
 
-// @safe - Establishes TCP/IPC connection to server
+// @unsafe - Establishes TCP/IPC connection to server
 // Uses Arc::get_mut() for exclusive mutable access during initialization
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
@@ -1099,10 +1481,46 @@ int Client::connect(const char* addr, bool client) const {
   mut_conn.set_heartbeat_config(pending_heartbeat_config_.get());
   // Apply pending circuit-breaker config before connecting
   mut_conn.set_circuit_breaker_config(pending_circuit_breaker_config_.get());
+  // Apply pending reconnect policy before connecting
+  mut_conn.set_reconnect_policy(pending_reconnect_policy_.get());
+
+  // 4g4: channel mode is unconditional — auto-install a default TCP
+  // `ChannelFactoryProxy` if the caller hasn't already bound one via
+  // `set_channel_factory(...)`. The connection's `connect(addr)` and
+  // reconnect spawn route through `factory->connect(addr)` ->
+  // `bind_channel_direct(...)`.
+  if (!has_pending_channel_factory()) {
+    auto tcp_factory =
+        rusty::Arc<TcpFactory>::make(poll_thread_worker_);
+    set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
+  }
+
+  // push the pending channel factory
+  // into the new ClientConnection. Once bound, the connection's
+  // `connect(addr)` and reconnect spawn route through the factory
+  // (`factory->connect(addr)` -> `bind_channel(...)`) instead of
+  // the legacy fd path. Take the proxy by std::move because
+  // pro::proxy is move-only; the factory is a one-shot push per
+  // Client lifecycle (re-bind via `set_channel_factory` to install
+  // a different one — affects subsequent Client::connect calls).
+  // @unsafe { SpinMutex::lock + Box deref + ChannelFactoryProxy move }
+  {
+    auto guard = pending_factory_.lock().unwrap();
+    if (guard->is_some()) {
+      // Move the proxy out of the boxed Option. The Box stays
+      // alive on the stack until the end of this scope; we move
+      // the inner proxy into the new ClientConnection's bind_factory
+      // (which re-boxes it on the connection side).
+      auto box = std::move(*guard).unwrap();
+      ChannelFactoryProxy moved = std::move(*box);
+      mut_conn.bind_factory(std::move(moved));
+      *guard = rusty::None;  // single-use; tests can re-bind
+    }
+  }
 
   // Call connect through mutable reference
   int result = 0;
-  // @unsafe - Low-level TCP/IPC connection
+  // @unsafe - Low-level TCP/IPC connection (or factory-driven)
   {
     result = mut_conn.connect(addr);
   }
@@ -1117,7 +1535,7 @@ int Client::connect(const char* addr, bool client) const {
 }
 
 // @unsafe - Attempts to reconnect to the last connected address
-int Client::reconnect(std::function<void(bool)> on_complete) const {
+int Client::reconnect(rusty::Function<void(bool)> on_complete) const {
   auto guard = connection_.borrow();
   if (guard->is_none()) {
     Log_error("rrr::Client: no connection to reconnect");
@@ -1131,7 +1549,8 @@ int Client::reconnect(std::function<void(bool)> on_complete) const {
 
   // @unsafe - reconnect does socket operations
   {
-    return conn.reconnect(on_complete);
+    // rusty::Function is move-only — std::move into the inner call.
+    return conn.reconnect(std::move(on_complete));
   }
 }
 
@@ -1164,7 +1583,7 @@ PoolConfig ClientPool::pool_config() const {
   return config_.get();
 }
 
-// @safe - Check if a client is considered healthy
+// @unsafe - Check if a client is considered healthy
 bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
   auto cfg = config_.get();
 
@@ -1194,8 +1613,10 @@ bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
 
 // @safe - Destroys pool and all cached connections
 ClientPool::~ClientPool() {
-  for (auto& it : cache_) {
-    for (auto& client : it.second) {
+  // rusty::BTreeMap iter `operator*()` returns
+  // `std::tuple<const K&, V&>` (post-2026-04 API).
+  for (auto&& [_addr, clients] : cache_) {
+    for (auto& client : clients) {
       client->close();
     }
   }
@@ -1210,9 +1631,12 @@ ClientPool::~ClientPool() {
 size_t ClientPool::get_healthy_client_count(const std::string& addr) {
   l_.lock();
   size_t count = 0;
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    for (const auto& client : it->second) {
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    // rusty::BTreeMap::get returns `Option<V&>` (post-2026-04
+    // API), so unwrap() yields a reference, not a pointer.
+    auto& clients = clients_opt.unwrap();
+    for (const auto& client : clients) {
       if (is_client_healthy(client)) {
         count++;
       }
@@ -1226,30 +1650,33 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
 size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
   l_.lock();
   size_t removed = 0;
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    auto& clients = it->second;
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    // BTreeMap::get returns `Option<V&>`; unwrap() yields a
+    // reference. Use `.` instead of `->`, drop the `*` deref.
+    auto& clients = clients_opt.unwrap();
     auto cfg = config_.get();
 
-    // Remove unhealthy clients, but keep at least min_connections
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &removed, &clients, &cfg](const rusty::Arc<Client>& client) {
-        // Keep if we're at minimum connections
-        if (clients.size() - removed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        if (!is_client_healthy(client)) {
-          client->close();
-          removed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
+    // Remove unhealthy clients, but keep at least min_connections.
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - removed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (!is_client_healthy(client)) {
+        client->close();
+        removed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    clients = std::move(kept);
 
     // Remove empty entries from cache
-    if (clients.empty()) {
-      cache_.erase(it);
+    if (clients.is_empty()) {
+      cache_.remove(addr);
     }
   }
   l_.unlock();
@@ -1268,28 +1695,29 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
     return 0;
   }
 
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    auto& clients = it->second;
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    // BTreeMap::get returns `Option<V&>`.
+    auto& clients = clients_opt.unwrap();
 
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &closed, &clients, &cfg, current_time_ms](const rusty::Arc<Client>& client) {
-        // Keep if we're at minimum connections
-        if (clients.size() - closed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        // Check if idle
-        if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
-          client->close();
-          closed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - closed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
+        client->close();
+        closed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    clients = std::move(kept);
 
-    if (clients.empty()) {
-      cache_.erase(it);
+    if (clients.is_empty()) {
+      cache_.remove(addr);
     }
   }
   l_.unlock();
@@ -1302,30 +1730,49 @@ size_t ClientPool::remove_all_unhealthy() {
   size_t total_removed = 0;
   auto cfg = config_.get();
 
-  for (auto it = cache_.begin(); it != cache_.end(); ) {
-    auto& clients = it->second;
-    size_t removed = 0;
-
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &removed, &clients, &cfg](const rusty::Arc<Client>& client) {
-        if (clients.size() - removed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        if (!is_client_healthy(client)) {
-          client->close();
-          removed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
-    total_removed += removed;
-
-    if (clients.empty()) {
-      it = cache_.erase(it);
-    } else {
-      ++it;
+  // BTreeMap::keys() now returns `keys_range` (a transient
+  // iterator-shaped object), not `Vec<K>`. Drain into a Vec so the
+  // subsequent loop body — which mutates `cache_` via `remove(...)`
+  // — doesn't iterate while modifying.
+  rusty::Vec<std::string> keys;
+  {
+    auto it = cache_.keys();
+    keys.reserve(it.len());
+    for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
+      keys.push(std::string(opt.unwrap()));
     }
+  }
+  rusty::Vec<std::string> empty_keys;
+  for (const auto& addr : keys) {
+    auto clients_opt = cache_.get(addr);
+    if (clients_opt.is_none()) {
+      continue;
+    }
+    // BTreeMap::get returns `Option<V&>`.
+    auto& clients = clients_opt.unwrap();
+    size_t removed = 0;
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - removed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (!is_client_healthy(client)) {
+        client->close();
+        removed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    clients = std::move(kept);
+    total_removed += removed;
+    if (clients.is_empty()) {
+      empty_keys.push(addr);
+    }
+  }
+  for (const auto& addr : empty_keys) {
+    cache_.remove(addr);
   }
   l_.unlock();
   return total_removed;
@@ -1342,30 +1789,46 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
     return 0;
   }
 
-  for (auto it = cache_.begin(); it != cache_.end(); ) {
-    auto& clients = it->second;
-    size_t closed = 0;
-
-    auto new_end = std::remove_if(clients.begin(), clients.end(),
-      [this, &closed, &clients, &cfg, current_time_ms](const rusty::Arc<Client>& client) {
-        if (clients.size() - closed <= static_cast<size_t>(cfg.min_connections)) {
-          return false;
-        }
-        if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
-          client->close();
-          closed++;
-          return true;
-        }
-        return false;
-      });
-    clients.erase(new_end, clients.end());
-    total_closed += closed;
-
-    if (clients.empty()) {
-      it = cache_.erase(it);
-    } else {
-      ++it;
+  // same drain pattern as remove_all_unhealthy above —
+  // BTreeMap::keys() returns a transient `keys_range`.
+  rusty::Vec<std::string> keys;
+  {
+    auto it = cache_.keys();
+    keys.reserve(it.len());
+    for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
+      keys.push(std::string(opt.unwrap()));
     }
+  }
+  rusty::Vec<std::string> empty_keys;
+  for (const auto& addr : keys) {
+    auto clients_opt = cache_.get(addr);
+    if (clients_opt.is_none()) {
+      continue;
+    }
+    auto& clients = clients_opt.unwrap();
+    size_t closed = 0;
+    rusty::Vec<rusty::Arc<Client>> kept;
+    kept.reserve(clients.len());
+    for (const auto& client : clients) {
+      if (clients.len() - closed <= static_cast<size_t>(cfg.min_connections)) {
+        kept.push(client.clone());
+        continue;
+      }
+      if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
+        client->close();
+        closed++;
+      } else {
+        kept.push(client.clone());
+      }
+    }
+    clients = std::move(kept);
+    total_closed += closed;
+    if (clients.is_empty()) {
+      empty_keys.push(addr);
+    }
+  }
+  for (const auto& addr : empty_keys) {
+    cache_.remove(addr);
   }
   l_.unlock();
   return total_closed;
@@ -1375,8 +1838,9 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
 size_t ClientPool::total_client_count() {
   l_.lock();
   size_t count = 0;
-  for (const auto& it : cache_) {
-    count += it.second.size();
+  // BTreeMap iter returns `tuple<const K&, V&>`.
+  for (auto&& [_addr, clients] : cache_) {
+    count += clients.size();
   }
   l_.unlock();
   return count;
@@ -1385,7 +1849,7 @@ size_t ClientPool::total_client_count() {
 // @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::address_count() {
   l_.lock();
-  size_t count = cache_.size();
+  size_t count = cache_.len();
   l_.unlock();
   return count;
 }
@@ -1397,17 +1861,19 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
   BulkReconnectResult result{0, 0, 0, 0};
 
   // Collect clients to reconnect
-  std::vector<rusty::Arc<Client>> clients_to_reconnect;
+  rusty::Vec<rusty::Arc<Client>> clients_to_reconnect;
   {
     l_.lock();
-    auto it = cache_.find(addr);
-    if (it != cache_.end()) {
-      for (const auto& client : it->second) {
+    auto clients_opt = cache_.get(addr);
+    if (clients_opt.is_some()) {
+      // BTreeMap::get returns `Option<V&>`.
+      auto& clients = clients_opt.unwrap();
+      for (const auto& client : clients) {
         auto state = client->connection_state();
         if (config.skip_connected && state == ConnectionState::CONNECTED) {
           result.skipped++;
         } else {
-          clients_to_reconnect.push_back(client);
+          clients_to_reconnect.push(client);
         }
       }
     }
@@ -1424,7 +1890,7 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
                                 clients_to_reconnect.size());
 
     // Track reconnection results for this batch
-    std::vector<std::atomic<int>> batch_results(batch_end - i);
+    rusty::Vec<std::atomic<int>> batch_results(batch_end - i);
     for (auto& r : batch_results) r.store(-1);
 
     // Start async reconnections
@@ -1483,11 +1949,12 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
   BulkReconnectResult total_result{0, 0, 0, 0};
 
   // Get list of addresses
-  std::vector<std::string> addresses;
+  rusty::Vec<std::string> addresses;
   {
     l_.lock();
-    for (const auto& kv : cache_) {
-      addresses.push_back(kv.first);
+    // BTreeMap iter returns `tuple<const K&, V&>`.
+    for (auto&& [addr, _clients] : cache_) {
+      addresses.push(addr);
     }
     l_.unlock();
   }
@@ -1514,11 +1981,17 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   l_.lock();
 
   // Get or create load balancer state for this address
-  auto& lb_state = lb_state_[addr];
+  auto lb_state_opt = lb_state_.get(addr);
+  if (lb_state_opt.is_none()) {
+    lb_state_.insert(addr, LoadBalancerState{});
+    lb_state_opt = lb_state_.get(addr);
+  }
+  // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
+  auto& lb_state = lb_state_opt.unwrap();
 
-  auto it = cache_.find(addr);
-  if (it != cache_.end()) {
-    auto& clients = it->second;
+  auto clients_opt = cache_.get(addr);
+  if (clients_opt.is_some()) {
+    auto& clients = clients_opt.unwrap();
     int client_count = static_cast<int>(clients.size());
 
     // Use load balancer to select starting index
@@ -1573,19 +2046,19 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
           ok = false;
           break;
         }
-        clients.push_back(client);
+        clients.push(client);
       }
 
-      if (ok && !clients.empty()) {
+      if (ok && !clients.is_empty()) {
         sp_cl = rusty::Some(clients[rand_() % clients.size()].clone());
       } else {
         // Remove from cache if we can't connect
-        cache_.erase(it);
+        cache_.remove(addr);
       }
     }
   } else {
     // No cached connections - create new ones
-    std::vector<rusty::Arc<Client>> parallel_clients;
+    rusty::Vec<rusty::Arc<Client>> parallel_clients;
     bool ok = true;
     for (int i = 0; i < num_connections; i++) {
       auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
@@ -1594,11 +2067,11 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
         ok = false;
         break;
       }
-      parallel_clients.push_back(client);
+      parallel_clients.push(client);
     }
     if (ok) {
       sp_cl = rusty::Some(parallel_clients[rand_() % parallel_clients.size()].clone());
-      cache_[addr] = std::move(parallel_clients);
+      cache_.insert(addr, std::move(parallel_clients));
     }
     // If not ok, parallel_clients automatically cleaned up by Arc
   }
@@ -1606,85 +2079,27 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   return sp_cl;
 }
 
-// @unsafe - Apply TCP keepalive options to socket
+// @safe - 4g3c3: keepalive is now configured by the channel layer's
+// `TcpConnection` at construction time (see `tcp_channel.cpp`); the
+// RPC layer no longer owns the fd and cannot issue setsockopt.
+// `keepalive_config_` is still accepted via `set_keepalive` for API
+// stability, but its effect on the live channel proxy is currently
+// not propagated (the channel layer reads its own defaults at
+// connect time). Tests that assert keepalive configuration belong
+// at the channel layer.
 void ClientConnection::apply_keepalive_options() {
-  if (socket_ < 0) {
-    return;
-  }
-
-  auto config = keepalive_config_.get();
-  if (!config.enabled) {
-    // Disable keepalive
-    int no = 0;
-    // @unsafe { setsockopt system call }
-    setsockopt(socket_, SOL_SOCKET, SO_KEEPALIVE, &no, sizeof(no));
-    return;
-  }
-
-  // Enable keepalive
-  int yes = 1;
-  // @unsafe { setsockopt system calls }
-  if (setsockopt(socket_, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes)) != 0) {
-    Log_warn("Failed to enable SO_KEEPALIVE: %s", strerror(errno));
-    return;
-  }
-
-#ifdef __linux__
-  // Linux-specific TCP keepalive parameters
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPIDLE,
-                 &config.idle_sec, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPIDLE: %s", strerror(errno));
-  }
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPINTVL,
-                 &config.interval_sec, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPINTVL: %s", strerror(errno));
-  }
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPCNT,
-                 &config.count, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPCNT: %s", strerror(errno));
-  }
-#elif defined(__APPLE__)
-  // macOS uses TCP_KEEPALIVE for idle time (equivalent to TCP_KEEPIDLE)
-  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPALIVE,
-                 &config.idle_sec, sizeof(int)) != 0) {
-    Log_warn("Failed to set TCP_KEEPALIVE: %s", strerror(errno));
-  }
-  // macOS doesn't have TCP_KEEPINTVL or TCP_KEEPCNT via setsockopt
-#endif
-
-  Log_debug("TCP keepalive configured: idle=%ds, interval=%ds, count=%d",
-            config.idle_sec, config.interval_sec,
-            config.count);
+  // No-op in channel mode.
 }
 
-// @unsafe - Validate connection is alive using getsockopt
+// @safe - Validate connection liveness via state machine alone.
+//
+// 4g3c3: the legacy `getsockopt(SO_ERROR)` health probe is gone — we
+// don't own an fd. The channel layer surfaces transport errors via
+// `on_error` / `on_closed`, which the connection's fan-out routes
+// into the state machine. So the state-machine check is the
+// authoritative liveness signal.
 bool ClientConnection::validate_connection() const {
-  // Check 1: State machine says CONNECTED
-  if (!state_machine_.is_connected()) {
-    return false;
-  }
-
-  // Check 2: Socket is valid
-  if (socket_ < 0) {
-    return false;
-  }
-
-  // Check 3: No pending socket error (getsockopt SO_ERROR)
-  int error = 0;
-  socklen_t len = sizeof(error);
-  // @unsafe { getsockopt system call }
-  if (getsockopt(socket_, SOL_SOCKET, SO_ERROR, &error, &len) != 0) {
-    // getsockopt itself failed
-    Log_warn("getsockopt(SO_ERROR) failed: %s", strerror(errno));
-    return false;
-  }
-
-  if (error != 0) {
-    Log_warn("Socket has pending error: %s", strerror(error));
-    return false;
-  }
-
-  return true;
+  return state_machine_.is_connected();
 }
 
 } // namespace rrr

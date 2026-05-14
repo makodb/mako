@@ -16,6 +16,7 @@
 #include "multiversion.hh"
 #include "sync_util.hh"
 #include "lib/common.h"
+#include <atomic>
 #include "common.hh"
 #include "stdlib.h"
 
@@ -309,10 +310,11 @@ public:
   }
 
 
+  // Returns an approximate count of keys in the table (local shard only).
+  // Updated at commit time under lock; may be stale for recently aborted transactions.
   size_t approx_size() const {
-    // looks like if we want to implement this we have to tree walkers and all sorts of annoying things like that. could also possibly
-    // do a range query and just count keys
-    return 0;
+    // @safe - returns count updated at commit time (under lock); no atomics needed.
+    return size_count_;
   }
 
   // goddammit templates/hax
@@ -566,6 +568,11 @@ public:
     bool isInsert = has_insert(item), isDelete = has_delete(item);
 
     if (isDelete) { // delete
+      // Update count at commit time (under lock), so no atomics needed.
+      // insert-then-delete cancels out (net change = 0); plain delete decrements.
+      if (!isInsert) {
+        size_count_--;
+      }
       if (!TThread::is_multiversion()) {
         if (!isInsert) { // update
           assert(!(e->version() & invalid_bit));
@@ -606,6 +613,7 @@ public:
     if (Opacity)  // false
       TransactionTid::set_version(e->version(), t.commit_tid());
     else if (isInsert) {  // insert
+      size_count_++;
       Version v = e->version() & ~invalid_bit;
       fence();
       e->version() = v;
@@ -893,6 +901,8 @@ protected:
   typedef Masstree::tcursor<table_params> cursor_type;
   typedef Masstree::leaf<table_params> leaf_type;
   table_type table_;
+  // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
+  size_t size_count_{0};
 };
 
 template <typename V, typename Box, bool Opacity>
@@ -900,3 +910,4 @@ __thread typename MassTrans<V, Box, Opacity>::threadinfo_type MassTrans<V, Box, 
 
 template <typename V, typename Box, bool Opacity>
 constexpr typename MassTrans<V, Box, Opacity>::Version MassTrans<V, Box, Opacity>::invalid_bit;
+

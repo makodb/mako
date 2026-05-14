@@ -1,0 +1,47 @@
+[0;32m=== Mako Ubuntu 24.04 Docker Build Script ===[0m
+
+[1;33mWarning: Some RUNPATH entries include extra paths; forcing Docker library path.[0m
+[1;33m  - build_docker/dbtest: /workspace/build_docker:/workspace/build_docker/third-party/yaml-cpp[0m
+[1;33mRunning CI test 'shard2ReplicationRaft' (no rebuild)...[0m
+=========================================
+Running: ./ci/ci.sh shard2ReplicationRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with RAFT replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_VEyV.yml
+Starting shard 0 with Raft...
+Starting shard 1 with Raft...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 39s
+Stopping shards (graceful)...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication_raft.sh_rrr_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1777129040)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8398.28 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 2.12111 (< 40%)
+
+Checking test_2shard_replication_raft.sh_rrr_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8589.66 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 2.23678 (< 40%)
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+[0;32mCI test 'shard2ReplicationRaft' completed![0m

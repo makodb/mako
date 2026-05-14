@@ -1,8 +1,29 @@
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+#include <string.h>
+
+
 #include <stdio.h>
 
+
+
+
 #include "unittest.hpp"
-#include "logging.hpp"
-#include "strop.hpp"
+
+
+#include "../rrr.hpp"
 
 // @external: {
 //   printf: [unsafe],
@@ -34,23 +55,23 @@ TestMgr* TestMgr::instance() {
 
 // @unsafe - Stores raw pointer in container
 TestCase* TestMgr::reg(TestCase* t) {
-    tests_.push_back(t);  // @unsafe
+    tests_.push(t);  // @unsafe
     return t;
 }
 
 // @unsafe - Uses raw pointers and C-string operations
-void TestMgr::matched_tests(const char* match, std::vector<TestCase*>* matched) {
-    std::vector<std::string>&& split = strsplit(match, ',');  // @unsafe
+void TestMgr::matched_tests(const char* match, rusty::Vec<TestCase*>* matched) {
+    rusty::Vec<std::string>&& split = strsplit(match, ',');  // @unsafe
     matched->clear();  // @unsafe
     for (auto& t: tests_) {
         for (auto& s: split) {
             if (s.find('/') != std::string::npos) {
                 if (t->group() + std::string("/") + t->name() == s) {
-                    matched->push_back(t);  // @unsafe
+                    matched->push(t);  // @unsafe
                 }
             } else {
                 if (t->group() == s) {
-                    matched->push_back(t);  // @unsafe
+                    matched->push(t);  // @unsafe
                 }
             }
         }
@@ -58,16 +79,16 @@ void TestMgr::matched_tests(const char* match, std::vector<TestCase*>* matched) 
 }
 
 // @unsafe - Uses raw pointers, C-strings, strlen
-int TestMgr::parse_args(int argc, char* argv[], bool* show_help, bool* list_tests, std::vector<TestCase*>* selected) {
+int TestMgr::parse_args(int argc, char* argv[], bool* show_help, bool* list_tests, rusty::Vec<TestCase*>* selected) {
     *show_help = false;
     *list_tests = false;
     char* select = nullptr;
     char* skip = nullptr;
-    std::vector<TestCase*> match;
+    rusty::Vec<TestCase*> match;
     for (int i = 1; i < argc; i++) {
-        if (streq(argv[i], "-h") || streq(argv[i], "--help")) {  // @unsafe
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {  // @unsafe
             *show_help = true;
-        } else if (streq(argv[i], "-l") || streq(argv[i], "--list")) {  // @unsafe
+        } else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0) {  // @unsafe
             *list_tests = true;
         } else if (startswith(argv[i], "--select=")) {  // @unsafe
             select = argv[i] + strlen("--select=");  // @unsafe
@@ -80,9 +101,17 @@ int TestMgr::parse_args(int argc, char* argv[], bool* show_help, bool* list_test
         }
     }
     if (select == nullptr && skip == nullptr) {
-        *selected = tests_;
+        selected->clear();  // @unsafe
+        selected->reserve(tests_.len());  // @unsafe
+        for (auto& t : tests_) {
+            selected->push(t);  // @unsafe
+        }
     } else if (select != nullptr && skip == nullptr) {
-        *selected = match;
+        selected->clear();  // @unsafe
+        selected->reserve(match.len());  // @unsafe
+        for (auto& t : match) {
+            selected->push(t);  // @unsafe
+        }
     } else if (select == nullptr && skip != nullptr) {
         selected->clear();  // @unsafe
         for (auto& t: tests_) {
@@ -93,7 +122,7 @@ int TestMgr::parse_args(int argc, char* argv[], bool* show_help, bool* list_test
                 }
             }
             if (select_me) {
-                selected->push_back(t);  // @unsafe
+                selected->push(t);  // @unsafe
             }
         }
     } else { // select != nullptr && skip != nullptr
@@ -107,7 +136,7 @@ int TestMgr::parse_args(int argc, char* argv[], bool* show_help, bool* list_test
 int TestMgr::run(int argc, char* argv[]) {
     bool show_help;
     bool list_tests;
-    std::vector<TestCase*> selected;
+    rusty::Vec<TestCase*> selected;
     int r = parse_args(argc, argv, &show_help, &list_tests, &selected);  // @unsafe
     if (r != 0 || show_help) {
         printf("usage: %s [-h|--help] [-l|--list] [--select,skip=group_x/test_y,group_z]\n", argv[0]);  // @unsafe

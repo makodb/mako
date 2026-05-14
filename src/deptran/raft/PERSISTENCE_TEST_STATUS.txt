@@ -4,6 +4,17 @@ RAFT PERSISTENCE TEST - STATUS AND NOTES
 Date: 2026-01-11
 Branch: zeyu-raft-disk
 
+NOTE
+----
+This is a historical status document.  The `Marshallable` abstract
+base and the `MarshallDeputy` envelope were later retired;
+production persistence code now serializes through `janus::Command`
+(`SerializableEnvelope<MakoCommands>`) which produces byte-for-byte
+identical wire bytes to the prior `MarshallDeputy` path.  Where this
+doc says "wrap in MarshallDeputy" / "Marshallable kind", read "wrap
+in Command" / "Command kind"; the underlying logic and
+`[v32 kind][payload]` on-disk format are unchanged.
+
 CURRENT STATUS
 --------------
 All persistence, crash-recovery, partition+restart, and Figure 8 crash-recovery tests PASSING (Tests 12-19).
@@ -165,7 +176,7 @@ Latest trace (trace_0108.txt @ 18:45) shows:
 - Kill() works correctly (doesn't destroy shared poll thread)
 - Restart() correctly loads persisted state AND logs from disk
 - Fix 2 verified: Same thread ID before/after restart
-- Fix 3 verified: Logs loaded with correct Marshallable kind (kind=5 = CMD_TPC_COMMIT)
+- Fix 3 verified: Logs loaded with correct Command kind (kind=5 = CMD_TPC_COMMIT)
 - Restarted servers catch up missing logs from leader
 - Leader election works correctly after leader kill
 - All 5 servers participate in final commits
@@ -268,30 +279,31 @@ Problem: After restart, servers were skipping log application with error:
   "[APPLY-LOGS] site=4 SKIP index=1 (no instance or log)"
 
 Root cause: The RaftData serialization in raft_persistence.cc was only persisting
-primitive fields (term, ballot, slot_id, etc.) but NOT the log_ field
-(shared_ptr<Marshallable>). The comment in the code said:
-  "// Marshallable pointers left as nullptr for now"
+primitive fields (term, ballot, slot_id, etc.) but NOT the polymorphic
+log_ command field.  The comment in the code at the time said:
+  "// command pointers left as nullptr for now"
 
-This meant restarted servers had log entries with nullptr commands, so they
+This meant restarted servers had log entries with empty commands, so they
 couldn't apply the logs even though the metadata was correctly restored.
 
 Solution: Modified SerializeRaftData and DeserializeRaftData to handle the log_
-field using the MarshallDeputy pattern:
+field via the polymorphic kind-tagged envelope (originally MarshallDeputy;
+the post-L10f-2 equivalent is `janus::Command`):
 
 SerializeRaftData:
 1. Use rrr::Marshal for serialization (instead of raw memcpy)
 2. Write primitive fields
 3. Write has_log flag (uint8_t) indicating if log_ is present
-4. If present, wrap log_ in MarshallDeputy and serialize it
-   - MarshallDeputy writes kind_ (type ID) then calls ToMarshal()
+4. If present, wrap log_ in the kind-tagged envelope and serialize it
+   - Envelope writes kind_ (type ID) then calls save()
 
 DeserializeRaftData:
 1. Use rrr::Marshal for deserialization
 2. Read primitive fields
 3. Read has_log flag
-4. If present, create MarshallDeputy and deserialize
-   - MarshallDeputy reads kind_, uses factory to create correct type, calls FromMarshal()
-5. Assign md.sp_data_ to entry.log_
+4. If present, construct the kind-tagged envelope and deserialize
+   - Envelope reads kind_, uses factory to create correct type, calls load()
+5. Assign the recovered payload to entry.log_
 
 Files changed:
 - src/deptran/raft/raft_persistence.cc:154-213 - Rewrote Serialize/Deserialize functions
@@ -300,7 +312,7 @@ Verification (from trace_0108.txt @ 18:45):
   [PERSIST-LOAD] slot=1 loaded log_ kind=5
   [PERSIST-LOAD] slot=2 loaded log_ kind=5
   [PERSIST-LOAD] slot=3 loaded log_ kind=5
-  (kind=5 = CMD_TPC_COMMIT, the correct Marshallable type)
+  (kind=5 = CMD_TPC_COMMIT, the correct Command type)
 
   After loading, server 4 successfully applies all logs:
   [APPLY-LOGS] site=4 commitIndex=5 executeIndex=0

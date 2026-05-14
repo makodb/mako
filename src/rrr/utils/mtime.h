@@ -1,3 +1,5 @@
+#pragma once
+
 /*
  * mtime.h
  *
@@ -31,3 +33,4 @@
 //}
 //
 //#endif /* MTIME_H_ */
+

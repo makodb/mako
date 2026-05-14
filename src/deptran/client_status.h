@@ -11,7 +11,8 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/time.h>
-#include "../rrr/base/debugging.hpp"
+
+#include "rrr/rrr.hpp"
 #ifdef __APPLE__ // for OS X
 #include <mach/clock.h>
 #include <mach/mach.h>
@@ -20,6 +21,8 @@
 #include "constants.h"
 
 namespace janus {
+
+using rrr::verify;
 
 // Forward declarations
 void clock_gettime(struct timespec *time);

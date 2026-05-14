@@ -74,7 +74,7 @@ class Frame {
                                   TxLogServer *sch);
 
   Workload *CreateTxGenerator();
-  virtual vector<rusty::Box<rrr::Service>> CreateRpcServices(uint32_t site_id,
+  virtual vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                                    TxLogServer *dtxn_sched,
                                                    rusty::Arc<rrr::PollThread> poll_thread_worker);
 };

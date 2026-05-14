@@ -1,3 +1,15 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /* 
  * File:   dag.h
  * Author: ms
@@ -16,7 +28,12 @@
 #include <apr_errno.h>
 #include <apr_thread_mutex.h>
 
+
+
+
+
 #include "safe_assert.h"
+#include "logger.h"
 #include "mpr_queue.h"
 
 typedef uint32_t queueid_t;
@@ -40,7 +57,7 @@ typedef struct {
     void *data;
 } mpr_dag_node_t;
 
-static void mpr_dag_create(mpr_dag_t **pp_dag) {
+inline void mpr_dag_create(mpr_dag_t **pp_dag) {
     *pp_dag = (mpr_dag_t*) malloc(sizeof(mpr_dag_t));
     mpr_dag_t *d = *pp_dag;
     apr_pool_create(&d->mp, NULL);
@@ -51,7 +68,7 @@ static void mpr_dag_create(mpr_dag_t **pp_dag) {
     apr_thread_mutex_create(&d->mx, APR_THREAD_MUTEX_UNNESTED, d->mp);
 }
 
-static void mpr_dag_destroy(mpr_dag_t *dag) {
+inline void mpr_dag_destroy(mpr_dag_t *dag) {
     LOG_TRACE("dag to be destroied.");
     apr_queue_term(dag->qu);
     apr_thread_mutex_destroy(dag->mx);
@@ -60,11 +77,11 @@ static void mpr_dag_destroy(mpr_dag_t *dag) {
     LOG_DEBUG("dag destroied.");
 }
 
-static void mpr_dag_interrupt(mpr_dag_t *dag) {
+inline void mpr_dag_interrupt(mpr_dag_t *dag) {
     apr_queue_interrupt_all(dag->qu);
 }
 
-static void mpr_dag_push(mpr_dag_t *dag, queueid_t *qids, 
+inline void mpr_dag_push(mpr_dag_t *dag, queueid_t *qids, 
         size_t sz_qids, void* data) {
 
     mpr_dag_node_t *node = (mpr_dag_node_t*)malloc(sizeof(mpr_dag_node_t));
@@ -106,7 +123,7 @@ static void mpr_dag_push(mpr_dag_t *dag, queueid_t *qids,
     apr_thread_mutex_unlock(dag->mx);
 }
 
-static void mpr_dag_pop(mpr_dag_t *dag, queueid_t *qids, size_t sz_qids, void** data) {
+inline void mpr_dag_pop(mpr_dag_t *dag, queueid_t *qids, size_t sz_qids, void** data) {
     apr_thread_mutex_lock(dag->mx);
 
     // 1. pop it from the queue
@@ -159,7 +176,7 @@ static void mpr_dag_pop(mpr_dag_t *dag, queueid_t *qids, size_t sz_qids, void** 
  * @param sz_qids
  * @param data
  */
-static apr_status_t mpr_dag_getwhite(mpr_dag_t *dag, queueid_t **qids, 
+inline apr_status_t mpr_dag_getwhite(mpr_dag_t *dag, queueid_t **qids, 
         size_t* sz_qids, void** data) {
     apr_status_t status;
     mpr_dag_node_t *node = NULL;

@@ -13,41 +13,10 @@ FpgaRaftCommo::FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_w
 //  verify(poll != nullptr);
 }
 
-shared_ptr<FpgaRaftForwardQuorumEvent> FpgaRaftCommo::SendForward(parid_t par_id, 
-                                            parid_t self_id, shared_ptr<Marshallable> cmd)
-{
-    int n = Config::GetConfig()->GetPartitionSize(par_id);
-    auto e = Reactor::create_sp_event<FpgaRaftForwardQuorumEvent>(1,1);
-    parid_t fid = (self_id + 1 ) % n ;
-    if (fid != self_id + 1 )
-    {
-      // sleep for 2 seconds cos no leader
-      int32_t timeout = 2*1000*1000 ;
-      auto sp_e = Reactor::create_sp_event<TimeoutEvent>(timeout);
-      sp_e->wait();    
-    }
-    auto proxies = rpc_par_proxies_[par_id];
-    WAN_WAIT;
-    auto proxy = (FpgaRaftProxy*) proxies[fid].second ;
-    FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
-      if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
-        return;
-      }
-      uint64_t cmt_idx = 0;
-      fu->get_reply() >> cmt_idx;
-      e->FeedResponse(cmt_idx);
-    };    
-    MarshallDeputy md(cmd);
-    FpgaRaftProxy::RpcForwardRequest req{};
-    req.cmd = md;
-    auto f = proxy->async_Forward(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-    return e;
-}
+// removed `FpgaRaftCommo::SendForward` —
+// only call site was the now-deleted `CoordinatorFpgaRaft::Forward`.
+// `FpgaRaftForwardQuorumEvent` deleted alongside; the FpgaRaft::
+// Forward RPC declaration is gone from rcc_rpc.rpc.
 
 void FpgaRaftCommo::BroadcastHeartbeat(parid_t par_id,
 																			 uint64_t logIndex) {
@@ -126,7 +95,7 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
 																					 uint64_t prevLogIndex,
 																					 uint64_t prevLogTerm,
 																					 uint64_t commitIndex,
-																					 shared_ptr<Marshallable> cmd) {
+																					 const janus::Command& cmd) {
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -138,8 +107,7 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
 
-		MarshallDeputy md(cmd);
-		verify(md.sp_data_ != nullptr);
+		verify(cmd.has_value());
 
 		DepId di;
 		di.str = "dep";
@@ -154,7 +122,7 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
     req.leaderPrevLogTerm = prevLogTerm;
     req.leaderCommitIndex = commitIndex;
     req.dep_id = di;
-    req.cmd = md;
+    req.cmd = cmd;
     auto f = proxy->async_AppendEntries(req, fuattr);
     if (f.is_ok()) {
       Future::safe_release(f.unwrap().raw_future());
@@ -174,7 +142,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
                                       uint64_t prevLogIndex,
                                       uint64_t prevLogTerm,
                                       uint64_t commitIndex,
-                                      shared_ptr<Marshallable> cmd) {
+                                      const janus::Command& cmd) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<FpgaRaftAppendQuorumEvent>(n, n/2 + 1);
   auto proxies = rpc_par_proxies_[par_id];
@@ -240,8 +208,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
       bool y = ((accept == 1) && (isLeader) && (currentTerm == term));
       e->FeedResponse(y, index, ip);
     };
-    MarshallDeputy md(cmd);
-		verify(md.sp_data_ != nullptr);
+    verify(cmd.has_value());
 		outbound++;
 		DepId di;
 		di.str = "dep";
@@ -254,7 +221,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
     req.leaderPrevLogTerm = prevLogTerm;
     req.leaderCommitIndex = commitIndex;
     req.dep_id = di;
-    req.cmd = md;
+    req.cmd = cmd;
     auto f = proxy->async_AppendEntries(req, fuattr);
     if (f.is_ok()) {
       Future::safe_release(f.unwrap().raw_future());
@@ -264,56 +231,21 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
   return e;
 }
 
-void FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
-                                           slotid_t slot_id,
-																					 i64 dep_id,
-                                           ballot_t ballot,
-                                           uint64_t currentTerm,
-                                           uint64_t prevLogIndex,
-                                           uint64_t prevLogTerm,
-                                           uint64_t commitIndex,
-                                           shared_ptr<Marshallable> cmd,
-                                           const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  vector<rusty::Arc<Future>> fus;
-  for (auto& p : proxies) {
-    auto proxy = (FpgaRaftProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    MarshallDeputy md(cmd);
-		DepId di;
-		di.str = "dep";
-		di.id = dep_id;
-    FpgaRaftProxy::RpcAppendEntriesRequest req{};
-    req.slot = slot_id;
-    req.ballot = ballot;
-    req.leaderCurrentTerm = currentTerm;
-    req.leaderPrevLogIndex = prevLogIndex;
-    req.leaderPrevLogTerm = prevLogTerm;
-    req.leaderCommitIndex = commitIndex;
-    req.dep_id = di;
-    req.cmd = md;
-    auto f = proxy->async_AppendEntries(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-//  verify(0);
-}
+// removed deprecated callback-style
+// `void FpgaRaftCommo::BroadcastAppendEntries(... callback)` — body
+// had `verify(0); // deprecated function` and no callers.
 
 void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,
 																			const i64 dep_id,
                                       const ballot_t ballot,
-                                      const shared_ptr<Marshallable> cmd) {
+                                      const janus::Command& cmd) {
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   for (auto& p : proxies) {
     auto proxy = (FpgaRaftProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
-    MarshallDeputy md(cmd);
 		DepId di;
 		di.str = "dep";
 		di.id = dep_id;
@@ -321,7 +253,7 @@ void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
     req.slot = slot_id;
     req.ballot = ballot;
     req.dep_id = di;
-    req.cmd = md;
+    req.cmd = cmd;
     auto f = proxy->async_Decide(req, fuattr);
     if (f.is_ok()) {
       Future::safe_release(f.unwrap().raw_future());
@@ -329,29 +261,9 @@ void FpgaRaftCommo::BroadcastDecide(const parid_t par_id,
   }
 }
 
-void FpgaRaftCommo::BroadcastVote(parid_t par_id,
-                                        slotid_t lst_log_idx,
-                                        ballot_t lst_log_term,
-                                        parid_t self_id,
-                                        ballot_t cur_term,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  for (auto& p : proxies) {
-    auto proxy = (FpgaRaftProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    FpgaRaftProxy::RpcVoteRequest req{};
-    req.lst_log_idx = lst_log_idx;
-    req.lst_log_term = lst_log_term;
-    req.par_id = self_id;
-    req.cur_term = cur_term;
-    auto f = proxy->async_Vote(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-}
+// removed deprecated callback-style
+// `void FpgaRaftCommo::BroadcastVote(... callback)` — body had
+// `verify(0); // deprecated function` and no callers.
 
 shared_ptr<FpgaRaftVoteQuorumEvent>
 FpgaRaftCommo::BroadcastVote(parid_t par_id,
@@ -393,29 +305,9 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
   return e;
 }
 
-void FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
-                                        slotid_t lst_log_idx,
-                                        ballot_t lst_log_term,
-                                        parid_t self_id,
-                                        ballot_t cur_term,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0); // deprecated function
-  auto proxies = rpc_par_proxies_[par_id];
-  for (auto& p : proxies) {
-    auto proxy = (FpgaRaftProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = cb;
-    FpgaRaftProxy::RpcVoteRequest req{};
-    req.lst_log_idx = lst_log_idx;
-    req.lst_log_term = lst_log_term;
-    req.par_id = self_id;
-    req.cur_term = cur_term;
-    auto f = proxy->async_Vote(req, fuattr);
-    if (f.is_ok()) {
-      Future::safe_release(f.unwrap().raw_future());
-    }
-  }
-}
+// removed deprecated callback-style
+// `void FpgaRaftCommo::BroadcastVote2FPGA(... callback)` — body had
+// `verify(0); // deprecated function` and no callers.
 
 shared_ptr<FpgaRaftVote2FPGAQuorumEvent>
 FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,

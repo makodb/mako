@@ -27,9 +27,18 @@ using namespace network_client;
 // ============================================================================
 namespace paxos_impl {
 
-// network client
-std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
-std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};
+// removed
+//   `std::vector<shared_ptr<network_client::NetworkClientServiceImpl>>
+//    nc_services = {};`
+// — never populated anywhere (only `vector::push_back` etc. would
+// add elements).  Reads at the now-deleted `nc_get_*_requests`
+// getter functions accessed `nc_services[par_id]` which would have
+// been UB on the empty vector.  The live `nc_setup_server` /
+// `nc_start_server` create their own `NetworkClientServiceImpl`
+// instances inside an `rrr::Server` and never touch this global.
+// removed
+//   `std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};`
+// — declared but never written or read anywhere in the codebase.
 // end of network client
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
@@ -39,15 +48,32 @@ vector<unique_ptr<ClientWorker>> client_workers_g = {};
 typedef std::chrono::high_resolution_clock::time_point tp;
 typedef pair<const char*, pair<int,tp>> queue_entry;
 typedef pair<const char*, pair<int,int>> queue_entry_par;
-static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;
-static std::queue<queue_entry_par> submit_queue_nc;
-static rrr::SpinLock l_;
-static atomic<int> producer{0}, consumer{0};
+// removed
+//   `static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;`
+// — `add_log` enqueued into it but the only dequeue happened in
+// the now-deleted `submit_logger` (which was itself only called from
+// the dead `PollSubmitLog` thread function — no `pthread_create`
+// for it survived the Phase 4e-16 cleanup).
+// removed
+//   `static std::queue<queue_entry_par> submit_queue_nc;`
+// — only used inside the now-deleted `PollSubQNc` function.
+// removed `static rrr::SpinLock l_;` —
+// declared but no `lock()` / `unlock()` calls anywhere in the file
+// or codebase.
+// removed `static atomic<int> producer{0};`
+// — only read inside the now-deleted `PollSubmitLog`'s
+// `while(producer >= 0)` loop guard; no writers anywhere.
+// 16 already removed the `consumer` half of
+// the original `static atomic<int> producer{0}, consumer{0};`
+// pair for the same reason.
 static atomic<int> submit_tot{0};
-pthread_t submit_poll_th_;
-const int len = 5;
-static std::map<std::string,long double> timer;
-
+// removed `pthread_t submit_poll_th_;` —
+// referenced only in commented-out `pthread_create(...)` /
+// `pthread_detach(...)` lines.
+// removed `const int len = 5;` and
+// `static std::map<std::string,long double> timer;`.  Both fed only
+// the now-deleted `microbench_paxos` / `microbench_paxos_queue`
+// driver functions and `add_time()` reporting helper.
 function<void(int)> leader_callback_{};
 
 std::map<int, std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>> leader_replay_cb;
@@ -55,8 +81,13 @@ std::map<int, std::function<int(const char*&, int, int, int, std::queue<std::tup
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
-const bool is_datacenter_failure = false;  // data center failures
-const bool is_fail_new_impl = true; // the new implementation for the shard failure
+// removed `const bool is_datacenter_failure = false;`
+// and `const bool is_fail_new_impl = true;` — both were hard-coded
+// constants with no command-line / YAML override path, gating dead
+// branches in `setup2()` (the `is_datacenter_failure` branch and its
+// `heartbeatBackground2` / `heartbeatMonitor3` thread fns) and in
+// `heartbeatMonitor2()` (the `else` branch of `if(is_fail_new_impl)`).
+// All gated-off code removed alongside the constants.
 
 int get_epoch(){
   int x;
@@ -130,73 +161,14 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
     Log_info("server workers' communicators setup");
 }
 
-char* message[200];
-void microbench_paxos() {
-    // register callback
-    for (auto& worker : pxs_workers_g) {
-        if (worker->IsLeader(worker->site_info_->partition_id_))
-            worker->register_apply_callback([&worker](const char* log, int len) {
-                Log_debug("submit callback enter in");
-                if (worker->submit_num >= worker->tot_num) return;
-                worker->Submit(log, len, worker->site_info_->partition_id_);
-                worker->submit_num++;
-            });
-        else
-            worker->register_apply_callback([=](const char* log, int len) {});
-    }
-    auto client_infos = Config::GetConfig()->GetMyClients();
-    if (client_infos.size() <= 0) return;
-    int concurrent = Config::GetConfig()->get_concurrent_txn();
-    for (int i = 0; i < concurrent; i++) {
-        message[i] = new char[len];
-        message[i][0] = (i / 100) + '0';
-        message[i][1] = ((i / 10) % 10) + '0';
-        message[i][2] = (i % 10) + '0';
-        for (int j = 3; j < len - 1; j++) {
-            message[i][j] = (rand() % 10) + '0';
-        }
-        message[i][len - 1] = '\0';
-    }
-#ifdef CPU_PROFILE
-    char prof_file[1024];
-  Config::GetConfig()->GetProfilePath(prof_file);
-  // start to profile
-  ProfilerStart(prof_file);
-#endif // ifdef CPU_PROFILE
-    struct timeval t1, t2;
-    gettimeofday(&t1, NULL);
-    for (int i = 0; i < concurrent; i++) {
-        for (auto& worker : pxs_workers_g) {
-            worker->Submit(message[i], len, worker->site_info_->partition_id_);
-        }
-    }
-    for (auto& worker : pxs_workers_g) {
-        worker->WaitForSubmit();
-    }
-    gettimeofday(&t2, NULL);
-    pxs_workers_g[0]->submit_tot_sec_ += t2.tv_sec - t1.tv_sec;
-    pxs_workers_g[0]->submit_tot_usec_ += t2.tv_usec - t1.tv_usec;
-#ifdef CPU_PROFILE
-    // stop profiling
-  ProfilerStop();
-#endif // ifdef CPU_PROFILE
-
-    for (int i = 0; i < concurrent; i++) {
-        delete message[i];
-    }
-    Log_info("shutdown Server Control Service after task finish");
-    for (auto& worker : pxs_workers_g) {
-        if (worker->hb_rpc_server_ != nullptr) {
-            worker->hb_rpc_server_->do_shutdown();
-        }
-    }
-}
-
-/*pair<pair<string, pair<int, uint32_t>>, bool> remove_from_submitq(){
-  pair<string, pair<int,uint32_t>> paxos_entry;
-  bool found = submit_queue.try_dequeue(paxos_entry);
-  return make_pair(paxos_entry, found);
-}*/
+// removed `char* message[200];` global +
+// `microbench_paxos()` driver — never called from production paths
+// (only the now-deleted dispatcher in `replication_helper.cc`
+// referenced it; nothing referenced the dispatcher either).
+//
+// removed long-commented-out
+// `remove_from_submitq()` helper that called
+// `submit_queue.try_dequeue` — `submit_queue` is gone.
 
 void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
@@ -215,44 +187,17 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
 }
 
 
-static bool wait = false;
-static int count_free = 0;
-void submit_logger() {
-  auto endTime = std::chrono::high_resolution_clock::now(); 
-  pair<const char*, pair<int,int>> paxos_entry;
-  auto res = submit_queue.try_dequeue(paxos_entry);
-  if(!res){
-    return;
-  }
-  //auto time_in_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - paxos_entry.second.second).count();
-  //free((char*)paxos_entry.first);
-  //Log_info("Time spent in queue for this entry is %d", time_in_queue);
-//  if(time_in_queue < (int64_t)100*1000*1000){
-//	  wait = true;
-//  }else{
-//	wait = false;
-//  }
-//  count_free++;
-//  return;
-  //consumer++;
-  const char* nlog = paxos_entry.first;
-  int len = paxos_entry.second.first;
-  uint32_t par_id = paxos_entry.second.second;
-  add_log_without_queue(nlog, len, par_id);
-}
-
-void* PollSubmitLog(void* arg){
-    while(producer >= 0){
-      submit_logger();
-      if(wait){
-	      //Log_info("The number of entries freed are %d, size of the queue is %d", count_free, submit_queue.size_approx());
-	      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	      count_free = 0;
-      }
-    }
-    pthread_exit(nullptr);
-    return nullptr;
-}
+// removed dead `wait` / `count_free` /
+// `submit_logger()` / `PollSubmitLog()` chain.  `PollSubmitLog`
+// was a `pthread_create` worker entry point that polled
+// `submit_queue` and called `submit_logger`, which in turn
+// dequeued and routed to `add_log_without_queue`.  No surviving
+// `pthread_create(..., PollSubmitLog, ...)` call site referenced
+// it — Phase 4e-16's commented-out `// pthread_create(...,
+// PollSubQNc, nullptr)` left both polling threads as orphans —
+// so `PollSubmitLog` was never started.  Without a live thread
+// dequeueing, `submit_queue.enqueue(...)` in `add_log` (now also
+// removed) was leaking entries.
 
 map<string, string> getHosts(std::string filename) {
     map<string, string> proc_host_map_;
@@ -315,9 +260,8 @@ int shutdown_paxos() {
     // kill the election thread
     es->running = false;
 
-    for(auto kv : timer){
-   	 std::cout << "Key=" << kv.first << " Val=" << kv.second/1000.0 << std::endl;
-    }
+    // removed `timer` print loop — fed only
+    // by the now-deleted `add_time()` helper.
     for (auto& worker : pxs_workers_g) {
         worker->WaitForShutdown();
     }
@@ -408,7 +352,12 @@ void register_for_leader_par_id_return(std::function<int(const char*&, int, int,
 void submit(const char* log, int len, uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {  // submit a transaction
         if (!worker->IsLeader(par_id)) continue;
-        verify(worker->submit_pool != nullptr);
+        // removed
+        // `verify(worker->submit_pool != nullptr);` — `submit_pool`
+        // was always nullptr (assignment was commented out in
+        // `SetupBase`), so this verify would have always fired had
+        // this branch ever been reached.  Field + class deleted in
+        // this phase.
         string log_str;
         std::copy(log, log + len, std::back_inserter(log_str));
         worker->IncSubmit();
@@ -421,18 +370,16 @@ void submit(const char* log, int len, uint32_t par_id) {
         submit_tot++;
     }
 }
-void add_time(std::string key, long double value,long double denom){
-  value /= denom;
-  if(timer.find(key)==timer.end()){
-    timer[key] = value;
-  }else{
-    timer[key]+=value;
-  }
-}
-
-static tp firstTime;
-static tp endTime;
-static bool debug = false;
+// removed `add_time(key, value, denom)`
+// helper — the only call site was inside the also-deleted
+// `microbench_paxos_queue` driver, and the `timer` map it accumulated
+// into is gone (only reader was the `shutdown_paxos` print loop).
+//
+// removed dead `static tp firstTime;`,
+// `static tp endTime;`, `static bool debug = false;` — declared
+// but no production reader or writer anywhere.  The only `debug`
+// reference was a `// marker:ansh for debug` line comment inside
+// the also-dead `electionMonitor` (deleted alongside).
 void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   // Find the worker for this partition by iterating, don't assume index == partition_id
   for (auto& worker : pxs_workers_g) {
@@ -456,50 +403,18 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   Log_error("add_log_to_nc: no worker found for par_id %d", par_id);
 }
 
-void* PollSubQNc(void* arg){
-   Log_error("exit branch");
-   exit(1);
-   while(true){
-     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-     l_.lock();
-     //Log_info("Clearing queue of size %d", submit_queue_nc.size());
-     int deleted = 0;
-     while(!submit_queue_nc.empty()){
-	     auto edt = std::chrono::high_resolution_clock::now();
-	     auto x = submit_queue_nc.front();
-	     //auto time_in_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(edt - x.second.second).count();
-	     //if(time_in_queue < 100.0)break;
-	     submit_queue_nc.pop();
-	     //free((char*)x.first);
-	     //deleted++;
-	     add_log_without_queue((char*)x.first, x.second.first, x.second.second);
+// removed `void* PollSubQNc(void*)` — body
+// started with `Log_error("exit branch"); exit(1);`, making everything
+// after unreachable.  The only reference to the function (a
+// `pthread_create(..., PollSubQNc, ...)` at line 939) was already
+// commented out.  `submit_queue_nc` and `submit_poll_th_` went away
+// alongside.
 
-     }
-     //Log_info("Cleared %d entries", deleted);
-     l_.unlock();
-  }
-   pthread_exit(nullptr);
-   return nullptr;
-}
-
-shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
-  auto bulk_prepare = make_shared<BulkPrepareLog>();
-  for(int i = 0; i < pxs_workers_g.size(); i++){
-    int32_t par_id = pxs_workers_g[i]->site_info_->partition_id_;
-    slotid_t slot = pxs_workers_g[i]->n_current+1;
-    bulk_prepare->min_prepared_slots.push_back(make_pair(par_id, slot));
-  }
-  bulk_prepare->epoch = epoch;
-  bulk_prepare->leader_id = machine_id;
-  return bulk_prepare;
-}
-
-shared_ptr<HeartBeatLog> createHeartBeat(int epoch, int machine_id){
-  auto heart_beat = make_shared<HeartBeatLog>();
-  heart_beat->epoch = epoch;
-  heart_beat->leader_id = machine_id;
-  return heart_beat;
-}
+// removed `createBulkPrepare(epoch, machine_id)`
+// — only call site was inside the now-deleted `send_bulk_prep`.
+// removed `createHeartBeat(epoch, machine_id)`
+// — only call site was inside the deleted `electionMonitor` thread fn
+//.  No surviving caller.
 
 shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   auto syncLog = make_shared<SyncLogRequest>();
@@ -515,38 +430,15 @@ shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   return syncLog;
 }
 
-shared_ptr<SyncNoOpRequest> createSyncNoOpLog(int epoch, int machine_id){
-  auto syncNoOpLog = make_shared<SyncNoOpRequest>();
-  syncNoOpLog->leader_id = machine_id;
-  syncNoOpLog->epoch = epoch;
-  for(int i = 0; i < pxs_workers_g.size(); i++){
-    auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    pw->mtx_.lock();
-    slotid_t min_slot = pw->max_executed_slot_;
-    pw->mtx_.unlock();
-    syncNoOpLog->sync_slots.push_back(min_slot);
-  }
-  return syncNoOpLog;
-}
+// removed `createSyncNoOpLog(epoch, machine_id)`
+// — only call site was inside the now-deleted `send_no_ops_to_all_workers`
+//.  No surviving caller; the matching
+// `PaxosWorker::SendSyncNoOpLog` is also removed in this phase.
 
-
-void send_no_ops_to_all_workers(int epoch){
-  auto pw = pxs_workers_g.back();
-  auto syncNoOpLog = createSyncNoOpLog(epoch, es->machine_id);
-  auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncNoOpLog, ess](){
-    int val = pw->SendSyncNoOpLog(syncNoOpLog);
-    if(val == -1){
-      ess->stuff_after_election_cond_.notify_all();
-    }
-  }));
-  auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
-  {
-    std::unique_lock<std::mutex> lock(es->stuff_after_election_mutex_);
-    es->stuff_after_election_cond_.wait(lock);
-  }
-}
+// removed `send_no_ops_to_all_workers(epoch)`
+// — only call site was inside the now-deleted `stuff_todo_leader_election`.
+// The commented-out `// send_no_ops_to_all_workers(epoch)` line in
+// `stuff_todo_learner_upgrade` is unaffected.
 
 /*
 change state to 1,
@@ -641,126 +533,26 @@ void stuff_todo_learner_upgrade(){
   }
 }
 
-void stuff_todo_leader_election(){
-  es->state_lock();
-  es->set_state(1);
-  for(int i = 0; i < pxs_workers_g.size(); i++){
-    pxs_workers_g[i]->election_state_lock.lock();
-    pxs_workers_g[i]->cur_epoch = es->get_epoch();
-    pxs_workers_g[i]->is_leader = 1;
-    pxs_workers_g[i]->election_state_lock.unlock();
-    auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    ps->mtx_.lock();
-    //ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_executed_slot_+1); // reset open slot counter
-    //ps->cur_open_slot_ = ps->max_executed_slot_+1;
-    ps->cur_open_slot_ = ps->max_committed_slot_+1;
-    Log_info("The last committed slot %d and executed slot %d and open %d and touched %d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot);
-    ps->mtx_.unlock();
-  }
-  int epoch = es->get_epoch();
-  es->state_unlock();
-  sync_callbacks_for_new_leader();
-  send_sync_logs(epoch);
-  send_no_ops_to_all_workers(epoch);
-  send_no_ops_for_mark(epoch);
-}
+// removed `stuff_todo_leader_election()` —
+// no caller anywhere; the `electionMonitor` thread fn
+// was its only invoker, and the surviving cluster-internal
+// `heartbeatMonitor2` path uses `stuff_todo_learner_upgrade` instead.
+// removed `send_bulk_prep(send_epoch)` —
+// also referenced only by the deleted `electionMonitor` thread fn.
 
-void send_bulk_prep(int send_epoch){
-  auto pw = pxs_workers_g.back();
-  auto bp_log = createBulkPrepare(send_epoch, pw->site_info_->locale_id);
-  auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, bp_log, ess]() {
-      int val = pw->SendBulkPrepare(bp_log);
-      if(val != -1){
-        ess->state_lock();
-        ess->set_state(0);
-        ess->set_epoch(val);
-        ess->state_unlock();
-      }
-      ess->election_cond.notify_all();
-  }));
-  auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
-}
-
-// marker:ansh
-void* electionMonitor(void* arg){
-   void(1);
-   // we need to take two situations into consideration: 1) startup; 2) exit
-   // startup: sleep 5 seconds for the startup
-   usleep(5 * 1000 * 1000);
-
-   while(es->running){
-
-    es->state_lock();
-    /*if(es->machine_id == 2){ // marker:ansh for debug
-      es->state_unlock();
-      break;
-    }*/
-    if(es->cur_state == 1){
-      if(es->did_not_send_prep()){
-       //send_bulk_prep(es->get_epoch());
-       //es->set_bulkprep_time();
-      }
-      es->state_unlock();
-      es->sleep_timeout();
-      continue;
-    }
-    if(!es->did_not_see_leader()){
-      es->state_unlock();
-      es->sleep_timeout();
-      continue;
-    }
-    int send_epoch = es->set_epoch();
-    es->state_unlock();
-    send_bulk_prep(send_epoch);
-    {
-      std::unique_lock<std::mutex> lock(es->election_state);
-      es->election_cond.wait(lock);
-    }
-    es->state_lock();
-    if(send_epoch != es->cur_epoch){
-      es->state_unlock();
-      continue;
-    }
-    es->state_unlock();
-    stuff_todo_leader_election();
-    leader_callback_(0);
-  }
-  pthread_exit(nullptr);
-  return nullptr;
-}
-
-//marker:ansh
-void* heartbeatMonitor(void* arg){
-   void(1);
-   while(es->running){
-     es->sleep_heartbeat();
-     es->state_lock();
-     if(es->cur_state == 0){
-      es->state_unlock();
-      continue;
-     }
-     int send_epoch = es->get_epoch();
-     es->state_unlock();
-     auto pw = pxs_workers_g.back();
-     auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
-     auto ess = es;
-     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, hb_log, ess]() {
-        int val = pw->SendHeartBeat(hb_log);
-        if(val != -1){
-          ess->state_lock();
-          ess->set_state(0);
-          ess->set_epoch(val);
-          ess->state_unlock();
-        }
-    }));
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
-    pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
-  }
-   pthread_exit(nullptr);
-   return nullptr;
-}
+// removed dead `void* electionMonitor(void*)`
+// (~46 lines) and `void* heartbeatMonitor(void*)` (~29 lines)
+// pthread thread functions.  Both were referenced only inside
+// commented-out `// Pthread_create(...)` lines further down in
+// `setup2()` (around line 910/913 of the pre-cleanup file); no
+// surviving call site started either thread.  The live election
+// path is `setup2()`'s `Pthread_create(..., heartbeatBackground{,2}, ...)`
+// + `Pthread_create(..., heartbeatMonitor{2,3}, ...)` set, which
+// stays.  Both deleted functions referenced live state
+// (`es->state_lock()`, `send_bulk_prep`, `stuff_todo_leader_election`,
+// `pxs_workers_g.back()->GetPollThread()`, `createHeartBeat`,
+// `OneTimeJob`, `leader_callback_`), but nothing on the live path
+// invokes them.
 
 void* heartbeatBackground(void* arg) {
   auto poll_arc = PollThread::create();
@@ -788,32 +580,10 @@ void* heartbeatBackground(void* arg) {
   return nullptr;
 }
 
-// between distant datacenters
-void* heartbeatBackground2(void* arg) {
-  auto poll_arc = PollThread::create();
-  auto rpc_cli = rrr::Client::create(poll_arc);
-  auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0); // tie to the partition0
-  // get the leader's host + port
-  auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
-  std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
-  Log_info("start a heartbeatBackground2, addr:%s",addr_port.c_str());
-  while (rpc_cli->connect(addr_port.c_str())!=0) {
-     usleep(100 * 1000); // retry to connect
-  }
-
-  // Arc::get() returns const T*, but proxy doesn't mutate client
-  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
-  while (es->running) {
-    ServerControlProxy::RpcServerHeartBeatRequest req;
-    auto connected = client_proxy->server_heart_beat(req);
-    if (connected.is_ok()){
-      es->set_heartbeat_seen();
-    }
-    std::this_thread::sleep_for(30ms); // for the heartbeat between 2 distant datacenters
-  }
-  Log_info("heartbeatBackground2 is ended!");
-  return nullptr;
-}
+// removed `void* heartbeatBackground2(void*)`
+// — referenced only inside the now-deleted `if (is_datacenter_failure)`
+// branch of `setup2()` (`Pthread_create(..., heartbeatBackground2, ...)`)
+// and the constant gating that branch was hard-coded `false`.
 
 // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
 void* heartbeatMonitor2(void* arg) { // happens on the learner
@@ -834,67 +604,23 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
 
      Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
 
-     if (is_fail_new_impl) {
-      leader_callback_(0); // call register_leader_election_callback in dbtest.cc
-      stuff_todo_learner_upgrade();
-      leader_callback_(2);
-      std::this_thread::sleep_for(std::chrono::seconds(100000));
-      break;
-     } else {
-      auto x0 = std::chrono::high_resolution_clock::now() ;
-      leader_callback_(0); // call register_leader_election_callback in dbtest.cc
-      auto x1 = std::chrono::high_resolution_clock::now() ;
-      stuff_todo_learner_upgrade();
-      auto x2 = std::chrono::high_resolution_clock::now() ;
-      leader_callback_(2); // prepare
-      leader_callback_(3); // commit
-      auto x3 = std::chrono::high_resolution_clock::now() ;
-      // milliseconds: x1-x0:40402, x2-x1:103832, x3-x2:2011
-      Log_info("x1-x0:%d, x2-x1:%d, x3-x2:%d",
-              std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count(),
-              std::chrono::duration_cast<std::chrono::microseconds>(x2-x1).count(),
-              std::chrono::duration_cast<std::chrono::microseconds>(x3-x2).count());
-      std::this_thread::sleep_for(std::chrono::seconds(100000));
-     }
-    }
-  }
-  return nullptr;
-}
-
-// this is for the datacenter failure, on the p1
-void* heartbeatMonitor3(void* arg) {  
-  Log_info("start a heartbeatMonitor3");
-  time_t st = time(NULL);
-
-  std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
-
-  while (es->running) {
-    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                  std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    WAN_WAIT_TIME(100);
-    // 1. detect
-    if (duration2.count()/1000.0/1000.0 > 1000) { // if not received about 10 times, datacenter failure very expensive
-     Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
-     // reach threshold to trigger a failover
-     // 5ms is far enough within the same data center, otherwise, several seconds across data-center
-     time_t end = time (NULL);
-     if (end - st > 35) {
-       Log_info("Let's stop it automatically without failover2!!!");
-       exit(0);
-     }
-
-     // by default, p1 is the new leader datacenter, p2 is still the follower datacenter
-     // the synchrnization is equivalent to the leader election overhead
-     // synchronize the consensus between different datacenter
-     leader_callback_(4);  // call register_leader_election_callback
-
+     // collapsed `if (is_fail_new_impl) {...}
+     // else {...}` (the constant was hard-coded `true`); the dead else
+     // branch ran a stale 4-step `leader_callback_(0/2/3)` sequence
+     // with chrono timing instrumentation.
+     leader_callback_(0); // call register_leader_election_callback in dbtest.cc
+     stuff_todo_learner_upgrade();
+     leader_callback_(2);
      std::this_thread::sleep_for(std::chrono::seconds(100000));
      break;
     }
   }
-  Log_info("end a heartbeatMonitor3");
   return nullptr;
 }
+
+// removed `void* heartbeatMonitor3(void*)`
+// — paired with the deleted `heartbeatBackground2`; referenced only
+// inside the same dead `if (is_datacenter_failure)` branch.
 
 // to be called after setup 1; needed for multiprocess setup
 int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 is forced to be follower
@@ -916,51 +642,41 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
     es->set_epoch(0);
     es->set_leader(0);
   }
-  if (is_datacenter_failure){
-    if (Config::GetConfig()->proc_name_.compare("p1")==0
-        && shardIndex == 0) {
-      Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground2, nullptr);
-      pthread_detach(es->heartbeat_th_);
+  // collapsed `if (is_datacenter_failure)
+  // {...} else {...}` to just the else-branch (the constant was
+  // hard-coded `false`).  The dead if-branch launched
+  // `heartbeatBackground2` / `heartbeatMonitor3`, both removed above.
+  if (Config::GetConfig()->proc_name_.compare("learner")==0) {
+    Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
+    pthread_detach(es->heartbeat_th_);
 
-      Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor3, nullptr);
-      pthread_detach(es->heartbeat_th_checking_);
-    }
-  }else{
-    if (Config::GetConfig()->proc_name_.compare("learner")==0) {
-      Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
-      pthread_detach(es->heartbeat_th_);
-
-      Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
-      pthread_detach(es->heartbeat_th_checking_);
-    }
-    return 0;
+    Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
+    pthread_detach(es->heartbeat_th_checking_);
   }
-
-  // Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
-  // pthread_detach(submit_poll_th_);
-  // if (action != 1) {
-  //      Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
-  //      pthread_detach(es->election_th_);
-  //  }
-  //  Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
-  //  pthread_detach(es->heartbeat_th_);
+  // 20 / 4e-19 / 4e-16: cleared a stale
+  // commented-out block that referenced now-deleted thread entry
+  // points (`PollSubQNc`, `electionMonitor`, `heartbeatMonitor`)
+  // and their `Pthread_create` / `pthread_detach` lines.  The live
+  // pthread starts (`heartbeatBackground` / `heartbeatMonitor2` above)
+  // are unaffected.
   return 0;
 }
 
 void add_log(const char* log, int len, uint32_t par_id){
-    auto startTime = std::chrono::high_resolution_clock::now();
     //read_log(log, len, "silo");
+    // removed the `chrono::high_resolution_clock`
+    // start/end snapshots, the `paxos_entry = make_pair(...)` packing,
+    // and `submit_queue.enqueue(paxos_entry)` — `submit_queue` was a
+    // leaked write-only queue (no live dequeue thread; see the
+    // file-scope retirement note above).  The `IncSubmit` accounting
+    // on the leader worker stays.  The chrono snapshots fed only the
+    // commented-out `add_time("enqueue_time", ...)` reporting line.
     for (auto& worker : pxs_workers_g) {
       if (!worker->IsLeader(par_id)) continue;
       worker->IncSubmit();
       break;
     }
-    auto endTime = std::chrono::high_resolution_clock::now();
-    auto paxos_entry = make_pair(log, make_pair(len, par_id));
-    submit_queue.enqueue(paxos_entry);
-    endTime = std::chrono::high_resolution_clock::now();
     submit_tot++;
-    //add_time("enqueue_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
 }
 
 
@@ -1000,15 +716,22 @@ void wait_for_submit(uint32_t par_id) {
           continue;
         }
         worker->election_state_lock.unlock();
-        //verify(worker->submit_pool != nullptr);
-        //worker->submit_pool->wait_for_all();
-	      Log_info("The number of completed submits n_current: %ld replay_queue: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx(), par_id, (int)worker->n_tot);
+        // removed commented-out
+        // `//verify(worker->submit_pool != nullptr);` and
+        // `//worker->submit_pool->wait_for_all();` — `submit_pool`
+        // field is gone.
+	      // dropped `replay_queue.size_approx()`
+	      // from this Log_info — `replay_queue` field went away with
+	      // the dead `AddReplayEntry` / `StartReplayRead` pair.
+	      Log_info("The number of completed submits n_current: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, par_id, (int)worker->n_tot);
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
     for (auto& worker : pxs_workers_g) {
         if (!worker->IsPartition(par_id)) continue;
-	      Log_info("Par_id %ld [partition], the number of completed submits %ld %ld", par_id, (int)worker->n_current, (int)worker->replay_queue.size_approx());
+	      // dropped `replay_queue.size_approx()`
+	      // from this Log_info too.
+	      Log_info("Par_id %ld [partition], the number of completed submits %ld", par_id, (int)worker->n_current);
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }
@@ -1022,88 +745,10 @@ void pre_shutdown_step(){
     }
 }
 
-void microbench_paxos_queue() {
-    // register callback
-    for (auto& worker : pxs_workers_g) {
-        if (worker->IsLeader(worker->site_info_->partition_id_))
-            worker->register_apply_callback([&worker](const char* log, int len) {
-                Log_info("submit callback enter in");
-                if (worker->submit_num >= worker->tot_num) return;
-                worker->submit_num++;
-                submit(log, len, worker->site_info_->partition_id_);
-            });
-        else
-            worker->register_apply_callback([&worker](const char* log, int len) {
-                std::ofstream outfile(string("log/") + string(worker->site_info_->name.c_str()) + string(".txt"), ios::app);
-                outfile << log << std::endl;
-                outfile.close();
-            });
-    }
-    auto client_infos = Config::GetConfig()->GetMyClients();
-    if (client_infos.size() <= 0) return;
-    int concurrent = Config::GetConfig()->get_concurrent_txn();
-    for (int i = 0; i < concurrent; i++) {
-        message[i] = new char[len];
-        message[i][0] = (i / 100) + '0';
-        message[i][1] = ((i / 10) % 10) + '0';
-        message[i][2] = (i % 10) + '0';
-        for (int j = 3; j < len - 1; j++) {
-            message[i][j] = (rand() % 10) + '0';
-        }
-        message[i][len - 1] = '\0';
-    }
-#ifdef CPU_PROFILE
-    char prof_file[1024];
-  Config::GetConfig()->GetProfilePath(prof_file);
-  // start to profile
-  ProfilerStart(prof_file);
-#endif // ifdef CPU_PROFILE
-    struct timeval t1, t2;
-    gettimeofday(&t1, NULL);
-    vector<std::thread> ths;
-    int k = 0;
-    for (int j = 0; j < 2; j++) {
-        ths.push_back(std::thread([=, &k]() {
-            int par_id = k++;
-            for (int i = 0; i < concurrent; i++) {
-                submit(message[i], len, par_id);
-                // wait_for_submit(j);
-            }
-        }));
-    }
-    Log_info("waiting for submission threads.");
-    for (auto& th : ths) {
-        th.join();
-    }
-    while (1) {
-        for (int j = 0; j < 2; j++) {
-            wait_for_submit(j);
-        }
-        bool flag = true;
-        for (auto& worker : pxs_workers_g) {
-            if (worker->tot_num > worker->submit_num)
-                flag = false;
-        }
-        if (flag) {
-            Log_info("microbench finishes");
-            break;
-        }
-    }
-    gettimeofday(&t2, NULL);
-    pxs_workers_g[0]->submit_tot_sec_ += t2.tv_sec - t1.tv_sec;
-    pxs_workers_g[0]->submit_tot_usec_ += t2.tv_usec - t1.tv_usec;
-#ifdef CPU_PROFILE
-    // stop profiling
-  ProfilerStop();
-#endif // ifdef CPU_PROFILE
-
-    Log_info("%s, time consumed: %f", pxs_workers_g[0]->site_info_->name.c_str(),
-             pxs_workers_g[0]->submit_tot_sec_ + ((float)pxs_workers_g[0]->submit_tot_usec_) / 1000000);
-    for (int i = 0; i < concurrent; i++) {
-        delete message[i];
-    }
-    pre_shutdown_step();
-}
+// removed `microbench_paxos_queue()` driver
+// — never called from production paths (only the now-deleted
+// dispatcher in `replication_helper.cc` referenced it; nothing
+// referenced the dispatcher either).
 
 // http://www.cse.cuhk.edu.hk/~ericlo/teaching/os/lab/9-PThread/Pass.html
 struct args {
@@ -1173,32 +818,20 @@ void nc_setup_server(int nthreads, std::string host) {
   }
 }
 
-std::vector<std::vector<int>> *nc_get_new_order_requests(int par_id) {
-  return &nc_services[par_id]->new_order_requests;
-}
-
-std::vector<std::vector<int>>* nc_get_payment_requests(int par_id) {
-  return &nc_services[par_id]->payment_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_delivery_requests(int par_id) {
-  return &nc_services[par_id]->delivery_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_order_status_requests(int par_id) {
-  return &nc_services[par_id]->order_status_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_stock_level_requests(int par_id) {
-  return &nc_services[par_id]->stock_level_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_read_requests(int par_id) {
-  return &nc_services[par_id]->read_requests;
-}; 
-
-std::vector<std::vector<int>>* nc_get_rmw_requests(int par_id) {
-  return &nc_services[par_id]->rmw_requests;
-};
+// removed seven `nc_get_*_requests` getter
+// functions (~30 lines):
+//   nc_get_new_order_requests, nc_get_payment_requests,
+//   nc_get_delivery_requests, nc_get_order_status_requests,
+//   nc_get_stock_level_requests, nc_get_read_requests,
+//   nc_get_rmw_requests.
+// All seven returned `&nc_services[par_id]->{varies}_requests`, but
+// `nc_services` was never populated, so any call would have been
+// UB on an empty vector.  The only external caller in `nc_main.cc`
+// at line 381 was already a single-line `//` comment.  The
+// matching dispatchers in `replication_helper.cc` and the seven
+// declarations in each of `paxos_impl` / `raft_impl` / global
+// namespaces in `replication_helper.h` (21 total) were removed
+// alongside, plus the seven Raft-side `Log_warn`-only
+// placeholders in `raft_main_helper.cc`.
 
 }  // namespace paxos_impl

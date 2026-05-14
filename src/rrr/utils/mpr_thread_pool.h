@@ -1,5 +1,16 @@
 #pragma once
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 #include <apr_queue.h>
 #include <apr_thread_proc.h>
 #include <apr_thread_mutex.h>
@@ -7,6 +18,12 @@
 
 #define SZ_QUEUE 1000000
 #define SZ_THREADPOOL 1
+
+
+
+
+#include "logger.h"
+#include "safe_assert.h"
 
 typedef struct {
     apr_pool_t *mp; 
@@ -17,7 +34,7 @@ typedef struct {
     apr_uint32_t is_exit;
 } mpr_thread_pool_t;
 
-static void* APR_THREAD_FUNC mpr_thread_pool_run(apr_thread_t *t, void* arg) {
+inline void* APR_THREAD_FUNC mpr_thread_pool_run(apr_thread_t *t, void* arg) {
     mpr_thread_pool_t *tp = (mpr_thread_pool_t*) arg;
     while (apr_atomic_read32(&tp->is_exit) == 0) {
         void *param;
@@ -41,7 +58,7 @@ static void* APR_THREAD_FUNC mpr_thread_pool_run(apr_thread_t *t, void* arg) {
     return NULL;
 }
 
-static void mpr_thread_pool_create(mpr_thread_pool_t **tp, apr_thread_start_t func) {
+inline void mpr_thread_pool_create(mpr_thread_pool_t **tp, apr_thread_start_t func) {
     *tp = (mpr_thread_pool_t*) malloc(sizeof(mpr_thread_pool_t));
     apr_pool_create(&(*tp)->mp, NULL);
     apr_queue_create(&(*tp)->qu, SZ_QUEUE, (*tp)->mp);
@@ -54,7 +71,7 @@ static void mpr_thread_pool_create(mpr_thread_pool_t **tp, apr_thread_start_t fu
     }
 }
 
-static void mpr_thread_pool_destroy(mpr_thread_pool_t *tp) {
+inline void mpr_thread_pool_destroy(mpr_thread_pool_t *tp) {
     apr_atomic_set32(&tp->is_exit, 1);
     apr_queue_term(tp->qu);
     for (int i = 0; i < SZ_THREADPOOL; i++) {
@@ -70,7 +87,7 @@ static void mpr_thread_pool_destroy(mpr_thread_pool_t *tp) {
 
 
 
-static void mpr_thread_pool_push(mpr_thread_pool_t *tp, void *params) {
+inline void mpr_thread_pool_push(mpr_thread_pool_t *tp, void *params) {
     while (1) {
         apr_status_t status = apr_queue_push(tp->qu, params);
         if (status == APR_SUCCESS) {
@@ -87,6 +104,6 @@ static void mpr_thread_pool_push(mpr_thread_pool_t *tp, void *params) {
     
 }
 
-static int mpr_thread_pool_task_count(mpr_thread_pool_t *tp) {
+inline int mpr_thread_pool_task_count(mpr_thread_pool_t *tp) {
     return apr_queue_size(tp->qu);
 }

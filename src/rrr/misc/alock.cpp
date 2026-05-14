@@ -1,9 +1,27 @@
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+
+
+
+
+
 
 #include "alock.hpp"
-#include "reactor/coroutine.h"
-#include "reactor/event.h"
-#include "reactor/reactor.h"
+
+
+#include "../rrr.hpp"
 
 // External safety annotations for atomic operations and STL functions
 // @external: {
@@ -11,19 +29,24 @@
 //   std::__atomic_base::store: [unsafe]
 //   std::__atomic_base::fetch_add: [unsafe]
 //   std::__atomic_base::fetch_sub: [unsafe]
-//   std::map::erase: [unsafe]
 //   std::list::erase: [unsafe]
 //   std::list::emplace_back: [unsafe]
 //   std::vector::push_back: [unsafe]
-//   std::function::function: [unsafe]
 // }
 
 
 
 namespace rrr {
 
+ALock::ALock()
+    : status_(FREE),
+      n_rlock_(0),
+      done_(false) {}
 
-// @unsafe - Creates std::function objects from lambdas
+ALock::~ALock() = default;
+
+
+// @unsafe - Creates ALock callback wrappers from lambdas
 uint64_t ALock::lock_sync(uint64_t owner,
                      type_t type,
                      uint64_t priority) {
@@ -31,17 +54,17 @@ uint64_t ALock::lock_sync(uint64_t owner,
   IntEvent& proceed = Reactor::create_event<IntEvent>(); // init 0, 1 as ready
   uint64_t ret_id = 0;
   // @unsafe {
-  std::function<void(uint64_t)> _yes_callback
+  ALockLockedCallback _yes_callback
       = [&proceed, &ret_id](uint64_t id) {
         ret_id = id;
         verify(id > 0);
         proceed.set(1);
       };
-  std::function<void()> _no_callback
+  ALockNotifyCallback _no_callback
       = [&]() {
         proceed.set(1);
       };
-  std::function<int()> _wound_callback
+  ALockWoundCallback _wound_callback
       = [&]() {
 //        proceed.set(1); // TODO why this caused problem???
         return 0;
@@ -61,17 +84,17 @@ uint64_t ALock::lock_sync(uint64_t owner,
 uint64_t ALock::lock_sync(uint64_t owner,
                      type_t type,
                      uint64_t priority,
-                     const std::function<int(void)>& wound_callback) {
+                     const ALockWoundCallback& wound_callback) {
 
   IntEvent& proceed = Reactor::create_event<IntEvent>();
   uint64_t ret_id = 0;
-  std::function<void(uint64_t)> _yes_callback
+  ALockLockedCallback _yes_callback
       = [&proceed, &ret_id](uint64_t id) {
         ret_id = id;
         verify(id > 0);
         proceed.set(1);
       };
-  std::function<void()> _no_callback
+  ALockNotifyCallback _no_callback
       = [&]() {
         proceed.set(1);
       };
@@ -103,11 +126,11 @@ WaitDieALock::~WaitDieALock() {
 }
 
 uint64_t WaitDieALock::vlock(uint64_t owner,
-                             const std::function<void(uint64_t)> &yes_callback,
-                             const std::function<void(void)>& no_callback,
+                             const ALockLockedCallback &yes_callback,
+                             const ALockNotifyCallback& no_callback,
                              type_t type,
                              uint64_t priority,
-                             const std::function<int(void)> &) {
+                             const ALockWoundCallback &) {
     uint64_t id = get_next_id();
     if (done_) {
         no_callback();
@@ -212,10 +235,10 @@ void WaitDieALock::abort(uint64_t id) {
                                         // needs to approve all following read
                                         // requests till next write request
                 verify(status_ == RLOCKED);
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == RLOCK) {
-                        lock_reqs.push_back(&(*next_it));
+                        lock_reqs.push(&(*next_it));
                     }
                     else
                         break;
@@ -251,11 +274,11 @@ void WaitDieALock::abort(uint64_t id) {
                 write_acquire(*next_it);
             }
             else { // acquire read locks
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == WLOCK)
                         break;
-                    lock_reqs.push_back(&(*next_it));
+                    lock_reqs.push(&(*next_it));
                 }
                 read_acquire(lock_reqs);
                 verify(status_ == RLOCKED);
@@ -321,11 +344,11 @@ void WoundDieALock::wound_die(type_t type, int64_t priority) {
 }
 
 uint64_t WoundDieALock::vlock(uint64_t owner,
-                              const std::function<void(uint64_t)> &yes_callback,
-                              const std::function<void(void)>& no_callback,
+                              const ALockLockedCallback &yes_callback,
+                              const ALockNotifyCallback& no_callback,
                               type_t type,
                               uint64_t priority,
-                              const std::function<int(void)> &wound_callback) {
+                              const ALockWoundCallback &wound_callback) {
 
     uint64_t id = get_next_id();
 
@@ -351,11 +374,11 @@ uint64_t WoundDieALock::vlock(uint64_t owner,
                 write_acquire(front);
             }
             else {
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 std::list<lock_req_t>::iterator it = requests_.begin();
                 for (; it != requests_.end(); it++)
                     if (it->type == RLOCK)
-                        lock_reqs.push_back(&(*it));
+                        lock_reqs.push(&(*it));
                     else
                         break;
                 read_acquire(lock_reqs);
@@ -366,14 +389,14 @@ uint64_t WoundDieALock::vlock(uint64_t owner,
         {
             verify(front.type == RLOCK && front.status == lock_req_t::LOCK);
             bool new_acquired = false;
-            std::vector<lock_req_t *> lock_reqs;
+            rusty::Vec<lock_req_t *> lock_reqs;
             std::list<lock_req_t>::iterator it = requests_.begin();
             for (; it != requests_.end(); it++) {
                 if (it->status == lock_req_t::LOCK) {
                     verify(it->type == RLOCK && new_acquired == false);
                 }
                 else if (it->type == RLOCK) {
-                    lock_reqs.push_back(&(*it));
+                    lock_reqs.push(&(*it));
                     new_acquired = true;
                 }
                 else
@@ -416,10 +439,10 @@ void WoundDieALock::abort(uint64_t id) {
                                         // needs to approve all following read
                                         // requests till next write request
                 verify(status_ == RLOCKED);
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == RLOCK) {
-                        lock_reqs.push_back(&(*next_it));
+                        lock_reqs.push(&(*next_it));
                     }
                     else
                         break;
@@ -453,11 +476,11 @@ void WoundDieALock::abort(uint64_t id) {
                 write_acquire(*next_it);
             }
             else { // acquire read locks
-                std::vector<lock_req_t *> lock_reqs;
+                rusty::Vec<lock_req_t *> lock_reqs;
                 for (; next_it != requests_.end(); next_it++) {
                     if (next_it->type == WLOCK)
                         break;
-                    lock_reqs.push_back(&(*next_it));
+                    lock_reqs.push(&(*next_it));
                 }
                 read_acquire(lock_reqs);
                 verify(status_ == RLOCKED);
@@ -468,11 +491,11 @@ void WoundDieALock::abort(uint64_t id) {
 }
 
 uint64_t TimeoutALock::vlock(uint64_t owner,
-                             const std::function<void(uint64_t)>& yes_callback,
-                             const std::function<void(void)>& no_callback,
+                             const ALockLockedCallback& yes_callback,
+                             const ALockNotifyCallback& no_callback,
                              type_t type,
                              uint64_t priority,
-                             const std::function<int(void)>& wound_callback) {
+                             const ALockWoundCallback& wound_callback) {
 
 
     //        safe_check();
@@ -561,7 +584,7 @@ uint64_t TimeoutALock::vlock(uint64_t owner,
     return id;
 }
 
-uint32_t TimeoutALock::lock_all(std::vector<ALockReq*>& lock_reqs) {
+uint32_t TimeoutALock::lock_all(rusty::Vec<ALockReq*>& lock_reqs) {
     verify(status_ == FREE && n_rlock_ == 0);
 
     // find next lock. if next lock is read lock, find all
@@ -579,7 +602,7 @@ uint32_t TimeoutALock::lock_all(std::vector<ALockReq*>& lock_reqs) {
             n_lock++;
 
             //Log_info("lock req yes: %p", &next_req);
-            lock_reqs.push_back(&next_req);
+            lock_reqs.push(&next_req);
 
             if (next_req.type_== RLOCK) {
                 status_ = RLOCKED;
@@ -603,7 +626,7 @@ uint32_t TimeoutALock::lock_all(std::vector<ALockReq*>& lock_reqs) {
             n_lock++;
             n_rlock_ ++;
             //Log_info("lock req yes: %p", &next_req);
-            lock_reqs.push_back(&next_req);
+            lock_reqs.push(&next_req);
         }
     }
     return n_lock;
@@ -636,7 +659,7 @@ void TimeoutALock::abort(uint64_t id) {
 
     // found the request, different actions based on
     // the current state of the lock.
-    std::vector<ALockReq*> lock_reqs;
+    rusty::Vec<ALockReq*> lock_reqs;
 
     ALockReq& req = *it;
     if (req.cas_status(ALockReq::LOCK, ALockReq::UNLOCK)) {
@@ -679,13 +702,13 @@ void TimeoutALock::abort(uint64_t id) {
 }
 
 
-// @unsafe - Uses std::function and std::vector
+// @unsafe - Uses Arc<Function const>-backed callback wrappers + Vec
 TimeoutALock::~TimeoutALock() {
     //    return;
 
     // free all the lockes and trigger timeout for those waiting.
     // @unsafe {
-    std::vector<std::function<void(void)>> tocall;
+    rusty::Vec<ALockNotifyCallback> tocall;
     // }
     //        lock_.lock();
     auto& alarm = get_alarm_s();
@@ -709,8 +732,8 @@ TimeoutALock::~TimeoutALock() {
 }
 
 
-void ALockGroup::lock_all(const std::function<void(void)>& yes_cb,
-        const std::function<void(void)>& no_cb) {
+void ALockGroup::lock_all(const ALockNotifyCallback& yes_cb,
+        const ALockNotifyCallback& no_cb) {
 //    verify(cas_status(INIT, WAIT) || cas_status(LOCK, WAIT));
 //
 //    yes_callback_ = yes_cb;

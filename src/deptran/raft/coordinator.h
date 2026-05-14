@@ -37,12 +37,17 @@ class CoordinatorRaft : public Coordinator {
     { return (RaftCommo *) commo_; }
   }
   bool in_submission_ = false; // debug;
-  bool in_prepare_ = false; // debug
-  bool in_accept = false; // debug
+  // removed `in_prepare_` and `in_accept`
+  // debug-guard fields — neither was ever written or read in the
+  // raft path (the comparable guards on the paxos / mencius
+  // coordinators ARE used; CoordinatorRaft just had the shape
+  // copied over).
   bool in_append_entries = false; // debug
   uint64_t minIndex = 0;
  public:
-  shared_ptr<Marshallable> cmd_{nullptr};
+  // migrated from
+  // `shared_ptr<Marshallable>` to `janus::Command`.
+  Command cmd_{};
   CoordinatorRaft(uint32_t coo_id,
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
@@ -52,7 +57,10 @@ class CoordinatorRaft : public Coordinator {
   slotid_t slot_id_ = 0;
   // Safe shared mutable counter - shares ownership with RaftFrame
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_;
-  uint64_t cmt_idx_ = 0 ;
+  // removed `uint64_t cmt_idx_ = 0;` —
+  // declared but never written or read on CoordinatorRaft (the
+  // sibling field on CoordinatorFpgaRaft IS live; this one was a
+  // copy-paste that never got wired up).
 
   // @safe
   uint32_t n_replica() {
@@ -83,7 +91,7 @@ class CoordinatorRaft : public Coordinator {
   void DoTxAsync(TxRequest &req) override {}
 
   // @unsafe - raw pointer dereferences, shared_ptr, complex logic
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 

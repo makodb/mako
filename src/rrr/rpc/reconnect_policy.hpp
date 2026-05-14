@@ -1,9 +1,20 @@
 #pragma once
 
-#include <rusty/cell.hpp>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
 #include <cstdint>
-#include <algorithm>
-#include <random>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/cell.hpp>
+
+
+
 
 namespace rrr {
 

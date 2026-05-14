@@ -24,8 +24,11 @@ class SchedulerClassic: public TxLogServer {
   ~SchedulerClassic() {
   }
 
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   void MergeCommands(vector<shared_ptr<TxPieceData>>&,
-                     shared_ptr<Marshallable>);
+                     const janus::Command&);
 
   bool ExecutePiece(Tx& tx, TxPieceData& piece_data, TxnOutput& ret_output);
 
@@ -35,7 +38,7 @@ class SchedulerClassic: public TxLogServer {
 
   virtual bool Dispatch(cmdid_t cmd_id,
 												struct DepId dep_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         TxnOutput& ret_output);
 
   /**
@@ -69,7 +72,9 @@ class SchedulerClassic: public TxLogServer {
 
   virtual void DoAbort(Tx& tx_box);
 
-  virtual int Next(int,shared_ptr<Marshallable>) override;
+  // take janus::Command (matches RegLearnerAction
+  // signature in deptran/scheduler.h).
+  virtual int Next(int, janus::Command) override;
 
   virtual bool IsLeader() override { return rep_sched_->IsLeader(); }
 
@@ -82,7 +87,7 @@ class SchedulerClassic: public TxLogServer {
   int PrepareReplicated(TpcPrepareCommand& prepare_cmd);
   int CommitReplicated(TpcCommitCommand& commit_cmd);
 
-  bool CheckCommitted(Marshallable& commit_cmd) override;
+  bool CheckCommitted(const janus::Command& commit_cmd) override;
 
 };
 

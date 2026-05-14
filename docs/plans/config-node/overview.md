@@ -300,7 +300,7 @@ private:
 
 #pragma once
 
-#include "rrr/rpc/server.hpp"
+#include "rrr/rrr.hpp"
 #include "config.h"
 
 namespace janus {
@@ -346,7 +346,7 @@ private:
 #include <string>
 #include <memory>
 #include "config.h"
-#include "rrr/rpc/client.hpp"
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

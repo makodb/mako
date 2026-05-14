@@ -1,0 +1,31 @@
+=== BUILD test_raft_quorum (incremental) ===
+[0/2] Re-checking globbed directories...
+[1/4] Scanning /workspace/tests/raft_quorum_test.cc for CXX dependencies
+[2/4] Generating CXX dyndep file CMakeFiles/test_raft_quorum.dir/CXX.dd
+[3/4] Building CXX object CMakeFiles/test_raft_quorum.dir/tests/raft_quorum_test.cc.o
+[4/4] Linking CXX executable test_raft_quorum
+=== RUN ===
+[==========] Running 8 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 8 tests from RaftQuorumTest
+[ RUN      ] RaftQuorumTest.ConstructionAndAccessors
+[       OK ] RaftQuorumTest.ConstructionAndAccessors (0 ms)
+[ RUN      ] RaftQuorumTest.EmptyCollectIsEmpty
+[       OK ] RaftQuorumTest.EmptyCollectIsEmpty (0 ms)
+[ RUN      ] RaftQuorumTest.AllRepliesArrive_WaitReturnsTrue
+[       OK ] RaftQuorumTest.AllRepliesArrive_WaitReturnsTrue (0 ms)
+[ RUN      ] RaftQuorumTest.EarlyQuorum_WaitReturnsBeforeAllReplies
+[       OK ] RaftQuorumTest.EarlyQuorum_WaitReturnsBeforeAllReplies (0 ms)
+[ RUN      ] RaftQuorumTest.Timeout_WaitReturnsFalseWithPartialReplies
+[       OK ] RaftQuorumTest.Timeout_WaitReturnsFalseWithPartialReplies (52 ms)
+[ RUN      ] RaftQuorumTest.ReceivedCounterAdvancesPerReply
+[       OK ] RaftQuorumTest.ReceivedCounterAdvancesPerReply (0 ms)
+[ RUN      ] RaftQuorumTest.CollectIsOneShot_SecondCallReturnsEmpty
+[       OK ] RaftQuorumTest.CollectIsOneShot_SecondCallReturnsEmpty (0 ms)
+[ RUN      ] RaftQuorumTest.NonTrivialReplyType
+[       OK ] RaftQuorumTest.NonTrivialReplyType (0 ms)
+[----------] 8 tests from RaftQuorumTest (52 ms total)
+
+[----------] Global test environment tear-down
+[==========] 8 tests from 1 test suite ran. (52 ms total)
+[  PASSED  ] 8 tests.

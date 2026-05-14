@@ -7,7 +7,7 @@
 #include "communicator.h"
 #include "raft/server.h"
 #include "paxos/server.h"
-#include "rrr/rpc/recovery_manager.hpp"
+#include "raft/recovery_manager.hpp"
 
 #include <gperftools/profiler.h>
 
@@ -98,21 +98,21 @@ void ServerWorker::SetupBase() {
     tx_sched_->rep_frame_ = rep_frame_;
     tx_sched_->rep_sched_ = rep_sched_;
 
-    // Phase 2.1: Initialize recovery for replication servers
+    // Initialize recovery for replication servers
     InitializeRecovery(site_info_->partition_id_, site_info_->locale_id);
   }
   // add callbacks to execute commands to rep_sched_
   if (rep_sched_ && tx_sched_) {
     rep_sched_->RegLearnerAction(std::bind(
-        static_cast<int(TxLogServer::*)(int, shared_ptr<Marshallable>)>(&TxLogServer::Next),
+        static_cast<int(TxLogServer::*)(int, janus::Command)>(&TxLogServer::Next),
         tx_sched_,
         std::placeholders::_1,
         std::placeholders::_2));
 
-    // Phase 2.4: Start state machine recovery tracking
+    // Start state machine recovery tracking
     tx_sched_->SetRecoveryMode(true);
 
-    // Phase 2.2: Replay committed entries after callback is registered
+    // Replay committed entries after callback is registered
     if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
       raft_server->ReplayCommittedEntries();
     }
@@ -120,7 +120,7 @@ void ServerWorker::SetupBase() {
       paxos_server->ReplayCommittedEntries();
     }
 
-    // Phase 2.4: End state machine recovery tracking
+    // End state machine recovery tracking
     tx_sched_->SetRecoveryMode(false);
   }
 #endif
@@ -213,7 +213,7 @@ void ServerWorker::SetupService() {
                                                    rep_sched_,
                                                    poll_worker);
     for (auto& svc : services) {
-      rpc_server_->reg_service(std::move(svc));
+      rpc_server_->reg_service_proxy(std::move(svc));
     }
   }
 #else
@@ -222,7 +222,7 @@ void ServerWorker::SetupService() {
                                                   tx_sched_,
                                                   poll_worker);
     for (auto& svc : services) {
-      rpc_server_->reg_service(std::move(svc));
+      rpc_server_->reg_service_proxy(std::move(svc));
     }
   }
 
@@ -231,7 +231,7 @@ void ServerWorker::SetupService() {
                                                    rep_sched_,
                                                    poll_worker);
     for (auto& svc : services) {
-      rpc_server_->reg_service(std::move(svc));
+      rpc_server_->reg_service_proxy(std::move(svc));
     }
   }
 #endif
@@ -261,24 +261,13 @@ void ServerWorker::WaitForShutdown() {
     hb_rpc_server_->wait_for_shutdown();
     delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
-    if (hb_thread_pool_g != svr_thread_pool_)
-      hb_thread_pool_g->release();
+    // Arc auto-releases on destruction (hb_thread_pool_g goes out of scope with ServerWorker)
 
-    // Use for_each_service to access services owned by rpc_server_
-    if (rpc_server_ != nullptr) {
-      rpc_server_->for_each_service([](rrr::Service& service) {
-        if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(&service)) {
-          auto& recorder = s->recorder_;
-          if (recorder) {
-            auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;
-            auto sz_flush_avg_ = recorder->stat_sz_.peek().avg_;
-            Log::info("Log to disk, average log per flush: %lld,"
-                          " average size per flush: %lld",
-                      n_flush_avg_, sz_flush_avg_);
-          }
-        }
-      });
-    }
+    // removed `for_each_service(...) { if
+    // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
+    // recorder = s->recorder_; if (recorder) { Log::info(...) } } }`
+    // block — `Service::recorder_` field is always nullptr (now
+    // gone); the `if (recorder)` branch was unreachable.
   }
   Log_debug("exit %s", __FUNCTION__);
 }
@@ -392,7 +381,7 @@ ServerWorker::~ServerWorker() {
   }
 }
 
-// Phase 2.1: Initialize recovery for replication servers
+// Initialize recovery for replication servers
 // @unsafe - Uses LogStorage and filesystem operations
 void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id) {
   if (!rep_sched_) {
@@ -400,10 +389,10 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
   }
 
   // Create recovery config for this replica
-  rrr::RecoveryConfig config = rrr::RecoveryConfig::for_replica(partition_id, locale_id);
+  raft::RecoveryConfig config = raft::RecoveryConfig::for_replica(partition_id, locale_id);
 
   // Create recovery manager
-  rrr::RecoveryManager recovery_manager(config);
+  raft::RecoveryManager recovery_manager(config);
 
   // Create storage backend
   auto storage = recovery_manager.create_storage();
@@ -415,13 +404,13 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
   // Try to recover Raft server
   if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
     auto result = recovery_manager.recover(
-        [raft_server, &storage](std::shared_ptr<rrr::LogStorage> s) {
+        [raft_server, &storage](std::shared_ptr<janus::raft::LogStorage> s) {
           raft_server->SetLogStorage(s);
         },
         [raft_server]() {
           return raft_server->RecoverFromStorage();
         },
-        [&storage](rrr::RecoveryResult& r) {
+        [&storage](raft::RecoveryResult& r) {
           auto term_opt = storage->get_metadata("currentTerm");
           if (term_opt.is_some()) {
             r.recovered_term = std::stoull(term_opt.unwrap());
@@ -442,13 +431,13 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
   // Try to recover Paxos server
   if (auto* paxos_server = dynamic_cast<PaxosServer*>(rep_sched_)) {
     auto result = recovery_manager.recover(
-        [paxos_server, &storage](std::shared_ptr<rrr::LogStorage> s) {
+        [paxos_server, &storage](std::shared_ptr<janus::raft::LogStorage> s) {
           paxos_server->SetLogStorage(s);
         },
         [paxos_server]() {
           return paxos_server->RecoverFromStorage();
         },
-        [&storage](rrr::RecoveryResult& r) {
+        [&storage](raft::RecoveryResult& r) {
           auto epoch_opt = storage->get_metadata("cur_epoch");
           if (epoch_opt.is_some()) {
             r.recovered_epoch = std::stoull(epoch_opt.unwrap());

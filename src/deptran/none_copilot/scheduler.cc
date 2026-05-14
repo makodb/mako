@@ -60,8 +60,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 				if (submit_ % 1000 == 0)
 					Log_info("avg batch size %f", (double)total_/submit_);
 				shared_ptr<Coordinator> coo{CreateRepCoord(dep_id.id)};
-				auto sp_m = dynamic_pointer_cast<Marshallable>(batch_cmd);
-				coo->Submit(sp_m);
+				coo->Submit(batch_cmd);
 			}
 		} else {
 			shared_ptr<Coordinator> coo{CreateRepCoord(dep_id.id)};
@@ -69,8 +68,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 			batch_buffer_.push_back(cmd);
 			batch_cmd->AddCmds(batch_buffer_);
 			batch_buffer_.clear();
-			auto sp_m = dynamic_pointer_cast<Marshallable>(batch_cmd);
-			coo->Submit(sp_m);
+			coo->Submit(batch_cmd);
 		}
 		sp_tx->commit_result->wait();
 #ifdef COPILOT_TIME_DEBUG

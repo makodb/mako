@@ -18,7 +18,50 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
 
 # Build tools
-sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf
+sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf curl
+
+# Ensure CMake >= 3.30 for C++23 import std/module support.
+# Ubuntu 24.04 apt currently provides 3.28.x, which is too old for this repo.
+REQUIRED_CMAKE_VERSION="3.30.0"
+BOOTSTRAP_CMAKE_VERSION="${BOOTSTRAP_CMAKE_VERSION:-3.31.0}"
+
+version_ge() {
+    # Returns success when $1 >= $2.
+    [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
+}
+
+current_cmake_version="0.0.0"
+if command -v cmake >/dev/null 2>&1; then
+    current_cmake_version="$(cmake --version | awk 'NR==1 {print $3}')"
+fi
+
+if ! version_ge "$current_cmake_version" "$REQUIRED_CMAKE_VERSION"; then
+    echo "Installing newer CMake (have ${current_cmake_version}, need >= ${REQUIRED_CMAKE_VERSION})..."
+
+    case "$(uname -m)" in
+        x86_64|amd64) cmake_arch="x86_64" ;;
+        aarch64|arm64) cmake_arch="aarch64" ;;
+        *)
+            echo "Unsupported architecture for CMake bootstrap: $(uname -m)"
+            exit 1
+            ;;
+    esac
+
+    cmake_tar="cmake-${BOOTSTRAP_CMAKE_VERSION}-linux-${cmake_arch}.tar.gz"
+    cmake_url="https://github.com/Kitware/CMake/releases/download/v${BOOTSTRAP_CMAKE_VERSION}/${cmake_tar}"
+    tmp_dir="$(mktemp -d)"
+
+    curl -fsSL "$cmake_url" -o "${tmp_dir}/${cmake_tar}"
+    sudo rm -rf "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}"
+    sudo mkdir -p "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}"
+    sudo tar -xzf "${tmp_dir}/${cmake_tar}" --strip-components=1 -C "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}"
+    sudo ln -sf "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}/bin/cmake" /usr/local/bin/cmake
+    sudo ln -sf "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}/bin/ctest" /usr/local/bin/ctest
+    sudo ln -sf "/opt/cmake-${BOOTSTRAP_CMAKE_VERSION}/bin/cpack" /usr/local/bin/cpack
+    rm -rf "$tmp_dir"
+fi
+
+echo "Using $(cmake --version | head -n1)"
 
 # Memory allocators and profiling
 sudo apt-get --assume-yes install libjemalloc-dev libgoogle-perftools-dev
@@ -49,8 +92,10 @@ sudo apt-get --assume-yes install pandoc
 # DPDK (if available)
 sudo apt-get --assume-yes install libdpdk-dev || echo "DPDK not available, skipping"
 
-# For rusty-cpp-checker: LLVM 18 and Z3 (available in Ubuntu 24.04 default repos)
-sudo apt-get --assume-yes install llvm-18-dev libclang-18-dev clang-18 libz3-dev
+# For rusty-cpp-checker and CMake module scanning: LLVM/Clang tools + Z3.
+sudo apt-get --assume-yes install llvm-18-dev libclang-18-dev clang-18 clang-tools-18 libz3-dev
+# Required by CMakeLists.txt forcing clang + -stdlib=libc++
+sudo apt-get --assume-yes install libc++-18-dev libc++abi-18-dev
 
 # Set up alternatives for clang/llvm
 sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100 || true

@@ -1,9 +1,34 @@
-#include <chrono>
-#include <functional>
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/result.hpp>
+#include <rusty/option.hpp>
+#include <rusty/unsafe_cell.hpp>
+#include <pthread.h>
+
+
 #include <sys/time.h>
 
-#include "misc.hpp"
+
+
+
 #include "threading.hpp"
+
+
+#include "../rrr.hpp"
 
 // External safety annotations for atomic operations
 // @external: {
@@ -17,40 +42,6 @@
 using namespace std;
 
 namespace rrr {
-
-// @unsafe - Uses address-of operator for nanosleep call
-// SAFETY: Only takes address of stack-allocated timespec which remains valid throughout nanosleep
-void SpinLock::lock() {
-    // Fast path: try to acquire lock immediately
-    bool expected = false;
-    if (locked_.compare_exchange_strong(expected, true, 
-                                        std::memory_order_acquire,
-                                        std::memory_order_relaxed)) {
-        return;
-    }
-    
-    // Spin for a short while before sleeping
-    int wait = 1000;
-    while ((wait-- > 0) && locked_.load(std::memory_order_relaxed)) {
-        // CPU-specific pause instruction to reduce contention
-#if defined(__i386__) || defined(__x86_64__)
-        asm volatile("pause");
-#endif
-    }
-    
-    // Fall back to sleeping if still contended
-    struct timespec t;
-    t.tv_sec = 0;
-    t.tv_nsec = 50000;  // 50 microseconds
-    
-    expected = false;
-    while (!locked_.compare_exchange_weak(expected, true,
-                                          std::memory_order_acquire,
-                                          std::memory_order_relaxed)) {
-        nanosleep(&t, nullptr);
-        expected = false;
-    }
-}
 
 struct start_thread_pool_args {
     ThreadPool* thrpool;
@@ -69,6 +60,13 @@ ThreadPool::ThreadPool(int n /* =... */)
     : n_(n), round_robin_(), th_(n), q_(n) {
     verify(n_ >= 0);
 
+    // rusty::Vec(size_t) only reserves capacity, it does NOT populate the
+    // vector. Grow th_ to n elements before indexed assignment. q_ is a
+    // std::vector (see threading.hpp) and the constructor already sized it.
+    for (int i = 0; i < n_; i++) {
+        th_.push(pthread_t{});
+    }
+
     for (int i = 0; i < n_; i++) {
         start_thread_pool_args* args = new start_thread_pool_args();
         args->thrpool = this;
@@ -77,17 +75,17 @@ ThreadPool::ThreadPool(int n /* =... */)
     }
 }
 
-ThreadPool::~ThreadPool() {
+ThreadPool::~ThreadPool() noexcept {
     should_stop_ = true;
     for (int i = 0; i < n_; i++) {
-        q_[i].push(rusty::Box<function<void()>>(nullptr));  // death pill
+        q_[i].push(rusty::Box<rusty::Function<void()>>(nullptr));  // death pill
     }
     for (int i = 0; i < n_; i++) {
         Pthread_join(th_[i], nullptr);
     }
     // check if there's left over jobs
     for (int i = 0; i < n_; i++) {
-        rusty::Box<function<void()>> job(nullptr);
+        rusty::Box<rusty::Function<void()>> job(nullptr);
         while (q_[i].try_pop(&job)) {
             if (job.is_valid()) {
                 (*job)();
@@ -97,12 +95,12 @@ ThreadPool::~ThreadPool() {
     // th_ and q_ are now std::vector, automatically cleaned up
 }
 
-int ThreadPool::run_async(const std::function<void()>& f) {
+int ThreadPool::run_async(rusty::Function<void()> f) {
     if (should_stop_) {
         return EPERM;
     }
     int queue_id = round_robin_.next() % n_;
-    q_[queue_id].push(rusty::make_box<function<void()>>(f));
+    q_[queue_id].push(rusty::make_box<rusty::Function<void()>>(std::move(f)));
     return 0;
 }
 
@@ -115,9 +113,9 @@ void ThreadPool::run_thread(int id_in_pool) {
     int stage = 0;
 
     // randomized stealing order
-    std::vector<int> steal_order(n_);
+    rusty::Vec<int> steal_order(n_);
     for (int i = 0; i < n_; i++) {
-        steal_order[i] = i;
+        steal_order.push(i);
     }
     Rand r;
     for (int i = 0; i < n_ - 1; i++) {
@@ -131,7 +129,7 @@ void ThreadPool::run_thread(int id_in_pool) {
     // succeed: sleep - 1
     // failure: sleep + 10
     for (;;) {
-        rusty::Box<function<void()>> job(nullptr);
+        rusty::Box<rusty::Function<void()>> job(nullptr);
 
         switch(stage) {
         case 0:
@@ -180,6 +178,17 @@ void ThreadPool::run_thread(int id_in_pool) {
     // steal_order is automatically cleaned up (std::vector)
 }
 
+// Min-heap comparator over the wall-clock timestamp `pair.first`.
+// Replaces the prior `std::greater<job_t>{}`, which transitively required
+// `operator<` on the second element — now `Option<Box<Function>>`, which
+// does not provide one. We only need to order on time anyway.
+struct GreaterByJobTime {
+    template <typename Pair>
+    bool operator()(const Pair& a, const Pair& b) const noexcept {
+        return a.first > b.first;
+    }
+};
+
 void* RunLater::start_run_later(void* thiz) {
     RunLater* rl = (RunLater *) thiz;
     rl->run_later_loop();
@@ -196,11 +205,14 @@ RunLater::RunLater() :
     Pthread_create(&th_, nullptr, RunLater::start_run_later, this);
 }
 
-RunLater::~RunLater() {
+RunLater::~RunLater() noexcept {
     should_stop_ = true;
 
     Pthread_mutex_lock(&m_);
-    jobs_.push(make_pair(0.0, nullptr)); // death pill
+    // death pill: None payload (former nullptr) signals run_later_loop
+    // to exit on dequeue.
+    jobs_.push(job_t(0.0, rusty::None));
+    std::push_heap(jobs_.begin(), jobs_.end(), GreaterByJobTime{});
     Pthread_cond_signal(&cv_);
     Pthread_mutex_unlock(&m_);
 
@@ -209,14 +221,13 @@ RunLater::~RunLater() {
     Pthread_cond_destroy(&cv_);
 }
 
-// @unsafe - rusty-cpp false positives: now_f is initialized, job_func null check is done before dereference
+// @unsafe - rusty-cpp false positives: now_f is initialized, job_func is moved out before dereference
 void RunLater::try_one_job() {
     // @unsafe - pthread mutex operations
     { Pthread_mutex_lock(&m_); }
-    if (!jobs_.empty()) {
-        // Copy job data before potentially modifying container
-        auto job_time = jobs_.top().first;
-        auto job_func = jobs_.top().second;
+    if (!jobs_.is_empty()) {
+        // Peek the time without copying the (move-only) Option payload.
+        auto job_time = jobs_.front().first;
 
         struct timeval now;
         // @unsafe - gettimeofday uses address-of
@@ -224,19 +235,26 @@ void RunLater::try_one_job() {
         double now_f = now.tv_sec + now.tv_usec / 1000.0 / 1000.0;
         double wait = job_time - now_f;
         if (wait < 0.0) {
-            // Pop now that we've copied the data
-            // @unsafe - STL container method
-            { jobs_.pop(); }
-            if (job_func == nullptr) {
+            // Move the function out before pop_heap shuffles the vector;
+            // pop_heap then leaves the (now-empty) Option at the back, and
+            // jobs_.pop() removes that back slot.
+            auto job_func = std::move(jobs_.front().second);
+            // @unsafe - heap operations over internal job vector
+            {
+                std::pop_heap(jobs_.begin(), jobs_.end(), GreaterByJobTime{});
+                (void)jobs_.pop();
+            }
+            if (job_func.is_none()) {
                 // death pill
                 // @unsafe
                 { Pthread_mutex_unlock(&m_); }
                 return;
             } else {
-                // @unsafe - function pointer dereference and delete
+                // @unsafe - move Box out of Option and invoke
                 {
-                    (*job_func)();
-                    delete job_func;
+                    auto box = std::move(job_func).unwrap();
+                    (*box)();
+                    // box drops at end of scope, freeing the Function
                 }
             }
         } else {
@@ -272,7 +290,7 @@ void RunLater::run_later_loop() {
     bool done = false;
     while (!done) {
         Pthread_mutex_lock(&m_);
-        if (jobs_.empty()) {
+        if (jobs_.is_empty()) {
             done = true;
         }
         Pthread_mutex_unlock(&m_);
@@ -282,7 +300,7 @@ void RunLater::run_later_loop() {
     }
 }
 
-int RunLater::run_later(double sec, const std::function<void()>& f) {
+int RunLater::run_later(double sec, rusty::Function<void()> f) {
     if (should_stop_) {
         return EPERM;
     }
@@ -301,7 +319,8 @@ int RunLater::run_later(double sec, const std::function<void()>& f) {
     latest_l_.unlock();
 
     Pthread_mutex_lock(&m_);
-    jobs_.push(make_pair(later, new std::function<void()>(f)));
+    jobs_.push(job_t(later, rusty::Some(rusty::make_box<rusty::Function<void()>>(std::move(f)))));
+    std::push_heap(jobs_.begin(), jobs_.end(), GreaterByJobTime{});
     Pthread_cond_signal(&cv_);
     Pthread_mutex_unlock(&m_);
 

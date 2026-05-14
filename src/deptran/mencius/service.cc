@@ -42,7 +42,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
                                  const uint64_t& sender,
                                  const std::vector<uint64_t>& skip_commits,
                                  const std::vector<uint64_t>& skip_potentials,
-                                 const MarshallDeputy& cmd,
+                                 const janus::Command& cmd,
                                  ballot_t* max_ballot,
                                  uint64_t* coro_id,
                                  rrr::DeferredReply defer) {
@@ -58,9 +58,9 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
   }
   for (auto x: skip_commits) {
     auto cmd_ptr = std::make_shared<TpcCommitCommand>();
-    MarshallDeputy md(cmd_ptr);
-    md.kind_ = MarshallDeputy::CMD_TPC_COMMIT;
-    sched_->OnCommit(x, 100, md.sp_data_, true);
+    janus::Command md{cmd_ptr};
+    // OnCommit takes janus::Command directly.
+    sched_->OnCommit(x, 100, md, true);
   }
   sched_->g_mutex.unlock();
 
@@ -82,7 +82,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
         sender,
         skip_commits,
         skip_potentials,
-        const_cast<MarshallDeputy&>(cmd).sp_data_,
+        cmd,
         max_ballot,
         coro_id,
         [defer = std::move(defer)]() mutable { defer.reply(); });
@@ -91,17 +91,16 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
 
 void MenciusServiceImpl::Decide(const uint64_t& slot,
                                 const ballot_t& ballot,
-                                const MarshallDeputy& cmd,
+                                const janus::Command& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  auto x = cmd.sp_data_;
 
-  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd.sp_data_);
+  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   sched_->c_mutex.lock();
   sched_->unexecuted_keys_[parsed_cmd.key_] += 1;
   sched_->c_mutex.unlock();
 
-  sched_->OnCommit(slot, ballot, x);
+  sched_->OnCommit(slot, ballot, cmd);
   defer.reply();
 }
 

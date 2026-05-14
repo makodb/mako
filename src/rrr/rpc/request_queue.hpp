@@ -1,13 +1,31 @@
 #pragma once
 
-#include <chrono>
-#include <cerrno>
-#include <list>
-#include <functional>
-#include <mutex>
-#include <memory>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+#include <rusty/arc.hpp>
+#include <rusty/function.hpp>
 #include <rusty/option.hpp>
-#include "misc/marshal.hpp"
+#include <rusty/vecdeque.hpp>
+
+#include "../base/threading.hpp"  // SpinMutex<T>
+
+
+
+
+#include "../base/basetypes.hpp"
+#include "../misc/marshal.hpp"
+
 
 namespace rrr {
 
@@ -32,8 +50,8 @@ struct QueuedRequest {
     i32 rpc_id;                        // RPC method ID
     std::chrono::steady_clock::time_point timestamp;  // When queued
     uint32_t retry_count;              // Number of retries
-    std::shared_ptr<Marshal> payload;  // Serialized request data (shared_ptr due to Marshal's NoCopy)
-    std::function<void(int)> callback; // Completion callback (error_code)
+    rusty::Arc<Marshal> payload;       // Serialized request data
+    rusty::Function<void(int)> callback; // Completion callback (error_code)
     uint32_t ttl_ms;                   // TTL in milliseconds
 
     // @unsafe - Constructor uses std::chrono
@@ -42,7 +60,7 @@ struct QueuedRequest {
         , rpc_id(0)
         , timestamp(std::chrono::steady_clock::now())
         , retry_count(0)
-        , payload(nullptr)
+        , payload(rusty::Arc<Marshal>::make())
         , ttl_ms(30000)
     {}
 
@@ -134,9 +152,13 @@ struct RequestQueueConfig {
 class RequestQueue {
 private:
     RequestQueueConfig config_;
-    std::list<QueuedRequest> queue_;  // Using list to avoid move assignment issues with Marshal
-    // @unsafe { std::mutex for thread-safe concurrent access }
-    mutable std::mutex mutex_;
+    // VecDeque ring-buffer wrapped in SpinMutex for thread-safe access.
+    // SpinMutex owns its T, replacing the prior `mutex_ + queue_` pair
+    // pattern with a single rusty-style "data inside the lock" container.
+    // The VecDeque's placement-new ring-buffer preserves the same
+    // "no move-assignment of QueuedRequest's Marshal-bearing payload
+    // after enqueue" property the prior std::list comment cited.
+    mutable SpinMutex<rusty::VecDeque<QueuedRequest>> queue_;
 
 public:
     // @unsafe - Constructor uses defaults() which returns struct
@@ -146,7 +168,7 @@ public:
 
     // === Enqueue/Dequeue Operations ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     // Returns true if queued, false if rejected
     bool enqueue(QueuedRequest request) {
         if (!config_.enabled) {
@@ -159,16 +181,15 @@ public:
             return false;
         }
 
-        // @unsafe { std::mutex lock, std::list operations }
-        std::lock_guard<std::mutex> lock(mutex_);
+        // @unsafe { SpinMutex lock, VecDeque operations }
+        auto guard = queue_.lock().unwrap();
 
-        if (queue_.size() >= config_.max_size) {
+        if (guard->size() >= config_.max_size) {
             switch (config_.overflow_strategy) {
                 case OverflowStrategy::DROP_OLDEST:
                     // Remove oldest and proceed
-                    if (!queue_.empty()) {
-                        auto oldest = std::move(queue_.front());
-                        queue_.pop_front();
+                    if (!guard->is_empty()) {
+                        auto oldest = guard->pop_front();
                         // Invoke callback outside lock would be better,
                         // but for simplicity we do it here with error code
                         if (oldest.callback) {
@@ -205,70 +226,59 @@ public:
             request.ttl_ms = config_.default_ttl_ms;
         }
 
-        // @unsafe { std::list push_back }
-        queue_.push_back(std::move(request));
+        // @unsafe { VecDeque push_back }
+        guard->push_back(std::move(request));
         return true;
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     rusty::Option<QueuedRequest> dequeue() {
-        // @unsafe { std::mutex lock, std::list operations }
-        std::lock_guard<std::mutex> lock(mutex_);
+        // @unsafe { SpinMutex lock, VecDeque operations }
+        auto guard = queue_.lock().unwrap();
 
-        if (queue_.empty()) {
+        if (guard->is_empty()) {
             return rusty::None;
         }
 
-        auto request = std::move(queue_.front());
-        queue_.pop_front();
-        return rusty::Some(std::move(request));
+        return rusty::Some(guard->pop_front());
     }
 
-    // @unsafe - Uses std::list and std::mutex
-    // Note: Returns pointer that should be used immediately while lock is held
-    // For thread-safety, prefer dequeue() instead
-    bool peek(QueuedRequest& out) const {
-        // @unsafe { std::mutex lock, std::list operations }
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        if (queue_.empty()) {
-            return false;
-        }
-
-        // @unsafe { struct assignment }
-        out = queue_.front();
-        return true;
-    }
+    // removed `peek(QueuedRequest&)` — its `out = guard->front();`
+    // copy-assignment relied on QueuedRequest being copyable, which is
+    // no longer the case after the callback field migrated from
+    // std::function to move-only rusty::Function.  The method had no
+    // production callers (tests-only, used for inspection of xid
+    // post-enqueue); coverage moved to size()/empty().
 
     // === Expiration ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     size_t expire_stale() {
-        std::vector<std::function<void(int)>> callbacks_to_invoke;
+        rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
         size_t removed = 0;
 
         {
-            // @unsafe { std::mutex lock }
-            std::lock_guard<std::mutex> lock(mutex_);
+            // @unsafe { SpinMutex lock }
+            auto guard = queue_.lock().unwrap();
 
-            size_t original_size = queue_.size();
-            auto it = queue_.begin();
-            while (it != queue_.end()) {
-                if (it->is_expired()) {
-                    if (it->callback) {
-                        callbacks_to_invoke.push_back(std::move(it->callback));
-                    }
-                    it = queue_.erase(it);
-                } else {
-                    ++it;
+            // Extract expired elements via extract_if. The predicate is
+            // const-only (rusty::Function<bool(const T&)>) and cannot mutate
+            // the element, so we drain callbacks via pop_front afterward.
+            auto expired = guard->extract_if(
+                rusty::Function<bool(const QueuedRequest&)>(
+                    [](const QueuedRequest& r) { return r.is_expired(); }));
+            removed = expired.size();
+            while (!expired.is_empty()) {
+                auto req = expired.pop_front();
+                if (req.callback) {
+                    callbacks_to_invoke.push(std::move(req.callback));
                 }
             }
-
-            removed = original_size - queue_.size();
         }
 
-        // Invoke callbacks outside lock
-        for (const auto& cb : callbacks_to_invoke) {
+        // Invoke callbacks outside lock.  rusty::Function::operator()
+        // is non-const, so iterate by mutable reference.
+        for (auto& cb : callbacks_to_invoke) {
             // @unsafe { callback invocation }
             try {
                 cb(kRequestQueueExpiredError);
@@ -280,55 +290,56 @@ public:
 
     // === Size and State ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     size_t size() const {
-        // @unsafe { std::mutex lock, std::list::size }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.size();
+        // @unsafe { SpinMutex lock, VecDeque::size }
+        auto guard = queue_.lock().unwrap();
+        return guard->size();
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     bool empty() const {
-        // @unsafe { std::mutex lock, std::list::empty }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.empty();
+        // @unsafe { SpinMutex lock, VecDeque::is_empty }
+        auto guard = queue_.lock().unwrap();
+        return guard->is_empty();
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     bool full() const {
-        // @unsafe { std::mutex lock, std::list::size }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.size() >= config_.max_size;
+        // @unsafe { SpinMutex lock, VecDeque::size }
+        auto guard = queue_.lock().unwrap();
+        return guard->size() >= config_.max_size;
     }
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     size_t remaining_capacity() const {
-        // @unsafe { std::mutex lock, std::list::size }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return config_.max_size > queue_.size() ?
-               config_.max_size - queue_.size() : 0;
+        // @unsafe { SpinMutex lock, VecDeque::size }
+        auto guard = queue_.lock().unwrap();
+        return config_.max_size > guard->size() ?
+               config_.max_size - guard->size() : 0;
     }
 
     // === Clear and Reset ===
 
-    // @unsafe - Uses std::list and std::mutex
+    // @unsafe - Uses rusty::VecDeque and SpinMutex
     void clear_all(int error_code = -3) {
-        std::vector<std::function<void(int)>> callbacks_to_invoke;
+        rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
 
         {
-            // @unsafe { std::mutex lock, std::list operations }
-            std::lock_guard<std::mutex> lock(mutex_);
+            // @unsafe { SpinMutex lock, VecDeque operations }
+            auto guard = queue_.lock().unwrap();
 
-            for (auto& req : queue_) {
+            for (auto& req : *guard) {
                 if (req.callback) {
-                    callbacks_to_invoke.push_back(std::move(req.callback));
+                    callbacks_to_invoke.push(std::move(req.callback));
                 }
             }
-            queue_.clear();
+            guard->clear();
         }
 
-        // Invoke callbacks outside lock
-        for (const auto& cb : callbacks_to_invoke) {
+        // Invoke callbacks outside lock.  rusty::Function::operator()
+        // is non-const, so iterate by mutable reference.
+        for (auto& cb : callbacks_to_invoke) {
             // @unsafe { callback invocation }
             try {
                 cb(error_code);
@@ -356,8 +367,12 @@ public:
 
     // @unsafe - Update configuration (clears queue if not empty)
     void update_config(const RequestQueueConfig& config) {
-        // @unsafe { std::mutex lock, config assignment }
-        std::lock_guard<std::mutex> lock(mutex_);
+        // Take the queue's lock to serialize against in-flight enqueue/dequeue
+        // operations so config_ updates are observed atomically with respect
+        // to those operations.
+        // @unsafe { SpinMutex lock, config assignment }
+        auto guard = queue_.lock().unwrap();
+        (void)guard;
         config_ = config;
         // Note: Caller should clear queue before calling if needed
     }

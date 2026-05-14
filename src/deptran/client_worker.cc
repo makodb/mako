@@ -1,5 +1,16 @@
 #include <cmath>
 #include "client_worker.h"
+
+// The wait_recordplace macro is defined in rrr/reactor/event.h but macros do
+// not cross module boundaries, so redefine it locally here.
+#ifndef wait_recordplace
+#define wait_recordplace(ev, wait_func) do { \
+  auto ref_ev = ev; \
+  ref_ev->record_place(__FILE__, __LINE__); \
+  ref_ev->wait_func; \
+} while(0)
+#endif
+
 #include "frame.h"
 #include "procedure.h"
 #include "workload.h"
@@ -24,9 +35,10 @@ ClientWorker::~ClientWorker() {
   }
 }
 
-void ClientWorker::retrive_statistic() {
-  verify(0); // No longer need since date are recorded directly to ClientWorker instead of Coordinator
-}
+// removed `ClientWorker::retrive_statistic()`
+// — body was `verify(0); // No longer need since date are recorded
+// directly to ClientWorker instead of Coordinator`; only call site
+// (`s_main.cc:242`) was already commented out.
 
 void ClientWorker::ForwardRequestDone(Coordinator* coo,
                                       TxReply* output,

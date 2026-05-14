@@ -1,25 +1,26 @@
-/*
- * safe_assert.h
- *
- *  Created on: Nov 9, 2012
- *      Author: frog
- */
+#pragma once
 
-#ifndef SAFE_ASSERT_H_
-#define SAFE_ASSERT_H_
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
 
-#include <stdlib.h>
-#include <assert.h>
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
+
+
+
+
+inline void SAFE_ASSERT(bool expr) {
 #ifdef NDEBUG
-#define SAFE_ASSERT(expr) \
-  do { \
-    if (!(expr)) { \
-      abort(); \
-    } \
-  } while (0)
-#else /* NDEBUG */
-#define SAFE_ASSERT(expr) assert(expr)
-#endif /* NDEBUG */
-
-#endif /* SAFE_ASSERT_H_ */
+    if (!expr) {
+        std::abort();
+    }
+#else
+    assert(expr);
+#endif
+}

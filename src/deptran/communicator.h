@@ -146,11 +146,11 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   
-  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& id_set) {
+  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& id_set) {
     if (y) {
       vote_yes();
       // If ok=true, jepoch and oepoch are not larger than local, so we can update id_sets
-      auto vec_rec_data = std::dynamic_pointer_cast<VecRecData>(id_set.sp_data_);
+      auto vec_rec_data = marshallable_cast<VecRecData>(id_set);
       if (vec_rec_data) {
         id_sets_.push_back(vec_rec_data);
       }
@@ -192,27 +192,28 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
     key_states_.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); i++) {
       key_index_[keys[i]] = i;
-      key_states_.push_back(KeyState{keys[i], {}, 0, nullptr});
+      key_states_.push_back(KeyState{keys[i], {}, 0, janus::Command{}});
     }
     int f = (n_total_ - 1) / 2;
     majority_threshold_ = (f + 2 + 1) / 2;
   }
 
-  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& batch_md) {
+  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& batch_md) {
     if (y) {
       vote_yes();
-      auto batch = std::dynamic_pointer_cast<KeyCmdBatchData>(batch_md.sp_data_);
+      auto batch = marshallable_cast<KeyCmdBatchData>(batch_md);
       if (batch) {
         for (size_t i = 0; i < batch->Size(); i++) {
           auto it = key_index_.find(batch->GetKey(i));
           if (it == key_index_.end()) {
             continue;
           }
-          auto cmd = batch->GetCommand(i);
-          if (!cmd) {
+          const auto& cmd = batch->GetCommand(i);
+          if (!cmd.has_value()) {
             continue;
           }
           auto& state = key_states_[it->second];
+          // GetCombinedCmdID still takes shared_ptr<Marshallable>.
           uint64_t cmd_id = SimpleRWCommand::GetCombinedCmdID(cmd);
           int count = ++state.cmd_counts_[cmd_id];
           if (count > state.max_count) {
@@ -232,10 +233,13 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
     }
   }
 
-  std::vector<std::pair<key_t, shared_ptr<Marshallable>>> GetRecoveredCommands() const {
-    std::vector<std::pair<key_t, shared_ptr<Marshallable>>> result;
+  // return Commands directly
+  // (no inner_marshallable() unwrap).  JetpackBroadcastRecordCmd takes
+  // the same shape on input.
+  std::vector<std::pair<key_t, janus::Command>> GetRecoveredCommands() const {
+    std::vector<std::pair<key_t, janus::Command>> result;
     for (const auto& state : key_states_) {
-      if (state.max_cmd && state.max_count >= majority_threshold_) {
+      if (state.max_cmd.has_value() && state.max_count >= majority_threshold_) {
         result.emplace_back(state.key, state.max_cmd);
       }
     }
@@ -248,11 +252,12 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   epoch_t max_oepoch_ = -1;
 
  private:
+  // max_cmd migrated to janus::Command.
   struct KeyState {
     key_t key;
     std::unordered_map<uint64_t, int> cmd_counts_;
     int max_count = 0;
-    shared_ptr<Marshallable> max_cmd = nullptr;
+    janus::Command max_cmd{};
   };
 
   std::vector<key_t> ordered_keys_;
@@ -341,14 +346,18 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
   using QuorumEvent::QuorumEvent;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
-  shared_ptr<Marshallable> recovered_cmd_;
-  
-  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& cmd) {
+  // recovered_cmd_ migrated
+  // from `shared_ptr<Marshallable>` to `janus::Command`.
+  // GetRecoveredCmd now returns Command too;
+  // shared_ptr<Marshallable> callers auto-convert via implicit ctor.
+  janus::Command recovered_cmd_;
+
+  void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& cmd) {
     if (y) {
       vote_yes();
       // Store the recovered command if we get one
-      if (!recovered_cmd_ && cmd.sp_data_) {
-        recovered_cmd_ = cmd.sp_data_;
+      if (!recovered_cmd_.has_value() && cmd.has_value()) {
+        recovered_cmd_ = cmd;
       }
     } else {
       vote_no();
@@ -361,8 +370,8 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
       }
     }
   }
-  
-  shared_ptr<Marshallable> GetRecoveredCmd() {
+
+  const janus::Command& GetRecoveredCmd() const {
     return recovered_cmd_;
   }
 };
@@ -382,10 +391,34 @@ class Communicator {
   map<siteid_t, ClassicProxy *> rpc_proxies_{};
   map<parid_t, vector<SiteProxyPair>> rpc_par_proxies_{};
   map<parid_t, SiteProxyPair> leader_cache_ = {};
-  unordered_map<uint64_t, pair<rrr::i64, rrr::i64>> outbound_{};
-	map<uint64_t, double> lat_util_{};
-  locid_t leader_ = 0;
-  
+  // removed `lat_util_` and `leader_`
+  // fields — `lat_util_` was referenced only in commented-out
+  // `Log_info` lines at `classic/coordinator.cc:474, 651`; `leader_`
+  // had no readers or writers anywhere in the codebase.
+  //
+  // excised the dead CPU-utilization /
+  // RPC-latency profiling subsystem.  Removed fields:
+  //   - `unordered_map<uint64_t, pair<rrr::i64, rrr::i64>> outbound_`
+  //     (RPC start-time map; written in `BroadcastDispatch` callback
+  //     at `communicator.cc:782` and read only inside the dead
+  //     window-tracking blocks at `communicator.cc:1023-1048` and
+  //     `communicator.cc:1161-1192`).
+  //   - `int index`, `int total`, `int low_util` (the `_` suffix
+  //     versions like `total_` are LIVE and stay).
+  //   - `rrr::i64 window[200]`, `window_time`, `total_time`,
+  //     `window_avg`, `total_avg` (the rolling-window latency
+  //     accounting).
+  //   - `double cpu = 1.0`, `last_cpu = 1.0`, `tx` (the CPU /
+  //     network utilisation snapshot).
+  //   - `void ResetProfiles()` member function — reset all of the
+  //     above; called only from the dead `if(false && ...)` re-elect
+  //     branches in `classic/coordinator.cc`.
+  // The matching writes in `communicator.cc` (the start-time
+  // record at line 782, the window-tracking blocks in the Commit /
+  // Abort callbacks) and the dead `if(false && ...)` re-elect
+  // branches in `classic/coordinator.cc:469-497` and
+  // `classic/coordinator.cc:644-678` were removed alongside.
+
   // Global view tracking for all partitions (shared across all communicators)
   static std::map<parid_t, View> partition_views_;
   static std::mutex partition_views_mutex_;
@@ -395,32 +428,22 @@ class Communicator {
 	int begin_index = 0;
 	bool paused = false;
 	bool slow = false;
-	int index;
-	int cpu_index;
-	int low_util;
-  int total;
 	int total_;
 	shared_ptr<QuorumEvent> qe;
-  rrr::i64 window[200];
-  rrr::i64 window_time;
-  rrr::i64 total_time;
-	rrr::i64 window_avg;
-	rrr::i64 total_avg;
-	double cpu_stor[10];
-	double cpu_total;
-	double cpu = 1.0;
-	double last_cpu = 1.0;
-	double tx;
   vector<ClientSiteProxyPair> client_leaders_;
   std::atomic_bool client_leaders_connected_;
   std::vector<std::thread> threads;
   bool broadcasting_to_leaders_only_{true};
   bool follower_forwarding{false};
-	std::mutex lock_;
+  // removed `std::mutex lock_;`,
+  // `std::condition_variable cv_;`, and `bool waiting = false;`
+  // — neither field was accessed via `commo()->`/`commo_->` from
+  // any caller, nor by any internal `Communicator` member function.
+  // The companion `count_lock_` IS live (used in
+  // `classic/coordinator.cc:118-121` and `client_worker.cc:306-309`)
+  // and stays.
 	std::mutex count_lock_;
-	std::condition_variable cv_;
-	bool waiting = false;
-  
+
   // Callback function type for getting dynamic leader
   using LeaderCallback = std::function<locid_t(parid_t)>;
   LeaderCallback leader_callback_ = nullptr;
@@ -473,19 +496,18 @@ class Communicator {
 
   vector<function<bool(const string& arg, string& ret)> >
       msg_string_handlers_{};
-  vector<function<bool(const MarshallDeputy& arg,
-                       MarshallDeputy& ret)> > msg_marshall_handlers_{};
+  vector<function<bool(const janus::Command& arg,
+                       janus::Command& ret)> > msg_marshall_handlers_{};
 
-	void ResetProfiles();
   void SendStart(SimpleCommand& cmd,
                  int32_t output_size,
                  std::function<void(rusty::Arc<Future> fu)> &callback);
   virtual void BroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
                          Coordinator *coo,
                          const std::function<void(int res, TxnOutput &)> &) ;
-  virtual void SyncBroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
-                         Coordinator *coo,
-                         const std::function<void(int res, TxnOutput &)> &) ;
+  // removed `SyncBroadcastDispatch(...)`
+  // declaration — only call site was the now-deleted
+  // `CoordinatorClassic::DispatchSync`.
 
 	shared_ptr<QuorumEvent> SendReelect();
 
@@ -538,49 +560,34 @@ class Communicator {
   std::shared_ptr<MessageEvent> SendMessage(svrid_t svr_id, string& msg);
 
   void AddMessageHandler(std::function<bool(const string&, string&)>);
-  void AddMessageHandler(std::function<bool(const MarshallDeputy&,
-                                            MarshallDeputy&)>);
+  void AddMessageHandler(std::function<bool(const janus::Command&,
+                                            janus::Command&)>);
 
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastBulkPrepare(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        std::function<void(ballot_t, int)> cb){
-      verify(0);
-    }
+  // removed `BroadcastBulkPrepare`,
+  // `BroadcastHeartBeat`, `BroadcastSyncNoOps` virtual stubs — the
+  // matching `MultiPaxosCommo` overrides + `PaxosWorker::Send*`
+  // senders were deleted in Phases 4e-25/4e-26.
 
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastHeartBeat(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        const std::function<void(ballot_t, int)>& cb){
-      verify(0);
-    }
-
+    // take janus::Command;
+    // shared_ptr<Marshallable> callers auto-convert.
     virtual void ForwardToLearner(parid_t par_id,
                                   uint64_t slot,
                                   ballot_t ballot,
-                                  shared_ptr<Marshallable> cmd,
+                                  const janus::Command& cmd,
                                   const std::function<void(uint64_t, ballot_t)>& cb) {
       verify(0);
     }
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
-                      shared_ptr<Marshallable> cmd,
-                      const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb){
+                      const janus::Command& cmd,
+                      const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb){
       verify(0);
     }
 
-   virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastSyncNoOps(parid_t par_id,
-                    shared_ptr<Marshallable> cmd,
-                    const std::function<void(ballot_t, int)>& cb){
-
-	verify(0);
-   }
-
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncCommit(parid_t par_id,
-                      shared_ptr<Marshallable> cmd,
+                      const janus::Command& cmd,
                       const std::function<void(ballot_t, int)>& cb){
       verify(0);
     }
@@ -600,10 +607,13 @@ class Communicator {
                                                                    epoch_t jepoch, epoch_t oepoch);
   shared_ptr<JetpackPullCmdQuorumEvent> JetpackBroadcastPullCmd(parid_t par_id, locid_t loc_id, 
                                                                const std::vector<key_t>& keys, epoch_t jepoch, epoch_t oepoch);
+  // take Commands directly
+  // (was vector<pair<key_t, shared_ptr<Marshallable>>>).  Callers
+  // produce these from GetRecoveredCommands.
   shared_ptr<QuorumEvent> JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
-                                                    epoch_t jepoch, epoch_t oepoch, 
-                                                    int sid, int rid, 
-                                                    const std::vector<std::pair<key_t, shared_ptr<Marshallable>>>& cmds);
+                                                    epoch_t jepoch, epoch_t oepoch,
+                                                    int sid, int rid,
+                                                    const std::vector<std::pair<key_t, janus::Command>>& cmds);
   shared_ptr<JetpackPrepareQuorumEvent> JetpackBroadcastPrepare(parid_t par_id, locid_t loc_id, 
                                                                epoch_t jepoch, epoch_t oepoch, 
                                                                ballot_t max_seen_ballot);

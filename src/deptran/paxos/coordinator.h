@@ -24,9 +24,15 @@ class CoordinatorMultiPaxos : public Coordinator {
   bool in_prepare_ = false; // debug
   bool in_accept = false; // debug
   bool in_commit = false;
-  bool in_forward = false; //debug
-  shared_ptr<Marshallable> cmd_{nullptr};
-  vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md{};
+  // removed `bool in_forward = false;` —
+  // declared but never written or read.
+  // polymorphic command field
+  // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
+  // Boundary calls into commo (which still takes
+  // `shared_ptr<Marshallable>`) use `cmd_.inner_marshallable()`.
+  Command cmd_{};
+  // removed dead `vec_md`
+  // field — declared but never written or read anywhere.
   CoordinatorMultiPaxos(uint32_t coo_id,
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
@@ -52,7 +58,7 @@ class CoordinatorMultiPaxos : public Coordinator {
     return this->loc_id_ == 0;
   }
 
-  void assignCmd(shared_ptr<Marshallable>& cmd){
+  void assignCmd(const janus::Command& cmd) override {
     cmd_ = cmd;
   }
 
@@ -68,19 +74,23 @@ class CoordinatorMultiPaxos : public Coordinator {
   }
 
   void DoTxAsync(TxRequest &req) override {}
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
-  ballot_t PickBallot();
+  // removed `PickBallot()` and `Forward()`
+  // declarations — `PickBallot()` was used only by the now-deleted
+  // `Prepare()`; `Forward()` was declared but never
+  // defined (commented-out call site at coordinator.cc:157 also gone).
   void Submit();
 
-  void Forward();
-
-  void Prepare();
-//  void PrepareAck(phase_t phase, Future *fu);
+  // removed `Prepare()` declaration —
+  // the body was `verify(0)`-tagged debug code, and `GotoNextPhase`
+  // skips the prepare phase entirely.  The commented-out `PrepareAck`
+  // legacy callback signature is also gone now.
   void Accept();
-//  void AcceptAck(phase_t phase, Future *fu);
+  // removed commented-out
+  // `// void AcceptAck(phase_t phase, Future *fu);` legacy decl.
   void Commit();
 
   void Reset() override {}
@@ -95,8 +105,12 @@ class CoordinatorMultiPaxos : public Coordinator {
 
 class BulkCoordinatorMultiPaxos : public CoordinatorMultiPaxos {
 public:
-    shared_ptr<Marshallable> cmd_{nullptr};
-    void Prepare();
+    // shadow Command field (intentionally hides the
+    // base class's `cmd_` for the bulk coordinator's separate state).
+    Command cmd_{};
+    // removed `Prepare()` declaration — the
+    // method was dead (`GotoNextPhase` skips the prepare phase via a
+    // `// Prepare();` comment, and no other caller exists).
     void Accept();
     void Commit();
     void GotoNextPhase();
@@ -104,9 +118,9 @@ public:
                           int32_t benchmark,
                           rusty::Option<rusty::Arc<ClientStatus>> client_status,
                           uint32_t thread_id);
-    void BulkSubmit(shared_ptr<Marshallable> &cmd,
+    void BulkSubmit(const janus::Command& cmd,
                     rusty::Function<void()> func = {},
-                    rusty::Function<void()> exe_callback = {});
+                    rusty::Function<void()> exe_callback = {}) override;
 };
 
 } //namespace janus

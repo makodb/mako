@@ -31,7 +31,8 @@ read_only) {
   auto dtxn = frame_->CreateTx(epoch, tid, read_only, this);
   if (dtxn != nullptr) {
     dtxns_[tid] = dtxn;
-    dtxn->recorder_ = this->recorder_;
+    // removed
+    // `dtxn->recorder_ = this->recorder_;` — both fields gone.
     dtxn->txn_reg_ = txn_reg_;
     verify(txn_reg_ != nullptr);
     verify(dtxn->tid_ == tid);
@@ -52,7 +53,8 @@ shared_ptr<Tx> TxLogServer::CreateTx(txnid_t tx_id, bool ro) {
   auto dtxn = frame_->CreateTx(epoch_mgr_.curr_epoch_, tx_id, ro, this);
   if (dtxn != nullptr) {
     dtxns_[tx_id] = dtxn;
-    dtxn->recorder_ = this->recorder_;
+    // removed
+    // `dtxn->recorder_ = this->recorder_;` — both fields gone.
     verify(txn_reg_);
     dtxn->txn_reg_ = txn_reg_;
     verify(dtxn->tid_ == tx_id);
@@ -148,57 +150,16 @@ mdb::Txn *TxLogServer::GetOrCreateMTxn(const i64 tid) {
   return txn;
 }
 
-// TODO move this to the dtxn class
-void TxLogServer::get_prepare_log(i64 txn_id,
-                                  const std::vector<i32> &sids,
-                                  std::string *str) {
-  auto it = mdb_txns_.find(txn_id);
-  verify(it != mdb_txns_.end() && it->second != NULL);
-
-  // marshal txn_id
-  uint64_t len = str->size();
-  str->resize(len + sizeof(txn_id));
-  memcpy((void *) (str->data()), (void *) (&txn_id), sizeof(txn_id));
-  len += sizeof(txn_id);
-  verify(len == str->size());
-
-  // p denotes prepare log
-  const char prepare_tag = 'p';
-  str->resize(len + sizeof(prepare_tag));
-  memcpy((void *) (str->data() + len),
-         (void *) &prepare_tag,
-         sizeof(prepare_tag));
-  len += sizeof(prepare_tag);
-  verify(len == str->size());
-
-  // marshal related servers
-  uint32_t num_servers = sids.size();
-  str->resize(len + sizeof(num_servers) + sizeof(i32) * num_servers);
-  memcpy((void *) (str->data() + len),
-         (void *) &num_servers,
-         sizeof(num_servers));
-  len += sizeof(num_servers);
-  for (uint32_t i = 0; i < num_servers; i++) {
-    memcpy((void *) (str->data() + len), (void *) (&(sids[i])), sizeof(i32));
-    len += sizeof(i32);
-  }
-  verify(len == str->size());
-
-  switch (mode_) {
-    case MODE_2PL:
-    case MODE_OCC:((mdb::Txn2PL *) it->second)->marshal_stage(*str);
-      break;
-    default:verify(0);
-  }
-}
+// removed `TxLogServer::get_prepare_log`
+// (~42 LOC) — only call site was the now-deleted `do_logging()`-
+// gated branch in `SchedulerClassic::Prepare`, which built a `log`
+// string only to discard it.
 
 TxLogServer::TxLogServer() : mtx_() {
   mdb_txn_mgr_ = make_shared<mdb::TxnMgrUnsafe>();
-  if (Config::GetConfig()->do_logging()) {
-    auto path = Config::GetConfig()->log_path();
-    // TODO free this
-//    recorder_ = new Recorder(path);
-  }
+  // removed `if (do_logging()) { ... }`
+  // block — body was a commented-out
+  // `// recorder_ = new Recorder(path);` and the field is gone.
 }
 
 // @unsafe - Logs recovery status
@@ -227,7 +188,9 @@ Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
   coord->par_id_ = partition_id_;
   //Log_info("Partition id set: %d", partition_id_);
   coord->loc_id_ = this->loc_id_;
-  coord->dep_id_ = dep_id;
+  // removed a second
+  // `coord->dep_id_ = dep_id;` immediately below this line — it was
+  // a duplicate write of the same value already done above.
   return coord;
 }
 
@@ -328,12 +291,15 @@ void TxLogServer::DestroyExecutor(txnid_t txn_id) {
 void TxLogServer::Pause() {
   Log_info("!!!!!!!! TxLogServer::Pause()");
   commo_->Pause();
-  paused_ = true;
+  // removed `paused_ = true;` — the
+  // `paused_` field on TxLogServer had no readers anywhere; the
+  // field went away in the same commit.
 };
 
 void TxLogServer::Resume() {
   commo_->Resume();
-  paused_ = false;
+  // removed `paused_ = false;` — see the
+  // companion comment on Pause() above.
 };
 
 void TxLogServer::TriggerUpgradeEpoch() {
@@ -398,41 +364,13 @@ int32_t TxLogServer::OnUpgradeEpoch(uint32_t old_epoch) {
   return epoch_mgr_.CheckBufferInactive();
 }
 
-UniqueCmdID TxLogServer::GetUniqueCmdID(shared_ptr<Marshallable> cmd) {
-  shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece{nullptr};
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-    VecPieceData *cmd_cast = (VecPieceData*)(tpc_cmd->cmd_.get());
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-  } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    shared_ptr<VecPieceData> cmd_cast = dynamic_pointer_cast<VecPieceData>(cmd);
-    sp_vec_piece = cmd_cast->sp_vec_piece_data_;
-  } else {
-    verify(0);
-  }
-  shared_ptr<TxPieceData> vector0 = *(sp_vec_piece->begin());
-  shared_ptr<CmdData> casted_cmd = dynamic_pointer_cast<CmdData>(vector0);
-  UniqueCmdID cmd_id;
-  cmd_id.client_id_ = casted_cmd->client_id_;
-  cmd_id.cmd_id_ = casted_cmd->cmd_id_in_client_;
-  return cmd_id;
-}
-
-value_t TxLogServer::DBGet(const shared_ptr<Marshallable>& cmd) {
-  shared_ptr<SimpleRWCommand> parsed_cmd_ = make_shared<SimpleRWCommand>(cmd);
-  return kv_table_[parsed_cmd_->key_];
-}
-
-value_t TxLogServer::DBPut(const shared_ptr<Marshallable>& cmd) {
-  shared_ptr<SimpleRWCommand> parsed_cmd_ = make_shared<SimpleRWCommand>(cmd);
-  kv_table_[parsed_cmd_->key_] = parsed_cmd_->value_;
-  return 1;
-}
-
+// removed dead helpers
+// `GetUniqueCmdID(shared_ptr<Marshallable>)`, `DBGet(...)`, and
+// `DBPut(...)`.  None had callers anywhere in the tree.
 
 // below are about rule
 
-void TxLogServer::OnRuleSpeculativeExecute(const shared_ptr<Marshallable>& cmd,
+void TxLogServer::OnRuleSpeculativeExecute(const janus::Command& cmd,
                     bool_t* accepted,
                     value_t* result,
                     bool_t* is_leader) {
@@ -460,7 +398,7 @@ void TxLogServer::OnRuleSpeculativeExecute(const shared_ptr<Marshallable>& cmd,
   *is_leader = IsLeader();
 }
 
-void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<Marshallable>& cmd) {
+void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd) {
   if (Config::GetConfig()->tx_proto_ == MODE_RULE && SimpleRWCommand::NeedRecordConflictInOriginalPath(cmd)) {
     // Log_info("[JETPACK-Witness] loc_id %d about to push_back", loc_id_);
     rep_sched_->witness_.push_back(cmd);
@@ -468,7 +406,8 @@ void TxLogServer::OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<
 }
 
 
-void TxLogServer::RuleWitnessGC(const shared_ptr<Marshallable>& cmd) {
+void TxLogServer::RuleWitnessGC(const janus::Command& cmd) {
+  // Witness::remove now takes Command directly.
   if (Config::GetConfig()->tx_proto_ == MODE_RULE)
     witness_.remove(cmd);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
@@ -480,7 +419,7 @@ void TxLogServer::RuleWitnessGC(const shared_ptr<Marshallable>& cmd) {
 }
 
 
-void RevoveryCandidates::push_back(uint64_t cmd_id, shared_ptr<Marshallable> cmd, bool is_write) {
+void RevoveryCandidates::push_back(uint64_t cmd_id, const janus::Command& cmd, bool is_write) {
   candidates_[cmd_id] = cmd;
   if (total_write_ == 0 && is_write) {
     verify(to_recover_id_ == (uint64_t)(-1));
@@ -496,6 +435,8 @@ void RevoveryCandidates::push_back(uint64_t cmd_id, shared_ptr<Marshallable> cmd
 bool RevoveryCandidates::remove(uint64_t cmd_id) {
   auto it = candidates_.find(cmd_id);
   if (it != candidates_.end()) {
+    // it->second is Command; SimpleRWCommand still
+    // takes shared_ptr<Marshallable>.
     SimpleRWCommand parsed_cmd = SimpleRWCommand(it->second);
     if (total_write_ == 1 && parsed_cmd.IsWrite()) {
       to_recover_id_ = (uint64_t)(-1);
@@ -524,24 +465,24 @@ bool RevoveryCandidates::has_cmd_to_recover() const {
   return to_recover_id_ != (uint64_t)(-1);
 }
 
-shared_ptr<Marshallable> RevoveryCandidates::cmd_to_recover() {
-  
+janus::Command RevoveryCandidates::cmd_to_recover() {
   if (to_recover_id_ != (uint64_t)(-1)) {
-    if (candidates_.find(to_recover_id_) != candidates_.end()) {
-      return candidates_[to_recover_id_];
-    } else {
-      return nullptr;
+    auto it = candidates_.find(to_recover_id_);
+    if (it != candidates_.end()) {
+      return it->second;
     }
-  } else {
-    return nullptr;
   }
+  return janus::Command{};
 }
 
-bool Witness::push_back(const shared_ptr<Marshallable>& cmd) {
-  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
+bool Witness::push_back(const janus::Command& cmd_env) {
+  // SimpleRWCommand ctor + WitnessLog ctor still take
+  // shared_ptr<Marshallable>; unwrap at the boundary.
+  // RevoveryCandidates::push_back takes Command directly (prep6aa).
+  SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
   key_t key = parsed_cmd.key_;
   uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
-  
+
 #ifdef JETPACK_RECOVERY_DEBUG
   Log_info("[JETPACK-DEBUG] Witness::push_back called for key=%d, cmd_id=%lu", key, cmd_id);
 #endif
@@ -554,33 +495,35 @@ bool Witness::push_back(const shared_ptr<Marshallable>& cmd) {
 #endif
     // not exist conflict
     // Log_info("[JETPACK-Witness] candidates_[%d].push_back %lu", key, cmd_id);
-    candidates_[key].push_back(cmd_id, cmd, parsed_cmd.IsWrite());
+    candidates_[key].push_back(cmd_id, cmd_env, parsed_cmd.IsWrite());
 #ifdef JETPACK_RECOVERY_DEBUG
     Log_info("[JETPACK-DEBUG] Added cmd to candidates[%d], no conflict", key);
 #endif
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(0, cmd, 1, witness_size_));
+    witness_log_.push_back(WitnessLog(0, cmd_env, 1, witness_size_));
 #endif
     witness_size_distribution_.mid_time_append(++witness_size_);
     return true;
   } else {
     // exist conflict, candidates_[key].size() >= 1
     // Log_info("[JETPACK-Witness] candidates_[%d].push_back %lu", key, cmd_id);
-    candidates_[key].push_back(cmd_id, cmd, parsed_cmd.IsWrite());
+    candidates_[key].push_back(cmd_id, cmd_env, parsed_cmd.IsWrite());
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-DEBUG] Added cmd to candidates[%d], WITH conflict (size now=%zu)", 
+    Log_info("[JETPACK-DEBUG] Added cmd to candidates[%d], WITH conflict (size now=%zu)",
              key, candidates_[key].size());
 #endif
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(0, cmd, 0, witness_size_));
+    witness_log_.push_back(WitnessLog(0, cmd_env, 0, witness_size_));
 #endif
     return false;
   }
 }
 
-int Witness::remove(const shared_ptr<Marshallable>& cmd) {
-  if (cmd->kind_ != MarshallDeputy::CMD_TPC_BATCH) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
+int Witness::remove(const janus::Command& cmd_env) {
+  // SimpleRWCommand + WitnessLog still take shared_ptr;
+  // marshallable_cast works on Command directly via Envelope overload.
+  if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
     bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
     if (removed) {
       witness_size_distribution_.mid_time_append(--witness_size_);
@@ -588,14 +531,15 @@ int Witness::remove(const shared_ptr<Marshallable>& cmd) {
       //   candidates_.erase(parsed_cmd.key_);
     }
 #ifdef WITNESS_LOG_DEBUG
-    witness_log_.push_back(WitnessLog(1, cmd, removed, witness_size_));
+    witness_log_.push_back(WitnessLog(1, cmd_env, removed, witness_size_));
 #endif
     return removed;
   } else {
-    auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
+    auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
+    verify(cmds != nullptr);
     int total_removed = 0;
     for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(c);
+      SimpleRWCommand parsed_cmd{janus::Command{c}};
       bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
       if (removed) {
         witness_size_distribution_.mid_time_append(--witness_size_);
@@ -604,24 +548,29 @@ int Witness::remove(const shared_ptr<Marshallable>& cmd) {
         //   candidates_.erase(parsed_cmd.key_);
       }
 #ifdef WITNESS_LOG_DEBUG
-      witness_log_.push_back(WitnessLog(1, c, removed, witness_size_));
+      // c is shared_ptr<TpcCommitCommand>; auto-converts to Command
+      // via the templated non-Marshallable ctor.
+      witness_log_.push_back(WitnessLog(1, janus::Command{c}, removed, witness_size_));
 #endif
     }
     return total_removed;
   }
 }
 
-bool Witness::has_appeared(const shared_ptr<Marshallable>& cmd) {
+bool Witness::has_appeared(const janus::Command& cmd_env) {
+  // SimpleRWCommand still takes shared_ptr;
+  // marshallable_cast works on Command directly.
   // For a batched command, return whether all of them have appeared
-  if (cmd->kind_ != MarshallDeputy::CMD_TPC_BATCH) {
-    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
+  if (cmd_env.kind_ != TpcBatchCommand::static_kind()) {
+    SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_env);
     uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
     return candidates_[parsed_cmd.key_].has_appeared(cmd_id);
   } else {
-    auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
+    auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
+    verify(cmds != nullptr);
     bool all_has_appeared = true;
     for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd = SimpleRWCommand(c);
+      SimpleRWCommand parsed_cmd{janus::Command{c}};
       uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
       if (!candidates_[parsed_cmd.key_].has_appeared(cmd_id)) {
         all_has_appeared = false;
@@ -632,9 +581,8 @@ bool Witness::has_appeared(const shared_ptr<Marshallable>& cmd) {
   }
 }
 
-void Witness::set_belongs_to_leader(bool belongs_to_leader) {
-  belongs_to_leader_ = belongs_to_leader;
-}
+// removed `void Witness::set_belongs_to_leader(bool)`
+// — see the companion comment on the deleted field in scheduler.h.
 
 std::vector<double> Witness::witness_size_distribution() {
   // Log_info("witness 50pct %d %.2f" , witness_size_distribution_.count(), witness_size_distribution_.pct50());
@@ -678,7 +626,8 @@ void Witness::reset() {
   max_accepted_ballot_ = -1;
   sid_ = -1;
   set_size_ = 0;
-  committed_ = false;
+  // removed `committed_ = false;` — the
+  // Witness::committed_ field was deleted in the same commit.
 }
 
 
@@ -963,8 +912,8 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   
   // For committed (sid, set_size) pair, ensure all positions exist locally
   for (int rid = 0; rid < set_size; rid++) {
-    auto cmd = rec_set_.get(sid, rid);
-    if (!cmd) {
+    janus::Command cmd = rec_set_.get(sid, rid);
+    if (!cmd.has_value()) {
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] Missing command at sid=%d, rid=%d, pulling from replicas", sid, rid);
 #endif
@@ -975,7 +924,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
       Log_info("[JETPACK-RECOVERY] PullRecSetIns completed sid=%d rid=%d (site=%d) success=%d", sid, rid, site_id_, pull_e->yes());
       if (pull_e->yes()) {
         cmd = pull_e->GetRecoveredCmd();
-        if (cmd) {
+        if (cmd.has_value()) {
           rec_set_.insert(sid, rid, cmd);
 #ifdef JETPACK_RECOVERY_DEBUG
           Log_info("[JETPACK-RECOVERY] Successfully pulled missing command for sid=%d, rid=%d", sid, rid);
@@ -987,19 +936,19 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
         }
       } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-        Log_info("[JETPACK-RECOVERY] PullRecSetIns FAILED for sid=%d, rid=%d: got %d/%d responses", 
+        Log_info("[JETPACK-RECOVERY] PullRecSetIns FAILED for sid=%d, rid=%d: got %d/%d responses",
                  sid, rid, pull_e->n_voted_yes_, pull_e->n_total_);
 #endif
       }
     }
-    
+
     // Resubmit command via broadcast dispatch to find leader
-    verify(cmd != nullptr); // Command must exist after pull attempt
-    
+    verify(cmd.has_value()); // Command must exist after pull attempt
+
 #ifdef JETPACK_RECOVERY_DEBUG
     Log_info("[JETPACK-RECOVERY] Resubmitting command for sid=%d, rid=%d via broadcast dispatch", sid, rid);
 #endif
-    
+
     // Use the new dispatch method that will find the leader
     DispatchRecoveredCommand(cmd, recovery_event);
     if (((rid + 1) % 100) == 0 || rid + 1 == set_size) {
@@ -1034,7 +983,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   Log_info("[JETPACK-RECOVERY] FinishRecovery broadcast completed, fast path restored");
 }
 
-void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_ptr<IntEvent> recovery_event) {
+void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr<IntEvent> recovery_event) {
   // Determine if this is tx_sched or rep_sched
   const char* sched_type = "UNKNOWN";
   if (rep_sched_ && this == rep_sched_) {
@@ -1042,28 +991,29 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
   } else if (!rep_sched_ || rep_sched_ != this) {
     sched_type = "TX_SCHED";
   }
-  
-  // Log_info("[JETPACK-RECOVERY] DispatchRecoveredCommand called on %s TxLogServer %p (site_id=%d)", 
+
+  // Log_info("[JETPACK-RECOVERY] DispatchRecoveredCommand called on %s TxLogServer %p (site_id=%d)",
   //          sched_type, this, site_id_);
 #ifdef JETPACK_RECOVERY_DEBUG
-  Log_info("[JETPACK-RECOVERY] Dispatching recovered command, kind=%d", cmd->kind_);
+  Log_info("[JETPACK-RECOVERY] Dispatching recovered command, kind=%d", cmd.kind_);
 #endif
-  
+
   // Extract the inner command if this is a TpcCommitCommand
-  shared_ptr<Marshallable> inner_cmd = cmd;
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-    if (tpc_cmd && tpc_cmd->cmd_) {
+  janus::Command inner_cmd = cmd;
+  if (cmd.kind_ == TpcCommitCommand::static_kind()) {
+    auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(tpc_cmd != nullptr);
+    if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
       inner_cmd = tpc_cmd->cmd_;
 #ifdef JETPACK_RECOVERY_DEBUG
-      Log_info("[JETPACK-RECOVERY] Extracted inner command from TpcCommitCommand, inner kind=%d", inner_cmd->kind_);
+      Log_info("[JETPACK-RECOVERY] Extracted inner command from TpcCommitCommand, inner kind=%d", inner_cmd.kind_);
 #endif
     }
   }
-  
+
   // Check if the inner command is VecPieceData
-  if (inner_cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) {
-    auto vec_piece_data = dynamic_pointer_cast<VecPieceData>(inner_cmd);
+  if (inner_cmd.kind_ == VecPieceData::static_kind()) {
+    auto vec_piece_data = marshallable_cast<VecPieceData>(inner_cmd);
     if (vec_piece_data && vec_piece_data->sp_vec_piece_data_) {
       // Mark this as a recovery command
       vec_piece_data->is_recovery_command_ = true;
@@ -1144,36 +1094,36 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] WARNING: Inner command is not VecPieceData, cannot dispatch");
 #endif
-      Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand failed: inner command kind=%d (expected VecPieceData)", inner_cmd->kind_);
+      Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand failed: inner command kind=%d (expected VecPieceData)", inner_cmd.kind_);
     }
   } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] WARNING: Command kind %d not supported for dispatch", inner_cmd->kind_);
+    Log_info("[JETPACK-RECOVERY] WARNING: Command kind %d not supported for dispatch", inner_cmd.kind_);
 #endif
-    Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand unsupported command kind=%d", inner_cmd->kind_);
+    Log_error("[JETPACK-RECOVERY] DispatchRecoveredCommand unsupported command kind=%d", inner_cmd.kind_);
   }
 }
 
-void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
-                                         const MarshallDeputy& new_view, 
+void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
+                                         const janus::Command& new_view, 
                                          const epoch_t& new_view_id) {
   rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
   rep_sched_->oepoch_ = new_view_id;
   auto config = Config::GetConfig();
   
-  // Extract ViewData from MarshallDeputy parameters
-  auto sp_old_view_data = dynamic_pointer_cast<ViewData>(old_view.sp_data_);
-  auto sp_new_view_data = dynamic_pointer_cast<ViewData>(new_view.sp_data_);
+  // Extract ViewData from janus::Command parameters
+  auto sp_old_view_data = marshallable_cast<ViewData>(old_view);
+  auto sp_new_view_data = marshallable_cast<ViewData>(new_view);
   
   // Update the views if extraction was successful
   if (sp_old_view_data) {
     rep_sched_->old_view_ = sp_old_view_data->GetView();
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Updated old_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Updated old_view from janus::Command");
 #endif
   } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Warning: Could not extract old_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Warning: Could not extract old_view from janus::Command");
 #endif
   }
   
@@ -1183,7 +1133,7 @@ void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
              partition_id_, rep_sched_->new_view_.ToString().c_str(), incoming_view.ToString().c_str());
     rep_sched_->new_view_ = incoming_view;
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Updated new_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Updated new_view from janus::Command");
 #endif
     
     // Update the communicator's view immediately
@@ -1230,7 +1180,7 @@ void TxLogServer::OnJetpackBeginRecovery(const MarshallDeputy& old_view,
     }
   } else {
 #ifdef JETPACK_RECOVERY_DEBUG
-    Log_info("[JETPACK-RECOVERY] Warning: Could not extract new_view from MarshallDeputy");
+    Log_info("[JETPACK-RECOVERY] Warning: Could not extract new_view from janus::Command");
 #endif
   }
 }
@@ -1240,8 +1190,8 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
                                      bool_t* ok,
                                      epoch_t* reply_jepoch,
                                      epoch_t* reply_oepoch,
-                                     MarshallDeputy* reply_old_view,
-                                     MarshallDeputy* reply_new_view,
+                                     janus::Command* reply_old_view,
+                                     janus::Command* reply_new_view,
                                      shared_ptr<VecRecData> id_set) {
   
   
@@ -1267,9 +1217,9 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
   }
 #endif
   
-  // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  // Initialize janus::Command objects with ViewData objects
+  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
+  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
   
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
@@ -1295,8 +1245,8 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
                                    bool_t* ok, 
                                    epoch_t* reply_jepoch, 
                                    epoch_t* reply_oepoch,
-                                   MarshallDeputy* reply_old_view,
-                                   MarshallDeputy* reply_new_view,
+                                   janus::Command* reply_old_view,
+                                   janus::Command* reply_new_view,
                                    shared_ptr<KeyCmdBatchData>& batch) {
   
   if (!rep_sched_ || !batch) {
@@ -1307,8 +1257,8 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
     return;
   }
   
-  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
+  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
   
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
@@ -1326,7 +1276,7 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
       }
       if (rep_sched_->witness_.has_cmd_to_recover(key)) {
         auto cmd = rep_sched_->witness_.cmd_to_recover(key);
-        if (cmd) {
+        if (cmd.has_value()) {
           batch->AddEntry(key, cmd);
         }
       }
@@ -1360,15 +1310,15 @@ void TxLogServer::OnJetpackPrepare(const epoch_t& jepoch,
                                    bool_t* ok, 
                                    epoch_t* reply_jepoch,
                                    epoch_t* reply_oepoch,
-                                   MarshallDeputy* reply_old_view,
-                                   MarshallDeputy* reply_new_view,
+                                   janus::Command* reply_old_view,
+                                   janus::Command* reply_new_view,
                                    ballot_t* reply_max_seen_ballot,
                                    ballot_t* accepted_ballot, 
                                    int32_t* replied_sid, 
                                    int32_t* replied_set_size) {
-  // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  // Initialize janus::Command objects with ViewData objects
+  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
+  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
   
   if (max_seen_ballot > rep_sched_->witness_.max_seen_ballot_) {
     rep_sched_->witness_.max_seen_ballot_ = max_seen_ballot;
@@ -1396,12 +1346,12 @@ void TxLogServer::OnJetpackAccept(const epoch_t& jepoch,
                                   bool_t* ok,
                                   epoch_t* reply_jepoch,
                                   epoch_t* reply_oepoch,
-                                  MarshallDeputy* reply_old_view,
-                                  MarshallDeputy* reply_new_view,
+                                  janus::Command* reply_old_view,
+                                  janus::Command* reply_new_view,
                                   ballot_t* reply_max_seen_ballot) {
-  // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  // Initialize janus::Command objects with ViewData objects
+  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
+  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
   
   if (max_seen_ballot > rep_sched_->witness_.max_seen_ballot_) {
     rep_sched_->witness_.max_seen_ballot_ = max_seen_ballot;
@@ -1421,36 +1371,38 @@ void TxLogServer::OnJetpackAccept(const epoch_t& jepoch,
   }
 }
 
-void TxLogServer::OnJetpackCommit(const epoch_t& jepoch, 
-                                  const epoch_t& oepoch, 
-                                  const int32_t& sid, 
+void TxLogServer::OnJetpackCommit(const epoch_t& jepoch,
+                                  const epoch_t& oepoch,
+                                  const int32_t& sid,
                                   const int32_t& set_size) {
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->witness_.sid_ = sid;
     rep_sched_->witness_.set_size_ = set_size;
-    rep_sched_->witness_.committed_ = true;
+    // removed
+    // `rep_sched_->witness_.committed_ = true;` along with the
+    // never-read `committed_` field on Witness.
   }
 }
 
 void TxLogServer::OnJetpackPullRecSetIns(const epoch_t& jepoch,
-                                         const epoch_t& oepoch, 
-                                         const int32_t& sid, 
-                                         const int32_t& rid, 
-                                         bool_t* ok, 
+                                         const epoch_t& oepoch,
+                                         const int32_t& sid,
+                                         const int32_t& rid,
+                                         bool_t* ok,
                                          epoch_t* reply_jepoch,
                                          epoch_t* reply_oepoch,
-                                         MarshallDeputy* reply_old_view,
-                                         MarshallDeputy* reply_new_view,
-                                         shared_ptr<Marshallable> cmd) {
-  // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
-  
+                                         janus::Command* reply_old_view,
+                                         janus::Command* reply_new_view) {
+  // Initialize janus::Command objects with ViewData objects
+  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
+  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
+
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     *ok = 1;
     *reply_jepoch = rep_sched_->jepoch_;
     *reply_oepoch = rep_sched_->oepoch_;
-    cmd = rep_sched_->rec_set_.get(sid, rid);
+    // Note: `cmd` wire-out param populated in service.cc with empty
+    // TpcCommitCommand pre-fill — never wired up in scheduler.
   } else {
     *ok = 0;
     *reply_jepoch = rep_sched_->jepoch_;

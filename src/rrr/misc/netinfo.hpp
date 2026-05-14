@@ -1,14 +1,25 @@
 #pragma once
 
-#include "stdlib.h"
-#include "stdio.h"
-#include "string.h"
-#include "sys/times.h"
-//#include <fstream>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <cstddef>  // NULL macro (not exported by `import std;`)
+#include <sys/times.h>
 
 #ifndef __APPLE__
 // #include "sys/vtimes.h"
 #endif
+
+
+
 
 namespace rrr {
 
@@ -57,7 +68,7 @@ private:
     double get_net_stat() {
         struct tms tms_buf;
         clock_t ticks;
-        double ret;
+        double ret = 0.0;
 
         ticks = times(&tms_buf);
         //Log_info("ticks: %d -> %d", last_ticks_, ticks);
@@ -68,7 +79,6 @@ private:
 	std::ifstream rxfile("/sys/class/net/ens4/statistics/rx_bytes");
         getline(rxfile, line1);
         unsigned long rxed = strtoul(line1.c_str(), NULL, 0);
-	Log_info("rxed: %d -> %d", last_bytes_rxed, rxed);
         rxfile.close();
 
 	std::string line2;
@@ -78,9 +88,7 @@ private:
 	txfile.close();
 
 	ret += (txed - last_bytes_txed) + (rxed - last_bytes_rxed);
-	Log_info("what is ret before div? %f", ret);
         ret /= (ticks - last_ticks_);
-	Log_info("what is ret? %f", ret);
         //ret /= num_processors_;
 
         last_ticks_ = ticks;

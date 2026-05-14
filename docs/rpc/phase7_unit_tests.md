@@ -52,7 +52,6 @@ Tests for RPC error types:
 - Error category classification
 - Error code to string conversion
 - Error category to string conversion
-- RpcException construction and what() message
 - is_retryable_error() classification
 - is_connection_error() and is_timeout_error() helpers
 

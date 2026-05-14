@@ -6,8 +6,9 @@
 #include "benchmark_control_rpc.h"
 #include "client_status.h"
 #include "server_worker.h"
-#include "../rrr/reactor/event.h"
 #include "scheduler.h"
+
+#include "rrr/rrr.hpp"
 
 // #define CPU_PROFILE 1
 
@@ -238,7 +239,8 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
 
 void client_shutdown() {
   for (const unique_ptr<ClientWorker>& client: client_workers_g) {
-    // client->retrive_statistic();
+    // removed commented-out
+    // `// client->retrive_statistic();` — method deleted.
     for (int i = 0; i < 6; i++)
       cli2cli[i].merge(client->cli2cli_[i]);
     frequency.merge(client->frequency_);

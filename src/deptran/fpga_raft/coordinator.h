@@ -22,13 +22,16 @@ class CoordinatorFpgaRaft : public Coordinator {
     return (FpgaRaftCommo *) commo_;
   }
   bool in_submission_ = false; // debug;
-  bool in_prepare_ = false; // debug
-  bool in_accept = false; // debug
+  // removed `in_prepare_` and `in_accept`
+  // debug-guard fields — neither was ever written or read in the
+  // fpga_raft path.
   bool in_append_entries = false; // debug
   uint64_t minIndex = 0;
 
  public:
-  shared_ptr<Marshallable> cmd_{nullptr};
+  // polymorphic command field
+  // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
+  Command cmd_{};
   CoordinatorFpgaRaft(uint32_t coo_id,
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
@@ -60,11 +63,10 @@ class CoordinatorFpgaRaft : public Coordinator {
   }
 
   void DoTxAsync(TxRequest &req) override {}
-  void Forward(shared_ptr<Marshallable> &cmd,
-              rusty::Function<void()> func = {},
-              rusty::Function<void()> exe_callback = {}) ;
+  // removed `Forward(...)` declaration —
+  // body had `verify(0); // TODO delete it` and was never called.
 
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 

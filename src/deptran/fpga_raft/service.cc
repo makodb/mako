@@ -15,9 +15,8 @@ void FpgaRaftServiceImpl::Heartbeat(const FpgaRaftService::RpcHeartbeatRequest& 
   this->Heartbeat(req.leaderPrevLogIndex, req.dep_id, &resp.followerPrevLogIndex, std::move(defer));
 }
 
-void FpgaRaftServiceImpl::Forward(const FpgaRaftService::RpcForwardRequest& req, FpgaRaftService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
-  this->Forward(req.cmd, &resp.cmt_idx, std::move(defer));
-}
+// removed `Forward` typed-rpc override
+// (and matching N-arg overload further below).
 
 void FpgaRaftServiceImpl::Vote(const FpgaRaftService::RpcVoteRequest& req, FpgaRaftService::RpcVoteResponse& resp, rrr::DeferredReply defer) {
   this->Vote(req.lst_log_idx, req.lst_log_term, req.par_id, req.cur_term, &resp.max_ballot, &resp.vote_granted, std::move(defer));
@@ -51,14 +50,9 @@ void FpgaRaftServiceImpl::Heartbeat(const uint64_t& leaderPrevLogIndex,
   defer.reply();
 }
 
-void FpgaRaftServiceImpl::Forward(const MarshallDeputy& cmd,
-                                  uint64_t* cmt_idx,
-                                  rrr::DeferredReply defer) {
-  verify(sched_ != nullptr);
-  sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
-                    cmt_idx,
-                    [defer = std::move(defer)]() mutable { defer.reply(); });
-}
+// removed `Forward(janus::Command, ...)`
+// N-arg overload — only caller was the deleted typed-rpc shim
+// above; the receiver `FpgaRaftServer::OnForward` is also gone.
 
 void FpgaRaftServiceImpl::Vote(const uint64_t& lst_log_idx,
                                const ballot_t& lst_log_term,
@@ -101,7 +95,7 @@ void FpgaRaftServiceImpl::AppendEntries2(const uint64_t& slot,
                                          const uint64_t& leaderPrevLogTerm,
                                          const uint64_t& leaderCommitIndex,
                                          const DepId& dep_id,
-                                         const MarshallDeputy& cmd,
+                                         const janus::Command& cmd,
                                          uint64_t* followerAppendOK,
                                          uint64_t* followerCurrentTerm,
                                          uint64_t* followerLastLogIndex,
@@ -128,7 +122,7 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
                                         const uint64_t& leaderPrevLogTerm,
                                         const uint64_t& leaderCommitIndex,
                                         const DepId& dep_id,
-                                        const MarshallDeputy& cmd,
+                                        const janus::Command& cmd,
                                         uint64_t* followerAppendOK,
                                         uint64_t* followerCurrentTerm,
                                         uint64_t* followerLastLogIndex,
@@ -155,7 +149,7 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
         leaderPrevLogTerm,
         leaderCommitIndex,
         dep_id,
-        const_cast<MarshallDeputy&>(cmd).sp_data_,
+        cmd,
         followerAppendOK,
         followerCurrentTerm,
         followerLastLogIndex,
@@ -166,14 +160,14 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
 void FpgaRaftServiceImpl::Decide(const uint64_t& slot,
                                  const ballot_t& ballot,
                                  const DepId& dep_id,
-                                 const MarshallDeputy& cmd,
+                                 const janus::Command& cmd,
                                  rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   (void)dep_id;
   Fiber::create_run([this, slot, ballot, cmd, defer = std::move(defer)]() mutable {
     sched_->OnCommit(slot,
                      ballot,
-                     const_cast<MarshallDeputy&>(cmd).sp_data_);
+                     cmd);
     defer.reply();
   });
 }

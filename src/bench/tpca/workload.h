@@ -1,6 +1,7 @@
 #pragma once
 
 #include "deptran/workload.h"
+#include <random>
 
 namespace janus {
 

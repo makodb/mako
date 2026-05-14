@@ -4,19 +4,22 @@
 #include "../constants.h"
 #include "../scheduler.h"
 #include "../paxos_worker.h"
-#include "rrr/rpc/log_storage.hpp"
-#include "rrr/rpc/snapshot_manager.hpp"
+#include "deptran/raft/log_storage.hpp"
+#include "deptran/raft/snapshot_manager.hpp"
 
 namespace janus {
-class Command;
 class CmdData;
 
+// polymorphic command fields
+// (`accepted_cmd_` / `committed_cmd_`) migrated from
+// `shared_ptr<Marshallable>` to `janus::Command`.  See
+// `docs/dev/l10-unblock-plan.md`.
 struct PaxosData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
   bool is_no_op = false;
-  shared_ptr<Marshallable> accepted_cmd_{nullptr};
-  shared_ptr<Marshallable> committed_cmd_{nullptr};
+  Command accepted_cmd_{};
+  Command committed_cmd_{};
 };
 
 struct BulkPrepare{
@@ -48,9 +51,9 @@ class PaxosServer : public TxLogServer {
   bool in_applying_logs_{false};
 
   // ========================================================================
-  // LOG PERSISTENCE (Phase 1.4)
+  // LOG PERSISTENCE
   // ========================================================================
-  std::shared_ptr<rrr::LogStorage> log_storage_;
+  std::shared_ptr<janus::raft::LogStorage> log_storage_;
 
   // Metadata keys for persistence
   static constexpr const char* META_EPOCH = "cur_epoch";
@@ -69,23 +72,23 @@ class PaxosServer : public TxLogServer {
 
  public:
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
-  void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage) { log_storage_ = std::move(storage); }
-  // @safe - Read-only access
-  std::shared_ptr<rrr::LogStorage> GetLogStorage() const { return log_storage_; }
+  void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) { log_storage_ = std::move(storage); }
+  // @unsafe - Read-only access
+  std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const { return log_storage_; }
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
   bool RecoverFromStorage();
 
   // ========================================================================
-  // SNAPSHOT SUPPORT (Phase 3.1)
+  // SNAPSHOT SUPPORT
   // ========================================================================
-  std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;
+  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;
 
   // @unsafe - Moves ownership of snapshot manager
-  void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager> manager) {
+  void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
     snapshot_manager_ = std::move(manager);
   }
-  // @safe - Read-only access
-  std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
+  // @unsafe - Read-only access
+  std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
   }
 
@@ -106,7 +109,7 @@ class PaxosServer : public TxLogServer {
   size_t GetUncommittedCount() const;
 
   /**
-   * Compact log entries up to the given index (Phase 3.4).
+   * Compact log entries up to the given index.
    * Removes entries from storage that are covered by a snapshot.
    * @param up_to_index Remove entries with index <= this value
    * @return Number of entries removed
@@ -142,10 +145,12 @@ class PaxosServer : public TxLogServer {
     return sp_instance;
   }
 
-  void OnForward(shared_ptr<Marshallable> &cmd,
-                 uint64_t dep_id,
-                 uint64_t* coro_id,
-                 rusty::Function<void()> cb);
+  // removed `OnForward` declaration —
+  // body was `verify(0); // Should never be called in Mako`; the
+  // `MultiPaxosServiceImpl::Forward(janus::Command, ...)` handler
+  // has an empty body that never reaches this method (Mako uses
+  // `OnForwardToLearner` instead via the `ForwardToLearnerServer`
+  // RPC).
 
   void OnPrepare(slotid_t slot_id,
                  ballot_t ballot,
@@ -153,65 +158,59 @@ class PaxosServer : public TxLogServer {
                  uint64_t* coro_id,
                  rusty::Function<void()> cb);
 
+  // handler parameters take
+  // const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
   void OnAccept(const slotid_t slot_id,
 		const uint64_t time,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd,
+                const janus::Command& cmd,
                 ballot_t *max_ballot,
                 uint64_t* coro_id,
                 rusty::Function<void()> cb);
 
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd);
+                const janus::Command& cmd);
 
-  void OnBulkPrepare(shared_ptr<Marshallable> &cmd,
-                    i32 *ballot,
-                    i32* valid,
-                    rusty::Function<void()> cb);
+  // removed `OnBulkPrepare`, `OnHeartbeat`
+  // declarations — only callers were the now-deleted
+  // `MultiPaxosServiceImpl::BulkPrepare` / `Heartbeat` handlers.
 
-  void OnHeartbeat(shared_ptr<Marshallable> &cmd,
-                    i32 *ballot,
-                    i32* valid,
-                    rusty::Function<void()> cb);
-
-  void OnBulkAccept(shared_ptr<Marshallable> &cmd,
+  void OnBulkAccept(const janus::Command& cmd,
                     i32* ballot,
                     i32 *valid,
                     rusty::Function<void()> cb);
 
-  void OnBulkCommit(shared_ptr<Marshallable> &cmd,
+  void OnBulkCommit(const janus::Command& cmd,
                     i32* ballot,
                     i32 *valid,
                     rusty::Function<void()> cb);
 
-  void OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
-                      i32* ballot,
-                      i32 *valid,
-                      shared_ptr<BulkPaxosCmd> ret_cmd,
-                      rusty::Function<void()> cb);
+  // removed `OnBulkPrepare2` declaration —
+  // only caller was the now-deleted
+  // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
-  void OnSyncLog(shared_ptr<Marshallable> &cmd,
+  void OnSyncLog(const janus::Command& cmd,
                       i32* ballot,
                       i32 *valid,
                       shared_ptr<SyncLogResponse> ret_cmd,
                       rusty::Function<void()> cb);
 
-  void OnSyncCommit(shared_ptr<Marshallable> &cmd,
+  void OnSyncCommit(const janus::Command& cmd,
                       i32* ballot,
                       i32 *valid,
                       rusty::Function<void()> cb);
 
 
-  void OnSyncNoOps(shared_ptr<Marshallable> &cmd,
-                  i32* ballot,
-                  i32 *valid,
-                  rusty::Function<void()> cb);
-  
+  // removed `OnSyncNoOps` declaration — only
+  // caller was the now-deleted `MultiPaxosServiceImpl::SyncNoOps`
+  // handler.
+
   void OnForwardToLearner(const rrr::i32& par_id,
-                        const uint64_t& slot, 
+                        const uint64_t& slot,
                         const ballot_t& ballot,
-                        shared_ptr<Marshallable> &cmd,
+                        const janus::Command& cmd,
                         rusty::Function<void()> cb);
 
   int get_open_slot(){

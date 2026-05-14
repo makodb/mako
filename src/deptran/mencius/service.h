@@ -33,14 +33,14 @@ class MenciusServiceImpl : public MenciusService {
                const uint64_t& sender,
                const std::vector<uint64_t>& skip_commits,
                const std::vector<uint64_t>& skip_potentials,
-               const MarshallDeputy& cmd,
+               const janus::Command& cmd,
                ballot_t* max_ballot,
                uint64_t* coro_id,
                rrr::DeferredReply defer);
 
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
-              const MarshallDeputy& cmd,
+              const janus::Command& cmd,
               rrr::DeferredReply defer);
 
 

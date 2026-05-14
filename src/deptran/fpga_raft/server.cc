@@ -2,10 +2,12 @@
 
 #include "server.h"
 // #include "paxos_worker.h"
-#include "exec.h"
+// removed `#include "exec.h"` —
+// FpgaRaftExecutor class deleted.
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
+#include "rrr/misc/serializable.hpp"  // wrap_serializable_aliased
 
 
 namespace janus {
@@ -53,15 +55,17 @@ void* FpgaRaftServer::HeartbeatLoop(void* args) {
 		auto prevTerm = instance->prevTerm;
 		auto ballot = instance->ballot;
 		auto slot = instance->slot_id;
-		shared_ptr<Marshallable> cmd = instance->log_;
-		
-		
+		// SendAppendEntriesAgain now takes const Command&;
+		// pass instance->log_ directly.
+		const auto& cmd = instance->log_;
+
+
 		parid_t partition_id = hb_loop_args->sch->partition_id_;
 		hb_loop_args->commo->BroadcastHeartbeat(partition_id, prevLogIndex);
 
 		auto matcheds = hb_loop_args->commo->matchedIndex;
 		for (auto it = matcheds.begin(); it != matcheds.end(); it++) {
-			if (prevLogIndex > it->second + 10000 && cmd) {
+			if (prevLogIndex > it->second + 10000 && cmd.has_value()) {
 				Log_info("leader_id: %d vs follower_id for %d: %d", prevLogIndex, it->first, it->second);
 				//hb_loop_args->commo->SendHeartbeat(partition_id, it->first, prevLogIndex);
 				hb_loop_args->commo->SendAppendEntriesAgain(it->first,
@@ -247,9 +251,12 @@ bool FpgaRaftServer::RequestVote() {
 
     auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
-    verify(empty_cmd->kind_ == MarshallDeputy::CMD_TPC_EMPTY);
-    auto sp_m = dynamic_pointer_cast<Marshallable>(empty_cmd);
-    ((CoordinatorFpgaRaft*)co)->Submit(sp_m);
+    // dropped tautological `kMarshallKind == static_kind()` verify
+    // (the kMarshallKind constant retired with the L8 TypeList migration).
+    // aliased wrap via Command::pack_aliased preserves
+    // shared_ptr identity through the proxy.
+    ((CoordinatorFpgaRaft*)co)->Submit(
+        janus::Command::pack_aliased<TpcEmptyCommand>(empty_cmd));
     
     //RequestVote2FPGA() ;
     if(IsLeader())
@@ -383,7 +390,7 @@ void FpgaRaftServer::StartTimer()
                                      const uint64_t leaderPrevLogTerm,
                                      const uint64_t leaderCommitIndex,
 																		 const struct DepId dep_id,
-                                     shared_ptr<Marshallable> &cmd,
+                                     const janus::Command& cmd,
                                      uint64_t *followerAppendOK,
                                      uint64_t *followerCurrentTerm,
                                      uint64_t *followerLastLogIndex,
@@ -438,9 +445,11 @@ void FpgaRaftServer::StartTimer()
             *followerCurrentTerm = this->currentTerm;
             *followerLastLogIndex = this->lastLogIndex;
             
-						if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
-              auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-              auto sp_vec_piece = dynamic_pointer_cast<VecPieceData>(p_cmd->cmd_)->sp_vec_piece_data_;
+						if (cmd.kind_ == TpcCommitCommand::static_kind()){
+              auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+              auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
+              verify(vec_piece_data != nullptr);
+              auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
               
 							vector<struct KeyValue> kv_vector;
 							int index = 0;
@@ -476,29 +485,14 @@ void FpgaRaftServer::StartTimer()
         cb();
     }
 
-    void FpgaRaftServer::OnForward(shared_ptr<Marshallable> &cmd, 
-                                          uint64_t *cmt_idx,
-                                          rusty::Function<void()> cb) {
-        this->rep_frame_ = this->frame_ ;
-        auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
-        ((CoordinatorFpgaRaft*)co)->Submit(cmd);
-        
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        *cmt_idx = ((CoordinatorFpgaRaft*)co)->cmt_idx_ ;
-        if(IsLeader() || *cmt_idx == 0 )
-        {
-          Log_debug(" is leader");
-          *cmt_idx = this->commitIndex ;
-        }
-
-        verify(*cmt_idx != 0) ;
-        WAN_WAIT
-        cb() ;        
-    }
+// removed `FpgaRaftServer::OnForward`
+// (~20 LOC) — only caller was the deleted
+// `FpgaRaftServiceImpl::Forward` handler; the matching
+// FpgaRaft::Forward RPC declaration is gone from rcc_rpc.rpc.
 
   void FpgaRaftServer::OnCommit(const slotid_t slot_id,
                               const ballot_t ballot,
-                              shared_ptr<Marshallable> &cmd) {
+                              const janus::Command& cmd) {
 #ifdef LATENCY_LOG_DEBUG
     Log_info("Time of cmd <%d, %d> arrive svr %d OnCommit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
@@ -515,7 +509,10 @@ void FpgaRaftServer::StartTimer()
     
     for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
         auto next_instance = GetFpgaRaftInstance(id);
-        if (next_instance->log_) {
+        // next_instance->log_ is Command; unwrap at the
+        // boundary for RuleWitnessGC + GetCmdID (still take
+        // shared_ptr<Marshallable>).  app_next_ takes Command.
+        if (next_instance->log_.has_value()) {
             Log_debug("fpga-raft par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
             // WAN_WAIT
             RuleWitnessGC(next_instance->log_);
@@ -552,7 +549,9 @@ void FpgaRaftServer::StartTimer()
 
       for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
           auto next_instance = GetFpgaRaftInstance(id);
-          if (next_instance->log_) {
+          // same Command-boundary pattern as the apply
+          // loop above.
+          if (next_instance->log_.has_value()) {
               // WAN_WAIT
               RuleWitnessGC(next_instance->log_);
               app_next_(id, next_instance->log_);
@@ -565,7 +564,7 @@ void FpgaRaftServer::StartTimer()
   }
 
   void FpgaRaftServer::removeCmd(slotid_t slot) {
-    auto cmd = dynamic_pointer_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
+    auto cmd = marshallable_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
     if (!cmd)
       return;
     tx_sched_->DestroyTx(cmd->tx_id_);
@@ -573,11 +572,14 @@ void FpgaRaftServer::StartTimer()
   }
 
 #ifdef ZERO_OVERHEAD
-  bool FpgaRaftServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) {
+  bool FpgaRaftServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     for (slotid_t id = executeIndex + 1; id <= maxIndex; id++) {
       auto next_instance = GetFpgaRaftInstance(id);
-      if (next_instance->log_ && SimpleRWCommand::Conflict(next_instance->log_, cmd))
+      // Conflict has Command overload now; both args
+      // are Command so dispatch directly.
+      if (next_instance->log_.has_value() &&
+          SimpleRWCommand::Conflict(next_instance->log_, cmd))
         return true;
     }
     return false;

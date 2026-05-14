@@ -1,7 +1,21 @@
 #pragma once
 
-#include <vector>
-#include <iostream>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+
+
+
 
 namespace rrr {
 
@@ -27,12 +41,12 @@ public:
 class TestMgr {
     TestMgr() :tests_() { }
     static TestMgr* instance_s;
-    std::vector<TestCase*> tests_;
+    rusty::Vec<TestCase*> tests_;
 public:
     static TestMgr* instance();
     TestCase* reg(TestCase*);
-    int parse_args(int argc, char* argv[], bool* show_help, bool* list_tests, std::vector<TestCase*>* selected);
-    void matched_tests(const char* match, std::vector<TestCase*>* matched);
+    int parse_args(int argc, char* argv[], bool* show_help, bool* list_tests, rusty::Vec<TestCase*>* selected);
+    void matched_tests(const char* match, rusty::Vec<TestCase*>* matched);
     int run(int argc, char* argv[]);
 };
 

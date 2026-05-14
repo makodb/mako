@@ -283,7 +283,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
   RccTx(RccTx& rhs_dtxn);
   RccTx(epoch_t, txnid_t tid, TxLogServer *mgr, bool ro);
 
-  virtual ~RccTx() {
+  ~RccTx() noexcept override {
   }
 
   virtual void DispatchExecute(SimpleCommand &cmd,
@@ -348,6 +348,20 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const ParentEdge<RccTx> &e) {
 inline rrr::Marshal &operator>>(rrr::Marshal &m, ParentEdge<RccTx> &e) {
   m >> e.partitions_;
   return m;
+}
+
+// archive operators for ParentEdge<RccTx>
+// (mirrors the Marshal-based pair byte-for-byte). Used by rcc_rpc.h's
+// archive emission to serialize parent_set_t fields (a typedef for
+// vector<pair<txid_t, ParentEdge<RccTx>>>).
+inline rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const ParentEdge<RccTx> &e) {
+  ar << e.partitions_;
+  return ar;
+}
+
+inline rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, ParentEdge<RccTx> &e) {
+  ar >> e.partitions_;
+  return ar;
 }
 
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const RccTx &ti) {

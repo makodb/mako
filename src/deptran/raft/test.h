@@ -43,7 +43,7 @@ class RaftLabTest {
   int testFigure8CrashRecovery(void);
 
   // ===========================================================================
-  // SPECULATIVE RAFT TESTS (Phase 7)
+  // SPECULATIVE RAFT TESTS
   // ===========================================================================
   // Tests for speculative replication functionality
 
@@ -263,6 +263,85 @@ class RaftLabTest {
 
   // Test cannot add two servers simultaneously via OnAddServer-like logic
   int testCannotAddTwoServersSimultaneously(void);
+
+  // ===========================================================================
+  // REPLICATED DB COMMAND TESTS
+  // ===========================================================================
+  // Pure serialization tests for ReplicatedDBCommand (no cluster needed)
+
+  // Test PUT command marshal/unmarshal round-trip
+  int testReplicatedDBCommandPutMarshal(void);
+
+  // Test DELETE command marshal/unmarshal round-trip
+  int testReplicatedDBCommandDeleteMarshal(void);
+
+  // Test BATCH command marshal/unmarshal round-trip
+  int testReplicatedDBCommandBatchMarshal(void);
+
+  // ===========================================================================
+  // REPLICATED DB INTEGRATION TESTS
+  // ===========================================================================
+  // Integration tests requiring a running Raft cluster + RocksDB
+
+  // Test Put on leader, Get from leader's local RocksDB
+  int testReplicatedDBPutGet(void);
+
+  // Test Put then Delete, verify Get returns not-found
+  int testReplicatedDBDelete(void);
+
+  // Test that apply callback replicates data to follower's RocksDB
+  int testReplicatedDBReplication(void);
+
+  // Test CreateStateMachineSnapshot / LoadStateMachineSnapshot round-trip
+  int testReplicatedDBSnapshot(void);
+
+  // Test snapshot transfer from leader to follower
+  int testReplicatedDBSnapshotTransfer(void);
+
+  // Test ReplicatedDB wiring in Setup() via MAKO_REPLICATED_DB=1
+  int testReplicatedDBWiring(void);
+
+  // Test snapshot compression (LZ4) and backward-compatible decompression
+  int testReplicatedDBSnapshotCompression(void);
+
+  // ===========================================================================
+  // CONFIG MANAGER TESTS
+  // ===========================================================================
+  // Integration tests for ConfigManager on top of ReplicatedDB
+
+  // Test basic ConfigManager operations: set/get shard count, replicas, version increments
+  int testConfigManagerBasic(void);
+
+  // Test shard lifecycle: AddShard, verify config, RemoveShard, verify removal
+  int testConfigManagerShardLifecycle(void);
+
+  // Test epoch management: get initial epoch, advance twice, verify
+  int testConfigManagerEpoch(void);
+
+  // ClusterConfig tests
+
+  // Test hash-based key routing: same key always maps to same shard, keys distribute across shards
+  int testClusterConfigRouting(void);
+
+  // Test loading ClusterConfig from ConfigManager: set up shards via ConfigManager, load into ClusterConfig, verify
+  int testClusterConfigLoadFromConfigManager(void);
+
+  // ConfigWatcher tests
+
+  // Test that ConfigWatcher detects version changes and updates ClusterConfig
+  int testConfigWatcherDetectsChanges(void);
+
+  // Test that ConfigWatcher invokes callback on update and not when nothing changed
+  int testConfigWatcherCallback(void);
+
+  // Test 99: LinearizableGet on leader succeeds; fails on follower
+  int testLinearizableGet(void);
+
+  // Test 100: LinearizableGet after leader change
+  int testLinearizableGetAfterLeaderChange(void);
+
+  // Test 101: ReplicatedDB crash recovery
+  int testReplicatedDBCrashRecovery(void);
 
   void wait(uint64_t microseconds);
 

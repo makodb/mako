@@ -30,22 +30,16 @@ bool CoordinatorFpgaRaft::IsFPGALeader() {
    return this->sch_->IsFPGALeader() ;
 }
 
-void CoordinatorFpgaRaft::Forward(shared_ptr<Marshallable>& cmd,
-                                   rusty::Function<void()> func,
-                                   rusty::Function<void()> exe_callback) {
-    //for(int i = 0; i < 100; i++) Log_info("inside forward");
-		verify(0) ; // TODO delete it
-    auto e = commo()->SendForward(par_id_, loc_id_, cmd);
-    e->wait();
-    uint64_t cmt_idx = e->CommitIdx() ;
-    cmt_idx_ = cmt_idx ;
-    Fiber::create_run([&] () {
-      this->sch_->SpCommit(cmt_idx) ;
-    }) ;
-}
+// removed `CoordinatorFpgaRaft::Forward`
+// — body started with `verify(0); // TODO delete it` and the only
+// upstream caller would have been a forwarding-from-follower path
+// that was never wired up.  Companion `FpgaRaftCommo::SendForward`,
+// `FpgaRaftForwardQuorumEvent`, and the FpgaRaft::Forward RPC
+// handler chain (`FpgaRaftServiceImpl::Forward` +
+// `FpgaRaftServer::OnForward`) are also gone in this phase.
 
 
-void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
+void CoordinatorFpgaRaft::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
@@ -53,19 +47,22 @@ void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
 #endif
   // client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
   if (!IsLeader()) {
-    //Log_fatal("i am not the leader; site %d; locale %d",
-    //          frame_->site_info_->id, loc_id_);
-    Forward(cmd, std::move(func), std::move(exe_callback)) ;
+    // removed `Forward(cmd, ...)` call —
+    // `Forward` method deleted (was `verify(0)`-tagged dead code).
+    // Treat non-leader submission as a hard failure for now —
+    // production behavior was already a crash via the dead Forward.
+    verify(0); // not the leader; non-leader submission unsupported
     return ;
   }
 
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  verify(cmd_ == nullptr);
+  // cmd_ is now janus::Command.
+  verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
   cmd_ = cmd;
-  verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_.has_value());
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
@@ -89,10 +86,8 @@ void CoordinatorFpgaRaft::AppendEntries() {
 
     /* TODO: get prevLogTerm based on the logs */
     uint64_t prevLogTerm = this->sch_->currentTerm;
-    // client2test_point_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_));
 		this->sch_->SetLocalAppend(cmd_, &prevLogTerm, &prevLogIndex, slot_id_, curr_ballot_) ;
-		
-    // client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_));
+
 #ifdef LATENCY_LOG_DEBUG
     Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
@@ -165,12 +160,9 @@ void CoordinatorFpgaRaft::AppendEntries() {
     }
     else if (sp_quorum->no()) {
         verify(0);
-        // TODO should become a follower if the term is smaller
-        //if(!IsLeader())
-        {
-            Forward(cmd_, std::move(commit_callback_)) ;
-            return ;
-        }
+        // removed `Forward(cmd_,
+        // commit_callback_)` call inside this `verify(0)`-guarded
+        // unreachable branch — `Forward` method deleted.
     }
     else {
         verify(0);
@@ -185,6 +177,7 @@ void CoordinatorFpgaRaft::Commit() {
   Log_debug("fpga-raft broadcast commit for partition: %d, slot %d",
             (int) par_id_, (int) slot_id_);
 #ifdef LATENCY_LOG_DEBUG
+  // GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
@@ -206,7 +199,8 @@ void CoordinatorFpgaRaft::LeaderLearn() {
     /*     this->sch_->app_next_(*instance->log_); */
     /* } */
 #ifdef LATENCY_LOG_DEBUG
-    Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+    // GetCmdID still takes shared_ptr<Marshallable>.
+  Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
     verify(phase_ == Phase::COMMIT);
@@ -228,8 +222,10 @@ void CoordinatorFpgaRaft::GotoNextPhase() {
       } else {
         // TODO
         verify(0);
-        Forward(cmd_, std::move(commit_callback_)) ;
-        phase_ = Phase::COMMIT;
+        // removed `Forward(cmd_,
+        // commit_callback_)` and `phase_ = Phase::COMMIT;` inside
+        // this `verify(0)`-guarded unreachable branch — `Forward`
+        // method deleted.
       }
     case Phase::ACCEPT:
       verify(phase_ % n_phase == Phase::COMMIT);

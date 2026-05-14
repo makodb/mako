@@ -24,6 +24,13 @@ COMPOSE_CMD_PREFIX="MAKO_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME} docker compose"
 
 # Environment variables/options for Docker runs
 DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e CARGO_HOME=/workspace/.cargo-docker -e BUILD_DIR=build_docker)
+# Forward MAKO_ASAN so CMakeLists.txt builds with -fsanitize=address + libc
+# malloc, and the dbtest runtime sees a sane ASAN_OPTIONS for the test run.
+if [ -n "${MAKO_ASAN:-}" ]; then
+    DOCKER_ENV_OPTS+=(-e "MAKO_ASAN=${MAKO_ASAN}")
+    : "${ASAN_OPTIONS:=abort_on_error=0:halt_on_error=0:detect_leaks=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:strict_init_order=1}"
+    DOCKER_ENV_OPTS+=(-e "ASAN_OPTIONS=${ASAN_OPTIONS}")
+fi
 DOCKER_INIT_OPTS=(--init)
 DOCKER_SECURITY_OPTS=()
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then
@@ -553,7 +560,7 @@ case "$ACTION" in
                      fi && \
                      if [ ! -f build_docker/CMakeCache.txt ]; then \
                          echo 'Configuring build_docker'; \
-                         cmake -S . -B build_docker ${DOCKER_CMAKE_BORROW_ARG}; \
+                         cmake -S . -B build_docker -DCMAKE_BUILD_TYPE=Release ${DOCKER_CMAKE_BORROW_ARG}; \
                      else \
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \
@@ -744,7 +751,7 @@ case "$ACTION" in
                          fi && \
                          if [ ! -f build_docker/CMakeCache.txt ]; then \
                              echo 'Configuring build_docker'; \
-                             cmake -S . -B build_docker; \
+                             cmake -S . -B build_docker -DCMAKE_BUILD_TYPE=Release; \
                          else \
                              echo 'Reusing existing build_docker CMake cache'; \
                          fi && \
@@ -802,8 +809,11 @@ case "$ACTION" in
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh cleanup"
                 ;;
             *)
+                # Build via ci.sh's compile phase (cmake+ninja). The top-level
+                # Makefile was removed by commit 0cf5b9724's CMake migration;
+                # invoking `make` directly no longer works.
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
-                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} make BUILD_DIR=build_docker -j${CI_JOBS} && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh compile && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
         esac
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"

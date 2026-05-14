@@ -45,6 +45,7 @@ class RpcScanner(runtime.Scanner):
         ('"raw"', re.compile('raw')),
         ('"prefix"', re.compile('prefix')),
         ('"fast"', re.compile('fast')),
+        ('"async"', re.compile('async')),
         ('"service"', re.compile('service')),
         ('"abstract"', re.compile('abstract')),
         ('"long"', re.compile('long')),
@@ -210,7 +211,7 @@ class Rpc(runtime.Parser):
     def service_functions(self, _parent=None):
         _context = self.Context(_parent, self._scanner, 'service_functions', [])
         functions = []
-        while self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', 'SYMBOL', '"}"', context=_context) != '"}"':
+        while self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', '"async"', 'SYMBOL', '"}"', context=_context) != '"}"':
             service_function = self.service_function(_context)
             functions += service_function,
         return functions
@@ -218,8 +219,8 @@ class Rpc(runtime.Parser):
     def service_function(self, _parent=None):
         _context = self.Context(_parent, self._scanner, 'service_function', [])
         attr = None; abstract = False; input = []; output = []
-        if self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', 'SYMBOL', context=_context) != 'SYMBOL':
-            _token = self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', context=_context)
+        if self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', '"async"', 'SYMBOL', context=_context) != 'SYMBOL':
+            _token = self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', '"async"', context=_context)
             if _token == '"prefix"':
                 self._scan('"prefix"', context=_context)
                 attr = "prefix"
@@ -232,9 +233,12 @@ class Rpc(runtime.Parser):
             elif _token == '"fiber"':
                 self._scan('"fiber"', context=_context)
                 attr = "fiber"
-            else: # == '"defer"'
+            elif _token == '"defer"':
                 self._scan('"defer"', context=_context)
                 attr = "defer"
+            else: # == '"async"'
+                self._scan('"async"', context=_context)
+                attr = "async"
         SYMBOL = self._scan('SYMBOL', context=_context)
         forbid_reserved_names(SYMBOL)
         self._scan('"\\("', context=_context)
@@ -245,7 +249,7 @@ class Rpc(runtime.Parser):
             func_arg_list = self.func_arg_list(_context)
             output = func_arg_list
         self._scan('"\\)"', context=_context)
-        if self._peek('"="', '"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', 'SYMBOL', '"}"', context=_context) == '"="':
+        if self._peek('"="', '"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', '"async"', 'SYMBOL', '"}"', context=_context) == '"="':
             self._scan('"="', context=_context)
             self._scan('"0"', context=_context)
             abstract = True
@@ -295,7 +299,7 @@ def load_existing_rpc_codes(header_fpath):
     with open(header_fpath) as f:
         for raw_line in f:
             line = raw_line.rstrip("\n")
-            m_service = re.match(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)Service\s*:\s*public\s+rrr::Service\s*\{', line)
+            m_service = re.match(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)Service\s*(?::\s*public\s+rrr::Service\s*)?\{', line)
             if m_service:
                 current_service = m_service.group(1)
                 in_enum = False
@@ -334,7 +338,7 @@ def generate_rpc_table(rpc_source, existing_codes=None):
             used_codes.add(rpc_code)
     return rpc_table
 
-def rpcgen(rpc_fpath, languages):
+def rpcgen(rpc_fpath, languages, archive=True):
     with open(rpc_fpath) as f:
         rpc_src = f.read()
 
@@ -364,7 +368,7 @@ def rpcgen(rpc_fpath, languages):
 
     if "cpp" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".h"
-        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer)
+        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, archive=archive)
 
     if "python" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".py"

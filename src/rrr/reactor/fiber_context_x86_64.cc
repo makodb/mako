@@ -1,6 +1,10 @@
 /**
  * @file fiber_context_x86_64.cc
  * @brief x86_64 SysV context switch primitive for Fibers.
+ *
+ * Plain C++ translation unit (NOT a module impl partition). Top-level asm()
+ * inside a module impl partition is treated as non-reachable by clang and
+ * the symbol never makes it into the .o file.
  */
 
 #if defined(__x86_64__)

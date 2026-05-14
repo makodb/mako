@@ -1,9 +1,16 @@
 #pragma once
 
-#include <list>
-#include <map>
-#include <unordered_map>
-#include <functional>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 
 #include <sys/types.h>
 #include <sys/time.h>
@@ -30,6 +37,9 @@
 //   freeaddrinfo: [unsafe, (addrinfo*) -> void]
 //   close: [unsafe, (int) -> int]
 // }
+
+
+
 
 namespace rrr {
 

@@ -19,16 +19,11 @@ RccCommo* RccCoord::commo() {
 
 void RccCoord::PreDispatch() {
   verify(ro_state_ == BEGIN);
-  auto dispatch = std::bind(&RccCoord::DispatchAsync, this);
-  if (recorder_) {
-    std::string log_s;
-    verify(0);
-    // TODO get appropriate log
-//    req.get_log(cmd_->id_, log_s);
-    //recorder_->submit(log_s, dispatch);
-  } else {
-    dispatch();
-  }
+  // simplified `if (recorder_) { ... }
+  // else { dispatch(); }` — `recorder_` field is gone (was always
+  // nullptr); the if-branch was a `verify(0)`-only TODO shell with
+  // commented-out `recorder_->submit(...)` body.
+  DispatchAsync();
 }
 
 
@@ -81,10 +76,12 @@ void RccCoord::DispatchAck(phase_t phase,
 //  RccTx& info = *(graph.vertex_index().at(tx_data().root_id_));
 //  verify(cmd[0].root_id_ == info.id());
 //  verify(info.partition_.find(cmd.partition_id_) != info.partition_.end());
-  if (res) {
-    // need validation
-    tx_data().need_validation_ = true;
-  }
+  // removed
+  //   if (res) { tx_data().need_validation_ = true; }
+  // — the `need_validation_` field on TxData has no readers anywhere
+  // in the codebase (the only would-be reader was a commented-out
+  // line in rcc/server.cc; that path is on a different `sp_tx`
+  // type).  Field deleted alongside this write.
 
   for (auto& pair : output) {
     n_dispatch_ack_++;

@@ -18,6 +18,8 @@ public:
         dispatch_quota.value_ = 3 * max_pending_rpc_;
     }
 
+    ~CommunicatorRule() noexcept override {}
+
     vector<SiteProxyPair> LeaderProxyForPartition(parid_t, int idx=-1) const;
 
     std::vector<int> LeadersForPartition(parid_t par_id) const;

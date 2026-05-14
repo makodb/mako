@@ -51,6 +51,36 @@ GTAGS
 GRTAGS
 GPATH
 /CMakeFiles
+# Ninja / CMake build artifacts that land in the repo root if a build runs
+# from here by mistake. The canonical build dir is /build (ignored above).
+/.ninja_deps
+/.ninja_log
+/build.ninja
+/rules.ninja
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+
+# In-source build artifacts that land under nested directories when CMake
+# (or autoconf, in masstree's case) is run with the source tree as the
+# build dir. The canonical build dir is /build; these wildcard rules guard
+# against accidental in-source builds polluting `git status` / `git add -A`.
+**/CMakeFiles/
+**/cmake_install.cmake
+**/CTestTestfile.cmake
+src/masstree/Makefile
+src/masstree/GNUmakefile
+src/masstree/autom4te.cache/
+src/masstree/configure
+src/masstree/config.h
+src/masstree/config.h.in
+src/masstree/config.h.in~
+src/masstree/config.status
+src/rrr/Makefile
+/CPackConfig.cmake
+/CPackSourceConfig.cmake
+/CTestTestfile.cmake
+/gcm.cache/
 /_3rdParty
 /.clang-format
 *.so
@@ -78,3 +108,6 @@ cmake-build/*
 
 # Misc build/test artifacts
 /Testing/
+
+# Local assistant workspace
+/.claude/

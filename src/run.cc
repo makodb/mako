@@ -6,79 +6,81 @@
 using namespace std;
 using namespace rrr;
 
-// copy from ./test/coroutine.cc
+// copy from ./tests/fiber_runtime.cc
 void ASSERT_EQ(bool a) { if (!a) throw; }
 
-void coroutine_basic() {
+void fiber_basic() {
   int x = 0;
-  Fiber::CreateRun([&x] () {
+  Fiber::create_run([&x] () {
     x = 1;
     sleep(2);
     x = 2;
   });
   ASSERT_EQ(x == 2);
 }
-void coroutine_yield() {
+void fiber_yield() {
   int x = 0;
-  auto coro1 = Fiber::CreateRun([&x] () {
+  auto fiber1 = Fiber::create_run([&x] () {
     x = 1;
-    Fiber::CurrentCoroutine()->Yield();
+    Fiber::current_fiber().unwrap()->yield_();
     x = 2;
-    Fiber::CurrentCoroutine()->Yield();
+    Fiber::current_fiber().unwrap()->yield_();
     x = 3;
   });
   ASSERT_EQ(x == 1);
-  Reactor::get_reactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->continue_fiber(fiber1);
   ASSERT_EQ(x == 2);
-  Reactor::get_reactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->continue_fiber(fiber1);
   ASSERT_EQ(x == 3);
 }
-shared_ptr<Fiber> coroutine_yield_2_sub() {
+rusty::Rc<Fiber> fiber_yield_2_sub() {
   int x;
-  auto coro1 = Fiber::CreateRun([&x] () {
+  auto fiber1 = Fiber::create_run([&x] () {
       x = 1;
-      Fiber::CurrentCoroutine()->Yield();
+      Fiber::current_fiber().unwrap()->yield_();
   });
-  return coro1;
+  return fiber1;
 }
-void coroutine_yield_2() {
-  shared_ptr<Fiber> c = coroutine_yield_2_sub();
-  c->Continue();
+void fiber_yield_2() {
+  rusty::Rc<Fiber> fiber = fiber_yield_2_sub();
+  fiber->continue_();
 }
-void coroutine_wait_die_lock() {
+void fiber_wait_die_lock() {
   WaitDieALock a;
-  auto coro1 = Fiber::CreateRun([&a] () {
+  auto fiber1 = Fiber::create_run([&a] () {
     uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
     ASSERT_EQ(req_id == true);
-    Fiber::CurrentCoroutine()->Yield();
-    Log_info("aborting lock from coroutine 1.");
+    Fiber::current_fiber().unwrap()->yield_();
+    Log_info("aborting lock from fiber 1.");
     a.abort(req_id);
   });
 
   int x = 0;
-  auto coro2 = Fiber::CreateRun([&] () {
+  auto fiber2 = Fiber::create_run([&] () {
     uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
     ASSERT_EQ(req_id == false);
     x = 1;
   });
+  (void)fiber2;
   ASSERT_EQ(x == 1);
 
   int y = 0;
-  auto coro3 = Fiber::CreateRun([&] () {
+  auto fiber3 = Fiber::create_run([&] () {
     uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);  // yield
     ASSERT_EQ(req_id > 0);
-    Log_info("acquired lock from coroutine 3.");
+    Log_info("acquired lock from fiber 3.");
     y = 1;
   });
+  (void)fiber3;
   ASSERT_EQ(y == 0);
-  coro1->Continue();
+  fiber1->continue_();
   Reactor::get_reactor()->loop();
   ASSERT_EQ(y == 1);
 }
 
 int main(int argc, char* argv[]) {
-  coroutine_basic();
-  coroutine_yield();
-  coroutine_yield_2();
-  coroutine_wait_die_lock();
+  fiber_basic();
+  fiber_yield();
+  fiber_yield_2();
+  fiber_wait_die_lock();
 }

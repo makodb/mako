@@ -91,7 +91,7 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
     // this GotoNextPhase is in none/coordinator.cc, coz this is CoordinatorNone instance
     // class CoordinatorNone : public CoordinatorClassic { }
     Fiber::create_run([this]() {
-        // Log_info("Start CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+        // Log_info("Start CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
         GotoNextPhase();
       }, __FILE__, __LINE__
     );
@@ -172,19 +172,18 @@ void CoordinatorClassic::GotoNextPhase() {
 
 void CoordinatorClassic::Reset() {
   Coordinator::Reset();
-  for (int i = 0; i < site_prepare_.size(); i++) {
-    site_prepare_[i] = 0;
-  }
+  // removed `site_prepare_[i] = 0;` reset
+  // loop and `n_prepare_req_ = 0;` write — both fields are gone.
   n_dispatch_ = 0;
   n_dispatch_ack_ = 0;
-  n_prepare_req_ = 0;
   n_prepare_ack_ = 0;
   n_finish_req_ = 0;
   n_finish_ack_ = 0;
   dispatch_acks_.clear();
   committed_ = false;
   aborted_ = false;
-	repeat_ = false;
+  // removed `repeat_ = false;` — the
+  // `repeat_` field was deleted alongside (always-false dead state).
 }
 
 void CoordinatorClassic::Restart() {
@@ -250,42 +249,10 @@ void CoordinatorClassic::DispatchAsync() {
   Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
 }
 
-void CoordinatorClassic::DispatchSync() {
-  Log_debug("commo Broadcast to the server on client worker");
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  auto txn = (TxData*) cmd_;
-
-  int cnt = 0;
-  auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
-  n_pd = 100;
-  ReadyPiecesData cmds_by_par;
-  cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
-  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
-  for (auto& pair: cmds_by_par) {
-    const parid_t& par_id = pair.first;
-    auto& cmds = pair.second;
-    n_dispatch_ += cmds.size();
-    cnt += cmds.size();
-    auto sp_vec_piece = std::make_shared<vector<shared_ptr<TxPieceData>>>();
-    for (auto c: cmds) {
-      c->id_ = next_pie_id();
-      dispatch_acks_[c->inn_id_] = false;
-      sp_vec_piece->push_back(c);
-    }
-
-    commo()->SyncBroadcastDispatch(sp_vec_piece,
-                                    this,
-                                    std::bind(&CoordinatorClassic::DispatchAck,
-                                              this,
-                                              phase_,
-                                              -1, 
-                                              std::placeholders::_1,
-                                              std::placeholders::_2));
-
-  }
-
-  Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
-}
+// removed `CoordinatorClassic::DispatchSync`
+// (~36 LOC) — never called externally; was the synchronous twin of
+// `DispatchAsync` and the only call site of
+// `Communicator::SyncBroadcastDispatch` (left for follow-up).
 
 // not used
 void CoordinatorClassic::DispatchAsync(bool last) {
@@ -360,7 +327,7 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
   if (res == REJECT) {
     aborted_ = true;
     txn->commit_.store(false);
-    // Log_info("DispatchAck Reject CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+    // Log_info("DispatchAck Reject CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
     GotoNextPhase();
     return;
   } else if (res == WRONG_LEADER) {
@@ -404,10 +371,10 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
     dispatch_ack_ = true;
     // Log_info("CoordinatorRule coo_id=%d thread_id=%d cmd_ver_=%d cmd_ver=%d current_phase=%d [End of DispatchAck]", coo_id_, thread_id_, cmd_ver_, cmd_ver, phase % 3);
     if (phase != phase_) {
-      // Log_info("AllDispatchAcked Failed CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+      // Log_info("AllDispatchAcked Failed CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
       return;
     }
-    // Log_info("AllDispatchAcked Successed CoroutineID %d %d", Fiber::current_coroutine()->id, Fiber::current_coroutine()->global_id);
+    // Log_info("AllDispatchAcked Successed CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
     GotoNextPhase();
   }
 }
@@ -459,42 +426,19 @@ void CoordinatorClassic::Prepare() {
     cmd->commit_.store(true);
     committed_ = true;
   }
-	if(repeat_) {
-		
-	}
+  // removed empty-body `if(repeat_) {}`
+  // — `repeat_` was always false (default-init, never set true);
+  // the field and this empty branch went away together.
 	if (commo()->slow) {
 		Log_info("prep_slow");
 		prep_slow = true;
 	}
-	//if(commo()->slow  && commo()->total > 100 && !commo()->paused){
-		//double cpu_thres = 0.90/(1 + exp(-0.00107340141*(commo()->window_avg - 721.918226)));
-		//double cpu_thres = 0.29712171*log(commo()->window_avg) - 2.8758182;
-		/*double cpu_thres = 0.0000137325*commo()->window_avg - 0.23825;
-		if(cpu_thres >= 0.85) cpu_thres = 0.85;
-		//Log_info("cpu vs lat_util_: %f vs %f", commo()->cpu, cpu_thres);
-		if(commo()->cpu <= (cpu_thres*0.0) && !commo()->paused && commo()->cpu != commo()->last_cpu){
-			commo()->last_cpu = commo()->cpu;
-			commo()->low_util++;
-		} else if(commo()->cpu > (cpu_thres*0.0)) commo()->low_util = 0;*/
-		/*if(commo()->slow){
-			commo()->low_util = 0;
-			Log_info("Reelection started");
-			commo()->paused = true;
-
-			commo()->qe = Reactor::create_sp_event<QuorumEvent>(concurrent-1, concurrent-1);
-			commo()->qe->n_voted_yes_ = commo()->total_;
-			commo()->qe->wait();
-			commo()->qe = NULL;
-
-			sp_quorum_event = commo()->SendReelect();
-			sp_quorum_event->wait();
-			commo()->paused = false;
-			commo()->slow = false;
-			Log_info("Reelection finished");
-			commo()->ResetProfiles();
-			commo()->total_ = 0;
-		}
-	}*/
+	// removed the dead re-elect branch that
+	// referenced the now-deleted `commo()->total / window_avg / cpu /
+	// last_cpu / low_util / ResetProfiles()` profiling state.  The
+	// branch was already commented out (`//if(...)` then nested
+	// `/* ... */` blocks); the live `commo()->slow` / `Log_info` /
+	// `prep_slow` write above is unaffected.
 }
 
 void CoordinatorClassic::PrepareAck(phase_t phase, int res) {
@@ -532,7 +476,7 @@ void CoordinatorClassic::EarlyAbort() {
                   PRIx64
                   " to %d", tx_data().id_, rp);
     commo()->SendEarlyAbort(rp, cmd_->id_);
-    site_abort_[rp]++;
+    // removed `site_abort_[rp]++;` — write-only.
   }
   GotoNextPhase();
 }
@@ -541,7 +485,8 @@ void CoordinatorClassic::Commit() {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
   auto it = dispatch_acks_.begin();
   it->second = true;
-//  ___TestPhaseThree(cmd_->id_);
+  // removed commented-out
+  // `// ___TestPhaseThree(cmd_->id_);` — method deleted.
   auto mode = Config::GetConfig()->tx_proto_;
   verify(mode == MODE_OCC || mode == MODE_2PL);
   Log_debug("send out finish request, cmd_id: %"
@@ -641,41 +586,13 @@ void CoordinatorClassic::Commit() {
   } else {
     verify(0);
   }
-	//Log_info("slow inside Commit is: %d", commo()->slow);
-	//Log_info("commo window avg: %d", commo()->window_avg);
-	if(false && (prep_slow || commo()->slow)  && commo()->total > 10000 && !commo()->paused){
-		//double cpu_thres = 0.90/(1 + exp(-0.00107340141*(commo()->window_avg - 721.918226)));
-		//double cpu_thres = 0.29712171*log(commo()->window_avg) - 2.8758182;
-		/*double cpu_thres = 0.0000137325*commo()->window_avg - 0.23825;
-		if(cpu_thres >= 0.85) cpu_thres = 0.85;
-		//Log_info("cpu vs lat_util_: %f vs %f", commo()->cpu, cpu_thres);
-		if(commo()->cpu <= (cpu_thres*0.0) && !commo()->paused && commo()->cpu != commo()->last_cpu){
-			commo()->last_cpu = commo()->cpu;
-			commo()->low_util++;
-		} else if(commo()->cpu > (cpu_thres*0.0)) commo()->low_util = 0;*/
-		if(commo()->slow || prep_slow){
-			commo()->low_util = 0;
-			Log_info("Reelection started: %d/%d", commo()->total_, concurrent-1);
-			commo()->qe = Reactor::create_sp_event<QuorumEvent>(concurrent-1, concurrent-1);
-
-			commo()->count_lock_.lock();
-			commo()->paused = true;
-			commo()->qe->n_voted_yes_ = commo()->total_;
-			commo()->count_lock_.unlock();
-			
-			commo()->qe->wait();
-			commo()->qe = NULL;
-
-			for (int i = 0; i < 100; i++) Log_info("Reelection: done waiting for commits");
-			sp_quorum_event = commo()->SendReelect();
-			sp_quorum_event->wait();
-			commo()->paused = false;
-			commo()->slow = false;
-			Log_info("Reelection finished");
-			commo()->ResetProfiles();
-			commo()->total_ = 0;
-		}
-	}
+	// removed the `if(false && ...)`
+	// short-circuited re-elect branch that referenced the now-deleted
+	// `commo()->total` / `window_avg` / `cpu` / `last_cpu` /
+	// `low_util` / `ResetProfiles()` profiling state.  The branch
+	// was unreachable (`false &&` short-circuits before any of the
+	// fields are touched).  The live `prep_slow = false;` at the
+	// bottom of the function is unaffected.
 	prep_slow = false;
 }
 
@@ -783,17 +700,11 @@ void CoordinatorClassic::Report(TxReply& txn_reply,
   }
 }
 
-void CoordinatorClassic::___TestPhaseThree(txnid_t txn_id) {
-  // auto it = ___phase_three_tids_.find(txn_id);
-//  verify(it == ___phase_three_tids_.end());
-//  ___phase_three_tids_.insert(txn_id);
-}
-
-void CoordinatorClassic::___TestPhaseOne(txnid_t txn_id) {
-  auto it = ___phase_one_tids_.find(txn_id);
-  verify(it == ___phase_one_tids_.end());
-  ___phase_one_tids_.insert(txn_id);
-}
+// removed `___TestPhaseOne(txnid_t)` and
+// `___TestPhaseThree(txnid_t)` test helpers + companion
+// `___phase_one_tids_` / `___phase_three_tids_` set fields — only
+// references were commented-out call sites in
+// `tapir/coordinator.cc:23` and `classic/coordinator.cc:520`.
 
 void CoordinatorClassic::SetNewLeader(parid_t par_id, volatile locid_t* cur_pause) {
   locid_t prev_pause_srv = *cur_pause;

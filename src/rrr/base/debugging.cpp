@@ -1,13 +1,33 @@
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+#include <stdio.h>
+#include <assert.h>
+
+
 #include <execinfo.h>
 #include <limits.h>
 #include <string.h>
 
-#include <string>
-#include <vector>
-#include <utility>
+
+
+
 
 #include "debugging.hpp"
-#include "misc.hpp"
+
+
+#include "../rrr.hpp"
 
 // External safety annotations for system and std library functions
 // @external: {
@@ -15,7 +35,6 @@
 //   std::__atomic_base::fetch_add: [unsafe, (int) -> int]
 //   std::__atomic_base::store: [unsafe, (int) -> void]
 //   std::mersenne_twister_engine::operator(): [unsafe, () -> unsigned int]
-//   std::function::operator(): [unsafe, () -> void]
 //   clock_gettime: [unsafe, (int, struct timespec*) -> int]
 //   select: [unsafe, (int, fd_set*, fd_set*, fd_set*, struct timeval*) -> int]
 // }
@@ -85,7 +104,7 @@ void print_stack_trace(FILE* fp /* =? */) {
 
     fprintf(fp, "  *** begin stack trace ***\n");
     const char* exec_path = get_exec_path();
-    vector<pair<string, string>> fmt_output;
+    rusty::Vec<pair<string, string>> fmt_output;
     size_t max_func_length = 0;
     for (int i = 0; i < frames - 1; i++) {
         bool addr2line_ok = false;
@@ -104,14 +123,14 @@ void print_stack_trace(FILE* fp /* =? */) {
                 } else {
                     max_func_length = max(max_func_length, demangled_func_name.size());
                     string file_line = getline(addr2line);
-                    fmt_output.push_back(make_pair(demangled_func_name, file_line));
+                    fmt_output.push(make_pair(demangled_func_name, file_line));
                 }
                 pclose(addr2line);
             }
         }
         if (!addr2line_ok) {
             max_func_length = max(max_func_length, strlen(str_frames[i]));
-            fmt_output.push_back(make_pair(str_frames[i], ""));
+            fmt_output.push(make_pair(str_frames[i], ""));
         }
     }
     for (size_t i = 0; i < fmt_output.size(); i++) {

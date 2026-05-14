@@ -24,7 +24,7 @@ void MenciusServer::OnPrepare(slotid_t slot_id,
     // TODO if accepted anything, return;
     verify(0);
   }
-  auto coro_opt = Fiber::current_coroutine();
+  auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -41,7 +41,7 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
                            const uint64_t sender,
                            const std::vector<uint64_t>& skip_commits, 
                            const std::vector<uint64_t>& skip_potentials,
-                           shared_ptr<Marshallable> &cmd,
+                           const janus::Command& cmd,
                            ballot_t *max_ballot,
                            uint64_t* coro_id,
                            rusty::Function<void()> cb) {
@@ -62,7 +62,7 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
     verify(0);
   }
 
-  auto coro_opt = Fiber::current_coroutine();
+  auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -76,17 +76,22 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
 
 void MenciusServer::OnCommit(const slotid_t slot_id,
                            const ballot_t ballot,
-                           shared_ptr<Marshallable> &cmd,
+                           const janus::Command& cmd,
                            bool is_skip) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   //Log_info("mencius scheduler decide for slot: %d on loc_id_:%d", slot_id, this->loc_id_);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Log_info("OnCommit loc_id_=%d cmd_id=<%d, %d>", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
   auto instance = GetInstance(slot_id);
+  // MenciusData::committed_cmd_ is now Command;
+  // assignment from shared_ptr<Marshallable>& works via the
+  // Command operator=(shared_ptr<Marshallable>) overload.
   instance->committed_cmd_ = cmd;
   instance->is_skip = true;
   if (instance->is_skip){
-    instance->committed_cmd_->kind_ = MarshallDeputy::CMD_TPC_COMMIT;
+    // Command's `kind_` is a public field mirror of MarshallDeputy's;
+    // the legacy `committed_cmd_->kind_` write is preserved.
+    instance->committed_cmd_.kind_ = TpcCommitCommand::static_kind();
   }
   if (slot_id > max_committed_slot_) {
     max_committed_slot_ = slot_id;
@@ -103,9 +108,11 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   
 #ifdef JETPACK_DEDUPLICATE_OPTIMIZATION
   // deduplicate optimization: Accepted duplicated cmd can be ignored
+  // cmd_ is Command; witness_.has_appeared still takes
+  // shared_ptr<Marshallable>.
   for (slotid_t id = max_committed_slot_; id < max_active_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->cmd_ && witness_.has_appeared(next_instance->cmd_)) {
+    if (next_instance->cmd_.has_value() && witness_.has_appeared(next_instance->cmd_)) {
       max_committed_slot_++;
     }
   }
@@ -114,7 +121,10 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   slotid_t tmp_max_executed_slot_ = max_executed_slot_;
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->committed_cmd_) {
+    // committed_cmd_ is Command; RuleWitnessGC and
+    // SimpleRWCommand still take shared_ptr<Marshallable>; app_next_
+    // takes Command directly.
+    if (next_instance->committed_cmd_.has_value()) {
       if (!next_instance->executed_){
         RuleWitnessGC(next_instance->committed_cmd_);
         app_next_(id, next_instance->committed_cmd_);
@@ -138,7 +148,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
   //apply the entry out of order if there is no conflict
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
-    if (next_instance->committed_cmd_) {
+    if (next_instance->committed_cmd_.has_value()) {
       SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_);
       if ((!next_instance->executed_) && (unexecuted_keys_[parsed_cmd.key_]==1)){
         RuleWitnessGC(next_instance->committed_cmd_);
@@ -180,13 +190,15 @@ void MenciusServer::Setup() {
 }
 
 #ifdef ZERO_OVERHEAD
-bool MenciusServer::ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) {
+bool MenciusServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_env) {
   return false;
+  // Conflict has Command overload now; pass Commands.
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   for (slotid_t id = max_executed_slot_ + 1; id <= max_active_slot_; id++) {
     auto next_instance = GetInstance(id);
     // check next_instance->executed_ since Mencius have out-of-order execution
-    if (next_instance->committed_cmd_ && !next_instance->executed_ && SimpleRWCommand::Conflict(next_instance->committed_cmd_, cmd))
+    if (next_instance->committed_cmd_.has_value() && !next_instance->executed_ &&
+        SimpleRWCommand::Conflict(next_instance->committed_cmd_, cmd_env))
       return true;
   }
   return false;

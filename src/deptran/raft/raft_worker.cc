@@ -46,7 +46,7 @@ namespace janus {
 // @safe
 RaftWorker::RaftWorker() = default;
 
-// @safe - cleanup operations are bounded
+// @unsafe - cleanup operations are bounded
 RaftWorker::~RaftWorker() {
   StopSubmitThread();
 
@@ -93,8 +93,7 @@ void RaftWorker::SetupBase() {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
         is_leader = leader ? 1 : 0;
       }
-#ifdef SINGLE_RAFT_INSTANCE
-      // SINGLE-RAFT: Notify ALL registered partitions on leader change.
+      // Notify all partitions that currently have callback registrations.
       std::set<uint32_t> par_ids;
       for (const auto& kv : leader_callbacks_by_partition_) {
         par_ids.insert(kv.first);
@@ -110,11 +109,6 @@ void RaftWorker::SetupBase() {
           NotifyRaftLeaderChange(pid, leader);
         }
       }
-#else
-      // MULTI-RAFT: Notify only this worker's partition.
-      uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
-      NotifyRaftLeaderChange(par_id, leader);
-#endif
     });
   }
 
@@ -137,7 +131,7 @@ void RaftWorker::SetupService() {
 
   // Create thread pool
   uint32_t num_threads = 1;
-  thread_pool_g = new base::ThreadPool(num_threads);
+  thread_pool_g = base::ThreadPool::make(num_threads);
 
   // Create RPC server first (before registering services)
   rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
@@ -148,7 +142,7 @@ void RaftWorker::SetupService() {
                                                    rep_sched_,
                                                    poll_worker);
     for (auto& svc : services) {
-      rpc_server_->reg_service(std::move(svc));
+      rpc_server_->reg_service_proxy(std::move(svc));
     }
   }
 
@@ -187,14 +181,15 @@ void RaftWorker::SetupHeartbeat() {
   }
 
   // Setup heartbeat/control RPC server
-  // ServerControlServiceImpl constructor takes (status, timeout, recorder)
+  // ServerControlServiceImpl ctor 3rd
+  // `Recorder*` parameter removed; updated call site to 2 args.
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_thread_pool_g = new base::ThreadPool(1);
+  hb_thread_pool_g = base::ThreadPool::make(1);
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
-  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), 5, nullptr));
+  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), 5));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = site_info_->GetHostAddr(CtrlPortDelta);
@@ -229,13 +224,11 @@ void RaftWorker::ShutDown() {
   }
 
   if (hb_thread_pool_g) {
-    hb_thread_pool_g->release();
-    hb_thread_pool_g = nullptr;
+    // Arc auto-releases on destruction
   }
 
   if (thread_pool_g) {
-    thread_pool_g->release();
-    thread_pool_g = nullptr;
+    // Arc auto-releases on destruction
   }
 
   // Services are now owned by rpc_server_ and deleted with it
@@ -267,7 +260,7 @@ void RaftWorker::ShutDown() {
   Log_info("[RAFT-WORKER-SHUTDOWN] poll threads shutdown complete");
 }
 
-// @safe
+// @unsafe
 void RaftWorker::WaitForShutdown() {
   StopSubmitThread();
 
@@ -280,20 +273,19 @@ void RaftWorker::WaitForShutdown() {
   }
 }
 
-// @safe - pointer dereferences are bounded, dynamic_cast marked @external [safe]
+// @unsafe - pointer dereferences are bounded, dynamic_cast marked @external [safe]
 bool RaftWorker::IsLeader(uint32_t par_id) {
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
 
-#ifndef SINGLE_RAFT_INSTANCE
-  // MULTI-RAFT: Check if this worker owns the requested partition.
-  // @unsafe
-  { // rep_frame_->site_info_-> pointer dereference chain
-    if (rep_frame_->site_info_->partition_id_ != par_id) {
-      return false;
+  if (!handles_all_partitions_) {
+    // @unsafe
+    { // rep_frame_->site_info_-> pointer dereference chain
+      if (rep_frame_->site_info_->partition_id_ != par_id) {
+        return false;
+      }
     }
   }
-#endif
 
   // @unsafe
   { // GetRaftServer uses dynamic_cast on raw pointer, raft_server-> pointer dereference
@@ -318,24 +310,21 @@ siteid_t RaftWorker::GetLeaderHint() {
   return INVALID_SITEID;
 }
 
-// @safe - pointer dereferences are bounded
+// @unsafe - pointer dereferences are bounded
 bool RaftWorker::IsPartition(uint32_t par_id) {
-#ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: A single RaftWorker handles all partitions.
-  (void)par_id;
-  return true;
-#else
-  // MULTI-RAFT: Each worker owns exactly one partition.
+  if (handles_all_partitions_) {
+    return true;
+  }
+  // Multi-group mode: each worker owns exactly one partition.
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
   // @unsafe
   { // rep_frame_->site_info_-> pointer dereference chain
     return rep_frame_->site_info_->partition_id_ == par_id;
   }
-#endif
 }
 
-// @safe
+// @unsafe
 void RaftWorker::StartSubmitThread() {
   if (submit_thread_started_) {
     return;
@@ -348,7 +337,7 @@ void RaftWorker::StartSubmitThread() {
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::StopSubmitThread() {
   if (!submit_thread_started_) {
     return;
@@ -374,7 +363,7 @@ void RaftWorker::StopSubmitThread() {
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size) {
   if (!submit_thread_started_) {
     // @unsafe
@@ -399,19 +388,12 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
   submit_cv_.notify_one();
 }
 
-// @safe - external calls marked @external [safe]
-#ifdef SINGLE_RAFT_INSTANCE
+// @unsafe - external calls marked @external [safe]
 std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
     const char* log_entry,
     int length,
     txnid_t tx_id,
     uint32_t par_id) {
-#else
-std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
-    const char* log_entry,
-    int length,
-    txnid_t tx_id) {
-#endif
 
   auto tpc_cmd = std::make_shared<TpcCommitCommand>();
   tpc_cmd->tx_id_ = tx_id;
@@ -424,13 +406,8 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   simple_cmd->input.values_ = std::make_shared<map<int32_t, Value>>();
   (*simple_cmd->input.values_)[0] = Value(std::string(log_entry, length));
   simple_cmd->input.keys_.insert(0);
-
-#ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: Store the actual partition ID so Next() can route correctly
+  // Store the partition id so callback routing is always explicit.
   simple_cmd->partition_id_ = par_id;
-#else
-  simple_cmd->partition_id_ = 0;
-#endif
 
   vpd->sp_vec_piece_data_->push_back(simple_cmd);
   tpc_cmd->cmd_ = vpd;
@@ -441,7 +418,7 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   return tpc_cmd;
 }
 
-// @safe - external calls marked @external [safe], pointer ops are bounded
+// @unsafe - external calls marked @external [safe], pointer ops are bounded
 void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id=%d length=%d", par_id, length);
 
@@ -461,17 +438,11 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   txnid_t tx_id = next_tx_id.fetch_add(1);
 
   // Use the production helper to create proper TpcCommitCommand{cmd_=VecPieceData}
-#ifdef SINGLE_RAFT_INSTANCE
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
-#else
-  auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id);
-#endif
-
-  auto cmd = std::static_pointer_cast<Marshallable>(tpc_cmd);
 
   uint64_t index = 0;
   uint64_t term = 0;
-  bool appended = raft_server->Start(cmd, &index, &term);
+  bool appended = raft_server->Start(tpc_cmd, &index, &term);
   if (!appended) {
     return;
   }
@@ -482,10 +453,11 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 
 // @safe
 void RaftWorker::IncSubmit() {
-  n_submit++;
+  // @unsafe
+  { n_submit++; }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::WaitForSubmit() {
   std::unique_lock<std::mutex> lock(condition_mutex_);
   // Wait logic - can be enhanced with condition variable if needed
@@ -506,7 +478,7 @@ void RaftWorker::WaitForSubmit() {
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_apply_callback(std::function<void(const char*, int)> cb) {
   // @unsafe
   { this->callback_ = cb; }
@@ -526,7 +498,7 @@ void RaftWorker::register_apply_callback(std::function<void(const char*, int)> c
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_apply_callback_par_id(
     std::function<void(const char*&, int, int)> cb) {
   // @unsafe
@@ -547,7 +519,7 @@ void RaftWorker::register_apply_callback_par_id(
   }
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_leader_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
@@ -575,7 +547,7 @@ void RaftWorker::register_leader_callback_par_id_return(
            site_info_ ? site_info_->partition_id_ : -1);
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_follower_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
@@ -602,7 +574,7 @@ void RaftWorker::register_follower_callback_par_id_return(
            site_info_ ? site_info_->partition_id_ : -1);
 }
 
-// @safe - delegates to register_follower_callback_par_id_return
+// @unsafe - delegates to register_follower_callback_par_id_return
 void RaftWorker::register_apply_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
@@ -610,13 +582,13 @@ void RaftWorker::register_apply_callback_par_id_return(
   register_follower_callback_par_id_return(cb);
 }
 
-// @safe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
-int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
+// @unsafe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
+int RaftWorker::Next(int slot_id, janus::Command md) {
   int status = -1;
 
   // @unsafe
-  { // operator bool on shared_ptr (null check)
-    if (!cmd) {
+  { // null check on Command envelope
+    if (!md.has_value()) {
       Log_error("Received null command in Next()");
       return status;
     }
@@ -630,10 +602,13 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   int len = 0;
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
-  auto tpc_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
-  if (tpc_cmd && tpc_cmd->cmd_) {
+  auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
+  // tpc_cmd->cmd_ is Command; has_value() for null
+  // check; marshallable_cast<T>(Command&) overload handles the cast.
+  if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
     // Extract VecPieceData that contains the raw bytes
-    auto vpd = std::dynamic_pointer_cast<VecPieceData>(tpc_cmd->cmd_);
+    auto vpd = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(vpd != nullptr);
     if (vpd && vpd->sp_vec_piece_data_ && !vpd->sp_vec_piece_data_->empty()) {
       // Get the first SimpleCommand
       auto simple_cmd = (*vpd->sp_vec_piece_data_)[0];
@@ -664,11 +639,11 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
     return status;
   }
 
-#ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: Extract par_id from the committed entry's SimpleCommand::partition_id_
+  // Extract par_id from the committed entry's SimpleCommand::partition_id_.
   uint32_t par_id = 0;
-  if (tpc_cmd && tpc_cmd->cmd_) {
-    auto vpd_inner = std::dynamic_pointer_cast<VecPieceData>(tpc_cmd->cmd_);
+  if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
+    auto vpd_inner = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    verify(vpd_inner != nullptr);
     if (vpd_inner && vpd_inner->sp_vec_piece_data_ && !vpd_inner->sp_vec_piece_data_->empty()) {
       par_id = (*vpd_inner->sp_vec_piece_data_)[0]->partition_id_;
     }
@@ -702,25 +677,6 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
 
   int encoded_value = (*active_callback_ptr)(
       log, len, par_id, slot_id, un_replay_queue);
-#else
-  // MULTI-RAFT: Use site_info_ partition and global callbacks
-  uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
-  bool am_leader = IsLeader(par_id);
-
-  auto& active_callback = am_leader ? leader_callback_par_id_return_ : follower_callback_par_id_return_;
-
-  if (!active_callback) {
-    Log_error("[RAFT-CALLBACK] No %s callback registered for partition %d",
-              am_leader ? "leader" : "follower", par_id);
-    return status;
-  }
-
-  Log_debug("[RAFT-CALLBACK] Applying log at slot %d using %s callback",
-            slot_id, am_leader ? "LEADER" : "FOLLOWER");
-
-  int encoded_value = active_callback(
-      log, len, par_id, slot_id, un_replay_logs_);
-#endif
 
   status = encoded_value % 10;
   uint32_t timestamp = encoded_value / 10;
@@ -729,13 +685,8 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
       char* dest = static_cast<char*>(malloc(len));
       verify(dest != nullptr);
       memcpy(dest, log, len);
-#ifdef SINGLE_RAFT_INSTANCE
       un_replay_queue.push(std::make_tuple(timestamp, slot_id, status, len,
                                            static_cast<const char*>(dest)));
-#else
-      un_replay_logs_.push(std::make_tuple(timestamp, slot_id, status, len,
-                                           static_cast<const char*>(dest)));
-#endif
   }
 
   Log_debug("Raft applied log at slot %d: status=%d, timestamp=%u, role=%s, par_id=%d",
@@ -745,9 +696,8 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   } // end @unsafe block for const char* log
 }
 
-#ifdef SINGLE_RAFT_INSTANCE
 // SINGLE-RAFT: Per-partition callback registration methods
-// @safe
+// @unsafe
 void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
   leader_callbacks_by_partition_[par_id] = cb;
 
@@ -767,7 +717,7 @@ void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, waterma
   Log_info("[SINGLE-RAFT] Registered leader callback for partition %d", par_id);
 }
 
-// @safe
+// @unsafe
 void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
   follower_callbacks_by_partition_[par_id] = cb;
 
@@ -786,9 +736,8 @@ void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, water
 
   Log_info("[SINGLE-RAFT] Registered follower callback for partition %d", par_id);
 }
-#endif
 
-// @safe
+// @unsafe
 void RaftWorker::SubmitLoop() {
   std::unique_lock<std::mutex> lock(submit_mutex_);
   while (true) {

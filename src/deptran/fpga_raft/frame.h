@@ -17,7 +17,8 @@ class FpgaRaftFrame : public Frame {
   FpgaRaftCommo *commo_ = nullptr;
   /* TODO: have another class for common data */
   FpgaRaftServer *sch_ = nullptr;
-  Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
+  // removed `CreateExecutor` override —
+  // `FpgaRaftExecutor` class deleted; the virtual is never called.
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,
                                  int benchmark,
@@ -26,7 +27,7 @@ class FpgaRaftFrame : public Frame {
                                  shared_ptr<TxnRegistry> txn_reg) override;
   TxLogServer *CreateScheduler() override;
   Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::Option<rusty::Arc<PollThread>>()) override;
-  vector<rusty::Box<rrr::Service>> CreateRpcServices(uint32_t site_id,
+  vector<rrr::ServiceProxy> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
                                            rusty::Arc<rrr::PollThread> poll_thread_worker) override;
 };

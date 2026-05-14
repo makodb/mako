@@ -11,6 +11,7 @@
 #include "config.h"
 #include "./paxos/coordinator.h"
 #include "concurrentqueue.h"
+#include "mako_commands.h"
 
 namespace janus {
 
@@ -24,572 +25,319 @@ namespace janus {
 		Log_info("commit id %ld and length %d from %s", cid, length, custom);
 	}
 
-	inline size_t track_write(int fd, const void* p, size_t len, int offset){
-		const char* x = (const char*)p;
-		ssize_t sz = ::write(fd, x + offset, len - offset);
-		if(sz > len - offset || sz <= 0){
-			//std::cout << "gahdamn " <<  sz << std::endl;
-			//Log_info("Gahdamn, speed it %lld", sz);
-			return 0;
-		}
-		return sz;
-	}
+	// removed `class SubmitPool` (~120 LOC) —
+	// the only user was the `SubmitPool* submit_pool = nullptr;` field
+	// on `PaxosWorker`, and that field was always nullptr (the only
+	// assignment, `submit_pool = new SubmitPool();`, was already
+	// commented out in `SetupBase()`).  The class itself was a small
+	// pthread-based job-queue thread pool; nothing in the rest of the
+	// codebase referenced it.
 
-	class SubmitPool {
-		private:
-			struct start_submit_pool_args {
-				SubmitPool* subpool;
-			};
-
-			int n_;
-			std::list<std::function<void()>*>* q_;
-			pthread_cond_t not_empty_;
-			pthread_mutex_t m_;
-			pthread_mutex_t run_;
-			pthread_t th_;
-			bool should_stop_{false};
-
-			static void* start_thread_pool(void* args) {
-				start_submit_pool_args* t_args = (start_submit_pool_args *) args;
-				t_args->subpool->run_thread();
-				delete t_args;
-				pthread_exit(nullptr);
-				return nullptr;
-			}
-			void run_thread() {
-				for (;;) {
-					function<void()>* job = nullptr;
-					Pthread_mutex_lock(&m_);
-					while (q_->empty()) {
-						Pthread_cond_wait(&not_empty_, &m_);
-					}
-					Pthread_mutex_lock(&run_);
-					job = q_->front();
-					q_->pop_front();
-					Pthread_mutex_unlock(&m_);
-					if (job == nullptr) {
-						Pthread_mutex_unlock(&run_);
-						break;
-					}
-					(*job)();
-					delete job;
-					Pthread_mutex_unlock(&run_);
-				}
-			}
-			bool try_pop(std::function<void()>** t) {
-				bool ret = false;
-				if (!q_->empty()) {
-					ret = true;
-					*t = q_->front();
-					q_->pop_front();
-				}
-				return ret;
-			}
-
-		public:
-			SubmitPool()
-				: n_(1), th_(0), q_(new std::list<std::function<void()>*>), not_empty_(), m_(), run_() {
-					verify(n_ >= 0);
-					Pthread_mutex_init(&m_, nullptr);
-					Pthread_mutex_init(&run_, nullptr);
-					Pthread_cond_init(&not_empty_, nullptr);
-					for (int i = 0; i < n_; i++) {
-						start_submit_pool_args* args = new start_submit_pool_args();
-						args->subpool = this;
-						Pthread_create(&th_, nullptr, SubmitPool::start_thread_pool, args);
-					}
-				}
-			SubmitPool(const SubmitPool&) = delete;
-  SubmitPool& operator=(const SubmitPool&) = delete;
-  ~SubmitPool() {
-    should_stop_ = true;
-    for (int i = 0; i < n_; i++) {
-      Pthread_mutex_lock(&m_);
-      q_->push_back(nullptr); //death pill
-      Pthread_cond_signal(&not_empty_);
-      Pthread_mutex_unlock(&m_);
-    }
-    for (int i = 0; i < n_; i++) {
-      Pthread_join(th_, nullptr);
-    }
-    Log_debug("%s: enter in wait_for_all", __FUNCTION__);
-    wait_for_all();
-    Pthread_cond_destroy(&not_empty_);
-    Pthread_mutex_destroy(&m_);
-    Pthread_mutex_destroy(&run_);
-    delete q_;
-  }
-  void wait_for_all() {
-    for (int i = 0; i < n_; i++) {
-      function<void()>* job;
-      Pthread_mutex_lock(&m_);
-      Pthread_mutex_lock(&run_);
-      while (try_pop(&job)) {
-        if (job != nullptr) {
-          (*job)();
-          delete job;
-        }
-      }
-      Pthread_mutex_unlock(&m_);
-      Pthread_mutex_unlock(&run_);
-    }
-  }
-  int add(const std::function<void()>& f) {
-    if (should_stop_) {
-      return -1;
-    }
-    Pthread_mutex_lock(&m_);
-    q_->push_back(new function<void()>(f));
-    Pthread_cond_signal(&not_empty_);
-    Pthread_mutex_unlock(&m_);
-    return 0;
-  }
-};
-
-class BulkPrepareLog : public Marshallable {
+// TypeList-derived kind.
+class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
+                                                MakoCommands> {
   public:
   vector<pair<uint32_t,slotid_t>> min_prepared_slots;
   uint32_t leader_id;
   int epoch;
 
-  BulkPrepareLog(): Marshallable(MarshallDeputy::CMD_BLK_PREP_PXS){
+  BulkPrepareLog() = default;
 
+  void save(BinaryWriteArchive& ar) const {
+    ar << static_cast<int32_t>(min_prepared_slots.size());
+    for (auto i : min_prepared_slots) ar << i;
+    ar << leader_id;
+    ar << epoch;
   }
 
-  Marshal& to_marshal(Marshal& m) const override {
-      m << (int32_t) min_prepared_slots.size();
-      for(auto i : min_prepared_slots){
-          m << i;
-      }
-      m << leader_id;
-      m << epoch;
-      return m;
-  }
-
-  Marshal& from_marshal(Marshal& m) override {
+  void load(BinaryReadArchive& ar) {
     int32_t sz;
-    m >> sz;
-    for(int i = 0; i < sz; i++){
-      pair<uint32_t,slotid_t> pr;
-      m >> pr;
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
+      pair<uint32_t, slotid_t> pr;
+      ar >> pr;
       min_prepared_slots.push_back(pr);
     }
-    m >> leader_id;
-    m >> epoch;
-    return m;
+    ar >> leader_id;
+    ar >> epoch;
   }
-
 };
 
-class PaxosPrepCmd : public Marshallable {
+// TypeList-derived kind.
+class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
   public:
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   int leader_id;
 
-  PaxosPrepCmd(): Marshallable(MarshallDeputy::CMD_PREP_PXS){
+  PaxosPrepCmd() = default;
 
+  // NOTE: preserves the legacy bug-or-feature where the second size
+  // prefix is `slots.size()` instead of `ballots.size()` — wire
+  // format byte-for-byte identical.
+  void save(BinaryWriteArchive& ar) const {
+    ar << static_cast<int32_t>(slots.size());
+    for (auto i : slots) ar << i;
+    ar << static_cast<int32_t>(slots.size());
+    for (auto i : ballots) ar << i;
+    ar << leader_id;
   }
 
-  Marshal& to_marshal(Marshal& m) const override {
-      m << (int32_t) slots.size();
-      for(auto i : slots){
-          m << i;
-      }
-      m << (int32_t) slots.size();
-      for(auto i : ballots){
-          m << i;
-      }
-      m << leader_id;
-      return m;
-  }
-
-  Marshal& from_marshal(Marshal& m) override {
+  void load(BinaryReadArchive& ar) {
     int32_t sz;
-    m >> sz;
-    for(int i = 0; i < sz; i++){
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
       slotid_t x;
-      m >> x;
+      ar >> x;
       slots.push_back(x);
     }
-    m >> sz;
-    for(int i = 0; i < sz; i++){
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
       ballot_t x;
-      m >> x;
+      ar >> x;
       ballots.push_back(x);
     }
-    m >> leader_id;
-    return m;
+    ar >> leader_id;
   }
-
 };
 
-class HeartBeatLog : public Marshallable {
+// TypeList-derived kind.
+class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
   public:
   uint32_t leader_id;
   int epoch;
 
-  HeartBeatLog(): Marshallable(MarshallDeputy::CMD_HRTBT_PXS){
+  HeartBeatLog() = default;
 
+  void save(BinaryWriteArchive& ar) const {
+    ar << leader_id;
+    ar << epoch;
   }
 
-  Marshal& to_marshal(Marshal& m) const override {
-      m << leader_id;
-      m << epoch;
-      return m;
+  void load(BinaryReadArchive& ar) {
+    ar >> leader_id;
+    ar >> epoch;
   }
-
-  Marshal& from_marshal(Marshal& m) override {
-    m >> leader_id;
-    m >> epoch;
-    return m;
-  }
-
 };
 
-class SyncLogRequest : public Marshallable {
+// TypeList-derived kind.
+class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
+                                                MakoCommands> {
   public:
     int leader_id;
     ballot_t epoch;
     vector<slotid_t> sync_commit_slot;
-    SyncLogRequest(): Marshallable(MarshallDeputy::CMD_SYNCREQ_PXS){
+    SyncLogRequest() = default;
 
-    }
-
-    Marshal& to_marshal(Marshal& m) const override {
-      m << leader_id;
-      m << epoch;
-      m << (int32_t)sync_commit_slot.size();
-      for(int i = 0; i < sync_commit_slot.size(); i++){
-        m << sync_commit_slot[i];
+    void save(BinaryWriteArchive& ar) const {
+      ar << leader_id;
+      ar << epoch;
+      ar << static_cast<int32_t>(sync_commit_slot.size());
+      for (size_t i = 0; i < sync_commit_slot.size(); i++) {
+        ar << sync_commit_slot[i];
       }
-      return m;
     }
 
-    Marshal& from_marshal(Marshal& m) override {
-      m >> leader_id;
-      m >> epoch;
+    void load(BinaryReadArchive& ar) {
+      ar >> leader_id;
+      ar >> epoch;
       int32_t sz;
-      m >> sz;
-      for(int i = 0; i < sz; i++){
+      ar >> sz;
+      for (int i = 0; i < sz; i++) {
         slotid_t x;
-        m >> x;
+        ar >> x;
         sync_commit_slot.push_back(x);
       }
-      return m;
     }
 };
 
-class SyncLogResponse : public Marshallable {
+// migrated from Marshallable to Serializable.
+// Wire payload preserved byte-for-byte:
+//   int32_t sync_data.size() | N x MarshallDeputy bytes
+//   int32_t missing_slots.size()
+//   per missing_slots row: int32_t inner.size() | M x slotid_t
+// The nested `vector<shared_ptr<janus::Command>>` field uses the
+// prep `operator<<` / `operator>>` overloads for
+// MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
+// layout as the legacy `m << *sync_data[i]` / `m >> *x`.
+class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
+                                                 MakoCommands> {
   public:
-    vector<shared_ptr<MarshallDeputy>> sync_data;
+    vector<shared_ptr<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
-    SyncLogResponse(): Marshallable(MarshallDeputy::CMD_SYNCRESP_PXS){
+    SyncLogResponse() = default;
 
-    }
-
-    Marshal& to_marshal(Marshal& m) const override {
-      m << (int32_t)sync_data.size();
-      for(int i = 0; i < sync_data.size(); i++){
-        m << *sync_data[i];
+    void save(BinaryWriteArchive& ar) const {
+      ar << static_cast<int32_t>(sync_data.size());
+      for (size_t i = 0; i < sync_data.size(); i++) {
+        ar << *sync_data[i];
       }
-      m << (int32_t)missing_slots.size();
-      for(int i = 0; i < missing_slots.size(); i++){
-        m << (int32_t)missing_slots[i].size();
-        for(int j = 0; j < missing_slots[i].size(); j++){
-          m << missing_slots[i][j];
+      ar << static_cast<int32_t>(missing_slots.size());
+      for (size_t i = 0; i < missing_slots.size(); i++) {
+        ar << static_cast<int32_t>(missing_slots[i].size());
+        for (size_t j = 0; j < missing_slots[i].size(); j++) {
+          ar << missing_slots[i][j];
         }
       }
-      return m;
     }
 
-    Marshal& from_marshal(Marshal& m) override {
+    void load(BinaryReadArchive& ar) {
       int32_t sz;
-      m >> sz;
-      for(int i = 0; i < sz; i++){
-        MarshallDeputy* x = new MarshallDeputy;
-        m >> *x;
-        auto shrd_ptr = shared_ptr<MarshallDeputy>(x);
-        sync_data.push_back(shrd_ptr);
+      ar >> sz;
+      for (int i = 0; i < sz; i++) {
+        auto x = std::make_shared<janus::Command>();
+        ar >> *x;
+        sync_data.push_back(std::move(x));
       }
-      m >> sz;
-      for(int i = 0; i < sz; i++){
+      ar >> sz;
+      for (int i = 0; i < sz; i++) {
         int32_t sz1;
-        m >> sz1;
+        ar >> sz1;
         vector<slotid_t> cur;
-        for(int j = 0; j < sz1; j++){
+        for (int j = 0; j < sz1; j++) {
           slotid_t x;
-          m >> x;
+          ar >> x;
           cur.push_back(x);
         }
-        missing_slots.push_back(cur);
-      } 
-      return m;
+        missing_slots.push_back(std::move(cur));
+      }
     }
 };
 
-class SyncNoOpRequest : public Marshallable{
+// TypeList-derived kind.
+class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
+                                                 MakoCommands> {
   public:
   int leader_id;
   ballot_t epoch;
   vector<slotid_t> sync_slots;
-  SyncNoOpRequest(): Marshallable(MarshallDeputy::CMD_SYNCNOOP_PXS){
+  SyncNoOpRequest() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
-    m << leader_id;
-    m << epoch;
-    m << (int32_t)sync_slots.size();
-    for(int i = 0; i < sync_slots.size(); i++){
-      m << sync_slots[i];
+  void save(BinaryWriteArchive& ar) const {
+    ar << leader_id;
+    ar << epoch;
+    ar << static_cast<int32_t>(sync_slots.size());
+    for (size_t i = 0; i < sync_slots.size(); i++) {
+      ar << sync_slots[i];
     }
-    return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
-    m >> leader_id;
-    m >> epoch;
+  void load(BinaryReadArchive& ar) {
+    ar >> leader_id;
+    ar >> epoch;
     int32_t sz;
-    m >> sz;
-    for(int i = 0; i < sz; i++){
+    ar >> sz;
+    for (int i = 0; i < sz; i++) {
       slotid_t x;
-      m >> x;
+      ar >> x;
       sync_slots.push_back(x);
     }
-    return m;
   }
 };
 
 
-class LogEntry : public Marshallable {
+// migrated from TypedPaxosLogEnvelopeAdapter
+// to Serializable. Wire format byte-for-byte preserved:
+//   int length
+//   std::string log_entry-equivalent bytes
+// (the shared_ptr_apprch=1 fast path that copies operation_test bytes
+// into a temporary std::string is reproduced inside save()).
+//
+// 1 cleanup: deleted the unused `bypass_to_socket_` /
+// `entity_size` / `write_to_fd` / `length_as_v64` / `operation_` /
+// `len_v64` members. They were a zero-copy fast path that no caller
+// ever enabled; only `length`, `log_entry`, and `operation_test` are
+// actually used by save/load.
+class LogEntry : public rrr::Serializable<LogEntry, MakoCommands> {
 public:
-  char* operation_ = nullptr;
   int length = 0;
   std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
   shared_ptr<char> operation_test;
-  mutable char len_v64[9];
 
-  LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = false;
-  }
+  LogEntry() = default;
 
-  virtual ~LogEntry() {
-    if (operation_ != nullptr) delete operation_;
-    operation_ = nullptr;
-    //free(operation_test.get());
-  }
-
-  virtual Marshal& to_marshal(Marshal&) const override;
-  virtual Marshal& from_marshal(Marshal&) override;
-  size_t entity_size() const override {
-    return sizeof(int) + length_as_v64() + length;
-  }
-
-  size_t length_as_v64() const {
-    v64 v_len = length;
-    size_t bsize = rrr::SparseInt::dump(v_len.get(), len_v64);
-    //Log_info("size of v64 obj is %d", bsize);
-    return bsize;
-  }
-
-  size_t write_to_fd(int fd, size_t written_to_socket) const override {
-    size_t sz = 0, prev = written_to_socket;
-    //Log_info("stepping here, writing length");
-    if(written_to_socket < sizeof(int)){
-      sz = track_write(fd, &length, sizeof(int), written_to_socket);
-      if(sz > 0)written_to_socket += sz;
-      assert(sz >= 0);
-      if(written_to_socket < sizeof(int))return written_to_socket - prev;
-    }
-    //Log_info("stepping here, writing length_as_v64");
-    size_t to_write = length_as_v64();
-    if(written_to_socket < sizeof(int) + to_write){
-      sz = track_write(fd, len_v64, to_write, written_to_socket - sizeof(int));
-      if(sz > 0)written_to_socket += sz;
-      assert(sz >= 0);
-      if(written_to_socket < sizeof(int) + to_write)return written_to_socket - prev;
-    }
-    //Log_info("stepping here, writing data");
-    if(written_to_socket < sizeof(int) + to_write + length) {
-      if (true) {
-        sz = track_write(fd, operation_test.get(), length, written_to_socket - sizeof(int) - to_write);
-      } else {
-        sz = track_write(fd, log_entry.c_str(), length, written_to_socket - sizeof(int) - to_write);
-        //sz += blocking_write(fd, log_entry.c_str(), length);
-      }
-      if(sz > 0)written_to_socket += sz;
-      assert(sz >= 0);
-      if(written_to_socket < sizeof(int) + to_write + length)return written_to_socket - prev;
-    }
-    //Log_info("stepping here, written data entirely %lld, %lld", written_to_socket, entity_size());
-    assert(written_to_socket == entity_size());
-    assert(written_to_socket - prev >= 0);
-    return written_to_socket - prev;
-  }
-
-  // void reset_write_offsets() override {
-  //         written_to_socket = 0;
-          
-  // }
+  // Serializable interface. Implementations live in
+  // paxos_worker.cc — they reference the file-static `shared_ptr_apprch`
+  // flag that gates the operation_test-vs-log_entry encoding choice.
+  void save(BinaryWriteArchive& ar) const;
+  void load(BinaryReadArchive& ar);
 };
-
-/*
-inline rrr::Marshal& operator<<(rrr::Marshal &m, const LogEntry &cmd) {
-  m << cmd.length;
-  m << cmd.log_entry;
-  return m;
-}
-
-inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
-  m >> cmd.length;
-  m >> cmd.log_entry;
-  return m;
-}
-*/
-class BulkPaxosCmd : public  Marshallable {
+// migrated from TypedPaxosLogEnvelopeAdapter
+// to Serializable. Wire format byte-for-byte preserved:
+//   int32_t leader_id
+//   int32_t slots.size() | N x slotid_t
+//   int32_t ballots.size() | N x ballot_t
+//   int32_t cmds.size() | N x MarshallDeputy bytes
+// The nested MarshallDeputies use the Phase 3f-prep `operator<<` /
+// `operator>>` overloads on BinaryWriteArchive / BinaryReadArchive —
+// same byte layout as legacy `m << *cmds[i]` / `m >> *cmds[i]`.
+//
+// 1 cleanup: deleted the unused `bypass_to_socket_` /
+// `entity_size` / `serialize_slots_ballots` / `write_to_fd` /
+// `serialized_slots` members. They were a zero-copy fast path that
+// no caller ever enabled.
+class BulkPaxosCmd : public rrr::Serializable<BulkPaxosCmd, MakoCommands> {
 public:
   int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
-  vector<shared_ptr<MarshallDeputy>> cmds{};
-  mutable char *serialized_slots = nullptr;
+  vector<shared_ptr<janus::Command>> cmds{};
 
-  BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = false;
-  }
-  virtual ~BulkPaxosCmd() {
+  BulkPaxosCmd() = default;
+  ~BulkPaxosCmd() {
       slots.clear();
       ballots.clear();
       cmds.clear();
   }
-  Marshal& to_marshal(Marshal& m) const override {
-      m << (int32_t) leader_id;
-      m << (int32_t) slots.size();
-      for(auto i : slots){
-          m << i;
+
+  void save(BinaryWriteArchive& ar) const {
+      ar << static_cast<int32_t>(leader_id);
+      ar << static_cast<int32_t>(slots.size());
+      for (auto i : slots) {
+          ar << i;
       }
-      m << (int32_t) ballots.size();
-      for(auto i : ballots){
-          m << i;
+      ar << static_cast<int32_t>(ballots.size());
+      for (auto i : ballots) {
+          ar << i;
       }
-      m << (int32_t) cmds.size();
-      for (auto sp : cmds) {
-        auto p = sp.get();
-          m << *p;
+      ar << static_cast<int32_t>(cmds.size());
+      for (const auto& sp : cmds) {
+          ar << *sp;
       }
-      return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
-      //return m;
+  void load(BinaryReadArchive& ar) {
       int32_t szs, szb, szc;
-      m >> leader_id;
-      m >> szs;
+      ar >> leader_id;
+      ar >> szs;
       for (int i = 0; i < szs; i++) {
           slotid_t x;
-          m >> x;
+          ar >> x;
           slots.push_back(x);
       }
-      //return m;
-      m >> szb;
-      // Read exactly the number of ballots that were serialized
+      ar >> szb;
+      // Read exactly the number of ballots that were serialized.
       for (int i = 0; i < szb; i++) {
           ballot_t x;
-          m >> x;
+          ar >> x;
           ballots.push_back(x);
       }
-      m >> szc;
+      ar >> szc;
       for (int i = 0; i < szc; i++) {
-        auto x = new MarshallDeputy;
-        m >> *x;
-        auto sp_md = shared_ptr<MarshallDeputy>(x);
-        cmds.push_back(sp_md);
+          auto sp_md = std::make_shared<janus::Command>();
+          ar >> *sp_md;
+          cmds.push_back(std::move(sp_md));
       }
-      return m;
   }
-
-  size_t entity_size() const override {
-    size_t sz = 0;
-    sz += 4*sizeof(int32_t);
-    for(int i = 0; i < slots.size(); i++){
-      sz += sizeof(slotid_t);
-      sz += sizeof(ballot_t);
-      sz += cmds[i].get()->entity_size();
-    }
-    return sz;
-  }
-
-  size_t serialize_slots_ballots() const {
-    int32_t batch = slots.size();
-    size_t total_sz = 4*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
-    if(serialized_slots != nullptr){
-      return total_sz;
-    }
-    serialized_slots = (char*)malloc(total_sz*sizeof(char));
-    int wrt = 0;
-    memcpy(serialized_slots + wrt, &leader_id, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    for(auto i : slots){
-      memcpy(serialized_slots + wrt, &i, sizeof(slotid_t));
-      wrt += sizeof(slotid_t);
-    }
-    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    for(auto i : ballots){
-      memcpy(serialized_slots + wrt, &i, sizeof(ballot_t));
-      wrt += sizeof(ballot_t);
-    }
-    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
-    wrt += sizeof(int32_t);
-    return total_sz;
-  }
-
-  size_t write_to_fd(int fd, size_t written_to_socket) const override {
-    size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
-    //Log_info("written here %d %d", to_write, written_to_socket);
-    if(written_to_socket < to_write){
-      sz = track_write(fd, serialized_slots, to_write, written_to_socket);
-      if(sz > 0){
-        written_to_socket += sz;
-      }
-      verify(sz >= 0);
-      if(written_to_socket < to_write)return written_to_socket - prev;
-    }
-    //Log_info("written here %d", written_to_socket);
-    for (auto cmdsp : cmds) {
-      to_write += cmdsp.get()->entity_size();
-      if(written_to_socket >= to_write)continue;
-      sz = cmdsp.get()->write_to_fd(fd, written_to_socket - (to_write - cmdsp.get()->entity_size()));
-      //std::cout << "should have written bytes "<< sz << std::endl;
-      if(sz > 0){
-        written_to_socket += sz;
-      }
-      verify(sz >= 0);
-      //Log_info("written here %d %d", written_to_socket, entity_size());
-      verify(written_to_socket - prev >= 0);
-      if(written_to_socket < to_write)return written_to_socket - prev;
-    }
-    //free(serialized_slots);
-    //Log_info("written to socket %d  and size is %d", written_to_socket, entity_size());
-    verify(written_to_socket == entity_size());
-    return written_to_socket - prev;
-  }
-
-  // void reset_write_offsets() override {
-	 //  written_to_socket = 0;
-	 //  for(auto cmdsp : cmds){
-	 //     cmdsp.get()->reset_write_offsets();
-	 //  }
-  // }
 };
 
 class PaxosWorker {
 private:
-  inline void _Submit(shared_ptr<Marshallable>);
-  inline void _BulkSubmit(shared_ptr<Marshallable>, int);
+  // take const janus::Command&;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  inline void _Submit(const janus::Command&);
+  inline void _BulkSubmit(const janus::Command&, int);
 
   std::mutex finish_mutex{};
   std::condition_variable finish_cond{};
@@ -606,26 +354,31 @@ public:
   std::atomic<int> n_current{0};  // requests sent out
   std::atomic<int> n_submit{0};
   std::atomic<int> n_tot{0};
-  SubmitPool* submit_pool = nullptr;
+  // removed `SubmitPool* submit_pool = nullptr;`
+  // — always nullptr; the assignment was commented out and the
+  // class itself is now deleted.
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
   rrr::Server* rpc_server_ = nullptr;
-  base::ThreadPool* thread_pool_g = nullptr;
-  // for microbench
-  std::atomic<int> submit_num{0};
+  rusty::Arc<base::ThreadPool> thread_pool_g{nullptr};
+  // removed `std::atomic<int> submit_num{0};`
+  // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
+  // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
+  // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place: it
+  // is initialized via `Config::get_tot_req()` at worker construction
+  // and a follow-up sweep can chase the Config wiring.
   int tot_num = 0;
-  int submit_tot_sec_ = 0;
-  int submit_tot_usec_ = 0;
   int cur_epoch;
   int is_leader;
-  int bulk_writer = 0;
-  int bulk_reader = 0;
+  // removed `int bulk_writer = 0;` and
+  // `int bulk_reader = 0;` — only used inside the now-deleted
+  // `AddAcceptNc` / `StartReadAcceptNc` NC-batching pair.
 
 
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   rrr::Server* hb_rpc_server_ = nullptr;
-  base::ThreadPool* hb_thread_pool_g = nullptr;
+  rusty::Arc<base::ThreadPool> hb_thread_pool_g{nullptr};
 
   Config::SiteInfo* site_info_ = nullptr;
   std::queue<std::tuple<int, int, int, int, const char *>> un_replay_logs_ ;  // timestamp, slot_id, status, len, log
@@ -635,19 +388,19 @@ public:
   std::recursive_mutex mtx_worker_submit{};
   std::mutex condition_mutex;
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
-  static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
-  moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
-  // Reduced from 1,000,000 to 100,000 (10x bulkBatchCount of 10,000)
-  // 1M entries × 16 bytes = 16MB per PaxosWorker, which caused memory explosion
-  // when running multiple shards (12 workers × 16MB = 192MB just for this vector)
-  vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(100000, nullptr);
-  std::mutex nc_submit_l_;
+  // removed `static std::queue<shared_ptr<Coordinator>>
+  // coo_queue_nc;` — declared and defined but never read or written
+  // anywhere outside commented-out code in the now-deleted
+  // `StartReadAcceptNc` / `AddAcceptNc` pair.
+  // removed `replay_queue`, `all_coords`,
+  // `bulkops_th_`, `replay_th_`, `stop_replay_flag` — all only fed
+  // the dead `AddAcceptNc` / `StartReadAcceptNc` / `AddReplayEntry`
+  // / `StartReplayRead` paths.
+  // removed `std::mutex nc_submit_l_;` —
+  // declared but never locked anywhere outside commented-out code.
   std::recursive_mutex election_state_lock;
   const unsigned int cnt = bulkBatchCount;
-  pthread_t bulkops_th_;
-  pthread_t replay_th_;
   bool stop_flag = false;
-  bool stop_replay_flag = true;
 
   void SetupHeartbeat();
   void InitQueueRead();
@@ -656,22 +409,23 @@ public:
   void SetupService();
   void SetupCommo();
   void ShutDown();
-  int Next(int,shared_ptr<Marshallable>);
+  // take MarshallDeputy (matches RegLearnerAction
+  // signature in deptran/scheduler.h).
+  int Next(int, janus::Command);
   void WaitForSubmit();
   void WaitForNoops();
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);
   void AddAccept(shared_ptr<Coordinator>);
-  void AddAcceptNc(shared_ptr<Coordinator>);
-  void AddReplayEntry(Marshallable&);
+  // removed `AddAcceptNc`, `AddReplayEntry`,
+  // `StartReplayRead`, `StartReadAcceptNc` declarations — see
+  // paxos_worker.cc retirement comments.
   void submitJob(rusty::Arc<Job>);
-  int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
-  int SendHeartBeat(shared_ptr<HeartBeatLog>);
+  // removed `SendBulkPrepare`, `SendHeartBeat`,
+  // `SendSyncNoOpLog` declarations — definitions deleted; see
+  // paxos_worker.cc retirement comments.
   int SendSyncLog(shared_ptr<SyncLogRequest>);
-  int SendSyncNoOpLog(shared_ptr<SyncNoOpRequest>);
   static void* StartReadAccept(void*);
-  static void* StartReplayRead(void*);
-  static void* StartReadAcceptNc(void*);
   PaxosWorker();
   ~PaxosWorker();
 
@@ -837,3 +591,12 @@ public:
 };
 
 } // namespace janus
+
+//)` (the bridge overload in
+// marshal_serializable_bridge.hpp routes Serializable T through
+// `wrap_serializable`); cast sites use `marshallable_cast<T>` (also
+// bridged). Phase 5a-1 cleanup deleted the unused
+// TypedPaxosLogEnvelopeAdapter template and the dead
+// `bypass_to_socket_` / `entity_size` / `write_to_fd` /
+// `length_as_v64` / `serialize_slots_ballots` fast-path machinery on
+// LogEntry and BulkPaxosCmd.)

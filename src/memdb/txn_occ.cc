@@ -8,6 +8,12 @@
 
 namespace mdb {
 
+using rrr::Log_debug;
+using rrr::Log_info;
+using rrr::Log_warn;
+using rrr::Log_error;
+
+
 TxnOCC::TxnOCC(const TxnMgr *mgr,
                txn_id_t txnid,
                const std::vector<std::string> &table_names) : Txn2PL(mgr,

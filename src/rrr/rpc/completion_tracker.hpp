@@ -1,5 +1,19 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
 /**
- * Request Completion Tracking for RPC (Phase 4.3)
+ * Request Completion Tracking for RPC
  *
  * Tracks completed request XIDs on the server side to allow clients
  * to query if a request completed after reconnection.
@@ -16,13 +30,13 @@
  * Thread-safe via rusty::Mutex.
  */
 
-#pragma once
 
-#include <cstdint>
-#include <unordered_set>
-#include <list>
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
+
+
+
+
 #include "idempotency.hpp"
 
 namespace rrr {
@@ -125,7 +139,7 @@ class CompletionTracker {
     rusty::Mutex<LruList> lru_list_;
 
     // Set for O(1) lookup
-    rusty::Mutex<std::unordered_set<int64_t>> completed_set_;
+    rusty::Mutex<rusty::HashSet<int64_t>> completed_set_;
 
     // Statistics
     rusty::Cell<uint64_t> total_tracked_{0};
@@ -136,7 +150,7 @@ class CompletionTracker {
 public:
     // @safe - Constructor
     explicit CompletionTracker(const CompletionTrackerConfig& config = CompletionTrackerConfig::defaults())
-        : config_(config), lru_list_(LruList{}), completed_set_(std::unordered_set<int64_t>{}) {}
+        : config_(config), lru_list_(LruList{}), completed_set_(rusty::HashSet<int64_t>{}) {}
 
     // @safe - Check if tracking is enabled
     bool enabled() const {
@@ -168,7 +182,7 @@ public:
         auto set_guard = completed_set_.lock().unwrap();
 
         // Skip if already tracked
-        if (set_guard->count(xid) > 0) {
+        if (set_guard->contains(xid)) {
             return;
         }
 
@@ -177,7 +191,7 @@ public:
         // Evict if at capacity
         while (list_guard->size() >= cfg.max_entries && !list_guard->empty()) {
             auto& oldest = list_guard->back();
-            set_guard->erase(oldest.xid);
+            set_guard->remove(oldest.xid);
             list_guard->pop_back();
             evictions_.set(evictions_.get() + 1);
         }
@@ -206,7 +220,7 @@ public:
         auto set_guard = completed_set_.lock().unwrap();
 
         // Quick check if XID exists
-        if (set_guard->count(xid) == 0) {
+        if (!set_guard->contains(xid)) {
             return false;
         }
 
@@ -217,7 +231,7 @@ public:
             if (it->xid == xid) {
                 if (it->is_expired(current_time_ms, cfg.ttl_ms)) {
                     // Expired - remove it
-                    set_guard->erase(xid);
+                    set_guard->remove(xid);
                     list_guard->erase(it);
                     return false;
                 }
@@ -236,11 +250,11 @@ public:
     bool remove(int64_t xid) {
         auto set_guard = completed_set_.lock().unwrap();
 
-        if (set_guard->count(xid) == 0) {
+        if (!set_guard->contains(xid)) {
             return false;
         }
 
-        set_guard->erase(xid);
+        set_guard->remove(xid);
 
         auto list_guard = lru_list_.lock().unwrap();
         for (auto it = list_guard->begin(); it != list_guard->end(); ++it) {
@@ -269,7 +283,7 @@ public:
     // @safe - Get number of currently tracked XIDs
     size_t size() const {
         auto guard = completed_set_.lock().unwrap();
-        return guard->size();
+        return guard->len();
     }
 
     // @safe - Get total XIDs ever tracked
@@ -326,7 +340,7 @@ public:
         auto it = list_guard->begin();
         while (it != list_guard->end()) {
             if (it->is_expired(current_time_ms, cfg.ttl_ms)) {
-                set_guard->erase(it->xid);
+                set_guard->remove(it->xid);
                 it = list_guard->erase(it);
                 evicted++;
             } else {

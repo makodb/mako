@@ -1,7 +1,18 @@
 #pragma once
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
 /**
- * Connection Health Metrics (Phase 3.2)
+ * Connection Health Metrics
  *
  * Tracks request, data transfer, connection lifecycle, and latency metrics
  * for monitoring connection health and performance.
@@ -13,8 +24,9 @@
  */
 
 #include <rusty/cell.hpp>
-#include <cstdint>
-#include <limits>
+
+
+
 
 namespace rrr {
 

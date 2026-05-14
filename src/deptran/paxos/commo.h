@@ -32,77 +32,64 @@ class MultiPaxosCommo : public Communicator {
   int current_proxy_batch_idx = 0;
   bool is_broadcast_syncLog = false;
 
-  shared_ptr<PaxosPrepareQuorumEvent>
-  BroadcastPrepare(parid_t par_id,
-                   slotid_t slot_id,
-                   ballot_t ballot);
-  void BroadcastPrepare(parid_t par_id,
-                        slotid_t slot_id,
-                        ballot_t ballot,
-                        const function<void(rusty::Arc<Future>)> &callback);
+  // removed `BroadcastPrepare(parid, slot,
+  // ballot)` declaration — only call site was the now-deleted
+  // `CoordinatorMultiPaxos::Prepare()`; body was a `verify(0)` shell.
+  // removed deprecated callback-style
+  // `void BroadcastPrepare(parid_t, slotid_t, ballot_t, callback)` —
+  // body had `verify(0);` and was mostly commented out; no live
+  // callers anywhere.
   shared_ptr<PaxosAcceptQuorumEvent>
   BroadcastAccept(parid_t par_id,
                   slotid_t slot_id,
                   ballot_t ballot,
-                  shared_ptr<Marshallable> cmd);
-  void BroadcastAccept(parid_t par_id,
-                       slotid_t slot_id,
-                       ballot_t ballot,
-                       shared_ptr<Marshallable> cmd,
-                       const function<void(rusty::Arc<Future>)> &callback);
+                  const janus::Command& cmd);
+  // removed deprecated callback-style
+  // `void BroadcastAccept(parid_t, slotid_t, ballot_t, cmd,
+  // callback)` — same shape as the deprecated BroadcastPrepare.
   void ForwardToLearner(parid_t par_id,
                         uint64_t slot,
                         ballot_t ballot,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         const std::function<void(uint64_t, ballot_t)>& cb);
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
                        const ballot_t ballot,
-                       const shared_ptr<Marshallable> cmd);
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastBulkPrepare(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        std::function<void(ballot_t, int)> cb) override;
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastHeartBeat(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        const std::function<void(ballot_t, int)>& cb) override;
-
-  virtual shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastSyncNoOps(parid_t par_id,
-                    shared_ptr<Marshallable> cmd,
-                    const std::function<void(ballot_t, int)>& cb) override;
+                       const janus::Command& cmd);
+  // removed `BroadcastBulkPrepare`,
+  // `BroadcastHeartBeat`, `BroadcastSyncNoOps` — became dead in
+  // 25 when the matching `PaxosWorker::SendHeartBeat` /
+  // `SendBulkPrepare` / `SendSyncNoOpLog` senders went away.
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
-                        const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb) override;
+                        const janus::Command& cmd,
+                        const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb) override;
 
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncCommit(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         const std::function<void(ballot_t, int)>& cb) override;
 
   shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkAccept(parid_t par_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         const std::function<void(ballot_t, int)>& cb);
   shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkDecide(parid_t par_id,
-                           const shared_ptr<Marshallable> cmd,
+                           const janus::Command& cmd,
                            const std::function<void(ballot_t, int)>& cb);
 
-  shared_ptr<PaxosAcceptQuorumEvent>
-    BroadcastPrepare2(parid_t par_id,
-                      const shared_ptr<Marshallable> cmd,
-                      const std::function<void(MarshallDeputy, ballot_t, int)>& cb);
+  // removed `BroadcastPrepare2` declaration
+  // — only call site was the now-deleted
+  // `BulkCoordinatorMultiPaxos::Prepare()`; the body was already a
+  // `verify(0)`-then-commented-out shell.
 
-  shared_ptr<PaxosPrepareQuorumEvent>
-  SendForward(parid_t par_id,
-              uint64_t follower_id,
-              uint64_t dep_id,
-              shared_ptr<Marshallable> cmd);
+  // removed `SendForward(parid, follower_id,
+  // dep_id, cmd)` declaration — never called from anywhere in the
+  // tree; the only candidate caller would have been a Jetpack
+  // forward-to-leader path that was never wired up.
 };
 
 } // namespace janus

@@ -1,17 +1,29 @@
 #pragma once
-#include "../base/all.hpp"
 
-#include "stdlib.h"
-#include "stdio.h"
-#include "string.h"
-#include <mutex>
-#include <sstream>
-#include <vector>
-#include "sys/times.h"
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+#include <sys/times.h>
+#include <unistd.h>
 
 #ifdef __linux__
-#include "sys/sysinfo.h"
+#include <sys/sysinfo.h>
 #endif
+
+
+
+
+#include "../base/all.hpp"
 
 namespace rrr {
 
@@ -31,7 +43,7 @@ private:
 #ifdef __linux__
     	struct tms tms_buf;
 			double txed, rxed;
-			std::vector<double> result;
+			rusty::Vec<double> result;
 			struct sysinfo mem_info;
 
 			sysinfo(&mem_info);
@@ -47,8 +59,8 @@ private:
 			last_user_ticks_[index] = tms_buf.tms_utime;
 			
 			pid_ = ::getpid();
-			result = get_network(std::to_string(pid_), result, last_ticks_[index]);
-			result = get_memory(std::to_string(pid_), result, last_ticks_[index]);
+			get_network(std::to_string(pid_), result, last_ticks_[index]);
+			get_memory(std::to_string(pid_), result, last_ticks_[index]);
 
 			index++;
 			//proc_cpuinfo = fopen("/proc/cpuinfo", "r");
@@ -74,16 +86,15 @@ private:
      * return:  upon success, this function will return the utilization roughly
      *          between 0.0 to 1.0; otherwise, it will return a negative value
      */
-	    std::vector<double> get_cpu_stat() {
-				const std::lock_guard<std::recursive_mutex> lock (mtx_);
+    rusty::Vec<double> get_cpu_stat() {
+			const std::lock_guard<std::recursive_mutex> lock (mtx_);
 
-#ifdef __linux__
-	      struct tms tms_buf;
-	      clock_t ticks;
-				std::vector<double> result;
-				unsigned long txed, rxed;
-	      double cpu_total, tx_total, rx_total;
-	      clock_t last_ticks;
+      struct tms tms_buf;
+      clock_t ticks;
+			rusty::Vec<double> result;
+			unsigned long txed, rxed;
+      double cpu_total, tx_total, rx_total;
+      clock_t last_ticks;
 			
 			ticks = times(&tms_buf);
 			if(index < 10) last_ticks = last_ticks_[index-1];
@@ -127,30 +138,27 @@ private:
 			last_cpu = cpu_total;
         //ret /= num_processors_;
 	
-			if(index < 10) result.push_back(-1.0);
-			else result.push_back(cpu_total);
+			if(index < 10) result.push(-1.0);
+			else result.push(cpu_total);
 			
-				result = get_network(std::to_string(pid_), result, ticks);
-				result = get_memory(std::to_string(pid_), result, ticks);
-	    	return result;
-#else
-				return {-1.0, -1.0, -1.0, -1.0};
-#endif
-	    }
+			get_network(std::to_string(pid_), result, ticks);
+			get_memory(std::to_string(pid_), result, ticks);
+    	return result;
+    }
 
-			std::vector<double> get_network(std::string pid, std::vector<double> result, clock_t ticks){
+		void get_network(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
 #ifndef __linux__
-				(void) pid;
-				(void) ticks;
-				result.push_back(-1.0);
-				result.push_back(-1.0);
-				return result;
+			(void) pid;
+			(void) ticks;
+			result.push(-1.0);
+			result.push(-1.0);
+			return;
 #else
-				double tx_total, rx_total;
-				std::string line;
-				std::string temp;
-				unsigned long txed, rxed;
-				std::ifstream netfile("/proc/"+pid+"/net/dev");
+			double tx_total = -1.0, rx_total = -1.0;
+			std::string line;
+			std::string temp;
+			unsigned long txed, rxed;
+			std::ifstream netfile("/proc/"+pid+"/net/dev");
 
 			for(int i = 0; i < 4; i++){
 				getline(netfile, line);
@@ -192,25 +200,24 @@ private:
 				}
 			}
 			
-			result.push_back(tx_total);
-			result.push_back(rx_total);
+			result.push(tx_total);
+			result.push(rx_total);
 
-				last_txed = tx_total;
-				last_rxed = rx_total;
-				return result;
+			last_txed = tx_total;
+			last_rxed = rx_total;
 #endif
-			}
+		}
 
-			std::vector<double> get_memory(std::string pid, std::vector<double> result, clock_t ticks){
+		void get_memory(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
 #ifndef __linux__
-				(void) pid;
-				(void) ticks;
-				result.push_back(-1.0);
-				return result;
+			(void) pid;
+			(void) ticks;
+			result.push(-1.0);
+			return;
 #else
-				long rss;
-				double mem_usage, mem_total;
-				std::string ignore;
+			long rss;
+			double mem_usage, mem_total = -1.0;
+			std::string ignore;
 
 			std::ifstream stat_file("/proc/"+pid+"/stat", std::ios_base::in);
 			
@@ -234,15 +241,14 @@ private:
 				else mem_total = (mem_usage - last_mem_usage[8])/(ticks - last_ticks_[8]);
 			}
 			
-			result.push_back(mem_total);
+			result.push(mem_total);
 
-				last_mem = mem_total;
-				return result;
+			last_mem = mem_total;
 #endif
-			}
+		}
 
 public:
-    static std::vector<double> cpu_stat() {
+    static rusty::Vec<double> cpu_stat() {
         static CPUInfo cpu_info;
         return cpu_info.get_cpu_stat();
     }

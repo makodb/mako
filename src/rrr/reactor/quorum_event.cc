@@ -1,7 +1,27 @@
 
-#include "quorum_event.h"
-#include "coroutine.h"
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
+
+
+
+
+
+
+#include "quorum_event.h"
+
+
+#include "../rrr.hpp"
 
 namespace janus {
 
@@ -17,16 +37,19 @@ QuorumEvent::QuorumEvent(int n_total, int quorum)
 
 void QuorumEvent::finalize(
     uint64_t timeout,
-    function<bool(vector<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
-  
-  
-  Fiber::create_run([timeout, finalize_func, this]() {
+    rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
+
+
+  // rusty::Function is move-only, so capture the callback by move
+  // into the background fiber's lambda.  The lambda must also be
+  // `mutable` so the captured (non-const) Function can be invoked.
+  Fiber::create_run([timeout, finalize_func = std::move(finalize_func), this]() mutable {
     bool ret = false;
-    
+
     auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)
-    vector<std::pair<uint16_t, rrr::i64> > dangling_rpc;
-    for (auto &it : xids_)
-      dangling_rpc.push_back(it);  // fetch out dangling rpc info before it's freed (see comment A)
+    rusty::Vec<std::pair<uint16_t, rrr::i64> > dangling_rpc;
+    for (auto it : xids_)
+      dangling_rpc.push(it);  // fetch out dangling rpc info before it's freed (see comment A)
 
     final_ev->wait(timeout);
     /* A: by the time this fires, the quorum event could have been freed. Thus,
@@ -37,6 +60,7 @@ void QuorumEvent::finalize(
       // Log_info("finalized timeout");
       ret = finalize_func(dangling_rpc);
     }
+    (void)ret;
   }, __FILE__, __LINE__);
 }
 
@@ -45,15 +69,13 @@ void QuorumEvent::add_xid(uint16_t site, rrr::i64 xid) {
 }
 
 void QuorumEvent::remove_xid(uint16_t site) {
-  auto it = xids_.find(site);
-  if (it != xids_.end())
-    xids_.erase(it);
+  xids_.remove(site);
 }
 
 void QuorumEvent::vote_yes() {
   n_voted_yes_++;
   test();
-  vec_timestamp_.push_back(Time::now(true) - begin_timestamp_);
+  vec_timestamp_.push(Time::now(true) - begin_timestamp_);
 
   if (finalize_event_->status_.get() != Event::TIMEOUT)
     finalize_event_->set(n_voted_yes_ + n_voted_no_);

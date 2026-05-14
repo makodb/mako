@@ -5,7 +5,8 @@
 #include "benchmark_control_rpc.h"
 #include "client_worker.h"
 #include "stats_registry.h"
-#include "../rrr/misc/recorder.hpp"
+
+#include "rrr/rrr.hpp"
 
 
 extern vector<unique_ptr<janus::ClientWorker>> client_workers_g;
@@ -83,27 +84,19 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
   ServerResponse *res = &rpc_resp.res;
   res->cpu_util = rrr::CPUInfo::cpu_stat()[0];
 
-  // Get recorder from StatsRegistry
-  auto& registry = StatsRegistry::instance();
-  auto* recorder = registry.get_recorder();
-  if (recorder) {
-    AvgStat r_cnt = recorder->stat_cnt_.reset();
-    AvgStat r_sz = recorder->stat_sz_.reset();
-    res->r_cnt_sum = r_cnt.sum_;
-    res->r_cnt_num = r_cnt.n_stat_;
-    res->r_sz_sum = r_sz.sum_;
-    res->r_sz_num = r_sz.n_stat_;
-  } else {
-    res->r_cnt_sum = 0;
-    res->r_cnt_num = 0;
-    res->r_sz_sum = 0;
-    res->r_sz_num = 0;
-  }
+  // collapsed `if (recorder) { ... } else
+  // {res->r_cnt_sum = 0; ... }` to just the else branch — recorder
+  // was always nullptr; field + getter both gone.
+  res->r_cnt_sum = 0;
+  res->r_cnt_num = 0;
+  res->r_sz_sum = 0;
+  res->r_sz_num = 0;
   if (!sig_handler_set_)
     set_sig_handler();
   alarm(timeout_);
 
   // Get statistics from StatsRegistry
+  auto& registry = StatsRegistry::instance();
   auto statistics = registry.get_all_statistics();
   for (auto it = statistics.begin(); it != statistics.end(); it++) {
     res->statistics[std::string(it->first)] = it->second;
@@ -125,16 +118,14 @@ void ServerControlServiceImpl::server_heart_beat_with_data(
   defer.reply();
 }
 
+// removed 3rd `Recorder *recorder` ctor
+// parameter (and its `if (recorder) { ... set_recorder(recorder); }`
+// body) — every caller passed nullptr.
 ServerControlServiceImpl::ServerControlServiceImpl(rusty::Arc<ServerStatus> status,
-                                                   unsigned int timeout,
-                                                   Recorder *recorder) :
+                                                   unsigned int timeout) :
         status_(std::move(status)),
         timeout_(timeout),
         sig_handler_set_(false) {
-  // Register recorder with global StatsRegistry if provided
-  if (recorder) {
-    StatsRegistry::instance().set_recorder(recorder);
-  }
   scsi_s.push_back(this);
 }
 

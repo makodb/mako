@@ -1,5 +1,19 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
 /**
- * Idempotency Support for RPC (Phase 2.3)
+ * Idempotency Support for RPC
  *
  * Provides duplicate request detection on the server side to ensure
  * idempotent operations are not executed multiple times due to retries.
@@ -10,15 +24,15 @@
  * Thread-safe via rusty::Cell and rusty::Mutex.
  */
 
-#pragma once
 
-#include <cstdint>
-#include <unordered_map>
-#include <list>
-#include <vector>
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
-#include "misc/marshal.hpp"
+
+
+
+
+#include "../misc/marshal.hpp"
+
 
 namespace rrr {
 
@@ -148,12 +162,12 @@ struct IdempotencyConfig {
 /**
  * @safe - Cached response entry for idempotency cache
  *
- * Uses std::vector<char> for response data since Marshal is non-copyable.
+ * Uses rusty::Vec<char> for response data since Marshal is non-copyable.
  */
 struct CachedResponse {
     IdempotencyKey key;
     int32_t error_code = 0;             // Response error code
-    std::vector<char> response_data;    // Serialized response payload
+    rusty::Vec<char> response_data;    // Serialized response payload
     uint64_t timestamp_ms = 0;          // When the response was cached
 
     // @safe - Default constructor
@@ -173,9 +187,11 @@ struct CachedResponse {
 
     // @unsafe - Copy response data from Marshal
     void set_response_data(const Marshal& m) {
-        size_t size = m.content_size();
-        response_data.resize(size);
+        const size_t size = m.content_size();
+        response_data.clear();
+        response_data.reserve(size);
         if (size > 0) {
+            response_data.set_len(size);
             // Use Marshal's peek method to copy data without consuming
             // peek takes T& which we cast from char* to char& for raw access
             Marshal& non_const_m = const_cast<Marshal&>(m);
@@ -185,8 +201,8 @@ struct CachedResponse {
 
     // @unsafe - Copy response data to Marshal
     void get_response_data(Marshal* out) const {
-        if (out && !response_data.empty()) {
-            out->write(response_data.data(), response_data.size());
+        if (out && !response_data.is_empty()) {
+            out->write(response_data.data(), response_data.len());
         }
     }
 };
@@ -255,7 +271,7 @@ class IdempotencyCache {
     // Cache data structure protected by mutex
     // Key -> iterator in LRU list
     using LruList = std::list<CachedResponse>;
-    using CacheMap = std::unordered_map<IdempotencyKey, typename LruList::iterator,
+    using CacheMap = rusty::HashMap<IdempotencyKey, typename LruList::iterator,
                                          IdempotencyKeyHash>;
 
     rusty::Mutex<LruList> lru_list_;
@@ -308,19 +324,20 @@ public:
         // Lock cache map
         auto map_guard = cache_map_.lock().unwrap();
 
-        auto it = map_guard->find(key);
-        if (it == map_guard->end()) {
+        auto map_it = map_guard->get(key);
+        if (map_it.is_none()) {
             misses_.set(misses_.get() + 1);
             return false;
         }
+        auto list_it = *map_it.unwrap();
 
         // Check TTL
-        auto& entry = *(it->second);
+        auto& entry = *list_it;
         if (entry.is_expired(current_time_ms, cfg.ttl_ms)) {
             // Entry expired - remove it
             auto list_guard = lru_list_.lock().unwrap();
-            list_guard->erase(it->second);
-            map_guard->erase(it);
+            list_guard->erase(list_it);
+            map_guard->remove(key);
             misses_.set(misses_.get() + 1);
             return false;
         }
@@ -328,7 +345,7 @@ public:
         // Cache hit - move to front of LRU list
         {
             auto list_guard = lru_list_.lock().unwrap();
-            list_guard->splice(list_guard->begin(), *list_guard, it->second);
+            list_guard->splice(list_guard->begin(), *list_guard, list_it);
         }
 
         // Copy response data
@@ -364,22 +381,23 @@ public:
         auto list_guard = lru_list_.lock().unwrap();
 
         // Check if key already exists
-        auto existing = map_guard->find(key);
-        if (existing != map_guard->end()) {
+        auto existing = map_guard->get(key);
+        if (existing.is_some()) {
+            auto list_it = *existing.unwrap();
             // Update existing entry
-            auto& entry = *(existing->second);
+            auto& entry = *list_it;
             entry.error_code = error_code;
             entry.set_response_data(response);
             entry.timestamp_ms = current_time_ms;
             // Move to front
-            list_guard->splice(list_guard->begin(), *list_guard, existing->second);
+            list_guard->splice(list_guard->begin(), *list_guard, list_it);
             return;
         }
 
         // Evict if at capacity
         while (list_guard->size() >= cfg.max_entries && !list_guard->empty()) {
             auto& oldest = list_guard->back();
-            map_guard->erase(oldest.key);
+            map_guard->remove(oldest.key);
             list_guard->pop_back();
             evictions_.set(evictions_.get() + 1);
         }
@@ -393,7 +411,7 @@ public:
 
         // Insert at front
         list_guard->push_front(std::move(entry));
-        map_guard->insert({key, list_guard->begin()});
+        map_guard->insert(key, list_guard->begin());
     }
 
     /**
@@ -404,14 +422,15 @@ public:
     bool remove(const IdempotencyKey& key) {
         auto map_guard = cache_map_.lock().unwrap();
 
-        auto it = map_guard->find(key);
-        if (it == map_guard->end()) {
+        auto map_it = map_guard->get(key);
+        if (map_it.is_none()) {
             return false;
         }
+        auto list_it = *map_it.unwrap();
 
         auto list_guard = lru_list_.lock().unwrap();
-        list_guard->erase(it->second);
-        map_guard->erase(it);
+        list_guard->erase(list_it);
+        map_guard->remove(key);
         return true;
     }
 
@@ -431,7 +450,7 @@ public:
     // @safe - Get cache size
     size_t size() const {
         auto guard = cache_map_.lock().unwrap();
-        return guard->size();
+        return guard->len();
     }
 
     // @safe - Get hit count
@@ -484,7 +503,7 @@ public:
         auto it = list_guard->begin();
         while (it != list_guard->end()) {
             if (it->is_expired(current_time_ms, cfg.ttl_ms)) {
-                map_guard->erase(it->key);
+                map_guard->remove(it->key);
                 it = list_guard->erase(it);
                 evicted++;
             } else {

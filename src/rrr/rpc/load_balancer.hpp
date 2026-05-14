@@ -1,6 +1,18 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 /**
  * Load balancing strategies for RPC client pools.
- * Part of Phase 5.2: Load Balancing Strategies.
+ * Load Balancing Strategies.
  *
  * Provides different strategies for selecting clients from a pool:
  * - RANDOM: Random selection (default, fast)
@@ -9,12 +21,13 @@
  * - LEAST_LATENCY: Select client with lowest average latency
  */
 
-#pragma once
 
-#include <cstdint>
-#include <vector>
 #include <rusty/cell.hpp>
 #include <rusty/arc.hpp>
+
+
+
+
 #include "connection_metrics.hpp"
 
 namespace rrr {

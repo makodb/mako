@@ -8,9 +8,9 @@
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
-#include "rpc/log_storage.hpp"
-#include "rpc/recovery_manager.hpp"
-#include "rpc/snapshot_manager.hpp"
+#include "log_storage.hpp"
+#include "recovery_manager.hpp"
+#include "snapshot_manager.hpp"
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -40,8 +40,8 @@
 // }
 
 namespace janus {
-class Command;
 class CmdData;
+class ReplicatedDB;
 
 #define INVALID_SITEID  ((siteid_t)-1)
 #define NUM_BATCH_TIMER_RESET  (100)
@@ -79,14 +79,22 @@ enum class CommitStatus {
 };
 
 // @safe - data struct with shared_ptr fields (shared_ptr marked @external)
+//
+// polymorphic command fields
+// (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
+// `shared_ptr<Marshallable>` to `janus::Command`.  Internal storage
+// inside Command remains `shared_ptr<Marshallable>` (boundary calls
+// to APIs still taking `shared_ptr<Marshallable>` use
+// `cmd.inner_marshallable()`).  Wire format unchanged.  See
+// `docs/dev/l10-unblock-plan.md`.
 struct RaftData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
-  shared_ptr<Marshallable> accepted_cmd_{nullptr};
-  shared_ptr<Marshallable> committed_cmd_{nullptr};
+  Command accepted_cmd_{};
+  Command committed_cmd_{};
 
   ballot_t term;
-  shared_ptr<Marshallable> log_{nullptr};
+  Command log_{};
 
 	//for retries
 	ballot_t prevTerm;
@@ -113,16 +121,24 @@ class RaftServer : public TxLogServer {
   friend class RaftLabTest;     // Allow test cases to access private members for verification
  private:
   // ============================================================================
-  // LOG PERSISTENCE (Phase 1.3)
+  // LOG PERSISTENCE
   // ============================================================================
-  std::shared_ptr<rrr::LogStorage> log_storage_;  // Optional persistent storage
+  std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
   bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
-  // SNAPSHOT SUPPORT (Phase 3.1)
+  // SNAPSHOT SUPPORT
   // ============================================================================
-  std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
+  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
   uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
+
+  // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
+  // @unsafe - std::function holds non-borrow-checked closures
+  std::function<std::string()> create_sm_snapshot_cb_;
+  std::function<void(const std::string&)> load_sm_snapshot_cb_;
+
+  // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set)
+  std::shared_ptr<ReplicatedDB> replicated_db_;
 
   // @unsafe - Initializes snapshot manager from environment config
   void InitializeSnapshotManager();
@@ -212,7 +228,7 @@ class RaftServer : public TxLogServer {
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
   // ============================================================================
-  // SPECULATIVE REPLICATION STATE (Phase 1.1)
+  // SPECULATIVE REPLICATION STATE
   // ============================================================================
   // Enables separation of "speculative" (memory quorum) from "secured" (durable
   // quorum) for both leadership and log entries. See docs/dev/phase1_speculative_state_plan.md
@@ -321,8 +337,7 @@ class RaftServer : public TxLogServer {
               const ballot_t& can_term,
               ballot_t *reply_term,
               bool_t *vote_granted,
-              bool_t vote,
-              rusty::Function<void()> cb) {
+              bool_t vote) {
       // @unsafe
       {
         *vote_granted = vote ;
@@ -363,13 +378,12 @@ class RaftServer : public TxLogServer {
           resetTimer("granted vote");
 
           if (async_persistence_) {
-            // SPECULATIVE VOTING (async mode): Respond IMMEDIATELY (memory vote)
-            // Then start async persistence and send VoteDurable after fsync
+            // SPECULATIVE VOTING (async mode): return NOW (memory vote), then
+            // start async persistence and send VoteDurable after fsync. The
+            // outer fiber replies automatically once this function returns.
             n_vote_++ ;
-            cb() ;  // Respond now - this is the memory vote
 
-            // Start async vote persistence
-            // Capture necessary state for the async operation
+            // Capture necessary state for the async persistence thread.
             ballot_t term_copy = currentTerm;
             siteid_t voter_copy = site_id_;
             siteid_t can_id_copy = can_id;
@@ -404,38 +418,38 @@ class RaftServer : public TxLogServer {
               }), done);
             }
 
-            return;  // Already called cb() above
+            return;
           } else {
-            // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then respond
-            // No separate VoteDurable RPC needed - the vote response implies durability
+            // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then return.
+            // No separate VoteDurable RPC needed — the ack implies durability.
             PersistState(currentTerm, can_id, "doVote: sync vote persist");
             n_vote_++ ;
-            cb() ;
             return;
           }
       }
 
       n_vote_++ ;
-      cb() ;
   }
 
   // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
   void applyLogs();
 
-#ifdef SINGLE_RAFT_INSTANCE
-  // SINGLE-RAFT: Dedicated apply fiber and background apply thread.
+  // Dedicated apply fiber and background apply thread.
   void StartApplyFiber();
 
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
   std::mutex apply_queue_mtx_;
-  std::deque<std::pair<slotid_t, shared_ptr<Marshallable>>> apply_queue_;
+  // apply_queue_ holds Command
+  // instead of shared_ptr<Marshallable> — RaftData::log_ migrated in
+  // prep2; this drops the boundary unwrap that
+  // EnqueueCommittedEntries had to do.  Wire format unchanged.
+  std::deque<std::pair<slotid_t, Command>> apply_queue_;
 
   void StartApplyThread();
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
-#endif
 
-  // @safe - timer and atomic operations are safe internal operations
+  // @unsafe - timer and atomic operations include atomics/mutexes
   void resetTimerBatch()
   {
     // Log_info("!!!!!!! if (!failover_)");
@@ -458,8 +472,8 @@ class RaftServer : public TxLogServer {
                         bool_t* ok,
                         epoch_t* reply_jepoch,
                         epoch_t* reply_oepoch,
-                        MarshallDeputy* reply_old_view,
-                        MarshallDeputy* reply_new_view,
+                        janus::Command* reply_old_view,
+                        janus::Command* reply_new_view,
                         shared_ptr<KeyCmdBatchData>& batch) override;
 
   // @unsafe - const char* parameter type requires unsafe context
@@ -571,9 +585,12 @@ class RaftServer : public TxLogServer {
   void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
-  bool Start(shared_ptr<Marshallable> &cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  bool Start(const janus::Command& cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
 
-  // @safe - output pointer writes are bounded
+  // @unsafe - output pointer writes and mutex operations
   void GetState(bool *is_leader, uint64_t *term) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // @unsafe
@@ -589,14 +606,22 @@ class RaftServer : public TxLogServer {
   // @safe - sets POD field
   void SetHeartbeatInterval(uint64_t micros) { heartbeat_interval_us_ = micros; }
 
+  // @unsafe - Implements ReadIndex protocol for linearizable reads.
+  // Returns true if this server is confirmed leader and safe to serve reads.
+  // Waits for executeIndex to catch up to commitIndex.
+  bool ReadIndex(uint64_t timeout_us = 5000000);
+
   // @safe - returns POD field
   uint64_t GetLogRetentionWindow() const { return log_retention_window_; }
 
   // @safe - sets POD field (minimum 1 to avoid division by zero)
   void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
 
-  // @safe - external calls marked @external, output pointer writes in @unsafe blocks
-  void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
+  // @unsafe - external calls plus output pointer writes and shared_ptr ops
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void SetLocalAppend(const janus::Command& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // @unsafe
     {
@@ -619,9 +644,11 @@ class RaftServer : public TxLogServer {
     // @unsafe
     {
 #ifndef RAFT_TEST_CORO
-      if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
-        auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-        auto sp_vec_piece = dynamic_pointer_cast<VecPieceData>(p_cmd->cmd_)->sp_vec_piece_data_;
+      if (cmd.kind_ == TpcCommitCommand::static_kind()){
+        auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+        auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
+        verify(vec_piece_data != nullptr);
+        auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
 
         // Check if this is Mako data (STR values) vs Janus data (I32 values)
         bool is_mako_data = false;
@@ -663,7 +690,7 @@ class RaftServer : public TxLogServer {
     }
   }
 
-  // @safe - map access and make_shared marked @external [safe]
+  // @unsafe - map access and shared_ptr mutation
   shared_ptr<RaftData> GetInstance(slotid_t id) {
     verify(id >= min_active_slot_ || lastLogIndex == 0);
     auto& sp_instance = logs_[id];
@@ -682,7 +709,7 @@ class RaftServer : public TxLogServer {
     return sp_instance;
   }*/
 
-  // @safe - Log_info and make_shared marked @external [safe]
+  // @unsafe - map access and shared_ptr mutation
    shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
     if (id < min_active_slot_ && id != 0) {
       Log_info("[RAFT_LOG] expanding min_active_slot_ from %lu to %lu", min_active_slot_, id);
@@ -701,7 +728,7 @@ class RaftServer : public TxLogServer {
   ~RaftServer() ;
 
   // ============================================================================
-  // LOG PERSISTENCE PUBLIC API (Phase 1.3)
+  // LOG PERSISTENCE PUBLIC API
   // ============================================================================
 
   /**
@@ -709,8 +736,8 @@ class RaftServer : public TxLogServer {
    * Should be called before starting the server.
    * @param storage Shared pointer to LogStorage implementation
    */
-  // @safe - moves shared_ptr into member field
-  void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage) {
+  // @unsafe - moves shared_ptr into member field
+  void SetLogStorage(std::shared_ptr<janus::raft::LogStorage> storage) {
     log_storage_ = std::move(storage);
   }
 
@@ -718,8 +745,8 @@ class RaftServer : public TxLogServer {
    * Get the current log storage backend.
    * @return Shared pointer to LogStorage, or nullptr if not set
    */
-  // @safe - returns copy of shared_ptr
-  std::shared_ptr<rrr::LogStorage> GetLogStorage() const {
+  // @unsafe - returns copy of shared_ptr
+  std::shared_ptr<janus::raft::LogStorage> GetLogStorage() const {
     return log_storage_;
   }
 
@@ -749,7 +776,7 @@ class RaftServer : public TxLogServer {
   size_t GetUncommittedCount() const;
 
   // ============================================================================
-  // SNAPSHOT SUPPORT PUBLIC API (Phase 3.1)
+  // SNAPSHOT SUPPORT PUBLIC API
   // ============================================================================
 
   /**
@@ -757,8 +784,8 @@ class RaftServer : public TxLogServer {
    * Should be called before starting the server.
    * @param manager Shared pointer to SnapshotManager implementation
    */
-  // @safe - moves shared_ptr into member field
-  void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager> manager) {
+  // @unsafe - moves shared_ptr into member field
+  void SetSnapshotManager(std::shared_ptr<janus::raft::SnapshotManager> manager) {
     snapshot_manager_ = std::move(manager);
   }
 
@@ -766,9 +793,33 @@ class RaftServer : public TxLogServer {
    * Get the current snapshot manager.
    * @return Shared pointer to SnapshotManager, or nullptr if not set
    */
-  // @safe - returns copy of shared_ptr
-  std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
+  // @unsafe - returns copy of shared_ptr
+  std::shared_ptr<janus::raft::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
+  }
+
+  /**
+   * Get the ReplicatedDB instance, if one was created during Setup().
+   * @return Shared pointer to ReplicatedDB, or nullptr if not enabled
+   */
+  // @unsafe - returns copy of shared_ptr
+  std::shared_ptr<ReplicatedDB> GetReplicatedDB() const {
+    return replicated_db_;
+  }
+
+  /**
+   * Set state machine snapshot callbacks.
+   * Called by ReplicatedDB (or other state machines) to hook into
+   * CreateSnapshot() and OnInstallSnapshot().
+   * @param create_cb Returns serialized state machine snapshot data
+   * @param load_cb Loads serialized state machine snapshot data
+   */
+  // @unsafe - stores std::function closures
+  void SetStateMachineSnapshotCallbacks(
+      std::function<std::string()> create_cb,
+      std::function<void(const std::string&)> load_cb) {
+    create_sm_snapshot_cb_ = std::move(create_cb);
+    load_sm_snapshot_cb_ = std::move(load_cb);
   }
 
   /**
@@ -793,7 +844,7 @@ class RaftServer : public TxLogServer {
   uint64_t GetSnapshotTerm() const;
 
   /**
-   * Compact log entries up to the given index (Phase 3.4).
+   * Compact log entries up to the given index.
    * Removes entries from storage that are covered by a snapshot.
    * @param up_to_index Remove entries with index <= this value
    * @return Number of entries removed
@@ -827,8 +878,7 @@ class RaftServer : public TxLogServer {
                      const siteid_t& can_id,
                      const ballot_t& can_term,
                      ballot_t *reply_term,
-                     bool_t *vote_granted,
-                     rusty::Function<void()> cb) ;
+                     bool_t *vote_granted) ;
 
   /**
    * VoteDurable RPC Handler - Speculative Voting Protocol
@@ -845,10 +895,12 @@ class RaftServer : public TxLogServer {
   // @unsafe - Modifies durableVoters_ and securedLeader_
   void OnVoteDurable(const ballot_t& term,
                      const siteid_t& voter_id,
-                     bool_t* acknowledged,
-                     rusty::Function<void()> cb);
+                     bool_t* acknowledged);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   void OnAppendEntries(const slotid_t slot_id,
                        const ballot_t ballot,
                        const uint64_t leaderCurrentTerm,
@@ -856,12 +908,11 @@ class RaftServer : public TxLogServer {
                        const uint64_t leaderPrevLogIndex,
                        const uint64_t leaderPrevLogTerm,
                        const uint64_t leaderCommitIndex,
-                       shared_ptr<Marshallable> &cmd,
+                       const janus::Command& cmd,
                        const uint64_t leaderNextLogTerm, // disabled in batched version (term recorded in the TpcCommitCommand)
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,
                        uint64_t *followerLastLogIndex,
-                       rusty::Function<void()> cb,
                        bool trigger_election_now = false);
 
   /**
@@ -881,8 +932,7 @@ class RaftServer : public TxLogServer {
   void OnAppendEntriesDurable(const ballot_t& term,
                               const siteid_t& follower_id,
                               const uint64_t& lastLogIndex,
-                              bool_t* acknowledged,
-                              rusty::Function<void()> cb);
+                              bool_t* acknowledged);
 
   /**
    * TimeoutNow RPC Handler - Leadership Transfer Protocol
@@ -903,8 +953,7 @@ class RaftServer : public TxLogServer {
   void OnTimeoutNow(const uint64_t leaderTerm,
                     const siteid_t leaderSiteId,
                     uint64_t *followerTerm,
-                    bool_t *success,
-                    rusty::Function<void()> cb);
+                    bool_t *success);
 
   /**
    * InstallSnapshot RPC Handler - Snapshot Transfer Protocol
@@ -928,8 +977,7 @@ class RaftServer : public TxLogServer {
                          const uint64_t last_included_index,
                          const uint64_t last_included_term,
                          const std::string& data,
-                         uint64_t* term_out,
-                         rusty::Function<void()> cb);
+                         uint64_t* term_out);
 
   // ============================================================================
   // MEMBERSHIP CHANGE PUBLIC API
@@ -947,12 +995,13 @@ class RaftServer : public TxLogServer {
    * @return Reference to the active replica set
    */
   // @safe - Read-only accessor
+  // @lifetime: (&'a) -> &'a
   const std::set<siteid_t>& GetCurrentConfig() const;
 
   /**
    * Check if a server is a learner (being caught up, not yet in quorum).
    */
-  // @safe - Read-only lookup
+  // @unsafe - Read-only lookup on std::set
   bool IsLearner(siteid_t id) const { return learners_.count(id) > 0; }
 
   /**
@@ -995,8 +1044,7 @@ class RaftServer : public TxLogServer {
   void OnAddServer(const uint64_t term, const uint64_t new_server_id,
                    const std::string& addr,
                    bool_t* success, std::string* error_msg,
-                   uint64_t* leader_hint,
-                   rrr::DeferredReply defer);
+                   uint64_t* leader_hint);
 
   /**
    * RemoveServer RPC Handler - Membership Change Protocol
@@ -1015,8 +1063,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - Modifies config state
   void OnRemoveServer(const uint64_t term, const uint64_t server_id,
                       bool_t* success, std::string* error_msg,
-                      uint64_t* leader_hint,
-                      rrr::DeferredReply defer);
+                      uint64_t* leader_hint);
 
   // @unsafe - modifies proxy maps with C-style casts on raw pointers (non-trivial pointer arithmetic)
   void Disconnect(const bool disconnect = true);
@@ -1061,7 +1108,7 @@ class RaftServer : public TxLogServer {
    *
    * Safety: This maintains all Raft safety guarantees via explicit transfer protocol.
    */
-  // @safe - Log_info marked @external [safe], mutex is bounded
+  // @unsafe - Log_info plus mutex operations
   void SetPreferredLeader(siteid_t site_id) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -1114,7 +1161,7 @@ class RaftServer : public TxLogServer {
   void StopLeadershipTransferMonitoring();
 
   // ============================================================================
-  // PUBLIC API: Speculative Replication State (Phase 1.1)
+  // PUBLIC API: Speculative Replication State
   // ============================================================================
 
   /**
@@ -1151,7 +1198,7 @@ class RaftServer : public TxLogServer {
    * Get the set of servers that have memory-voted for us in current term.
    * @return copy of specVoters set
    */
-  // @safe - Returns copy, read-only access
+  // @unsafe - Returns copy, read-only access
   std::set<siteid_t> GetSpecVoters() const {
     return specVoters_;
   }
@@ -1160,7 +1207,7 @@ class RaftServer : public TxLogServer {
    * Get the count of servers that have memory-voted for us in current term.
    * @return Number of servers in specVoters
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::set
   size_t GetSpecVotersCount() const {
     return specVoters_.size();
   }
@@ -1169,7 +1216,7 @@ class RaftServer : public TxLogServer {
    * Get the set of servers that have durably-voted for us in current term.
    * @return copy of durableVoters set
    */
-  // @safe - Returns copy, read-only access
+  // @unsafe - Returns copy, read-only access
   std::set<siteid_t> GetDurableVoters() const {
     return durableVoters_;
   }
@@ -1178,7 +1225,7 @@ class RaftServer : public TxLogServer {
    * Get the count of servers that have durably-voted for us in current term.
    * @return Number of servers in durableVoters
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::set
   size_t GetDurableVotersCount() const {
     return durableVoters_.size();
   }
@@ -1197,7 +1244,7 @@ class RaftServer : public TxLogServer {
    * @param index Log index to query
    * @return Number of nodes that have memory-acked this index
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::map
   size_t GetMemoryAckCount(uint64_t index) const {
     auto it = memoryAcks_.find(index);
     return it != memoryAcks_.end() ? it->second.size() : 0;
@@ -1208,7 +1255,7 @@ class RaftServer : public TxLogServer {
    * @param index Log index to query
    * @return Number of nodes that have durably-acked this index
    */
-  // @safe - Read-only accessor
+  // @unsafe - Read-only accessor on std::map
   size_t GetDurableAckCount(uint64_t index) const {
     auto it = durableAcks_.find(index);
     return it != durableAcks_.end() ? it->second.size() : 0;

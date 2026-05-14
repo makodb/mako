@@ -354,10 +354,14 @@ public:
       const std::string &value)
   {
     INVARIANT(n < N);
-    // Copy value into arena: the scan callback passes a lambda-local string
-    // that is destroyed after each invocation, so storing &value would dangle.
-    std::string * const v_px = arena->next();
-    *v_px = value;
+    INVARIANT(arena);
+
+    // Copy values into the arena so callback consumers never hold references
+    // to transient strings owned by lower-level scan implementations.
+    std::string *const v_px = arena->next();
+    INVARIANT(v_px && v_px->empty());
+    v_px->assign(value);
+
     if (ignore_key) {
       values.emplace_back(nullptr, v_px);
     } else {

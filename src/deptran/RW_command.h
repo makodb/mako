@@ -1,11 +1,20 @@
 #pragma once
 
 #include "__dep__.h"
-#include "../rrr/misc/marshal.hpp"
+
+#include "rrr/rrr.hpp"
+#include "mako_commands.h"
 
 namespace janus {
 
-class SimpleRWCommand: public rrr::Marshallable {
+class SimpleCommand;  // forward decl for ctor below; full def in procedure.h
+
+// TypeList-derived kind. Wire payload preserved:
+// int32_t type_ | key_t key_ | int32_t value_ (the cmd_id_,
+// rule_mode_*, is_recovery_command_, zero_time_ fields are local
+// state, never serialized).
+class SimpleRWCommand : public rrr::Serializable<SimpleRWCommand,
+                                                 MakoCommands> {
  public:
   int32_t type_;
   key_t key_;
@@ -16,24 +25,45 @@ class SimpleRWCommand: public rrr::Marshallable {
   bool is_recovery_command_{false};
   SimpleRWCommand();
   // SimpleRWCommand(const SimpleRWCommand &o);
-  SimpleRWCommand(shared_ptr<rrr::Marshallable> cmd);
+  // Command is the only polymorphic
+  // ctor.  The L10f-2 step 5 retirement of Marshallable removed the
+  // legacy `shared_ptr<rrr::Marshallable>` overload — no production
+  // callers remained.
+  SimpleRWCommand(const Command& cmd);
+  // SimpleCommand-direct ctor.
+  // After CmdData stops inheriting Marshallable, callers that hold a
+  // SimpleCommand directly must use this overload (not the
+  // shared_ptr<Marshallable> path that no longer accepts derived
+  // pointers).  Body just reads SimpleCommand fields directly.
+  SimpleRWCommand(const SimpleCommand& cmd);
   std::string cmd_to_string();
   bool same_as(SimpleRWCommand &other);
-  rrr::Marshal& to_marshal(rrr::Marshal& m) const override;
-  rrr::Marshal& from_marshal(rrr::Marshal& m) override;
+
+  void save(rrr::BinaryWriteArchive& ar) const;
+  void load(rrr::BinaryReadArchive& ar);
+
   bool IsRead();
   bool IsWrite();
   bool IsRecoveryCommand();
-  static pair<int32_t, int32_t> GetCmdID(shared_ptr<rrr::Marshallable> cmd);
-  static uint64_t GetCombinedCmdID(shared_ptr<rrr::Marshallable> cmd);
   static double GetCurrentMsTime();
   static void SetZeroTime();
   static double GetMsTimeElaps();
-  static double GetCommandMsTime(shared_ptr<rrr::Marshallable> cmd);
-  static double GetCommandMsTimeElaps(shared_ptr<rrr::Marshallable> cmd);
-  static key_t GetKey(shared_ptr<rrr::Marshallable> cmd);
-  static bool NeedRecordConflictInOriginalPath(shared_ptr<rrr::Marshallable> cmd);
-  static bool Conflict(shared_ptr<rrr::Marshallable> cmd1, shared_ptr<rrr::Marshallable> cmd2);
+
+  // Command-taking statics are
+  // primary; the legacy `shared_ptr<Marshallable>` overloads delegate
+  // through Command(sp).
+  static pair<int32_t, int32_t> GetCmdID(const Command& cmd);
+  static uint64_t GetCombinedCmdID(const Command& cmd);
+  static double GetCommandMsTime(const Command& cmd);
+  static double GetCommandMsTimeElaps(const Command& cmd);
+  static key_t GetKey(const Command& cmd);
+  static bool NeedRecordConflictInOriginalPath(const Command& cmd);
+  static bool Conflict(const Command& cmd1, const Command& cmd2);
+
+  // removed the
+  // `shared_ptr<rrr::Marshallable>` overloads of every static
+  // helper above.  After Marshallable retires, no caller can
+  // synthesize that argument shape.
   static uint64_t CombineInt32(pair<uint32_t, uint32_t> a) {
     return (((uint64_t)a.first) << 31) | a.second;
     // return (((uint64_t)a.first) * 1000000000) + a.second;

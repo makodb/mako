@@ -6,21 +6,24 @@
 #include "../classic/tpc_command.h"
 
 namespace janus {
-class Command;
 class CmdData;
 
 #define INVALID_PARID  ((parid_t)-1)
 #define NUM_BATCH_TIMER_RESET  (100)
 #define SEC_BATCH_TIMER_RESET  (1)
 
+// polymorphic command fields
+// (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
+// `shared_ptr<Marshallable>` to `janus::Command`.  See
+// `docs/dev/l10-unblock-plan.md`.
 struct FpgaRaftData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
-  shared_ptr<Marshallable> accepted_cmd_{nullptr};
-  shared_ptr<Marshallable> committed_cmd_{nullptr};
+  Command accepted_cmd_{};
+  Command committed_cmd_{};
 
   ballot_t term;
-  shared_ptr<Marshallable> log_{nullptr};
+  Command log_{};
 
 	//for retries
 	ballot_t prevTerm;
@@ -72,7 +75,9 @@ class FpgaRaftServer : public TxLogServer {
   {
     Log_debug("set loc_id %d is leader %d", loc_id_, isLeader) ;
     is_leader_ = isLeader ;
-    witness_.set_belongs_to_leader(isLeader);
+    // removed
+    // `witness_.set_belongs_to_leader(isLeader);` — see the
+    // companion comment on the deleted field/setter in scheduler.h.
   }
 
   void setIsFPGALeader(bool isLeader)
@@ -170,7 +175,10 @@ class FpgaRaftServer : public TxLogServer {
     return fpga_is_leader_ ;
   }
   
-  void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void SetLocalAppend(const janus::Command& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     *index = lastLogIndex ;
     lastLogIndex += 1;
@@ -182,9 +190,11 @@ class FpgaRaftServer : public TxLogServer {
 		instance->ballot = ballot;
     maxIndex = std::max(maxIndex, slot_id);
 
-    if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
-      auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-      auto sp_vec_piece = dynamic_pointer_cast<VecPieceData>(p_cmd->cmd_)->sp_vec_piece_data_;
+    if (cmd.kind_ == TpcCommitCommand::static_kind()){
+      auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+      auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
+      verify(vec_piece_data != nullptr);
+      auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
 			vector<struct KeyValue> kv_vector;
 			int index = 0;
 			for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){
@@ -264,6 +274,9 @@ class FpgaRaftServer : public TxLogServer {
                       rusty::Function<void()> cb) ;
 
 
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   void OnAppendEntries(const slotid_t slot_id,
                        const ballot_t ballot,
                        const uint64_t leaderCurrentTerm,
@@ -271,19 +284,21 @@ class FpgaRaftServer : public TxLogServer {
                        const uint64_t leaderPrevLogTerm,
                        const uint64_t leaderCommitIndex,
 											 const struct DepId dep_id,
-                       shared_ptr<Marshallable> &cmd,
+                       const janus::Command& cmd,
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,
                        uint64_t *followerLastLogIndex,
                        rusty::Function<void()> cb);
 
+  // take janus::Command.
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
-                shared_ptr<Marshallable> &cmd);
+                const janus::Command& cmd);
 
-  void OnForward(shared_ptr<Marshallable> &cmd, 
-                          uint64_t *cmt_idx,
-                          rusty::Function<void()> cb) ;
+  // removed `OnForward` declaration —
+  // only caller was the deleted `FpgaRaftServiceImpl::Forward`
+  // handler; the matching FpgaRaft::Forward RPC was dropped from
+  // rcc_rpc.rpc.
 
   void SpCommit(const uint64_t cmt_idx) ;
 
@@ -304,7 +319,7 @@ class FpgaRaftServer : public TxLogServer {
   void removeCmd(slotid_t slot);
 
 #ifdef ZERO_OVERHEAD
-  bool ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) override;
+  bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) override;
 #endif
 };
 } // namespace janus

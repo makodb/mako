@@ -1,11 +1,12 @@
 #include "testconf.h"
-#include "../../rrr/misc/marshal.hpp"
 #include "../config.h"
 #include "frame.h"
 #include "service.h"
 #include "commo.h"
-#include "rpc/recovery_manager.hpp"
+#include "recovery_manager.hpp"
 #include <cstring>
+
+#include "rrr/rrr.hpp"
 
 namespace janus {
 
@@ -14,7 +15,7 @@ namespace janus {
 int _test_id_g = 0;
 
 std::map<siteid_t, RaftFrame*> RaftTestConfig::replicas;
-std::map<siteid_t, std::function<int(int, std::shared_ptr<Marshallable>)>>
+std::map<siteid_t, std::function<int(int, janus::Command)>>
     RaftTestConfig::commit_callbacks;
 std::map<siteid_t, std::vector<int>> RaftTestConfig::committed_cmds;
 std::map<siteid_t, uint64_t> RaftTestConfig::rpc_count_last;
@@ -39,10 +40,9 @@ void RaftTestConfig::SetLearnerAction(void) {
     auto frame = pair.second;
     // rep_frame_ is already set in constructor, no need to set it here
     RaftTestConfig::commit_callbacks[svr] =
-        [svr](int slot, std::shared_ptr<Marshallable> cmd) -> int {
-          verify(cmd);
-          verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
-          auto commit_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
+        [svr](int slot, janus::Command md) -> int {
+          verify(md.kind_ == TpcCommitCommand::static_kind());
+          auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
           verify(commit_cmd != nullptr);
           Log_debug("server %d committed value %d at slot %d",
                     svr, commit_cmd->tx_id_, slot);
@@ -171,10 +171,9 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
   cmdptr->tx_id_ = cmd;
   cmdptr->cmd_ = vpd_p;
-  auto cmdptr_m = dynamic_pointer_cast<Marshallable>(cmdptr);
   // call Start()
   // Log_info("Start: Calling Start() on server %d for command %d", svr, cmd);
-  bool result = it->second->svr_->Start(cmdptr_m, index, term);
+  bool result = it->second->svr_->Start(cmdptr, index, term);
   // Log_info("Start: Server %d Start() for command %d returned %s, index=%ld, term=%ld",
   //          svr, cmd, result ? "SUCCESS" : "FAILED", *index, *term);
   return result;
@@ -261,6 +260,28 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
       int nc;
       int iteration = 0;
       while ((chrono::steady_clock::now() - start2) < chrono::seconds{10}) {
+        if (retry) {
+          // If leadership/term moved on, this index may be stale. Retry Start() quickly.
+          if (TermMovedOn(term)) {
+            Log_info("DoAgreement: Term moved on from %ld while waiting for command %d at index %ld, retrying Start()", term, cmd, index);
+            break;
+          }
+
+          bool isLeader = false;
+          uint64_t curTerm = 0;
+          auto ldr_it = replicas.find(ldr);
+          if (ldr_it == replicas.end() || ldr_it->second == nullptr || ldr_it->second->svr_ == nullptr) {
+            Log_info("DoAgreement: Leader %d disappeared while waiting for command %d at index %ld, retrying Start()", ldr, cmd, index);
+            break;
+          }
+          ldr_it->second->svr_->GetState(&isLeader, &curTerm);
+          if (!isLeader || curTerm != term) {
+            Log_info("DoAgreement: Leader changed (server=%d isLeader=%d term=%ld expected_term=%ld) while waiting for command %d at index %ld, retrying Start()",
+                     ldr, isLeader ? 1 : 0, curTerm, term, cmd, index);
+            break;
+          }
+        }
+
         nc = NCommitted(index);
         Log_info("DoAgreement: Iteration %d - NCommitted(%ld) returned %d for command %d", iteration++, index, nc, cmd);
         if (nc < 0) {
@@ -305,33 +326,14 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
   return 0;
 }
 
-shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t svr, int cmd) {
-  verify(0); // this function has been replaced by Start()
-  auto cmt_idx_p = std::make_shared<CommitIndex>(0);
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
-    [this, cmd, svr, cmt_idx_p]() {
-      auto cmdptr = std::make_shared<TpcCommitCommand>();
-      auto vpd_p = std::make_shared<VecPieceData>();
-      vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
-      cmdptr->tx_id_ = cmd;
-      cmdptr->cmd_ = vpd_p;
-      Log_debug("Starting agreement for cmd id %d", cmdptr->tx_id_);
-      auto cmdptr_m = dynamic_pointer_cast<Marshallable>(cmdptr);
-      auto it = replicas.find(svr);
-      if (it != replicas.end()) {
-        it->second->svr_->CreateRepCoord(0)->Submit(cmdptr_m, [svr, cmt_idx_p, it](){
-          cmt_idx_p->setval(it->second->svr_->commitIndex);
-        });
-      }
-    }
-  ));
-  auto it = replicas.find(svr);
-  if (it != replicas.end()) {
-    it->second->commo_->rpc_poll_.as_ref().unwrap()->add(rusty::Arc<Job>(arc_job));
-  }
-  Log_debug("Started agreement for cmd id %d", cmd);
-  return cmt_idx_p;
-}
+// removed
+//   `shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t,
+//    int)`
+// — body started with `verify(0); // this function has been replaced
+// by Start()`.  The function had been intentionally disabled and
+// replaced by `RaftTestConfig::Start` long ago; `grep StartAgreement`
+// returned only the declaration in `testconf.h:99` and the
+// definition.  Header declaration also went away in the same commit.
 
 void RaftTestConfig::Disconnect(siteid_t svr) {
   std::lock_guard<std::mutex> lk(disconnect_mtx_);
@@ -670,21 +672,21 @@ void RaftTestConfig::Restart(siteid_t svr) {
              svr, frame->svr_->async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
-    rrr::RecoveryConfig config;
+    raft::RecoveryConfig config;
     std::string base_path = "/tmp";
     config.storage_path = base_path + "/raft_" + std::to_string(svr) +
                          "_partition_" + std::to_string(site_info->partition_id_);
 
     // Create RecoveryManager and storage
-    rrr::RecoveryManager manager(config);
+    raft::RecoveryManager manager(config);
     auto storage = manager.create_storage();
 
     if (storage) {
       // Use RecoveryManager to orchestrate recovery
       auto result = manager.recover(
-        [frame](std::shared_ptr<rrr::LogStorage> s) { frame->svr_->SetLogStorage(s); },
+        [frame](std::shared_ptr<janus::raft::LogStorage> s) { frame->svr_->SetLogStorage(s); },
         [frame]() { return frame->svr_->RecoverFromStorage(); },
-        [frame](rrr::RecoveryResult& r) {
+        [frame](raft::RecoveryResult& r) {
           r.recovered_term = frame->svr_->currentTerm;
           r.recovered_entries = frame->svr_->raft_logs_.size();
         }
@@ -738,10 +740,9 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
   // Re-register learner action BEFORE adding to replicas map
   commit_callbacks[svr] =
-      [svr](int slot, std::shared_ptr<Marshallable> cmd) -> int {
-        verify(cmd);
-        verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
-        auto commit_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
+      [svr](int slot, janus::Command md) -> int {
+        verify(md.kind_ == TpcCommitCommand::static_kind());
+        auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
         verify(commit_cmd != nullptr);
         Log_debug("server %d committed value %d at slot %d",
                   svr, commit_cmd->tx_id_, slot);
@@ -842,7 +843,7 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
 }
 
 // ============================================================================
-// SPECULATIVE RAFT STATE QUERIES (Phase 7)
+// SPECULATIVE RAFT STATE QUERIES
 // ============================================================================
 
 bool RaftTestConfig::IsSecuredLeader(siteid_t svr) {

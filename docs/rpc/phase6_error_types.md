@@ -50,20 +50,10 @@ Detailed error codes within each category:
 - OUT_OF_MEMORY
 - INVALID_STATE
 
-### RpcException Class
+### Error Handling Model
 
-```cpp
-class RpcException : public std::exception {
-    RpcErrorCategory category_;
-    RpcError code_;
-    std::string message_;
-
-public:
-    const char* what() const noexcept override;
-    RpcErrorCategory category() const;
-    RpcError code() const;
-};
-```
+Phase 6 uses structured `RpcError` codes and helper predicates for retry and
+classification decisions. There is no RPC-specific exception type.
 
 ## Implementation Details
 
@@ -76,7 +66,7 @@ public:
 
 - All functions annotated @safe
 - No raw pointers
-- Uses standard exception mechanism
+- Uses explicit error codes (no RPC-specific exception path)
 
 ## File Structure
 

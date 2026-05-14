@@ -1,8 +1,22 @@
 #pragma once
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
+
 #include <string.h>
-#include <string>
-#include <vector>
+
+
+
 
 namespace rrr {
 
@@ -15,6 +29,6 @@ bool endswith(const char* str, const char* head);
 std::string format_decimal(double val);
 std::string format_decimal(int val);
 
-std::vector<std::string> strsplit(const std::string& str, const char sep = ' ');
+rusty::Vec<std::string> strsplit(const std::string& str, const char sep = ' ');
 
 } // namespace base

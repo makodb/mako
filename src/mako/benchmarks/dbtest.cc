@@ -319,7 +319,7 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
   // This ensures all shard workers complete thread_init() before any start transactions
   benchConfig.initMultiShardBarrier(shard_indices.size());
 
-  // Phase 1: Create and initialize bench_runners for all shards
+  // Create and initialize bench_runners for all shards
   vector<bench_runner*> runners;
   for (int shard_idx : shard_indices) {
     ShardContext* ctx = benchConfig.getShardContext(shard_idx);
@@ -361,7 +361,7 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
     Notice("Created bench_runner for shard %d", shard_idx);
   }
 
-  // Phase 1.5: Wire up cross-shard tables for local access (multi-shard mode only)
+  // Wire up cross-shard tables for local access (multi-shard mode only)
   // Each runner needs tables from all OTHER local shards
   Notice("Wiring up cross-shard tables for %zu runners", runners.size());
   for (size_t i = 0; i < runners.size(); i++) {
@@ -376,7 +376,7 @@ static void run_workers_multi_shard(const vector<int>& shard_indices)
   }
   Notice("Cross-shard table wiring completed");
 
-  // Phase 2: Run all shards in parallel using threads
+  // Run all shards in parallel using threads
   // Each shard runs its workers independently
   vector<thread> shard_threads;
 

@@ -80,8 +80,7 @@ Tests structured error types in real RPC scenarios:
 - TimeoutError                       // Returns TIMEOUT on long request
 - InvalidRpcIdError                  // Returns INVALID_REQUEST
 - ErrorCategoriesCorrect             // Categories match error types
-- ErrorRetryableCheck                // is_retryable() for different errors
-- RpcExceptionFromError              // Can throw RpcException from RpcError
+- ErrorRetryableCheck                // is_retryable_error() for different errors
 ```
 
 ### 5. `test/rpc_combined_reliability_test.cc` (~200 LOC)

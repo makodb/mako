@@ -1,15 +1,36 @@
-/**
- * @file fiber_context_runtime.cc
- * @brief Custom stackful coroutine runtime compatible with Fiber's legacy task/yield flow.
- */
 
-#include "fiber_impl.h"
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
 
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/box.hpp>
+#include <rusty/rc.hpp>
+#include <rusty/option.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/refcell.hpp>
+#include <rusty/function.hpp>
+
+
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "../base/all.hpp"
+
+#include "../rrr.hpp"
+
+/**
+ * @file fiber_context_runtime.cc
+ * @brief Custom stackful fiber runtime compatible with Fiber's task/yield flow.
+ */
+
+
+
 
 namespace rrr {
 
@@ -17,14 +38,14 @@ namespace rrr {
 //   fiber_context_x86_64.cc  (x86_64)
 //   fiber_context_aarch64.cc (AArch64/ARM64)
 
-thread_local boost_coro_task_t* boost_coro_task_t::tls_active_task_ = nullptr;
+thread_local fiber_task_t* fiber_task_t::tls_active_task_ = nullptr;
 
-void boost_coro_yield_t::operator()() {
+void fiber_yield_t::operator()() {
   verify(task_ != nullptr);
   task_->yield_to_caller();
 }
 
-boost_coro_task_t::boost_coro_task_t(TaskFn fn)
+fiber_task_t::fiber_task_t(TaskFn fn)
     : fn_(std::move(fn)),
       yield_(*this) {
   init_context();
@@ -32,7 +53,7 @@ boost_coro_task_t::boost_coro_task_t(TaskFn fn)
   resume();
 }
 
-boost_coro_task_t::~boost_coro_task_t() {
+fiber_task_t::~fiber_task_t() {
   if (stack_mapping_ != nullptr) {
     int rc = munmap(stack_mapping_, stack_mapping_bytes_);
     verify(rc == 0);
@@ -41,11 +62,11 @@ boost_coro_task_t::~boost_coro_task_t() {
   }
 }
 
-void boost_coro_task_t::operator()() {
+void fiber_task_t::operator()() {
   resume();
 }
 
-void boost_coro_task_t::init_context() {
+void fiber_task_t::init_context() {
   std::size_t page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
   if (page_sz == 0) {
     page_sz = 4096;
@@ -70,7 +91,7 @@ void boost_coro_task_t::init_context() {
   fiber_ctx_ = FiberContext{};
   caller_ctx_ = FiberContext{};
   const auto trampoline_addr =
-      reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(&boost_coro_task_t::entry_trampoline));
+      reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(&fiber_task_t::entry_trampoline));
 #if defined(__x86_64__)
   // SysV x86_64 ABI: %rsp % 16 == 8 on function entry (simulates a call pushing ret addr).
   stack_top -= sizeof(void*);
@@ -85,7 +106,7 @@ void boost_coro_task_t::init_context() {
 #endif
 }
 
-void boost_coro_task_t::resume() {
+void fiber_task_t::resume() {
   if (state_ == State::FINISHED) {
     return;
   }
@@ -95,7 +116,7 @@ void boost_coro_task_t::resume() {
   tls_active_task_ = old;
 }
 
-void boost_coro_task_t::yield_to_caller() {
+void fiber_task_t::yield_to_caller() {
   verify(state_ == State::RUNNING);
   state_ = State::SUSPENDED;
   fiber_swap_context(&fiber_ctx_, &caller_ctx_);
@@ -104,15 +125,15 @@ void boost_coro_task_t::yield_to_caller() {
   }
 }
 
-void boost_coro_task_t::entry_trampoline() {
+void fiber_task_t::entry_trampoline() {
   auto* task = tls_active_task_;
   verify(task != nullptr);
   task->entry();
 }
 
-[[noreturn]] void boost_coro_task_t::entry() {
+[[noreturn]] void fiber_task_t::entry() {
   state_ = State::RUNNING;
-  verify(fn_);
+  verify(static_cast<bool>(fn_));
   fn_(yield_);
   state_ = State::FINISHED;
   fiber_swap_context(&fiber_ctx_, &caller_ctx_);

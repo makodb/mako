@@ -21,19 +21,19 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
         }
         int res;
         TxnOutput output;
-        MarshallDeputy md;
-        fu->get_reply() >> res >> output >> md;
-        if (md.kind_ == MarshallDeputy::EMPTY_GRAPH) {
+        rrr::AnyMessage am;
+        fu->get_reply() >> res >> output >> am;
+        // graph reply rides directly as
+        // an `AnyMessage`, no `janus::Command` wrapper.
+        if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
           auto v = rgraph.CreateV(tid);
           RccTx& info = *v;
 //          info.partition_.insert(par_id);
           verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
-        } else if (md.kind_ == MarshallDeputy::RCC_GRAPH) {
-          // Arc returns const reference, use const_cast for mutation
-          auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.sp_data_));
-          callback(res, output, graph);
+        } else if (auto sp_graph = am.unpack<RccGraph>()) {
+          callback(res, output, *sp_graph);
         } else {
           verify(0);
         }
@@ -67,11 +67,11 @@ void JanusCommo::SendInquire(parid_t pid,
       Log_info("Get a error message in reply");
       return;
     }
-    MarshallDeputy md;
-    fu->get_reply() >> md;
-    // Arc returns const reference, use const_cast for mutation
-    auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.sp_data_));
-    callback(graph);
+    rrr::AnyMessage am;
+    fu->get_reply() >> am;
+    auto sp_graph = am.unpack<RccGraph>();
+    verify(sp_graph);
+    callback(*sp_graph);
   };
   fuattr.callback = cb;
   // TODO fix.
@@ -105,13 +105,11 @@ void JanusCommo::BroadcastPreAccept(
         return;
       }
       int32_t res;
-      MarshallDeputy md;
-      fu->get_reply() >> res >> md;
-      // Arc returns const reference, use const_cast for mutation
-      auto& graph = dynamic_cast<RccGraph&>(const_cast<Marshallable&>(*md.sp_data_));
-      // Convert back to shared_ptr for callback (bridge pattern)
-      auto sp = std::make_shared<RccGraph>(graph);
-      callback(res, sp);
+      rrr::AnyMessage am;
+      fu->get_reply() >> res >> am;
+      auto sp_graph = am.unpack<RccGraph>();
+      verify(sp_graph);
+      callback(res, std::make_shared<RccGraph>(*sp_graph));
     };
     verify(txn_id > 0);
     if (skip_graph) {
@@ -122,14 +120,14 @@ void JanusCommo::BroadcastPreAccept(
       auto fu_result = proxy->async_JanusPreAcceptWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Use shared_ptr directly for MarshallDeputy
+      // graph field is now `AnyMessage`
+      // directly (not wrapped in `janus::Command`).
       auto sp_graph_copy = std::make_shared<RccGraph>(*sp_graph);
-      MarshallDeputy md(sp_graph_copy);
       ClassicProxy::RpcJanusPreAcceptRequest req;
       req.txn_id = txn_id;
       req.rank = RANK_UNDEFINED;
       req.cmd = cmds;
-      req.graph = md;
+      req.graph = *rrr::AnyMessage::pack(sp_graph_copy);
       auto fu_result = proxy->async_JanusPreAccept(req, fuattr);
       // Arc auto-released
     }
@@ -157,15 +155,14 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
       callback(res);
     };
     verify(cmd_id > 0);
-    // Use shared_ptr directly for MarshallDeputy
+    // graph field is `AnyMessage` directly.
     auto sp_graph = std::make_shared<RccGraph>(*graph);
-    MarshallDeputy md(sp_graph);
     rank_t rank = RANK_D;
     ClassicProxy::RpcJanusAcceptRequest req;
     req.txn_id = cmd_id;
     req.rank = rank;
     req.ballot = ballot;
-    req.graph = md;
+    req.graph = *rrr::AnyMessage::pack(sp_graph);
     auto fu_result = proxy->async_JanusAccept(req, fuattr);
     // Arc auto-released
   }
@@ -204,14 +201,13 @@ void JanusCommo::BroadcastCommit(
       auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
       // Arc auto-released
     } else {
-      // Use shared_ptr directly for MarshallDeputy
+      // graph field is `AnyMessage` directly.
       auto sp_graph = std::make_shared<RccGraph>(*graph);
-      MarshallDeputy md(sp_graph);
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;
       req.rank = 0;
       req.need_validation = need_validation;
-      req.graph = md;
+      req.graph = *rrr::AnyMessage::pack(sp_graph);
       auto fu_result = proxy->async_JanusCommit(req, fuattr);
       // Arc auto-released
     }

@@ -1,3 +1,17 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
 /**
  * This is a asynchronous queued lock module with timeout support.
  * Written to support two-phase locking in rococo.
@@ -8,29 +22,40 @@
  * thread.
  */
 
-#pragma once
 
-#include <list>
-#include <mutex>
-#include <thread>
-#include <functional>
-#include <cstdint>
 
-#include "base/all.hpp"
+
+
+// External safety annotations for STL functions used in inline methods
+// (Previously listed `std::function::function: [unsafe]` here; no longer
+// needed — alock has migrated all callback storage to the Arc<Function
+// const>-backed `detail::CallbackWrapper` defined under base/.)
+
+
+
+
+#include "../base/all.hpp"
+#include "../base/callback_wrapper.hpp"
+
 
 #include "alarm.hpp"
 #include "dball.hpp"
 
-// External safety annotations for STL functions used in inline methods
-// @external: {
-//   std::function::function: [unsafe]
-// }
-
-#define ALOCK_TIMEOUT (200000) // 0.2s;
-//#define ALOCK_TIMEOUT (0) // no_timeout;
-
-
 namespace rrr {
+
+// ALock callback shapes — Arc<Function<...const>>-backed wrappers from
+// `base/callback_wrapper.hpp`.  The wrapper hides the move-only inner
+// rusty::Function behind a copyable handle so `lock_req_t` (which is
+// stored by value in `std::list<lock_req_t> requests_` and is itself
+// copyable) keeps its prior copy semantics — a lock_req_t copy is now
+// a few Arc refcount bumps instead of a deep std::function copy.  Same
+// wrapper type the channel-tier callbacks (`OnFrameCallback` etc.) and
+// FutureAttr::callback use.
+using ALockLockedCallback = detail::CallbackWrapper<void(uint64_t) const>;
+using ALockNotifyCallback = detail::CallbackWrapper<void() const>;
+using ALockWoundCallback  = detail::CallbackWrapper<int() const>;
+
+inline constexpr uint64_t ALOCK_TIMEOUT = 200000; // 0.2s
 
 class ALock {
  public:
@@ -50,30 +75,26 @@ class ALock {
 
   // @unsafe - Pure virtual function for lock implementation
   virtual uint64_t vlock(uint64_t owner,
-                         const std::function<void(uint64_t)> &yes_callback,
-                         const std::function<void(void)> &no_callback,
+                         const ALockLockedCallback &yes_callback,
+                         const ALockNotifyCallback &no_callback,
                          type_t type,
                          uint64_t priority, // lower value has higher priority
-                         const std::function<int(void)> &wound_callback) = 0;
+                         const ALockWoundCallback &wound_callback) = 0;
 
   bool done_;
 
  public:
-  ALock() :
-      status_(FREE),
-      n_rlock_(0),
-      done_(false) {
-  }
+  ALock();
 
-  // @unsafe - Constructs std::function and calls virtual vlock
+  // @unsafe - Constructs ALock callback wrapper and calls virtual vlock
   virtual uint64_t lock(uint64_t owner,
-                        const std::function<void(void)> &yes_callback,
-                        const std::function<void(void)> &no_callback,
+                        const ALockNotifyCallback &yes_callback,
+                        const ALockNotifyCallback &no_callback,
                         type_t type = WLOCK,
                         int64_t priority = 0, // lower value has higher priority
-                        const std::function<int(void)> &wound_callback = [] ()->int {return 0;}) {
+                        const ALockWoundCallback &wound_callback = [] ()->int {return 0;}) {
     // @unsafe {
-    std::function<void(uint64_t)> _yes_callback
+    ALockLockedCallback _yes_callback
         = [yes_callback](uint64_t id) {
           yes_callback();
         };
@@ -98,11 +119,11 @@ class ALock {
   virtual uint64_t lock_sync(uint64_t owner,
                         type_t type,
                         uint64_t priority,
-                        const std::function<int(void)>& wound_callback);
+                        const ALockWoundCallback& wound_callback);
 
   virtual void disable_wound(uint64_t req_id);
   virtual void abort(uint64_t id) = 0;
-  virtual ~ALock() { }
+  virtual ~ALock();
 };
 
 class WaitDieALock: public ALock {
@@ -115,8 +136,8 @@ class WaitDieALock: public ALock {
     uint64_t id;
     int64_t priority;
     type_t type;
-    std::function<void(uint64_t)> yes_callback;
-    std::function<void(void)> no_callback;
+    ALockLockedCallback yes_callback;
+    ALockNotifyCallback no_callback;
     lock_req_status_t status;
 
     lock_req_t() : id(0), priority(0), type(WLOCK), status(WAIT),
@@ -126,8 +147,8 @@ class WaitDieALock: public ALock {
     lock_req_t(uint64_t _id,
                int64_t _priority,
                type_t _type,
-               const std::function<void(uint64_t)> &_yes_callback,
-               const std::function<void(void)> &_no_callback,
+               const ALockLockedCallback &_yes_callback,
+               const ALockNotifyCallback &_no_callback,
                lock_req_status_t _status = WAIT) :
         id(_id),
         priority(_priority),
@@ -159,6 +180,21 @@ class WaitDieALock: public ALock {
     WD_WAIT,
     WD_DIE
   } wd_status_t;
+  // alock carve-out (2026-05-01): the wait-die lock-waiter queue
+  // stays `std::list` (NOT `rusty::VecDeque`).  alock.cpp relies on
+  // three standard linked-list properties that VecDeque can't supply
+  // without a semantic-level refactor:
+  //   - reverse iteration (`requests_.rbegin/rend` at alock.cpp:309/329)
+  //   - iterator-stable erase-during-iterate (`requests_.erase(it)`
+  //     at alock.cpp:230/257/270/437/459/471 — returns the next iter
+  //     and leaves all others valid)
+  //   - pointer stability across re-entrant `lock()` calls from inside
+  //     a yes_callback (read_acquire collects `lock_req_t*` snapshots
+  //     and would see those invalidated by a VecDeque ring-buffer
+  //     reallocation triggered by a recursive lock())
+  // Same precedent as the LRU caches in rpc/idempotency.hpp and
+  // rpc/completion_tracker.hpp.  See docs/TODO-srpc.md L2c-alock for
+  // the full rationale.
   std::list<lock_req_t> requests_;
 
   uint64_t n_r_in_queue_;
@@ -180,37 +216,34 @@ class WaitDieALock: public ALock {
     lock_req.status = lock_req_t::LOCK;
     lock_req.yes_callback(lock_req.id);
   }
-  void read_acquire(const std::vector<lock_req_t *> &lock_reqs) {
+  void read_acquire(const rusty::Vec<lock_req_t *> &lock_reqs) {
     if (lock_reqs.size() == 0) {
       return;
     }
     if (n_rlock_ == 0)
       status_ = RLOCKED;
     n_rlock_ += lock_reqs.size();
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> > to_calls;
+    rusty::Vec<std::pair<ALockLockedCallback, uint64_t> > to_calls;
     to_calls.reserve(lock_reqs.size());
-    std::vector<lock_req_t *>::const_iterator it;
-    for (it = lock_reqs.begin(); it != lock_reqs.end(); it++) {
-      verify((*it)->type == RLOCK && (*it)->status == lock_req_t::WAIT);
-      (*it)->status = lock_req_t::LOCK;
-      to_calls.push_back(
-          std::pair<std::function<void(uint64_t)>, uint64_t>(
-              (*it)->yes_callback,
-              (*it)->id));
+    for (auto* req : lock_reqs) {
+      verify(req->type == RLOCK && req->status == lock_req_t::WAIT);
+      req->status = lock_req_t::LOCK;
+      to_calls.push(
+          std::pair<ALockLockedCallback, uint64_t>(
+              req->yes_callback,
+              req->id));
     }
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> >::iterator
-        cit;
-    for (cit = to_calls.begin(); cit != to_calls.end(); cit++) {
-      cit->first(cit->second);
+    for (auto& cb : to_calls) {
+      cb.first(cb.second);
     }
   }
 
   virtual uint64_t vlock(uint64_t owner,
-                         const std::function<void(uint64_t)> &yes_callback,
-                         const std::function<void(void)> &no_callback,
+                         const ALockLockedCallback &yes_callback,
+                         const ALockNotifyCallback &no_callback,
                          type_t type,
                          uint64_t priority,
-                         const std::function<int(void)> &) override;
+                         const ALockWoundCallback &) override;
 
   void sanity_check() {
     bool acquired_check = false;
@@ -293,9 +326,9 @@ class WoundDieALock: public ALock {
     uint64_t id;
     int64_t priority;
     type_t type;
-    std::function<void(uint64_t)> yes_callback;
-    std::function<void(void)> no_callback;
-    std::function<int(void)> wound_callback;
+    ALockLockedCallback yes_callback;
+    ALockNotifyCallback no_callback;
+    ALockWoundCallback wound_callback;
     lock_req_status_t status;
 
     lock_req_t() : id(0), priority(0), type(WLOCK), status(WAIT),
@@ -305,9 +338,9 @@ class WoundDieALock: public ALock {
     lock_req_t(uint64_t _id,
                int64_t _priority,
                type_t _type,
-               const std::function<void(uint64_t)> &_yes_callback,
-               const std::function<void(void)> &_no_callback,
-               const std::function<int(void)> &_wound_callback,
+               const ALockLockedCallback &_yes_callback,
+               const ALockNotifyCallback &_no_callback,
+               const ALockWoundCallback &_wound_callback,
                lock_req_status_t _status = WAIT) :
         id(_id),
         priority(_priority),
@@ -337,6 +370,9 @@ class WoundDieALock: public ALock {
     }
   };
 
+  // alock carve-out (2026-05-01) — see the WaitDieALock comment
+  // above for full rationale.  Same iterator-stability / reverse-
+  // iteration / pointer-stability requirements apply here.
   std::list<lock_req_t> requests_;
 
   void wound_die(type_t type, int64_t priority);
@@ -379,37 +415,34 @@ class WoundDieALock: public ALock {
     lock_req.status = lock_req_t::LOCK;
     lock_req.yes_callback(lock_req.id);
   }
-  void read_acquire(const std::vector<lock_req_t *> &lock_reqs) {
+  void read_acquire(const rusty::Vec<lock_req_t *> &lock_reqs) {
     if (lock_reqs.size() == 0) {
       return;
     }
     if (n_rlock_ == 0)
       status_ = RLOCKED;
     n_rlock_ += lock_reqs.size();
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> > to_calls;
+    rusty::Vec<std::pair<ALockLockedCallback, uint64_t> > to_calls;
     to_calls.reserve(lock_reqs.size());
-    std::vector<lock_req_t *>::const_iterator it;
-    for (it = lock_reqs.begin(); it != lock_reqs.end(); it++) {
-      verify((*it)->type == RLOCK && (*it)->status == lock_req_t::WAIT);
-      (*it)->status = lock_req_t::LOCK;
-      to_calls.push_back(
-          std::pair<std::function<void(uint64_t)>, uint64_t>(
-              (*it)->yes_callback,
-              (*it)->id));
+    for (auto* req : lock_reqs) {
+      verify(req->type == RLOCK && req->status == lock_req_t::WAIT);
+      req->status = lock_req_t::LOCK;
+      to_calls.push(
+          std::pair<ALockLockedCallback, uint64_t>(
+              req->yes_callback,
+              req->id));
     }
-    std::vector<std::pair<std::function<void(uint64_t)>, uint64_t> >::iterator
-        cit;
-    for (cit = to_calls.begin(); cit != to_calls.end(); cit++) {
-      cit->first(cit->second);
+    for (auto& cb : to_calls) {
+      cb.first(cb.second);
     }
   }
 
   virtual uint64_t vlock(uint64_t owner,
-                         const std::function<void(uint64_t)> &yes_callback,
-                         const std::function<void(void)> &no_callback,
+                         const ALockLockedCallback &yes_callback,
+                         const ALockNotifyCallback &no_callback,
                          type_t type,
                          uint64_t priority,
-                         const std::function<int(void)> &wound_callback) override;
+                         const ALockWoundCallback &wound_callback) override;
 
   void sanity_check() {
     bool acquired_check = false;
@@ -476,11 +509,11 @@ class WoundDieALock: public ALock {
 class TimeoutALock: public ALock {
  protected:
   virtual uint64_t vlock(uint64_t owner,
-                         const std::function<void(uint64_t)> &yes_callback,
-                         const std::function<void(void)> &no_callback,
+                         const ALockLockedCallback &yes_callback,
+                         const ALockNotifyCallback &no_callback,
                          type_t type,
                          uint64_t priority,
-                         const std::function<int(void)> &) override;
+                         const ALockWoundCallback &) override;
 
  public:
   enum mode_t { TIMEOUT, PROMPT };
@@ -501,8 +534,8 @@ class TimeoutALock: public ALock {
     type_t type_;
     uint64_t timeout_ = 0;
 
-    std::function<void(uint64_t)> yes_callback_;
-    std::function<void()> no_callback_;
+    ALockLockedCallback yes_callback_;
+    ALockNotifyCallback no_callback_;
 
     uint64_t time_;
     status_t status_;
@@ -516,8 +549,8 @@ class TimeoutALock: public ALock {
 
     ALockReq(uint64_t id,
              type_t type,
-             const std::function<void(uint64_t)> &yes_cb,
-             const std::function<void()> &no_cb,
+             const ALockLockedCallback &yes_cb,
+             const ALockNotifyCallback &no_cb,
              uint64_t tm_out) :
         id_(id),
         type_(type),
@@ -557,7 +590,20 @@ class TimeoutALock: public ALock {
 
   uint64_t id_locked_ = 0;
 
-  std::mutex lock_;
+  // the prior `std::mutex lock_;` field never
+  // had any uncommented lock/unlock site — every reference to `lock_`
+  // in alock.{hpp,cpp} was inside `//`-prefixed dead code (see git
+  // blame for the commented-out `lock_.lock()` / `lock_.unlock()`
+  // pairs that used to wrap `requests_` mutations in an earlier
+  // version).  Field removed; no consumer (test_alock or otherwise)
+  // accessed it directly.  If concurrency over `requests_` is ever
+  // re-introduced, follow the L7-request_queue / L7-inmemory_*
+  // pattern: wrap the protected fields in `SpinMutex<Inner>` rather
+  // than re-adding a separate std::mutex.
+  //
+  // alock carve-out (2026-05-01) — `std::list<ALockReq>` stays for
+  // the same iterator-stability reasons as the WaitDieALock variant
+  // (see that class's comment above for full rationale).
   std::list<ALockReq> requests_;
   //    uint64_t tm_last_ = 0;
   uint64_t tm_wait_;
@@ -593,7 +639,7 @@ class TimeoutALock: public ALock {
   /**
    * return: how many i locked.
    */
-  uint32_t lock_all(std::vector<ALockReq *> &lock_reqs);
+  uint32_t lock_all(rusty::Vec<ALockReq *> &lock_reqs);
 
   /**
    *
@@ -607,13 +653,20 @@ class ALockGroup {
 
   enum status_t { INIT, WAIT, LOCK, TIMEOUT, UNLOCK };
 
-  std::recursive_mutex mtx_locks_;
+  // both `std::recursive_mutex mtx_locks_` and
+  // `std::mutex mtx_` were dead — every uncommented use site of
+  // either was already inside `//` comments (see git blame for the
+  // historical `mtx_locks_.lock()` and `mtx_.lock_guard` blocks that
+  // were commented out before this point).  Removed.  Same forward-
+  // looking guidance as TimeoutALock above: future re-introduction
+  // of concurrency should use SpinMutex<Inner>, not a separate
+  // std::mutex.
 
-  std::map<ALock *, uint64_t> locked_;
-  std::map<ALock *, ALock::type_t> tolock_;
+  rusty::BTreeMap<ALock *, uint64_t> locked_;
+  rusty::BTreeMap<ALock *, ALock::type_t> tolock_;
 
   uint64_t priority_;
-  std::function<int(void)> wound_callback_;
+  ALockWoundCallback wound_callback_;
 
 
   // INIT->WAIT->LOCK->UNLOCK
@@ -621,10 +674,9 @@ class ALockGroup {
   // TODO: LOCK->WAIT->LOCK->WAIT->LOCK
   // TODO: LOCK->WAIT->TIMEOUT
   status_t status_;
-  std::mutex mtx_;
 
-  std::function<void(void)> yes_callback_;
-  std::function<void(void)> no_callback_;
+  ALockNotifyCallback yes_callback_;
+  ALockNotifyCallback no_callback_;
 
   uint64_t n_locked_ = 0;
   uint64_t n_tolock_ = 0;
@@ -632,8 +684,8 @@ class ALockGroup {
   DragonBall *db_;
 
   ALockGroup(int64_t priority = 0,
-             const std::function<int(void)> &wound_callback
-             = std::function<int(void)>()) :
+             const ALockWoundCallback &wound_callback
+             = ALockWoundCallback()) :
       priority_(priority),
       wound_callback_(wound_callback),
       status_(INIT) {
@@ -670,7 +722,7 @@ class ALockGroup {
       //	    mtx_locks_.lock();
       //	    tolock_.insert(std::pair<ALock*, uint64_t>(&alock, 0));
       //	    tolock_.insert(std::pair<ALock*, ALock::type_t>(&alock, type));
-      tolock_[alock] = type;
+      tolock_.insert(alock, type);
       //	    mtx_locks_.unlock();
     } else {
       verify(0);
@@ -679,9 +731,10 @@ class ALockGroup {
 
   void abort_all_locked() {
     //        mtx_locks_.lock();
-    for (auto &pair: locked_) {
-      auto &alock = pair.first;
-      auto &areq_id = pair.second;
+    // rusty::BTreeMap iter `operator*()` returns
+    // `std::tuple<const K&, V&>` (post-2026-04 API). Use structured
+    // bindings to keep the same `alock`/`areq_id` names.
+    for (auto&& [alock, areq_id] : locked_) {
       if (areq_id != 0) {
         alock->abort(areq_id);
       }
@@ -700,8 +753,8 @@ class ALockGroup {
     }
   }
 
-  void lock_all(const std::function<void(void)> &yes_cb,
-                const std::function<void(void)> &no_cb);
+  void lock_all(const ALockNotifyCallback &yes_cb,
+                const ALockNotifyCallback &no_cb);
 
   void unlock_all() {
 

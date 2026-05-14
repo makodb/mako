@@ -142,32 +142,40 @@ class Frequency {
   }
 };
 
+// candidates_ migrated to
+// `unordered_map<uint64_t, janus::Command>`.
+// external API (push_back, cmd_to_recover)
+// also takes/returns Command; shared_ptr<Marshallable> callers
+// auto-convert via Command's implicit ctor.
 class RevoveryCandidates {
   // <cmd_id, cmd>
-  unordered_map<uint64_t, shared_ptr<Marshallable>> candidates_;
+  unordered_map<uint64_t, janus::Command> candidates_;
   unordered_map<uint64_t, bool> appeared_;
   int total_write_ = 0;
   uint64_t to_recover_id_ = -1;
  public:
   RevoveryCandidates() {}
-  void push_back(uint64_t cmd_id, shared_ptr<Marshallable> cmd, bool is_write);
+  void push_back(uint64_t cmd_id, const janus::Command& cmd, bool is_write);
   bool remove(uint64_t cmd_id);
   bool has_appeared(uint64_t cmd_id);
   size_t size() const;
   int total_write();
   bool has_cmd_to_recover() const;
-  shared_ptr<Marshallable> cmd_to_recover();
+  janus::Command cmd_to_recover();
 };
 
 class Witness {
+  // WitnessLog::cmd_ migrated from
+  // shared_ptr<Marshallable> to janus::Command.  Conditional
+  // WITNESS_LOG_DEBUG; never compiled in default builds.
   class WitnessLog {
    public:
     double time_;
     int operation_; // 0: push_back; 1: remove
-    shared_ptr<Marshallable> cmd_;
+    janus::Command cmd_;
     bool success_;
     int size_;
-    WitnessLog(int operation, shared_ptr<Marshallable> cmd, bool success, int size):
+    WitnessLog(int operation, const janus::Command& cmd, bool success, int size):
       operation_(operation), cmd_(cmd), success_(success), size_(size) {
       time_ = SimpleRWCommand::GetCurrentMsTime();
     }
@@ -183,7 +191,12 @@ class Witness {
       }
     }
   };
-  bool belongs_to_leader_{false}; // i.e. This server can propose value // discard
+  // removed `bool belongs_to_leader_{false};`
+  // and `void set_belongs_to_leader(bool);` — the field was already
+  // commented `// discard`; it was set in 3 callers
+  // (`mencius/server.h:48`, `fpga_raft/server.h:75`,
+  // `copilot/server.cc:26`) but never read by anything.  The 3 calls
+  // to the setter were removed alongside the field.
   int witness_size_ = 0;
   Distribution witness_size_distribution_;
 
@@ -195,25 +208,33 @@ class Witness {
   /* Recover related begin */
   ballot_t max_seen_ballot_ = -1, max_accepted_ballot_ = -1;
   int sid_ = -1, set_size_ = 0;
-  bool committed_ = false;
+  // removed `bool committed_ = false;` —
+  // set by `TxLogServer::OnJetpackCommit` at scheduler.cc:1437 but
+  // never read anywhere.  The matching `sid_` / `set_size_` fields
+  // it was set alongside ARE read at scheduler.cc:1388-1389, so
+  // those stay; only `committed_` was dead state.
   /* Recover related end */
 
   Witness() {};
   ~Witness() {};
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   // return whether meet conflict, but not whether push_back success
-  bool push_back(const shared_ptr<Marshallable>& cmd);
+  bool push_back(const janus::Command& cmd);
   // return how many cmd have been removed (cmd may be CMD_TPC_BATCH)
-  int remove(const shared_ptr<Marshallable>& cmd);
+  int remove(const janus::Command& cmd);
   // return whether all cmds appeared before
-  bool has_appeared(const shared_ptr<Marshallable>& cmd);
-  void set_belongs_to_leader(bool belongs_to_leader); // discard
+  bool has_appeared(const janus::Command& cmd);
   // return 50pct, 90pct, 99pct, ave of the witness_size_distribution_
   std::vector<double> witness_size_distribution();
   /* Recover related begin */
   bool has_cmd_to_recover(key_t key) {
     return candidates_[key].has_cmd_to_recover();
   }
-  shared_ptr<Marshallable> cmd_to_recover(key_t key) {
+  // returns Command;
+  // shared_ptr<Marshallable> callers auto-convert via implicit ctor.
+  janus::Command cmd_to_recover(key_t key) {
     return candidates_[key].cmd_to_recover();
   }
   shared_ptr<VecRecData> id_set();
@@ -257,48 +278,26 @@ class RecentAverage {
   }
 };
 
-struct ResponseData {
-  // pair<ver_t, ver_t> pos_of_this_pack;
-  map<pair<int, int>, vector<shared_ptr<Marshallable> > >responses_;
-  shared_ptr<Marshallable> max_cmd_{nullptr};
-  int received_count_ = 0, accept_count_ = 0, max_accept_count_ = 0;
-  double first_seen_time_ = 0;
-  bool done_{false};
-  pair<int, int> append_response(const shared_ptr<Marshallable>& cmd) {
-    VecPieceData *vecPiece;
-    if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) { // original through tx svr
-      shared_ptr<TpcCommitCommand> tpc_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-      vecPiece = (VecPieceData*)(tpc_cmd->cmd_.get());
-    } else if (cmd->kind_ == MarshallDeputy::CMD_VEC_PIECE) { // jetpack broadcast
-      vecPiece = dynamic_pointer_cast<VecPieceData>(cmd).get();
-    } else {
-      verify(0);
-    }
-    shared_ptr<CmdData> md = vecPiece->sp_vec_piece_data_->at(0);
-    pair<int, int> cmd_id = {md->client_id_, md->cmd_id_in_client_};
-    responses_[cmd_id].push_back(cmd);
-    accept_count_++;
-    if (responses_[cmd_id].size() > max_accept_count_) {
-      max_accept_count_ = responses_[cmd_id].size();
-      max_cmd_ = cmd;
-    }
-    return {accept_count_, max_accept_count_};
-  }
-  shared_ptr<Marshallable> GetMaxCmd() {
-    return max_cmd_;
-  }
-};
+// removed dead `struct ResponseData`
+// (~30 LOC) — declared with `responses_`, `max_cmd_`, `accept_count_` etc.
+// fields plus `append_response()` and `GetMaxCmd()` methods, but never
+// instantiated, referenced, or constructed anywhere in the tree.
 
+// rec_set_ migrated from
+// `vector<shared_ptr<Marshallable>>` to `vector<janus::Command>`.
+// external API now also uses Command;
+// shared_ptr<Marshallable> callers auto-convert via Command's
+// implicit ctor.
 class RecoverySet {
-  std::unordered_map<int, std::vector<shared_ptr<Marshallable>>> rec_set_;
+  std::unordered_map<int, std::vector<janus::Command>> rec_set_;
  public:
-  void insert(int sid, int rid, shared_ptr<Marshallable> cmd) {
+  void insert(int sid, int rid, const janus::Command& cmd) {
     if (rec_set_[sid].size() <= rid) {
         rec_set_[sid].resize(rid + 1);
     }
     rec_set_[sid][rid] = cmd;
   }
-  shared_ptr<Marshallable> get(int sid, int rid) {
+  const janus::Command& get(int sid, int rid) {
     if (rec_set_[sid].size() <= rid) {
         rec_set_[sid].resize(rid + 1);
     }
@@ -310,19 +309,13 @@ class RecoverySet {
 
 
 
-struct CommitNotification {
-  // client side
-  bool client_stored_ = false;
-  bool_t* committed_;
-  value_t* commit_result_;
-  function<void()> commit_callback_;
-  // coordinator side
-  bool coordinator_stored_ = false;
-  value_t coordinator_commit_result_;
-  bool coordinator_replied_ = false;
-  // timestamp (ms)
-  double receive_time_ = -1;
-};
+// removed `struct CommitNotification` —
+// declared with 7 fields (client_stored_, committed_, commit_result_,
+// commit_callback_, coordinator_stored_, coordinator_commit_result_,
+// coordinator_replied_, receive_time_) but never instantiated
+// anywhere.  `grep "CommitNotification\s+"` returned only the
+// definition itself; the matches on `testSpeculativeCommitNotification`
+// / `testDurableCommitNotification` are unrelated test method names.
 
 class TxnRegistry;
 class Executor;
@@ -339,7 +332,8 @@ class TxLogServer {
   View old_view_, new_view_;
   int sid, rid, sid_cnt_ = 0;
   RecoverySet rec_set_;
-  bool simulated_fail_ = false;
+  // removed `bool simulated_fail_ = false;`
+  // — declared but never written or read anywhere.
   std::chrono::steady_clock::time_point jetpack_recovery_start_time_{};
   /* Some Jetpack elements end */
 
@@ -351,12 +345,24 @@ class TxLogServer {
   unordered_map<txid_t, mdb::Txn *> mdb_txns_{};
   unordered_map<txid_t, Executor *> executors_{};
 
-  function<int(int,shared_ptr<Marshallable>)> app_next_{};
-  function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};
+  // app_next_ now takes janus::Command (not
+  // shared_ptr<Marshallable>) so user code is one type level removed
+  // from the rrr framework's wire-boundary shared_ptr.  MarshallDeputy
+  // ctors are non-explicit, so callers passing `shared_ptr<Marshallable>`
+  // (e.g. `instance->log_`) auto-convert at the call site.
+  function<int(int, janus::Command)> app_next_{};
+  // removed
+  //   `function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};`
+  // — declared but never written or invoked anywhere.
 
   shared_ptr<mdb::TxnMgr> mdb_txn_mgr_{};
   int mode_;
-  Recorder *recorder_ = nullptr;
+  // removed `Recorder *recorder_ = nullptr;`
+  // — only assignment was a commented-out
+  // `recorder_ = new Recorder(path);` in `scheduler.cc::SetupTransport`,
+  // and the only readers were `dtxn->recorder_ = this->recorder_;`
+  // propagation lines in `scheduler.cc::CreateRccDtxn` /
+  // `CreateTx` (also gone in this phase).  Field always nullptr.
   Frame *frame_ = nullptr;
   Frame *rep_frame_ = nullptr;
   TxLogServer *tx_sched_ = nullptr;
@@ -374,9 +380,15 @@ class TxLogServer {
   bool in_upgrade_epoch_{false};
   const int EPOCH_DURATION = 5;
 
-  bool paused_ = false; // [Jetpack] For failure recovery additional helper
+  // removed `bool paused_ = false;` — set
+  // in `TxLogServer::Pause()` / `Resume()` (scheduler.cc:333, 338)
+  // alongside `commo_->Pause()` / `commo_->Resume()` calls but
+  // never read.  The Pause/Resume methods themselves are kept
+  // (called from `server_worker.cc:329, 335` and `service.cc:371,
+  // 396`) since the `commo_->Pause()` side effect is real; only the
+  // dead `paused_` writes were removed.
 
-  // Phase 2.4: State machine recovery tracking
+  // State machine recovery tracking
   bool in_state_machine_recovery_{false};
   size_t transactions_recovered_{0};
 
@@ -478,10 +490,8 @@ class TxLogServer {
   virtual mdb::Txn *GetOrCreateMTxn(const i64 tid);
   virtual mdb::Txn *RemoveMTxn(const i64 tid);
 
-  void get_prepare_log(i64 txn_id,
-                       const std::vector<i32> &sids,
-                       std::string *str
-  );
+  // removed `get_prepare_log` declaration —
+  // see scheduler.cc retirement comment.
 
   // TODO: (Shuai: I am not sure this is supposed to be here.)
   // I think it used to initialized the database?
@@ -490,27 +500,40 @@ class TxLogServer {
                  mdb::Table *tbl
   );
 
+  // takes janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
   virtual int32_t Dispatch(cmdid_t cmd_id,
-                        shared_ptr<Marshallable> cmd,
+                        const janus::Command& cmd,
                         TxnOutput& ret_output,
                         std::shared_ptr<ViewData>& view_data) {
     verify(0);
     return REJECT;
   }
 
-  void RegLearnerAction(function<int(int,shared_ptr<Marshallable>)> learner_action) {
+  // take a `function<int(int, janus::Command)>`.
+  // Lambdas registered here see the deputy directly; if they need the
+  // legacy shared_ptr they can call `md.inner()`, or use the
+  // `marshallable_cast<T>(md)` overload to downcast to a concrete type.
+  void RegLearnerAction(function<int(int, janus::Command)> learner_action) {
     app_next_ = learner_action;
   }
 
-  virtual int Next(int,shared_ptr<Marshallable> cmd) { verify(0); };
+  // take janus::Command (matches RegLearnerAction
+  // signature above).  Body uses `md.inner()` / `marshallable_cast<T>(md)`
+  // to access the underlying typed payload.
+  virtual int Next(int, janus::Command md) { verify(0); };
   /**
    * Check if the command is already committed
    * @param commit_cmd command to be checked
    * @return true if it's already committed, false otherwise
    */
-  virtual bool CheckCommitted(Marshallable& commit_cmd) { verify(0); }
+  virtual bool CheckCommitted(const janus::Command& commit_cmd) { verify(0); }
 
-  virtual void Next(Marshallable& cmd) { verify(0); };
+  // removed `virtual void Next(Marshallable&)
+  // { verify(0); }` — declared on the base but never overridden in
+  // any subclass and never called.  The live virtual is the
+  // `Next(int, shared_ptr<Marshallable>)` overload above.
 
 	virtual void Setup() { verify(0); } ;
   virtual bool IsLeader() {
@@ -519,7 +542,7 @@ class TxLogServer {
     }
     return false;
   }
-  // @safe
+  // @unsafe
   virtual bool IsFPGALeader() { verify(0); } ;
 	virtual bool RequestVote() { verify(0); return false;};
   virtual void Pause();
@@ -538,7 +561,10 @@ class TxLogServer {
   unordered_map<key_t, value_t> database_;
   int database_operation_count_ = 0;
 
-  void ApplyToDatabase(shared_ptr<Marshallable> cmd) {
+  // takes janus::Command;
+  // unwraps to shared_ptr<Marshallable> at the boundary into
+  // SimpleRWCommand which still takes the legacy shape.
+  void ApplyToDatabase(const janus::Command& cmd) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
     // Log_info("Apply Write %d key %d value %d", parsed_cmd.IsWrite(), parsed_cmd.key_, parsed_cmd.value_);
     if (parsed_cmd.IsWrite()) {
@@ -557,12 +583,6 @@ class TxLogServer {
     return checksum;
   }
 
-  UniqueCmdID GetUniqueCmdID(shared_ptr<Marshallable> cmd);
-
-  value_t DBGet(const shared_ptr<Marshallable>& cmd);
-
-  value_t DBPut(const shared_ptr<Marshallable>& cmd);
-
   // This used for garbage collection / evaluation data structure grows over time
   void PrintStructureSize();
 
@@ -571,18 +591,30 @@ class TxLogServer {
   Witness witness_;
 
   // For Rule usage
-  void OnRuleSpeculativeExecute(const shared_ptr<Marshallable>& cmd,
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void OnRuleSpeculativeExecute(const janus::Command& cmd,
                                 bool_t* accepted,
                                 value_t* result,
                                 bool_t* is_leader);
 
-  void OriginalPathUnexecutedCmdConflictPlaceHolder(const shared_ptr<Marshallable>& cmd);
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void OriginalPathUnexecutedCmdConflictPlaceHolder(const janus::Command& cmd);
 
   // @unsafe
-  void RuleWitnessGC(const shared_ptr<Marshallable>& cmd);
+  // takes janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void RuleWitnessGC(const janus::Command& cmd);
 
 #ifdef ZERO_OVERHEAD
-  virtual bool ConflictWithOriginalUnexecutedLog(const shared_ptr<Marshallable>& cmd) {
+  // takes janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  virtual bool ConflictWithOriginalUnexecutedLog(const janus::Command& cmd) {
     // This function should be overrided by the deriviated class (replica server)
     assert(0);
     return false;
@@ -603,10 +635,13 @@ class TxLogServer {
   void JetpackCommit(int sid, int set_size);
 
   void JetpackResubmit(int sid, int set_size);
-  void DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_ptr<IntEvent> recovery_event = nullptr);
+  // take janus::Command;
+  // shared_ptr<Marshallable> callers auto-convert via Command's
+  // implicit ctor.
+  void DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr<IntEvent> recovery_event = nullptr);
   
-  void OnJetpackBeginRecovery(const MarshallDeputy& old_view,
-                              const MarshallDeputy& new_view, 
+  void OnJetpackBeginRecovery(const janus::Command& old_view,
+                              const janus::Command& new_view, 
                               const epoch_t& new_view_id);
   
   void OnJetpackPullIdSet(const epoch_t& jepoch,
@@ -614,8 +649,8 @@ class TxLogServer {
                           bool_t* ok,
                           epoch_t* reply_jepoch,
                           epoch_t* reply_oepoch,
-                          MarshallDeputy* reply_old_view,
-                          MarshallDeputy* reply_new_view,
+                          janus::Command* reply_old_view,
+                          janus::Command* reply_new_view,
                           shared_ptr<VecRecData> id_set);
   
   // @unsafe
@@ -625,8 +660,8 @@ class TxLogServer {
                         bool_t* ok, 
                         epoch_t* reply_jepoch, 
                         epoch_t* reply_oepoch,
-                        MarshallDeputy* reply_old_view,
-                        MarshallDeputy* reply_new_view,
+                        janus::Command* reply_old_view,
+                        janus::Command* reply_new_view,
                         shared_ptr<KeyCmdBatchData>& batch);
   
   void OnJetpackRecordCmd(const epoch_t& jepoch, 
@@ -641,8 +676,8 @@ class TxLogServer {
                         bool_t* ok, 
                         epoch_t* reply_jepoch,
                         epoch_t* reply_oepoch,
-                        MarshallDeputy* reply_old_view,
-                        MarshallDeputy* reply_new_view,
+                        janus::Command* reply_old_view,
+                        janus::Command* reply_new_view,
                         ballot_t* reply_max_seen_ballot,
                         ballot_t* accepted_ballot, 
                         int32_t* replied_sid, 
@@ -656,8 +691,8 @@ class TxLogServer {
                        bool_t* ok,
                        epoch_t* reply_jepoch,
                        epoch_t* reply_oepoch,
-                       MarshallDeputy* reply_old_view,
-                       MarshallDeputy* reply_new_view,
+                       janus::Command* reply_old_view,
+                       janus::Command* reply_new_view,
                        ballot_t* reply_max_seen_ballot);
   
   void OnJetpackCommit(const epoch_t& jepoch, 
@@ -665,16 +700,21 @@ class TxLogServer {
                        const int32_t& sid, 
                        const int32_t& set_size);
   
+  // dropped trailing dead
+  // `shared_ptr<Marshallable> cmd` parameter — was assigned by the
+  // body but passed by value, so the assignment never propagated to
+  // the caller.  Caller in service.cc::JetpackPullRecSetIns retains
+  // its `cmd->set_marshallable(empty TpcCommitCommand)` pre-fill as
+  // the actual wire-out value.
   void OnJetpackPullRecSetIns(const epoch_t& jepoch,
-                              const epoch_t& oepoch, 
-                              const int32_t& sid, 
-                              const int32_t& rid, 
-                              bool_t* ok, 
+                              const epoch_t& oepoch,
+                              const int32_t& sid,
+                              const int32_t& rid,
+                              bool_t* ok,
                               epoch_t* reply_jepoch,
                               epoch_t* reply_oepoch,
-                              MarshallDeputy* reply_old_view,
-                              MarshallDeputy* reply_new_view,
-                              shared_ptr<Marshallable> cmd);
+                              janus::Command* reply_old_view,
+                              janus::Command* reply_new_view);
   
   void OnJetpackFinishRecovery(const epoch_t& oepoch);
 

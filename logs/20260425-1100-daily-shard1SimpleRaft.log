@@ -1,0 +1,41 @@
+[0;32m=== Mako Ubuntu 24.04 Docker Build Script ===[0m
+
+[1;33mWarning: Some RUNPATH entries include extra paths; forcing Docker library path.[0m
+[1;33m  - build_docker/simpleTransactionRep: /workspace/build_docker:/workspace/build_docker/third-party/yaml-cpp[0m
+[1;33mRunning CI test 'shard1ReplicationSimpleRaft' (no rebuild)...[0m
+=========================================
+Running: ./ci/ci.sh shard1ReplicationSimpleRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with RAFT replication using simpleTransactionRep
+=========================================
+simpleTransactionRep config: /tmp/mako_simple_txn_rep_T3Ox.yml
+Starting shard 0 with Raft...
+Waiting for replication verification completion (timeout: 40s)...
+  ... waiting (10s elapsed, p2=0, p1=0, replay=1)
+  ... waiting (20s elapsed, p2=0, p1=0, replay=1)
+Verification markers completed after 21s
+Stopping shards...
+./examples/test_1shard_replication_simple_raft.sh: line 62:    47 Killed                  nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 "$trd" localhost 1 raft > "$log_localhost" 2>&1
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 6 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+[0;32mCI test 'shard1ReplicationSimpleRaft' completed![0m

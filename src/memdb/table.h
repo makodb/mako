@@ -185,7 +185,7 @@ public:
     }
 
     virtual uint16_t Checksum() override {
-      auto v = std::make_unique<vector<uint16_t>>(rows_.size());
+      auto v = std::make_unique<std::vector<uint16_t>>(rows_.size());
       auto i = 0;
       uint16_t ret = 0;
       for (auto pair: rows_) {

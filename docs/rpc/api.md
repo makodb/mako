@@ -474,20 +474,11 @@ enum class RpcError : int32_t {
 };
 ```
 
-### RpcException Class
+### Error Handling Model
 
-```cpp
-class RpcException : public std::exception {
-public:
-    RpcException(RpcError error, const std::string& message = "");
-
-    RpcError error() const;
-    RpcErrorCategory category() const;
-    const char* what() const noexcept override;
-
-    bool is_retryable() const;
-};
-```
+RPC surfaces structured `RpcError` values and helper predicates
+(`is_connection_error`, `is_timeout_error`, `is_retryable_error`) instead of
+an RPC-specific exception type.
 
 ### Helper Functions
 
@@ -758,7 +749,7 @@ client->connect("127.0.0.1:8080");
 auto opts = RequestOptions::defaults();
 opts.timeout_ms = 500;
 
-auto fu = client->request_with_options(RPC_METHOD, opts, [](Marshal& m) {
+auto fu = client->request_with_options(RPC_METHOD, opts, [](BinaryWriteArchive& m) {
     m << arg1 << arg2;
 });
 
@@ -775,7 +766,7 @@ if (fu.is_ok()) {
 ```cpp
 auto opts = RequestOptions::idempotent_retry(3);  // 3 retries
 
-auto fu = client->request_with_options(RPC_IDEMPOTENT_METHOD, opts, [](Marshal& m) {
+auto fu = client->request_with_options(RPC_IDEMPOTENT_METHOD, opts, [](BinaryWriteArchive& m) {
     m << request_data;
 });
 ```

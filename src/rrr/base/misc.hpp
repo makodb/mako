@@ -1,11 +1,20 @@
 #pragma once
 
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
 #include <cinttypes>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <functional>
 #include <string>
 
-#include "basetypes.hpp"
+
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -18,6 +27,13 @@
 //   getdelim: [unsafe, (char**, size_t*, int, FILE*) -> ssize_t]
 //   free: [unsafe, (void*) -> void]
 // }
+
+
+
+
+#include <rusty/fn.hpp>
+
+#include "basetypes.hpp"
 
 namespace rrr {
 
@@ -80,7 +96,7 @@ template <typename T, size_t N> char (&ArraySizeHelper(const T (&array)[N]))[N];
 
 #define arraysize(array) (sizeof(base::ArraySizeHelper(array)))
 
-// @unsafe - Calls std::map::insert (external unsafe)
+// @unsafe - Calls Map::insert (template; external unsafe regardless of concrete container)
 // SAFETY: Standard container insertion, caller ensures map is valid
 template <class K, class V, class Map>
 inline void insert_into_map(Map &map, const K &key, const V &value) {
@@ -112,25 +128,30 @@ public:
 // @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug
 // workaround)
 class OneTimeJob : public Job {
-public:
-  // @safe
-  OneTimeJob(std::function<void()> func) : func_(func) {}
+ public:
+  // @safe - Takes ownership of the callable; rusty::Function is move-only.
+  OneTimeJob(rusty::Function<void()> func) : func_(std::move(func)) {
+  }
   bool done_{false};
   bool ready_{true};
-  std::function<void()> func_{};
+  rusty::Function<void()> func_{};
   // Interface method - inherits @unsafe from Job
   bool Ready() override { return ready_; }
   // Interface method - inherits @unsafe from Job
   bool Done() override { return done_; }
   // Interface method - inherits @unsafe from Job
-  // Calls std::function::operator() (external unsafe)
+  // Calls rusty::Function::operator() (external unsafe)
   // SAFETY: Executes user-provided function, caller ensures validity
   void Work() override {
     ready_ = false;
     func_();
     done_ = true;
   }
-  virtual ~OneTimeJob() {};
+  // No user-declared destructor: Job's `virtual ~Job() = default;`
+  // covers polymorphic deletion, and omitting our own destructor
+  // allows the implicit move constructor / move assignment to be
+  // synthesized — required since `func_` is move-only
+  // (`rusty::Function` is non-copyable).
 };
 
 // @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug

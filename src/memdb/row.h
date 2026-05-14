@@ -6,12 +6,14 @@
 #include <vector>
 #include <string>
 #include <ctime>
+#include <functional>
 
 #include "utils.h"
 #include "schema.h"
 #include "locking.h"
 
-#include "rrr.hpp"
+#include "rrr/rrr.hpp"
+#include <rusty/arc.hpp>
 
 using std::list;
 
@@ -22,7 +24,15 @@ class Schema;
 class Table;
 
 
-class Row: public RefCounted {
+/**
+ * Row - database table row with column data storage.
+ *
+ * DEPRECATED: Row inherits from RefCounted for legacy compatibility.
+ * New code should use rusty::Arc<Row> for shared ownership.
+ * The ref_copy()/release() pattern is being replaced by Arc::clone() and implicit drop.
+ * Migration status: in progress.
+ */
+class Row: public NoCopy {
   // fixed size part
   char *fixed_part_;
   int n_columns_ = 0;
@@ -62,8 +72,20 @@ class Row: public RefCounted {
           dense_var_part_(nullptr), dense_var_idx_(nullptr),
           tbl_(nullptr), rdonly_(false), schema_(nullptr) { }
 
-  // RefCounted should have protected dtor
+  // Arc<Row> compatible - destructor must be public for Arc's control block
   virtual ~Row();
+
+  // DEPRECATED: Compatibility shim for legacy ref_copy() calls.
+  // New code should use Arc<Row>::clone() or avoid copying altogether.
+  Row* ref_copy() { return this; }
+
+  // DEPRECATED: Compatibility shim for legacy release() calls.
+  // New code should use Arc<Row> with implicit drop.
+  int release() { return 0; }
+
+  // DEPRECATED: Compatibility shim for legacy ref_count() calls.
+  // Always returns 1 (valid) since Row no longer uses refcounting.
+  int ref_count() const { return 1; }
 
   void copy_into(Row *row) const;
 
@@ -276,7 +298,8 @@ class CoarseLockedRow: public Row {
  protected:
 
   CoarseLockedRow() : Row(), lock_() {}
-  // protected dtor as required by RefCounted
+  // public dtor for Arc<Row> compatibility
+ public:
   ~CoarseLockedRow() { }
 
   void copy_into(CoarseLockedRow *row) const {
@@ -435,7 +458,8 @@ class FineLockedRow: public Row {
 
  protected:
 
-  // protected dtor as required by RefCounted
+  // protected dtor as required by RefCounted (now public for Arc compatibility)
+ public:
   ~FineLockedRow() {
     switch (type_2pl_) {
       case WAIT_DIE:
@@ -581,7 +605,8 @@ class VersionedRow: public CoarseLockedRow {
 
  protected:
 
-  // protected dtor as required by RefCounted
+  // protected dtor as required by RefCounted (now public for Arc compatibility)
+ public:
   ~VersionedRow() {
 //    delete[] ver_;
   }

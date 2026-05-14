@@ -38,8 +38,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
-#include "rrr/rpc/client.hpp"
-#include "rrr/reactor/reactor.h"
+#include "rrr/rrr.hpp"
 #include <string>
 #include <atomic>
 #include <unordered_map>
@@ -119,6 +118,45 @@ public:
     // @safe - Accessor methods (implements ITable)
     const std::string& GetName() const override { return name_; }
     uint16_t GetTableId() const { return table_id_; }
+
+    // @safe - Scan not supported on remote tables (stub)
+    Status Scan(void* txn,
+                const std::string& start_key,
+                const std::string* end_key,
+                std::function<bool(const std::string& key, const std::string& value)> callback) override {
+        (void)txn; (void)start_key; (void)end_key; (void)callback;
+        return Status::IOError("Scan not supported on remote table");
+    }
+
+    // @safe - ReverseScan not supported on remote tables (stub)
+    Status ReverseScan(void* txn,
+                       const std::string& start_key,
+                       const std::string* end_key,
+                       std::function<bool(const std::string& key, const std::string& value)> callback) override {
+        (void)txn; (void)start_key; (void)end_key; (void)callback;
+        return Status::IOError("ReverseScan not supported on remote table");
+    }
+
+    // @safe - Exists implemented via Get
+    Status Exists(void* txn, const std::string& key, bool* exists) override {
+        if (!exists) return Status::InvalidArgument("Invalid argument");
+        std::string unused;
+        Status s = Get(txn, key, unused);
+        if (s.ok()) { *exists = true; return Status::OK(); }
+        if (s.IsNotFound()) { *exists = false; return Status::OK(); }
+        return s;
+    }
+
+    // @safe - Insert delegates to Put
+    Status Insert(void* txn, const std::string& key, const std::string& value) override {
+        return Put(txn, key, value);
+    }
+
+    // @safe - GetApproximateSize not supported on remote tables (stub)
+    Status GetApproximateSize(size_t* size) override {
+        (void)size;
+        return Status::IOError("GetApproximateSize not supported on remote table");
+    }
 
 private:
     RemoteDB* db_;      // Borrowed pointer to parent (not owned)

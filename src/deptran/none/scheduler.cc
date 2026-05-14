@@ -6,12 +6,13 @@
 #include "../rcc_rpc.h"
 
 namespace janus {
-int32_t SchedulerNone::Dispatch(cmdid_t cmd_id, shared_ptr<Marshallable> cmd,
+int32_t SchedulerNone::Dispatch(cmdid_t cmd_id, const janus::Command& cmd,
 								TxnOutput& ret_output, std::shared_ptr<ViewData>& view_data) {
 	auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(cmd_id));
 	DepId di;
 	di.str = "dep";
 	di.id = 0;
+	// SchedulerClassic::Dispatch takes janus::Command.
 	SchedulerClassic::Dispatch(cmd_id, di, cmd, ret_output);
 	sp_tx->fully_dispatched_->wait();
 

@@ -7,6 +7,7 @@
 #include <rusty/function.hpp>
 #include "rcc/graph.h"
 #include "command_marshaler.h"
+#include "mako_commands.h"
 #include "txn_reg.h"
 #include "view.h"
 
@@ -36,7 +37,9 @@ class TxWorkspace {
  public:
   set<int32_t> keys_ = {};
   std::shared_ptr<map<int32_t, Value>> values_{};
-  std::shared_ptr<map<int32_t, shared_ptr<IntEvent>>> value_events_{};
+  // removed
+  // `std::shared_ptr<map<int32_t, shared_ptr<IntEvent>>> value_events_{};`
+  // — defined but never written or read anywhere in the codebase.
   TxWorkspace();
   ~TxWorkspace();
   TxWorkspace(const TxWorkspace& rhs);
@@ -102,20 +105,37 @@ class TxRequest {
   int cmd_id_in_client_ = -1;
   /******global unique id end********/
   rusty::Function<void(TxReply &)> callback_ = [] (TxReply&)->void {verify(0);};
-  rusty::Function<void()> fail_callback_ = [] () {
-    verify(0);
-  };
-  void get_log(i64 tid, std::string &log);
-  
+  // removed
+  //   `rusty::Function<void()> fail_callback_ = [] () { verify(0); };`
+  // and `void get_log(i64 tid, std::string &log);` — neither was
+  // referenced outside the definitions themselves.  `fail_callback_`
+  // was never set or invoked anywhere.  `get_log` had only two call
+  // sites and both were already commented-out
+  // (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).
 };
 
 Marshal& operator << (Marshal& m, const TxWorkspace &ws);
 
 Marshal& operator >> (Marshal& m, TxWorkspace& ws);
 
+// archive operators for TxWorkspace
+// (mirrors the Marshal-based pair byte-for-byte). Used by the
+// 6 SimpleCommand archive operators which feed VecPieceData's
+// Serializable save/load.
+BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws);
+
+BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace& ws);
+
 Marshal& operator << (Marshal& m, const TxReply& reply);
 
 Marshal& operator >> (Marshal& m, TxReply& reply);
+
+// archive operators for TxReply (mirrors the
+// Marshal-based pair byte-for-byte). Used by the rcc_rpc.h archive
+// emission now that rpcgen defaults to --archive.
+BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply);
+
+BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply);
 
 enum CommandStatus {
   WAITING=-1,
@@ -128,7 +148,13 @@ enum CommandStatus {
 // TODO rename to TxPieceData? Seems a bad name. Should figure out a better name.
 class SimpleCommand: public CmdData {
  public:
-  CmdData* root_ = nullptr;
+  // removed the dead `CmdData* root_`
+  // back-pointer.  It was written by `TxData::GetReadyPiecesData`
+  // and `TxData::GetNextReadySubCmd` (procedure.cc:288, 329) but
+  // never read by anything; the matching `RootCmd()` accessor and
+  // the `Clone()` override that copy-constructed it were equally
+  // unused.  See the companion comment on `CmdData::Clone` in
+  // `command.h` for the full audit.
   uint64_t timestamp_{0};
   int32_t rank_{RANK_UNDEFINED};
   TxWorkspace input{};
@@ -140,12 +166,6 @@ class SimpleCommand: public CmdData {
     verify(partition_id_ != 0xFFFFFFFF);
     return partition_id_;
   }
-  virtual CmdData* RootCmd() const {return root_;}
-  virtual CmdData* Clone() const override {
-    SimpleCommand* cmd = new SimpleCommand();
-    *cmd = *this;
-    return cmd;
-  }
   virtual ~SimpleCommand() {};
 };
 
@@ -153,137 +173,145 @@ typedef SimpleCommand TxPieceData;
 
 typedef map<parid_t, vector<shared_ptr<SimpleCommand>>> ReadyPiecesData;
 
-class VecPieceData : public Marshallable {
+// migrated from Marshallable to Serializable.
+// Wire format preserved byte-for-byte:
+//   int32_t sp_vec_piece_data_->size()
+//   per SimpleCommand: SimpleCommand bytes (via Phase 4d-6 archive op)
+//   double time_sent_from_client_
+//   bool_t is_recovery_command_
+// The nested SimpleCommand serialization uses the Phase 4d-6
+// archive operators in `command_marshaler.cc`, which mirror the
+// existing Marshal-based ones byte-for-byte.
+class VecPieceData : public rrr::Serializable<VecPieceData, MakoCommands> {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<shared_ptr<SimpleCommand>>> sp_vec_piece_data_{};
   double time_sent_from_client_ = -1e9; // <0 means null, unit is ms
   bool_t is_recovery_command_ = false; // Flag to indicate this is a recovery command
-  VecPieceData() : Marshallable(MarshallDeputy::CMD_VEC_PIECE) {
+  VecPieceData() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  void save(BinaryWriteArchive& ar) const {
     verify(sp_vec_piece_data_);
-    m << (int32_t) sp_vec_piece_data_->size();
-    for (auto sp : *sp_vec_piece_data_) {
-      m << *sp;
+    ar << static_cast<int32_t>(sp_vec_piece_data_->size());
+    for (const auto& sp : *sp_vec_piece_data_) {
+      ar << *sp;
     }
-    m << time_sent_from_client_;
-    m << is_recovery_command_;
-//    m << *sp_vec_piece_data_;
-    return m;
+    ar << time_sent_from_client_;
+    ar << is_recovery_command_;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  void load(BinaryReadArchive& ar) {
     verify(!sp_vec_piece_data_);
     sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<TxPieceData>>>();
     int32_t sz;
-    m >> sz;
+    ar >> sz;
     for (int i = 0; i < sz; i++) {
       auto x = std::make_shared<TxPieceData>();
-      m >> *x;
+      ar >> *x;
       sp_vec_piece_data_->push_back(x);
     }
-    m >> time_sent_from_client_;
-    m >> is_recovery_command_;
-//    m >> *sp_vec_piece_data_;
-    return m;
+    ar >> time_sent_from_client_;
+    ar >> is_recovery_command_;
   }
 };
 
-class VecRecData : public Marshallable {
+// TypeList-derived kind.
+class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
  public:
   // TODO move shared_ptr into the vector.
   shared_ptr<vector<key_t>> key_data_{};
-  VecRecData() : Marshallable(MarshallDeputy::CMD_REC_VEC) {
+  VecRecData() = default;
 
-  }
-
-  Marshal& to_marshal(Marshal& m) const override {
+  void save(BinaryWriteArchive& ar) const {
     verify(key_data_);
-    m << (int32_t) key_data_->size();
-    for (const key_t& k: *key_data_) {
-      m << k;
+    ar << static_cast<int32_t>(key_data_->size());
+    for (const key_t& k : *key_data_) {
+      ar << k;
     }
-//    m << *key_data_;
-    return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  void load(BinaryReadArchive& ar) {
     verify(!key_data_);
     key_data_ = std::make_shared<vector<key_t>>();
     int32_t sz;
-    m >> sz;
+    ar >> sz;
     for (int i = 0; i < sz; i++) {
       key_t x;
-      m >> x;
+      ar >> x;
       key_data_->push_back(x);
     }
-//    m >> *key_data_;
-    return m;
   }
 };
 
-class ViewData : public Marshallable {
+// TypeList-derived kind.
+class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
  public:
   View view_;
   parid_t partition_id_ = 0; // partition id for which this view applies
-  
-  ViewData() : Marshallable(MarshallDeputy::CMD_VIEW_DATA) {}
-  
-  ViewData(const View& view) : Marshallable(MarshallDeputy::CMD_VIEW_DATA), view_(view) {}
-  
-  ViewData(const View& view, parid_t pid) : Marshallable(MarshallDeputy::CMD_VIEW_DATA), view_(view), partition_id_(pid) {}
-  
+
+  ViewData() = default;
+
+  explicit ViewData(const View& view) : view_(view) {}
+
+  ViewData(const View& view, parid_t pid) : view_(view), partition_id_(pid) {}
+
   // Get the embedded View
   const View& GetView() const { return view_; }
   View& GetView() { return view_; }
-  
-  Marshal& to_marshal(Marshal& m) const override {
-    m << view_.n_;
-    m << view_.view_id_;
-    m << view_.timestamp_;
-    m << (int32_t)view_.leaders_.size();
+
+  void save(BinaryWriteArchive& ar) const {
+    ar << view_.n_;
+    ar << view_.view_id_;
+    ar << view_.timestamp_;
+    ar << static_cast<int32_t>(view_.leaders_.size());
     for (int leader : view_.leaders_) {
-      m << leader;
+      ar << leader;
     }
-    m << partition_id_;
-    return m;
+    ar << partition_id_;
   }
-  
-  Marshal& from_marshal(Marshal& m) override {
-    m >> view_.n_;
-    m >> view_.view_id_;
-    m >> view_.timestamp_;
+
+  void load(BinaryReadArchive& ar) {
+    ar >> view_.n_;
+    ar >> view_.view_id_;
+    ar >> view_.timestamp_;
     int32_t leader_count;
-    m >> leader_count;
+    ar >> leader_count;
     view_.leaders_.clear();
     view_.leaders_.reserve(leader_count);
     for (int i = 0; i < leader_count; i++) {
       int leader;
-      m >> leader;
+      ar >> leader;
       view_.leaders_.push_back(leader);
     }
-    m >> partition_id_;
-    return m;
+    ar >> partition_id_;
   }
-  
+
   std::string ToString() const {
-    return "ViewData{partition=" + std::to_string(partition_id_) + 
+    return "ViewData{partition=" + std::to_string(partition_id_) +
            ", " + view_.ToString() + "}";
   }
 };
 
-class KeyCmdBatchData : public Marshallable {
+// TypeList-derived kind. Uses Phase 3f-prep
+// nested-MarshallDeputy archive operators for the per-entry command
+// payloads.
+//
+// `commands_` migrated from
+// `vector<shared_ptr<Marshallable>>` to `vector<Command>`.
+// external API (AddEntry / GetCommand)
+// also uses Command directly; shared_ptr<Marshallable> callers
+// auto-convert via Command's implicit ctor.  save/load drives
+// Command archive ops directly; wire format unchanged.
+class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
+                                                 MakoCommands> {
  public:
   std::vector<key_t> keys_;
-  std::vector<shared_ptr<Marshallable>> commands_;
+  std::vector<Command> commands_;
 
-  KeyCmdBatchData() : Marshallable(MarshallDeputy::CMD_KEY_CMD_BATCH) {}
+  KeyCmdBatchData() = default;
 
-  void AddEntry(key_t key, const shared_ptr<Marshallable>& cmd) {
-    if (!cmd) {
+  void AddEntry(key_t key, const Command& cmd) {
+    if (!cmd.has_value()) {
       return;
     }
     keys_.push_back(key);
@@ -300,36 +328,32 @@ class KeyCmdBatchData : public Marshallable {
     return keys_[idx];
   }
 
-  shared_ptr<Marshallable> GetCommand(size_t idx) const {
+  const Command& GetCommand(size_t idx) const {
     verify(idx < commands_.size());
     return commands_[idx];
   }
 
-  Marshal& to_marshal(Marshal& m) const override {
+  void save(BinaryWriteArchive& ar) const {
     verify(keys_.size() == commands_.size());
     int32_t sz = commands_.size();
-    m << sz;
+    ar << sz;
     for (int32_t i = 0; i < sz; i++) {
-      m << keys_[i];
-      MarshallDeputy deputy;
-      deputy.set_marshallable(commands_[i]);
-      m << deputy;
+      ar << keys_[i];
+      // drive Command's archive op directly (same wire
+      // format as the previous `MarshallDeputy(commands_[i])` round-trip).
+      ar << commands_[i];
     }
-    return m;
   }
 
-  Marshal& from_marshal(Marshal& m) override {
+  void load(BinaryReadArchive& ar) {
     int32_t sz = 0;
-    m >> sz;
+    ar >> sz;
     keys_.resize(sz);
     commands_.resize(sz);
     for (int32_t i = 0; i < sz; i++) {
-      m >> keys_[i];
-      MarshallDeputy deputy;
-      m >> deputy;
-      commands_[i] = deputy.sp_data_;
+      ar >> keys_[i];
+      ar >> commands_[i];
     }
-    return m;
   }
 };
 
@@ -352,15 +376,17 @@ class TxData: public CmdData {
   }
   map<innid_t, TxWorkspace> inputs_ = {};  // input of each piece.
  public:
-  bool read_only_failed_ = false;
+  // removed `bool read_only_failed_ = false;`
+  // — the field was reset in `TxData::TxData()` and inside the now-
+  // deleted `read_only_reset()` but never read by anything.  The
+  // only `read_only_failed_ = true` writers were already
+  // commented-out code in procedure.cc.
   double pre_time_ = 0.0;
   bool early_return_ = false;
- protected:
-  template<class T>
-  T ChooseRandom(const std::vector<T>& v) {
-    return v[rrr::RandomGenerator::rand(0,v.size()-1)];
-  }
  public:
+  // removed protected `ChooseRandom<T>`
+  // template — defined here but never instantiated anywhere in the
+  // codebase (`grep ChooseRandom` returned only the definition).
   txnid_t txn_id_; // TODO obsolete
   uint64_t timestamp_ = 0;
   TxWorkspace ws_ = {}; // workspace.
@@ -381,14 +407,19 @@ class TxData: public CmdData {
   int n_pieces_dispatchable_ = 0;
   int n_pieces_dispatch_acked_ = 0;
   int n_pieces_dispatched_ = 0;
-  /** finished pieces counting */
-  int n_finished_ = 0;
+  // removed `int n_finished_ = 0;` — the
+  // field was previously serialized in the legacy
+  // TxData::to_marshal/from_marshal pair (deleted in Phase 5b-1) but
+  // never written or read by any other code.
 
   int max_try_ = 0;
   int n_try_ = 0;
 
-  bool validation_ok_{true};
-  bool need_validation_{false};
+  // removed `bool validation_ok_{true};`
+  // (no writer or reader anywhere) and `bool need_validation_{false};`
+  // (the only writer was `tx_data().need_validation_ = true;` at
+  // `rcc/coord.cc:86`, no readers; that write was removed in this
+  // commit).
 
   weak_ptr<TxnRegistry> txn_reg_{};
   Sharding *sss_ = nullptr;
@@ -407,17 +438,22 @@ class TxData: public CmdData {
                             int res,
                             map<int32_t, Value> &output) = 0;
   virtual bool IsReadOnly() = 0;
-  virtual void read_only_reset();
+  // removed several dead virtual methods —
+  //   `read_only_reset()`, `IsFinished()`, `Merge(TxnOutput&)`, and
+  //   `GetNextReadySubCmd()` — none had any production callers. Each
+  //   was either a `verify(0)` stub on the base class with no
+  //   subclass override (`IsFinished`, `GetNextReadySubCmd`) or a
+  //   helper whose only call sites were already commented-out
+  //   (`read_only_reset`, `Merge(TxnOutput&)` were referenced only by
+  //   commented-out code in `snow/ro6_coord.cc`, `rcc/coord.cc`,
+  //   `janus/coordinator.cc`).
   virtual int GetNPieceAll() {
     return n_pieces_all_;
   }
   virtual bool OutputReady();
-  virtual bool IsFinished(){verify(0);}
   virtual void Merge(CmdData&) override;
   virtual void Merge(innid_t inn_id, map<int32_t, Value>& output);
-  virtual void Merge(TxnOutput& output);
   virtual bool HasMoreUnsentPiece();
-  virtual shared_ptr<TxPieceData> GetNextReadySubCmd();
   virtual ReadyPiecesData GetReadyPiecesData(int32_t max = 0);
   virtual set<parid_t>& GetPartitionIds() override;
   TxWorkspace& GetWorkspace(innid_t inn_id) {
@@ -434,21 +470,22 @@ class TxData: public CmdData {
   }
   virtual bool IsOneRound();
   vector<SimpleCommand> GetCmdsByPartition(parid_t par_id);
-  vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t par_id, rank_t rank);
+  // removed
+  // `vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t, rank_t)`
+  // — declared and defined but never called anywhere.
 
-  Marshal& to_marshal(Marshal& m) const override;
-  Marshal& from_marshal(Marshal& m) override;
+  // removed dead TxData::to_marshal/from_marshal
+  // overrides (never invoked in production). The Marshallable base's
+  // `verify(0)` defaults remain for any unintentionally surviving
+  // virtual-dispatch path.
 
-  inline bool can_retry() {
-    return (max_try_ == 0 || n_try_ < max_try_);
-  }
+  // removed `inline bool can_retry()` —
+  // defined but never called.  Removed `inline void
+  // disable_early_return()` — only call sites were commented-out
+  // code in `snow/ro6_coord.cc:57` and `rcc/coord.cc:105`.
 
   inline bool do_early_return() {
     return early_return_;
-  }
-
-  inline void disable_early_return() {
-    early_return_ = false;
   }
 
   double last_attempt_latency();
@@ -462,3 +499,11 @@ class TxData: public CmdData {
 };
 
 } // namespace rcc
+
+// removed an empty `namespace rrr {}` block
+// at the bottom of this header — companion to the Phase 4e-2 cleanup
+// of the same shape in `tpc_command.h`.  The block previously held
+// `TypedMarshallableAdapterTraits<T>` specializations for VecRecData
+// / ViewData / KeyCmdBatchData / VecPieceData; the traits machinery
+// went away in Phase 5b-5 and the per-type registrations now live in
+// `procedure.cc` via `reg_serializable_in_deputy`.

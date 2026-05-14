@@ -15,6 +15,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-build}"
+CMAKE_GENERATOR="${CMAKE_GENERATOR:-Ninja}"
+CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
 
 GREEN='\033[32m'
 RED='\033[31m'
@@ -28,7 +30,7 @@ echo "========================================="
 # Ensure required binary exists (works even if only dbtest was built previously).
 if [ ! -f "$PROJECT_DIR/$BUILD_DIR/simpleTransactionRep" ]; then
     echo -e "${YELLOW}simpleTransactionRep not found in '$BUILD_DIR'. Building target now...${RESET}"
-    cmake -S "$PROJECT_DIR" -B "$PROJECT_DIR/$BUILD_DIR"
+    cmake -S "$PROJECT_DIR" -B "$PROJECT_DIR/$BUILD_DIR" -G "$CMAKE_GENERATOR" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE"
     cmake --build "$PROJECT_DIR/$BUILD_DIR" --parallel "${CI_BUILD_JOBS:-$(nproc)}" --target simpleTransactionRep
 fi
 

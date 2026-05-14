@@ -46,13 +46,19 @@ public:
   {
     if (this == &that)
       return *this;
-    // Clamp sz to N: the generic serializer reads via operator= from a raw
-    // buffer cast, so sz can be garbage when the source bytes are transiently
-    // inconsistent (optimistic-read racing a concurrent write).
-    sz = (that.sz > static_cast<IntSizeType>(N))
-             ? static_cast<IntSizeType>(N)
-             : that.sz;
-    NDB_MEMCPY(&buf[0], &that.buf[0], sz);
+    // Defense-in-depth clamp: the source struct is sometimes constructed by
+    // reinterpret_cast'ing a raw byte buffer (see
+    // serializer<inline_str_8<N>, true>::read in serializer.h, which does
+    // `*obj = *p` where `p = (T*)buf` points into a database-supplied page).
+    // If the page is corrupted upstream (as we hit on 2026-04-25 — a 4-byte
+    // heap overflow in client.cc's InvokeInstall produced a customer row
+    // whose c_first.sz byte happened to read 106), an unchecked memcpy of
+    // `that.sz` bytes will blast `that.sz` bytes into our `buf[N+1]` and
+    // trash the surrounding stack frame. Clamp to `N` so a corrupt source
+    // byte can never overflow the destination.
+    const IntSizeType n = (that.sz > N) ? static_cast<IntSizeType>(N) : that.sz;
+    sz = n;
+    NDB_MEMCPY(&buf[0], &that.buf[0], n);
     return *this;
   }
 

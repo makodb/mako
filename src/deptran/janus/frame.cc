@@ -9,11 +9,10 @@
 #include "coordinator.h"
 #include "scheduler.h"
 #include "tx.h"
-#include "../troad/troad.h"
 
 namespace janus {
 
-REG_FRAME(MODE_JANUS, vector<string>({"brq","baroque","janus"}), TroadJanusFrame);
+REG_FRAME(MODE_JANUS, vector<string>({"brq","baroque","janus"}), JanusFrame);
 
 Coordinator *JanusFrame::CreateCoordinator(cooid_t coo_id,
                                            Config *config,
@@ -42,7 +41,7 @@ TxLogServer *JanusFrame::CreateScheduler() {
   return sched;
 }
 
-vector<rusty::Box<rrr::Service>>
+vector<rrr::ServiceProxy>
 JanusFrame::CreateRpcServices(uint32_t site_id,
                               TxLogServer *sched,
                               rusty::Arc<rrr::PollThread> poll_thread_worker) {

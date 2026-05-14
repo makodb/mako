@@ -1,34 +1,38 @@
+#pragma once
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/rusty.hpp>
 /**
  * This is an alarmer.
  */
 
 
-#pragma once
 
-#include <list>
-#include <mutex>
-#include <thread>
-#include <functional>
-#include <map>
-
-#include "base/misc.hpp"
-#include "reactor/reactor.h"
-
-// External safety annotations for STL functions
-// @external: {
-//   std::make_pair: [unsafe]
-//   std::map::operator[]: [unsafe]
-//   std::map::erase: [unsafe]
-// }
 
 // @unsafe
+
+
+
+
+#include "../base/all.hpp"
+#include "../reactor/reactor.h"
+
+
 namespace rrr {
 
 class Alarm: public FrequentJob {
  public:
   bool run_ = true;
-  std::thread th_;
-  //    std::mutex lock_;
 
   uint64_t next_id_ = 1;
 
@@ -37,17 +41,14 @@ class Alarm: public FrequentJob {
 
 
   // id -> <alarm_time, func>;
-  std::map<uint64_t,
-           std::pair<uint64_t, std::function<void(void)>>> waiting_;
+  rusty::BTreeMap<uint64_t,
+           std::pair<uint64_t, rusty::Function<void(void)>>> waiting_;
 
   // <time, id> -> func
-  std::map<std::pair<uint64_t, uint64_t>,
-           std::function<void(void)> > idx_time_;
+  rusty::BTreeMap<std::pair<uint64_t, uint64_t>,
+           rusty::Function<void(void)> > idx_time_;
 
-  Alarm() : th_(), waiting_(), idx_time_()
-//	th_([this] () {
-//		this->alarm_loop();
-//	    })
+  Alarm() : waiting_(), idx_time_()
   {
     period_ = 50 * 1000; // 50ms;
   }
@@ -62,17 +63,23 @@ class Alarm: public FrequentJob {
   }
 
   bool exe_next() {
-    //	std::lock_guard<std::mutex> guard(lock_);
     bool ret = false;
     auto it = waiting_.begin();
     if (it != waiting_.end()) {
       uint64_t tm_now = rrr::Time::now();
-      uint64_t tm_out = it->second.first;
+      // rusty::BTreeMap iter `operator*()` returns
+      // `std::tuple<const K&, V&>` (post-2026-04 API). Outer value V
+      // is the `pair<timeout, callback>` we stored, accessed via
+      // `std::get<1>` on the tuple.
+      auto item = *it;
+      const uint64_t id = std::get<0>(item);
+      auto& val = std::get<1>(item);
+      uint64_t tm_out = val.first;
       ret = (tm_now > tm_out);
       if (ret) {
-        auto &func = it->second.second;
+        auto& func = val.second;
         func();
-        waiting_.erase(it);
+        waiting_.remove(id);
       }
     }
     return ret;
@@ -94,12 +101,11 @@ class Alarm: public FrequentJob {
 //	}
 //    }
 
-  // @unsafe - Adds alarm callback (uses std::map::operator[] and std::make_pair)
-  uint64_t add(uint64_t time, std::function<void(void)> func) {
-    //	std::lock_guard<std::mutex> guard(lock_);
+  // @unsafe - Adds alarm callback (uses rusty::HashMap::insert and std::make_pair)
+  uint64_t add(uint64_t time, rusty::Function<void(void)> func) {
     //Log::debug("add timeout callback");
     uint64_t id = next_id_++;
-    waiting_[id] = std::make_pair(time, func);
+    waiting_.insert(id, std::make_pair(time, std::move(func)));
     //	idx_time_[std::make_pair(time, id)] = func;
     return id;
   }
@@ -111,13 +117,9 @@ class Alarm: public FrequentJob {
    * and will never be invoked. If not, it is not sure that
    * whether this callback will be invoked or not.
    */
-  // @unsafe - Removes alarm callback (calls std::map::erase)
+  // @unsafe - Removes alarm callback (calls rusty::HashMap::remove)
   bool remove(uint64_t id) {
-    //	std::lock_guard<std::mutex> guard(lock_);
-    // @unsafe {
-    int n_erased = waiting_.erase(id);
-    // }
-    return (n_erased == 1);
+    return waiting_.remove(id).is_some();
   }
 
 };

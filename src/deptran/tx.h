@@ -49,12 +49,18 @@ class Tx: public enable_shared_from_this<Tx> {
   TxLogServer *sched_{nullptr};
   int phase_;
   mdb::Txn *mdb_txn_{nullptr};
-  Recorder *recorder_{nullptr};
+  // removed `Recorder *recorder_{nullptr};`
+  // — propagation `dtxn->recorder_ = this->recorder_` from
+  // `TxLogServer::recorder_` is gone; field always nullptr.
   weak_ptr<TxnRegistry> txn_reg_{};
   TxWorkspace ws_{};
   // TODO at most one active coroutine runnable for a tx at a time
 //  IntEvent running_{};
-  shared_ptr<Marshallable> cmd_{};
+  // polymorphic command field
+  // migrated from `shared_ptr<Marshallable>` to `janus::Command`.
+  // Boundary calls into APIs still taking `shared_ptr<Marshallable>`
+  // use `cmd_.inner_marshallable()`.
+  Command cmd_{};
   shared_ptr<ViewData> sp_view_data_ = nullptr;
 
 

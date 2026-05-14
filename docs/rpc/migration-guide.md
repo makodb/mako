@@ -48,6 +48,17 @@ several behaviors became stricter/safer:
 No source-level migration is required for existing callers, but operators
 should follow the wire upgrade order above for mixed-version deployments.
 
+### Typed RPC API (completed)
+
+All RPC services now use typed request/response structs exclusively. The
+`rpcgen` code generator produces only typed APIs — no legacy pointer-style
+wrappers. Generated service classes do not inherit `rrr::Service`; they
+register via `ServiceTypedBoxAdapter` / `Server::reg_service(Box<T>)`.
+
+The `--legacy-compat` flag and `SRPC_LEGACY_COMPAT` CMake option have been
+removed. All callsites across `src/deptran/` use typed `Rpc*Request`/
+`Rpc*Response` structs.
+
 ## New Dependencies
 
 ### rusty-cpp (Required)
@@ -95,7 +106,7 @@ Existing code continues to work:
 // Before and after - no changes needed
 auto client = Client::create(poll_thread);
 client->connect("127.0.0.1:8080");
-auto future = client->request(RPC_ID, [](Marshal& m) { m << data; });
+auto future = client->request(RPC_ID, [](BinaryWriteArchive& m) { m << data; });
 future.unwrap()->wait();
 client->close();
 ```

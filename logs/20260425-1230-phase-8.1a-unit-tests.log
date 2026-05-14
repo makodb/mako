@@ -1,0 +1,28 @@
+=== build all raft unit tests ===
+[0/2] Re-checking globbed directories...
+ninja: no work to do.
+=== run each ===
+--- test_raft_messages ---
+[==========] 2 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 2 tests.
+--- test_raft_quorum ---
+[==========] 8 tests from 1 test suite ran. (52 ms total)
+[  PASSED  ] 8 tests.
+--- test_raft_transport_facade ---
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 1 test.
+--- test_raft_rrr_transport_compile ---
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 1 test.
+--- test_raft_dispatcher_facade ---
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 1 test.
+--- test_raft_channel_transport ---
+[==========] 2 tests from 1 test suite ran. (21 ms total)
+[  PASSED  ] 2 tests.
+--- test_raft_test_cluster ---
+[==========] 4 tests from 1 test suite ran. (2 ms total)
+[  PASSED  ] 4 tests.
+--- test_raft_memory_snapshot_manager ---
+[==========] 3 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 3 tests.

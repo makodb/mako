@@ -1,27 +1,26 @@
 #pragma once
-#include <algorithm>
-#include <list>
-#include <memory>
-#include <queue>
-#include <set>
-#include <thread>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
-#include <variant>
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <unistd.h>
 #include <rusty/rusty.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/fn.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/mpsc.hpp>
+#include <rusty/sync/atomic.hpp>
+#include <rusty/async.hpp>
 #include <rusty/vecdeque.hpp>
 #include <rusty/btreeset.hpp>
-#include "base/misc.hpp"
-#include "event.h"
-#include "quorum_event.h"
-#include "coroutine.h"
-#include "epoll_wrapper.h"
 
 // External safety annotations for system functions used in this module
 // @external: {
@@ -57,12 +56,12 @@
 //   std::*::push_back: [unsafe, (auto) -> void]
 //   std::*::insert_or_assign: [unsafe, (auto...) -> auto]
 //   std::*::operator[]: [unsafe, (auto) -> auto&]
-//   std::make_shared: [unsafe, (auto...) -> std::shared_ptr<auto>]
-//   std::shared_ptr::operator*: [unsafe, () -> auto&]
-//   std::shared_ptr::operator->: [unsafe, () -> auto*]
-//   std::shared_ptr::get: [unsafe, () -> auto*]
-//   std::shared_ptr::operator=: [unsafe, (const std::shared_ptr<auto>&) -> std::shared_ptr<auto>&]
-//   std::shared_ptr::shared_ptr: [unsafe, (auto...) -> void]
+//   rusty::Arc::make: [unsafe, (auto...) -> rusty::Arc<auto>]
+//   rusty::Arc::operator*: [unsafe, () -> auto&]
+//   rusty::Arc::operator->: [unsafe, () -> auto*]
+//   rusty::Arc::get: [unsafe, () -> auto*]
+//   rusty::Arc::operator=: [unsafe, (const rusty::Arc<auto>&) -> rusty::Arc<auto>&]
+//   rusty::Arc::Arc: [unsafe, (auto...) -> void]
 //   std::visit: [unsafe, (auto...) -> auto]
 //   visit: [unsafe, (auto...) -> auto]
 //   std::move: [unsafe, (auto) -> auto]
@@ -88,17 +87,26 @@
 //   verify: [unsafe, (auto) -> void]
 // }
 
+
+
+
+#include "../base/all.hpp"
+#include "../rpc/pollable_proxy.h"
+
+
+#include "event.h"
+#include "quorum_event.h"
+#include "fiber_impl.h"
+#include "epoll_wrapper.h"
+
 namespace rrr {
 
-using std::make_unique;
-using std::make_shared;
-
 // Note: Fiber is the primary class (defined in fiber_impl.h)
-// The full definition is available via #include "coroutine.h" above
+// The full definition is available via #include "fiber_impl.h" above
 
 /**
  * @class Reactor
- * @brief Thread-local event loop and coroutine scheduler
+ * @brief Thread-local event loop and fiber scheduler
  *
  * MEMORY SAFETY MODEL:
  *
@@ -109,7 +117,7 @@ using std::make_shared;
  *
  * 2. INTERIOR MUTABILITY (RustyCpp Patterns)
  *    - Cell<T>: Used for primitive counters and flags (looping_, thread_id_, etc.)
- *    - RefCell<T>: Used for complex types (sp_running_coro_th_)
+ *    - RefCell<T>: Used for complex types (sp_running_fiber_th_)
  *    - mutable containers: STL containers with const method access
  *
  * 3. SMART POINTER USAGE
@@ -121,8 +129,8 @@ using std::make_shared;
  *    - All reactor operations are single-threaded (no locks needed)
  *
  * SAFETY INVARIANTS:
- * - One active coroutine per reactor at any time
- * - Events never outlive their coroutines (weak refs)
+ * - One active fiber per reactor at any time
+ * - Events never outlive their fibers (weak refs)
  * - Loop() only called from owning thread
  */
 class Reactor {
@@ -143,16 +151,16 @@ class Reactor {
   static rusty::Rc<Reactor> get_disk_reactor();
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
-  // Thread-local current coroutine with single-threaded Rc
+  // Thread-local current fiber with single-threaded Rc
   // Wrapped in RefCell for explicit interior mutability (Cell<T> requires trivially_copyable)
-  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_coro_th_;
+  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_;
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   // Using Cell for safe interior mutability (int is trivially copyable)
   rusty::Cell<int> server_id_{0};
 
   /**
-   * A reactor needs to keep reference to all coroutines created,
+   * A reactor needs to keep reference to all fibers created,
    * in case it is freed by the caller after a yield.
    */
   // Events managed with std::shared_ptr<Event> for polymorphism support
@@ -165,73 +173,163 @@ class Reactor {
   // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
   // Using RefCell for safe interior mutability in const methods
-  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> coros_{};
-  rusty::RefCell<std::vector<rusty::Rc<Fiber>>> available_coros_{};
+  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
+  rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
-  static thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> clients_;
-  static thread_local std::unordered_set<std::string> dangling_ips_;
+  static thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> clients_;
+  static thread_local rusty::HashSet<std::string> dangling_ips_;
   // Interior mutability using Cell<T> for safe const method access
   rusty::Cell<bool> looping_{false};
   rusty::Cell<bool> slow_{false};
   rusty::Cell<int> slow_count_{0};
   rusty::Cell<int> trying_count_{0};
-  rusty::Cell<std::thread::id> thread_id_{};
-  // Jetpack coroutine counters - using Cell for interior mutability
-  rusty::Cell<int64_t> n_created_coroutines_{0};
-  rusty::Cell<int64_t> n_busy_coroutines_{0};
-  rusty::Cell<int64_t> n_active_coroutines_{0};
-  rusty::Cell<int64_t> n_active_coroutines_2_{0};
-  rusty::Cell<int64_t> n_idle_coroutines_{0};
+  rusty::Cell<rusty::thread::ThreadId> thread_id_{};
+  // Jetpack fiber counters - using Cell for interior mutability
+  rusty::Cell<int64_t> n_created_fibers_{0};
+  rusty::Cell<int64_t> n_busy_fibers_{0};
+  rusty::Cell<int64_t> n_active_fibers_{0};
+  rusty::Cell<int64_t> n_active_fibers_2_{0};
+  rusty::Cell<int64_t> n_idle_fibers_{0};
+  // Stackless coroutine task slots managed by the reactor loop.
+  // `poll_once` is move-only (rusty::Function): `process_stackless_tasks`
+  // moves the function out of its slot before invoking it (so the
+  // reactor's RefCell guards on `stackless_tasks_` aren't held across
+  // user code), then moves it back if the poll didn't return Ready.
+  struct StacklessTaskEntry {
+    bool active = false;
+    bool queued = false;
+    rusty::Function<bool(rusty::Context&)> poll_once;
+  };
+  rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
+  rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
+  rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
   static SpinLock trying_job_;
-#ifdef REUSE_CORO
-#define REUSING_CORO (true)
+#if defined(REUSE_FIBER) || defined(REUSE_CORO)
+#define REUSING_FIBER (true)
 #else
-#define REUSING_CORO (false)
+#define REUSING_FIBER (false)
 #endif
 
   // Checks and processes timeout events with std::shared_ptr<Event>
   void check_timeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
   /**
-   * @param ev. is usually allocated on coroutine stack. memory managed by user.
+   * @param ev. is usually allocated on a fiber stack. memory managed by user.
    */
-  // @safe - Creates and runs a new coroutine with rusty::Rc ownership
+  // @safe - Creates and runs a new fiber with rusty::Rc ownership
   // Refactored into smaller safe helper functions for clarity and safety.
-  // Jetpack: file/line parameters for debugging coroutine creation location
-  rusty::Rc<Fiber> create_run_coroutine(rusty::Function<void()> func,
+  // Jetpack: file/line parameters for debugging fiber creation location
+  rusty::Rc<Fiber> create_run_fiber(rusty::Function<void()> func,
                                             const char* file = "",
                                             int64_t line = 0) const;
 
  private:
-  // Helper functions for create_run_coroutine - each is @safe with internal @unsafe blocks
+  // Helper functions for create_run_fiber - each is @safe with internal @unsafe blocks
 
-  // @safe - Gets a recycled coroutine or creates a new one
-  rusty::Rc<Fiber> get_or_create_coroutine(rusty::Function<void()> func,
+  // @safe - Gets a recycled fiber or creates a new one
+  rusty::Rc<Fiber> get_or_create_fiber(rusty::Function<void()> func,
                                                const char* file,
                                                int64_t line) const;
 
-  // @safe - Saves current running coroutine to allow nesting
-  rusty::Option<rusty::Rc<Fiber>> save_running_coroutine() const;
+  // @safe - Saves current running fiber to allow nesting
+  rusty::Option<rusty::Rc<Fiber>> save_running_fiber() const;
 
-  // @safe - Restores previously saved running coroutine
-  void restore_running_coroutine(rusty::Option<rusty::Rc<Fiber>> old_coro) const;
+  // @safe - Restores previously saved running fiber
+  void restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const;
 
-  // @safe - Sets the current running coroutine
-  void set_running_coroutine(const rusty::Rc<Fiber>& coro) const;
+  // @safe - Sets the current running fiber
+  void set_running_fiber(const rusty::Rc<Fiber>& fiber) const;
 
-  // @safe - Registers coroutine in the active set
-  void register_coroutine(const rusty::Rc<Fiber>& coro) const;
+  // @safe - Registers a fiber in the active set
+  void register_fiber(const rusty::Rc<Fiber>& fiber) const;
+
+  // @safe - Queue a stackless task slot for polling if not already queued.
+  void enqueue_stackless_task(size_t idx) const;
+
+  // @safe - Register a stackless task poller and return slot index.
+  size_t register_stackless_poller(rusty::Function<bool(rusty::Context&)> poller) const;
+
+  // @safe - Poll all queued stackless tasks once.
+  // Returns true if at least one stackless task was polled.
+  bool process_stackless_tasks() const;
+
+  // @safe - Arc::make wrapper with localized unsafe allocation boundary.
+  template <typename U, typename... Args>
+  static rusty::Arc<U> make_arc(Args&&... args) {
+    // @unsafe
+    { return rusty::Arc<U>::make(std::forward<Args>(args)...); }
+  }
 
  public:
   // @safe - Main event loop
   void loop(bool infinite = false, bool do_check_timeout = true) const;
-  // @safe - Continues execution of a paused coroutine
-  void continue_coro(rusty::Rc<Fiber> coro) const;
-  void recycle(rusty::Rc<Fiber>& coro) const;
+  // @safe - Continues execution of a paused fiber
+  void continue_fiber(rusty::Rc<Fiber> fiber) const;
+  void recycle(rusty::Rc<Fiber>& fiber) const;
   void display_waiting_ev() const;
+  // @safe - Spawn a stackless C++20 coroutine task managed by the reactor.
+  void spawn_stackless_task(rusty::Task<void> task) const;
+  // @safe - Spawn a stackless task with a completion callback when ready.
+  template <typename T, typename OnReady>
+  void spawn_stackless_task_with_result(rusty::Task<T> task, OnReady on_ready) const {
+    constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+    struct EarlyWakeState {
+      explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
+      const Reactor* reactor;
+      mutable std::atomic<size_t> idx{kUnregisteredSlot};
+      mutable std::atomic<bool> pending_wake{false};
+    };
+
+    // SAFETY: shared state is heap-owned; reactor outlives callback execution.
+    auto early_wake = make_arc<EarlyWakeState>(this);
+
+    rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
+      size_t idx = early_wake->idx.load(std::memory_order_acquire);
+      if (idx == kUnregisteredSlot) {
+        early_wake->pending_wake.store(true, std::memory_order_release);
+        return;
+      }
+      early_wake->reactor->enqueue_stackless_task(idx);
+    }};
+    rusty::Context early_ctx{&early_waker};
+    auto early_poll = task.poll(early_ctx);
+    if (early_poll.is_ready()) {
+      on_ready(std::move(early_poll.value));
+      return;
+    }
+
+    struct TaskState {
+      mutable rusty::Task<T> task;
+      mutable rusty::Option<OnReady> on_ready;
+      rusty::Arc<EarlyWakeState> early_wake;
+
+      TaskState(rusty::Task<T> t, OnReady cb, rusty::Arc<EarlyWakeState> ew)
+          : task(std::move(t)), on_ready(std::move(cb)), early_wake(std::move(ew)) {}
+    };
+
+    // SAFETY: TaskState is only accessed through the Arc captured by the poller.
+    auto state = make_arc<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
+    auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
+      auto poll_result = state->task.poll(ctx);
+      if (!poll_result.is_ready()) {
+        return false;
+      }
+      state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
+      if (state->on_ready.is_some()) {
+        // unwrap() consumes: moves out and sets to None in one step.
+        auto cb = state->on_ready.unwrap();
+        cb(std::move(poll_result.value));
+      }
+      return true;
+    });
+    state->early_wake->idx.store(idx, std::memory_order_release);
+    if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
+      enqueue_stackless_task(idx);
+    }
+  }
 
   ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",
-              all_events_.borrow()->len(), coros_.borrow()->len());
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.len()=%zu",
+              all_events_.borrow()->len(), fibers_.borrow()->len());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
@@ -278,10 +376,12 @@ class PollThreadWorker;
 
 // Commands sent from PollThread to PollThreadWorker via channel
 // Using std::variant for type-safe discriminated union
-struct CmdAddPollable { rusty::Arc<Pollable> pollable; };
+struct CmdAddPollable {
+    PollableProxy pollable;
+};
 struct CmdRemovePollable { int fd; };
 struct CmdClosePollable { int fd; };  // Close socket and drop Arc (thread-safe close)
-struct CmdUpdateMode { int fd; int new_mode; const Pollable* poll_ptr; };
+struct CmdUpdateMode { int fd; int new_mode; };
 struct CmdAddJob { rusty::Arc<Job> job; };
 struct CmdRemoveJob { rusty::Arc<Job> job; };
 struct CmdShutdown {};
@@ -353,9 +453,16 @@ public:
     // @unsafe - Add a pollable from within the poll thread (e.g., from handle_read)
     // Must only be called from the poll thread (asserts if not)
     // SAFETY: Dereferences raw pointer current_worker_ and calls do_add_pollable
-    static void add_pollable_from_current_thread(rusty::Arc<Pollable> poll) {
+    static void add_pollable_from_current_thread(PollableProxy poll) {
         verify(current_worker_ != nullptr);
         current_worker_->do_add_pollable(std::move(poll));
+    }
+
+    template <typename T>
+    static void add_pollable_from_current_thread(rusty::Arc<T> poll) {
+        verify(current_worker_ != nullptr);
+        auto poll_proxy = make_pollable_proxy_from_typed_arc(std::move(poll));
+        current_worker_->do_add_pollable(std::move(poll_proxy));
     }
 
     // @unsafe - Update poll mode directly (bypasses channel)
@@ -377,14 +484,14 @@ private:
     // Process incoming commands from channel
     void process_commands();
 
-    // Triggers ready jobs in coroutines
+    // Triggers ready jobs in fibers
     void trigger_job();
 
     // Internal implementations (single-threaded, no races)
-    void do_add_pollable(rusty::Arc<Pollable> poll);
+    void do_add_pollable(PollableProxy poll);
     void do_remove_pollable(int fd);
     void do_close_pollable(int fd);  // Close socket and drop Arc
-    void do_update_mode(int fd, int new_mode, const Pollable* poll_ptr);
+    void do_update_mode(int fd, int new_mode);
     void do_add_job(rusty::Arc<Job> job);
     void do_remove_job(rusty::Arc<Job> job);
 
@@ -399,12 +506,12 @@ private:
     Epoll poll_;
 
     // Pollable state - single owner in worker thread
-    std::unordered_map<int, rusty::Arc<Pollable>> fd_to_pollable_;
-    std::unordered_map<int, int> mode_;  // fd -> mode
-    std::unordered_set<int> pending_remove_;
+    rusty::HashMap<int, PollableProxy> fd_to_pollable_;
+    rusty::HashMap<int, int> mode_;  // fd -> mode
+    rusty::HashSet<int> pending_remove_;
 
     // Jobs - single owner in worker thread
-    std::set<rusty::Arc<Job>> jobs_;
+    rusty::BTreeSet<rusty::Arc<Job>> jobs_;
 
     // Stop flag
     bool stop_ = false;
@@ -429,9 +536,10 @@ private:
     // Join handle for the thread (Mutex provides interior mutability)
     rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>> join_handle_;
 
-    // Thread ID of the poll thread - used to detect self-join attempts
-    // std::atomic for safe cross-thread access (set by spawned thread, read by shutdown())
-    mutable std::atomic<std::thread::id> poll_thread_id_{};
+    // Thread ID of the poll thread - used to detect self-join attempts.
+    // rusty::Atomic wraps std::atomic<ThreadId> — ThreadId is TriviallyCopyable so
+    // this stays lock-free on typical platforms.
+    mutable rusty::sync::atomic::Atomic<rusty::thread::ThreadId> poll_thread_id_{};
 
     // Track if shutdown was called
     mutable std::atomic<bool> shutdown_called_{false};
@@ -455,11 +563,12 @@ public:
     PollThread& operator=(PollThread&& other) = delete;
 
     // Send commands to worker via channel
-    void add(rusty::Arc<Pollable> poll) const;
+    void add_proxy(PollableProxy poll) const;
     void remove(Pollable& poll) const;
-    void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops Arc
+    void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops proxy ownership
     // @safe - Sends update mode command via channel
     // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
+    void update_mode(int fd, int new_mode) const;
     void update_mode(const Pollable& poll, int new_mode) const;
     void add(rusty::Arc<Job> job) const;
     void remove(rusty::Arc<Job> job) const;

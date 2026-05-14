@@ -1,11 +1,12 @@
 #include <Python.h>
+#include <rusty/rusty.hpp>
 
 #include <string>
 #include <memory>
-#include <map>
+#include "../../rrr.hpp"
 
-#include "rpc/server.hpp"
-#include "rpc/client.hpp"
+
+
 
 // External safety annotations for atomic operations
 // @external: {
@@ -32,8 +33,8 @@ class PythonRpcService : public Service {
 public:
     ~PythonRpcService() {
         // Release Python references
-        for (auto& [rpc_id, func] : handlers_) {
-            Py_XDECREF(func);
+        for (auto entry : handlers_) {
+            Py_XDECREF(entry.second);
         }
     }
 
@@ -47,13 +48,14 @@ public:
     int __reg_to__(Server& svr, size_t svc_index) override {
         // @unsafe - loop iteration
         {
-            for (auto& [rpc_id, func] : handlers_) {
+            for (auto entry : handlers_) {
+                int rpc_id = entry.first;
                 int ret = svr.reg_rpc(rpc_id, svc_index);
                 if (ret != 0) {
                     // Unregister on failure
-                    for (auto& [id, _] : handlers_) {
-                        if (id >= rpc_id) break;
-                        svr.unreg(id);
+                    for (auto prior : handlers_) {
+                        if (prior.first >= rpc_id) break;
+                        svr.unreg(prior.first);
                     }
                     return ret;
                 }
@@ -66,7 +68,7 @@ public:
     void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override;
 
 private:
-    std::map<i32, PyObject*> handlers_;
+    rusty::BTreeMap<i32, PyObject*> handlers_;
 };
 
 // Wrapper to hold Arc<Mutex<>> for Python binding
@@ -124,8 +126,21 @@ void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakSer
     if (sconn_opt.is_some()) {
         auto sconn = sconn_opt.unwrap();
         if (output_m != NULL) {
-            const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](Marshal& out) {
-                out.read_from_marshal(*output_m, output_m->content_size());
+            // drain the Python-side Marshal
+            // into a contiguous buffer and write through the archive's
+            // raw-byte API.  The legacy `out.read_from_marshal(*output_m, n)`
+            // chunk-share fast path is gone; the extra memcpy is
+            // negligible compared to the Python interpreter overhead
+            // around this call site.
+            std::size_t n = output_m->content_size();
+            std::vector<std::uint8_t> tmp(n);
+            if (n > 0) {
+                verify(output_m->read(tmp.data(), n) == n);
+            }
+            const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](BinaryWriteArchive& out) {
+                if (n > 0) {
+                    out.write_bytes(tmp.data(), n);
+                }
             });
             delete output_m;
         } else {
@@ -140,7 +155,7 @@ void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakSer
 
 // Map from Server* to its PythonRpcService* (before registration)
 // The service is moved to the Server when server_start is called
-static std::map<Server*, PythonRpcService*> pending_python_services_;
+static rusty::BTreeMap<Server*, PythonRpcService*> pending_python_services_;
 
 static PyObject* _pyrpc_init_server(PyObject* self, PyObject* args) {
     GILHelper gil_helper;
@@ -286,11 +301,19 @@ static PyObject* _pyrpc_client_async_call(PyObject* self, PyObject* args) {
     Marshal* m = (Marshal*) m_id;
 
     bool valid_id = m->valid_id;
-    auto fu_result = clnt->request(rpc_id, [&](Marshal& out) {
-        // NOTE: We use Marshal as a buffer to packup an RPC message, then push it into
-        //       client side buffer. Here is the only place that we are using Marshal's
-        //       read_from_marshal function with non-empty Marshal object.
-        out.read_from_marshal(*m, m->content_size());
+    // drain the Python-side Marshal into
+    // a contiguous buffer and push it through the archive's
+    // raw-byte API.  See the matching comment in
+    // `_pyrpc_python_func_executor`'s reply path.
+    std::size_t n = m->content_size();
+    std::vector<std::uint8_t> tmp(n);
+    if (n > 0) {
+        verify(m->read(tmp.data(), n) == n);
+    }
+    auto fu_result = clnt->request(rpc_id, [&](BinaryWriteArchive& out) {
+        if (n > 0) {
+            out.write_bytes(tmp.data(), n);
+        }
     });
     if (fu_result.is_ok()) {
         clnt->set_valid(valid_id);
@@ -322,11 +345,19 @@ static PyObject* _pyrpc_client_sync_call(PyObject* self, PyObject* args) {
     Client* clnt = (Client*) u;
     Marshal* m = (Marshal*) m_id;
 
-    auto fu_result = clnt->request(rpc_id, [&](Marshal& out) {
-        // NOTE: We use Marshal as a buffer to packup an RPC message, then push it into
-        //       client side buffer. Here is the only place that we are using Marshal's
-        //       read_from_marshal function with non-empty Marshal object.
-        out.read_from_marshal(*m, m->content_size());
+    // drain the Python-side Marshal into
+    // a contiguous buffer and push it through the archive's
+    // raw-byte API.  See the matching comment in
+    // `_pyrpc_python_func_executor`'s reply path.
+    std::size_t n = m->content_size();
+    std::vector<std::uint8_t> tmp(n);
+    if (n > 0) {
+        verify(m->read(tmp.data(), n) == n);
+    }
+    auto fu_result = clnt->request(rpc_id, [&](BinaryWriteArchive& out) {
+        if (n > 0) {
+            out.write_bytes(tmp.data(), n);
+        }
     });
 
     Marshal* m_rep = new Marshal;

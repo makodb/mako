@@ -299,10 +299,24 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
-        reqBuf->len = sizeof(uint32_t)*config.nshards;
-        memcpy(reqBuf->value, cc, sizeof(uint32_t)*config.nshards);
+        // `cc` is a 4-byte buffer produced by encode_single_timestamp() (see
+        // common.h:482 and shardClient.cc:333-335) — a single uint32_t. The
+        // receiver's HandleInstallRequest() (server.cc:153-174) reads exactly
+        // one uint32 via decode_single_timestamp(req->value). The previous
+        // `* config.nshards` multiplier on both `len` and the memcpy here was
+        // dead code from an older "vector of timestamps per shard" wire shape
+        // that the install handler migrated away from; under nshards>=2 it
+        // memcpy'd 4*N bytes from a 4-byte heap allocation, overrunning into
+        // jemalloc's next slab. The corrupted bytes propagated through the
+        // wire and eventually showed up as a stack-buffer-overflow in
+        // `inline_str_base::operator=` (the customer record's c_first/c_last
+        // size byte read as 106), which is what blew up shard2ReplicationRaft.
+        // AddressSanitizer pinpointed this on 2026-04-25; see
+        // logs/20260425-fix-shard2-asan/asan_report.787.
+        reqBuf->len = sizeof(uint32_t);
+        memcpy(reqBuf->value, cc, sizeof(uint32_t));
         blocked = true;
-        size_t bytes_used = sizeof(vector_int_request_t) - max_vector_int_length + sizeof(uint64_t)*config.nshards;
+        size_t bytes_used = sizeof(vector_int_request_t) - max_vector_int_length + sizeof(uint32_t);
         transport->SendRequestToAll(this,
                                       installReqType,
                                       dstShardIdx,

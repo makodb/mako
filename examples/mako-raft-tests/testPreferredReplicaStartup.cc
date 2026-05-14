@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
 
     vector<string> config{
         get_current_absolute_path() + "../config/none_raft.yml",
-        get_current_absolute_path() + "../config/1c1s3r1p_cluster_test.yml"
+        get_current_absolute_path() + "../config/1c1s5r1p_cluster_test.yml"
     };
 
     char *argv_raft[18];

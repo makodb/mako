@@ -100,7 +100,8 @@ class CoordinatorClassic : public Coordinator {
   void Restart() override;
 
   virtual void DispatchAsync();
-  virtual void DispatchSync();
+  // removed `DispatchSync()` declaration —
+  // never called externally; impl deleted.
   virtual void DispatchAsync(bool last);
   virtual void DispatchAck(phase_t phase,
                            double dispatch_time,
@@ -129,10 +130,10 @@ class CoordinatorClassic : public Coordinator {
 
   void ForwardTxnRequest(TxRequest& req);
   void ForwardTxRequestAck(const TxReply&);
-  // for debug
-  set<txnid_t> ___phase_one_tids_ = set<txnid_t>();
-  set<txnid_t> ___phase_three_tids_ = set<txnid_t>();
-  void ___TestPhaseOne(txnid_t txn_id);
-  void ___TestPhaseThree(txnid_t txn_id);
+  // removed `___phase_one_tids_` /
+  // `___phase_three_tids_` debug sets and `___TestPhaseOne` /
+  // `___TestPhaseThree` test helpers — only references were
+  // commented-out call sites in tapir/coordinator.cc and
+  // classic/coordinator.cc.
 };
 } // namespace janus

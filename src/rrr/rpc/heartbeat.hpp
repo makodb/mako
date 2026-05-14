@@ -1,21 +1,31 @@
 #pragma once
 
-#include <rusty/cell.hpp>
-#include <functional>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <rusty/cell.hpp>
+#include <rusty/function.hpp>
+
+
+
 
 namespace rrr {
 
-// Time utility
-namespace {
-    // @safe - Get current time in microseconds
-    inline uint64_t heartbeat_time_us() {
-        // @unsafe - system call
-        {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
-        }
+// @safe - Get current time in microseconds
+inline uint64_t heartbeat_time_us() {
+    // @unsafe - system call
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
     }
 }
 
@@ -126,7 +136,7 @@ private:
     rusty::Cell<bool> timed_out_{false};
 
     // Callback for timeout
-    std::function<void()> on_timeout_;
+    rusty::Function<void()> on_timeout_;
 
 public:
     // @safe - Constructor with config
@@ -142,7 +152,7 @@ public:
     }
 
     // @safe - Set timeout callback
-    void set_on_timeout(std::function<void()> callback) {
+    void set_on_timeout(rusty::Function<void()> callback) {
         on_timeout_ = std::move(callback);
     }
 
@@ -209,7 +219,7 @@ public:
                 timed_out_.set(true);
 
                 // Invoke callback
-                // @unsafe - std::function::operator bool
+                // @unsafe - rusty::Function::operator bool
                 {
                     if (on_timeout_) {
                         on_timeout_();

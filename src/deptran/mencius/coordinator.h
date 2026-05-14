@@ -22,8 +22,10 @@ class CoordinatorMencius : public Coordinator {
   bool in_submission_ = false; // debug;
   bool in_prepare_ = false; // debug
   bool in_suggest = false; // debug
-  bool in_forward = false; //debug
-  shared_ptr<Marshallable> cmd_{nullptr};
+  // removed `bool in_forward = false;` —
+  // declared but never written or read.
+  // cmd_ migrated to janus::Command.
+  Command cmd_{};
   CoordinatorMencius(uint32_t coo_id,
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
@@ -58,14 +60,17 @@ class CoordinatorMencius : public Coordinator {
   }
 
   void DoTxAsync(TxRequest &req) override {}
-  void Submit(shared_ptr<Marshallable> &cmd,
+  void Submit(const janus::Command& cmd,
               rusty::Function<void()> func = {},
               rusty::Function<void()> exe_callback = {}) override;
 
-  ballot_t PickBallot();
+  // removed `PickBallot()` declaration —
+  // only call site was the now-deleted `Prepare()`.
   void Submit();
 
-  void Prepare();
+  // removed `Prepare()` declaration —
+  // body was `verify(0)`-tagged debug code; `GotoNextPhase` skips
+  // the prepare phase entirely.
   void Suggest();
   void Commit();
 

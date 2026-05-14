@@ -13,89 +13,28 @@ MultiPaxosCommo::MultiPaxosCommo(rusty::Option<rusty::Arc<PollThread>> poll)
   : Communicator(std::move(poll)) {
 }
 
-// Jetpack: SendForward for forwarding commands to leader
-shared_ptr<PaxosPrepareQuorumEvent>
-MultiPaxosCommo::SendForward(parid_t par_id,
-                             uint64_t follower_id,
-                             uint64_t dep_id,
-                             shared_ptr<Marshallable> cmd) {
-  auto e = Reactor::create_sp_event<PaxosPrepareQuorumEvent>(1, 1);
-  auto src_coroid = e->get_coro_id();
-  auto leader_id = LeaderProxyForPartition(par_id).first;
-  auto leader_proxy = (MultiPaxosProxy*) LeaderProxyForPartition(par_id).second;
+// removed `MultiPaxosCommo::SendForward` —
+// never called from anywhere in the tree; was a stub for an
+// unwired-up Jetpack forward-to-leader path.  The corresponding
+// `Forward` RPC declaration in rcc_rpc.rpc and the
+// `MultiPaxosServiceImpl::Forward` empty handler are also gone.
 
-  FutureAttr fuattr;
-  fuattr.callback = [e, leader_id, src_coroid, follower_id](rusty::Arc<Future> fu) {
-    if (fu->get_error_code() != 0) {
-      Log_info("Get a error message in reply");
-      return;
-    }
-    uint64_t coro_id = 0;
-    fu->get_reply() >> coro_id;
-    e->FeedResponse(1);
-    Log_info("adding dependency");
-    // e->add_dep(follower_id, src_coroid, leader_id, coro_id);
-  };
+// removed deprecated callback-style
+// `void MultiPaxosCommo::BroadcastPrepare(parid_t, slotid_t, ballot_t,
+// callback)` — body had `verify(0);` and was mostly commented out;
+// no live callers anywhere.
 
-  MarshallDeputy md(cmd);
-  MultiPaxosProxy::RpcForwardRequest req;
-  req.cmd = md;
-  req.dep_id = dep_id;
-  auto f = leader_proxy->async_Forward(req, fuattr);
-  if (f.is_ok()) {
-    Future::safe_release(f.unwrap().raw_future());
-  }
-
-  return e;
-}
-
-void MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
-                                       slotid_t slot_id,
-                                       ballot_t ballot,
-                                       const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0);
-  // auto proxies = rpc_par_proxies_[par_id];
-  // for (auto& p : proxies) {
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = cb;
-  //   Future::safe_release(proxy->async_Prepare(slot_id, ballot, fuattr));
-  // }
-}
-
-shared_ptr<PaxosPrepareQuorumEvent>
-MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
-                                  slotid_t slot_id,
-                                  ballot_t ballot) {
-  verify(0);
-  int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  auto e = Reactor::create_sp_event<PaxosPrepareQuorumEvent>(n, n); //marker:ansh debug
-  // auto proxies = rpc_par_proxies_[par_id];
-  // int cur_batch_idx = current_proxy_batch_idx;
-  // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  // for (int i=0;i<n+1;i++) {
-  //   auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = [e, ballot](Future* fu) {
-  //     ballot_t b = 0;
-  //     fu->get_reply() >> b;
-  //     e->FeedResponse(b==ballot);
-  //     // TODO add max accepted value.
-  //   };
-  //   Future::safe_release(proxy->async_Prepare(slot_id, ballot, fuattr));
-  // }
-  return e;
-}
+// removed `MultiPaxosCommo::BroadcastPrepare`
+// (parid, slot, ballot) — body was a `verify(0);` shell with the
+// real implementation commented out.  Only call site was the
+// now-deleted `CoordinatorMultiPaxos::Prepare()`.
 
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastAccept(parid_t par_id,
                                  slotid_t slot_id,
                                  ballot_t ballot,
-                                 shared_ptr<Marshallable> cmd) {
-  verify(0);                               
+                                 const janus::Command& cmd) {
+  verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
 //  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
   auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, n);
@@ -113,44 +52,26 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   //     fu->get_reply() >> b;
   //     e->FeedResponse(b==ballot);
   //   };
-  //   MarshallDeputy md(cmd);
+  //   janus::Command md(cmd);
   //   auto f = proxy->async_Accept(slot_id, ballot, md, fuattr);
   //   Future::safe_release(f);
   // }
   return e;
 }
 
-void MultiPaxosCommo::BroadcastAccept(parid_t par_id,
-                                      slotid_t slot_id,
-                                      ballot_t ballot,
-                                      shared_ptr<Marshallable> cmd,
-                                      const function<void(rusty::Arc<Future>)>& cb) {
-  verify(0);
-  // int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  // auto proxies = rpc_par_proxies_[par_id];
-  // vector<Future*> fus;
-  // int cur_batch_idx = current_proxy_batch_idx;
-  // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  // for (int i=0;i<n+1;i++) {
-  //   auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = cb;
-  //   MarshallDeputy md(cmd);
-  //   auto f = proxy->async_Accept(slot_id, ballot, md, fuattr);
-  //   Future::safe_release(f);
-  // }
-}
+// removed deprecated callback-style
+// `void MultiPaxosCommo::BroadcastAccept(parid_t, slotid_t, ballot_t,
+// cmd, callback)` — body had `verify(0);` and was mostly commented
+// out; no live callers anywhere.
 
 /**
- * @brief forward the committed log the learner 
+ * @brief forward the committed log the learner
  * Within the same data center
  */
 void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
                                        uint64_t slot,
                                        ballot_t ballot,
-                                       shared_ptr<Marshallable> cmd,
+                                       const janus::Command& cmd,
                                        const std::function<void(uint64_t, ballot_t)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   auto proxies = rpc_par_proxies_[par_id];
@@ -183,7 +104,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         cb(slot, ballot);
         //e->FeedResponse(1);
 	      };
-	     MarshallDeputy md(cmd);
+	     janus::Command md(cmd);
 	     //Log_info("ForwardToLearner: SENDING to learner site_id=%d, slot=%lu", p.first, slot);
        MultiPaxosProxy::RpcForwardToLearnerServerRequest req;
        req.par_id = par_id;
@@ -197,7 +118,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
     // auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     // if (Config::GetConfig()->SiteById(p.first).role!=2) continue;
     //  auto proxy = (MultiPaxosProxy*) p.second;
-    //  MarshallDeputy md(cmd);
+    //  janus::Command md(cmd);
     //  uint64_t *slotr;
     //  ballot_t *ballotr;
     //  proxy->ForwardToLearnerServer(par_id, slot, ballot, md, slotr, ballotr);
@@ -209,7 +130,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
 void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,
                                       const ballot_t ballot,
-                                      const shared_ptr<Marshallable> cmd) {
+                                      const janus::Command& cmd) {
   verify(0);
   // int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   // auto proxies = rpc_par_proxies_[par_id];
@@ -222,128 +143,31 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
   //   auto proxy = (MultiPaxosProxy*) p.second;
   //   FutureAttr fuattr;
   //   fuattr.callback = [](Future* fu) {};
-  //   MarshallDeputy md(cmd);
+  //   janus::Command md(cmd);
   //   auto f = proxy->async_Decide(slot_id, ballot, md, fuattr);
   //   Future::safe_release(f);
   // }
 }
 
-shared_ptr<PaxosAcceptQuorumEvent>
-MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
-                                      shared_ptr<Marshallable> cmd,
-                                      function<void(ballot_t, int)> cb) {
-  verify(0);
-  //Log_info("BroadcastBulkPrepare: i am here");
-  int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); // marker:debug
-  //Log_info("BroadcastBulkPrepare: i am here partition size %d", n);
-  // auto proxies = rpc_par_proxies_[par_id];
-  // vector<Future*> fus;
-  // int cur_batch_idx = current_proxy_batch_idx;
-  // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  // for (int i=0;i<n+1;i++) {
-  //   auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   if (Config::GetConfig()->SiteById(p.first).role==0) continue;
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = [e, cb] (Future* fu) {
-  //     i32 valid;
-  //     i32 ballot;
-  //     fu->get_reply() >> ballot >> valid;
-  //     //Log_info("Received response %d %d", ballot, valid);
-  //     cb(ballot, valid);
-  //     e->FeedResponse(valid);
-  //   };
-  //   verify(cmd != nullptr);
-  //   MarshallDeputy md(cmd);
-  //   auto f = proxy->async_BulkPrepare(md, fuattr);
-  //   Future::safe_release(f);
-  // }
-  return e;
-}
+// removed `MultiPaxosCommo::BroadcastBulkPrepare`
+// — became dead in Phase 4e-25 when the only sender
+// (`PaxosWorker::SendBulkPrepare`) went away.  The body was already a
+// `verify(0)`-then-commented-out shell.
 
-shared_ptr<PaxosAcceptQuorumEvent>
-MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
-                                 shared_ptr<Marshallable> cmd,
-                                 const std::function<void(MarshallDeputy, ballot_t, int)>& cb) {
-  verify(0);
-  int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); //marker:debug
-  // auto proxies = rpc_par_proxies_[par_id];
-  // vector<Future*> fus;
-  // //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
-  // int cur_batch_idx = current_proxy_batch_idx;
-  // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  // for (int i=0;i<n+1;i++) {
-  //   auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-  //   if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-  //   auto proxy = (MultiPaxosProxy*) p.second;
-  //   FutureAttr fuattr;
-  //   fuattr.callback = [e, cb] (Future* fu) {
-  //     i32 valid;
-  //     i32 ballot;
-  //     MarshallDeputy response_val;
-  //     fu->get_reply() >> ballot >> valid >> response_val;
-  //     //Log_info("BroadcastPrepare2: received response: %d %d", ballot, valid);
-  //     cb(response_val, ballot, valid);
-  //     e->FeedResponse(valid);
-  //   };
-  //   verify(cmd != nullptr);
-  //   MarshallDeputy md(cmd);
-  //   auto f = proxy->async_BulkPrepare2(md, fuattr);
-  //   Future::safe_release(f);
-  // }
-  return e;
-}
+// removed `MultiPaxosCommo::BroadcastPrepare2`
+// — only call site was the now-deleted
+// `BulkCoordinatorMultiPaxos::Prepare()`; body was a
+// `verify(0)`-then-commented-out shell.
 
-// Within the same data center
-shared_ptr<PaxosAcceptQuorumEvent>
-MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
-                                    shared_ptr<Marshallable> cmd,
-                                    const function<void(ballot_t, int)>& cb) {
-  int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k);
-  auto proxies = rpc_par_proxies_[par_id];
-  vector<rusty::Arc<Future>> fus;
-  int cur_batch_idx = current_proxy_batch_idx;
-  current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  for (int i=0;i<n+1;i++) {
-    auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
-    auto proxy = (MultiPaxosProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
-      if (fu->get_error_code()!=0) {
-        Log_info("received an error message5");
-        return;
-      }
-      i32 valid;
-      i32 ballot;
-      fu->get_reply() >> ballot >> valid;
-      cb(ballot, valid);
-      e->FeedResponse(valid);
-    };
-    verify(cmd != nullptr);
-    MarshallDeputy md(cmd);
-    MultiPaxosProxy::RpcHeartbeatRequest req;
-    req.cmd = md;
-    auto fu_result = proxy->async_Heartbeat(req, fuattr);
-    if (fu_result.is_ok()) {
-      Future::safe_release(fu_result.unwrap().raw_future());
-    }
-  }
-  return e;
-}
+// removed `MultiPaxosCommo::BroadcastHeartBeat`
+// — became dead in Phase 4e-25 when the only sender
+// (`PaxosWorker::SendHeartBeat`) went away.
 
 // Distant data centers
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
-                                  shared_ptr<Marshallable> cmd,
-                                  const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb) {
+                                  const janus::Command& cmd,
+                                  const std::function<void(shared_ptr<janus::Command>, ballot_t, int)>& cb) {
   is_broadcast_syncLog = true;
   Log_info("invoke BroadcastSyncLog to prepare for the failover");
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
@@ -366,14 +190,14 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       }
       i32 valid;
       i32 ballot;
-      MarshallDeputy response_val;
+      janus::Command response_val;
       fu->get_reply() >> ballot >> valid >> response_val;
-      auto sp_md = make_shared<MarshallDeputy>(response_val);
+      auto sp_md = make_shared<janus::Command>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
     };
-    verify(cmd != nullptr);
-    MarshallDeputy md(cmd);
+    verify(cmd.has_value());
+    janus::Command md(cmd);
     MultiPaxosProxy::RpcSyncLogRequest req;
     req.cmd = md;
     auto fu_result = proxy->async_SyncLog(req, fuattr);
@@ -384,50 +208,13 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
   return e;
 }
 
-shared_ptr<PaxosAcceptQuorumEvent>
-MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
-                                  shared_ptr<Marshallable> cmd,
-                                  const std::function<void(ballot_t, int)>& cb) {
-  int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  // not old leader, not new leader(old learner)
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n-1, n-1);
-  auto proxies = rpc_par_proxies_[par_id];
-  vector<rusty::Arc<Future>> fus;
-  int cur_batch_idx = current_proxy_batch_idx;
-  current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  for (int i=0;i<n+1;i++) {
-    auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
-    if (Config::GetConfig()->SiteById(p.first).role==0) continue; // ??? why skip itself
-    auto proxy = (MultiPaxosProxy*) p.second;
-    FutureAttr fuattr;
-    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
-      if (fu->get_error_code()!=0) {
-        Log_info("received an error message4");
-        return;
-      }
-      i32 valid;
-      i32 ballot;
-      fu->get_reply() >> ballot >> valid;
-      cb(ballot, valid);
-      e->FeedResponse(valid);
-    };
-    verify(cmd != nullptr);
-    MarshallDeputy md(cmd);
-    MultiPaxosProxy::RpcSyncNoOpsRequest req;
-    req.cmd = md;
-    auto fu_result = proxy->async_SyncNoOps(req, fuattr);
-    if (fu_result.is_ok()) {
-      Future::safe_release(fu_result.unwrap().raw_future());
-    }
-  }
-  return e;
-}
+// removed `MultiPaxosCommo::BroadcastSyncNoOps`
+// — became dead in Phase 4e-25 when the only sender
+// (`PaxosWorker::SendSyncNoOpLog`) went away.
 
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
-                                  shared_ptr<Marshallable> cmd,
+                                  const janus::Command& cmd,
                                   const std::function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
@@ -451,7 +238,7 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
   //     e->FeedResponse(valid);
   //   };
   //   verify(cmd != nullptr);
-  //   MarshallDeputy md(cmd);
+  //   janus::Command md(cmd);
   //   auto f = proxy->async_SyncCommit(md, fuattr);
   //   Future::safe_release(f);
   // }
@@ -461,7 +248,7 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
 // Distant data center
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
-                                 shared_ptr<Marshallable> cmd,
+                                 const janus::Command& cmd,
                                  const function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
@@ -491,8 +278,8 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       cb(ballot, valid);
       e->FeedResponse(valid);
     };
-    verify(cmd != nullptr);
-    MarshallDeputy md(cmd);
+    verify(cmd.has_value());
+    janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkAcceptRequest req;
     req.cmd = md;
     auto fu_result = proxy->async_BulkAccept(req, fuattr);
@@ -506,7 +293,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
 // Distant data center
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
-                                     shared_ptr<Marshallable> cmd,
+                                     const janus::Command& cmd,
                                      const function<void(ballot_t, int)>& cb){
   auto proxies = rpc_par_proxies_[par_id];
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
@@ -531,7 +318,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
       cb(ballot, valid);
       e->FeedResponse(valid);
     };
-    MarshallDeputy md(cmd);
+    janus::Command md(cmd);
     MultiPaxosProxy::RpcBulkDecideRequest req;
     req.cmd = md;
     auto fu_result = proxy->async_BulkDecide(req, fuattr);

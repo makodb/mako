@@ -4,6 +4,7 @@
 #include "commo.h"
 #include "server.h"
 #include "frame.h"
+#include "rrr/misc/serializable.hpp"  // wrap_serializable
 
 // #define DO_FINALIZE
 
@@ -45,7 +46,7 @@ inline ballot_t CoordinatorCopilot::pickGreaterBallot(ballot_t ballot) {
   return makeUniqueBallot((ballot >> 8) + 1);
 }
 
-void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
+void CoordinatorCopilot::Submit(const janus::Command& cmd,
                                 rusty::Function<void()> func,
                                 rusty::Function<void()> exe_callback) {
   verify(IsPilot() || IsCopilot());  // only pilot or copilot can initiate command submission
@@ -54,9 +55,12 @@ void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
 #ifdef FULL_LOG_DEBUG
   Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
 #endif
-  verify(!cmd_now_);
+  // cmd_now_ is now janus::Command.
+  verify(!cmd_now_.has_value());
 
-  begin = Time::now(true);
+  // removed `begin = Time::now(true);` —
+  // the `begin` field was used only to compute `fac` / `ac`, both
+  // of which were dead state.
 
   cmd_now_ = cmd;
   auto slot_and_dep = sch_->PickInitSlotAndDep();
@@ -65,7 +69,7 @@ void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
   is_pilot_ = IsPilot() ? YES : NO;
   slot_id_ = slot_and_dep.first;
   dep_ = slot_and_dep.second;
-  verify(cmd_now_->kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_now_.has_value());
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
@@ -175,28 +179,33 @@ void CoordinatorCopilot::FastAccept() {
       "Copilot coordinator %u broadcast FAST_ACCEPT, "
       "partition: %u, %s : %lu -> %lu",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
-      // dynamic_pointer_cast<TpcCommitCommand>(cmd_now_)->tx_id_);
-  begin = Time::now(true);
+      // marshallable_cast<TpcCommitCommand>(cmd_now_)->tx_id_);
+  // removed `begin = Time::now(true);` —
+  // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("FastAccept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
+  // BroadcastFastAccept now takes janus::Command.
   auto sq_quorum = commo()->BroadcastFastAccept(par_id_,
                                                 is_pilot_, slot_id_,
                                                 curr_ballot_,
                                                 dep_,
                                                 cmd_now_);
   // sq_quorum->id_ = dep_id_;
-  // Log_debug("current coroutine's dep_id: %d", Fiber::current_coroutine()->dep_id_);
+  // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
 
   sq_quorum->wait();
 #ifdef FULL_LOG_DEBUG
+  // GetCmdID still takes shared_ptr<Marshallable>.
   Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", dynamic_pointer_cast<TpcBatchCommand>(cmd_now_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  // marshallable_cast<T>(Command&) overload handles cmd_now_ directly.
+  Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", marshallable_cast<TpcBatchCommand>(cmd_now_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
-  fac = Time::now(true) - begin;
+  // removed `fac = Time::now(true) - begin;`
+  // — `fac` was a timing counter that nothing read.
 #ifdef DO_FINALIZE
   sq_quorum->finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
@@ -250,7 +259,8 @@ void CoordinatorCopilot::Accept() {
       "partition: %u, %s : %lu -> %lu",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
 
-  begin = Time::now(true);
+  // removed `begin = Time::now(true);` —
+  // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
   // Log_info("Accept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
   auto sp_quorum = commo()->BroadcastAccept(par_id_,
@@ -259,7 +269,7 @@ void CoordinatorCopilot::Accept() {
                                             dep_,
                                             cmd_now_);
   // sp_quorum->id_ = dep_id_;
-  // Log_debug("current coroutine's dep_id: %d", Fiber::current_coroutine()->dep_id_);
+  // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
 
   sp_quorum->wait();
 #ifdef DO_FINALIZE
@@ -269,7 +279,8 @@ void CoordinatorCopilot::Accept() {
   // cout << "ac";
   // sp_quorum->Log();
   // if ((static_cast<CopilotFrame*>(frame_)->n_accept_ & 0x3ff) == 0)
-  ac = Time::now(true) - begin;
+  // removed `ac = Time::now(true) - begin;`
+  // — `ac` was a timing counter that nothing read.
 
   if (sp_quorum->yes()) {
     committed_ = true;
@@ -314,7 +325,8 @@ void CoordinatorCopilot::Commit() {
   auto dep_ins = sch_->GetInstance(dep_, REVERSE(is_pilot_));
   int take = 0;
   if (dep_ins && !in_fast_takeover_ && dep_ != 0) {
-      begin = Time::now(true);
+      // removed `begin = Time::now(true);`
+      // — see companion comment in CoordinatorCopilot::Submit.
   // if (false) {
     // auto dep_ins = sch_->GetInstance(dep_, REVERSE(is_pilot_));
     /* It must proceed after all entries before its dependency have committed
@@ -348,8 +360,11 @@ void CoordinatorCopilot::Commit() {
         }
       }
     }
-    uint64_t finish = Time::now(true) - begin;
-    // Log_info("takeover %lldus", finish);
+    // removed
+    //   `uint64_t finish = Time::now(true) - begin;`
+    // — `finish` was unused (the only Log_info consumer is
+    // commented-out below) and `begin` went away with the other
+    // dead timing counters.
   }
   clearStatus();
 }
@@ -420,7 +435,8 @@ inline void CoordinatorCopilot::clearStatus() {
     return;
   done_ = true;
   curr_ballot_ = 0;
-  cmd_now_ = nullptr;
+  // Command's reset is via default-construction.
+  cmd_now_ = Command{};
   current_phase_ = INIT_END;
   fast_path_ = false;
   direct_commit_ = false;
@@ -428,7 +444,9 @@ inline void CoordinatorCopilot::clearStatus() {
 
   is_pilot_ = 0;
   slot_id_ = 0;
-  slot_hint_ = nullptr;
+  // removed `slot_hint_ = nullptr;` —
+  // the field was never read; the frame-side write at frame.cc:85
+  // also went away.
   dep_ = 0;
 }
 

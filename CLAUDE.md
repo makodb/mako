@@ -152,6 +152,27 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 
 **CRITICAL: All new C++ code MUST be written to be rusty-safe.** This is not optional. Follow these requirements for every new file, function, or modification.
 
+**Refactor as you go.** When touching a file, if you see std constructs
+in the surrounding blast radius of your change that have direct rusty
+equivalents (`std::vector` → `rusty::Vec`, `std::shared_ptr` →
+`rusty::Arc`, `std::mutex` → `rusty::Mutex`, `std::function` →
+`rusty::Function`, `std::thread` → `rusty::thread::spawn`,
+`std::optional` → `rusty::Option`), migrate them in the same commit.
+Prefer rusty structures over STL equivalents everywhere. Do NOT
+expand scope beyond the blast radius of the change you're making —
+mention each migration in the commit message so bisection stays
+useful.
+
+Exceptions that stay std:
+ - rrr framework boundary types (the generated `rcc_rpc.h` still uses
+   `std::string`, `std::shared_ptr<Marshallable>`, etc. on the wire).
+   Convert at the edge; isolate the conversion in one spot; annotate
+   the boundary `@unsafe`.
+ - Third-party APIs (rocksdb, lz4, yaml-cpp) — we don't control their
+   signatures.
+ - Pre-existing code not in your change's blast radius. File a
+   follow-up if it's blocking something.
+
 **IMPORTANT**: Always keep the `third-party/rusty-cpp` submodule on the `main` branch with the latest commit. Do not switch to other branches.
 
 #### Required Safety Annotations

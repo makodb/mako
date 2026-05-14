@@ -33,7 +33,10 @@ class Coordinator {
   static std::mutex _dbg_txid_lock_;
   static std::unordered_set<txid_t> _dbg_txid_set_;
   bool _inuse_{false};
-  uint32_t n_start_ = 0;
+  // removed `uint32_t n_start_ = 0;` —
+  // declared but never read.  The live counter is
+  // `client_status_->txn_start_one(...)` which lives on
+  // `ClientStatus`.
   locid_t loc_id_ = -1;
   uint32_t coo_id_;
   uint32_t offset_;
@@ -41,7 +44,9 @@ class Coordinator {
   uint32_t coro_id_;
 	i64 dep_id_ = -1;
 	int concurrent;
-  std::vector<int> ids_;
+  // removed `std::vector<int> ids_;` —
+  // declared and `push_back`ed once at `communicator.cc:762` but
+  // never read.  The push site was deleted alongside the field.
   parid_t par_id_ = -1;
   slotid_t slot_id_ = 0;
   ballot_t curr_ballot_ = 1;
@@ -56,7 +61,10 @@ class Coordinator {
   // Transaction timeout in microseconds (from config, default 30 seconds)
   uint64_t txn_timeout_{30000000};
   uint32_t thread_id_;
-  bool batch_optimal_ = false;
+  // removed `bool batch_optimal_ = false;`
+  // — declared but the only reference was a commented-out
+  // `verify(!batch_optimal_)` in `snow/ro6_coord.cc:243`; never
+  // written or read in production paths.
 	bool slow_ = false;
   bool retry_wait_;
   shared_ptr<IntEvent> sp_ev_commit_{};
@@ -66,11 +74,18 @@ class Coordinator {
   std::atomic<uint64_t> next_txn_id_;
 
   std::recursive_mutex mtx_{};
-  Recorder *recorder_{nullptr};
+  // removed `Recorder *recorder_{nullptr};`
+  // — only assignment was `recorder_ = NULL;` in the constructor;
+  // no surviving `recorder_ = new Recorder(...)` call site, so the
+  // field was always nullptr.  The `if (recorder_) delete recorder_;`
+  // destructor cleanup was dead-after-null-check-only.  The
+  // `JanusCoordinator::recorder_` shadow declaration is also removed
+  // in this phase.
   CmdData *cmd_{nullptr};
   phase_t phase_ = 0;
   map<innid_t, bool> dispatch_acks_ = {};
-  map<innid_t, bool> handout_outs_ = {};
+  // removed `map<innid_t, bool> handout_outs_ = {};`
+  // — declared but never written or read anywhere in the codebase.
   Sharding* sharding_ = nullptr;
   shared_ptr<TxnRegistry> txn_reg_{nullptr};
   Communicator* commo_ = nullptr;
@@ -87,19 +102,36 @@ class Coordinator {
   bool commit_reported_ = false;
   bool validation_result_{true};
   bool aborted_ = false;
-	bool repeat_ = false;
+  // removed `bool repeat_ = false;` —
+  // default-initialised false, written only to false at
+  // `classic/coordinator.cc:187`, read only at
+  // `classic/coordinator.cc:462` inside an empty-body
+  // `if(repeat_) {}` (which was therefore unreachable code).
   uint32_t n_dispatch_ = 0;
   uint32_t n_dispatch_ack_ = 0;
-  uint32_t n_prepare_req_ = 0;
+  // removed `uint32_t n_prepare_req_ = 0;`
+  // — only ever zeroed (in Reset() and classic/coordinator.cc:180);
+  // never incremented or read.  Counterpart `n_prepare_ack_` stays
+  // because classic/coordinator.cc::DispatchAck increments it.
   uint32_t n_prepare_ack_ = 0;
   uint32_t n_finish_req_ = 0;
   uint32_t n_finish_ack_ = 0;
-  std::vector<int> site_prepare_;
-  std::vector<int> site_commit_;
-  std::vector<int> site_abort_;
-  std::vector<int> site_piece_;
+  // removed `std::vector<int> site_prepare_;`,
+  // `site_commit_;`, and `site_abort_;` — write-only counters with
+  // no observers.  All `site_*[rp]++` increments and the
+  // `site_prepare_[i] = 0` reset loop were dead-as-side-effect.
+  // Companion `.resize(...)` initialisations in `coordinator.cc::Reset`
+  // and the loop in `classic/coordinator.cc::DispatchRetry` removed
+  // alongside the fields.
+  // removed `std::vector<int> site_piece_;`
+  // — resized at coordinator.cc:53 alongside the other site_* vectors
+  // but never written or read otherwise (only commented-out debug
+  // logging at coordinator.cc:60-64 referenced it).  The resize call
+  // was removed alongside the field.
   rusty::Function<void()> commit_callback_ = [] () {verify(0);};
-  rusty::Function<void()> exe_callback_ = [] () {verify(0);};
+  // removed
+  //   `rusty::Function<void()> exe_callback_ = [] () {verify(0);};`
+  // — declared but never set or invoked anywhere.
   // above should be reset
 
   /******global unique id begin********/
@@ -178,17 +210,20 @@ class Coordinator {
   virtual void SetNewLeader(parid_t, volatile locid_t*) { verify(0); };
   virtual void FailoverPauseSocketOut(parid_t, locid_t) { verify(0); };
   virtual void FailoverResumeSocketOut(parid_t, locid_t) { verify(0); };
-  virtual void Submit(shared_ptr<Marshallable>& cmd,
+  // Submit/BulkSubmit/assignCmd
+  // take const janus::Command&; shared_ptr<Marshallable> callers
+  // auto-convert via Command's implicit ctor.
+  virtual void Submit(const janus::Command& cmd,
                       rusty::Function<void()> commit_callback = {},
                       rusty::Function<void()> exe_callback = {}) {
     verify(0);
   }
 
-  virtual  void assignCmd(shared_ptr<Marshallable>& cmd){
+  virtual void assignCmd(const janus::Command& cmd){
     verify(0);
   }
 
-  virtual void BulkSubmit(shared_ptr<Marshallable>& cmd,
+  virtual void BulkSubmit(const janus::Command& cmd,
                            rusty::Function<void()> commit_callback = {},
                            rusty::Function<void()> exe_callback = {}){
     verify(0);
@@ -200,7 +235,7 @@ class Coordinator {
     aborted_ = false;
     n_dispatch_ = 0;
     n_dispatch_ack_ = 0;
-    n_prepare_req_ = 0;
+    // removed `n_prepare_req_ = 0;` — field gone.
     n_prepare_ack_ = 0;
     n_finish_req_ = 0;
     n_finish_ack_ = 0;

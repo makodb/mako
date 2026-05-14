@@ -1,7 +1,8 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-#include "exec.h"
+// removed `#include "exec.h"` —
+// FpgaRaftExecutor class deleted (was 4 verify(0) stubs).
 #include "coordinator.h"
 #include "server.h"
 #include "service.h"
@@ -45,10 +46,11 @@ FpgaRaftFrame::FpgaRaftFrame(int mode) : Frame(mode) {
 
 }
 
-Executor *FpgaRaftFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
-  Executor *exec = new FpgaRaftExecutor(cmd_id, sched);
-  return exec;
-}
+// removed `FpgaRaftFrame::CreateExecutor`
+// — `FpgaRaftExecutor` class deleted (was 4 verify(0) stubs); the
+// `Frame::CreateExecutor` virtual is also never called anywhere
+// in the tree (no `frame_->CreateExecutor(...)` site survives), so
+// dropping this override is safe.
 
 Coordinator *FpgaRaftFrame::CreateCoordinator(cooid_t coo_id,
                                                 Config *config,
@@ -100,14 +102,14 @@ Communicator *FpgaRaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> p
   return commo_;
 }
 
-vector<rusty::Box<rrr::Service>>
+vector<rrr::ServiceProxy>
 FpgaRaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
                                    rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<rusty::Box<Service>>();
+  auto result = std::vector<rrr::ServiceProxy>();
   switch (config->replica_proto_) {
-    case MODE_FPGA_RAFT:result.push_back(rusty::make_box<FpgaRaftServiceImpl>(rep_sched));
+    case MODE_FPGA_RAFT:result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<FpgaRaftServiceImpl>(rep_sched)));
     default:break;
   }
   return result;

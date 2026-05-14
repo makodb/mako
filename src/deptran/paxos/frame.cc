@@ -101,14 +101,14 @@ Communicator *MultiPaxosFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>>
   return commo_;
 }
 
-vector<rusty::Box<rrr::Service>>
+vector<rrr::ServiceProxy>
 MultiPaxosFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
                                    rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<rusty::Box<Service>>();
+  auto result = std::vector<rrr::ServiceProxy>();
   switch (config->replica_proto_) {
-    case MODE_MULTI_PAXOS:result.push_back(rusty::make_box<MultiPaxosServiceImpl>(rep_sched));
+    case MODE_MULTI_PAXOS:result.push_back(rrr::make_service_proxy_from_typed_box(rusty::make_box<MultiPaxosServiceImpl>(rep_sched)));
     default:break;
   }
   return result;

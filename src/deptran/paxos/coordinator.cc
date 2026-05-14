@@ -25,7 +25,7 @@ BulkCoordinatorMultiPaxos::BulkCoordinatorMultiPaxos(uint32_t coo_id,
   : CoordinatorMultiPaxos(coo_id, benchmark, std::move(client_status), thread_id) {
 }
 
-void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
+void CoordinatorMultiPaxos::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_DEBUG
@@ -39,16 +39,17 @@ void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
-  verify(cmd_ == nullptr);
+  // cmd_ is now janus::Command; null check via has_value.
+  verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
   in_submission_ = true;
   cmd_ = cmd;
-  verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
+  verify(cmd_.has_value());
   commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 
-void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
+void BulkCoordinatorMultiPaxos::BulkSubmit(const janus::Command& cmd,
                                        rusty::Function<void()> func,
                                        rusty::Function<void()> exe_callback) {
     verify(!in_submission_);
@@ -58,77 +59,16 @@ void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
     GotoNextPhase();
 }
 
-ballot_t CoordinatorMultiPaxos::PickBallot() {
-  return curr_ballot_ + 1;
-}
-
-void CoordinatorMultiPaxos::Prepare() {
-  //std::lock_guard<std::recursive_mutex> lock(mtx_);
-  verify(0); // for debug;
-  verify(!in_prepare_);
-  in_prepare_ = true;
-  curr_ballot_ = PickBallot();
-  verify(slot_id_ > 0);
-  //rpc_event->add_dep(commo()->LeaderProxyForPartition(par_id_).first);
-  //rpc_event->log();
-  Log_debug("multi-paxos coordinator broadcasts prepare, "
-                "par_id_: %lx, slot_id: %llx",
-            par_id_,
-            slot_id_);
-  verify(n_prepare_ack_ == 0);
-  int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
-  auto sp_quorum = commo()->BroadcastPrepare(par_id_, slot_id_, curr_ballot_);
-  auto start = chrono::steady_clock::now();
-  Log_info("Time before Wait() is: %d", chrono::duration_cast<chrono::milliseconds>(start.time_since_epoch()).count());
-  sp_quorum->wait();
-  auto end = chrono::steady_clock::now();
-
-  auto duration = chrono::duration_cast<chrono::milliseconds>(end-start);
-  Log_info("Duration of Wait() in Prepare() is: %d", duration.count());
-  sp_quorum->log();
-  if (sp_quorum->yes()) {
-    verify(!sp_quorum->HasAcceptedValue());
-    // TODO use the previously accepted value.
-
-  } else if (sp_quorum->no()) {
-    // TODO restart prepare?
-    verify(0);
-  } else {
-    // TODO timeout
-    verify(0);
-  }
-//  commo()->BroadcastPrepare(par_id_,
-//                            slot_id_,
-//                            curr_ballot_,
-//                            std::bind(&CoordinatorMultiPaxos::PrepareAck,
-//                                      this,
-//                                      phase_,
-//                                      std::placeholders::_1));
-//}
-//
-//void CoordinatorMultiPaxos::PrepareAck(phase_t phase, Future* fu) {
-//  std::lock_guard<std::recursive_mutex> lock(mtx_);
-//  if (phase_ != phase) return;
-//  ballot_t max_ballot;
-//  fu->get_reply() >> max_ballot;
-//  if (max_ballot == curr_ballot_) {
-//    n_prepare_ack_++;
-//    verify(n_prepare_ack_ <= n_replica_);
-//    if (n_prepare_ack_ >= GetQuorum()) {
-//      GotoNextPhase();
-//    }
-//  } else {
-//    if (max_ballot > curr_ballot_) {
-//      curr_ballot_ = max_ballot + 1;
-//      Log_debug("%s: saw greater ballot increment to %d",
-//                __FUNCTION__, curr_ballot_);
-//      phase_ = Phase::INIT_END;
-//      GotoNextPhase();
-//    } else {
-////       max_ballot < curr_ballot ignore
-//    }
-//  }
-}
+// removed `CoordinatorMultiPaxos::PickBallot()`
+// — only call site was the now-deleted `Prepare()`.
+// removed `CoordinatorMultiPaxos::Prepare()`
+// (~50 LOC) — body started with `verify(0); // for debug;`, and the
+// only place the method could have been reached was via
+// `GotoNextPhase()`'s `Phase::PREPARE` case which is itself
+// unreachable: `INIT_END` skips the prepare phase via `phase_++` and
+// jumps directly to `Accept`.  The only use site of the matching
+// `BroadcastPrepare(parid, slot, ballot)` commo method (which was
+// also a `verify(0)` shell) — both removed in this phase.
 
 void CoordinatorMultiPaxos::Accept() {
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -139,6 +79,8 @@ void CoordinatorMultiPaxos::Accept() {
             par_id_, slot_id_);
   auto start = chrono::system_clock::now();
 #ifdef LATENCY_DEBUG
+  // GetCommandMsTimeElaps + Broadcast* still take
+  // shared_ptr<Marshallable>; unwrap from Command.
   client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_));
 #endif
   auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
@@ -152,38 +94,12 @@ void CoordinatorMultiPaxos::Accept() {
     // TODO process timeout.
     verify(0);
   }
-//  commo()->BroadcastAccept(par_id_,
-//                           slot_id_,
-//                           curr_ballot_,
-//                           cmd_,
-//                           std::bind(&CoordinatorMultiPaxos::AcceptAck,
-//                                     this,
-//                                     phase_,
-//                                     std::placeholders::_1));
-//}
-//
-//void CoordinatorMultiPaxos::AcceptAck(phase_t phase, Future* fu) {
-//  std::lock_guard<std::recursive_mutex> lock(mtx_);
-//  if (phase_ > phase) return;
-//  ballot_t max_ballot;
-//  fu->get_reply() >> max_ballot;
-//  if (max_ballot == curr_ballot_) {
-//    n_finish_ack_++;
-//    if (n_finish_ack_ >= GetQuorum()) {
-//      committed_ = true;
-//      GotoNextPhase();
-//    }
-//  } else {
-//    if (max_ballot > curr_ballot_) {
-//      curr_ballot_ = max_ballot + 1;
-//      Log_debug("%s: saw greater ballot increment to %d",
-//                __FUNCTION__, curr_ballot_);
-//      phase_ = Phase::INIT_END;
-//      GotoNextPhase();
-//    } else {
-//      // max_ballot < curr_ballot ignore
-//    }
-//  }
+// removed ~30 LOC of commented-out
+// `BroadcastAccept(..., AcceptAck-callback)` legacy + companion
+// `AcceptAck(phase_t, Future*)` body.  The shape was the
+// callback-style RPC dispatch that pre-dated the
+// `commo()->BroadcastAccept(...) -> sp_quorum->wait()` / `yes()`
+// pattern used today.  No live code; no surviving caller.
 }
 
 void CoordinatorMultiPaxos::Commit() {
@@ -210,14 +126,12 @@ void CoordinatorMultiPaxos::GotoNextPhase() {
         phase_++;
         verify(phase_ % n_phase == Phase::COMMIT);
       } else {
-        // TODO
+        // dropped commented-out
+        // `//Forward();` and stale TODO breadcrumbs — `Forward()`
+        // was never defined and the non-leader branch is
+        // `verify(0)`-guarded anyway.
         verify(0);
         Log_info("The local id is %d", this->loc_id_);
-        //Forward();
-        //Log_info("Follower logic");
-        //For now, do nothing
-        //
-        //Next steps: Find the leader, call submit, wait for the reply
       }
     case Phase::ACCEPT:
       verify(phase_ % n_phase == Phase::COMMIT);
@@ -271,81 +185,19 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
   }
 }
 
-void BulkCoordinatorMultiPaxos::Prepare() {
-  //std::lock_guard<std::recursive_mutex> lock(mtx_);
-   in_prepare_ = true;
-  // curr_ballot_ = PickBallot();
-  // verify(slot_id_ > 0);
-  // Log_debug("multi-paxos coordinator broadcasts prepare, "
-  //               "par_id_: %lx, slot_id: %llx",
-  //           par_id_,
-  //           slot_id_);
-  // verify(n_prepare_ack_ == 0);
-  // int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
-  //return;
-  auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-  auto prep_cmd = make_shared<PaxosPrepCmd>();
-  prep_cmd->slots = cmd_temp1->slots;
-  prep_cmd->ballots = cmd_temp1->ballots;
-  prep_cmd->leader_id = cmd_temp1->leader_id;
-
-  auto prep_cmd_marshallable = dynamic_pointer_cast<Marshallable>(prep_cmd);
-
-  //std::vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md;
-  auto ess_cc = es_cc;
-  if(es_cc->machine_id == 0)
-	Log_debug("Sending paxos prepare request for slot %d and partition %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
-  auto sp_quorum = commo()->BroadcastPrepare2(par_id_, prep_cmd_marshallable, [this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
-    if(!this->in_prepare_)
-	     return;
-    if(!valid){
-      //Log_info("Invalid value received for prepare and leader steps down");
-      //verify(0);
-      ess_cc->step_down(bt);
-      this->in_submission_ = false;
-    } else{
-      //Log_info("Valid value received for prepare %d", bt);
-      if(valid == 1)
-        this->vec_md.push_back(make_pair(bt, md.sp_data_));
-      // Weihai: comment, this line will cause an seg fault
-      //else
-      //  this->vec_md.push_back(make_pair(bt, cmd_));
-    }
-  });
-  sp_quorum->wait();
-  if (sp_quorum->yes()) {
-    //Log_info("The prepare is successfull");
-    ballot_t candidate_b = 0;
-    shared_ptr<Marshallable> candidate_val = nullptr;
-    for(int i = 0; i < vec_md.size(); i++){
-      if(vec_md[i].first > candidate_b){
-        candidate_b = vec_md[i].first;
-        candidate_val = vec_md[i].second;
-      }
-    }
-    //auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-    if(candidate_val){
-      auto cmd_temp = dynamic_pointer_cast<BulkPaxosCmd>(candidate_val);
-      auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-      //cmd_temp1->cmds.clear();
-      //cmd_temp1->cmds.push_back(cmd_temp->cmds[0]);
-    }
-    //Log_info("in submission ? %d", in_submission_);
-    // Log_info("Should be in accept now for slot %d", cmd_temp1->slots[0]);
-  } else if (sp_quorum->no()) {
-    // TODO restart prepare?
-    // verify(0);
-    //.. not a leader anymore, exit.
-  } else {
-    // TODO timeout
-    verify(0);
-  }
-  in_prepare_ = false;
-}
+// removed `BulkCoordinatorMultiPaxos::Prepare()`
+// (~70 LOC) — never called.  `GotoNextPhase` already skipped this
+// phase via a `// Prepare();` comment + `phase_++` workaround.  The
+// matching `BroadcastPrepare2`, `MultiPaxosServiceImpl::BulkPrepare2`,
+// and `OnBulkPrepare2` chain is removed in this phase.
 
 void BulkCoordinatorMultiPaxos::Accept() {
     in_accept = true;
-    auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+    // cmd_ is Command; marshallable_cast<T>(Command&)
+    // overload handles the cast.  BroadcastBulkAccept now also takes
+    // const Command& (per prep6t), so cmd_ flows through directly.
+    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1 != nullptr);
     if(!in_submission_){
       return;
     }
@@ -392,17 +244,18 @@ void BulkCoordinatorMultiPaxos::Commit() {
     }
     in_commit = true;
 
-    auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+    // cmd_ is Command; marshallable_cast<T>(Command&)
+    // overload handles the cast.
+    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1 != nullptr);
     auto commit_cmd = make_shared<PaxosPrepCmd>();
     commit_cmd->slots = cmd_temp1->slots;
     commit_cmd->ballots = cmd_temp1->ballots;
     commit_cmd->leader_id = cmd_temp1->leader_id;
 
-    auto commit_cmd_marshallable = dynamic_pointer_cast<Marshallable>(commit_cmd);
-
     auto ess_cc = es_cc;
     // Log_info("About to call BroadcastBulkDecide from Commit()");
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd_marshallable, [this, ess_cc](ballot_t ballot, int valid){
+    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd, [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_commit){
         return;
       }

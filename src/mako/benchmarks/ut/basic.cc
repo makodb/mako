@@ -1,8 +1,12 @@
 #include <iostream>
+#include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <map>
+#include <memory>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>

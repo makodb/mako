@@ -1,21 +1,38 @@
 
-#include <functional>
-#include <thread>
-#include <iostream>
-#include <cerrno>
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
-#include "coroutine.h"
+#include <ctime>
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <rusty/rusty.hpp>
+
+
+
+
+
+
 #include "event.h"
-#include "reactor.h"
-#include "epoll_wrapper.h"
+
+
+#include "../rrr.hpp"
 
 namespace rrr {
-using std::function;
 
-uint64_t Event::get_coro_id(){
-  auto coro_opt = Fiber::current_coroutine();
-  verify(coro_opt.is_some());
-  return coro_opt.unwrap()->id;
+uint64_t Event::get_fiber_id(){
+  auto fiber_opt = Fiber::current_fiber();
+  verify(fiber_opt.is_some());
+  return fiber_opt.unwrap()->id;
 }
 
 bool Event::is_slow() {
@@ -28,32 +45,32 @@ bool Event::is_slow() {
 // //  verify(__debug_creator); // if this fails, the event is not created by reactor.
 
 //   verify(Reactor::sp_reactor_th_);
-//   verify(Reactor::sp_reactor_th_->thread_id_ == std::this_thread::get_id());
+//   verify(Reactor::sp_reactor_th_->thread_id_ == rusty::thread::current_id());
 //   if (IsReady()) {
 //     status_ = DONE; // does not need to wait.
 //     return;
 //   } else {
 //     verify(status_ == INIT);
 //     status_= DEBUG;
-//     // the event may be created in a different coroutine.
+//     // the event may be created in a different fiber.
 //     // this value is set when wait is called.
-//     // for now only one coroutine can wait on an event.
-//     auto sp_coro = Fiber::current_coroutine();
-// //    verify(sp_coro);
+//     // for now only one fiber can wait on an event.
+//     auto sp_fiber = Fiber::current_fiber();
+// //    verify(sp_fiber);
 // //    verify(_dbg_p_scheduler_ == nullptr);
 // //    _dbg_p_scheduler_ = Reactor::get_reactor().get();
 //     auto& events = Reactor::get_reactor()->waiting_events_;
 //     events.push_back(shared_from_this());
-//     wp_coro_ = sp_coro;
+//     wp_fiber_ = sp_fiber;
 //     status_ = WAIT;
-//     sp_coro->yield_();
+//     sp_fiber->yield_();
 //   }
 // }
 
 void Event::wait(uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_.is_some());
-  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == std::this_thread::get_id());
+  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
   if (status_.get() == DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_.get() == INIT);
   if (is_ready()) {
@@ -66,12 +83,12 @@ void Event::wait(uint64_t timeout) {
 //    }
 //    verify(status_ == INIT); // does not support multiple wait so far. maybe we can support it in the future.
 //    status_= DEBUG;
-    // the event may be created in a different coroutine.
+    // the event may be created in a different fiber.
     // this value is set when wait is called.
-    // for now only one coroutine can wait on an event.
-    auto coro_opt = Fiber::current_coroutine();
-    verify(coro_opt.is_some());  // Can't wait outside a coroutine
-    auto coro = coro_opt.unwrap();
+    // for now only one fiber can wait on an event.
+    auto fiber_opt = Fiber::current_fiber();
+    verify(fiber_opt.is_some());  // Can't wait outside a fiber
+    auto fiber = fiber_opt.unwrap();
 
     // Use RefCell borrow_mut() for safe interior mutability
     auto reactor_rc = Reactor::get_reactor();
@@ -113,11 +130,11 @@ void Event::wait(uint64_t timeout) {
 //      }
 //      events.insert(it, shared_from_this());
 
-    wp_coro_ = coro;
+    wp_fiber_ = fiber;
     status_.set(WAIT);
-    auto coro_status = coro->status_.get();
-    verify(coro_status != Fiber::FINISHED && coro_status != Fiber::RECYCLED);
-    coro->yield_();
+    auto fiber_status = fiber->status_.get();
+    verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
+    fiber->yield_();
 #ifdef EVENT_TIMEOUT_CHECK
     if (__debug_timeout_ && status_.get() == TIMEOUT) {
       Log_info("timeout");
@@ -134,15 +151,15 @@ void Event::record_place(const char* file, int line) {
   rcd_wait_ = true;
 }
 
-// @safe - Tests if event is ready
+// @unsafe - Tests if event is ready (calls verify/log helpers not marked @safe)
 bool Event::test() {
   verify(__debug_creator);
   if (is_ready()) {
     if (status_.get() == INIT) {
       status_.set(DONE);
     } else if (status_.get() == WAIT) {
-      auto option_coro = wp_coro_.upgrade();
-      verify(option_coro.is_some());
+      auto option_fiber = wp_fiber_.upgrade();
+      verify(option_fiber.is_some());
       verify(status_.get() != DEBUG);
       status_.set(READY);
     } else if (status_.get() == READY) {
@@ -164,13 +181,13 @@ bool Event::test() {
 }
 
 Event::Event() {
-  auto coro_opt = Fiber::current_coroutine();
-  // It's OK if no coroutine is running - event might be created outside a coroutine
+  auto fiber_opt = Fiber::current_fiber();
+  // It's OK if no fiber is running - event might be created outside a fiber
   // and Wait() called later from within one
-  if (coro_opt.is_some()) {
-    wp_coro_ = coro_opt.unwrap();
+  if (fiber_opt.is_some()) {
+    wp_fiber_ = fiber_opt.unwrap();
   }
-  // Otherwise wp_coro_ stays as default empty weak pointer
+  // Otherwise wp_fiber_ stays as default empty weak pointer
 }
 
 bool IntEvent::test_trigger() {
@@ -209,23 +226,27 @@ bool SharedIntEvent::wait_until_gte(int x, int timeout) {
   auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
   ev->target_ = x;
-  auto it = events_.insert(events_.end(), ev);
+  events_.push(ev);
   ev->wait(timeout);
   // verify(ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
   bool if_timeout = (ev->status_.get() == Event::TIMEOUT);
-  events_.erase(it);
+  auto* ev_ptr = ev.get();
+  events_.retain(rusty::Function<bool(const std::shared_ptr<IntEvent>&)>(
+      [ev_ptr](const std::shared_ptr<IntEvent>& item) {
+        return item.get() != ev_ptr;
+      }));
   return if_timeout;
 }
 
-void SharedIntEvent::wait(function<bool(int v)> f) {
+void SharedIntEvent::wait(rusty::Function<bool(int v)> f) {
   if (f(value_)) {
     return;
   }
   auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
-  ev->test_ = f;
-  events_.push_back(ev);
+  ev->test_ = std::move(f);
+  events_.push(ev);
 //  ev->wait(1000*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
   ev->wait();

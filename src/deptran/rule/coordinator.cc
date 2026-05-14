@@ -2,8 +2,9 @@
 #include "frame.h"
 #include "benchmark_control_rpc.h"
 #include "../RW_command.h"
-#include "../../rrr/misc/rand.hpp"
 #include "commo.h"
+
+#include "rrr/rrr.hpp"
 
 namespace janus {
 
@@ -51,7 +52,10 @@ void CoordinatorRule::GotoNextPhase() {
       for (auto& pair: cmds_by_par_) {
         auto& cmds = pair.second;
         if (cmds.size() > 0)
-          cmd_is_write_ = SimpleRWCommand(cmds[0]).IsWrite();
+          // SimpleCommand-direct ctor (CmdData no longer
+          // inherits Marshallable, so the static_pointer_cast path
+          // is gone).
+          cmd_is_write_ = SimpleRWCommand(*cmds[0]).IsWrite();
       }
 
       if (0 <= Config::GetConfig()->jetpack_fastpath_attempt_rate_ && Config::GetConfig()->jetpack_fastpath_attempt_rate_ <= 100) {
@@ -85,7 +89,10 @@ void CoordinatorRule::GotoNextPhase() {
           c->rule_mode_on_and_is_original_path_only_command_ = !go_to_fastpath_;
           dispatch_acks_[c->inn_id_] = false;
           sp_vec_piece->push_back(c);
-          client_worker_->frequency_.append(SimpleRWCommand::GetKey(c));
+          // SimpleCommand no longer inherits Marshallable;
+          // construct SimpleRWCommand directly from the SimpleCommand
+          // and pull .key_ off it.
+          client_worker_->frequency_.append(SimpleRWCommand(*c).key_);
         }
         sp_vec_piece_by_par_[par_id] = sp_vec_piece;
       }
@@ -178,14 +185,16 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
     sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
     sp_vpd_ = sp_vpd;
 #ifdef MONGODB_DEBUG
-    Log_info("%.2f BroadcastRuleSpeculativeExecute <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_).first, SimpleRWCommand::GetCmdID(sp_vpd_).second);
+    janus::Command sp_vpd_marshaled{sp_vpd_};
+    Log_info("%.2f BroadcastRuleSpeculativeExecute <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
 #endif
     e = ((CommunicatorRule *)commo())->BroadcastRuleSpeculativeExecute(sp_vec_piece);
     // e = commo()->BroadcastRuleSpeculativeExecute(sp_vec_piece);
   }
   e->wait();
 #ifdef MONGODB_DEBUG
-  Log_info("%.2f BroadcastRuleSpeculativeExecute after wait <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_).first, SimpleRWCommand::GetCmdID(sp_vpd_).second);
+  janus::Command sp_vpd_marshaled{sp_vpd_};
+  Log_info("%.2f BroadcastRuleSpeculativeExecute after wait <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
 #endif
   if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {
     client_worker_->cli2cli_[0].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);

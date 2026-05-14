@@ -59,7 +59,7 @@ using namespace std;
 // google library
 
 // misc helper files
-#include "rrr.hpp"
+#include "rrr/rrr.hpp"
 
 using namespace rrr;
 
@@ -73,14 +73,15 @@ using rrr::i64;
 using rrr::Future;
 using rrr::DragonBall;
 using rrr::RandomGenerator;
-using rrr::Recorder;
+// removed `using rrr::Recorder;` — class deleted.
 using rrr::AvgStat;
 using rrr::ALock;
 using rrr::TimeoutALock;
 using rrr::PollThread;
 using rrr::Marshal;
-using rrr::Marshallable;
-using rrr::MarshallDeputy;
+// retired
+// `using rrr::Marshallable` and `using rrr::MarshallDeputy` —
+// the underlying classes are gone in this same release.
 
 // User include files
 //

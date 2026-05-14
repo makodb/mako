@@ -24,7 +24,12 @@ class ClassicServiceImpl : public ClassicService {
   uint64_t n_asking_ = 0;
 
 //  std::mutex mtx_;
-  Recorder* recorder_{nullptr};
+  // removed `Recorder* recorder_{nullptr};`
+  // — only assignment was a commented-out
+  // `recorder_ = new Recorder(path);` in `service.cc::SetupTransport`
+  // and the only readers were `auto& recorder = s->recorder_;
+  // if (recorder) {...}` blocks in `paxos_worker.cc::WaitForShutdown`
+  // and `server_worker.cc::WaitForShutdown` (also gone in this phase).
   Communicator* comm_{nullptr};
 
   TxLogServer* dtxn_sched_;
@@ -45,7 +50,7 @@ class ClassicServiceImpl : public ClassicService {
 	void ReElect(bool_t* success,
 							 rrr::DeferredReply done);
 
-  void RuleSpeculativeExecute(const MarshallDeputy& md,
+  void RuleSpeculativeExecute(const janus::Command& md,
                               bool_t* accepted,
                               int32_t* result,
                               bool_t* is_leader,
@@ -53,11 +58,11 @@ class ClassicServiceImpl : public ClassicService {
 
   void Dispatch(const i64& cmd_id,
 								const DepId& dep_id,
-                const MarshallDeputy& cmd,
+                const janus::Command& cmd,
                 int32_t* res,
                 TxnOutput* output,
                 uint64_t* coro_id,
-                MarshallDeputy* view_data,
+                janus::Command* view_data,
                 rrr::DeferredReply done);
 
   void FailoverPauseSocketOut(rrr::i32* res,
@@ -91,7 +96,7 @@ class ClassicServiceImpl : public ClassicService {
 							bool_t* slow,
               uint64_t* coro_id,
 	        		Profiling* profile,
-              MarshallDeputy* view_data,
+              janus::Command* view_data,
               rrr::DeferredReply done);
 
   void Abort(const i64& tid,
@@ -100,7 +105,7 @@ class ClassicServiceImpl : public ClassicService {
 						 bool_t* slow,
              uint64_t* coro_id,
 	        	 Profiling* profile,
-             MarshallDeputy* view_data,
+             janus::Command* view_data,
              rrr::DeferredReply done);
 
   void EarlyAbort(const i64& tid,
@@ -126,22 +131,12 @@ class ClassicServiceImpl : public ClassicService {
                    const rrr::i32& decision,
                    rrr::DeferredReply done);
 
-  void CarouselReadAndPrepare(const i64& cmd_id, const MarshallDeputy& cmd,
-      const bool_t& leader, int32_t* res, TxnOutput* output,
-      rrr::DeferredReply done);
-  void CarouselAccept(const txid_t& cmd_id, const ballot_t& ballot,
-      const int32_t& decision, rrr::DeferredReply done);
-  void CarouselFastAccept(const txid_t& cmd_id, const vector<SimpleCommand>& txn_cmds,
-      rrr::i32* res, rrr::DeferredReply done);
-  void CarouselDecide(
-      const txid_t& cmd_id, const rrr::i32& decision, rrr::DeferredReply done);
-
   void MsgString(const string& arg,
                  string* ret,
                  rrr::DeferredReply done);
 
-  void MsgMarshall(const MarshallDeputy& arg,
-                   MarshallDeputy* ret,
+  void MsgMarshall(const janus::Command& arg,
+                   janus::Command* ret,
                    rrr::DeferredReply done);
 
 #ifdef PIECE_COUNT
@@ -176,7 +171,7 @@ class ClassicServiceImpl : public ClassicService {
   void RccDispatch(const vector<SimpleCommand>& cmd,
                    int32_t* res,
                    TxnOutput* output,
-                   MarshallDeputy* p_md_graph,
+                   rrr::AnyMessage* p_md_graph,
                    rrr::DeferredReply done);
 
   void RccPreAccept(const txid_t& txnid,
@@ -202,7 +197,7 @@ class ClassicServiceImpl : public ClassicService {
                  rrr::DeferredReply done);
 
   void RccFinish(const txid_t& cmd_id,
-                 const MarshallDeputy& md_graph,
+                 const rrr::AnyMessage& md_graph,
                  TxnOutput* output,
                  rrr::DeferredReply done);
 
@@ -221,13 +216,13 @@ class ClassicServiceImpl : public ClassicService {
   void JanusDispatch(const vector<SimpleCommand>& cmd,
                      int32_t* p_res,
                      TxnOutput* p_output,
-                     MarshallDeputy* p_md_res_graph,
+                     rrr::AnyMessage* p_md_res_graph,
                      rrr::DeferredReply done);
 
   void JanusCommit(const txid_t& cmd_id,
                    const rank_t& rank,
                    const int32_t& need_validation,
-                   const MarshallDeputy& graph,
+                   const rrr::AnyMessage& graph,
                    int32_t* res,
                    TxnOutput* output,
                    rrr::DeferredReply done);
@@ -241,48 +236,33 @@ class ClassicServiceImpl : public ClassicService {
 
   void JanusInquire(const epoch_t& epoch,
                     const txid_t& tid,
-                    MarshallDeputy* p_md_graph,
+                    rrr::AnyMessage* p_md_graph,
                     rrr::DeferredReply done);
 
   void JanusPreAccept(const txid_t& txnid,
                       const rank_t& rank,
                       const vector<SimpleCommand>& cmd,
-                      const MarshallDeputy& md_graph,
+                      const rrr::AnyMessage& md_graph,
                       int32_t* res,
-                      MarshallDeputy* p_md_res_graph,
+                      rrr::AnyMessage* p_md_res_graph,
                       rrr::DeferredReply done);
 
   void JanusPreAcceptWoGraph(const txid_t& txnid,
                              const rank_t& rank,
                              const vector<SimpleCommand>& cmd,
                              int32_t* res,
-                             MarshallDeputy* res_graph,
+                             rrr::AnyMessage* res_graph,
                              rrr::DeferredReply done);
 
   void JanusAccept(const txid_t& txnid,
                    const rank_t& rank,
                    const ballot_t& ballot,
-                   const MarshallDeputy& md_graph,
+                   const rrr::AnyMessage& md_graph,
                    int32_t* res,
                    rrr::DeferredReply done);
 
-  void PreAcceptFebruus(const txid_t& tx_id,
-                        int32_t* res,
-                        uint64_t* timestamp,
-                        rrr::DeferredReply done);
-
-  void AcceptFebruus(const txid_t& tx_id,
-                     const ballot_t& ballot,
-                     const uint64_t& timestamp,
-                     int32_t* res,
-                     rrr::DeferredReply done);
-
-  void CommitFebruus(const txid_t& tx_id,
-                     const uint64_t& timestamp,
-                     int32_t* res, rrr::DeferredReply done);
-  
-  void JetpackBeginRecovery(const MarshallDeputy& old_view, 
-                            const MarshallDeputy& new_view, 
+  void JetpackBeginRecovery(const janus::Command& old_view,
+                            const janus::Command& new_view, 
                             const epoch_t& new_view_id, 
                             rrr::DeferredReply done);
   
@@ -291,27 +271,27 @@ class ClassicServiceImpl : public ClassicService {
                         bool_t* ok,
                         epoch_t* reply_jepoch,
                         epoch_t* reply_oepoch,
-                        MarshallDeputy* reply_old_view,
-                        MarshallDeputy* reply_new_view,
-                        MarshallDeputy* id_set,
+                        janus::Command* reply_old_view,
+                        janus::Command* reply_new_view,
+                        janus::Command* id_set,
                         rrr::DeferredReply done);
 
   void JetpackPullCmd(const epoch_t& jepoch,
                       const epoch_t& oepoch,
-                      const MarshallDeputy& key_batch,
+                      const janus::Command& key_batch,
                       bool_t* ok,
                       epoch_t* reply_jepoch,
                       epoch_t* reply_oepoch,
-                      MarshallDeputy* reply_old_view,
-                      MarshallDeputy* reply_new_view,
-                      MarshallDeputy* cmd_batch,
+                      janus::Command* reply_old_view,
+                      janus::Command* reply_new_view,
+                      janus::Command* cmd_batch,
                       rrr::DeferredReply done);
  
   void JetpackRecordCmd(const epoch_t& jepoch,
                         const epoch_t& oepoch,
                         const int32_t& sid,
                         const int32_t& rid,
-                        const MarshallDeputy& cmd_batch, 
+                        const janus::Command& cmd_batch, 
                         rrr::DeferredReply done);
  
   void JetpackPrepare(const epoch_t& jepoch,
@@ -320,8 +300,8 @@ class ClassicServiceImpl : public ClassicService {
                       bool_t* ok,
                       epoch_t* reply_jepoch,
                       epoch_t* reply_oepoch,
-                      MarshallDeputy* reply_old_view,
-                      MarshallDeputy* reply_new_view,
+                      janus::Command* reply_old_view,
+                      janus::Command* reply_new_view,
                       ballot_t* reply_max_seen_ballot,
                       ballot_t* accepted_ballot,
                       int32_t* replied_sid,
@@ -336,8 +316,8 @@ class ClassicServiceImpl : public ClassicService {
                      bool_t* ok,
                      epoch_t* reply_jepoch,
                      epoch_t* reply_oepoch,
-                     MarshallDeputy* reply_old_view,
-                     MarshallDeputy* reply_new_view,
+                     janus::Command* reply_old_view,
+                     janus::Command* reply_new_view,
                      ballot_t* reply_max_seen_ballot,
                      rrr::DeferredReply done);
  
@@ -354,9 +334,9 @@ class ClassicServiceImpl : public ClassicService {
                             bool_t* ok,
                             epoch_t* reply_jepoch,
                             epoch_t* reply_oepoch,
-                            MarshallDeputy* reply_old_view,
-                            MarshallDeputy* reply_new_view,
-                            MarshallDeputy* cmd,
+                            janus::Command* reply_old_view,
+                            janus::Command* reply_new_view,
+                            janus::Command* cmd,
                             rrr::DeferredReply done);
 
   void JetpackFinishRecovery(const epoch_t& oepoch,
@@ -385,10 +365,6 @@ class ClassicServiceImpl : public ClassicService {
   void TapirAccept(const ClassicService::RpcTapirAcceptRequest& req, ClassicService::RpcTapirAcceptResponse& resp, rrr::DeferredReply defer) override;
   void TapirFastAccept(const ClassicService::RpcTapirFastAcceptRequest& req, ClassicService::RpcTapirFastAcceptResponse& resp, rrr::DeferredReply defer) override;
   void TapirDecide(const ClassicService::RpcTapirDecideRequest& req, ClassicService::RpcTapirDecideResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselReadAndPrepare(const ClassicService::RpcCarouselReadAndPrepareRequest& req, ClassicService::RpcCarouselReadAndPrepareResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselAccept(const ClassicService::RpcCarouselAcceptRequest& req, ClassicService::RpcCarouselAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselFastAccept(const ClassicService::RpcCarouselFastAcceptRequest& req, ClassicService::RpcCarouselFastAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void CarouselDecide(const ClassicService::RpcCarouselDecideRequest& req, ClassicService::RpcCarouselDecideResponse& resp, rrr::DeferredReply defer) override;
   void RccDispatch(const ClassicService::RpcRccDispatchRequest& req, ClassicService::RpcRccDispatchResponse& resp, rrr::DeferredReply defer) override;
   void RccFinish(const ClassicService::RpcRccFinishRequest& req, ClassicService::RpcRccFinishResponse& resp, rrr::DeferredReply defer) override;
   void RccInquire(const ClassicService::RpcRccInquireRequest& req, ClassicService::RpcRccInquireResponse& resp, rrr::DeferredReply defer) override;
@@ -405,9 +381,6 @@ class ClassicServiceImpl : public ClassicService {
   void JanusPreAcceptWoGraph(const ClassicService::RpcJanusPreAcceptWoGraphRequest& req, ClassicService::RpcJanusPreAcceptWoGraphResponse& resp, rrr::DeferredReply defer) override;
   void RccAccept(const ClassicService::RpcRccAcceptRequest& req, ClassicService::RpcRccAcceptResponse& resp, rrr::DeferredReply defer) override;
   void JanusAccept(const ClassicService::RpcJanusAcceptRequest& req, ClassicService::RpcJanusAcceptResponse& resp, rrr::DeferredReply defer) override;
-  void PreAcceptFebruus(const ClassicService::RpcPreAcceptFebruusRequest& req, ClassicService::RpcPreAcceptFebruusResponse& resp, rrr::DeferredReply defer) override;
-  void AcceptFebruus(const ClassicService::RpcAcceptFebruusRequest& req, ClassicService::RpcAcceptFebruusResponse& resp, rrr::DeferredReply defer) override;
-  void CommitFebruus(const ClassicService::RpcCommitFebruusRequest& req, ClassicService::RpcCommitFebruusResponse& resp, rrr::DeferredReply defer) override;
   void JetpackBeginRecovery(const ClassicService::RpcJetpackBeginRecoveryRequest& req, ClassicService::RpcJetpackBeginRecoveryResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullIdSet(const ClassicService::RpcJetpackPullIdSetRequest& req, ClassicService::RpcJetpackPullIdSetResponse& resp, rrr::DeferredReply defer) override;
   void JetpackPullCmd(const ClassicService::RpcJetpackPullCmdRequest& req, ClassicService::RpcJetpackPullCmdResponse& resp, rrr::DeferredReply defer) override;

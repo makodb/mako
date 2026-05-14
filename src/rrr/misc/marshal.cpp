@@ -1,10 +1,36 @@
-#include <sstream>
+
+// import std; replacement — see <std_compat.hpp> for rationale.
+#include <std_compat.hpp>
+
+// @c-compat-added
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include <inttypes.h>
+#include <string.h>
+#include <unistd.h>
+#include <rusty/arc.hpp>
+#include <proxy/proxy.h>
+#include <proxy/proxy_macros.h>
+
+#include "../base/threading.hpp"  // rrr::SpinMutex
+
 
 #include <sys/time.h>
-#include <mutex>
+#include <rusty/rc.hpp>
+
+
+
+
 
 #include "marshal.hpp"
-#include <rusty/rc.hpp>
+
+
+#include "../rrr.hpp"
 
 // External safety annotations for atomic operations
 // @external: {
@@ -19,123 +45,15 @@ using namespace std;
 
 namespace rrr {
 
-#ifdef RPC_STATISTICS
-
-// -1, 0~15, 16~31, 32~63, 64~127, 128~255, 256~511, 512~1023, 1024~2047, 2048~4095, 4096~8191, 8192~
-static Counter g_marshal_in_stat[12];
-static Counter g_marshal_in_stat_cumulative[12];
-static Counter g_marshal_out_stat[12];
-static Counter g_marshal_out_stat_cumulative[12];
-static uint64_t g_marshal_stat_report_time = 0;
-static const uint64_t g_marshal_stat_report_interval = 1000 * 1000 * 1000;
-
-static void stat_marshal_report() {
-    Log::info("* MARSHAL:     -1 0~15 16~31 32~63 64~127 128~255 256~511 512~1023 1024~2047 2048~4095 4096~8191 8192~");
-    {
-        ostringstream ostr;
-        for (size_t i = 0; i < arraysize(g_marshal_in_stat); i++) {
-            i64 v = g_marshal_in_stat[i].peek_next();
-            g_marshal_in_stat_cumulative[i].next(v);
-            ostr << " " << v;
-            g_marshal_in_stat[i].reset();
-        }
-        Log::info("* MARSHAL IN: %s", ostr.str().c_str());
-    }
-    {
-        ostringstream ostr;
-        for (size_t i = 0; i < arraysize(g_marshal_in_stat); i++) {
-            ostr << " " << g_marshal_in_stat_cumulative[i].peek_next();
-        }
-        Log::info("* MARSHAL IN (cumulative): %s", ostr.str().c_str());
-    }
-    {
-        ostringstream ostr;
-        for (size_t i = 0; i < arraysize(g_marshal_out_stat); i++) {
-            i64 v = g_marshal_out_stat[i].peek_next();
-            g_marshal_out_stat_cumulative[i].next(v);
-            ostr << " " << v;
-            g_marshal_out_stat[i].reset();
-        }
-        Log::info("* MARSHAL OUT:%s", ostr.str().c_str());
-    }
-    {
-        ostringstream ostr;
-        for (size_t i = 0; i < arraysize(g_marshal_in_stat); i++) {
-            ostr << " " << g_marshal_out_stat_cumulative[i].peek_next();
-        }
-        Log::info("* MARSHAL OUT (cumulative): %s", ostr.str().c_str());
-    }
-}
-
-void stat_marshal_in(int fd, const void* buf, size_t nbytes, ssize_t ret) {
-    if (ret == -1) {
-        g_marshal_in_stat[0].next();
-    } else if (ret < 16) {
-        g_marshal_in_stat[1].next();
-    } else if (ret < 32) {
-        g_marshal_in_stat[2].next();
-    } else if (ret < 64) {
-        g_marshal_in_stat[3].next();
-    } else if (ret < 128) {
-        g_marshal_in_stat[4].next();
-    } else if (ret < 256) {
-        g_marshal_in_stat[5].next();
-    } else if (ret < 512) {
-        g_marshal_in_stat[6].next();
-    } else if (ret < 1024) {
-        g_marshal_in_stat[7].next();
-    } else if (ret < 2048) {
-        g_marshal_in_stat[8].next();
-    } else if (ret < 4096) {
-        g_marshal_in_stat[9].next();
-    } else if (ret < 8192) {
-        g_marshal_in_stat[10].next();
-    } else {
-        g_marshal_in_stat[11].next();
-    }
-
-    uint64_t now = base::rdtsc();
-    if (now - g_marshal_stat_report_time > g_marshal_stat_report_interval) {
-        stat_marshal_report();
-        g_marshal_stat_report_time = now;
-    }
-}
-
-void stat_marshal_out(int fd, const void* buf, size_t nbytes, ssize_t ret) {
-    if (ret == -1) {
-        g_marshal_out_stat[0].next();
-    } else if (ret < 16) {
-        g_marshal_out_stat[1].next();
-    } else if (ret < 32) {
-        g_marshal_out_stat[2].next();
-    } else if (ret < 64) {
-        g_marshal_out_stat[3].next();
-    } else if (ret < 128) {
-        g_marshal_out_stat[4].next();
-    } else if (ret < 256) {
-        g_marshal_out_stat[5].next();
-    } else if (ret < 512) {
-        g_marshal_out_stat[6].next();
-    } else if (ret < 1024) {
-        g_marshal_out_stat[7].next();
-    } else if (ret < 2048) {
-        g_marshal_out_stat[8].next();
-    } else if (ret < 4096) {
-        g_marshal_out_stat[9].next();
-    } else if (ret < 8192) {
-        g_marshal_out_stat[10].next();
-    } else {
-        g_marshal_out_stat[11].next();
-    }
-
-    uint64_t now = base::rdtsc();
-    if (now - g_marshal_stat_report_time > g_marshal_stat_report_interval) {
-        stat_marshal_report();
-        g_marshal_stat_report_time = now;
-    }
-}
-
-#endif // RPC_STATISTICS
+// retired the entire `#ifdef RPC_STATISTICS`
+// block.  Phase 5b-8 deleted the marshal-out side; Phase 5b-11 deleted
+// the only remaining caller of `stat_marshal_in` (`chunk::read_from_fd`)
+// along with `Marshal::read_from_fd` / `Marshal::chnk_read_from_fd`.
+// The receive path uses `FdSource` (`serializable.hpp`) instead, so
+// the histogram-bucket I/O accounting (`g_marshal_in_stat[12]`,
+// `g_marshal_in_stat_cumulative[12]`, `stat_marshal_report`,
+// `g_marshal_stat_report_time` / `g_marshal_stat_report_interval`,
+// `stat_marshal_in`) had no live producers.
 
 /**
  * 8kb minimum chunk size.
@@ -208,31 +126,11 @@ size_t Marshal::write(const void* p, size_t n) {
     return n;
 }
 
-// @unsafe - Uses new for raw heap allocation
-size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
-  //Log_info("bypassing copying %d", sz);
-  assert(data.entity_size() == sz);
-  assert(tail_ == nullptr || tail_->next == nullptr);
-
-  if(head_ == nullptr){
-    head_ = new chunk(data, sz);
-    tail_ = head_;
-  } else if (tail_->fully_written()){
-    tail_->next = new chunk(data, sz);
-    tail_ = tail_->next;
-  } else{
-    //Log_info("resizing current chunk %d", tail_->write_idx);
-    tail_->resize_to_current();
-    //verify(tail_->fully_written());
-    tail_->next = new chunk(data, sz);
-    tail_ = tail_->next;
-  }
-  write_cnt_ += sz;
-  content_size_ += sz;
-  assert(content_size_ == content_size_slow());
-  //Log_info("final size is %d", write_cnt_);
-  return sz;
-}
+// removed `Marshal::bypass_copying`. It
+// was the implementation of the dead bypass-to-socket fast path —
+// no production type ever set `bypass_to_socket_=true`, so the
+// `if (rhs.bypass_to_socket_)` branch in `operator<<(MarshallDeputy)`
+// (now also gone) never invoked it.
 
 size_t Marshal::read_chnk(void* p, size_t n){
     char* pc = (char *) p;
@@ -280,46 +178,12 @@ size_t Marshal::read(void* p, size_t n) {
     }
 }
 
-// @safe - Reads from file descriptor (I/O system call)
-// SAFETY: Internal @unsafe block handles I/O and raw pointer operations
-size_t Marshal::read_from_fd(int fd) {
-    // @unsafe - I/O system calls and raw pointer operations
-    {
-        assert(empty() || (head_ != nullptr && !head_->fully_read()));
-
-        size_t n_bytes = 0;
-        for (;;) {
-            if (head_ == nullptr) {
-                head_ = new chunk;
-                tail_ = head_;
-            } else if (tail_->fully_written()) {
-                tail_->next = new chunk;
-                tail_ = tail_->next;
-            }
-            int r = tail_->read_from_fd(fd);
-            if (r <= 0) {
-                break;
-            }
-            n_bytes += r;
-        }
-        write_cnt_ += n_bytes;
-        content_size_ += n_bytes;
-        assert(content_size_ == content_size_slow());
-
-        assert(empty() || (head_ != nullptr && !head_->fully_read()));
-        return n_bytes;
-    }
-}
-
-// the marshal object should have a chunk allocated with necessary size
-size_t Marshal::chnk_read_from_fd(int fd, size_t bytes){
-    size_t read_bytes = 0;
-    read_bytes += head_->read_from_fd(fd, bytes);
-    content_size_ += read_bytes;
-    write_cnt_ += read_bytes;
-    if(read_bytes <= 0)return 0;
-    return read_bytes;
-}
+// removed `Marshal::read_from_fd(int)` and
+// `Marshal::chnk_read_from_fd(int, size_t)`. Neither had any
+// production callers in the codebase; the receive path uses
+// `FdSource` (`serializable.hpp`) for direct fd reads. The
+// inner `chunk::read_from_fd` they used was deleted in the same
+// commit.
 
 size_t Marshal::read_reuse_chnk(Marshal& m, size_t n){
     assert(m.content_size() >= n);   // require m.content_size() >= n > 0
@@ -421,45 +285,14 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
 }
 
 
-// @safe - Writes to file descriptor (I/O system call)
-// SAFETY: Internal @unsafe block handles I/O and raw pointer operations
-size_t Marshal::write_to_fd(int fd) {
-    // @unsafe
-    {
-        size_t n_write = 0;
-        bool ok = false;
-        while (!empty()) {
-            int cnt = head_->write_to_fd(fd);
-            //Log_info("written %d bytes of %d", head_->read_idx, head_->write_idx);
-            if (head_->fully_read()) {
-                if (head_ == tail_) {
-                    tail_ = nullptr;
-                }
-                //Log_info("fully read a chunk of size %d %d", head_->data->size, head_->write_idx);
-                chunk* chnk = head_;
-                head_ = head_->next;
-                delete chnk;
-                ok = true;
-            }
-            if (cnt <= 0) {
-                //Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
-                break;
-            } else {
-                //Log_info("written %lld bytes of %lld", head_->read_idx, head_->write_idx);
-            }
-            assert(content_size_ >= (size_t) cnt);
-            content_size_ -= cnt;
-            n_write += cnt;
-            //if(ok) break;
+// removed `Marshal::write_to_fd(int)`. It
+// had no callers anywhere in the codebase. New code uses `FdSink`
+// (see `serializable.hpp`) to write archive bytes directly to a
+// file descriptor without going through the legacy chunk-list
+// representation.
 
-        }
-        assert(content_size_ == content_size_slow());
-        return n_write;
-    }
-}
-
-// @safe - Creates bookmark for deferred writes
-// SAFETY: Internal @unsafe block handles raw pointer and new/delete operations
+// @unsafe - Creates bookmark for deferred writes
+// SAFETY: Uses verify/new/delete and raw pointer operations
 Marshal::bookmark Marshal::set_bookmark(size_t n) {
     verify(write_cnt_ == 0);
 
@@ -472,7 +305,11 @@ Marshal::bookmark Marshal::set_bookmark(size_t n) {
             if (head_ == nullptr) {
                 head_ = new chunk;
                 tail_ = head_;
-            } else if (tail_->fully_written() || tail_->is_shared_data_chunk()) {
+            } else if (tail_->fully_written()) {
+                // dropped
+                // `|| tail_->is_shared_data_chunk()` — `shared_data`
+                // chunks no longer exist (dead bypass-to-socket
+                // fast path removed).
                 tail_->next = new chunk;
                 tail_ = tail_->next;
             }
@@ -485,90 +322,5 @@ Marshal::bookmark Marshal::set_bookmark(size_t n) {
     }
 }
 
-std::mutex md_mutex_g;
-std::mutex mdi_mutex_g;
-// Note: mc_ removed - now using Construct On First Use idiom in get_initializers()
-// @safe - Thread-local factory registry copy
-// SAFETY: Each thread has its own copy, no locking needed for access
-thread_local MarshallDeputy::MarContainer mc_th_;
-thread_local bool mc_th_initialized_ = false;
-
-// @unsafe - Registers initializer with mutex locking and map insertion
-int MarshallDeputy::reg_initializer(int32_t cmd_type,
-                                   function<Marshallable*()> init) {
-  md_mutex_g.lock();
-  auto& container = get_initializers();
-  auto pair = container.insert(std::make_pair(cmd_type, init));
-  verify(pair.second);
-  md_mutex_g.unlock();
-  return 0;
-}
-
-// @unsafe - Calls std::mutex::lock, std::unordered_map::find, std::function constructor
-function<Marshallable*()>
-MarshallDeputy::get_initializer(int32_t type) {
-  if (!mc_th_initialized_) {
-    md_mutex_g.lock();
-    auto& global_container = get_initializers();
-    // Copy the container into thread-local storage
-    mc_th_ = global_container;
-    mc_th_initialized_ = true;
-    md_mutex_g.unlock();
-  }
-  auto it = mc_th_.find(type);
-  verify(it != mc_th_.end());
-  auto f = it->second;
-  return f;
-}
-
-// Returns reference to global factory registry
-// SAFETY: Protected by mutex, initializes on first access
-// Uses Construct On First Use idiom to avoid static initialization order fiasco
-MarshallDeputy::MarContainer&
-MarshallDeputy::get_initializers() {
-  // Note: Caller must hold md_mutex_g
-  // Local static is guaranteed to be initialized on first access
-  static MarshallDeputy::MarContainer mc_;
-  return mc_;
-}
-
-Marshal &Marshallable::from_marshal(Marshal &m) {
-  verify(0);
-  return m;
-}
-
-// @unsafe - Calls std::shared_ptr::get and get_initializer
-// @lifetime: (&'a mut) -> &'a mut
-Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
-  verify(sp_data_ == nullptr);
-  switch (kind_) {
-    case UNKNOWN:
-      verify(0);
-      break;
-    default:
-      auto func = get_initializer(kind_);
-      verify(func);
-      // Call initializer function which returns raw Marshallable*
-      Marshallable* raw_ptr = func();
-      verify(raw_ptr);
-      // Wrap in shared_ptr to take ownership
-      sp_data_ = std::shared_ptr<Marshallable>(raw_ptr);
-      break;
-  }
-  verify(sp_data_ != nullptr);
-  // Use get() to get pointer access
-  Marshallable* mut_data = sp_data_.get();
-  verify(mut_data);  // Should succeed - we just created it
-  mut_data->from_marshal(m);
-  verify(sp_data_->kind_);
-  verify(kind_);
-  verify(sp_data_->kind_ == kind_);
-  return m;
-}
-
-Marshal &Marshallable::to_marshal(Marshal &m) const {
-  verify(0);
-  return m;
-}
 
 } // namespace rrr
