@@ -1,7 +1,11 @@
 #ifndef _NDB_TXN_H_
 #define _NDB_TXN_H_
 
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#else
 #include <malloc.h>
+#endif
 #include <stdint.h>
 #include <sys/types.h>
 #include <pthread.h>

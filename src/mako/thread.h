@@ -3,7 +3,7 @@
 
 #include <vector>
 #include <string>
-#include <thread>
+#include <pthread.h>
 
 #include "macros.h"
 
@@ -49,7 +49,7 @@ public:
 
 private:
   run_t body_;
-  std::thread thd_;
+  pthread_t thd_{};
   const bool daemon_;
   const std::string name_;
 };

@@ -32,10 +32,6 @@
 // (`EINVAL`, `ENOENT`) that the RPC dispatch path still emits.
 #include <errno.h>
 
-
-
-
-
 #include "server.hpp"
 
 
@@ -59,7 +55,6 @@
 using namespace std;
 
 namespace rrr {
-
 
 #ifdef RPC_STATISTICS
 

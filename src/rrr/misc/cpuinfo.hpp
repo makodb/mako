@@ -16,7 +16,7 @@
 #include <sys/times.h>
 #include <unistd.h>
 
-#ifndef __APPLE__
+#ifdef __linux__
 #include <sys/sysinfo.h>
 #endif
 
@@ -40,6 +40,7 @@ private:
     //uint32_t num_processors_;
     CPUInfo() {
 			const std::lock_guard<std::recursive_mutex> lock (mtx_);
+#ifdef __linux__
     	struct tms tms_buf;
 			double txed, rxed;
 			rusty::Vec<double> result;
@@ -68,6 +69,13 @@ private:
       //    if (strncmp(line, "processor", 9) == 0)
       //        num_processors_++;
       //fclose(proc_cpuinfo);
+#else
+			last_cpu = last_txed = last_rxed = last_mem = 0.0;
+			total_mem = 0;
+			page_size = 0;
+			index = 0;
+			pid_ = ::getpid();
+#endif
     }
 
     /**
@@ -139,6 +147,13 @@ private:
     }
 
 		void get_network(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
+#ifndef __linux__
+			(void) pid;
+			(void) ticks;
+			result.push(-1.0);
+			result.push(-1.0);
+			return;
+#else
 			double tx_total = -1.0, rx_total = -1.0;
 			std::string line;
 			std::string temp;
@@ -190,9 +205,16 @@ private:
 
 			last_txed = tx_total;
 			last_rxed = rx_total;
+#endif
 		}
 
 		void get_memory(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
+#ifndef __linux__
+			(void) pid;
+			(void) ticks;
+			result.push(-1.0);
+			return;
+#else
 			long rss;
 			double mem_usage, mem_total = -1.0;
 			std::string ignore;
@@ -222,6 +244,7 @@ private:
 			result.push(mem_total);
 
 			last_mem = mem_total;
+#endif
 		}
 
 public:

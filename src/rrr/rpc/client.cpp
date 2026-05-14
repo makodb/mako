@@ -47,7 +47,6 @@
 using namespace std;
 
 namespace rrr {
-
 // Helper function to get current time in milliseconds
 // @unsafe - Uses std::chrono which is not borrow-checked (but is memory-safe)
 static uint64_t current_time_ms() {

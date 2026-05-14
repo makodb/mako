@@ -16,6 +16,10 @@ namespace erpc { class ReqHandle; }
 
 #define HELPER_QUEUE_SIZE 100
 
+namespace erpc {
+class ReqHandle;
+}
+
 namespace mako
 {
 using namespace std;

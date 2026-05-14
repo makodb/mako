@@ -10,7 +10,9 @@
 #include <exception>  // asio uses std::nested_exception transitively but doesn't #include <exception> itself.
 #include <functional>
 #include <sys/file.h>
+#ifdef MAKO_ENABLE_ERPC
 #include "rpc.h"
+#endif
 #include <mutex>
 #include <condition_variable>
 #include <stdlib.h>
@@ -20,6 +22,12 @@
 #include <sstream>
 #include <iomanip>
 #include <random>
+#include <functional>
+#include <thread>
+
+#if defined(__APPLE__)
+#include <mach/mach_time.h>
+#endif
 
 // promise.timeout is abandoned
 #define GET_TIMEOUT 250
@@ -522,10 +530,24 @@ namespace mako
 
     /// Return the TSC
     static inline size_t rdtsc() {
-        uint64_t rax;
-        uint64_t rdx;
-        asm volatile("rdtsc" : "=a"(rax), "=d"(rdx));
-        return static_cast<size_t>((rdx << 32) | rax);
+#if defined(__APPLE__)
+        return static_cast<size_t>(mach_absolute_time());
+#elif defined(__i386__) || defined(__x86_64__)
+        uint32_t lo, hi;
+        asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        return static_cast<size_t>((static_cast<uint64_t>(hi) << 32) | lo);
+#elif defined(__aarch64__) || defined(__arm__)
+        uint64_t tsc;
+        asm volatile("mrs %0, cntvct_el0" : "=r"(tsc));
+        return static_cast<size_t>(tsc);
+#elif defined(__clang__) && __has_builtin(__builtin_readcyclecounter)
+        return static_cast<size_t>(__builtin_readcyclecounter());
+#else
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return (static_cast<size_t>(ts.tv_sec) << 32) ^
+               static_cast<size_t>(ts.tv_nsec);
+#endif
     }
 
     static double measure_rdtsc_freq() {

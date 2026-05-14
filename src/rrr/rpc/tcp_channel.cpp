@@ -716,6 +716,16 @@ bool TcpListener::handle_read() {
 
         any_progress = true;
 
+#ifdef __APPLE__
+        // Prevent SIGPIPE termination on write() to closed sockets.
+        // Linux uses MSG_NOSIGNAL on send(); macOS lacks that flag.
+        {
+            const int yes = 1;
+            // @unsafe — system call
+            (void)::setsockopt(conn_fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+        }
+#endif
+
         // Non-blocking accepted socket; matches the rest of the
         // channel layer's expectations.
         if (set_nonblocking_fd(conn_fd) != 0) {
@@ -815,6 +825,16 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
         return ConnectResult{ChannelConnectionProxy{},
                              connect_errno_to_channel_error(errno)};
     }
+
+#ifdef __APPLE__
+    // Prevent SIGPIPE termination on write() to closed sockets.
+    // Linux uses MSG_NOSIGNAL on send(); macOS lacks that flag.
+    {
+        const int yes = 1;
+        // @unsafe — system call
+        (void)::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+    }
+#endif
 
     // Make the socket non-blocking BEFORE the connect so we can apply
     // a timeout via `select(2)` if the kernel doesn't fail-fast.

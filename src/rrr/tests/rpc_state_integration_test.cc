@@ -32,7 +32,12 @@ static std::atomic<int> g_state_test_port{11000};
 namespace {
 
 int count_open_fds() {
-    DIR* dir = ::opendir("/proc/self/fd");
+#if defined(__APPLE__)
+    static constexpr const char* kFdDir = "/dev/fd";
+#else
+    static constexpr const char* kFdDir = "/proc/self/fd";
+#endif
+    DIR* dir = ::opendir(kFdDir);
     if (dir == nullptr) {
         return -1;
     }
@@ -47,7 +52,7 @@ int count_open_fds() {
     }
     ::closedir(dir);
 
-    // /proc/self/fd enumeration includes the directory descriptor itself.
+    // fd directory enumeration includes the directory descriptor itself.
     return count > 0 ? count - 1 : 0;
 }
 

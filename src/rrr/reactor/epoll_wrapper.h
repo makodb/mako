@@ -211,37 +211,31 @@ class Epoll {
   int Update(int fd, int new_mode, int old_mode) {
 #ifdef USE_KQUEUE
     struct kevent ev;
-    if ((new_mode & PollMode::READ) && !(old_mode & PollMode::READ)) {
-      // add READ
+    auto kqueue_update = [&](int flags, int filter) -> bool {
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
-      ev.flags = EV_ADD;
-      ev.filter = EVFILT_READ;
-      verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
+      ev.flags = flags;
+      ev.filter = filter;
+      if (kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0) return true;
+      // Treat closed/missing fd as a benign shutdown race (same as Linux path).
+      int err = errno;
+      return (err == EBADF || err == ENOENT);
+    };
+    if ((new_mode & PollMode::READ) && !(old_mode & PollMode::READ)) {
+      // add READ
+      verify(kqueue_update(EV_ADD, EVFILT_READ));
     }
     if (!(new_mode & PollMode::READ) && (old_mode & PollMode::READ)) {
       // del READ
-      bzero(&ev, sizeof(ev));
-      ev.ident = fd;
-      ev.flags = EV_DELETE;
-      ev.filter = EVFILT_READ;
-      verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
+      verify(kqueue_update(EV_DELETE, EVFILT_READ));
     }
     if ((new_mode & PollMode::WRITE) && !(old_mode & PollMode::WRITE)) {
       // add WRITE
-      bzero(&ev, sizeof(ev));
-      ev.ident = fd;
-      ev.flags = EV_ADD;
-      ev.filter = EVFILT_WRITE;
-      verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
+      verify(kqueue_update(EV_ADD, EVFILT_WRITE));
     }
     if (!(new_mode & PollMode::WRITE) && (old_mode & PollMode::WRITE)) {
       // del WRITE
-      bzero(&ev, sizeof(ev));
-      ev.ident = fd;
-      ev.flags = EV_DELETE;
-      ev.filter = EVFILT_WRITE;
-      verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
+      verify(kqueue_update(EV_DELETE, EVFILT_WRITE));
     }
 #else
     struct epoll_event ev;
@@ -282,7 +276,7 @@ class Epoll {
     struct kevent evlist[max_nev];
     struct timespec timeout;
     timeout.tv_sec = 0;
-    timeout.tv_nsec = 50 * 1000 * 1000; // 0.05 sec
+    timeout.tv_nsec = 1 * 1000 * 1000; // 0.001 sec
 
     int nev = kevent(poll_fd_, nullptr, 0, evlist, max_nev, &timeout);
 

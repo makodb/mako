@@ -12,7 +12,9 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <unistd.h>
+#if defined(__linux__)
 #include <sys/sysinfo.h>
+#endif
 
 #include "masstree/config.h"
 

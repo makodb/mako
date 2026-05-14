@@ -966,9 +966,12 @@ target_link_libraries(txlog_full INTERFACE
     txlog_core
 )
 # Ensure bench registry object is linked from static txlog_bench.
-target_link_options(txlog_full INTERFACE
-    "LINKER:-u,janus_register_bench_factories"
-)
+# macOS ld64 requires the C symbol underscore prefix in -u; GNU ld does not.
+if(APPLE)
+    target_link_options(txlog_full INTERFACE "LINKER:-u,_janus_register_bench_factories")
+else()
+    target_link_options(txlog_full INTERFACE "LINKER:-u,janus_register_bench_factories")
+endif()
 set(TXLOG_LINK_LIBS
     txlog_full
 )

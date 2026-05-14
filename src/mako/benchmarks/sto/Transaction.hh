@@ -13,7 +13,9 @@
 #include <iostream>
 #include <sstream>
 #include <atomic>
+#if defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
+#endif
 #include <vector>
 #include <cstring> // for memcpy
 #include "deptran/s_main.h"
@@ -443,12 +445,16 @@ private:
 
     void initialize();
 
+public:
     Transaction()
         : threadid_(TThread::id()), is_test_(false) {
         initialize();
         start();
     }
 
+    ~Transaction();
+
+private:
     struct testing_type {};
     static testing_type testing;
 
@@ -465,8 +471,6 @@ private:
         // init once
         start_time = mako::getCurrentTimeMillis();
     }
-
-    ~Transaction();
 
     // reset data so we can be reused for another transaction
     void start() {  // weihshen, start and init a transaction

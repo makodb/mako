@@ -12,7 +12,9 @@
 #include "benchmarks/common.h"
 #include "benchmarks/bench.h"
 #include "benchmarks/tpcc.h"
+#if defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
+#endif
 #include "deptran/s_main.h"
 #include "benchmarks/sto/sync_util.hh"
 

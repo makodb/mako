@@ -158,7 +158,11 @@ void mako::setup_helper(
       queue_holders_response[i],
       open_tables,
       &barrier_ready);
+#if defined(__APPLE__)
+    // macOS pthread_setname_np() only supports naming the *current* thread.
+#else
     pthread_setname_np(t.native_handle(), ("helper_" + std::to_string(i)).c_str());
+#endif
     t.detach();
   }
 
@@ -218,7 +222,11 @@ void mako::setup_erpc_server()
       i,
       std::ref(server_transports),
       std::ref(set_server_transport));
+#if defined(__APPLE__)
+    // macOS pthread_setname_np() only supports naming the *current* thread.
+#else
     pthread_setname_np(t.native_handle(), "erpc_server");
+#endif
     t.detach();
   }
 

@@ -9,16 +9,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <string>
+#include <vector>
 
 #include <rusty/rusty.hpp>
 
 #include <pthread.h>
-
-
-
-
-
-
+#if defined(__APPLE__)
+#include <mach/mach_time.h>
+#endif
 
 #include "rand.hpp"
 
@@ -155,9 +154,22 @@ int RandomGenerator::nu_rand(int a, int x, int y) {
 
 // @unsafe - Uses inline assembly (rdtsc instruction)
 unsigned long long RandomGenerator::rdtsc() {
+#if defined(__APPLE__)
+    // macOS (including Apple Silicon): mach_absolute_time is monotonic and fast.
+    return static_cast<unsigned long long>(mach_absolute_time());
+#elif defined(__x86_64__) || defined(__i386__)
     unsigned int lo, hi;
     __asm__ __volatile__("rdtsc" : "=a" (lo), "=d" (hi));  // @unsafe
     return ((unsigned long long)hi << 32) | lo;
+#elif defined(__clang__) && __has_builtin(__builtin_readcyclecounter)
+    return static_cast<unsigned long long>(__builtin_readcyclecounter());
+#else
+    // Fallback: not a true cycle counter, but sufficient for per-thread seeding.
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (static_cast<unsigned long long>(ts.tv_sec) << 32) ^
+           static_cast<unsigned long long>(ts.tv_nsec);
+#endif
 }
 
 // @unsafe - Calls rand_double which uses rand_r

@@ -23,15 +23,20 @@ Mako's core design-level innovation is **decoupling transaction execution from r
 
 ## Quick Start
 
-**Prerequisites:** Debian 12 or Ubuntu 24.04
+**Prerequisites:** Debian 12 / Ubuntu 24.04 (Linux) or macOS (Apple Silicon)
 
 ```bash
 # Clone with submodules
 git clone --recursive https://github.com/makodb/mako.git
 cd mako
 
-# Install dependencies
+# Install dependencies (choose ONE based on your OS)
+# Linux (Debian/Ubuntu):
 bash apt_packages.sh
+
+# macOS (Homebrew):
+bash brew_packages.sh
+
 source install_rustc.sh
 bash src/mako/update_config.sh
 
@@ -41,6 +46,9 @@ make -j32
 # Run tests
 ./ci/ci.sh all
 ```
+
+Notes:
+- On macOS, eRPC is disabled; `./ci/ci.sh all` skips the eRPC variants and runs the rrr/rpc-based tests.
 
 ---
 

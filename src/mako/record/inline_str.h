@@ -36,7 +36,7 @@ public:
   }
 
   inline_str_base(const inline_str_base &that)
-    : sz(that.sz)
+    : sz(that.sz > static_cast<IntSizeType>(N) ? static_cast<IntSizeType>(N) : that.sz)
   {
     NDB_MEMCPY(&buf[0], &that.buf[0], sz);
   }
@@ -304,6 +304,11 @@ struct serializer< inline_str_base<IntSizeType, N>, Compress > {
   read(const uint8_t *buf, obj_type *obj)
   {
     buf = serializer<IntSizeType, Compress>::read(buf, &obj->sz);
+    // Clamp to prevent stack buffer overflow when source bytes are transiently
+    // inconsistent (optimistic read racing a concurrent write). The atomicRead
+    // retry loop detects the version mismatch and discards the garbage result.
+    if (unlikely(obj->sz > N))
+      obj->sz = static_cast<IntSizeType>(N);
     NDB_MEMCPY(&obj->buf[0], buf, obj->sz);
     return buf + obj->sz;
   }
