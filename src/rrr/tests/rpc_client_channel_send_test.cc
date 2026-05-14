@@ -118,6 +118,10 @@ class ClientChannelSendTest : public ::testing::Test {
         conn_ = rusty::Some(rusty::Arc<ClientConnection>::make(poll_thread_.as_ref().unwrap().clone()));
         stub_ = std::make_shared<CapturingChannelStub>();
         mut_conn().bind_channel(make_capture_proxy(stub_));
+        // Drive the state machine to CONNECTED so request_via_channel's
+        // gate (added with the disconnect-buffering rescue) doesn't
+        // short-circuit the test request to ENOTCONN or queue it.
+        mut_conn().force_connected_for_testing();
     }
 
     void TearDown() override {

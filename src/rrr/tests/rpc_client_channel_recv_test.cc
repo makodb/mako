@@ -194,6 +194,8 @@ class ClientChannelRecvTest : public ::testing::Test {
                 rusty::sync::downgrade(conn_.as_ref().unwrap())});
         stub_ = std::make_shared<RecvDriverChannelStub>();
         mut_conn().bind_channel(make_recv_driver_proxy(stub_));
+        // request_via_channel rejects when state != CONNECTED; force it.
+        mut_conn().force_connected_for_testing();
     }
 
     void TearDown() override {
@@ -356,6 +358,13 @@ TEST_F(ClientChannelRecvTest, ResponseForUnknownXidIsDroppedSilently) {
 }
 
 TEST_F(ClientChannelRecvTest, RecvLoopExitsCleanlyOnChannelClose) {
+    // Default buffering is QUEUE — a request while disconnected
+    // would land in `pending_queue_` instead of returning ENOTCONN.
+    // This test is about the immediate-rejection path, so pick
+    // FAIL_FAST.
+    BufferingConfig cfg = BufferingConfig::disabled();
+    mut_conn().set_buffering_config(cfg);
+
     // Close the channel before any frames are delivered — the parked
     // recv-loop fiber should wake and exit, leaving the connection in
     // a stable state. We verify "no crash" plus the channel-mode

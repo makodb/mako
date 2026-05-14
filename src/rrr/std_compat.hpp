@@ -1,19 +1,26 @@
-// std_compat.hpp — explicit replacement for `import std;`.
+// std_compat.hpp — `import std;`, ordered after textual STL.
 //
-// libc++/libstdc++ support for `import std;` is still maturing in our
-// toolchain (clang-18 + libc++-18 in the Docker image). When mixed
-// with non-module TUs, the partial specializations re-exported
-// through `import rrr;` can collide with header-included copies and
-// produce
+// Clang 19 + libc++ 19 reject the order
 //
-//     ambiguous partial specializations of 'add_tuple_reduction<...>'
+//     import std;
+//     #include <vector>
 //
-// Pulling the standard headers in via this aggregate avoids the
-// import/include duality and the related ODR risks. Include this file
-// from each rrr module's GLOBAL MODULE FRAGMENT (i.e. before
-// `export module ...`) so that std symbols stay outside the module's
-// purview, matching the C++20 standard's recommendation for using
-// standard headers in modular code.
+// because the importer's ODR check fires before the deserializer
+// sees the textually-included copy and rejects libc++ internal
+// helpers like `__synth_three_way` as redeclared with a different
+// type. The reverse order works: `#include <vector>` first lets the
+// deserializer merge the symbols when `import std;` lands. (See
+// llvm-project issue #61465; libc++ documents this in
+// `<https://libcxx.llvm.org/Modules.html>`.)
+//
+// This aggregate therefore textually pulls in the full surface area
+// the codebase uses BEFORE importing the std module. Everything
+// reachable through `<std_compat.hpp>` sees both:
+//   * the textual declarations (so transitive `#include <vector>`
+//     from rusty-cpp/yaml-cpp/etc. is a no-op via the header guard);
+//   * the imported module names (so `std::*` resolves through the
+//     module path and `import std;` is available for hand-written
+//     code that wants to spell it that way).
 #pragma once
 
 #include <algorithm>
@@ -106,3 +113,5 @@
 #include <variant>
 #include <vector>
 #include <version>
+
+import std;

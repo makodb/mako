@@ -1035,6 +1035,17 @@ public:
         { weak_self_ = std::move(weak); }
     }
 
+    // Test-only: drive the state machine to `CONNECTED`. Production
+    // gets here via `connect(addr)` after the channel is bound; tests
+    // that construct a `ClientConnection` + `bind_channel(stub)`
+    // directly (without going through `Client::connect`) need this so
+    // the `request_via_channel` state-machine gate doesn't short-
+    // circuit them with ENOTCONN.
+    // @unsafe - state-machine mutation outside the connect() lifecycle.
+    void force_connected_for_testing() {
+        state_machine_.force_state(ConnectionState::CONNECTED);
+    }
+
     // observable counter for
     // channel-mode close fan-out's reconnect spawn. Tests verify the
     // fan-out reached the reconnect branch by checking this counter

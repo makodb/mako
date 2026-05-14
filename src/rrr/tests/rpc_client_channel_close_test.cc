@@ -140,6 +140,8 @@ class ClientChannelCloseTest : public ::testing::Test {
 
         stub_ = std::make_shared<CloseDriverChannelStub>();
         mut_conn().bind_channel(make_close_driver_proxy(stub_));
+        // request_via_channel rejects when state != CONNECTED; force it.
+        mut_conn().force_connected_for_testing();
     }
 
     void TearDown() override {
@@ -261,6 +263,13 @@ TEST_F(ClientChannelCloseTest, OnClosedAttemptsReconnectWhenPolicyAllows) {
 }
 
 TEST_F(ClientChannelCloseTest, RequestAfterCloseFailsFastWithENOTCONN) {
+    // Default buffering is QUEUE — a request while disconnected
+    // would land in `pending_queue_` (returns Ok with a future
+    // pending TTL expiry) instead of returning ENOTCONN. This test
+    // is about the immediate-rejection path, so pick FAIL_FAST.
+    BufferingConfig cfg = BufferingConfig::disabled();
+    mut_conn().set_buffering_config(cfg);
+
     stub_->deliver_closed(ChannelError::ConnectionReset);
     pump_until([&]() {
         return mut_conn().connection_state() == ConnectionState::FAILED;

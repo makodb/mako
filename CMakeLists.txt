@@ -1,8 +1,14 @@
 cmake_minimum_required(VERSION 3.30)
 
-# `import std;` was retired in favor of <std_compat.hpp> aggregate header
-# (see src/rrr/std_compat.hpp). Leaving the experimental key unset;
-# CMAKE_CXX_MODULE_STD stays OFF.
+# `import std;` is enabled via `src/rrr/std_compat.hpp`. The header
+# textually includes every C++ standard header AND then `import std;`s.
+# Clang's libc++ rejects `import std; ... #include <vector>` but
+# accepts the reverse order, so the include block comes first; that
+# also turns later transitive `#include`s from rusty-cpp/yaml-cpp/etc.
+# into no-ops via the header guard. The UUID gates CMake's
+# experimental `import std;` materialization and must be set BEFORE
+# `project()`.
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -51,10 +57,11 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_link_options(-stdlib=libc++ -lc++abi)
 endif()
 
-# `import std;` retired in favor of <std_compat.hpp>. Keep
-# CMAKE_CXX_MODULE_STD OFF so CMake doesn't try to materialize std.pcm
-# for targets that no longer reference the std module.
-set(CMAKE_CXX_MODULE_STD OFF)
+# `std_compat.hpp` does `import std;` at the bottom of its 90-line
+# textual aggregate. ON so CMake builds the `std.pcm` BMI and feeds
+# it to every C++23 target. Per-target opt-out is via setting
+# `CXX_MODULE_STD OFF` on the target.
+set(CMAKE_CXX_MODULE_STD ON)
 
 # Check compiler and version. C++23 + named modules require GCC >= 13.1
 # or Clang >= 17.
