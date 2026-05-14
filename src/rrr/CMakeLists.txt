@@ -16,7 +16,6 @@ if(NOT TARGET rrr)
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/rrr
         ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
-        ${PROXY_INCLUDE_DIR}
     )
     target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
     target_link_libraries(rrr pthread)
@@ -52,7 +51,6 @@ if(NOT TARGET rrr)
             ${CMAKE_SOURCE_DIR}/src
             ${CMAKE_SOURCE_DIR}/src/rrr
             ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
-            ${PROXY_INCLUDE_DIR}
         )
         target_compile_options(rrr_borrow PUBLIC ${RRR_CXXFLAGS})
 

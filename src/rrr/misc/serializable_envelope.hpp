@@ -6,12 +6,13 @@
 // Wire format `[v32 kind][payload bytes]` — byte-for-byte identical
 // to the legacy `MarshallDeputy` post-L9.
 //
-// Storage shape (post-L10f-2 step 5):
-//   * `inner_`: `pro::proxy<SerializableFacade>` value member (no
-//     `shared_ptr<Marshallable>` — Marshallable retired in this
-//     same release).  The proxy heap-boxes the underlying T
-//     internally; copying the envelope deep-copies T via the
-//     facade's `support_copy<nontrivial>` skill.
+// Storage shape:
+//   * `inner_`: `std::shared_ptr<SerializableBase>` (`SerializableProxy`).
+//     Copying the envelope shares the underlying payload via the
+//     shared_ptr's refcount; the holder type
+//     (`SerializableSharedPtrHolder<T>`) carries an inner
+//     `std::shared_ptr<T>` so `unpack_shared<T>` gives a real
+//     refcount-shared handle to the payload.
 //
 // Aliasing semantics:
 //   * `pack(value)` — VALUE-SEMANTIC: proxy owns a copy of `value`.
@@ -55,8 +56,7 @@ class SerializableEnvelope {
                   "SerializableEnvelope(shared_ptr<T>): T is not in TypeList. "
                   "Add T to the TypeList declaration.");
     verify(sp != nullptr);
-    inner_ = pro::make_proxy<SerializableFacade,
-                             details::SerializableSharedPtrHolder<T>>(
+    inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
         std::move(sp));
     refresh_kind();
   }
@@ -68,8 +68,7 @@ class SerializableEnvelope {
                   "SerializableEnvelope::operator=(shared_ptr<T>): T is not "
                   "in TypeList.");
     verify(sp != nullptr);
-    inner_ = pro::make_proxy<SerializableFacade,
-                             details::SerializableSharedPtrHolder<T>>(
+    inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
         std::move(sp));
     refresh_kind();
     return *this;
@@ -86,8 +85,7 @@ class SerializableEnvelope {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::pack<T>: T is not in TypeList.");
     SerializableEnvelope env;
-    env.inner_ = pro::make_proxy<SerializableFacade,
-                                 details::SerializableSharedPtrHolder<T>>(
+    env.inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
         std::make_shared<T>(value));
     env.refresh_kind();
     return env;
@@ -105,8 +103,7 @@ class SerializableEnvelope {
                   "TypeList.");
     verify(sp != nullptr);
     SerializableEnvelope env;
-    env.inner_ = pro::make_proxy<SerializableFacade,
-                                 details::SerializableSharedPtrHolder<T>>(
+    env.inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
         std::move(sp));
     env.refresh_kind();
     return env;
@@ -120,10 +117,12 @@ class SerializableEnvelope {
   T* unpack() {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::unpack<T>: T is not in TypeList.");
-    if (!inner_.has_value()) return nullptr;
-    if (auto* p = proxy_cast<T>(&*inner_)) return p;
-    if (auto* h = proxy_cast<details::SerializableSharedPtrHolder<T>>(&*inner_)) {
+    if (!inner_) return nullptr;
+    if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return h->ptr.get();
+    }
+    if constexpr (std::is_base_of_v<SerializableBase, T>) {
+      if (auto* p = dynamic_cast<T*>(inner_.get())) return p;
     }
     return nullptr;
   }
@@ -132,10 +131,12 @@ class SerializableEnvelope {
   const T* unpack() const {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::unpack<T>: T is not in TypeList.");
-    if (!inner_.has_value()) return nullptr;
-    if (auto* p = proxy_cast<T>(&*inner_)) return p;
-    if (auto* h = proxy_cast<details::SerializableSharedPtrHolder<T>>(&*inner_)) {
+    if (!inner_) return nullptr;
+    if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return h->ptr.get();
+    }
+    if constexpr (std::is_base_of_v<SerializableBase, T>) {
+      if (auto* p = dynamic_cast<const T*>(inner_.get())) return p;
     }
     return nullptr;
   }
@@ -150,13 +151,15 @@ class SerializableEnvelope {
   std::shared_ptr<T> unpack_shared() {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::unpack_shared<T>: T is not in TypeList.");
-    if (!inner_.has_value()) return nullptr;
-    if (auto* h = proxy_cast<details::SerializableSharedPtrHolder<T>>(&*inner_)) {
+    if (!inner_) return nullptr;
+    if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return h->ptr;
     }
-    if (auto* p = proxy_cast<T>(&*inner_)) {
-      // No-op deleter: caller responsibility for envelope lifetime.
-      return std::shared_ptr<T>(p, [](T*){});
+    if constexpr (std::is_base_of_v<SerializableBase, T>) {
+      if (auto* p = dynamic_cast<T*>(inner_.get())) {
+        // No-op deleter: caller responsibility for envelope lifetime.
+        return std::shared_ptr<T>(p, [](T*){});
+      }
     }
     return nullptr;
   }
@@ -165,12 +168,14 @@ class SerializableEnvelope {
   std::shared_ptr<const T> unpack_shared() const {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::unpack_shared<T>: T is not in TypeList.");
-    if (!inner_.has_value()) return nullptr;
-    if (auto* h = proxy_cast<details::SerializableSharedPtrHolder<T>>(&*inner_)) {
+    if (!inner_) return nullptr;
+    if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return std::const_pointer_cast<const T>(h->ptr);
     }
-    if (auto* p = proxy_cast<T>(&*inner_)) {
-      return std::shared_ptr<const T>(p, [](const T*){});
+    if constexpr (std::is_base_of_v<SerializableBase, T>) {
+      if (auto* p = dynamic_cast<const T*>(inner_.get())) {
+        return std::shared_ptr<const T>(p, [](const T*){});
+      }
     }
     return nullptr;
   }
@@ -185,23 +190,22 @@ class SerializableEnvelope {
 
   // -- Discriminator + state ---------------------------------------------
   int32_t kind() const {
-    return inner_.has_value() ? inner_->kind() : 0;
+    return inner_ ? inner_->kind() : 0;
   }
 
-  bool has_value() const noexcept { return inner_.has_value(); }
+  bool has_value() const noexcept { return static_cast<bool>(inner_); }
   explicit operator bool() const noexcept { return has_value(); }
 
   // Identity comparison.  For empty envelopes: equal iff both empty.
-  // For non-empty: equal iff they wrap proxies whose indirect
-  // accessor refers to the same instance — i.e., same underlying T*
-  // via the proxy library's indirect_rtti dispatch.  Two
-  // `pack_aliased(sp)` envelopes copied from the same source share
-  // a shared_ptr<T> and thus compare equal; `pack(v)` copies own
-  // their own T and compare unequal.
+  // For non-empty: equal iff they wrap the same SerializableBase
+  // instance — i.e., copies sharing the same shared_ptr refcount.
+  // Two `pack_aliased(sp)` envelopes copied from the same source
+  // share a holder and thus compare equal; `pack(v)` copies own
+  // their own holder and compare unequal.
   bool operator==(const SerializableEnvelope& other) const noexcept {
-    if (!inner_.has_value() && !other.inner_.has_value()) return true;
-    if (!inner_.has_value() || !other.inner_.has_value()) return false;
-    return &*inner_ == &*other.inner_;
+    if (!inner_ && !other.inner_) return true;
+    if (!inner_ || !other.inner_) return false;
+    return inner_.get() == other.inner_.get();
   }
   bool operator!=(const SerializableEnvelope& other) const noexcept {
     return !(*this == other);
@@ -233,10 +237,10 @@ class SerializableEnvelope {
 
  private:
   void refresh_kind() noexcept {
-    kind_ = inner_.has_value() ? inner_->kind() : 0;
+    kind_ = inner_ ? inner_->kind() : 0;
   }
 
-  pro::proxy<SerializableFacade> inner_;
+  SerializableProxy inner_;
 };
 
 // Migration compat: `marshallable_cast<T>` overload for envelopes.

@@ -732,8 +732,10 @@ class ClientConnection {
     // compatibility (those tests use `bind_channel(...)` and drive
     // FakeChannelStub::deliver() from the test thread).
     //
-    // Box-wrapped for the same `pro::proxy<F>` cyclic-constraint
-    // workaround applied to `fiber_channel_` and `factory_`.
+    // Box-wrapped to retain the same indirection shape used by
+    // `fiber_channel_` and `factory_` (the alias is already a
+    // `rusty::Box<ChannelConnectionBase>`; the outer Box keeps the
+    // Option's value-type uniform across slots).
     mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>> direct_channel_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
 
     rusty::Cell<bool> channel_mode_{false};
@@ -753,9 +755,9 @@ class ClientConnection {
     // switch that selects between the two paths; sub-leaf 4g removes
     // the legacy fd path entirely.
     //
-    // Boxed because `pro::proxy<F>` triggers a cyclic-constraint
-    // diagnostic when used directly as the value type of
-    // `rusty::Option` — same workaround we apply to `fiber_channel_`.
+    // Boxed to retain the same indirection shape as `fiber_channel_`
+    // (the alias is already a `rusty::Box<ChannelFactoryBase>`; the
+    // outer Box keeps the Option's value-type uniform across slots).
     // SpinMutex (not RefCell) for the same reason as `fiber_channel_`:
     // the close fan-out's reconnect spawn calls `connect_via_factory`
     // from a separate thread, which can race against user-thread
@@ -1909,12 +1911,11 @@ class Client {
     // connection then routes its `connect(addr)` and reconnect
     // spawn through the factory instead of the legacy fd path.
     //
-    // SpinMutex because pro::proxy<F> is move-only and we need to
-    // assign through this const facade without exposing the
-    // private member to friends. Box wrapper sidesteps the
-    // cyclic-constraint diagnostic that surfaces when
-    // `Option<pro::proxy<F>>` is instantiated directly (same
-    // workaround as `ClientConnection::factory_`).
+    // SpinMutex because `ChannelFactoryProxy` (a `rusty::Box<…Base>`)
+    // is move-only and we need to assign through this const facade
+    // without exposing the private member to friends. Box wrapper
+    // keeps the indirection shape uniform with
+    // `ClientConnection::factory_`.
     // SpinMutex (not RefCell) because Client::connect can be called
     // from any thread and reads/consumes pending_factory_ on each
     // call — sub-leaf 4g1.

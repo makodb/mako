@@ -330,7 +330,7 @@ void ServerConnection::dispatch_response_frame_via_channel(
             guard->as_ref().unwrap().get());
     }
     ChannelFrame frame{bytes, size};
-    // @unsafe - proxy method dispatch through pro::proxy
+    // @unsafe - virtual method dispatch through Box<ChannelConnectionBase>
     (void)(*proxy)->send_frame(frame);
 }
 

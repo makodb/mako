@@ -17,7 +17,7 @@
  *   - Inspection accessors (is_leader, current_term, commit_index) —
  *     placeholder implementations backed by in-node fields so tests
  *     can exercise the cluster plumbing end-to-end.
- *   - A `DummyDispatcher` inner type that satisfies DispatcherFacade
+ *   - A `DummyDispatcher` inner type that satisfies DispatcherBase
  *     by accepting every RPC and firing a vacuous reply. Phase 6.5
  *     replaces it with a real RaftServer-backed dispatcher.
  *
@@ -30,7 +30,6 @@
 #include <utility>
 #include <vector>
 
-#include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
 #include "channel_transport.hpp"
@@ -50,36 +49,36 @@ namespace raft {
 // Phase 6.5 will swap this for a RaftServer-backed dispatcher.
 // ---------------------------------------------------------------------------
 
-class DummyDispatcher {
+class DummyDispatcher : public DispatcherBase {
  public:
   // @safe
-  DummyDispatcher(siteid_t self) : self_(self) {}
+  explicit DummyDispatcher(siteid_t self) : self_(self) {}
 
-  VoteReply handle_vote(VoteReq req) {
+  VoteReply handle_vote(VoteReq req) override {
     VoteReply r{};
     r.max_ballot   = req.current_term;
     r.vote_granted = true;
     return r;
   }
-  VoteDurableReply handle_vote_durable(VoteDurableReq) {
+  VoteDurableReply handle_vote_durable(VoteDurableReq) override {
     VoteDurableReply r{}; r.acknowledged = true; return r;
   }
-  AppendEntriesReply handle_append_entries(AppendEntriesReq) {
+  AppendEntriesReply handle_append_entries(AppendEntriesReq) override {
     AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) {
+  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
     EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) {
+  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) override {
     AppendEntriesDurableReply r{}; r.acknowledged = true; return r;
   }
-  TimeoutNowReply handle_timeout_now(TimeoutNowReq) {
+  TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
     TimeoutNowReply r{}; r.success = true; return r;
   }
-  NotifyRestartReply handle_notify_restart(NotifyRestartReq) {
+  NotifyRestartReply handle_notify_restart(NotifyRestartReq) override {
     NotifyRestartReply r{}; r.acknowledged = true; return r;
   }
-  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) {
+  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) override {
     InstallSnapshotReply r{}; r.term_out = 0; return r;
   }
 
@@ -106,9 +105,7 @@ class RaftNode {
         transport_(std::move(transport)),
         log_storage_(log_storage),
         snap_manager_(snap_manager),
-        dispatcher_impl_(rusty::Arc<DummyDispatcher>::make(id)),
-        dispatcher_(pro::make_proxy<DispatcherFacade, DummyDispatcher>(
-            *dispatcher_impl_)) {}
+        dispatcher_(rusty::make_box<DummyDispatcher>(id)) {}
 
   // @safe
   siteid_t id() const { return id_; }
@@ -119,10 +116,10 @@ class RaftNode {
   // real impl.
   // @safe
   DispatcherProxy take_dispatcher() {
-    // Build a fresh proxy from the shared adapter handle so the node
-    // can still keep its own view after handing one out.
-    return pro::make_proxy<DispatcherFacade, DummyDispatcher>(
-        *dispatcher_impl_);
+    // Build a fresh DummyDispatcher so the node can still keep its own
+    // view after handing one out. DummyDispatcher is stateless beyond
+    // self_, so a fresh instance is semantically equivalent.
+    return rusty::make_box<DummyDispatcher>(id_);
   }
 
   // Inspection accessors. These are placeholders backed by simple
@@ -150,7 +147,6 @@ class RaftNode {
   TransportProxy                transport_;
   LogStorage*                   log_storage_{nullptr};
   SnapshotManager*              snap_manager_{nullptr};
-  rusty::Arc<DummyDispatcher>   dispatcher_impl_;
   DispatcherProxy               dispatcher_;
 
   bool     is_leader_{false};

@@ -6,11 +6,10 @@
 // SpinMutex. Mirrors the SerializableRegistry idiom — registrations
 // at static-init, lookups during RPC dispatch.
 //
-// payload_ is now a value-
-// typed `pro::proxy<SerializableFacade>` (no more `shared_ptr<
-// Marshallable>`).  The factory returns a holder-shaped proxy
-// matching `SerializableEnvelope`'s storage shape, so unpack
-// semantics match.
+// payload_ is now a `SerializableProxy` (a `std::shared_ptr<
+// SerializableBase>`) — no more `shared_ptr<Marshallable>`. The
+// factory returns a holder-shaped proxy matching `SerializableEnvelope`'s
+// storage shape, so unpack semantics match.
 
 #include "any_message.hpp"
 

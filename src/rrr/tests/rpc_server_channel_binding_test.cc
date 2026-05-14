@@ -18,28 +18,15 @@
 #include <string>
 #include <utility>
 
-#include <rusty/box.hpp>
-
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_TESTS_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_TESTS_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_TESTS_RESTORE_RR_MACRO
-#endif
-
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 
 #include "../rrr.hpp"
 
 namespace rrr {
 namespace {
 
-// Tiny fake conforming to ChannelFactoryFacade. We only need a
+// Tiny fake conforming to ChannelFactoryBase. We only need a
 // non-null proxy to flip the channel-factory latch; the proxy
 // methods don't have to do anything meaningful for this scaffolding
 // test.
@@ -55,21 +42,20 @@ class NullFactoryStub {
     const char* backend_name() const { return "null-stub"; }
 };
 
-class NullFactoryStubAdapter {
+class NullFactoryStubAdapter : public ChannelFactoryBase {
  public:
     explicit NullFactoryStubAdapter(std::shared_ptr<NullFactoryStub> p)
         : stub_(std::move(p)) {}
-    ConnectResult connect(std::string_view addr) { return stub_->connect(addr); }
-    ChannelListenerProxy make_listener() { return stub_->make_listener(); }
-    const char* backend_name() const { return stub_->backend_name(); }
+    ConnectResult connect(std::string_view addr) override { return stub_->connect(addr); }
+    ChannelListenerProxy make_listener() override { return stub_->make_listener(); }
+    const char* backend_name() const override { return stub_->backend_name(); }
 
  private:
     std::shared_ptr<NullFactoryStub> stub_;
 };
 
 inline ChannelFactoryProxy make_stub_factory_proxy() {
-    return pro::make_proxy<ChannelFactoryFacade,
-                           NullFactoryStubAdapter>(
+    return rusty::make_box<NullFactoryStubAdapter>(
         std::make_shared<NullFactoryStub>());
 }
 

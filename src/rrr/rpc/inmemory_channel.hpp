@@ -86,18 +86,6 @@
 
 #include "../base/threading.hpp"  // SpinMutex<T>
 
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_INMEMORY_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_INMEMORY_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_INMEMORY_RESTORE_RR_MACRO
-#endif
-
 #include "channel.hpp"
 
 namespace rrr {
@@ -228,7 +216,7 @@ struct InMemoryConnectionState {
 
 /**
  * One half of a paired in-memory connection. Implements the
- * `ChannelConnectionFacade` contract.
+ * `ChannelConnectionBase` contract.
  *
  * `is_a_side` selects which set of callbacks/state this half talks
  * to (its own) and which set it dispatches into when the peer's
@@ -248,7 +236,7 @@ class InMemoryChannel {
     InMemoryChannel(InMemoryChannel&&)                 = delete;
     InMemoryChannel& operator=(InMemoryChannel&&)      = delete;
 
-    // ChannelConnectionFacade methods.
+    // ChannelConnectionBase methods.
     ChannelError send_frame(const ChannelFrame& f);
     void         flush()              {}
     void         close();
@@ -305,21 +293,21 @@ class InMemoryChannel {
     bool is_a_side_;
 };
 
-// Adapter wrapping `Arc<InMemoryChannel>` for the channel-proxy
-// facade. Mirrors `TcpConnectionChannelAdapter`.
-class InMemoryChannelAdapter {
+// Adapter wrapping `Arc<InMemoryChannel>` for the channel virtual
+// base. Mirrors `TcpConnectionChannelAdapter`.
+class InMemoryChannelAdapter : public ChannelConnectionBase {
  public:
     explicit InMemoryChannelAdapter(rusty::Arc<InMemoryChannel> conn)
         : conn_(std::move(conn)) {}
 
-    ChannelError send_frame(const ChannelFrame& f) { return mut_conn().send_frame(f); }
-    void         flush()              { mut_conn().flush(); }
-    void         close()              { mut_conn().close(); }
-    bool         is_closed() const    { return conn_->is_closed(); }
-    std::string  peer_address() const { return conn_->peer_address(); }
-    void         set_on_frame (OnFrameCallback  cb) { mut_conn().set_on_frame (std::move(cb)); }
-    void         set_on_closed(OnClosedCallback cb) { mut_conn().set_on_closed(std::move(cb)); }
-    void         set_on_error (OnErrorCallback  cb) { mut_conn().set_on_error (std::move(cb)); }
+    ChannelError send_frame(const ChannelFrame& f) override { return mut_conn().send_frame(f); }
+    void         flush() override              { mut_conn().flush(); }
+    void         close() override              { mut_conn().close(); }
+    bool         is_closed() const override    { return conn_->is_closed(); }
+    std::string  peer_address() const override { return conn_->peer_address(); }
+    void         set_on_frame (OnFrameCallback  cb) override { mut_conn().set_on_frame (std::move(cb)); }
+    void         set_on_closed(OnClosedCallback cb) override { mut_conn().set_on_closed(std::move(cb)); }
+    void         set_on_error (OnErrorCallback  cb) override { mut_conn().set_on_error (std::move(cb)); }
 
  private:
     InMemoryChannel& mut_conn() {
@@ -330,8 +318,7 @@ class InMemoryChannelAdapter {
 
 inline ChannelConnectionProxy make_inmemory_channel_proxy(
         rusty::Arc<InMemoryChannel> conn) {
-    return pro::make_proxy<ChannelConnectionFacade,
-                           InMemoryChannelAdapter>(std::move(conn));
+    return rusty::make_box<InMemoryChannelAdapter>(std::move(conn));
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +327,7 @@ inline ChannelConnectionProxy make_inmemory_channel_proxy(
 
 /**
  * In-memory accept-side listener. Implements the
- * `ChannelListenerFacade` contract.
+ * `ChannelListenerBase` contract.
  *
  * On `listen(addr)`, the listener registers itself in the
  * switchboard. On `close()`, it unregisters and refuses further
@@ -358,7 +345,7 @@ class InMemoryListener {
     InMemoryListener(InMemoryListener&&)                 = delete;
     InMemoryListener& operator=(InMemoryListener&&)      = delete;
 
-    // ChannelListenerFacade methods.
+    // ChannelListenerBase methods.
     ChannelError listen(std::string_view addr);
     void         close();
     bool         is_closed() const;
@@ -398,17 +385,17 @@ class InMemoryListener {
 
 // Adapter wrapping `Arc<InMemoryListener>` for the listener-proxy
 // facade. Mirrors `TcpListenerChannelAdapter` (equivalent in spirit).
-class InMemoryListenerAdapter {
+class InMemoryListenerAdapter : public ChannelListenerBase {
  public:
     explicit InMemoryListenerAdapter(rusty::Arc<InMemoryListener> listener)
         : listener_(std::move(listener)) {}
 
-    ChannelError listen(std::string_view addr) { return mut_listener().listen(addr); }
-    void         close()              { mut_listener().close(); }
-    bool         is_closed() const    { return listener_->is_closed(); }
-    std::string  local_address() const { return listener_->local_address(); }
-    void set_on_accept(OnAcceptCallback cb) { mut_listener().set_on_accept(std::move(cb)); }
-    void set_on_error (OnErrorCallback  cb) { mut_listener().set_on_error (std::move(cb)); }
+    ChannelError listen(std::string_view addr) override { return mut_listener().listen(addr); }
+    void         close() override              { mut_listener().close(); }
+    bool         is_closed() const override    { return listener_->is_closed(); }
+    std::string  local_address() const override { return listener_->local_address(); }
+    void set_on_accept(OnAcceptCallback cb) override { mut_listener().set_on_accept(std::move(cb)); }
+    void set_on_error (OnErrorCallback  cb) override { mut_listener().set_on_error (std::move(cb)); }
 
  private:
     InMemoryListener& mut_listener() {
@@ -419,8 +406,7 @@ class InMemoryListenerAdapter {
 
 inline ChannelListenerProxy make_inmemory_listener_proxy(
         rusty::Arc<InMemoryListener> listener) {
-    return pro::make_proxy<ChannelListenerFacade,
-                           InMemoryListenerAdapter>(std::move(listener));
+    return rusty::make_box<InMemoryListenerAdapter>(std::move(listener));
 }
 
 // ---------------------------------------------------------------------------
@@ -428,7 +414,7 @@ inline ChannelListenerProxy make_inmemory_listener_proxy(
 // ---------------------------------------------------------------------------
 
 /**
- * In-memory factory implementing `ChannelFactoryFacade`.
+ * In-memory factory implementing `ChannelFactoryBase`.
  *
  * `connect(addr)` looks up the listener registered for `addr` in the
  * switchboard, builds a paired connection, fires the listener's
@@ -453,7 +439,7 @@ class InMemoryFactory {
     InMemoryFactory(InMemoryFactory&&)                 = delete;
     InMemoryFactory& operator=(InMemoryFactory&&)      = delete;
 
-    // ChannelFactoryFacade methods.
+    // ChannelFactoryBase methods.
     ConnectResult        connect(std::string_view addr);
     ChannelListenerProxy make_listener();
     const char*          backend_name() const { return "inmemory"; }
@@ -467,14 +453,14 @@ class InMemoryFactory {
     rusty::Arc<InMemorySwitchboard> switchboard_;
 };
 
-class InMemoryFactoryAdapter {
+class InMemoryFactoryAdapter : public ChannelFactoryBase {
  public:
     explicit InMemoryFactoryAdapter(rusty::Arc<InMemoryFactory> factory)
         : factory_(std::move(factory)) {}
 
-    ConnectResult        connect(std::string_view addr) { return mut_factory().connect(addr); }
-    ChannelListenerProxy make_listener()                { return mut_factory().make_listener(); }
-    const char*          backend_name() const           { return factory_->backend_name(); }
+    ConnectResult        connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    ChannelListenerProxy make_listener() override                { return mut_factory().make_listener(); }
+    const char*          backend_name() const override           { return factory_->backend_name(); }
 
  private:
     InMemoryFactory& mut_factory() {
@@ -485,8 +471,7 @@ class InMemoryFactoryAdapter {
 
 inline ChannelFactoryProxy make_inmemory_factory_proxy(
         rusty::Arc<InMemoryFactory> factory) {
-    return pro::make_proxy<ChannelFactoryFacade,
-                           InMemoryFactoryAdapter>(std::move(factory));
+    return rusty::make_box<InMemoryFactoryAdapter>(std::move(factory));
 }
 
 // ---------------------------------------------------------------------------

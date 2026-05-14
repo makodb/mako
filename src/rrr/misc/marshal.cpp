@@ -14,8 +14,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <rusty/arc.hpp>
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
 
 #include "../base/threading.hpp"  // rrr::SpinMutex
 

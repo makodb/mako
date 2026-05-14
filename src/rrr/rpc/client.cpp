@@ -620,8 +620,8 @@ int ClientConnection::connect_via_factory(const char* addr) {
   // ChannelFactoryProxy's underlying type (e.g. TcpFactory wrapped in
   // an Arc<TcpFactory> adapter) is reference-counted, so copying the
   // proxy is cheap. We don't have a generic clone() on
-  // pro::proxy<F>, so we copy through the Option's Arc-equivalent
-  // semantics by re-binding via std::move from a fresh borrow.
+  // rusty::Box<ChannelFactoryBase>, so we use the proxy in place
+  // through the Box wrapper while the SpinMutex guard is held.
   // @unsafe { SpinMutex::lock + ChannelFactoryProxy copy }
   {
     auto guard = factory_.lock().unwrap();
@@ -633,9 +633,10 @@ int ClientConnection::connect_via_factory(const char* addr) {
       invoke_error_callback(ENOTCONN, "factory unbound");
       return ENOTCONN;
     }
-    // pro::proxy is move-only; we can't clone. Use the proxy in
-    // place via the Box wrapper. The SpinMutex guard is held across
-    // the connect() syscall — the caller's perspective is that
+    // The proxy (rusty::Box<ChannelFactoryBase>) is move-only; we
+    // can't clone. Use it in place via the Box wrapper. The
+    // SpinMutex guard is held across the connect() syscall — the
+    // caller's perspective is that
     // connect is synchronous (channel-layer contract), and the
     // factory itself is read-only (bind_factory is essentially
     // one-shot per Client lifecycle), so holding the lock briefly
@@ -1500,9 +1501,10 @@ int Client::connect(const char* addr, bool client) const {
   // `connect(addr)` and reconnect spawn route through the factory
   // (`factory->connect(addr)` -> `bind_channel(...)`) instead of
   // the legacy fd path. Take the proxy by std::move because
-  // pro::proxy is move-only; the factory is a one-shot push per
-  // Client lifecycle (re-bind via `set_channel_factory` to install
-  // a different one — affects subsequent Client::connect calls).
+  // `ChannelFactoryProxy` (rusty::Box<ChannelFactoryBase>) is
+  // move-only; the factory is a one-shot push per Client lifecycle
+  // (re-bind via `set_channel_factory` to install a different one —
+  // affects subsequent Client::connect calls).
   // @unsafe { SpinMutex::lock + Box deref + ChannelFactoryProxy move }
   {
     auto guard = pending_factory_.lock().unwrap();

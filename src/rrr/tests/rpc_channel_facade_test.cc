@@ -1,14 +1,12 @@
 // Guard test for the SRPC channel core interfaces.
 //
-// Validates that the facade contracts in `rpc/channel.hpp` are coherent: a
-// fake implementation can satisfy each facade, and dispatch through the
-// proxy reaches the implementation. No real network I/O.
+// Validates that the virtual base contracts in `rpc/channel.hpp` are
+// coherent: a fake implementation can satisfy each base, and dispatch
+// through the Box<Base> reaches the implementation. No real network I/O.
 //
 // The fakes are exposed via thin adapters that hold `std::shared_ptr<Fake>`
-// and forward every facade member to the underlying fake. This mirrors the
-// adapter idiom used by `PollableTypedArcAdapter` and lets tests retain a
-// handle to the fake state without the proxy library trying to dispatch on
-// `std::shared_ptr<T>` directly.
+// and forward every base method to the underlying fake, letting tests
+// retain a handle to the fake state through their own shared_ptr.
 
 #include <gtest/gtest.h>
 
@@ -17,17 +15,7 @@
 #include <string>
 #include <utility>
 
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_TESTS_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_TESTS_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_TESTS_RESTORE_RR_MACRO
-#endif
+#include <rusty/box.hpp>
 
 #include "../rrr.hpp"
 
@@ -80,29 +68,29 @@ class FakeConnection {
 };
 
 // Adapter wraps a `shared_ptr<FakeConnection>` and exposes the
-// ChannelConnectionFacade member surface. Lets the proxy own the adapter
+// ChannelConnectionBase member surface. Lets the proxy own the adapter
 // while the test keeps the underlying fake reachable through its own
 // shared_ptr.
-class FakeConnectionAdapter {
+class FakeConnectionAdapter : public ChannelConnectionBase {
  public:
     explicit FakeConnectionAdapter(std::shared_ptr<FakeConnection> conn)
         : conn_(std::move(conn)) {}
 
-    ChannelError send_frame(const ChannelFrame& f) { return conn_->send_frame(f); }
-    void   flush()                                 { conn_->flush(); }
-    void   close()                                 { conn_->close(); }
-    bool   is_closed() const                       { return conn_->is_closed(); }
-    std::string peer_address() const               { return conn_->peer_address(); }
-    void set_on_frame(OnFrameCallback cb)          { conn_->set_on_frame(std::move(cb)); }
-    void set_on_closed(OnClosedCallback cb)        { conn_->set_on_closed(std::move(cb)); }
-    void set_on_error(OnErrorCallback cb)          { conn_->set_on_error(std::move(cb)); }
+    ChannelError send_frame(const ChannelFrame& f) override { return conn_->send_frame(f); }
+    void   flush() override                                 { conn_->flush(); }
+    void   close() override                                 { conn_->close(); }
+    bool   is_closed() const override                       { return conn_->is_closed(); }
+    std::string peer_address() const override               { return conn_->peer_address(); }
+    void set_on_frame(OnFrameCallback cb) override          { conn_->set_on_frame(std::move(cb)); }
+    void set_on_closed(OnClosedCallback cb) override        { conn_->set_on_closed(std::move(cb)); }
+    void set_on_error(OnErrorCallback cb) override          { conn_->set_on_error(std::move(cb)); }
 
  private:
     std::shared_ptr<FakeConnection> conn_;
 };
 
 inline ChannelConnectionProxy make_fake_conn_proxy(std::shared_ptr<FakeConnection> c) {
-    return pro::make_proxy<ChannelConnectionFacade, FakeConnectionAdapter>(std::move(c));
+    return rusty::make_box<FakeConnectionAdapter>(std::move(c));
 }
 
 // ---------------------------------------------------------------------------
@@ -132,24 +120,24 @@ class FakeListener {
     ChannelError listen_result_ = ChannelError::None;
 };
 
-class FakeListenerAdapter {
+class FakeListenerAdapter : public ChannelListenerBase {
  public:
     explicit FakeListenerAdapter(std::shared_ptr<FakeListener> l)
         : listener_(std::move(l)) {}
 
-    ChannelError listen(std::string_view addr) { return listener_->listen(addr); }
-    void close()                               { listener_->close(); }
-    bool is_closed() const                     { return listener_->is_closed(); }
-    std::string local_address() const          { return listener_->local_address(); }
-    void set_on_accept(OnAcceptCallback cb)    { listener_->set_on_accept(std::move(cb)); }
-    void set_on_error(OnErrorCallback cb)      { listener_->set_on_error(std::move(cb)); }
+    ChannelError listen(std::string_view addr) override { return listener_->listen(addr); }
+    void close() override                               { listener_->close(); }
+    bool is_closed() const override                     { return listener_->is_closed(); }
+    std::string local_address() const override          { return listener_->local_address(); }
+    void set_on_accept(OnAcceptCallback cb) override    { listener_->set_on_accept(std::move(cb)); }
+    void set_on_error(OnErrorCallback cb) override      { listener_->set_on_error(std::move(cb)); }
 
  private:
     std::shared_ptr<FakeListener> listener_;
 };
 
 inline ChannelListenerProxy make_fake_listener_proxy(std::shared_ptr<FakeListener> l) {
-    return pro::make_proxy<ChannelListenerFacade, FakeListenerAdapter>(std::move(l));
+    return rusty::make_box<FakeListenerAdapter>(std::move(l));
 }
 
 // ---------------------------------------------------------------------------
@@ -180,21 +168,21 @@ class FakeFactory {
     std::string last_connect_addr_;
 };
 
-class FakeFactoryAdapter {
+class FakeFactoryAdapter : public ChannelFactoryBase {
  public:
     explicit FakeFactoryAdapter(std::shared_ptr<FakeFactory> f)
         : factory_(std::move(f)) {}
 
-    ConnectResult connect(std::string_view addr) { return factory_->connect(addr); }
-    ChannelListenerProxy make_listener()         { return factory_->make_listener(); }
-    const char* backend_name() const             { return factory_->backend_name(); }
+    ConnectResult connect(std::string_view addr) override { return factory_->connect(addr); }
+    ChannelListenerProxy make_listener() override         { return factory_->make_listener(); }
+    const char* backend_name() const override             { return factory_->backend_name(); }
 
  private:
     std::shared_ptr<FakeFactory> factory_;
 };
 
 inline ChannelFactoryProxy make_fake_factory_proxy(std::shared_ptr<FakeFactory> f) {
-    return pro::make_proxy<ChannelFactoryFacade, FakeFactoryAdapter>(std::move(f));
+    return rusty::make_box<FakeFactoryAdapter>(std::move(f));
 }
 
 // ===========================================================================

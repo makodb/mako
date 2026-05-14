@@ -4,7 +4,7 @@
 //
 // parallel to the existing `Marshal` /
 // `Marshallable` system, decoupling format (how bytes are laid out)
-// from target (where bytes go). Built atop `pro::proxy` for
+// from target (where bytes go). Built atop virtual base classes for
 // type-erased Sink/Source dispatch.
 //
 // Wire format byte layout matches the existing `Marshal` operator<< /
@@ -34,6 +34,7 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <string_view>
@@ -42,6 +43,8 @@
 #include <utility>
 #include <vector>
 
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <rusty/rusty.hpp>
 #include <rusty/btreemap.hpp>
 #include <rusty/btreeset.hpp>
@@ -49,18 +52,6 @@
 #include <rusty/hashmap.hpp>
 #include <rusty/hashset.hpp>
 #include <rusty/vec.hpp>
-
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_MARSHAL_ARCHIVE_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_MARSHAL_ARCHIVE_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_MARSHAL_ARCHIVE_RESTORE_RR_MACRO
-#endif
 
 #include "../base/all.hpp"
 
@@ -74,11 +65,8 @@ namespace rrr {
 class Marshal;
 
 // ---------------------------------------------------------------------------
-// Layer 1+2: Sink / Source pro::proxy facades.
+// Layer 1+2: Sink / Source virtual base classes.
 // ---------------------------------------------------------------------------
-
-PRO_DEF_MEM_DISPATCH(SinkMemWrite, write);
-PRO_DEF_MEM_DISPATCH(SourceMemRead, read);
 
 // Sink: anything that can accept (const void*, size_t) bytes.
 //
@@ -86,26 +74,29 @@ PRO_DEF_MEM_DISPATCH(SourceMemRead, read);
 // callers that need durability must call sink-specific flush methods
 // before observing (FdSink will drain on destruction).
 //
-// `pro::skills::indirect_rtti` enables `proxy_cast<Adapter>(*proxy)`
-// so callers can recover the concrete adapter type (used by the
-// MarshallDeputy archive operators in marshal_serializable_bridge.hpp
-// to detect a Marshal-backed sink/source and short-circuit through
-// the existing legacy operator<<>>).
-struct SinkFacade : pro::facade_builder
-    ::add_convention<SinkMemWrite, void(const void*, size_t)>
-    ::add_skill<pro::skills::indirect_rtti>
-    ::build {};
-using SinkProxy = pro::proxy<SinkFacade>;
+// Adapters inherit `SinkBase` so callers can recover the concrete
+// adapter type via `dynamic_cast<Adapter*>(sink_base_ptr)` — used by
+// the MarshallDeputy archive operators in
+// marshal_serializable_bridge.hpp to detect a Marshal-backed
+// sink/source and short-circuit through the existing legacy
+// operator<<>>.
+class SinkBase {
+ public:
+  virtual ~SinkBase() = default;
+  virtual void write(const void* p, size_t n) = 0;
+};
+using SinkProxy = rusty::Box<SinkBase>;
 
 // Source: returns the number of bytes actually read (may be < n at EOF).
 //
 // Convention: returns 0 at EOF; raises (or aborts) on transport error.
 // Concrete sources control their own buffering / blocking semantics.
-struct SourceFacade : pro::facade_builder
-    ::add_convention<SourceMemRead, size_t(void*, size_t)>
-    ::add_skill<pro::skills::indirect_rtti>
-    ::build {};
-using SourceProxy = pro::proxy<SourceFacade>;
+class SourceBase {
+ public:
+  virtual ~SourceBase() = default;
+  virtual size_t read(void* p, size_t n) = 0;
+};
+using SourceProxy = rusty::Box<SourceBase>;
 
 // ---------------------------------------------------------------------------
 // Concrete Sink / Source — Phase 1a: in-memory buffer only.
@@ -173,33 +164,31 @@ class BufferSource {
   bool   eof()       const noexcept { return pos_ >= len_; }
 };
 
-// Adapter wrappers for the proxy facades.
+// Adapter wrappers for the SinkBase / SourceBase virtual bases.
 //
-// pro::proxy expects an "adapter" value that satisfies the convention
-// methods — passing a raw `BufferSink*` directly does not match, so
-// we wrap the pointer in a small forwarding adapter (mirroring the
-// pattern used by `TcpConnectionChannelAdapter` etc. in tcp_channel.hpp).
+// Adapters wrap a non-owning raw pointer to the concrete sink/source
+// and forward `write` / `read` through it.
 //
 // Lifetime: the proxy must not outlive `*sink` / `*source`.
-class BufferSinkAdapter {
+class BufferSinkAdapter : public SinkBase {
   BufferSink* sink_;
  public:
   explicit BufferSinkAdapter(BufferSink* s) noexcept : sink_(s) {}
-  void write(const void* p, size_t n) { sink_->write(p, n); }
+  void write(const void* p, size_t n) override { sink_->write(p, n); }
 };
 
-class BufferSourceAdapter {
+class BufferSourceAdapter : public SourceBase {
   BufferSource* source_;
  public:
   explicit BufferSourceAdapter(BufferSource* s) noexcept : source_(s) {}
-  size_t read(void* p, size_t n) { return source_->read(p, n); }
+  size_t read(void* p, size_t n) override { return source_->read(p, n); }
 };
 
 inline SinkProxy make_sink_proxy(BufferSink* sink) {
-  return pro::make_proxy<SinkFacade, BufferSinkAdapter>(sink);
+  return rusty::make_box<BufferSinkAdapter>(sink);
 }
 inline SourceProxy make_source_proxy(BufferSource* source) {
-  return pro::make_proxy<SourceFacade, BufferSourceAdapter>(source);
+  return rusty::make_box<BufferSourceAdapter>(source);
 }
 
 // ---------------------------------------------------------------------------
@@ -275,25 +264,25 @@ class FdSource {
   }
 };
 
-class FdSinkAdapter {
+class FdSinkAdapter : public SinkBase {
   FdSink* sink_;
  public:
   explicit FdSinkAdapter(FdSink* s) noexcept : sink_(s) {}
-  void write(const void* p, size_t n) { sink_->write(p, n); }
+  void write(const void* p, size_t n) override { sink_->write(p, n); }
 };
 
-class FdSourceAdapter {
+class FdSourceAdapter : public SourceBase {
   FdSource* source_;
  public:
   explicit FdSourceAdapter(FdSource* s) noexcept : source_(s) {}
-  size_t read(void* p, size_t n) { return source_->read(p, n); }
+  size_t read(void* p, size_t n) override { return source_->read(p, n); }
 };
 
 inline SinkProxy make_sink_proxy(FdSink* sink) {
-  return pro::make_proxy<SinkFacade, FdSinkAdapter>(sink);
+  return rusty::make_box<FdSinkAdapter>(sink);
 }
 inline SourceProxy make_source_proxy(FdSource* source) {
-  return pro::make_proxy<SourceFacade, FdSourceAdapter>(source);
+  return rusty::make_box<FdSourceAdapter>(source);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,11 +330,11 @@ class MarshalSource {
   size_t read(void* p, size_t n);
 };
 
-class MarshalSinkAdapter {
+class MarshalSinkAdapter : public SinkBase {
   MarshalSink* sink_;
  public:
   explicit MarshalSinkAdapter(MarshalSink* s) noexcept : sink_(s) {}
-  void write(const void* p, size_t n) { sink_->write(p, n); }
+  void write(const void* p, size_t n) override { sink_->write(p, n); }
 
   // Symmetric with MarshalSourceAdapter::source(); exposed for the
   // MarshallDeputy archive operator<< (currently it doesn't need
@@ -354,11 +343,11 @@ class MarshalSinkAdapter {
   MarshalSink* sink() const noexcept { return sink_; }
 };
 
-class MarshalSourceAdapter {
+class MarshalSourceAdapter : public SourceBase {
   MarshalSource* source_;
  public:
   explicit MarshalSourceAdapter(MarshalSource* s) noexcept : source_(s) {}
-  size_t read(void* p, size_t n) { return source_->read(p, n); }
+  size_t read(void* p, size_t n) override { return source_->read(p, n); }
 
   // Used by the MarshallDeputy archive operator>> to recover the
   // underlying Marshal — the operator detours through legacy
@@ -368,10 +357,10 @@ class MarshalSourceAdapter {
 };
 
 inline SinkProxy make_sink_proxy(MarshalSink* sink) {
-  return pro::make_proxy<SinkFacade, MarshalSinkAdapter>(sink);
+  return rusty::make_box<MarshalSinkAdapter>(sink);
 }
 inline SourceProxy make_source_proxy(MarshalSource* source) {
-  return pro::make_proxy<SourceFacade, MarshalSourceAdapter>(source);
+  return rusty::make_box<MarshalSourceAdapter>(source);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,10 +401,10 @@ class BinaryWriteArchive {
   explicit BinaryWriteArchive(MarshalSink* sink)
       : sink_(make_sink_proxy(sink)) {}
 
-  // Expose the inner SinkProxy so callers can use proxy_cast to
-  // recover the concrete adapter type (e.g.
-  // `proxy_cast<MarshalSinkAdapter>(*archive.sink())` to detect a
-  // Marshal-backed sink). Used by the MarshallDeputy archive
+  // Expose the inner SinkProxy so callers can dynamic_cast to recover
+  // the concrete adapter type (e.g.
+  // `dynamic_cast<MarshalSinkAdapter*>(archive.sink().get())` to
+  // detect a Marshal-backed sink). Used by the MarshallDeputy archive
   // operators in marshal_serializable_bridge.hpp.
   SinkProxy& sink() noexcept { return sink_; }
   const SinkProxy& sink() const noexcept { return sink_; }
@@ -604,7 +593,7 @@ class BinaryReadArchive {
   explicit BinaryReadArchive(MarshalSource* source)
       : source_(make_source_proxy(source)) {}
 
-  // Expose the inner SourceProxy so callers can use proxy_cast to
+  // Expose the inner SourceProxy so callers can dynamic_cast to
   // recover the concrete adapter type. Used by the MarshallDeputy
   // archive operators in marshal_serializable_bridge.hpp.
   SourceProxy& source() noexcept { return source_; }
@@ -852,9 +841,9 @@ class BinaryReadArchive {
 //   - void load(BinaryReadArchive&)         -- consume bytes
 //   - int32_t kind() const                  -- factory tag
 //
-// SerializableFacade type-erases over any such T. SerializableRegistry
-// maps a kind tag to a factory that constructs a fresh
-// SerializableProxy (default-constructing the underlying T).
+// SerializableBase type-erases over any such T (via virtual dispatch).
+// SerializableRegistry maps a kind tag to a factory that constructs a
+// fresh SerializableProxy (default-constructing the underlying T).
 //
 // Wire format:
 //   - SerializableProxy::save emits ONLY the payload bytes (no kind
@@ -868,49 +857,44 @@ class BinaryReadArchive {
 // old system; per-command-type migrations happen in Phase 4.
 // ---------------------------------------------------------------------------
 
-PRO_DEF_MEM_DISPATCH(SerializableMemSave, save);
-PRO_DEF_MEM_DISPATCH(SerializableMemLoad, load);
-PRO_DEF_MEM_DISPATCH(SerializableMemKind, kind);
+// Abstract base class for serializable payloads. Concrete derived
+// types implement `save`, `load`, and `kind`. The proxy is a
+// `std::shared_ptr<SerializableBase>` so SerializableEnvelope copies
+// share the underlying payload via refcount (matching the original
+// `support_copy<nontrivial>` semantics where copies via
+// SerializableSharedPtrHolder shared the inner shared_ptr).
+//
+// Downcasting: `dynamic_cast<T*>(proxy.get())` recovers the concrete
+// derived type, replacing the prior `proxy_cast<T>(&*proxy)` call.
+class SerializableBase {
+ public:
+  virtual ~SerializableBase() = default;
+  virtual void save(BinaryWriteArchive& ar) const = 0;
+  virtual void load(BinaryReadArchive& ar) = 0;
+  virtual int32_t kind() const = 0;
+};
 
-struct SerializableFacade : pro::facade_builder
-    ::add_convention<SerializableMemSave, void(BinaryWriteArchive&) const>
-    ::add_convention<SerializableMemLoad, void(BinaryReadArchive&)>
-    ::add_convention<SerializableMemKind, int32_t() const>
-    // Phase 4 prep: enable `pro::proxy_cast<T*>(&proxy)` for type-safe
-    // downcast back to the underlying T. Used by `serializable_cast<T>`
-    // in `marshal_serializable_bridge.hpp` to extract a typed payload
-    // from a SerializableMarshallableAdapter wrapped in MarshallDeputy.
-    ::add_skill<pro::skills::indirect_rtti>
-    // 2 step 5 (2026-05-05): enable `pro::proxy<F>` copy via
-    // T's copy ctor — required for SerializableEnvelope to be
-    // copyable when its `inner_` is a value-typed proxy.
-    // `support_copy` is a facade_builder method, not a skill.
-    ::support_copy<pro::constraint_level::nontrivial>
-    ::build {};
-
-using SerializableProxy = pro::proxy<SerializableFacade>;
+using SerializableProxy = std::shared_ptr<SerializableBase>;
 
 namespace details {
 
 // Wrapper used to put a `shared_ptr<T>` inside a SerializableProxy.
-// The proxy dispatches save/load/kind onto the underlying T by
-// forwarding through the held shared_ptr.  Copies of the proxy share
-// the underlying T (the shared_ptr's refcount).  Used by
-// `SerializableEnvelope::pack` / `pack_aliased` /
-// `SerializableEnvelope(shared_ptr<T>)` and by
-// `SerializableRegistry::reg<T>` so envelope.load() also produces a
-// holder-shaped proxy with shared ownership.
+// Inherits SerializableBase so the proxy's shared_ptr dispatches
+// save/load/kind onto the underlying T through the held shared_ptr.
+// Two SerializableProxy values produced from the same source share
+// the same SerializableSharedPtrHolder via the proxy's shared_ptr
+// refcount.
 template<typename T>
-struct SerializableSharedPtrHolder {
+struct SerializableSharedPtrHolder : public SerializableBase {
   std::shared_ptr<T> ptr;
 
   SerializableSharedPtrHolder() : ptr(std::make_shared<T>()) {}
   explicit SerializableSharedPtrHolder(std::shared_ptr<T> p)
       : ptr(std::move(p)) {}
 
-  void save(BinaryWriteArchive& ar) const { ptr->save(ar); }
-  void load(BinaryReadArchive& ar) { ptr->load(ar); }
-  int32_t kind() const { return ptr->kind(); }
+  void save(BinaryWriteArchive& ar) const override { ptr->save(ar); }
+  void load(BinaryReadArchive& ar) override { ptr->load(ar); }
+  int32_t kind() const override { return ptr->kind(); }
 };
 
 }  // namespace details
@@ -958,14 +942,19 @@ struct Serializable {
 // longer expressed as a separate template-constraint predicate.
 
 // Construct a SerializableProxy that owns a T constructed from the
-// forwarded arguments (default-constructed if no args). T must
-// satisfy:
+// forwarded arguments (default-constructed if no args). T just needs
+// to satisfy the structural shape:
 //   - void save(BinaryWriteArchive&) const
 //   - void load(BinaryReadArchive&)
 //   - int32_t kind() const
+// The factory wraps T in a SerializableSharedPtrHolder<T> so callers
+// can downcast back to T* via
+//   dynamic_cast<details::SerializableSharedPtrHolder<T>*>(proxy.get())
+// (or via the envelope's unpack<T>() / unpack_shared<T>()).
 template<class T, class... Args>
 inline SerializableProxy make_serializable_proxy(Args&&... args) {
-  return pro::make_proxy<SerializableFacade, T>(std::forward<Args>(args)...);
+  auto sp = std::make_shared<T>(std::forward<Args>(args)...);
+  return std::make_shared<details::SerializableSharedPtrHolder<T>>(std::move(sp));
 }
 
 // Factory registry: maps int32_t kind tags to factories that produce
@@ -993,13 +982,11 @@ class SerializableRegistry {
   template<class T>
   static int reg(int32_t kind) {
     register_factory(kind, []() -> SerializableProxy {
-      // 2 step 5 (2026-05-05): factory returns a holder-shaped
-      // proxy so SerializableEnvelope::load gives unpack_shared<T> a
-      // refcount-shared shared_ptr<T> — no dangling pointer when the
-      // helper outlives the source envelope.
+      // Holder-shaped proxy so SerializableEnvelope::load gives
+      // unpack_shared<T> a refcount-shared shared_ptr<T> — no dangling
+      // pointer when the helper outlives the source envelope.
       auto sp = std::make_shared<T>();
-      return pro::make_proxy<SerializableFacade,
-                             details::SerializableSharedPtrHolder<T>>(
+      return std::make_shared<details::SerializableSharedPtrHolder<T>>(
           std::move(sp));
     });
     return 0;

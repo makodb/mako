@@ -9,7 +9,7 @@
  *   - ChannelSwitchboard owns one mpsc channel per site and a small
  *     fault-injection state machine (drop direction, partition two
  *     groups, reset).
- *   - ChannelTransportAdapter satisfies TransportFacade. Each
+ *   - ChannelTransportAdapter satisfies TransportBase. Each
  *     reply-expecting send_* allocates a one-shot reply channel,
  *     pushes an Envelope carrying the deliver-closure + reply sender,
  *     then blocks on the reply receiver. The caller's thread parks in
@@ -178,17 +178,17 @@ make_fire_and_forget(Handle handle) {
 }  // namespace detail
 
 // ---------------------------------------------------------------------------
-// ChannelTransportAdapter — satisfies TransportFacade (fiber-sync).
+// ChannelTransportAdapter — satisfies TransportBase (fiber-sync).
 // ---------------------------------------------------------------------------
 
-class ChannelTransportAdapter {
+class ChannelTransportAdapter : public TransportBase {
  public:
   // @unsafe { non-owning switchboard pointer }
   ChannelTransportAdapter(ChannelSwitchboard* sw, siteid_t self, parid_t par)
       : sw_(sw), self_(self), par_(par) {}
 
   // @safe
-  siteid_t self_site_id() const { return self_; }
+  siteid_t self_site_id() const override { return self_; }
 
   // ------------------------------------------------------------------
   // Reply-expecting RPCs.
@@ -209,7 +209,7 @@ class ChannelTransportAdapter {
   // ------------------------------------------------------------------
 
   // @unsafe { mpsc bridge }
-  AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) {
+  AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
     auto [tx, rx] = rusty::sync::mpsc::channel<AppendEntriesReply>();
     Envelope env{self_, dst,
         rusty::Function<void(DispatcherProxy&)>(
@@ -224,7 +224,7 @@ class ChannelTransportAdapter {
 
   // @unsafe { mpsc bridge }
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
-                                                    EmptyAppendEntriesReq req) {
+                                                    EmptyAppendEntriesReq req) override {
     auto [tx, rx] = rusty::sync::mpsc::channel<EmptyAppendEntriesReply>();
     Envelope env{self_, dst,
         rusty::Function<void(DispatcherProxy&)>(
@@ -238,7 +238,7 @@ class ChannelTransportAdapter {
   }
 
   // @unsafe { mpsc bridge }
-  VoteReply send_vote(siteid_t dst, VoteReq req) {
+  VoteReply send_vote(siteid_t dst, VoteReq req) override {
     auto [tx, rx] = rusty::sync::mpsc::channel<VoteReply>();
     Envelope env{self_, dst,
         rusty::Function<void(DispatcherProxy&)>(
@@ -252,7 +252,7 @@ class ChannelTransportAdapter {
   }
 
   // @unsafe { mpsc bridge }
-  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) {
+  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
     auto [tx, rx] = rusty::sync::mpsc::channel<TimeoutNowReply>();
     Envelope env{self_, dst,
         rusty::Function<void(DispatcherProxy&)>(
@@ -266,7 +266,7 @@ class ChannelTransportAdapter {
   }
 
   // @unsafe { mpsc bridge }
-  InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) {
+  InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
     auto [tx, rx] = rusty::sync::mpsc::channel<InstallSnapshotReply>();
     Envelope env{self_, dst,
         rusty::Function<void(DispatcherProxy&)>(
@@ -284,7 +284,7 @@ class ChannelTransportAdapter {
   // ------------------------------------------------------------------
 
   // @safe
-  void send_vote_durable(siteid_t candidate, VoteDurableReq req) {
+  void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
     Envelope env{self_, candidate,
         rusty::Function<void(DispatcherProxy&)>(
             [req](DispatcherProxy& disp) mutable {
@@ -294,7 +294,7 @@ class ChannelTransportAdapter {
   }
 
   // @safe
-  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) {
+  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
     Envelope env{self_, leader,
         rusty::Function<void(DispatcherProxy&)>(
             [req](DispatcherProxy& disp) mutable {
@@ -304,7 +304,7 @@ class ChannelTransportAdapter {
   }
 
   // @safe
-  void send_notify_restart(siteid_t dst, parid_t /*par*/) {
+  void send_notify_restart(siteid_t dst, parid_t /*par*/) override {
     NotifyRestartReq req{};
     req.restarted_site_id = self_;
     Envelope env{self_, dst,
@@ -325,8 +325,7 @@ class ChannelTransportAdapter {
 inline TransportProxy make_channel_transport(ChannelSwitchboard* sw,
                                              siteid_t self,
                                              parid_t  par) {
-  ChannelTransportAdapter a{sw, self, par};
-  return pro::make_proxy<TransportFacade, ChannelTransportAdapter>(std::move(a));
+  return rusty::make_box<ChannelTransportAdapter>(sw, self, par);
 }
 
 // ---------------------------------------------------------------------------

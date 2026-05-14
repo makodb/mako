@@ -34,8 +34,8 @@ typedef vector<RccTx*> RccScc;
 // AnyMessage-wrapped Serializable. No `kind()` discriminant —
 // AnyMessage's `type_name_` string carries the type identity on the
 // wire.  The `kind()` method below is a stub required by the
-// `SerializableFacade` proxy contract; its return value is never
-// used because the surrounding AnyMessage's kind always wins.
+// `SerializableBase` contract; its return value is never used
+// because the surrounding AnyMessage's kind always wins.
 class EmptyGraph {
  public:
   EmptyGraph() = default;
@@ -71,7 +71,7 @@ class RccGraph : public Graph<RccTx> {
     // XXX hopefully some memory leak here does not hurt. :(
   }
 
-  // Stub for the SerializableFacade proxy contract; AnyMessage carries
+  // Stub for the SerializableBase contract; AnyMessage carries
   // the type identity on the wire, so this value is never consulted.
   int32_t kind() const noexcept { return 0; }
 

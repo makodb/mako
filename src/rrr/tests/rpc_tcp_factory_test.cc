@@ -19,7 +19,7 @@
 //   - Closing the client side fires on_closed on the server side.
 //   - Multiple sequential connect+frame exchanges through the same
 //     listener.
-//   - Factory channel proxy (`pro::proxy<ChannelFactoryFacade>`)
+//   - Factory channel proxy (`rusty::Box<ChannelFactoryBase>`)
 //     forwards all ops to the underlying TcpFactory.
 
 #include <gtest/gtest.h>

@@ -1,11 +1,12 @@
-// Compile + behavior test for the TransportFacade. Installs a trivial
+// Compile + behavior test for TransportBase. Installs a trivial
 // in-process adapter that records every send_* invocation, wraps it in
-// a TransportProxy, and verifies that each facade method routes
+// a TransportProxy, and verifies that each base method routes
 // correctly and returns the expected reply.
 
 #include <gtest/gtest.h>
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <rusty/sync/atomic.hpp>
 
 #include "deptran/raft/transport.hpp"
@@ -27,13 +28,14 @@ struct Counts {
   AtomicInt n_install_snap{0};
 };
 
-struct RecordingAdapter {
+class RecordingAdapter : public TransportBase {
+ public:
   siteid_t  self{99};
   rusty::Arc<Counts> counts{rusty::Arc<Counts>::make()};
 
-  siteid_t self_site_id() const { return self; }
+  siteid_t self_site_id() const override { return self; }
 
-  AppendEntriesReply send_append_entries(siteid_t, AppendEntriesReq) {
+  AppendEntriesReply send_append_entries(siteid_t, AppendEntriesReq) override {
     counts->n_append.fetch_add(1);
     AppendEntriesReply r{};
     r.follower_append_ok = 1;
@@ -41,40 +43,40 @@ struct RecordingAdapter {
     return r;
   }
 
-  EmptyAppendEntriesReply send_empty_append_entries(siteid_t, EmptyAppendEntriesReq) {
+  EmptyAppendEntriesReply send_empty_append_entries(siteid_t, EmptyAppendEntriesReq) override {
     counts->n_empty.fetch_add(1);
     EmptyAppendEntriesReply r{};
     r.follower_append_ok = 1;
     return r;
   }
 
-  VoteReply send_vote(siteid_t, VoteReq) {
+  VoteReply send_vote(siteid_t, VoteReq) override {
     counts->n_vote.fetch_add(1);
     VoteReply r{};
     r.vote_granted = true;
     return r;
   }
 
-  TimeoutNowReply send_timeout_now(siteid_t, TimeoutNowReq) {
+  TimeoutNowReply send_timeout_now(siteid_t, TimeoutNowReq) override {
     counts->n_timeout.fetch_add(1);
     TimeoutNowReply r{};
     r.success = true;
     return r;
   }
 
-  void send_vote_durable(siteid_t, VoteDurableReq) {
+  void send_vote_durable(siteid_t, VoteDurableReq) override {
     counts->n_vote_durable.fetch_add(1);
   }
 
-  void send_append_entries_durable(siteid_t, AppendEntriesDurableReq) {
+  void send_append_entries_durable(siteid_t, AppendEntriesDurableReq) override {
     counts->n_append_durable.fetch_add(1);
   }
 
-  void send_notify_restart(siteid_t, parid_t) {
+  void send_notify_restart(siteid_t, parid_t) override {
     counts->n_notify_restart.fetch_add(1);
   }
 
-  InstallSnapshotReply send_install_snapshot(siteid_t, InstallSnapshotReq) {
+  InstallSnapshotReply send_install_snapshot(siteid_t, InstallSnapshotReq) override {
     counts->n_install_snap.fetch_add(1);
     InstallSnapshotReply r{};
     r.term_out = 42;
@@ -85,9 +87,9 @@ struct RecordingAdapter {
 }  // namespace
 
 TEST(RaftTransportFacadeTest, AdapterConformsToFacade) {
-  auto adapter = rusty::Arc<RecordingAdapter>::make();
-  TransportProxy proxy =
-      pro::make_proxy<TransportFacade, RecordingAdapter>(*adapter);
+  auto* raw = new RecordingAdapter();
+  rusty::Arc<Counts> counts_handle = raw->counts;
+  TransportProxy proxy(raw);
 
   EXPECT_EQ(proxy->self_site_id(), 99u);
 
@@ -110,12 +112,12 @@ TEST(RaftTransportFacadeTest, AdapterConformsToFacade) {
   auto s = proxy->send_install_snapshot(7, InstallSnapshotReq{});
   EXPECT_EQ(s.term_out, 42u);
 
-  EXPECT_EQ(adapter->counts->n_append.load(),          1);
-  EXPECT_EQ(adapter->counts->n_empty.load(),           1);
-  EXPECT_EQ(adapter->counts->n_vote.load(),            1);
-  EXPECT_EQ(adapter->counts->n_timeout.load(),         1);
-  EXPECT_EQ(adapter->counts->n_vote_durable.load(),    1);
-  EXPECT_EQ(adapter->counts->n_append_durable.load(),  1);
-  EXPECT_EQ(adapter->counts->n_notify_restart.load(),  1);
-  EXPECT_EQ(adapter->counts->n_install_snap.load(),    1);
+  EXPECT_EQ(counts_handle->n_append.load(),          1);
+  EXPECT_EQ(counts_handle->n_empty.load(),           1);
+  EXPECT_EQ(counts_handle->n_vote.load(),            1);
+  EXPECT_EQ(counts_handle->n_timeout.load(),         1);
+  EXPECT_EQ(counts_handle->n_vote_durable.load(),    1);
+  EXPECT_EQ(counts_handle->n_append_durable.load(),  1);
+  EXPECT_EQ(counts_handle->n_notify_restart.load(),  1);
+  EXPECT_EQ(counts_handle->n_install_snap.load(),    1);
 }
