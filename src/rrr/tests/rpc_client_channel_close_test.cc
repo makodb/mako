@@ -93,7 +93,7 @@ class CloseDriverChannelStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_close_driver_proxy(
     std::shared_ptr<CloseDriverChannelStub> p) {
-    return rusty::make_box<CloseDriverChannelStubAdapter>(std::move(p));
+    return std::make_unique<CloseDriverChannelStubAdapter>(std::move(p));
 }
 
 // ---------------------------------------------------------------------------

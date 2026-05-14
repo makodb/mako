@@ -99,7 +99,7 @@ class FakeChannelStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_fake_channel_proxy(
     std::shared_ptr<FakeChannelStub> stub) {
-    return rusty::make_box<FakeChannelStubAdapter>(std::move(stub));
+    return std::make_unique<FakeChannelStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ class FakeChannelFactoryAdapter : public ChannelFactoryBase {
 
 inline ChannelFactoryProxy make_fake_factory_proxy(
     std::shared_ptr<FakeChannelFactory> f) {
-    return rusty::make_box<FakeChannelFactoryAdapter>(std::move(f));
+    return std::make_unique<FakeChannelFactoryAdapter>(std::move(f));
 }
 
 // ---------------------------------------------------------------------------

@@ -279,7 +279,7 @@ class TcpConnectionPollableAdapter : public PollableBase {
 
 inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
     rusty::Arc<TcpConnection> conn) {
-    return rusty::make_box<TcpConnectionChannelAdapter>(std::move(conn));
+    return std::make_unique<TcpConnectionChannelAdapter>(std::move(conn));
 }
 
 inline PollableProxy make_tcp_connection_pollable_proxy(
@@ -443,7 +443,7 @@ class TcpListenerPollableAdapter : public PollableBase {
 
 inline ChannelListenerProxy make_tcp_listener_channel_proxy(
     rusty::Arc<TcpListener> listener) {
-    return rusty::make_box<TcpListenerChannelAdapter>(std::move(listener));
+    return std::make_unique<TcpListenerChannelAdapter>(std::move(listener));
 }
 
 inline PollableProxy make_tcp_listener_pollable_proxy(
@@ -520,7 +520,7 @@ class TcpFactoryAdapter : public ChannelFactoryBase {
 };
 
 inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
-    return rusty::make_box<TcpFactoryAdapter>(std::move(factory));
+    return std::make_unique<TcpFactoryAdapter>(std::move(factory));
 }
 
 }  // namespace rrr

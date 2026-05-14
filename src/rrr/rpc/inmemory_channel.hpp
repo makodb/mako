@@ -318,7 +318,7 @@ class InMemoryChannelAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_inmemory_channel_proxy(
         rusty::Arc<InMemoryChannel> conn) {
-    return rusty::make_box<InMemoryChannelAdapter>(std::move(conn));
+    return std::make_unique<InMemoryChannelAdapter>(std::move(conn));
 }
 
 // ---------------------------------------------------------------------------
@@ -406,7 +406,7 @@ class InMemoryListenerAdapter : public ChannelListenerBase {
 
 inline ChannelListenerProxy make_inmemory_listener_proxy(
         rusty::Arc<InMemoryListener> listener) {
-    return rusty::make_box<InMemoryListenerAdapter>(std::move(listener));
+    return std::make_unique<InMemoryListenerAdapter>(std::move(listener));
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +471,7 @@ class InMemoryFactoryAdapter : public ChannelFactoryBase {
 
 inline ChannelFactoryProxy make_inmemory_factory_proxy(
         rusty::Arc<InMemoryFactory> factory) {
-    return rusty::make_box<InMemoryFactoryAdapter>(std::move(factory));
+    return std::make_unique<InMemoryFactoryAdapter>(std::move(factory));
 }
 
 // ---------------------------------------------------------------------------

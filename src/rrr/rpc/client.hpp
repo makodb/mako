@@ -1005,7 +1005,7 @@ public:
      */
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void bind_factory(ChannelFactoryProxy factory) {
-        if (!factory.has_value()) return;
+        if (!factory) return;
         // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
         {
             auto guard = factory_.lock().unwrap();
@@ -2105,7 +2105,7 @@ public:
      */
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void set_channel_factory(ChannelFactoryProxy factory) const {
-        if (!factory.has_value()) return;
+        if (!factory) return;
         // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
         {
             auto guard = pending_factory_.lock().unwrap();

@@ -113,7 +113,7 @@ class RecvDriverChannelStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_recv_driver_proxy(
     std::shared_ptr<RecvDriverChannelStub> p) {
-    return rusty::make_box<RecvDriverChannelStubAdapter>(std::move(p));
+    return std::make_unique<RecvDriverChannelStubAdapter>(std::move(p));
 }
 
 // ---------------------------------------------------------------------------

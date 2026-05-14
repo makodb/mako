@@ -90,7 +90,7 @@ class FakeConnectionAdapter : public ChannelConnectionBase {
 };
 
 inline ChannelConnectionProxy make_fake_conn_proxy(std::shared_ptr<FakeConnection> c) {
-    return rusty::make_box<FakeConnectionAdapter>(std::move(c));
+    return std::make_unique<FakeConnectionAdapter>(std::move(c));
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ class FakeListenerAdapter : public ChannelListenerBase {
 };
 
 inline ChannelListenerProxy make_fake_listener_proxy(std::shared_ptr<FakeListener> l) {
-    return rusty::make_box<FakeListenerAdapter>(std::move(l));
+    return std::make_unique<FakeListenerAdapter>(std::move(l));
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ class FakeFactoryAdapter : public ChannelFactoryBase {
 };
 
 inline ChannelFactoryProxy make_fake_factory_proxy(std::shared_ptr<FakeFactory> f) {
-    return rusty::make_box<FakeFactoryAdapter>(std::move(f));
+    return std::make_unique<FakeFactoryAdapter>(std::move(f));
 }
 
 // ===========================================================================
@@ -288,7 +288,7 @@ TEST(RpcChannelFacadeTest, ListenerDeliversAcceptedConnection) {
     int accepted = 0;
     listener_proxy->set_on_accept([&](ChannelConnectionProxy c) {
         ++accepted;
-        EXPECT_TRUE(c.has_value());
+        EXPECT_TRUE(static_cast<bool>(c));
         c->flush();
     });
     fake_listener->deliver_accept(std::move(conn_proxy));
@@ -305,16 +305,16 @@ TEST(RpcChannelFacadeTest, FactoryProducesConnectionsAndListeners) {
 
     auto ok = factory->connect("127.0.0.1:1");
     EXPECT_EQ(ok.error, ChannelError::None);
-    EXPECT_TRUE(ok.connection.has_value());
+    EXPECT_TRUE(static_cast<bool>(ok.connection));
     EXPECT_EQ(fake_factory->last_connect_addr(), "127.0.0.1:1");
 
     fake_factory->set_connect_result(ChannelError::ConnectionRefused);
     auto fail = factory->connect("127.0.0.1:9");
     EXPECT_EQ(fail.error, ChannelError::ConnectionRefused);
-    EXPECT_FALSE(fail.connection.has_value());
+    EXPECT_FALSE(static_cast<bool>(fail.connection));
 
     auto listener = factory->make_listener();
-    EXPECT_TRUE(listener.has_value());
+    EXPECT_TRUE(static_cast<bool>(listener));
 }
 
 }  // namespace

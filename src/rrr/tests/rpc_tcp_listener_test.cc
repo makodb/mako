@@ -224,7 +224,7 @@ TEST_F(TcpListenerTest, HandleReadAcceptsSingleConnection) {
     std::string accepted_peer;
     mut_listener().set_on_accept([&](ChannelConnectionProxy proxy) {
         ++accepts;
-        if (proxy.has_value()) {
+        if (proxy) {
             accepted_peer = proxy->peer_address();
         }
     });
@@ -244,7 +244,7 @@ TEST_F(TcpListenerTest, HandleReadAcceptsMultipleConnectionsInOnePass) {
     std::vector<std::string> peers;
     mut_listener().set_on_accept([&](ChannelConnectionProxy proxy) {
         ++accepts;
-        if (proxy.has_value()) {
+        if (proxy) {
             peers.push_back(proxy->peer_address());
         }
     });
@@ -294,7 +294,7 @@ TEST_F(TcpListenerTest, AcceptedConnectionIsUsableThroughProxy) {
 
     EXPECT_TRUE(mut_listener().handle_read());
     ASSERT_TRUE(received.is_some());
-    EXPECT_TRUE(received.as_ref().unwrap().has_value());
+    EXPECT_TRUE(static_cast<bool>(received.as_ref().unwrap()));
 
     // The proxy's facade methods should all be callable; we don't
     // exercise the data path here because that's covered by

@@ -62,7 +62,7 @@ class NullChannelStubAdapter : public ChannelConnectionBase {
 };
 
 inline ChannelConnectionProxy make_stub_channel_proxy() {
-    return rusty::make_box<NullChannelStubAdapter>(
+    return std::make_unique<NullChannelStubAdapter>(
         std::make_shared<NullChannelStub>());
 }
 

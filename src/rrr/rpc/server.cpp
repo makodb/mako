@@ -157,7 +157,7 @@ ServerConnection::~ServerConnection() {
 // subsequent leaves (5e) wires `weak_self_` immediately after
 // construction.
 void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
-    if (!proxy.has_value()) return;
+    if (!proxy) return;
 
     // Install callbacks BEFORE moving the proxy into the slot, so
     // the callbacks can capture a Weak<ServerConnection> without
@@ -587,7 +587,7 @@ int Server::start(const char* bind_addr) {
           channel_factory_.as_ref().unwrap().get());
       listener = (*factory)->make_listener();
     }
-    if (!listener.has_value()) {
+    if (!listener) {
       Log_error("rrr::Server::start: factory->make_listener() returned a "
                 "null proxy (factory backend=%s)",
                 /*best-effort name*/ "unknown");
@@ -606,7 +606,7 @@ int Server::start(const char* bind_addr) {
     // @unsafe - lambda capture, channel proxy mutator
     listener->set_on_accept([server_ptr, ctx_arc](
                                 ChannelConnectionProxy conn_proxy) {
-      if (!conn_proxy.has_value()) return;
+      if (!conn_proxy) return;
       auto sconn = rusty::Arc<ServerConnection>::make(
           ctx_arc.clone(), /*socket=*/-1);
       auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());

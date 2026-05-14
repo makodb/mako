@@ -86,7 +86,7 @@ class StubChannelAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_stub_proxy(
         std::shared_ptr<StubChannel> stub) {
-    return rusty::make_box<StubChannelAdapter>(std::move(stub));
+    return std::make_unique<StubChannelAdapter>(std::move(stub));
 }
 
 // Build a wire frame body in the channel-mode format:

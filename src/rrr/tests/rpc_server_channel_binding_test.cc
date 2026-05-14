@@ -55,7 +55,7 @@ class NullFactoryStubAdapter : public ChannelFactoryBase {
 };
 
 inline ChannelFactoryProxy make_stub_factory_proxy() {
-    return rusty::make_box<NullFactoryStubAdapter>(
+    return std::make_unique<NullFactoryStubAdapter>(
         std::make_shared<NullFactoryStub>());
 }
 

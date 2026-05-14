@@ -646,7 +646,7 @@ int ClientConnection::connect_via_factory(const char* addr) {
     auto* bound = const_cast<ChannelFactoryProxy*>(
         guard->as_ref().unwrap().get());
     ConnectResult result = (*bound)->connect(std::string_view(addr));
-    if (result.error != ChannelError::None || !result.connection.has_value()) {
+    if (result.error != ChannelError::None || !result.connection) {
       const auto err_str = std::string("factory connect failed: ")
           + channel_error_to_string(result.error);
       Log_error("rrr::ClientConnection: %s (addr=%s)", err_str.c_str(), addr);
@@ -704,7 +704,7 @@ int ClientConnection::connect_via_factory(const char* addr) {
 // concern; for 4c2 we document the constraint and rely on the
 // caller.
 void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
-  if (!channel.has_value()) return;
+  if (!channel) return;
 
   // Move the proxy into a heap-allocated `FiberChannel` so the
   // recv-loop fiber can hold a stable pointer to the wrapper across
@@ -762,7 +762,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
 // `trigger_job` spawns on its own reactor.
 void ClientConnection::bind_channel_via_poll_thread(
     ChannelConnectionProxy channel) {
-  if (!channel.has_value()) return;
+  if (!channel) return;
 
   // Move the proxy into the heap-allocated FiberChannel and flip
   // the latch on the calling thread — these are pure data
@@ -822,7 +822,7 @@ void ClientConnection::bind_channel_via_poll_thread(
 // layer must complete before drop is allowed (this matches the
 // FiberChannel destructor's contract).
 void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
-  if (!channel.has_value()) return;
+  if (!channel) return;
 
   // Capture a weak ref so the proxy's installed callbacks don't
   // extend the ClientConnection's lifetime (avoids a refcount cycle

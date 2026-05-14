@@ -69,7 +69,7 @@ class CapturingChannelStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_capturing_channel_proxy(
         std::shared_ptr<CapturingChannelStub> stub) {
-    return rusty::make_box<CapturingChannelStubAdapter>(std::move(stub));
+    return std::make_unique<CapturingChannelStubAdapter>(std::move(stub));
 }
 
 // Empty service used only to provide a valid `RpcServiceContext`

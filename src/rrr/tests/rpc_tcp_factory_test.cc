@@ -106,7 +106,7 @@ TEST_F(TcpFactoryTest, BackendNameIsTcp) {
 TEST_F(TcpFactoryTest, ConnectInvalidAddressFails) {
     auto r = mut_factory().connect("not-an-address");
     EXPECT_EQ(r.error, ChannelError::AddressInvalid);
-    EXPECT_FALSE(r.connection.has_value());
+    EXPECT_FALSE(static_cast<bool>(r.connection));
 }
 
 TEST_F(TcpFactoryTest, ConnectUnboundPortFailsConnectionRefused) {
@@ -134,7 +134,7 @@ TEST_F(TcpFactoryTest, ConnectUnboundPortFailsConnectionRefused) {
     // intercepts, ConnectionReset / Timeout. Localhost loopback in
     // a quiet test process should produce ConnectionRefused, but
     // the test stays robust against a spuriously-bound TIME_WAIT.
-    EXPECT_FALSE(r.connection.has_value());
+    EXPECT_FALSE(static_cast<bool>(r.connection));
     EXPECT_TRUE(r.error == ChannelError::ConnectionRefused
                 || r.error == ChannelError::ConnectionReset
                 || r.error == ChannelError::Timeout)
@@ -171,7 +171,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     // Client side: factory.connect().
     auto cresult = mut_factory().connect(local_addr);
     ASSERT_EQ(cresult.error, ChannelError::None);
-    ASSERT_TRUE(cresult.connection.has_value());
+    ASSERT_TRUE(static_cast<bool>(cresult.connection));
 
     std::mutex client_mu;
     std::vector<std::vector<std::uint8_t>> client_received;
@@ -347,7 +347,7 @@ TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
 
     auto r = proxy->connect(local_addr);
     ASSERT_EQ(r.error, ChannelError::None);
-    ASSERT_TRUE(r.connection.has_value());
+    ASSERT_TRUE(static_cast<bool>(r.connection));
 
     EXPECT_TRUE(wait_for([&] {
         std::lock_guard<std::mutex> g(mu);

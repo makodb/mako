@@ -69,7 +69,7 @@ class ConnStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_conn_proxy(
         std::shared_ptr<ConnStub> stub) {
-    return rusty::make_box<ConnStubAdapter>(std::move(stub));
+    return std::make_unique<ConnStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ class ListenerStubAdapter : public ChannelListenerBase {
 
 inline ChannelListenerProxy make_listener_proxy(
         std::shared_ptr<ListenerStub> stub) {
-    return rusty::make_box<ListenerStubAdapter>(std::move(stub));
+    return std::make_unique<ListenerStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ class FactoryStubAdapter : public ChannelFactoryBase {
 
 inline ChannelFactoryProxy make_factory_proxy(
         std::shared_ptr<FactoryStub> stub) {
-    return rusty::make_box<FactoryStubAdapter>(std::move(stub));
+    return std::make_unique<FactoryStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------

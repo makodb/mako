@@ -63,7 +63,7 @@ TEST_F(InMemoryChannelTest, BackendName) {
 TEST_F(InMemoryChannelTest, ConnectToUnboundAddrReturnsRefused) {
     auto result = factory_->connect("inmemory://nobody-listening");
     EXPECT_EQ(result.error, ChannelError::ConnectionRefused);
-    EXPECT_FALSE(result.connection.has_value());
+    EXPECT_FALSE(static_cast<bool>(result.connection));
 }
 
 // ---------------------------------------------------------------------------
@@ -113,8 +113,8 @@ TEST_F(InMemoryChannelTest, ConnectAndSendFrameClientToServer) {
 
     auto result = factory_->connect("inmemory://service-1");
     ASSERT_EQ(result.error, ChannelError::None);
-    ASSERT_TRUE(result.connection.has_value());
-    ASSERT_TRUE(server_side_proxy.has_value());
+    ASSERT_TRUE(static_cast<bool>(result.connection));
+    ASSERT_TRUE(static_cast<bool>(server_side_proxy));
 
     // Send a frame from client → server.
     std::vector<std::uint8_t> payload = {1, 2, 3, 4, 5};
@@ -279,8 +279,8 @@ TEST_F(InMemoryChannelTest, ClientCloseFiresServerOnClosed) {
     ASSERT_EQ(listener->listen("inmemory://close-1"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
         factory_, listener, "inmemory://close-1");
-    ASSERT_TRUE(pair.client.has_value());
-    ASSERT_TRUE(pair.server.has_value());
+    ASSERT_TRUE(static_cast<bool>(pair.client));
+    ASSERT_TRUE(static_cast<bool>(pair.server));
 
     int server_on_closed_calls = 0;
     ChannelError observed_reason = ChannelError::Internal;

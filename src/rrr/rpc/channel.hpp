@@ -231,7 +231,11 @@ class ChannelConnectionBase {
   virtual void         set_on_error(OnErrorCallback)            = 0;
 };
 
-using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
+// std::unique_ptr (not rusty::Box) because the proxy needs a nullable
+// "empty" state for default-constructed fields and for
+// `ConnectResult.connection` on failure. `bool(proxy)` is the null
+// check; `proxy->method()` dispatches directly.
+using ChannelConnectionProxy = std::unique_ptr<ChannelConnectionBase>;
 
 // ---------------------------------------------------------------------------
 // ChannelListener facade
@@ -268,7 +272,7 @@ class ChannelListenerBase {
   virtual void         set_on_error(OnErrorCallback)    = 0;
 };
 
-using ChannelListenerProxy = rusty::Box<ChannelListenerBase>;
+using ChannelListenerProxy = std::unique_ptr<ChannelListenerBase>;
 
 // ---------------------------------------------------------------------------
 // ChannelFactory facade
@@ -302,6 +306,6 @@ class ChannelFactoryBase {
   virtual const char*           backend_name()    const      = 0;
 };
 
-using ChannelFactoryProxy = rusty::Box<ChannelFactoryBase>;
+using ChannelFactoryProxy = std::unique_ptr<ChannelFactoryBase>;
 
 }  // namespace rrr

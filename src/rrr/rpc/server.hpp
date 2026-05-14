@@ -728,7 +728,7 @@ public:
      */
     // @unsafe - Records the factory under Box+Option interior storage.
     void set_channel_factory(ChannelFactoryProxy factory) {
-        if (!factory.has_value()) return;
+        if (!factory) return;
         // @unsafe { make_box + ChannelFactoryProxy move }
         channel_factory_ = rusty::Some(
             rusty::make_box<ChannelFactoryProxy>(std::move(factory)));

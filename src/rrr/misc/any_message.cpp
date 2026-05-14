@@ -26,7 +26,7 @@ namespace rrr {
 void AnyMessage::save(BinaryWriteArchive& ar) const {
   // Wire format: [v64-len-prefixed string: type_name] [payload bytes].
   ar << type_name_;
-  if (payload_.has_value()) {
+  if (payload_) {
     payload_->save(ar);
   }
 }
@@ -34,7 +34,7 @@ void AnyMessage::save(BinaryWriteArchive& ar) const {
 void AnyMessage::load(BinaryReadArchive& ar) {
   ar >> type_name_;
   payload_ = AnyMessageRegistry::create(type_name_);
-  verify(payload_.has_value() &&
+  verify(payload_ &&
          "AnyMessage::load: unknown type name on wire.  "
          "Did the sender register a type the receiver does not know?");
   payload_->load(ar);
