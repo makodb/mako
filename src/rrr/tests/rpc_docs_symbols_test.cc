@@ -69,7 +69,6 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "Result<MethodResponse, rrr::i32> Method(const MethodRequest&)",
         "async_Method(const MethodRequest&",
         "ServiceLike",
-        "ServiceFacade",
         "Server::reg_service(Box<T>)",
         "RpcResult<GetUserResponse> get_user(const GetUserRequest& req)",
     };

@@ -20,18 +20,6 @@
 #include <rusty/arc.hpp>
 #include <rusty/fn.hpp>
 
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_RESTORE_RR_MACRO
-#endif
-
 // External safety annotations for pure functions
 // @external: {
 //   std::min: [safe]
@@ -43,7 +31,7 @@
 #include "../base/all.hpp"
 
 // pull in `serializable.hpp` for
-// `SerializableProxy` / `SerializableFacade` definitions used by
+// `SerializableProxy` / `SerializableBase` definitions used by
 // `MarshallDeputy(shared_ptr<T>)` and `set_marshallable<T>` — the
 // templates dispatch transparently to the `wrap_typed_marshallable`
 // bridge overload (declared below) for migrated Serializable types

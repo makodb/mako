@@ -12,17 +12,6 @@
 #include <rusty/option.hpp>
 #include <rusty/sync/weak.hpp>
 
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_RESTORE_RR_MACRO
-#endif
 
 
 #include "../base/threading.hpp"
@@ -35,7 +24,7 @@
  * SRPC TCP Channel Backend.
  *
  * `TcpConnection` is one side of a connected TCP/Unix socket pair that
- * conforms to both the channel layer's `ChannelConnectionFacade` and the
+ * conforms to both the channel layer's `ChannelConnectionBase` and the
  * reactor's `Pollable` interface. Reads, writes, and callbacks are
  * driven from a single `PollThreadWorker`; the outbound queue is the
  * one piece of state guarded by a mutex because `send_frame()` may be
@@ -121,7 +110,7 @@ class TcpConnection {
     void set_outbound_high_water(std::size_t bytes);
 
     // -----------------------------------------------------------------------
-    // ChannelConnectionFacade methods
+    // ChannelConnectionBase methods
     // -----------------------------------------------------------------------
 
     ChannelError send_frame(const ChannelFrame& frame);
@@ -237,30 +226,30 @@ class TcpConnection {
 //
 // The same `TcpConnection` is exposed via two proxies:
 //
-//   - The channel-facade proxy (for `ChannelConnectionFacade`).
+//   - The channel-facade proxy (for `ChannelConnectionBase`).
 //   - The pollable proxy (for the reactor's poll thread).
 //
 // Each adapter holds an `Arc<TcpConnection>` and forwards method calls.
 // Both adapters together ensure the connection lives until *both*
 // proxies are released.
-class TcpConnectionChannelAdapter {
+class TcpConnectionChannelAdapter : public ChannelConnectionBase {
  public:
     explicit TcpConnectionChannelAdapter(rusty::Arc<TcpConnection> conn)
         : conn_(std::move(conn)) {}
 
-    ChannelError send_frame(const ChannelFrame& f) { return mut_conn().send_frame(f); }
-    void         flush()                            { mut_conn().flush(); }
-    void         close()                            { mut_conn().close(); }
-    bool         is_closed() const                  { return conn_->is_closed(); }
-    std::string  peer_address() const               { return conn_->peer_address(); }
+    ChannelError send_frame(const ChannelFrame& f) override { return mut_conn().send_frame(f); }
+    void         flush() override                            { mut_conn().flush(); }
+    void         close() override                            { mut_conn().close(); }
+    bool         is_closed() const override                  { return conn_->is_closed(); }
+    std::string  peer_address() const override               { return conn_->peer_address(); }
 
-    void set_on_frame (OnFrameCallback  cb) { mut_conn().set_on_frame (std::move(cb)); }
-    void set_on_closed(OnClosedCallback cb) { mut_conn().set_on_closed(std::move(cb)); }
-    void set_on_error (OnErrorCallback  cb) { mut_conn().set_on_error (std::move(cb)); }
+    void set_on_frame (OnFrameCallback  cb) override { mut_conn().set_on_frame (std::move(cb)); }
+    void set_on_closed(OnClosedCallback cb) override { mut_conn().set_on_closed(std::move(cb)); }
+    void set_on_error (OnErrorCallback  cb) override { mut_conn().set_on_error (std::move(cb)); }
 
  private:
     // `rusty::Arc<T>` exposes only `const T&` through its `operator->`
-    // and `operator*`. The proxy facade dispatches non-const methods
+    // and `operator*`. The virtual base dispatches non-const methods
     // (e.g. `send_frame`, `close`, `set_on_*`) on the underlying
     // connection, so we cast through here. Mirrors the
     // `PollableTypedArcAdapter::mut_poll` idiom in `pollable_proxy.h`.
@@ -268,20 +257,20 @@ class TcpConnectionChannelAdapter {
     rusty::Arc<TcpConnection> conn_;
 };
 
-class TcpConnectionPollableAdapter {
+class TcpConnectionPollableAdapter : public PollableBase {
  public:
     explicit TcpConnectionPollableAdapter(rusty::Arc<TcpConnection> conn)
         : conn_(std::move(conn)) {}
 
-    int  fd() const                          { return conn_->fd(); }
-    int  poll_mode() const                   { return conn_->poll_mode(); }
-    std::size_t content_size()               { return mut_conn().content_size(); }
-    bool handle_read()                       { return mut_conn().handle_read(); }
-    int  handle_write()                      { return mut_conn().handle_write(); }
-    void handle_error()                      { mut_conn().handle_error(); }
-    void close()                             { mut_conn().close(); }
-    bool is_closed() const                   { return conn_->is_closed(); }
-    bool check_pending_write_update() const  { return conn_->check_pending_write_update(); }
+    int  fd() const override                          { return conn_->fd(); }
+    int  poll_mode() const override                   { return conn_->poll_mode(); }
+    std::size_t content_size() override               { return mut_conn().content_size(); }
+    bool handle_read() override                       { return mut_conn().handle_read(); }
+    int  handle_write() override                      { return mut_conn().handle_write(); }
+    void handle_error() override                      { mut_conn().handle_error(); }
+    void close() override                             { mut_conn().close(); }
+    bool is_closed() const override                   { return conn_->is_closed(); }
+    bool check_pending_write_update() const override  { return conn_->check_pending_write_update(); }
 
  private:
     TcpConnection& mut_conn() { return const_cast<TcpConnection&>(*conn_.get()); }
@@ -290,14 +279,12 @@ class TcpConnectionPollableAdapter {
 
 inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
     rusty::Arc<TcpConnection> conn) {
-    return pro::make_proxy<ChannelConnectionFacade,
-                           TcpConnectionChannelAdapter>(std::move(conn));
+    return rusty::make_box<TcpConnectionChannelAdapter>(std::move(conn));
 }
 
 inline PollableProxy make_tcp_connection_pollable_proxy(
     rusty::Arc<TcpConnection> conn) {
-    return pro::make_proxy<PollableFacade,
-                           TcpConnectionPollableAdapter>(std::move(conn));
+    return rusty::make_box<TcpConnectionPollableAdapter>(std::move(conn));
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +328,7 @@ class TcpListener {
     TcpListener& operator=(TcpListener&&)      = delete;
 
     // -----------------------------------------------------------------------
-    // ChannelListenerFacade methods
+    // ChannelListenerBase methods
     // -----------------------------------------------------------------------
 
     /**
@@ -416,38 +403,38 @@ class TcpListener {
     SpinMutex<OnErrorCallback>  on_error_ {OnErrorCallback{}};
 };
 
-class TcpListenerChannelAdapter {
+class TcpListenerChannelAdapter : public ChannelListenerBase {
  public:
     explicit TcpListenerChannelAdapter(rusty::Arc<TcpListener> listener)
         : listener_(std::move(listener)) {}
 
-    ChannelError listen(std::string_view a) { return mut_listener().listen(a); }
-    void         close()                    { mut_listener().close(); }
-    bool         is_closed() const          { return listener_->is_closed(); }
-    std::string  local_address() const      { return listener_->local_address(); }
+    ChannelError listen(std::string_view a) override { return mut_listener().listen(a); }
+    void         close() override                    { mut_listener().close(); }
+    bool         is_closed() const override          { return listener_->is_closed(); }
+    std::string  local_address() const override      { return listener_->local_address(); }
 
-    void set_on_accept(OnAcceptCallback cb) { mut_listener().set_on_accept(std::move(cb)); }
-    void set_on_error (OnErrorCallback  cb) { mut_listener().set_on_error (std::move(cb)); }
+    void set_on_accept(OnAcceptCallback cb) override { mut_listener().set_on_accept(std::move(cb)); }
+    void set_on_error (OnErrorCallback  cb) override { mut_listener().set_on_error (std::move(cb)); }
 
  private:
     TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
     rusty::Arc<TcpListener> listener_;
 };
 
-class TcpListenerPollableAdapter {
+class TcpListenerPollableAdapter : public PollableBase {
  public:
     explicit TcpListenerPollableAdapter(rusty::Arc<TcpListener> listener)
         : listener_(std::move(listener)) {}
 
-    int  fd() const                          { return listener_->fd(); }
-    int  poll_mode() const                   { return listener_->poll_mode(); }
-    std::size_t content_size()               { return mut_listener().content_size(); }
-    bool handle_read()                       { return mut_listener().handle_read(); }
-    int  handle_write()                      { return mut_listener().handle_write(); }
-    void handle_error()                      { mut_listener().handle_error(); }
-    void close()                             { mut_listener().close(); }
-    bool is_closed() const                   { return listener_->is_closed(); }
-    bool check_pending_write_update() const  { return listener_->check_pending_write_update(); }
+    int  fd() const override                          { return listener_->fd(); }
+    int  poll_mode() const override                   { return listener_->poll_mode(); }
+    std::size_t content_size() override               { return mut_listener().content_size(); }
+    bool handle_read() override                       { return mut_listener().handle_read(); }
+    int  handle_write() override                      { return mut_listener().handle_write(); }
+    void handle_error() override                      { mut_listener().handle_error(); }
+    void close() override                             { mut_listener().close(); }
+    bool is_closed() const override                   { return listener_->is_closed(); }
+    bool check_pending_write_update() const override  { return listener_->check_pending_write_update(); }
 
  private:
     TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
@@ -456,14 +443,12 @@ class TcpListenerPollableAdapter {
 
 inline ChannelListenerProxy make_tcp_listener_channel_proxy(
     rusty::Arc<TcpListener> listener) {
-    return pro::make_proxy<ChannelListenerFacade,
-                           TcpListenerChannelAdapter>(std::move(listener));
+    return rusty::make_box<TcpListenerChannelAdapter>(std::move(listener));
 }
 
 inline PollableProxy make_tcp_listener_pollable_proxy(
     rusty::Arc<TcpListener> listener) {
-    return pro::make_proxy<PollableFacade,
-                           TcpListenerPollableAdapter>(std::move(listener));
+    return rusty::make_box<TcpListenerPollableAdapter>(std::move(listener));
 }
 
 // ---------------------------------------------------------------------------
@@ -476,7 +461,7 @@ inline PollableProxy make_tcp_listener_pollable_proxy(
  * (from `connect`) and listeners (from `make_listener`, on a
  * successful `listen`).
  *
- * Conforms to `ChannelFactoryFacade`:
+ * Conforms to `ChannelFactoryBase`:
  *
  *   - `connect(addr)` synchronously does `socket(2) + connect(2)`,
  *     wraps the fd in a `TcpConnection`, registers it with the poll
@@ -503,7 +488,7 @@ class TcpFactory {
     TcpFactory(TcpFactory&&)                 = delete;
     TcpFactory& operator=(TcpFactory&&)      = delete;
 
-    // ChannelFactoryFacade methods.
+    // ChannelFactoryBase methods.
     ConnectResult         connect(std::string_view addr);
     ChannelListenerProxy  make_listener();
     const char*           backend_name() const { return "tcp"; }
@@ -520,14 +505,14 @@ class TcpFactory {
     int                    connect_timeout_ms_ = 5000;
 };
 
-class TcpFactoryAdapter {
+class TcpFactoryAdapter : public ChannelFactoryBase {
  public:
     explicit TcpFactoryAdapter(rusty::Arc<TcpFactory> factory)
         : factory_(std::move(factory)) {}
 
-    ConnectResult        connect(std::string_view addr) { return mut_factory().connect(addr); }
-    ChannelListenerProxy make_listener()                { return mut_factory().make_listener(); }
-    const char*          backend_name() const           { return factory_->backend_name(); }
+    ConnectResult        connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    ChannelListenerProxy make_listener() override                { return mut_factory().make_listener(); }
+    const char*          backend_name() const override           { return factory_->backend_name(); }
 
  private:
     TcpFactory& mut_factory() { return const_cast<TcpFactory&>(*factory_.get()); }
@@ -535,8 +520,7 @@ class TcpFactoryAdapter {
 };
 
 inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
-    return pro::make_proxy<ChannelFactoryFacade,
-                           TcpFactoryAdapter>(std::move(factory));
+    return rusty::make_box<TcpFactoryAdapter>(std::move(factory));
 }
 
 }  // namespace rrr

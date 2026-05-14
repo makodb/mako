@@ -13,8 +13,7 @@ using namespace janus::raft;
 TEST(RaftRrrTransportCompileTest, FactorySymbolLinks) {
   // Force the compiler to emit make_rrr_transport's instantiation by
   // taking its address. If RrrTransportAdapter fails to satisfy
-  // TransportFacade, pro::make_proxy won't compile and this test file
-  // won't link.
+  // TransportBase, this test file won't link.
   auto* factory = &make_rrr_transport;
   EXPECT_NE(reinterpret_cast<void*>(factory), nullptr);
 }

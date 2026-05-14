@@ -11,6 +11,7 @@
 #include <thread>
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <rusty/sync/atomic.hpp>
 
 #include "deptran/raft/channel_transport.hpp"
@@ -29,36 +30,37 @@ struct Counts {
   AtomicInt n_install{0};
 };
 
-struct RecordingDispatcher {
+class RecordingDispatcher : public DispatcherBase {
+ public:
   rusty::Arc<Counts> counts{rusty::Arc<Counts>::make()};
 
-  VoteReply handle_vote(VoteReq) {
+  VoteReply handle_vote(VoteReq) override {
     counts->n_vote.fetch_add(1);
     VoteReply r{}; r.vote_granted = true; return r;
   }
-  VoteDurableReply handle_vote_durable(VoteDurableReq) {
+  VoteDurableReply handle_vote_durable(VoteDurableReq) override {
     counts->n_vote_durable.fetch_add(1);
     return VoteDurableReply{};
   }
-  AppendEntriesReply handle_append_entries(AppendEntriesReq) {
+  AppendEntriesReply handle_append_entries(AppendEntriesReq) override {
     counts->n_append.fetch_add(1);
     AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) {
+  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
     counts->n_append.fetch_add(1);
     EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
   }
-  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) {
+  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) override {
     return AppendEntriesDurableReply{};
   }
-  TimeoutNowReply handle_timeout_now(TimeoutNowReq) {
+  TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
     counts->n_timeout.fetch_add(1);
     TimeoutNowReply r{}; r.success = true; return r;
   }
-  NotifyRestartReply handle_notify_restart(NotifyRestartReq) {
+  NotifyRestartReply handle_notify_restart(NotifyRestartReq) override {
     return NotifyRestartReply{};
   }
-  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) {
+  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) override {
     counts->n_install.fetch_add(1);
     InstallSnapshotReply r{}; r.term_out = 7; return r;
   }
@@ -91,12 +93,12 @@ TEST(RaftChannelTransportTest, RoundTripBetweenTwoSites) {
   auto rx_a = sw.register_site(1);
   auto rx_b = sw.register_site(2);
 
-  auto disp_a_impl = rusty::Arc<RecordingDispatcher>::make();
-  auto disp_b_impl = rusty::Arc<RecordingDispatcher>::make();
-  DispatcherProxy disp_a =
-      pro::make_proxy<DispatcherFacade, RecordingDispatcher>(*disp_a_impl);
-  DispatcherProxy disp_b =
-      pro::make_proxy<DispatcherFacade, RecordingDispatcher>(*disp_b_impl);
+  auto* raw_a = new RecordingDispatcher();
+  auto* raw_b = new RecordingDispatcher();
+  rusty::Arc<Counts> counts_a = raw_a->counts;
+  rusty::Arc<Counts> counts_b = raw_b->counts;
+  DispatcherProxy disp_a(raw_a);
+  DispatcherProxy disp_b(raw_b);
 
   TransportProxy tr_a = make_channel_transport(&sw, /*self=*/1, /*par=*/0);
   TransportProxy tr_b = make_channel_transport(&sw, /*self=*/2, /*par=*/0);
@@ -121,10 +123,10 @@ TEST(RaftChannelTransportTest, RoundTripBetweenTwoSites) {
   // Give the durables a moment to be consumed before we tear down.
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-  EXPECT_EQ(disp_a_impl->counts->n_timeout.load(), 1);
-  EXPECT_EQ(disp_b_impl->counts->n_append.load(),  1);
-  EXPECT_EQ(disp_b_impl->counts->n_vote.load(),    1);
-  EXPECT_EQ(disp_b_impl->counts->n_vote_durable.load(), 1);
+  EXPECT_EQ(counts_a->n_timeout.load(), 1);
+  EXPECT_EQ(counts_b->n_append.load(),  1);
+  EXPECT_EQ(counts_b->n_vote.load(),    1);
+  EXPECT_EQ(counts_b->n_vote_durable.load(), 1);
 }
 
 TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
@@ -132,12 +134,11 @@ TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
   auto rx_a = sw.register_site(1);
   auto rx_b = sw.register_site(2);
 
-  auto disp_a_impl = rusty::Arc<RecordingDispatcher>::make();
-  auto disp_b_impl = rusty::Arc<RecordingDispatcher>::make();
-  DispatcherProxy disp_a =
-      pro::make_proxy<DispatcherFacade, RecordingDispatcher>(*disp_a_impl);
-  DispatcherProxy disp_b =
-      pro::make_proxy<DispatcherFacade, RecordingDispatcher>(*disp_b_impl);
+  auto* raw_a = new RecordingDispatcher();
+  auto* raw_b = new RecordingDispatcher();
+  rusty::Arc<Counts> counts_b = raw_b->counts;
+  DispatcherProxy disp_a(raw_a);
+  DispatcherProxy disp_b(raw_b);
 
   TransportProxy tr_a = make_channel_transport(&sw, 1, 0);
 
@@ -157,5 +158,5 @@ TEST(RaftChannelTransportTest, DropDirectionFallsBackToDefault) {
   sw.reset_faults();
   auto ok = tr_a->send_timeout_now(2, TimeoutNowReq{});
   EXPECT_TRUE(ok.success);
-  EXPECT_EQ(disp_b_impl->counts->n_timeout.load(), 1);
+  EXPECT_EQ(counts_b->n_timeout.load(), 1);
 }

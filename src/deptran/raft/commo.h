@@ -314,7 +314,7 @@ friend class RaftProxy;
   // The existing SendAppendEntries / BroadcastVote methods return
   // shared_ptr<QuorumEvent> shapes that fit the fiber-based wait path in
   // RaftServer. The new *Cb variants deliver each peer's reply via a plain
-  // callback, which is the shape the proxy::TransportFacade expects. Both
+  // callback, which is the shape RrrTransportAdapter wires into TransportBase. Both
   // variants share the same underlying rrr async_* call site; the *Cb
   // variants are merely a different projection of the reply.
   // ==========================================================================

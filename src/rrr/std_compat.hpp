@@ -1,10 +1,10 @@
 // std_compat.hpp — explicit replacement for `import std;`.
 //
 // libc++/libstdc++ support for `import std;` is still maturing in our
-// toolchain (clang-18 + libc++-18 in the Docker image). When mixed with
-// non-module TUs that use msft-proxy (`<proxy/proxy.h>`), the partial
-// specializations re-exported through `import rrr;` collide with the
-// header-included copies, producing
+// toolchain (clang-18 + libc++-18 in the Docker image). When mixed
+// with non-module TUs, the partial specializations re-exported
+// through `import rrr;` can collide with header-included copies and
+// produce
 //
 //     ambiguous partial specializations of 'add_tuple_reduction<...>'
 //

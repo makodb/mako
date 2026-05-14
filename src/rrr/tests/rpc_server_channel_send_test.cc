@@ -18,19 +18,8 @@
 #include <utility>
 #include <vector>
 
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_TESTS_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_TESTS_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_TESTS_RESTORE_RR_MACRO
-#endif
-
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 
 #include "../rrr.hpp"
 
@@ -62,26 +51,25 @@ class CapturingChannelStub {
     bool closed_ = false;
 };
 
-class CapturingChannelStubAdapter {
+class CapturingChannelStubAdapter : public ChannelConnectionBase {
  public:
     explicit CapturingChannelStubAdapter(std::shared_ptr<CapturingChannelStub> p)
         : stub_(std::move(p)) {}
-    ChannelError send_frame(const ChannelFrame& f) { return stub_->send_frame(f); }
-    void   flush()              { stub_->flush(); }
-    void   close()              { stub_->close(); }
-    bool   is_closed() const    { return stub_->is_closed(); }
-    std::string peer_address() const { return stub_->peer_address(); }
-    void set_on_frame (OnFrameCallback  cb) { stub_->set_on_frame (std::move(cb)); }
-    void set_on_closed(OnClosedCallback cb) { stub_->set_on_closed(std::move(cb)); }
-    void set_on_error (OnErrorCallback  cb) { stub_->set_on_error (std::move(cb)); }
+    ChannelError send_frame(const ChannelFrame& f) override { return stub_->send_frame(f); }
+    void   flush() override              { stub_->flush(); }
+    void   close() override              { stub_->close(); }
+    bool   is_closed() const override    { return stub_->is_closed(); }
+    std::string peer_address() const override { return stub_->peer_address(); }
+    void set_on_frame (OnFrameCallback  cb) override { stub_->set_on_frame (std::move(cb)); }
+    void set_on_closed(OnClosedCallback cb) override { stub_->set_on_closed(std::move(cb)); }
+    void set_on_error (OnErrorCallback  cb) override { stub_->set_on_error (std::move(cb)); }
  private:
     std::shared_ptr<CapturingChannelStub> stub_;
 };
 
 inline ChannelConnectionProxy make_capturing_channel_proxy(
         std::shared_ptr<CapturingChannelStub> stub) {
-    return pro::make_proxy<ChannelConnectionFacade,
-                           CapturingChannelStubAdapter>(std::move(stub));
+    return rusty::make_box<CapturingChannelStubAdapter>(std::move(stub));
 }
 
 // Empty service used only to provide a valid `RpcServiceContext`

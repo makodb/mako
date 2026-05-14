@@ -8,21 +8,10 @@
 #include <cstdint>
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <rusty/function.hpp>
 
 #include "../base/callback_wrapper.hpp"
-
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_RESTORE_RR_MACRO
-#endif
 
 
 /**
@@ -101,7 +90,7 @@
  * Lifetime and ownership
  * ============================================================================
  *
- * Connections are held as `pro::proxy<ChannelConnectionFacade>`
+ * Connections are held as `rusty::Box<ChannelConnectionBase>`
  * (move-only). The owner of the proxy is the owner of the connection;
  * destroying the proxy must close and unregister the underlying
  * resource. Callback objects supplied via `set_on_*` are kept alive by
@@ -208,17 +197,8 @@ using OnErrorCallback  = detail::CallbackWrapper<void(ChannelError err,
                                                        std::string_view message) const>;
 
 // ---------------------------------------------------------------------------
-// ChannelConnection facade
+// ChannelConnection virtual base
 // ---------------------------------------------------------------------------
-
-PRO_DEF_MEM_DISPATCH(ChannelConnMemSendFrame,        send_frame);
-PRO_DEF_MEM_DISPATCH(ChannelConnMemFlush,            flush);
-PRO_DEF_MEM_DISPATCH(ChannelConnMemClose,            close);
-PRO_DEF_MEM_DISPATCH(ChannelConnMemIsClosed,         is_closed);
-PRO_DEF_MEM_DISPATCH(ChannelConnMemPeerAddress,      peer_address);
-PRO_DEF_MEM_DISPATCH(ChannelConnMemSetOnFrame,       set_on_frame);
-PRO_DEF_MEM_DISPATCH(ChannelConnMemSetOnClosed,      set_on_closed);
-PRO_DEF_MEM_DISPATCH(ChannelConnMemSetOnError,       set_on_error);
 
 /**
  * Connection-oriented byte channel between two peers.
@@ -238,18 +218,20 @@ PRO_DEF_MEM_DISPATCH(ChannelConnMemSetOnError,       set_on_error);
  *   - After `is_closed()` returns true, `send_frame` must return a
  *     non-None error and must not deliver further frames to the peer.
  */
-struct ChannelConnectionFacade : pro::facade_builder
-    ::add_convention<ChannelConnMemSendFrame,    ChannelError(const ChannelFrame&)>
-    ::add_convention<ChannelConnMemFlush,        void()>
-    ::add_convention<ChannelConnMemClose,        void()>
-    ::add_convention<ChannelConnMemIsClosed,     bool() const>
-    ::add_convention<ChannelConnMemPeerAddress,  std::string() const>
-    ::add_convention<ChannelConnMemSetOnFrame,   void(OnFrameCallback)>
-    ::add_convention<ChannelConnMemSetOnClosed,  void(OnClosedCallback)>
-    ::add_convention<ChannelConnMemSetOnError,   void(OnErrorCallback)>
-    ::build {};
+class ChannelConnectionBase {
+ public:
+  virtual ~ChannelConnectionBase() = default;
+  virtual ChannelError send_frame(const ChannelFrame&)         = 0;
+  virtual void         flush()                                  = 0;
+  virtual void         close()                                  = 0;
+  virtual bool         is_closed()       const                  = 0;
+  virtual std::string  peer_address()    const                  = 0;
+  virtual void         set_on_frame(OnFrameCallback)            = 0;
+  virtual void         set_on_closed(OnClosedCallback)          = 0;
+  virtual void         set_on_error(OnErrorCallback)            = 0;
+};
 
-using ChannelConnectionProxy = pro::proxy<ChannelConnectionFacade>;
+using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
 
 // ---------------------------------------------------------------------------
 // ChannelListener facade
@@ -266,13 +248,6 @@ using ChannelConnectionProxy = pro::proxy<ChannelConnectionFacade>;
  */
 using OnAcceptCallback = detail::CallbackWrapper<void(ChannelConnectionProxy) const>;
 
-PRO_DEF_MEM_DISPATCH(ChannelListenerMemListen,      listen);
-PRO_DEF_MEM_DISPATCH(ChannelListenerMemClose,       close);
-PRO_DEF_MEM_DISPATCH(ChannelListenerMemIsClosed,    is_closed);
-PRO_DEF_MEM_DISPATCH(ChannelListenerMemLocalAddr,   local_address);
-PRO_DEF_MEM_DISPATCH(ChannelListenerMemSetOnAccept, set_on_accept);
-PRO_DEF_MEM_DISPATCH(ChannelListenerMemSetOnError,  set_on_error);
-
 /**
  * Server-side accept loop.
  *
@@ -282,16 +257,18 @@ PRO_DEF_MEM_DISPATCH(ChannelListenerMemSetOnError,  set_on_error);
  *     down the listening socket. Existing accepted connections are
  *     unaffected.
  */
-struct ChannelListenerFacade : pro::facade_builder
-    ::add_convention<ChannelListenerMemListen,      ChannelError(std::string_view)>
-    ::add_convention<ChannelListenerMemClose,       void()>
-    ::add_convention<ChannelListenerMemIsClosed,    bool() const>
-    ::add_convention<ChannelListenerMemLocalAddr,   std::string() const>
-    ::add_convention<ChannelListenerMemSetOnAccept, void(OnAcceptCallback)>
-    ::add_convention<ChannelListenerMemSetOnError,  void(OnErrorCallback)>
-    ::build {};
+class ChannelListenerBase {
+ public:
+  virtual ~ChannelListenerBase() = default;
+  virtual ChannelError listen(std::string_view)         = 0;
+  virtual void         close()                          = 0;
+  virtual bool         is_closed()       const          = 0;
+  virtual std::string  local_address()   const          = 0;
+  virtual void         set_on_accept(OnAcceptCallback)  = 0;
+  virtual void         set_on_error(OnErrorCallback)    = 0;
+};
 
-using ChannelListenerProxy = pro::proxy<ChannelListenerFacade>;
+using ChannelListenerProxy = rusty::Box<ChannelListenerBase>;
 
 // ---------------------------------------------------------------------------
 // ChannelFactory facade
@@ -313,23 +290,18 @@ struct ConnectResult {
     ChannelError           error = ChannelError::None;
 };
 
-PRO_DEF_MEM_DISPATCH(ChannelFactoryMemConnect,       connect);
-PRO_DEF_MEM_DISPATCH(ChannelFactoryMemMakeListener,  make_listener);
-PRO_DEF_MEM_DISPATCH(ChannelFactoryMemBackendName,   backend_name);
-
 /**
  * Constructs ChannelConnections and ChannelListeners. Each backend
  * (TCP, in-memory, future ones) provides its own factory.
  */
-struct ChannelFactoryFacade : pro::facade_builder
-    ::add_convention<ChannelFactoryMemConnect,
-                     ConnectResult(std::string_view)>
-    ::add_convention<ChannelFactoryMemMakeListener,
-                     ChannelListenerProxy()>
-    ::add_convention<ChannelFactoryMemBackendName,
-                     const char*() const>
-    ::build {};
+class ChannelFactoryBase {
+ public:
+  virtual ~ChannelFactoryBase() = default;
+  virtual ConnectResult         connect(std::string_view)    = 0;
+  virtual ChannelListenerProxy  make_listener()              = 0;
+  virtual const char*           backend_name()    const      = 0;
+};
 
-using ChannelFactoryProxy = pro::proxy<ChannelFactoryFacade>;
+using ChannelFactoryProxy = rusty::Box<ChannelFactoryBase>;
 
 }  // namespace rrr

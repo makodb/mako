@@ -1,10 +1,8 @@
 cmake_minimum_required(VERSION 3.30)
 
 # `import std;` was retired in favor of <std_compat.hpp> aggregate header
-# (see src/rrr/std_compat.hpp). The aggregate avoids the proxy.h
-# add_tuple_reduction ambiguity that surfaced when modules and
-# header-included templates both reached the same TU. Leaving the
-# experimental key unset; CMAKE_CXX_MODULE_STD stays OFF.
+# (see src/rrr/std_compat.hpp). Leaving the experimental key unset;
+# CMAKE_CXX_MODULE_STD stays OFF.
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -58,8 +56,8 @@ endif()
 # for targets that no longer reference the std module.
 set(CMAKE_CXX_MODULE_STD OFF)
 
-# Check compiler and version.
-# The ngcpp/proxy dependency requires GCC >= 13.1 or Clang >= 17.
+# Check compiler and version. C++23 + named modules require GCC >= 13.1
+# or Clang >= 17.
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13.1)
         message(FATAL_ERROR "GCC version 13.1 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
@@ -69,7 +67,7 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "Clang version 17.0 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
     endif()
 else()
-    message(WARNING "Compiler ${CMAKE_CXX_COMPILER_ID} is unvalidated for ngcpp/proxy (requires GCC >= 13.1 or Clang >= 17).")
+    message(WARNING "Compiler ${CMAKE_CXX_COMPILER_ID} is unvalidated (requires GCC >= 13.1 or Clang >= 17).")
 endif()
 
 # Auto-detect the latest available libclang for rusty-cpp-checker.
@@ -110,9 +108,6 @@ set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 # support is bypassed.
 if(ENABLE_BORROW_CHECKING)
     enable_borrow_checking()
-    set(BORROW_CHECKER_INCLUDE_PATHS
-        "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include"
-        CACHE STRING "Additional include paths for borrow checker" FORCE)
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -126,7 +121,6 @@ set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
 set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
 set(BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(ERPC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc")
-set(PROXY_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include")
 message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
 set(MASSTREE_DIR "src/masstree")
@@ -137,7 +131,6 @@ include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include"
 )
 
 # Build yaml-cpp from vendored source to avoid system ABI/version drift.
@@ -535,7 +528,6 @@ set(CXXFLAGS
   -MD
   -MP
   -I${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
-  -I${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include
   -Isrc
   -I${HOME}
   -DCONFIG_H=\"${CONFIG_H}\"
@@ -901,7 +893,6 @@ target_include_directories(txlog_core_obj PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include
     ${Python3_INCLUDE_DIRS}
 )
 target_compile_options(txlog_core_obj PRIVATE ${BENCH_CXXFLAGS})
@@ -1108,7 +1099,6 @@ if(DEPTRAN_BORROW_SRC)
         src/bench
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         third-party/yaml-cpp/include
-        third-party/proxy/include
     )
     target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
@@ -1165,12 +1155,10 @@ target_include_directories(mako PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/proxy/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
     "${HOME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
-    "${PROXY_INCLUDE_DIR}"
 )
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
@@ -1469,7 +1457,6 @@ if(BUILD_TESTS)
         src/mako
         test
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-        ${PROXY_INCLUDE_DIR}
     )
 
     # Common test compile options
@@ -1810,13 +1797,6 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_rpc_docs_symbols ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_docs_symbols COMMAND test_rpc_docs_symbols)
-
-    # ngcpp/proxy dependency smoke test
-    add_executable(test_rpc_proxy_dependency src/rrr/tests/rpc_proxy_dependency_test.cc)
-    target_include_directories(test_rpc_proxy_dependency PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_rpc_proxy_dependency PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_proxy_dependency ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_rpc_proxy_dependency COMMAND test_rpc_proxy_dependency)
 
     # Pollable proxy facade guard tests (Phase 1 leaf 1)
     add_executable(test_rpc_pollable_proxy_facade src/rrr/tests/rpc_pollable_proxy_facade_test.cc)

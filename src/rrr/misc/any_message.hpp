@@ -28,10 +28,9 @@
 // Wire format:  `[v64-prefixed string: type_name] [payload bytes]`.
 // Direct field type for RPC struct fields — no surrounding envelope.
 //
-// Storage shape (post-L10f-2 step 5): `payload_` is a value-typed
-// `pro::proxy<SerializableFacade>` that holds a
-// `details::SerializableSharedPtrHolder<T>` — same shape as
-// `SerializableEnvelope::inner_`, giving `unpack<T>()` a refcount-
+// Storage shape: `payload_` is a `std::shared_ptr<SerializableBase>`
+// that holds a `details::SerializableSharedPtrHolder<T>` — same shape
+// as `SerializableEnvelope::inner_`, giving `unpack<T>()` a refcount-
 // shared `shared_ptr<T>` regardless of the envelope's lifetime.
 //
 // Usage:
@@ -161,8 +160,7 @@ template <typename T>
 inline int reg_any_message_as(std::string name) {
   auto factory = []() -> SerializableProxy {
     auto sp = std::make_shared<T>();
-    return pro::make_proxy<SerializableFacade,
-                           details::SerializableSharedPtrHolder<T>>(
+    return std::make_shared<details::SerializableSharedPtrHolder<T>>(
         std::move(sp));
   };
   return AnyMessageRegistry::register_type(std::move(name),
@@ -183,9 +181,9 @@ inline bool AnyMessage::is_a() const {
 template <typename T>
 inline std::shared_ptr<T> AnyMessage::unpack() const {
   if (!is_a<T>()) return nullptr;
-  if (!payload_.has_value()) return nullptr;
-  if (auto* h = proxy_cast<details::SerializableSharedPtrHolder<T>>(
-          &*const_cast<SerializableProxy&>(payload_))) {
+  if (!payload_) return nullptr;
+  if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(
+          payload_.get())) {
     return h->ptr;
   }
   return nullptr;
@@ -195,8 +193,7 @@ template <typename T>
 inline std::shared_ptr<AnyMessage> AnyMessage::pack_as(
     std::string name, std::shared_ptr<T> val) {
   verify(val != nullptr);
-  auto payload = pro::make_proxy<SerializableFacade,
-                                 details::SerializableSharedPtrHolder<T>>(
+  auto payload = std::make_shared<details::SerializableSharedPtrHolder<T>>(
       std::move(val));
   return std::shared_ptr<AnyMessage>(
       new AnyMessage(std::move(name), std::move(payload)));

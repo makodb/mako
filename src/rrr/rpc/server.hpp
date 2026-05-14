@@ -26,17 +26,6 @@
 // channel layer's `TcpListener` / `TcpConnection` own those
 // syscalls.
 
-#ifdef RR
-#pragma push_macro("RR")
-#undef RR
-#define RRR_RESTORE_RR_MACRO 1
-#endif
-#include <proxy/proxy.h>
-#include <proxy/proxy_macros.h>
-#ifdef RRR_RESTORE_RR_MACRO
-#pragma pop_macro("RR")
-#undef RRR_RESTORE_RR_MACRO
-#endif
 
 // External safety annotations for system functions and STL operations.
 // Note: Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and
@@ -187,41 +176,25 @@ public:
     // Each service implements this to route requests to the appropriate handler
     // Uses virtual dispatch to avoid raw pointer capture and static_cast
     virtual void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
+
+    // Return a typed pointer to the underlying service instance. Default
+    // returns `this`; the typed-box adapter overrides this to return its
+    // wrapped concrete T*. Used by `Server::for_each_service` for
+    // cleanup hooks that need to inspect the concrete service.
+    virtual void* __get_service__() { return static_cast<void*>(this); }
 };
 
-PRO_DEF_MEM_DISPATCH(ServiceMemRegTo, __reg_to__);
-PRO_DEF_MEM_DISPATCH(ServiceMemDispatch, __dispatch__);
-PRO_DEF_MEM_DISPATCH(ServiceMemGetService, __get_service__);
+using ServiceProxy = rusty::Box<Service>;
 
-struct ServiceFacade : pro::facade_builder
-    ::add_convention<ServiceMemRegTo, int(Server&, size_t)>
-    ::add_convention<ServiceMemDispatch, void(i32, rusty::Box<Request>, WeakServerConnection)>
-    ::add_convention<ServiceMemGetService, void*()>
-    ::build {};
-
-using ServiceProxy = pro::proxy<ServiceFacade>;
-
-// Compatibility bridge for the Service-to-proxy migration.
-class ServiceBoxAdapter {
- public:
-  explicit ServiceBoxAdapter(rusty::Box<Service> svc) : svc_(std::move(svc)) {}
-
-  int __reg_to__(Server& server, size_t svc_index) { return svc_->__reg_to__(server, svc_index); }
-
-  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
-    svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
-  }
-
-  void* __get_service__() const { return static_cast<void*>(svc_.get()); }
-
- private:
-  rusty::Box<Service> svc_;
-};
-
+// Pass-through factory for services that already inherit Service.
 inline ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
-  return pro::make_proxy<ServiceFacade, ServiceBoxAdapter>(std::move(svc));
+  return svc;
 }
 
+// Concept matching the structural shape of a service: the duck-typed
+// `__reg_to__` / `__dispatch__` pair. Generated rcc_rpc.h services
+// satisfy this without inheriting `Service`; `ServiceTypedBoxAdapter`
+// bridges them into a `Box<Service>`.
 template <typename T>
 concept ServiceLike = requires(
     T& svc,
@@ -234,18 +207,26 @@ concept ServiceLike = requires(
   { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) } -> std::same_as<void>;
 };
 
+// Adapter that wraps a Box<T> for a duck-typed T and exposes it as a
+// concrete subclass of Service.
 template <ServiceLike T>
-class ServiceTypedBoxAdapter {
+class ServiceTypedBoxAdapter : public Service {
  public:
   explicit ServiceTypedBoxAdapter(rusty::Box<T> svc) : svc_(std::move(svc)) {}
 
-  int __reg_to__(Server& server, size_t svc_index) { return svc_->__reg_to__(server, svc_index); }
+  int __reg_to__(Server& server, size_t svc_index) override {
+    return svc_->__reg_to__(server, svc_index);
+  }
 
-  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
+  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) override {
     svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
   }
 
-  void* __get_service__() const { return static_cast<void*>(svc_.get()); }
+  // Returns `this` (the adapter itself, which IS a Service). The wrapped
+  // T does not inherit `Service`, so we can't expose it through a
+  // Service*-shaped callback; callers needing the concrete T should
+  // hold the typed handle separately.
+  void* __get_service__() override { return static_cast<void*>(static_cast<Service*>(this)); }
 
  private:
   rusty::Box<T> svc_;
@@ -253,7 +234,7 @@ class ServiceTypedBoxAdapter {
 
 template <ServiceLike T>
 inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
-  return pro::make_proxy<ServiceFacade, ServiceTypedBoxAdapter<T>>(std::move(svc));
+  return rusty::make_box<ServiceTypedBoxAdapter<T>>(std::move(svc));
 }
 
 /**

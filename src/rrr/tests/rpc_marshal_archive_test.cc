@@ -1326,29 +1326,39 @@ TEST(TypeListFactory, ContainsTracksIndexOf) {
   EXPECT_FALSE(TypeListFactoryList::contains<int>());
 }
 
+namespace {
+template<typename T>
+T* serializable_proxy_cast(SerializableProxy& proxy) {
+  if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(proxy.get())) {
+    return h->ptr.get();
+  }
+  return nullptr;
+}
+}  // namespace
+
 TEST(TypeListFactory, CreateAtReturnsCorrectTypeForEachPosition) {
   // pos=1 → Alpha
   {
     auto proxy = TypeListFactoryList::create_at(1);
-    auto* alpha = proxy_cast<TypeListFactoryAlpha>(&*proxy);
+    auto* alpha = serializable_proxy_cast<TypeListFactoryAlpha>(proxy);
     EXPECT_NE(alpha, nullptr);
-    EXPECT_EQ(proxy_cast<TypeListFactoryBeta>(&*proxy), nullptr);
-    EXPECT_EQ(proxy_cast<TypeListFactoryGamma>(&*proxy), nullptr);
+    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryBeta>(proxy), nullptr);
+    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryGamma>(proxy), nullptr);
   }
   // pos=2 → Beta
   {
     auto proxy = TypeListFactoryList::create_at(2);
-    EXPECT_EQ(proxy_cast<TypeListFactoryAlpha>(&*proxy), nullptr);
-    auto* beta = proxy_cast<TypeListFactoryBeta>(&*proxy);
+    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryAlpha>(proxy), nullptr);
+    auto* beta = serializable_proxy_cast<TypeListFactoryBeta>(proxy);
     EXPECT_NE(beta, nullptr);
-    EXPECT_EQ(proxy_cast<TypeListFactoryGamma>(&*proxy), nullptr);
+    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryGamma>(proxy), nullptr);
   }
   // pos=3 → Gamma
   {
     auto proxy = TypeListFactoryList::create_at(3);
-    EXPECT_EQ(proxy_cast<TypeListFactoryAlpha>(&*proxy), nullptr);
-    EXPECT_EQ(proxy_cast<TypeListFactoryBeta>(&*proxy), nullptr);
-    auto* gamma = proxy_cast<TypeListFactoryGamma>(&*proxy);
+    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryAlpha>(proxy), nullptr);
+    EXPECT_EQ(serializable_proxy_cast<TypeListFactoryBeta>(proxy), nullptr);
+    auto* gamma = serializable_proxy_cast<TypeListFactoryGamma>(proxy);
     EXPECT_NE(gamma, nullptr);
   }
 }
@@ -1510,7 +1520,7 @@ TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
   //   1) Read v32 kind from wire.
   //   2) create_at(kind) → fresh SerializableProxy for that type.
   //   3) proxy->load(reader) — populates the typed value.
-  //   4) Caller dispatches via proxy_cast<T>.
+  //   4) Caller dispatches via dynamic_cast on the SerializableBase holder.
   {
     BufferSink sink;
     BinaryWriteArchive writer(&sink);
@@ -1523,7 +1533,7 @@ TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
     auto proxy = TypeListFactoryList::create_at(2);
     proxy->load(reader);
 
-    auto* recovered = proxy_cast<TypeListFactoryBeta>(&*proxy);
+    auto* recovered = serializable_proxy_cast<TypeListFactoryBeta>(proxy);
     ASSERT_NE(recovered, nullptr);
     EXPECT_EQ(recovered->b, "round-trip canary");
   }

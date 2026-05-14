@@ -84,9 +84,6 @@ int main() {
     include_root = repo_root / "third-party/rusty-cpp/include"
     if not include_root.exists():
         raise RuntimeError(f"missing include path (submodule not initialized): {include_root}")
-    proxy_include_root = repo_root / "third-party/proxy/include"
-    if not proxy_include_root.exists():
-        raise RuntimeError(f"missing include path (submodule not initialized): {proxy_include_root}")
 
     cmd = [
         cxx,
@@ -104,8 +101,6 @@ int main() {
         str(repo_root / "src/deptran"),
         "-I",
         str(include_root),
-        "-I",
-        str(proxy_include_root),
         str(source),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)

@@ -2,13 +2,13 @@
 
 /**
  * @file rrr_transport.hpp
- * @brief Production TransportFacade adapter that wraps RaftCommo /
+ * @brief Production TransportBase adapter that wraps RaftCommo /
  *        RaftProxy. Fiber-synchronous since Phase 8.0 — each
  *        reply-expecting send_* blocks the calling fiber on an
  *        rrr::IntEvent until the reply lands.
  *
  * Rusty-safety:
- *  - No inheritance; polymorphism via the TransportFacade proxy.
+ *  - Polymorphism via TransportBase virtual dispatch.
  *  - Non-owning raw pointer to RaftCommo (@unsafe): RaftCommo lives on
  *    RaftServer, which outlives every adapter built on top of it.
  *    rusty::Arc<RaftCommo> is unusable because Arc<T>::operator-> yields
@@ -20,8 +20,6 @@
 
 #include <cstdint>
 
-// transport.hpp pulls in <proxy/proxy.h>; include it before `import rrr;`
-// so the proxy library's template machinery parses cleanly.
 #include "transport.hpp"
 #include "messages.hpp"
 
@@ -33,30 +31,30 @@
 namespace janus {
 namespace raft {
 
-class RrrTransportAdapter {
+class RrrTransportAdapter : public TransportBase {
  public:
   // @unsafe { non-owning raw pointer; caller must ensure commo outlives this }
   RrrTransportAdapter(RaftCommo* commo, siteid_t self, parid_t par)
       : commo_(commo), self_(self), par_(par) {}
 
   // @safe - identity read
-  siteid_t self_site_id() const { return self_; }
+  siteid_t self_site_id() const override { return self_; }
 
   // ------------------------------------------------------------------
   // Fire-and-forget RPCs — forwarded directly.
   // ------------------------------------------------------------------
 
   // @safe
-  void send_vote_durable(siteid_t candidate, VoteDurableReq req) {
+  void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
     commo_->SendVoteDurable(candidate, par_, req.term, req.voter_id);
   }
   // @safe
-  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) {
+  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
     commo_->SendAppendEntriesDurable(
         leader, par_, req.term, req.follower_id, req.last_log_index);
   }
   // @safe
-  void send_notify_restart(siteid_t self, parid_t par) {
+  void send_notify_restart(siteid_t self, parid_t par) override {
     commo_->SendNotifyRestart(self, par);
   }
 
@@ -69,7 +67,7 @@ class RrrTransportAdapter {
   // ------------------------------------------------------------------
 
   // @unsafe { std::function bridge at rrr boundary }
-  AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) {
+  AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
     auto slot  = std::make_shared<AppendEntriesReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
     commo_->SendAppendEntriesCb(
@@ -89,7 +87,7 @@ class RrrTransportAdapter {
 
   // @unsafe { std::function bridge at rrr boundary }
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
-                                                    EmptyAppendEntriesReq req) {
+                                                    EmptyAppendEntriesReq req) override {
     auto slot  = std::make_shared<AppendEntriesReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
     commo_->SendAppendEntriesCb(
@@ -116,7 +114,7 @@ class RrrTransportAdapter {
   //            BroadcastVoteCb fires the callback once per peer reply;
   //            send_vote is per-peer, so we filter on `from == dst`
   //            and park on a dedicated IntEvent. }
-  VoteReply send_vote(siteid_t dst, VoteReq req) {
+  VoteReply send_vote(siteid_t dst, VoteReq req) override {
     auto slot  = std::make_shared<VoteReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
     commo_->BroadcastVoteCb(
@@ -133,7 +131,7 @@ class RrrTransportAdapter {
   }
 
   // @unsafe { std::function bridge }
-  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) {
+  TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
     auto slot  = std::make_shared<TimeoutNowReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
     commo_->SendTimeoutNow(
@@ -149,7 +147,7 @@ class RrrTransportAdapter {
 
   // @unsafe { std::function bridge; SendInstallSnapshot already takes
   //           a std::function — we just wire it into a slot+event. }
-  InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) {
+  InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
     auto slot  = std::make_shared<InstallSnapshotReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
     commo_->SendInstallSnapshot(
@@ -173,8 +171,7 @@ class RrrTransportAdapter {
 inline TransportProxy make_rrr_transport(RaftCommo* commo,
                                          siteid_t  self,
                                          parid_t   par) {
-  return pro::make_proxy<TransportFacade, RrrTransportAdapter>(
-      commo, self, par);
+  return rusty::make_box<RrrTransportAdapter>(commo, self, par);
 }
 
 }  // namespace raft
