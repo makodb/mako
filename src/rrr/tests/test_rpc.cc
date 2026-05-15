@@ -1,14 +1,14 @@
+#include <stdio.h>
+
 #include <gtest/gtest.h>
-#include <atomic>
-#include <chrono>
-#include <memory>
-#include <thread>
 #include <unistd.h>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include "../rrr.hpp"
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
+
+import std;
 
 // External safety annotations for STL functions
 // @external: {

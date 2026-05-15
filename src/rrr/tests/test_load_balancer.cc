@@ -8,18 +8,18 @@
  * - ClientPool integration with load balancing
  */
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
-#include <atomic>
-#include <chrono>
-#include <memory>
-#include <thread>
 #include <unistd.h>
-#include <vector>
-#include <map>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include "../rrr.hpp"
 #include "benchmark_service.h"
+
+import std;
 
 // Atomic counter for dynamic port allocation to avoid conflicts when tests run in parallel
 static std::atomic<int> g_lb_next_port{12000};

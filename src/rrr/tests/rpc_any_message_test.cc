@@ -10,14 +10,17 @@
 //   6. Registration with the same name twice (under same T) is fine
 //      via the static-init pattern; under different T aborts.
 
+#include <stdint.h>
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 
-#include <memory>
-#include <string>
 
 #include "../rrr.hpp"
 #include "../misc/any_message.hpp"
 #include "../misc/serializable.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

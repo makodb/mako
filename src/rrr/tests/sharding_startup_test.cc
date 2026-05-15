@@ -10,11 +10,6 @@
  */
 
 #include <gtest/gtest.h>
-#include <filesystem>
-#include <thread>
-#include <chrono>
-#include <atomic>
-#include <optional>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include "../rrr.hpp"
@@ -25,6 +20,8 @@
 #include "../src/deptran/sharding_policy_cache.h"
 #include "../src/deptran/config_client.h"
 #include "../src/mako/benchmarks/tpcc_sharding.h"
+
+import std;
 
 namespace janus {
 namespace test {

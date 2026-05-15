@@ -13,15 +13,13 @@
 
 #include <gtest/gtest.h>
 
-#include <memory>
-#include <optional>
-#include <string>
-#include <utility>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

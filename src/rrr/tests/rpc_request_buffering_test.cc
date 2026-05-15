@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include <rusty/option.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -7,13 +9,10 @@
  */
 
 #include <gtest/gtest.h>
-#include <atomic>
-#include <cerrno>
-#include <mutex>
-#include <thread>
-#include <vector>
 #define RPC_TEST_HOOKS
 #include "../rrr.hpp"
+
+import std;
 #undef RPC_TEST_HOOKS
 
 using namespace rrr;

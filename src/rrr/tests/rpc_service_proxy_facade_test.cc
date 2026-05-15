@@ -1,11 +1,14 @@
+#include <stddef.h>
+
 #include <rusty/option.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
 
-#include <atomic>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

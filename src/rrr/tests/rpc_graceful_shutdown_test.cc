@@ -6,9 +6,8 @@
  */
 #include "gtest/gtest.h"
 #include "../rrr.hpp"
-#include <thread>
-#include <atomic>
-#include <chrono>
+
+import std;
 
 namespace rrr {
 

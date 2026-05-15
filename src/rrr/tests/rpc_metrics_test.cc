@@ -3,15 +3,16 @@
  * Tests ConnectionMetrics tracking of requests, bytes, latency, and connection lifecycle.
  */
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include <gtest/gtest.h>
-#include <atomic>
-#include <chrono>
-#include <thread>
-#include <vector>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
+
+import std;
 
 using namespace rrr;
 using namespace benchmark;

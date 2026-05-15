@@ -13,21 +13,18 @@
 //   * registered service → service's `__dispatch__` runs (we capture
 //     the dispatch via a recording helper)
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <cstdint>
-#include <memory>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
 #include "../rpc/internal_protocol.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

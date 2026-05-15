@@ -1,8 +1,9 @@
+#include <stddef.h>
+
 #include "simple_test_runner.h"
 #include "../rrr.hpp"
-#include <vector>
-#include <string>
-#include <map>
+
+import std;
 
 using namespace rrr;
 

@@ -4,9 +4,9 @@
  */
 
 #include <gtest/gtest.h>
-#include <thread>
-#include <chrono>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 using namespace std::chrono;

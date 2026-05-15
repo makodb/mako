@@ -4,15 +4,16 @@
  * Tests LogEntry serialization and InMemoryLogStorage implementation.
  */
 
+#include <stddef.h>
+
 #include <gtest/gtest.h>
-#include <thread>
-#include <vector>
-#include <atomic>
 
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/memory_log_storage.hpp"
 #include "deptran/classic/tpc_command.h"  // TpcEmptyCommand for nested-command tests
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 using namespace janus::raft;

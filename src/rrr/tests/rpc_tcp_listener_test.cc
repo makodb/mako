@@ -30,17 +30,12 @@
 //     fault deliberately — that's brittle — but we verify the slot).
 //   - The listener channel proxy forwards all facade methods.
 
+#include <stdint.h>
+#include <errno.h>
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <cerrno>
-#include <chrono>
-#include <cstring>
-#include <optional>
-#include <string>
-#include <thread>
-#include <utility>
-#include <vector>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -51,6 +46,8 @@
 #include <rusty/arc.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

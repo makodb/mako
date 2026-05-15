@@ -27,23 +27,17 @@
 // continue to pass because the `is_channel_mode()` branch is
 // strictly opt-in).
 
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <cstdint>
-#include <cstring>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <string>
-#include <thread>
-#include <utility>
-#include <vector>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

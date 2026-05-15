@@ -18,22 +18,17 @@
 // pumped manually so the recv-loop fiber observes the synthetic
 // close.
 
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <cstdint>
-#include <cstring>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

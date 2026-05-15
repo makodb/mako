@@ -10,14 +10,12 @@
 
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <memory>
-#include <string>
-#include <utility>
 
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

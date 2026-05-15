@@ -9,12 +9,13 @@
  * - CompletionQueryResult: status and helpers
  */
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include <gtest/gtest.h>
-#include <thread>
-#include <chrono>
-#include <vector>
-#include <atomic>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 using namespace std::chrono;

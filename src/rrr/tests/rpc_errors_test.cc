@@ -4,8 +4,9 @@
  */
 
 #include <gtest/gtest.h>
-#include <string>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 

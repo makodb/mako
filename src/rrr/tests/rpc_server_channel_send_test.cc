@@ -9,19 +9,18 @@
 // wire layout (channel mode always emits the extended-header form;
 // the size prefix is owned by the channel layer, not the body).
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include <gtest/gtest.h>
 
-#include <cstdint>
-#include <memory>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

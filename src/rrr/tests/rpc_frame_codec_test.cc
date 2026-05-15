@@ -16,15 +16,14 @@
 //   - Compatibility with `Marshal::set_bookmark` + i32 size-prefix
 //     emission used by the existing client/server send paths.
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
 
-#include <array>
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <vector>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

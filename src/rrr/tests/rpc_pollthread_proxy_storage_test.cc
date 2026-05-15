@@ -1,9 +1,7 @@
+#include <stddef.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <chrono>
-#include <functional>
-#include <thread>
 
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -13,6 +11,8 @@
 #include <rusty/function.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

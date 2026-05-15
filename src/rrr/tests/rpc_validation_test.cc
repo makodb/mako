@@ -3,13 +3,14 @@
  * Tests TCP keepalive configuration, idle detection, and connection validation.
  */
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
-#include <atomic>
-#include <chrono>
-#include <thread>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
 #include "benchmark_service.h"
+
+import std;
 
 using namespace rrr;
 using namespace benchmark;

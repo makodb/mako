@@ -24,15 +24,6 @@
 
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <chrono>
-#include <cstdio>
-#include <cstring>
-#include <mutex>
-#include <optional>
-#include <string>
-#include <thread>
-#include <vector>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -42,6 +33,8 @@
 #include <rusty/arc.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

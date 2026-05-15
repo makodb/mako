@@ -3,11 +3,13 @@
  * Tests queue operations, overflow strategies, and TTL expiration.
  */
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include <gtest/gtest.h>
-#include <atomic>
-#include <thread>
-#include <vector>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 using namespace std::chrono;

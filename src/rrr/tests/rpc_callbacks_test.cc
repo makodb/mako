@@ -3,11 +3,12 @@
  * Tests CallbackManager for connection lifecycle events.
  */
 
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
-#include <atomic>
-#include <thread>
-#include <vector>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 

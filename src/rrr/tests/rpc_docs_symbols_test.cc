@@ -1,9 +1,7 @@
 #include <gtest/gtest.h>
 
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <vector>
+
+import std;
 
 namespace {
 

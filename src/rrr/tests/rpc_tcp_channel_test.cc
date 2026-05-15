@@ -27,15 +27,10 @@
 //     wire-format guarantees we care about live in `frame_codec`, not
 //     in any TCP-specific framing, so this is a faithful substrate.
 
+#include <errno.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <cerrno>
-#include <cstring>
-#include <optional>
-#include <string>
-#include <thread>
-#include <vector>
 
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -44,6 +39,8 @@
 #include <rusty/arc.hpp>
 
 #include "../rrr.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

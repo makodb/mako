@@ -1,7 +1,11 @@
-#include <vector>
+#include <stdint.h>
+#include <stdlib.h>
+
 
 #include "../rrr.hpp"
 #include "deptran/all.h"
+
+import std;
 
 //using namespace base;
 //using namespace rpc;

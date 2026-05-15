@@ -15,19 +15,14 @@
 
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <string>
-#include <utility>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
 #include "../rpc/inmemory_channel.hpp"
+
+import std;
 
 namespace rrr {
 namespace {

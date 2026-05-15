@@ -1,10 +1,9 @@
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <vector>
-#include <unordered_set>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 using namespace std::chrono;

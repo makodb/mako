@@ -3,11 +3,12 @@
  * Tests configuration, timing, timeout detection, and callbacks.
  */
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
-#include <thread>
-#include <chrono>
-#include <atomic>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 using namespace std::chrono;

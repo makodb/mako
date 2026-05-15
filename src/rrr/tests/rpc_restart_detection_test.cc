@@ -4,11 +4,12 @@
  * Tests the server instance ID generation, client-side tracking,
  * and restart detection callback functionality.
  */
+#include <stdint.h>
+
 #include "gtest/gtest.h"
 #include "../rrr.hpp"
-#include <thread>
-#include <atomic>
-#include <chrono>
+
+import std;
 
 namespace rrr {
 
