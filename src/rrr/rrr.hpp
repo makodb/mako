@@ -18,7 +18,6 @@
 #include "rpc/fiber_channel.hpp"
 #include "rpc/circuit_breaker.hpp"
 #include "rpc/connection_metrics.hpp"
-#include "rpc/connection_state.hpp"
 #include "rpc/heartbeat.hpp"
 #include "rpc/reconnect_policy.hpp"
 #include "rpc/callbacks.hpp"
@@ -45,6 +44,7 @@
 // rrr submodules sit at the bottom of the textual chain.
 import rrr.alarm;
 import rrr.basetypes;
+import rrr.connection_state;
 import rrr.cpuinfo;
 import rrr.dball;
 import rrr.debugging;

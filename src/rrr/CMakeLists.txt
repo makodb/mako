@@ -30,6 +30,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp

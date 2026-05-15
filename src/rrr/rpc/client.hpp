@@ -32,7 +32,6 @@ import rrr.epoll_wrapper;
 
 #include "channel.hpp"
 #include "fiber_channel.hpp"
-#include "connection_state.hpp"
 #include "reconnect_policy.hpp"
 #include "request_queue.hpp"
 #include "connection_metrics.hpp"
@@ -40,6 +39,7 @@ import rrr.epoll_wrapper;
 #include "circuit_breaker.hpp"
 #include "callbacks.hpp"
 
+import rrr.connection_state;
 import rrr.errors;
 import rrr.load_balancer;
 import rrr.request_options;

@@ -156,4 +156,5 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | rpc/pollable_proxy (header-only → module) | 39.35 | 19 | 175.6 | — | PollableBase interface + PollableTypedArcAdapter<T> template + PollableProxy typedef. Uses PollMode constants from rrr.epoll_wrapper. 3 includers updated (reactor.h, tcp_channel.hpp, rrr.hpp). |
 | misc/dball (header-only → module) | 39.72 | 20 | 175.6 | — | DragonBall event-driven primitive + ConcurrentDragonBall typedef. 2 includers updated (rrr.hpp, alock.hpp). |
 | rpc/load_balancer (header-only → module) | — | 21 | — | — | LoadBalancingStrategy enum, LoadBalancerState, LoadBalancer with templated `select<>`. Forward-decl `class Client` MUST go in GMF (global-module attachment) — putting it in `export namespace rrr` caused 5 TUs to fail with "Client in module rrr.load_balancer follows declaration in global module". Same gotcha as PollThreadWorker earlier. |
+| rpc/connection_state (header-only → module) | 38.64 | 22 | 175.6 | — | ConnectionState enum + ConnectionStateMachine class (rusty::Cell + rusty::Function callback). 6-state lifecycle with valid-transition table. 2 includers updated. |
 
