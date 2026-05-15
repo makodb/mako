@@ -1,6 +1,9 @@
-# De-modularized rrr: plain STATIC library compiled from .cpp/.cc
-# implementation units. Header-only files (former module interface
-# units) are #included by the impl units and by external consumers.
+# rrr: STATIC library compiled from .cpp/.cc implementation units.
+# Files migrated to C++23 named modules keep their .cpp/.cc extension
+# but are wired in via FILE_SET CXX_MODULES below (RRR_MODULE_SRC).
+# They are explicitly removed from the regular source glob to avoid
+# double-compile. Migration is incremental and measurement-gated — see
+# docs/dev/srpc_module_migration_plan.md.
 file(GLOB RRR_BENCH_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/base/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/misc/*.cpp"
@@ -8,10 +11,25 @@ file(GLOB RRR_BENCH_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/reactor/*.cc"
 )
 
+# Files that have been converted to C++23 named-module interface units.
+# Each entry is a regular .cpp/.cc file but contains `export module
+# rrr.<name>;` at the top. The matching .hpp/.h remains as a forward-
+# declaration shim for non-importing consumers; the linker resolves
+# their calls to the module-emitted .o.
+set(RRR_MODULE_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
+)
+list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_MODULE_SRC})
+
 set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
 
 if(NOT TARGET rrr)
     add_library(rrr STATIC ${RRR_BENCH_SRC})
+    if(RRR_MODULE_SRC)
+        target_sources(rrr PUBLIC
+            FILE_SET rrr_modules TYPE CXX_MODULES FILES ${RRR_MODULE_SRC}
+        )
+    endif()
     target_include_directories(rrr PUBLIC
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/rrr
@@ -34,7 +52,9 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
+        # base/strop.cpp omitted — converted to a C++23 module interface
+        # unit (see RRR_MODULE_SRC). rusty-cpp cannot resolve module
+        # imports yet; revisit when the checker handles BMI paths.
         ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
         # removed misc/recorder.cpp — class
