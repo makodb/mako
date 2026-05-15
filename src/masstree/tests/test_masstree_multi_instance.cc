@@ -8,20 +8,17 @@
  * - RCU operations
  */
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <thread>
-#include <vector>
-#include <set>
-#include <random>
-#include <chrono>
-#include <memory>
 
 #include "masstree/masstree_context.h"
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
+
+import std;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;

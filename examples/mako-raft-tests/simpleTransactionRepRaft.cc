@@ -3,17 +3,17 @@
 // This is the Raft version of simpleTransactionRep.cc
 //
 
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <vector>
-#include <map>
+#include <stddef.h>
+#include <stdio.h>
+
 #include <mako.hh>
 #include "examples/common.h"
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
 #include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
+
+import std;
 
 using namespace std;
 using namespace mako;

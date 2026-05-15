@@ -1,10 +1,12 @@
+#include <string.h>
+
 #include "sys/times.h"
-#include <iostream>
 #include <unistd.h>
 #include <sys/types.h>
-#include <cstring>
 #include "coroutine.h"
 #include <sys/resource.h>
+
+import std;
 
 int main (int argc, char* argv[]) {
 	struct tms tms_buf;

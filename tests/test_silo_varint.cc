@@ -1,7 +1,11 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
 #include <gtest/gtest.h>
 #include "mako/varint.h"
-#include <vector>
-#include <limits>
+
+import std;
 
 // Test fixture for varint operations
 class VarintTest : public ::testing::Test {

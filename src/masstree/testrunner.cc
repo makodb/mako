@@ -21,10 +21,13 @@
 // @external_unsafe: fprintf
 // @external_unsafe: masstree_precondition
 
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "testrunner.hh"
-#include <algorithm>
-#include <numeric>
-#include <vector>
+
+import std;
 
 testrunner_base* testrunner_base::thehead;
 testrunner_base* testrunner_base::thetail;

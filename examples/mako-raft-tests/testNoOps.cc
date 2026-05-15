@@ -24,17 +24,13 @@
  * - Phase 7: Verify logs replicated after watermark sync
  */
 
-#include <iostream>
-#include <cstring>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <mutex>
-#include <sstream>
-#include <iomanip>
-#include <vector>
+#include <stdint.h>
+#include <stdlib.h>
+
 #include <mako.hh>
 #include <examples/common.h>
+
+import std;
 
 using namespace std;
 using namespace mako;

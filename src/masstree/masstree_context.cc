@@ -10,7 +10,8 @@
 
 #include "masstree_context.h"
 #include "kvthread.hh"
-#include <mutex>
+
+import std;
 
 // @safe - Uses rusty::MutPtr for borrow-checked semantics
 thread_local rusty::MutPtr<MasstreeContext> tl_masstree_context = nullptr;

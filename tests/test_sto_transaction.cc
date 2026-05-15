@@ -1,8 +1,7 @@
 #include <gtest/gtest.h>
 #include "mako/benchmarks/sto/TRcu.hh"
-#include <thread>
-#include <vector>
-#include <atomic>
+
+import std;
 
 // Test fixture for STO TRcu tests
 class STOTRcuTest : public ::testing::Test {

@@ -25,14 +25,14 @@
  * - Large writes (1MB) should complete in <10ms
  */
 
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <vector>
-#include <atomic>
-#include <cstring>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
 #include "../src/mako/rocksdb_persistence.h"
 #include "../src/mako/util.h"
+
+import std;
 
 using namespace std;
 using namespace mako;

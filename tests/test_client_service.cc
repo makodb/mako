@@ -1,13 +1,11 @@
 // @safe - Unit tests for MakoClientService
+#include <stdint.h>
+
 #include <gtest/gtest.h>
-#include <atomic>
-#include <chrono>
-#include <memory>
-#include <set>
-#include <thread>
-#include <vector>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
+
+import std;
 
 // We can only test the ID generation logic directly without mocking
 // ShardReceiver, since it requires full database setup.

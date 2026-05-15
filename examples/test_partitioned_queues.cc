@@ -40,16 +40,14 @@
  * - Even load distribution across workers
  */
 
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <vector>
-#include <atomic>
-#include <cstring>
-#include <unordered_map>
-#include <mutex>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+
 #include "../src/mako/rocksdb_persistence.h"
 #include "../src/mako/util.h"
+
+import std;
 
 using namespace std;
 using namespace mako;

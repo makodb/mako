@@ -7,23 +7,19 @@
  * Uses RustyCpp smart pointers for memory safety.
  */
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <thread>
-#include <vector>
-#include <memory>
-#include <random>
-#include <chrono>
-#include <set>
-#include <map>
-#include <mutex>
 
 #include "silo_runtime.h"
 #include "masstree/masstree_context.h"
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
+
+import std;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;

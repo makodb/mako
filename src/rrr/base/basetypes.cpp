@@ -7,8 +7,6 @@
 
 // @c-compat-added
 #include <pthread.h>
-#include <thread>
-#include <functional>
 
 #include <inttypes.h>
 #include <time.h>
@@ -18,6 +16,8 @@
 
 
 #include "../rrr.hpp"
+
+import std;
 
 import std;
 

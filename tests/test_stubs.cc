@@ -1,9 +1,9 @@
 // Stubs for missing symbols needed by some tests
 // These provide minimal implementations when full txn.cc is not needed
 
-#include <string>
-#include <cstdint>
-#include <sstream>
+#include <stdint.h>
+
+import std;
 
 // Stub for g_proto_version_str used in tuple.cc formatting
 // Real implementation is in txn.cc but brings many dependencies

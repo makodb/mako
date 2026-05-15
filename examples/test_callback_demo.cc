@@ -28,12 +28,12 @@
  * - Callbacks execute promptly after persistence
  */
 
-#include <iostream>
-#include <atomic>
-#include <thread>
-#include <chrono>
+#include <stdint.h>
+
 #include "../src/mako/rocksdb_persistence.h"
 #include "../src/mako/util.h"
+
+import std;
 
 // Mock get_epoch for testing
 static int get_epoch() {

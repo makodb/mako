@@ -14,14 +14,13 @@
  * - All nodes run for same duration: 2s startup + 30s monitoring = 32s total
  */
 
-#include <iostream>
-#include <cstring>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <mutex>
+#include <stdint.h>
+#include <stdlib.h>
+
 #include <mako.hh>
 #include <examples/common.h>
+
+import std;
 
 using namespace std;
 using namespace mako;

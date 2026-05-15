@@ -3,10 +3,13 @@
  * @brief Unit tests for TPC-C sharding policy initialization.
  */
 
+#include <math.h>
+
 #include <gtest/gtest.h>
-#include <sstream>
 #include "mako/benchmarks/tpcc_sharding.h"
 #include "sharding_policy_cache.h"
+
+import std;
 
 namespace mako {
 

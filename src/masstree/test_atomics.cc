@@ -31,9 +31,10 @@
 
 #define FORCE_ENABLE_ASSERTIONS 1
 #undef NDEBUG
+#include <stddef.h>
+
 #include "compiler.hh"
 #include <stdlib.h>
-#include <algorithm>
 #include <sys/time.h>
 #include <assert.h>
 #include <stdint.h>
@@ -46,6 +47,8 @@
 #include "value_bag.hh"
 #include "value_string.hh"
 #include "json.hh"
+
+import std;
 using namespace lcdf;
 
 uint8_t xb[100];

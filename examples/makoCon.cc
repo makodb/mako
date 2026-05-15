@@ -11,15 +11,16 @@
 // which wraps them in a single database transaction.
 //
 
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <atomic>
-#include <vector>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include <mako.hh>
 #include "db.hh"
 #include <examples/common.h>
 #include "lib/transaction_ffi.h"
+
+import std;
 
 // Global database instance (used by FFI callbacks)
 static mako::DB* g_mako_db = nullptr;

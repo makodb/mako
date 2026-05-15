@@ -1,9 +1,13 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 #include "mako/allocator.h"
 #include "mako/tuple.h"
-#include <vector>
-#include <thread>
-#include <atomic>
+
+import std;
 
 // ============================================================================
 // SILO ALLOCATOR TESTS - Testing real memory allocation system

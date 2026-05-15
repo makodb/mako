@@ -5,16 +5,18 @@
 // Each node runs a dedicated std::thread calling step_blocking() so the
 // sender actually has someone to unblock it.
 
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <thread>
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/sync/atomic.hpp>
 
 #include "deptran/raft/channel_transport.hpp"
+
+import std;
 
 using namespace janus::raft;
 

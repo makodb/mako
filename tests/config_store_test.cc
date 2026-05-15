@@ -3,11 +3,14 @@
  * @brief Unit tests for ConfigStore RocksDB persistence.
  */
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include <gtest/gtest.h>
-#include <filesystem>
-#include <cstdlib>
 #include "../src/deptran/config_store.h"
 #include "../src/deptran/sharding_policy_builder.h"
+
+import std;
 
 namespace janus {
 namespace test {

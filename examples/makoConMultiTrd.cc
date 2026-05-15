@@ -1,18 +1,14 @@
-#include <iostream>
-#include <fstream>
-#include <chrono>
-#include <thread>
-#include <vector>
-#include <atomic>
-#include <queue>
-#include <mutex>
-#include <condition_variable>
-#include <future>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include <mako.hh>
 #include <examples/common.h>
 #include "lib/rust_wrapper.h"
 #include "lib/transaction_ffi.h"
 #include "../src/mako/spinbarrier.h"
+
+import std;
 // #include "examples/test_verification.h"
 
 // ============================================================================

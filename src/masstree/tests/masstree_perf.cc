@@ -1,21 +1,11 @@
-#include <algorithm>
-#include <chrono>
-#include <cstdint>
-#include <ctime>
-#include <fstream>
-#include <iomanip>
-#include <iostream>
-#include <memory>
-#include <numeric>
-#include <optional>
-#include <random>
-#include <sstream>
-#include <string>
-#include <unordered_map>
-#include <vector>
+#include <stdint.h>
+#include <stddef.h>
+
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
+
+import std;
 
 using PerfTree = single_threaded_btree;
 

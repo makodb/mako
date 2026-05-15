@@ -43,13 +43,18 @@
 // @external_unsafe: memcpy
 // @external_unsafe: memmove
 
+#include <stdint.h>
+#include <assert.h>
+#include <stdlib.h>
+
 #include "string.hh"
 #include "straccum.hh"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <inttypes.h>
-#include <vector>
+
+import std;
 namespace lcdf {
 
 /** @file string.hh

@@ -1,13 +1,12 @@
-#include <iostream>
-#include <cstring>
-#include <vector>
-#include <chrono>
-#include <thread>
-#include <unordered_map>
-#include <mutex>
-#include <atomic>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include <mako.hh>
 #include <examples/common.h>
+
+import std;
 
 using namespace std;
 using namespace mako;

@@ -30,16 +30,15 @@
  * - No callback order violations within a partition
  */
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "../src/mako/rocksdb_persistence.h"
 #include "../src/mako/util.h"
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <vector>
-#include <atomic>
-#include <random>
-#include <cassert>
 #include <unistd.h>
+
+import std;
 
 using namespace mako;
 

@@ -29,12 +29,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <new>
 #include <sys/mman.h>
 #if HAVE_SUPERPAGE && !NOSUPERPAGE
 #include <sys/types.h>
 #include <dirent.h>
 #endif
+
+import std;
 
 // threadinfo::allthreads is now per-context in MasstreeContext
 #if ENABLE_ASSERTIONS

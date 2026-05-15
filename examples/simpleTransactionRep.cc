@@ -18,17 +18,11 @@
 // See docs/dev/unify_client_server_interface_plan.md for implementation plan.
 //
 
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <vector>
-#include <map>
-#include <algorithm>
-#include <cctype>
-#include <cstring>
-#include <cstdlib>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+
 #include <signal.h>
-#include <atomic>
 #include <mako.hh>
 #include "db.hh"
 #include "remote_db.hh"
@@ -40,6 +34,8 @@
 #include "../src/mako/spinbarrier.h"
 #include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
 #include "deptran/replication_helper.h"
+
+import std;
 
 using namespace std;
 using namespace mako;

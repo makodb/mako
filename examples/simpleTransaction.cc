@@ -2,12 +2,14 @@
 // Simple Transaction Tests for Mako Database
 //
 
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <cstdlib>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <mako.hh>
 #include <examples/common.h>
+
+import std;
 
 using namespace std;
 

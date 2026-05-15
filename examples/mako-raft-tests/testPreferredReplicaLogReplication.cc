@@ -19,18 +19,15 @@
  * - Phase 6: Shutdown
  */
 
-#include <iostream>
-#include <cstring>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <mutex>
-#include <sstream>
-#include <iomanip>
+#include <stdint.h>
+#include <stdlib.h>
+
 #include <mako.hh>
 #include <examples/common.h>
 #include "../src/deptran/classic/tpc_command.h"  // TpcCommitCommand
 #include "../src/deptran/procedure.h"            // VecPieceData, SimpleCommand
+
+import std;
 
 using namespace std;
 using namespace mako;

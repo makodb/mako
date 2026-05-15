@@ -8,11 +8,9 @@
  * - Network failure scenarios
  */
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
-#include <thread>
-#include <chrono>
-#include <atomic>
-#include <filesystem>
 
 #include "__dep__.h"
 #include "procedure.h"
@@ -22,6 +20,8 @@
 #include "config_store.h"
 #include "config_service.h"
 #include "config_client.h"
+
+import std;
 
 using namespace janus;
 namespace fs = std::filesystem;

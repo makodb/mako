@@ -11,16 +11,16 @@
  * supporting multiple Masstree instances.
  */
 
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <thread>
-#include <vector>
-#include <set>
 
 // Masstree headers
 #include "masstree/masstree_context.h"
 #include "masstree/kvthread.hh"
+
+import std;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;

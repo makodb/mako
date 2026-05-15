@@ -3,16 +3,16 @@
  * @brief Unit tests for ConfigService RPC interface.
  */
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
-#include <filesystem>
-#include <cstdlib>
-#include <thread>
-#include <chrono>
 #include "../src/deptran/config_service.h"
 #include "../src/deptran/config_store.h"
 #include "../src/deptran/config_schema.h"
 #include "../src/deptran/sharding_policy.h"
 #include "../src/deptran/sharding_policy_builder.h"
+
+import std;
 
 namespace janus {
 namespace test {

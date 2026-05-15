@@ -50,17 +50,16 @@
  * - For production use, monitor RocksDB metrics and adjust worker count
  */
 
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <vector>
-#include <atomic>
-#include <cstring>
-#include <unordered_map>
-#include <mutex>
-#include <random>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "../src/mako/rocksdb_persistence.h"
 #include "../src/mako/util.h"
+
+import std;
 
 using namespace std;
 using namespace mako;

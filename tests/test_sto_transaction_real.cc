@@ -1,8 +1,9 @@
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 #include "benchmarks/sto/Transaction.hh"
-#include <vector>
-#include <thread>
-#include <atomic>
+
+import std;
 
 // ============================================================================
 // STO TRANSACTION TESTS - Testing real transaction system

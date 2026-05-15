@@ -1,6 +1,5 @@
 #include <stdio.h>
-
-#include <cstdlib> // For std::stoi
+#include <stdlib.h>
 
 import std;
 

@@ -6,9 +6,8 @@
 #include <rusty/mutex.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/sync/mpsc.hpp>
-#include <thread>
-#include <chrono>
-#include <atomic>
+
+import std;
 
 // Mark std::thread::id as Send+Sync (it's a simple value type)
 namespace rusty {

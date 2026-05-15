@@ -4,17 +4,16 @@
 // exercises wait_until_quorum, then drives the reactor's event loop
 // from the test thread. Same pattern as `src/rrr/tests/test_and_event.cc`.
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <chrono>
-#include <thread>
-#include <utility>
-#include <vector>
 
 #include "deptran/raft/quorum.hpp"
 
 #include "rrr/rrr.hpp"
+
+import std;
 
 using janus::raft::RaftQuorum;
 using siteid_t_test = uint16_t;

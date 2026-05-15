@@ -13,14 +13,14 @@
  *   Full integration    - open/close, put/get/delete/scan lifecycle
  */
 
+#include <stddef.h>
+#include <stdio.h>
+
 #include <mako.hh>
 #include "db.hh"
 #include <examples/common.h>
-#include <algorithm>
-#include <iomanip>
-#include <sstream>
-#include <string>
-#include <vector>
+
+import std;
 
 // ============================================================================
 // Helpers

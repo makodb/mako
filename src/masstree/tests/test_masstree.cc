@@ -1,13 +1,13 @@
+#include <stdint.h>
+#include <stddef.h>
+
 #include <gtest/gtest.h>
 
-#include <algorithm>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <vector>
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
+
+import std;
 
 using TestTree = single_threaded_btree;
 

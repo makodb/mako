@@ -3,21 +3,18 @@
 // Simple test that continuously executes read/write transactions with statistics
 //
 
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <vector>
-#include <atomic>
-#include <random>
-#include <iomanip>
+#include <stdint.h>
+#include <stdio.h>
+
 #include <signal.h>
-#include <map>
 #include <mako.hh>
 #include "examples/common.h"
 #include "examples/statistics.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
 #include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
+
+import std;
 
 using namespace std;
 using namespace mako;

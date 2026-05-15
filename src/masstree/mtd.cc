@@ -109,8 +109,9 @@ namespace mtd_unsafe_file {} // Sets file_default to Unsafe for borrow checker
 #include "masstree_scan.hh"
 #include "masstree_context.h"
 #include "msgpack.hh"
-#include <algorithm>
-#include <deque>
+
+import std;
+
 using lcdf::StringAccum;
 
 enum { CKState_Quit, CKState_Uninit, CKState_Ready, CKState_Go };
