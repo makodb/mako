@@ -19,7 +19,6 @@
 #include "rpc/circuit_breaker.hpp"
 #include "rpc/connection_metrics.hpp"
 #include "rpc/heartbeat.hpp"
-#include "rpc/callbacks.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
@@ -43,6 +42,7 @@
 // rrr submodules sit at the bottom of the textual chain.
 import rrr.alarm;
 import rrr.basetypes;
+import rrr.callbacks;
 import rrr.connection_state;
 import rrr.cpuinfo;
 import rrr.dball;

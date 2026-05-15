@@ -36,8 +36,8 @@ import rrr.epoll_wrapper;
 #include "connection_metrics.hpp"
 #include "heartbeat.hpp"
 #include "circuit_breaker.hpp"
-#include "callbacks.hpp"
 
+import rrr.callbacks;
 import rrr.connection_state;
 import rrr.errors;
 import rrr.load_balancer;
