@@ -37,7 +37,6 @@
 #include "reactor/quorum_event.h"
 #include "rpc/completion_tracker.hpp"
 #include "reactor/reactor.h"
-#include "misc/alarm.hpp"
 #include "reactor/future.h"
 #include "rpc/client.hpp"
 #include "rpc/server.hpp"
@@ -48,6 +47,7 @@
 // `import std; ... #include <vector>` (the include lands after the
 // module's already-imported std), so umbrella imports for modularized
 // rrr submodules sit at the bottom of the textual chain.
+import rrr.alarm;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.epoll_wrapper;
