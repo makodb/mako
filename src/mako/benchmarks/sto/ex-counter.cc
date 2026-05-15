@@ -1,14 +1,18 @@
-#include <string>
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <sys/time.h>
 #include <assert.h>
 #include <sys/resource.h>
-#include <vector>
 #include "Transaction.hh"
 #include "TIntRange.hh"
 #include "TWrapped.hh"
 #include "randgen.hh"
 #include "clp.h"
+
+import std;
 #define GUARDED if (TransactionGuard tguard{})
 unsigned initial_seeds[64];
 unsigned ops_per_trans = 1;

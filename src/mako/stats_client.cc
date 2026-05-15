@@ -5,10 +5,12 @@
  *
  */
 
-#include <iostream>
-#include <string>
-#include <system_error>
-#include <thread>
+#include <stdint.h>
+#include <stddef.h>
+#include <errno.h>
+#include <string.h>
+#include <stdio.h>
+
 
 #include <unistd.h>
 #include <sys/socket.h>
@@ -17,6 +19,8 @@
 #include "counter.h"
 #include "stats_common.h"
 #include "util.h"
+
+import std;
 
 using namespace std;
 using namespace util;

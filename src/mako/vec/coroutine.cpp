@@ -1,10 +1,5 @@
-#include <iostream>
-#include <vector>
-#include <thread>
-#include <atomic>
-#include <coroutine>
-#include <queue>
-#include <chrono>
+
+import std;
 
 using namespace std;
 using namespace std::chrono;

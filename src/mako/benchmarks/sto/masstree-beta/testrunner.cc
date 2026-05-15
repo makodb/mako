@@ -13,10 +13,13 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "testrunner.hh"
-#include <algorithm>
-#include <numeric>
-#include <vector>
+
+import std;
 
 testrunner_base* testrunner_base::thehead;
 testrunner_base* testrunner_base::thetail;

@@ -5,11 +5,8 @@
 #include "simple_client.h"
 #include "simple_server.h"
 
-#include <iostream>
-#include <mutex>
-#include <thread>
-#include <map>
-#include <vector>
+
+import std;
 
 using namespace std;
 

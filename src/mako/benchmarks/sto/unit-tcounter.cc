@@ -1,12 +1,12 @@
 #undef NDEBUG
-#include <string>
-#include <iostream>
+#include <stdio.h>
+
 #include <assert.h>
-#include <vector>
-#include <algorithm>
 #include "Transaction.hh"
 #include "TCounter.hh"
 #include "TBox.hh"
+
+import std;
 
 void testTrivial() {
 	TCounter<int> c;

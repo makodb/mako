@@ -1,13 +1,15 @@
-#include <string>
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <assert.h>
-#include <vector>
-#include <random>
-#include <map>
 #include "Transaction.hh"
 #include "Vector.hh"
 #include "clp.h"
 #include "randgen.hh"
+
+import std;
 
 int max_value = 10000;
 int global_seed = 11;

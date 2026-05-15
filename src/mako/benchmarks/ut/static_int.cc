@@ -1,6 +1,9 @@
+#include <stddef.h>
+#include <stdlib.h>
+
 #include <stdio.h> 
-#include <iostream>
-#include <vector>
+
+import std;
 
 using namespace std;
 namespace ns { 

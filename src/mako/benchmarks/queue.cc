@@ -1,8 +1,6 @@
-#include <iostream>
-#include <sstream>
-#include <vector>
-#include <utility>
-#include <string>
+#include <stdint.h>
+#include <stddef.h>
+
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -14,6 +12,8 @@
 #include "../spinbarrier.h"
 
 #include "bench.h"
+
+import std;
 
 using namespace std;
 using namespace util;

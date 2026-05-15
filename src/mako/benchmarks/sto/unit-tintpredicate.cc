@@ -1,12 +1,15 @@
 #undef NDEBUG
-#include <string>
-#include <iostream>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <assert.h>
-#include <vector>
 #include "Transaction.hh"
 #include "TIntPredicate.hh"
 #include "StringWrapper.hh"
 #include "TBox.hh"
+
+import std;
 
 void testTrivial() {
 	TIntPredicate<int> ip;

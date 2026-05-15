@@ -1,14 +1,15 @@
-#include <string>
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+
 #include <assert.h>
-#include <vector>
-#include <random>
-#include <map>
 #include "Transaction.hh"
 #include "Vector.hh"
 #include "PriorityQueue.hh"
 #include "PriorityQueue1.hh"
 #include "randgen.hh"
+
+import std;
 
 #define GLOBAL_SEED 0
 #define MAX_VALUE  100000

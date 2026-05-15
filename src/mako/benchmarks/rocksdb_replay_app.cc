@@ -3,15 +3,12 @@
  * Reads and replays transaction logs from RocksDB with throughput measurement.
  */
 
-#include <iostream>
-#include <vector>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <map>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+
 #include <dirent.h>
 #include <sys/stat.h>
-#include <cstring>
 
 #include <rocksdb/c.h>
 
@@ -20,6 +17,8 @@
 #include "mbta_wrapper.hh"
 #include "deptran/s_main.h"
 #include "util.h"
+
+import std;
 
 using namespace mako;
 

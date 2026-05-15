@@ -1,11 +1,11 @@
 #define TVECTOR_DEFAULT_CAPACITY 16384
-#include <string>
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <assert.h>
-#include <vector>
-#include <random>
-#include <map>
-#include <queue>
 #include "Transaction.hh"
 #include "TVector.hh"
 #include "TVector_nopred.hh"
@@ -13,6 +13,8 @@
 #include "PriorityQueue1.hh"
 #include "clp.h"
 #include "randgen.hh"
+
+import std;
 int waiting = 5000;
 int max_value = 100000;
 int global_seed = 0;

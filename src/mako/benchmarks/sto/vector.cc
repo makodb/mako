@@ -1,9 +1,11 @@
-#include <string>
-#include <iostream>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <assert.h>
-#include <vector>
 #include "Transaction.hh"
 #include "Vector.hh"
+
+import std;
 
 void testSimpleInt() {
     Vector<int> f;

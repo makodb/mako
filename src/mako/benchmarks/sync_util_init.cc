@@ -1,17 +1,14 @@
 // This file contains the single definition of sync_util static variables
 // to avoid multiple definition errors when including mako.hh
 
-#include <vector>
-#include <atomic>
-#include <chrono>
-#include <mutex>
-#include <condition_variable>
-#include <unordered_map>
-#include <string>
+#include <stdint.h>
+
 
 #include "benchmarks/sto/sync_util.hh"
 #include "lib/configuration.h"
 #include "lib/common.h"
+
+import std;
 
 // Define all sync_util::sync_logger static variables once
 int sync_util::sync_logger::shardIdx = 0;

@@ -1,16 +1,18 @@
-#include <string>
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <assert.h>
-#include <vector>
-#include <sstream>
-#include <random>
-#include <map>
 #include "Transaction.hh"
 #include "TVector.hh"
 #include "TVector_nopred.hh"
 #include "clp.h"
 #include "randgen.hh"
 #include <sys/time.h>
+
+import std;
 int max_range = 10000;
 int max_value = 1000;
 int global_seed = 0;

@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 #include "macros.h"
 #include "amd64.h"
 #include "txn.h"
@@ -6,11 +8,8 @@
 #include "lockguard.h"
 #include "scopedperf.hh"
 
-#include <algorithm>
-#include <iostream>
-#include <sstream>
-#include <vector>
-#include <utility>
+
+import std;
 
 using namespace std;
 using namespace util;

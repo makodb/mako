@@ -1,11 +1,13 @@
 #undef NDEBUG
-#include <string>
-#include <iostream>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <assert.h>
-#include <vector>
 #include "Transaction.hh"
 #include "TArray.hh"
 #include "TBox.hh"
+
+import std;
 
 void testSimpleInt() {
 	TArray<int, 100> f;

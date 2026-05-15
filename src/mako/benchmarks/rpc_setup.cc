@@ -1,10 +1,10 @@
 // Implementation of TPCC setup utilities extracted from tpcc.cc
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include "rpc_setup.h"
 
-#include <algorithm>
-#include <map>
-#include <mutex>
 #include <pthread.h>
 #include <unistd.h>
 
@@ -268,6 +268,8 @@ void mako::stop_erpc_server()
 // ============================================================================
 
 #include "lib/client_tcp_server.h"
+
+import std;
 
 namespace {
 // Global pointer to client TCP server (singleton)

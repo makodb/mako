@@ -1,10 +1,11 @@
 #undef NDEBUG
-#include <string>
-#include <iostream>
+#include <stdio.h>
+
 #include <assert.h>
-#include <vector>
 #include "Transaction.hh"
 #include "TGeneric.hh"
+
+import std;
 
 void testSimpleInt() {
 	TGeneric f;

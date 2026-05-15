@@ -1,14 +1,16 @@
 #define INTERVAL_TREE_DEBUG 1
 #define rbaccount(x) ++rbaccount_##x
 unsigned long long rbaccount_rotation, rbaccount_flip, rbaccount_insert, rbaccount_erase;
-#include <iostream>
-#include <utility>
-#include <map>
-#include <vector>
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <string.h>
 #include "RBTree.hh"
 #include <sys/time.h>
 #include <sys/resource.h>
+
+import std;
 
 void rbaccount_report() {
     unsigned long long all = rbaccount_insert + rbaccount_erase;

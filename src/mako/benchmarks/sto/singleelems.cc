@@ -1,8 +1,13 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "Transaction.hh"
 #include "SingleElem.hh"
 #include "TGeneric.hh"
-#include <string>
 #include <assert.h>
+
+import std;
 
 void bigObjTests() {
   struct foo {

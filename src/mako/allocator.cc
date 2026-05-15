@@ -6,11 +6,13 @@
  * memory isolation between shards.
  */
 
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <sys/mman.h>
 #include <unistd.h>
-#include <map>
-#include <iostream>
-#include <cstring>
 #include <numa.h>
 
 #include "allocator.h"
@@ -19,6 +21,8 @@
 #include "lockguard.h"
 #include "static_vector.h"
 #include "counter.h"
+
+import std;
 
 using namespace util;
 

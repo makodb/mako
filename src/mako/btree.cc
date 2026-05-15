@@ -1,14 +1,11 @@
 // @unsafe: entire file uses complex template instantiations with unknown compare functions
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include <unistd.h>
 
-#include <iostream>
-#include <map>
-#include <set>
-#include <stack>
-#include <vector>
-#include <sstream>
-#include <atomic>
-#include <memory>
 
 #include "core.h"
 #include "thread.h"
@@ -16,6 +13,8 @@
 #include "util.h"
 #include "scopedperf.hh"
 #include "masstree_btree.h"
+
+import std;
 
 struct testing_concurrent_btree_traits : public masstree_params {
   static const bool RcuRespCaller = false;

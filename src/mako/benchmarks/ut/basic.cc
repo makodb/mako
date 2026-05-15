@@ -1,15 +1,8 @@
-#include <iostream>
-#include <algorithm>
-#include <atomic>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
-#include <map>
-#include <memory>
-#include <string>
-#include <thread>
-#include <unordered_map>
-#include <vector>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <time.h>
+
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/promise.h"
@@ -21,6 +14,8 @@
 #include "unordered_map"
 #include "util.h"
 #include "benchmarks/sto/sync_util.hh"
+
+import std;
 using namespace std;
 using namespace util;
 

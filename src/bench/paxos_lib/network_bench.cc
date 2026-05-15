@@ -1,10 +1,9 @@
+#include <stdlib.h>
+
 #include "../../deptran/s_main.h"
-#include <iostream>
-#include <vector>
 #include <sys/time.h>
-#include <thread>
-#include <string>
-#include <cstring>
+
+import std;
 
 
 int setup_paxos_default(){

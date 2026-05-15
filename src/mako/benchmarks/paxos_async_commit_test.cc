@@ -1,19 +1,18 @@
-#include <iostream>
-#include <cstring>
-#include <vector>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <getopt.h>
-#include <chrono>
-#include <thread>
 #include <unistd.h>
-#include <unordered_map>
 #include "../util.h"
 #include "deptran/s_main.h"
 #include "mutex"
-#include <chrono>
-#include <sstream>
-#include <iomanip>
 #include "benchmarks/sto/sync_util.hh"
 #include "lib/common.h"
+
+import std;
 
 using namespace std;
 using namespace mako;

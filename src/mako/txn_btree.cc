@@ -1,9 +1,10 @@
 // @unsafe: file uses complex template instantiations with unknown functions
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include <unistd.h>
-#include <limits>
-#include <memory>
-#include <atomic>
-#include <mutex>
 
 #include "txn.h"
 #include "txn_proto2_impl.h"
@@ -17,6 +18,8 @@
 #include "record/inline_str.h"
 
 #include "scopedperf.hh"
+
+import std;
 
 #define HAVE_REVERSE_RANGE_SCANS
 

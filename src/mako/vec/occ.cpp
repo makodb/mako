@@ -1,15 +1,8 @@
-#include <iostream>
-#include <vector>
-#include <thread>
-#include <random>
-#include <chrono>
-#include <algorithm>
-#include <atomic>
+#include <stdio.h>
+
 #include <cstdlib> // For std::stoi
-#include <csignal>
-#include <coroutine>
-#include <queue>
-#include <functional>
+
+import std;
 
 // Signal handler function
 void handleSignal(int signal) {

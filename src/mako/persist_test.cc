@@ -3,15 +3,12 @@
  * used to test the current persistence strategy
  */
 
-#include <cassert>
-#include <iostream>
-#include <cstdint>
-#include <random>
-#include <vector>
-#include <set>
-#include <atomic>
-#include <thread>
-#include <sstream>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 
 #include <unistd.h>
 #include <sys/uio.h>
@@ -27,6 +24,8 @@
 #include "amd64.h"
 #include "record/serializer.h"
 #include "util.h"
+
+import std;
 
 using namespace std;
 using namespace util;

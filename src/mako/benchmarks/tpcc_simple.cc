@@ -3,8 +3,11 @@
  * https://github.com/oltpbenchmark/oltpbench/tree/master/src/com/oltpbenchmark/benchmarks/tpcc
  */
 
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
 #include <sys/time.h>
-#include <string>
 #include <ctype.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -13,8 +16,6 @@
 #include <unistd.h>
 #include <getopt.h>
 
-#include <set>
-#include <vector>
 
 #include "../txn.h"
 #include "../macros.h"
@@ -23,6 +24,8 @@
 
 #include "bench.h"
 #include "tpcc.h"
+
+import std;
 using namespace std;
 using namespace util;
 

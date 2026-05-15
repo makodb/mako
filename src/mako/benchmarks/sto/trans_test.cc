@@ -1,11 +1,12 @@
-#include <string>
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+
 #include <assert.h>
-#include <vector>
-#include <random>
-#include <map>
 #include "Transaction.hh"
 #include "Testers.hh"
+
+import std;
 
 #define GLOBAL_SEED 10
 #define NTRANS 200 // Number of transactions each thread should run.

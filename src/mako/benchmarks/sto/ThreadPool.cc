@@ -1,11 +1,14 @@
 // @unsafe: uses template instantiations with unknown key functions and returns references
+#include <stdint.h>
+#include <stddef.h>
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include "ThreadPool.h"
-#include <stdexcept>
-#include <algorithm>
-#include<string_view>
-#include <unordered_set>
-#include <vector>
 #include "lib/common.h"
+
+import std;
 
 thread_local str_arena arena;
 thread_local void *buf = NULL;
