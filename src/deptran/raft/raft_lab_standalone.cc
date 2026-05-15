@@ -18,12 +18,12 @@
  * RaftServer + RaftLabTest driver.
  */
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <thread>
+#include <stddef.h>
+
 
 #include "deptran/raft/test_cluster.hpp"
+
+import std;
 
 using namespace janus::raft;
 

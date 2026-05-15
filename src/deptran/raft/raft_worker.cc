@@ -1,3 +1,8 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include "raft_worker.h"
 #include "server.h"
 #include "commo.h"
@@ -7,12 +12,8 @@
 #include "../paxos/commo.h"   // PaxosStatus enum reused by Mako watermark callbacks
 #include "../classic/tpc_command.h"  // TpcCommitCommand for batch optimization
 #include "../procedure.h"            // VecPieceData and SimpleCommand
-#include <chrono>
-#include <cstdlib>
-#include <cstring>
-#include <set>
-#include <vector>
-#include <atomic>
+
+import std;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]
