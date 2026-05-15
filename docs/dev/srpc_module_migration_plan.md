@@ -146,4 +146,5 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | base/threading (no-shim) | 37.01 | 8 | 136.8 | 9.99 | threading.hpp deleted; 9 includers updated. ~1000-line merged file (largest so far): Pthread wrappers, SpinLock/SpinMutex family, SpinCondVar, Queue<T>, ThreadPool, RunLater. Switched `max(...)` → `std::max(...)` (lost via `using namespace std;` drop). 2.19× baseline; threshold (3×) remains. |
 | misc/rand (no-shim) | 38.35 | 9 | 161.0 | 10.15 | rand.hpp deleted; only rrr.hpp included it. RandomGenerator class (all static methods). +1.3 s wallclock; 2.27× baseline. |
 | reactor/epoll_wrapper (no-shim) | 39.01 | 10 | 167.1 | 9.66 | epoll_wrapper.h deleted; 5 includers updated. `Pollable` interface + `Epoll` class with templated `Wait<>` member. Dropped the unused `class PollThreadWorker;` forward-decl (was causing global-vs-module attachment clash in reactor.h's similar forward-decl). |
+| rpc/utils (no-shim) | 38.07 | 11 | 174.9 | 9.62 | utils.hpp deleted; 2 includers updated (rrr.hpp, rpc/server.hpp). AddrInfo RAII + 3 free functions. Wallclock slightly **lower** than prior — noise band. |
 

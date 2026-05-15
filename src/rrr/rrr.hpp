@@ -27,7 +27,6 @@
 #include "rpc/internal_protocol.hpp"
 #include "rpc/reconnect_policy.hpp"
 #include "rpc/request_options.hpp"
-#include "rpc/utils.hpp"
 #include "rpc/load_balancer.hpp"
 #include "rpc/callbacks.hpp"
 #include "base/all.hpp"
@@ -62,5 +61,6 @@ import rrr.misc;
 import rrr.rand;
 import rrr.strop;
 import rrr.threading;
+import rrr.utils;
 
 namespace base = rrr;

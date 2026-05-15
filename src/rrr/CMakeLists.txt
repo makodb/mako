@@ -25,6 +25,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_MODULE_SRC})
 
