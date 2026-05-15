@@ -6,7 +6,6 @@ module;
 export module rrr.pollable_proxy;
 
 import std;
-import rrr.epoll_wrapper;
 
 export namespace rrr {
 

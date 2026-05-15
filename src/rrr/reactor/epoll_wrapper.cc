@@ -22,7 +22,6 @@ export module rrr.epoll_wrapper;
 
 import std;
 import rrr.debugging;
-import rrr.logging;
 
 export namespace rrr {
 using std::shared_ptr;
