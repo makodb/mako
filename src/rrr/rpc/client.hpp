@@ -36,13 +36,13 @@ import rrr.epoll_wrapper;
 #include "reconnect_policy.hpp"
 #include "request_queue.hpp"
 #include "connection_metrics.hpp"
-#include "request_options.hpp"
 #include "load_balancer.hpp"
 #include "heartbeat.hpp"
 #include "circuit_breaker.hpp"
 #include "callbacks.hpp"
 
 import rrr.errors;
+import rrr.request_options;
 
 namespace rrr {
 

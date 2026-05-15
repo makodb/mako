@@ -25,7 +25,6 @@
 #include "rpc/heartbeat.hpp"
 #include "rpc/internal_protocol.hpp"
 #include "rpc/reconnect_policy.hpp"
-#include "rpc/request_options.hpp"
 #include "rpc/load_balancer.hpp"
 #include "rpc/callbacks.hpp"
 #include "base/all.hpp"
@@ -59,6 +58,7 @@ import rrr.errors;
 import rrr.logging;
 import rrr.misc;
 import rrr.rand;
+import rrr.request_options;
 import rrr.strop;
 import rrr.threading;
 import rrr.utils;
