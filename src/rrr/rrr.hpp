@@ -18,7 +18,6 @@
 #include "rpc/fiber_channel.hpp"
 #include "rpc/circuit_breaker.hpp"
 #include "rpc/connection_metrics.hpp"
-#include "rpc/heartbeat.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
@@ -49,6 +48,7 @@ import rrr.dball;
 import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
+import rrr.heartbeat;
 import rrr.internal_protocol;
 import rrr.load_balancer;
 import rrr.logging;
