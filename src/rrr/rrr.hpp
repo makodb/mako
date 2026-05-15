@@ -32,7 +32,6 @@
 // — `Recorder` class deleted; was unused after Phase 4e-35.
 #include "rpc/idempotency.hpp"
 #include "rpc/request_queue.hpp"
-#include "rpc/pollable_proxy.h"
 #include "reactor/quorum_event.h"
 #include "rpc/completion_tracker.hpp"
 #include "reactor/reactor.h"
@@ -56,6 +55,7 @@ import rrr.internal_protocol;
 import rrr.logging;
 import rrr.misc;
 import rrr.netinfo;
+import rrr.pollable_proxy;
 import rrr.rand;
 import rrr.request_options;
 import rrr.stat;

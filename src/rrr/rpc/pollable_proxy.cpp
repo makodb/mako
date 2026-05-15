@@ -1,14 +1,15 @@
-#pragma once
+module;
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
+export module rrr.pollable_proxy;
+
+import std;
 import rrr.epoll_wrapper;
 
+export namespace rrr {
 
-namespace rrr {
-
-// Abstract base for objects participating in epoll-driven polling.
 class PollableBase {
  public:
   virtual ~PollableBase() = default;
@@ -51,4 +52,4 @@ inline PollableProxy make_pollable_proxy_from_typed_arc(rusty::Arc<T> poll) {
   return rusty::make_box<PollableTypedArcAdapter<T>>(std::move(poll));
 }
 
-}  // namespace rrr
+}  // export namespace rrr

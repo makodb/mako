@@ -91,12 +91,13 @@
 
 
 #include "../base/all.hpp"
-#include "../rpc/pollable_proxy.h"
 
 
 #include "event.h"
 #include "quorum_event.h"
 #include "fiber_impl.h"
+
+import rrr.pollable_proxy;
 
 import rrr.epoll_wrapper;
 

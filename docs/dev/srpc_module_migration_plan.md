@@ -153,4 +153,5 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | misc/stat + misc/netinfo (header-only → modules) | 38.23 | 16 | 175.4 | — | Two trivially-isolated headers — AvgStat (POD) and NetInfo (singleton reading /sys/class/net/...). 1 includer each (rrr.hpp). |
 | misc/alarm (header-only → module) | 38.41 | 17 | 175.5 | — | Alarm inherits FrequentJob (rrr.misc), uses rrr::PollThread* pointer-only. GMF forward-decl `namespace rrr { class PollThread; }` keeps the pointer in global-module attachment that matches reactor.h's full decl. 2 includers updated (rrr.hpp, misc/alock.hpp). |
 | misc/cpuinfo (header-only → module) | 39.60 | 18 | 175.6 | — | CPUInfo singleton reading /proc/PID/{net/dev,stat} + /proc/meminfo. Uses Log_debug from rrr.logging. Sole consumer: rrr.hpp. |
+| rpc/pollable_proxy (header-only → module) | 39.35 | 19 | 175.6 | — | PollableBase interface + PollableTypedArcAdapter<T> template + PollableProxy typedef. Uses PollMode constants from rrr.epoll_wrapper. 3 includers updated (reactor.h, tcp_channel.hpp, rrr.hpp). |
 
