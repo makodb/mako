@@ -60,8 +60,11 @@
 #include <utility>
 
 #include <rusty/fn.hpp>
+#include <rusty/function.hpp>
 
 #include "serializable.hpp"
+
+import rrr.debugging;
 
 namespace rrr {
 

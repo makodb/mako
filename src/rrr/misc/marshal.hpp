@@ -511,18 +511,6 @@ inline SourceProxy make_source_proxy(MarshalSource* source) {
   return rusty::make_box<MarshalSourceAdapter>(source);
 }
 
-// Inline definitions of the BinaryWriteArchive/BinaryReadArchive
-// convenience constructors that take MarshalSink*/MarshalSource*.
-// Declarations live in serializable.hpp; bodies are here so the
-// full class def for MarshalSink/MarshalSource (just above) is in
-// scope. This separation breaks the impl-side cycle that used to
-// require serializable.cpp to include marshal.hpp.
-inline BinaryWriteArchive::BinaryWriteArchive(MarshalSink* sink)
-    : sink_(make_sink_proxy(sink)) {}
-
-inline BinaryReadArchive::BinaryReadArchive(MarshalSource* source)
-    : source_(make_source_proxy(source)) {}
-
 // @unsafe
 // @lifetime: (&'a, const i8&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) {
