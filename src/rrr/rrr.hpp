@@ -16,7 +16,6 @@
 #include "rpc/frame_codec.hpp"
 #include "rpc/tcp_channel.hpp"
 #include "rpc/fiber_channel.hpp"
-#include "rpc/circuit_breaker.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
@@ -41,6 +40,7 @@
 import rrr.alarm;
 import rrr.basetypes;
 import rrr.callbacks;
+import rrr.circuit_breaker;
 import rrr.connection_metrics;
 import rrr.connection_state;
 import rrr.cpuinfo;

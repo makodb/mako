@@ -33,9 +33,9 @@ import rrr.epoll_wrapper;
 #include "channel.hpp"
 #include "fiber_channel.hpp"
 #include "request_queue.hpp"
-#include "circuit_breaker.hpp"
 
 import rrr.callbacks;
+import rrr.circuit_breaker;
 import rrr.connection_metrics;
 import rrr.connection_state;
 import rrr.heartbeat;
