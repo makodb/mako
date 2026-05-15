@@ -237,26 +237,65 @@ sanitizer) is the remaining piece.
 should be online before deeper refactors begin.
 **Estimate:** 2 days for the harness, ongoing for baseline tuning.
 
-### 5.1 Microbench harness (Google Benchmark)
+### 5.1 Microbench harness — wired
 
-- Point insert
-- Point lookup
-- Point remove
-- Range scan (short / long)
-- 50/50 mixed
-- 95/5 read-heavy
-- Thread counts: 1, 2, 4, 8, 16, 32
+`src/masstree/tests/masstree_perf.cc` runs six scenarios against a
+`single_threaded_btree`:
 
-### 5.2 CI gate
+| Scenario | What it measures |
+|---|---|
+| `insert_sequential` | bulk fill in key-ascending order |
+| `insert_random` | bulk fill in shuffled order |
+| `lookup_random` | point lookups on a pre-filled tree |
+| `mixed_read_write` | 80/20 read/write on a pre-filled tree |
+| `range_scan` | windowed range scans |
+| `remove_sequential` | bulk remove |
 
-- Numbers checked into a baseline file (per hardware target).
-- CI fails on >X% regression vs baseline (or vs `main` as
-  relative reference).
+Knobs:
 
-### 5.3 Cache-locality probe (optional)
+- `--keys N` keyspace (default 32,768)
+- `--lookup-rounds M` iterations for read-heavy scenarios (default 4)
+- `--scan-window W` range-scan width (default 256)
+- `--repetitions R` run each scenario R times, report best
+- `--output file` write per-scenario JSON
+- `--baseline file` compare against earlier `--output`
+- `--fail-on-regress PCT` (with `--baseline`) exit 2 if any scenario
+  is more than PCT % slower than baseline
+
+Multi-thread coverage (`concurrent_btree` at 1/2/4/8/16/32 threads) is
+not yet wired here; if you want it sooner, layer it in alongside the
+single-thread scenarios.
+
+### 5.2 Regression-gate workflow
+
+Per-hardware baselines aren't checked into the repo — what counts as a
+regression on one machine is the norm on another. The intended pattern
+is "before and after":
+
+```bash
+# 1. Capture baseline on `main`.
+build_local/masstree_perf --repetitions 5 --output baseline.json
+
+# 2. Apply your change, rebuild, re-run with the gate.
+build_local/masstree_perf --repetitions 5 \
+    --baseline baseline.json --fail-on-regress 15
+echo "exit=$?"   # 0 = within 15 %, 2 = regressed beyond threshold
+```
+
+Threshold tuning notes:
+
+- `--repetitions 1` (the default) has ~10 % noise on cold-CPU runs.
+  Use ≥ 3 reps before relying on the gate; 5 reps in CI is reasonable.
+- A 15 % threshold is a sane default for noisy shared hosts. On a
+  dedicated box you can tighten to 5 % once you've validated the
+  noise floor.
+- Exit codes: 0 = pass, 1 = invalid args or scenario error, 2 = gate
+  triggered. CI scripts should fail on any non-zero.
+
+### 5.3 Cache-locality probe (optional, not wired)
 
 - Scan benchmark with `perf stat` L1/LLC miss counters.
-- Likely flaky in shared CI; treat as advisory.
+- Likely flaky in shared CI; treat as advisory if added.
 
 ---
 

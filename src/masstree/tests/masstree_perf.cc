@@ -19,6 +19,9 @@ struct BenchmarkConfig {
   size_t key_count = 1 << 15;
   size_t lookup_rounds = 4;
   size_t scan_window = 256;
+  // Each scenario is run `repetitions` times; the best (max ops/sec) is
+  // reported. Higher reps trade wall time for noise resistance.
+  size_t repetitions = 1;
 };
 
 struct BenchmarkSummary {
@@ -75,13 +78,25 @@ class BenchmarkHarness {
   BenchmarkSummary RunAll() {
     BenchmarkSummary summary;
     summary.config = cfg_;
-    summary.results.push_back(RunSequentialInsert());
-    summary.results.push_back(RunRandomInsert());
-    summary.results.push_back(RunRandomLookup());
-    summary.results.push_back(RunMixedReadWrite());
-    summary.results.push_back(RunRangeScan());
-    summary.results.push_back(RunSequentialRemove());
+    summary.results.push_back(BestOf([this]{ return RunSequentialInsert(); }));
+    summary.results.push_back(BestOf([this]{ return RunRandomInsert(); }));
+    summary.results.push_back(BestOf([this]{ return RunRandomLookup(); }));
+    summary.results.push_back(BestOf([this]{ return RunMixedReadWrite(); }));
+    summary.results.push_back(BestOf([this]{ return RunRangeScan(); }));
+    summary.results.push_back(BestOf([this]{ return RunSequentialRemove(); }));
     return summary;
+  }
+
+  template <typename F>
+  ScenarioResult BestOf(F&& f) {
+    ScenarioResult best{};
+    for (size_t r = 0; r < cfg_.repetitions; ++r) {
+      ScenarioResult r_now = f();
+      if (r == 0 || r_now.ops_per_sec > best.ops_per_sec) {
+        best = r_now;
+      }
+    }
+    return best;
   }
 
  private:
@@ -238,7 +253,8 @@ void WriteJson(const BenchmarkSummary& summary, const std::string& output_path) 
   out << "  \"config\": {\n";
   out << "    \"key_count\": " << summary.config.key_count << ",\n";
   out << "    \"lookup_rounds\": " << summary.config.lookup_rounds << ",\n";
-  out << "    \"scan_window\": " << summary.config.scan_window << "\n";
+  out << "    \"scan_window\": " << summary.config.scan_window << ",\n";
+  out << "    \"repetitions\": " << summary.config.repetitions << "\n";
   out << "  },\n";
   out << "  \"results\": [\n";
   for (size_t i = 0; i < summary.results.size(); ++i) {
@@ -295,9 +311,15 @@ std::unordered_map<std::string, double> LoadBaseline(const std::string& path) {
   return metrics;
 }
 
-void PrintComparison(const BenchmarkSummary& summary,
-                     const std::unordered_map<std::string, double>& baseline) {
+// Returns the worst (most negative) percentage delta across all
+// scenarios present in both `summary` and `baseline`. A return of -3.4
+// means "the worst-regressed scenario is 3.4 % slower than baseline."
+// Scenarios missing from baseline are skipped (no comparison possible).
+double PrintComparison(const BenchmarkSummary& summary,
+                       const std::unordered_map<std::string, double>& baseline) {
   std::cout << "Performance comparison vs. baseline:\n";
+  double worst_delta_pct = 0.0;
+  bool any_compared = false;
   for (const auto& result : summary.results) {
     auto it = baseline.find(result.name);
     if (it == baseline.end()) {
@@ -309,13 +331,24 @@ void PrintComparison(const BenchmarkSummary& summary,
     std::cout << "  " << result.name << ": current=" << result.ops_per_sec
               << " baseline=" << it->second << " ("
               << std::fixed << std::setprecision(2) << pct << "%)\n";
+    if (!any_compared || pct < worst_delta_pct) {
+      worst_delta_pct = pct;
+      any_compared = true;
+    }
   }
+  return any_compared ? worst_delta_pct : 0.0;
 }
 
 void PrintUsage(const char* prog) {
-  std::cout << "Usage: " << prog
-            << " [--keys N] [--lookup-rounds M] [--scan-window W]"
-            << " [--output file] [--baseline file]\n";
+  std::cout << "Usage: " << prog << "\n"
+            << "  [--keys N]              keyspace size (default 32768)\n"
+            << "  [--lookup-rounds M]     iterations for lookup/mixed/scan (default 4)\n"
+            << "  [--scan-window W]       range-scan width (default 256)\n"
+            << "  [--repetitions R]       run each scenario R times; report best (default 1)\n"
+            << "  [--output file]         write per-scenario JSON results\n"
+            << "  [--baseline file]       compare against earlier --output file\n"
+            << "  [--fail-on-regress PCT] with --baseline, exit 1 if any scenario\n"
+            << "                          is more than PCT %% slower (default off)\n";
 }
 
 }  // namespace
@@ -324,6 +357,11 @@ int main(int argc, char** argv) {
   BenchmarkConfig config;
   std::string output_path;
   std::string baseline_path;
+  // Regression threshold in percent (positive number). When set
+  // alongside --baseline, the binary exits 1 if any scenario is more
+  // than this many percent slower than the baseline. A negative or
+  // unset value disables the gate.
+  double fail_on_regress_pct = -1.0;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -333,10 +371,14 @@ int main(int argc, char** argv) {
       config.lookup_rounds = std::stoull(argv[++i]);
     } else if (arg == "--scan-window" && i + 1 < argc) {
       config.scan_window = std::stoull(argv[++i]);
+    } else if (arg == "--repetitions" && i + 1 < argc) {
+      config.repetitions = std::stoull(argv[++i]);
     } else if (arg == "--output" && i + 1 < argc) {
       output_path = argv[++i];
     } else if (arg == "--baseline" && i + 1 < argc) {
       baseline_path = argv[++i];
+    } else if (arg == "--fail-on-regress" && i + 1 < argc) {
+      fail_on_regress_pct = std::stod(argv[++i]);
     } else if (arg == "--help") {
       PrintUsage(argv[0]);
       return 0;
@@ -347,8 +389,14 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (config.key_count == 0 || config.lookup_rounds == 0) {
-    std::cerr << "key count and lookup rounds must be positive numbers.\n";
+  if (config.key_count == 0 || config.lookup_rounds == 0 ||
+      config.repetitions == 0) {
+    std::cerr << "key-count, lookup-rounds, and repetitions must be positive.\n";
+    return 1;
+  }
+
+  if (fail_on_regress_pct >= 0.0 && baseline_path.empty()) {
+    std::cerr << "--fail-on-regress requires --baseline.\n";
     return 1;
   }
 
@@ -358,7 +406,8 @@ int main(int argc, char** argv) {
 
     std::cout << "Masstree micro-benchmark (keys=" << config.key_count
               << ", lookup_rounds=" << config.lookup_rounds
-              << ", scan_window=" << config.scan_window << ")\n";
+              << ", scan_window=" << config.scan_window
+              << ", repetitions=" << config.repetitions << ")\n";
     for (const auto& result : summary.results) {
       std::cout << "  " << result.name << " = "
                 << result.ops_per_sec << " ops/sec ("
@@ -369,7 +418,13 @@ int main(int argc, char** argv) {
 
     if (!baseline_path.empty()) {
       auto baseline = LoadBaseline(baseline_path);
-      PrintComparison(summary, baseline);
+      double worst_pct = PrintComparison(summary, baseline);
+      if (fail_on_regress_pct >= 0.0 && worst_pct < -fail_on_regress_pct) {
+        std::cerr << "REGRESSION: worst scenario is " << std::fixed
+                  << std::setprecision(2) << worst_pct
+                  << "%, threshold is -" << fail_on_regress_pct << "%\n";
+        return 2;
+      }
     }
   } catch (const std::exception& e) {
     std::cerr << "Benchmark failed: " << e.what() << "\n";
