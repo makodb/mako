@@ -25,6 +25,7 @@
 
 
 #include <rusty/fn.hpp>
+#include <rusty/function.hpp>
 
 #include "../base/debugging.hpp"
 

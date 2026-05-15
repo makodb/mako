@@ -33,11 +33,9 @@
 
 #include "../misc/marshal.hpp"
 
+import rrr.basetypes;
 
 namespace rrr {
-
-// Forward declarations
-class Counter;
 
 // ===========================================================================
 // IdempotencyKey

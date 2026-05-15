@@ -1,79 +1,255 @@
+module;
 
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <stdint.h>
-#include <stddef.h>
-#include <stdlib.h>
-
-
-// @c-compat-added
-#include <pthread.h>
-
+#include <rusty/rusty.hpp>
 #include <inttypes.h>
-#include <time.h>
+#include <pthread.h>
 #include <sys/time.h>
+#include <time.h>
 
-#include "basetypes.hpp"
-
-
-#include "../rrr.hpp"
+export module rrr.basetypes;
 
 import std;
 
-import std;
+export namespace rrr {
 
+template<typename T>
+inline void atomic_store_relaxed(std::atomic<T>& atomic_var, T value) {
+  atomic_var.store(value, std::memory_order_relaxed);
+}
 
+template<typename T>
+inline T atomic_load_relaxed(const std::atomic<T>& atomic_var) {
+  return atomic_var.load(std::memory_order_relaxed);
+}
 
+template<typename T>
+inline T atomic_fetch_add_acq_rel(std::atomic<T>& atomic_var, T value) {
+  return atomic_var.fetch_add(value, std::memory_order_acq_rel);
+}
 
-// External safety annotations for atomic operations
-// @external: {
-//   std::__atomic_base::load: [unsafe]
-//   std::__atomic_base::store: [unsafe]
-//   std::__atomic_base::fetch_add: [unsafe]
-//   std::__atomic_base::fetch_sub: [unsafe]
-// }
+template<typename T>
+inline T atomic_fetch_sub_acq_rel(std::atomic<T>& atomic_var, T value) {
+  return atomic_var.fetch_sub(value, std::memory_order_acq_rel);
+}
 
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
 
-// External safety annotations for system functions used in this module
-// @external: {
-//   gettimeofday: [unsafe, (struct timeval*, struct timezone*) -> int]
-//   pthread_self: [unsafe, () -> pthread_t]
-// }
+class SparseInt {
+public:
+    static size_t buf_size(char byte0);
+    static size_t val_size(i64 val);
+    static size_t dump(i32 val, char* buf);
+    static size_t dump(i64 val, char* buf);
+    static i32 load_i32(const char* buf);
+    static i64 load_i64(const char* buf);
+};
+
+class v32 {
+    i32 val_;
+public:
+    v32(i32 v = 0): val_(v) { }
+    void set(i32 v) { val_ = v; }
+    i32 get() const { return val_; }
+    size_t val_size() const { return SparseInt::val_size(val_); }
+};
+
+class v64 {
+    i64 val_;
+public:
+    v64(i64 v = 0): val_(v) { }
+    void set(i64 v) { val_ = v; }
+    i64 get() const { return val_; }
+    size_t val_size() const { return SparseInt::val_size(val_); }
+};
+
+class NoCopy {
+protected:
+    NoCopy() = default;
+    virtual ~NoCopy() = default;
+public:
+    NoCopy(const NoCopy&) = delete;
+    NoCopy& operator=(const NoCopy&) = delete;
+    NoCopy(NoCopy&&) = default;
+    NoCopy& operator=(NoCopy&&) = default;
+};
+
+class RefCounted {
+    std::atomic<int> refcnt_;
+protected:
+    virtual ~RefCounted() = 0;
+public:
+    RefCounted(): refcnt_(1) {}
+    int ref_count() const {
+        return atomic_load_relaxed(refcnt_);
+    }
+    RefCounted* ref_copy() {
+        atomic_fetch_add_acq_rel(refcnt_, 1);
+        return this;
+    }
+    int release() {
+        int r = atomic_fetch_sub_acq_rel(refcnt_, 1) - 1;
+        if (r < 0) std::abort();
+        if (r == 0) {
+            delete this;
+        }
+        return r;
+    }
+};
+inline RefCounted::~RefCounted() {}
+
+class Counter: public NoCopy {
+    std::atomic<i64> next_;
+public:
+    Counter(i64 start = 0) : next_(start) { }
+    i64 peek_next() const {
+        return atomic_load_relaxed(next_);
+    }
+    i64 next(i64 step = 1) {
+        return atomic_fetch_add_acq_rel(next_, step);
+    }
+    void reset(i64 start = 0) {
+        atomic_store_relaxed(next_, start);
+    }
+};
+
+class Time {
+public:
+    static const uint64_t RRR_USEC_PER_SEC = 1000000;
+
+    static uint64_t now(bool accurate = false) {
+      struct timespec spec;
+#ifdef __APPLE__
+      clock_gettime(CLOCK_REALTIME, &spec );
+#else
+      if (accurate) {
+        clock_gettime(CLOCK_MONOTONIC, &spec);
+      } else {
+        clock_gettime(CLOCK_REALTIME_COARSE, &spec);
+      }
+#endif
+      return spec.tv_sec * RRR_USEC_PER_SEC + spec.tv_nsec/1000;
+    }
+
+    static void sleep(uint64_t t) {
+        struct timeval tv;
+        tv.tv_usec = t % RRR_USEC_PER_SEC;
+        tv.tv_sec = t / RRR_USEC_PER_SEC;
+        select(0, NULL, NULL, NULL, &tv);
+    }
+};
+
+class Timer {
+public:
+    Timer();
+    void start();
+    void stop();
+    void reset();
+    double elapsed() const;
+private:
+    struct timeval begin_;
+    struct timeval end_;
+};
+
+class Rand: public NoCopy {
+    std::mt19937 rand_;
+public:
+    Rand();
+    std::mt19937::result_type next() {
+        return rand_();
+    }
+    std::mt19937::result_type next(int lower, int upper) {
+        return lower + rand_() % (upper - lower);
+    }
+    std::mt19937::result_type operator() () {
+        return rand_();
+    }
+};
+
+template<class T>
+class Enumerator {
+public:
+    virtual ~Enumerator() {}
+    virtual void reset() {
+        std::abort();
+    }
+    virtual bool has_next() = 0;
+    operator bool() {
+        return this->has_next();
+    }
+    virtual T next() = 0;
+    T operator() () {
+        return this->next();
+    }
+};
+
+template<class T, class Compare = std::greater<T>>
+class MergedEnumerator: public Enumerator<T> {
+    struct merge_helper {
+        T data;
+        Enumerator<T>* src;
+        merge_helper(const T& d, Enumerator<T>* s): data(d), src(s) {}
+        bool operator < (const merge_helper& other) const {
+            return Compare()(data, other.data);
+        }
+    };
+
+    rusty::Vec<merge_helper> q_;
+
+public:
+    void add_source(Enumerator<T>* src) {
+        if (src && src->has_next()) {
+            q_.push(merge_helper(src->next(), src));
+            std::push_heap(q_.begin(), q_.end());
+        }
+    }
+    void reset() override {
+    }
+    bool has_next() override {
+        return !q_.is_empty();
+    }
+    T next() override {
+        if (q_.is_empty()) std::abort();
+        std::pop_heap(q_.begin(), q_.end());
+        merge_helper mh = q_.pop();
+        T ret = mh.data;
+        Enumerator<T>* src = mh.src;
+        if (src->has_next()) {
+            q_.push(merge_helper(src->next(), src));
+            std::push_heap(q_.begin(), q_.end());
+        }
+        return ret;
+    }
+};
+
+} // export namespace rrr
 
 namespace rrr {
 
-// @safe - Pure computation, no memory operations
 size_t SparseInt::buf_size(char byte0) {
     if ((byte0 & 0x80) == 0) {
-        // binary: 0...
         return 1;
     } else if ((byte0 & 0xC0) == 0x80) {
-        // binary: 10...
         return 2;
     } else if ((byte0 & 0xE0) == 0xC0) {
-        // binary: 110...
         return 3;
     } else if ((byte0 & 0xF0) == 0xE0) {
-        // binary: 1110...
         return 4;
     } else if ((byte0 & 0xF8) == 0xF0) {
-        // binary: 11110...
         return 5;
     } else if ((byte0 & 0xFC) == 0xF8) {
-        // binary: 111110...
         return 6;
     } else if ((byte0 & 0xFE) == 0xFC) {
-        // binary: 1111110...
         return 7;
     } else if ((byte0 & 0xFF) == 0xFE) {
-        // binary: 11111110...
         return 8;
     } else {
         return 9;
     }
 }
 
-// @unsafe - Uses reinterpret_cast and address-of (marked unsafe for borrow checking)
-// SAFETY: Pure computation, no actual memory operations
 size_t SparseInt::val_size(i64 val) {
     if (-64 <= val && val <= 63) {
         return 1;
@@ -96,8 +272,6 @@ size_t SparseInt::val_size(i64 val) {
     }
 }
 
-// @unsafe - Uses raw pointer operations for performance
-// SAFETY: Caller must ensure buffer is large enough (at least val_size(val) bytes)
 size_t SparseInt::dump(i32 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -139,8 +313,6 @@ size_t SparseInt::dump(i32 val, char* buf) {
     }
 }
 
-// @unsafe - Uses raw pointer operations for performance
-// SAFETY: Caller must ensure buffer is large enough (at least val_size(val) bytes)
 size_t SparseInt::dump(i64 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -223,9 +395,6 @@ size_t SparseInt::dump(i64 val, char* buf) {
     }
 }
 
-
-// @unsafe - Reads from raw pointer
-// SAFETY: Caller must ensure buffer contains valid SparseInt encoding
 i32 SparseInt::load_i32(const char* buf) {
     i32 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -249,8 +418,6 @@ i32 SparseInt::load_i32(const char* buf) {
     return val;
 }
 
-// @unsafe - Reads from raw pointer
-// SAFETY: Caller must ensure buffer contains valid SparseInt encoding
 i64 SparseInt::load_i64(const char* buf) {
     i64 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -274,25 +441,19 @@ i64 SparseInt::load_i64(const char* buf) {
     return val;
 }
 
-// @safe - Constructor initializes fields and calls safe reset() method
 Timer::Timer() : begin_(), end_() {
     reset();
 }
 
-// @unsafe - Uses address-of operator and calls gettimeofday (external unsafe)
-// SAFETY: Properly passes address of timeval struct to gettimeofday
 void Timer::start() {
     reset();
     gettimeofday(&begin_, nullptr);
 }
 
-// @unsafe - Uses address-of operator and calls gettimeofday (external unsafe)
-// SAFETY: Properly passes address of timeval struct to gettimeofday
 void Timer::stop() {
     gettimeofday(&end_, nullptr);
 }
 
-// @safe - Simple field assignments, no unsafe operations
 void Timer::reset() {
     begin_.tv_sec = 0;
     begin_.tv_usec = 0;
@@ -300,12 +461,9 @@ void Timer::reset() {
     end_.tv_usec = 0;
 }
 
-// @unsafe - Uses address-of operator and calls gettimeofday (external unsafe)
-// SAFETY: Properly passes address of local timeval struct to gettimeofday
 double Timer::elapsed() const {
-    verify(begin_.tv_sec != 0 || begin_.tv_usec != 0);
+    if (begin_.tv_sec == 0 && begin_.tv_usec == 0) std::abort();
     if (end_.tv_sec == 0 && end_.tv_usec == 0) {
-        // not stopped yet
         struct timeval now;
         gettimeofday(&now, nullptr);
         return now.tv_sec - begin_.tv_sec + (now.tv_usec - begin_.tv_usec) / 1000000.0;
@@ -313,8 +471,6 @@ double Timer::elapsed() const {
     return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
-// @unsafe - Uses gettimeofday, pthread_self, and reinterpret_cast (external unsafe)
-// SAFETY: Properly passes address of local timeval, uses reinterpret_cast for 'this' pointer
 Rand::Rand() : rand_() {
     struct timeval now;
     gettimeofday(&now, nullptr);
@@ -326,4 +482,4 @@ Rand::Rand() : rand_() {
                static_cast<long long>(now.tv_usec) + thread_hash + this_hash);
 }
 
-} // namespace base
+} // namespace rrr

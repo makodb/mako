@@ -62,9 +62,10 @@
 
 
 
-#include "basetypes.hpp"
 #include "debugging.hpp"
 #include "misc.hpp"
+
+import rrr.basetypes;
 
 namespace rrr {
 

@@ -32,8 +32,9 @@
 
 
 #include <rusty/fn.hpp>
+#include <rusty/function.hpp>
 
-#include "basetypes.hpp"
+import rrr.basetypes;
 
 namespace rrr {
 

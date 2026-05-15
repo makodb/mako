@@ -45,7 +45,8 @@
 #include "fiber_impl.h"
 #include "event.h"
 #include "future.h"
-#include "../base/basetypes.hpp"
+
+import rrr.basetypes;
 
 namespace rrr {
 

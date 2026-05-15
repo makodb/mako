@@ -25,26 +25,37 @@ expensive in this codebase (abort) or expose specific files that bloat
 
 ### Principles
 
-1. **Top-level module per file, file extensions preserved**: each
-   `.hpp`/`.cpp` pair becomes a single module interface unit named
-   `rrr.foo` (top-level module, not a `rrr:foo` partition of a single
-   umbrella module). The `.cpp` is **rewritten in place** to contain
-   `export module rrr.foo;` plus the definitions — extension stays
-   `.cpp` (CMake's `FILE_SET CXX_MODULES` doesn't require `.cppm`).
-   For header-only files like `cpuinfo.hpp`, a new sibling `.cpp` is
-   created to host the module declaration; the original `.hpp` stays
-   as the shim. Top-level naming keeps each BMI's transitive footprint
-   independent and lets consumers `import rrr.foo;` directly later.
-2. **Header retained as forward-decl shim**: the original
-   `base/foo.hpp` stays intact (declarations + macros). Consumers
-   continue to `#include "foo.hpp"` and the linker resolves to the
-   module-emitted `.o`. No consumer churn until a later optional pass
-   flips them to `import rrr.foo;`.
+1. **Merge each pair into one `.cpp` module unit**: each `.hpp`/`.cpp`
+   pair collapses into a single module interface unit named `rrr.foo`,
+   written into `foo.cpp`. The `.hpp` is **deleted**. Class
+   declarations, templates, inline methods (formerly in the header)
+   and out-of-line definitions (formerly in the `.cpp`) all live in
+   the module unit. Exports are marked with `export` on the
+   namespace-scope declarations consumers need to see. File extension
+   stays `.cpp` (CMake's `FILE_SET CXX_MODULES` accepts any
+   extension). Header-only `.hpp` files (cpuinfo, dball, etc.) also
+   get renamed/moved to `.cpp` module units; the `.hpp` is deleted.
+   Rationale: keeping the `.hpp` as a forward-decl shim only works for
+   files with free-function definitions. Class-member definitions
+   require declarations and bodies share the same module attachment;
+   otherwise clang reports "declaration of X in module rrr.foo
+   follows declaration in the global module" for every libc++/libc
+   header that gets dragged into two attachments. Merging avoids
+   the split entirely.
+2. **`rrr.hpp` becomes the import surface for legacy consumers**:
+   the umbrella header replaces its deleted `#include "base/foo.hpp"`
+   entries with `import rrr.foo;`. Heavy transitive textual headers
+   (`<std_compat.hpp>`, `<rusty/rusty.hpp>`) are retained inside
+   `rrr.hpp` so consumers that relied on those transitively don't
+   break in this pass. A later cleanup pass can prune them.
 3. **CMakeLists wiring**: `RRR_MODULE_SRC` is an explicit list of
    converted files (not a glob); the regular source list is
    `REMOVE_ITEM`-stripped of those entries to avoid double-compile.
    `target_sources(rrr PUBLIC FILE_SET rrr_modules TYPE CXX_MODULES
    FILES ${RRR_MODULE_SRC})` adds them.
+4. **Macros**: preprocessor macros (`streq` etc.) can't be exported
+   via modules. Unused macros are deleted; used macros either move to
+   `rrr.hpp` (textual) or are converted to inline functions.
 3. **Measure every commit**: wallclock clean build, total `.pcm`
    bytes, and `ninja -d stats` per-TU compile times. Any single-file
    conversion that adds >5% wallclock or >50 MB PCM is a red flag —
@@ -126,5 +137,7 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | Step | Wallclock (s) | PCM count | PCM total (MB) | librrr.a (MB) | Notes |
 |------|--------------:|----------:|---------------:|---------------:|-------|
 | baseline | 16.86 | 2 | 28.5 | 10.07 | clang 19, cmake 3.31 |
-| base/strop | 15.63 | 3 | 53.0 | 10.02 | +24.5 MB PCM (rusty.hpp + import std). 0 importers via shim. Wallclock within noise. File ext kept as .cpp. |
+| base/strop (shim, superseded) | 15.63 | 3 | 53.0 | 10.02 | Approach abandoned. |
+| base/strop (no-shim) | 20.65 | 3 | 53.0 | 10.51 | strop.hpp deleted; rrr.hpp + base/all.hpp import the module. Also fixed transitive: dball.hpp + misc.hpp now `#include <rusty/function.hpp>` directly. |
+| base/basetypes (no-shim) | 20.66 | 4 | 77.6 | 10.47 | basetypes.hpp deleted; 7 includers updated (rrr.hpp, base/all.hpp, base/misc.hpp, base/threading.hpp, rpc/request_queue.hpp, reactor/quorum_event.h, reactor/fiber.h, rpc/idempotency.hpp). +24.6 MB BMI. Wallclock flat vs strop alone — basetypes BMI builds in parallel. |
 

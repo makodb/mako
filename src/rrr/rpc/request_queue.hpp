@@ -23,8 +23,9 @@
 
 
 
-#include "../base/basetypes.hpp"
 #include "../misc/marshal.hpp"
+
+import rrr.basetypes;
 
 
 namespace rrr {

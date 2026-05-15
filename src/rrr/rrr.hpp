@@ -3,7 +3,6 @@
 
 // Former `rrr:public` exports are folded into this root module.
 #include "base/debugging.hpp"
-#include "base/strop.hpp"
 // "base/unittest.hpp" is intentionally NOT re-exported through the
 // umbrella: it defines free-form `EXPECT_EQ` / `EXPECT_TRUE` /
 // `EXPECT_FALSE` / `EXPECT_BINARY_OP_GENERATOR` macros that collide
@@ -31,7 +30,6 @@
 #include "rpc/reconnect_policy.hpp"
 #include "rpc/request_options.hpp"
 #include "rpc/utils.hpp"
-#include "base/basetypes.hpp"
 #include "rpc/load_balancer.hpp"
 #include "rpc/callbacks.hpp"
 #include "base/misc.hpp"
@@ -57,5 +55,12 @@
 #include "rpc/server.hpp"
 #include "misc/alock.hpp"
 #include "reactor/fiber.h"
+
+// Imports go AFTER textual `#include`s. libc++ rejects the order
+// `import std; ... #include <vector>` (the include lands after the
+// module's already-imported std), so umbrella imports for modularized
+// rrr submodules sit at the bottom of the textual chain.
+import rrr.basetypes;
+import rrr.strop;
 
 namespace base = rrr;
