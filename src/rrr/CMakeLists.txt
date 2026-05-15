@@ -18,6 +18,7 @@ file(GLOB RRR_BENCH_SRC
 # their calls to the module-emitted .o.
 set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/callback_wrapper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp

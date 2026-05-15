@@ -11,7 +11,7 @@
 #include <rusty/box.hpp>
 #include <rusty/function.hpp>
 
-#include "../base/callback_wrapper.hpp"
+import rrr.callback_wrapper;
 
 
 /**
