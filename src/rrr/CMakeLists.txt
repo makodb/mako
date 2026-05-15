@@ -18,6 +18,7 @@ file(GLOB RRR_BENCH_SRC
 # their calls to the module-emitted .o.
 set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_MODULE_SRC})
@@ -49,7 +50,7 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
         # base/basetypes.cpp omitted — module unit (see RRR_MODULE_SRC).
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
+        # base/debugging.cpp omitted — module unit.
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp

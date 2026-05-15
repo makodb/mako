@@ -27,7 +27,7 @@
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
 
-#include "../base/debugging.hpp"
+import rrr.debugging;
 
 namespace rrr {
 

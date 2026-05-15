@@ -1,51 +1,55 @@
-
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <stddef.h>
-#include <stdlib.h>
-
-
-// @c-compat-added
+module;
 
 #include <rusty/rusty.hpp>
-
-#include <stdio.h>
-#include <assert.h>
-
-
 #include <execinfo.h>
 #include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
+// Forward declaration of get_exec_path, kept in the GMF so the symbol
+// has global-module attachment (matches the non-module definition in
+// base/misc.cpp). Declaring it in module purview would give the call
+// site a `@rrr.debugging` attachment that fails to link.
+namespace rrr {
+const char* get_exec_path();
+}
 
-
-
-
-#include "debugging.hpp"
-
-
-#include "../rrr.hpp"
+export module rrr.debugging;
 
 import std;
 
-// External safety annotations for system and std library functions
-// @external: {
-//   std::__atomic_base::load: [unsafe, () -> int]
-//   std::__atomic_base::fetch_add: [unsafe, (int) -> int]
-//   std::__atomic_base::store: [unsafe, (int) -> void]
-//   std::mersenne_twister_engine::operator(): [unsafe, () -> unsigned int]
-//   clock_gettime: [unsafe, (int, struct timespec*) -> int]
-//   select: [unsafe, (int, fd_set*, fd_set*, fd_set*, struct timeval*) -> int]
-// }
+export namespace rrr {
 
-using namespace std;
+void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));
+
+/**
+ * Use assert() when the test is only intended for debugging.
+ * Use verify() when the test is crucial for both debug and release binary.
+ */
+template <typename Expr>
+inline void verify(const Expr& expr,
+                   const std::source_location& loc = std::source_location::current()) {
+  const bool ok = static_cast<bool>(expr);
+#ifdef NDEBUG
+  if (__builtin_expect(!ok, false)) {
+    fprintf(stderr, "  *** verify failed at %s, line %u\n", loc.file_name(), loc.line());
+    print_stack_trace(stderr);
+    std::abort();
+  }
+#else
+  assert(ok);
+#endif
+}
+
+} // export namespace rrr
 
 namespace rrr {
 
 #ifdef __APPLE__
 
-// @unsafe - Uses backtrace functions, popen, and raw memory operations
-// SAFETY: Stack arrays are properly sized; backtrace functions are thread-safe
-void print_stack_trace(FILE* fp /* =? */) {
+void print_stack_trace(FILE* fp) {
     const int max_trace = 1024;
     void* callstack[max_trace];
     memset(callstack, 0, sizeof(callstack));
@@ -59,20 +63,21 @@ void print_stack_trace(FILE* fp /* =? */) {
 
     fprintf(fp, "  *** begin stack trace ***\n");
     for (int i = 0; i < frames - 1; i++) {
-        string trace = str_frames[i];
+        std::string trace = str_frames[i];
         size_t idx = trace.rfind(' ');
         size_t idx2 = trace.rfind(' ', idx - 1);
         idx = trace.rfind(' ', idx2 - 1) + 1;
-        string mangled = trace.substr(idx, idx2 - idx);
-        string left = trace.substr(0, idx);
-        string right = trace.substr(idx2);
+        std::string mangled = trace.substr(idx, idx2 - idx);
+        std::string left = trace.substr(0, idx);
+        std::string right = trace.substr(idx2);
 
-        string cmd = "c++filt -n ";
+        std::string cmd = "c++filt -n ";
         cmd += mangled;
 
         auto demangle = popen(cmd.c_str(), "r");
         if (demangle) {
-            string demangled = getline(demangle);
+            std::string demangled;
+            std::getline(*reinterpret_cast<std::istream*>(demangle), demangled);
             fprintf(fp, "%s%s%s\n", left.c_str(), demangled.c_str(), right.c_str());
             pclose(demangle);
         } else {
@@ -86,9 +91,21 @@ void print_stack_trace(FILE* fp /* =? */) {
 
 #else // no __APPLE__
 
-// @unsafe - Uses backtrace functions, popen, and raw memory operations  
-// SAFETY: Stack arrays are properly sized; backtrace functions are thread-safe
-void print_stack_trace(FILE* fp /* =? */) {
+namespace {
+inline std::string read_line_from_pipe(FILE* fp) {
+    char buf[4096];
+    if (fgets(buf, sizeof(buf), fp) == nullptr) {
+        return std::string();
+    }
+    std::string s(buf);
+    if (!s.empty() && s.back() == '\n') {
+        s.pop_back();
+    }
+    return s;
+}
+}
+
+void print_stack_trace(FILE* fp) {
     const int max_trace = 1024;
     void* callstack[max_trace];
     memset(callstack, 0, sizeof(callstack));
@@ -102,33 +119,33 @@ void print_stack_trace(FILE* fp /* =? */) {
 
     fprintf(fp, "  *** begin stack trace ***\n");
     const char* exec_path = get_exec_path();
-    rusty::Vec<pair<string, string>> fmt_output;
+    rusty::Vec<std::pair<std::string, std::string>> fmt_output;
     size_t max_func_length = 0;
     for (int i = 0; i < frames - 1; i++) {
         bool addr2line_ok = false;
         if (exec_path != nullptr) {
             char buf[32];
             snprintf(buf, sizeof(buf), "addr2line %p -e ", callstack[i]);
-            string cmd = buf;
+            std::string cmd = buf;
             cmd += exec_path;
             cmd += " -f -C 2>&1";
             auto addr2line = popen(cmd.c_str(), "r");
             if (addr2line) {
                 addr2line_ok = true;
-                string demangled_func_name = getline(addr2line);
-                if (demangled_func_name[0] == '?') {
+                std::string demangled_func_name = read_line_from_pipe(addr2line);
+                if (demangled_func_name.empty() || demangled_func_name[0] == '?') {
                     addr2line_ok = false;
                 } else {
-                    max_func_length = max(max_func_length, demangled_func_name.size());
-                    string file_line = getline(addr2line);
-                    fmt_output.push(make_pair(demangled_func_name, file_line));
+                    max_func_length = std::max(max_func_length, demangled_func_name.size());
+                    std::string file_line = read_line_from_pipe(addr2line);
+                    fmt_output.push(std::make_pair(demangled_func_name, file_line));
                 }
                 pclose(addr2line);
             }
         }
         if (!addr2line_ok) {
-            max_func_length = max(max_func_length, strlen(str_frames[i]));
-            fmt_output.push(make_pair(str_frames[i], ""));
+            max_func_length = std::max(max_func_length, strlen(str_frames[i]));
+            fmt_output.push(std::make_pair(std::string(str_frames[i]), std::string()));
         }
     }
     for (size_t i = 0; i < fmt_output.size(); i++) {
@@ -152,4 +169,4 @@ void print_stack_trace(FILE* fp /* =? */) {
 
 #endif // ifdef __APPLE__
 
-} // namespace base
+} // namespace rrr

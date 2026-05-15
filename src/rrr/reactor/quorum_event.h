@@ -18,12 +18,10 @@
 
 
 
-#include "../base/debugging.hpp"
-
-
 #include "event.h"
 
 import rrr.basetypes;
+import rrr.debugging;
 
 using rrr::Event;
 using rrr::IntEvent;

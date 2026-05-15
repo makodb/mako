@@ -140,4 +140,5 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | base/strop (shim, superseded) | 15.63 | 3 | 53.0 | 10.02 | Approach abandoned. |
 | base/strop (no-shim) | 20.65 | 3 | 53.0 | 10.51 | strop.hpp deleted; rrr.hpp + base/all.hpp import the module. Also fixed transitive: dball.hpp + misc.hpp now `#include <rusty/function.hpp>` directly. |
 | base/basetypes (no-shim) | 20.66 | 4 | 77.6 | 10.47 | basetypes.hpp deleted; 7 includers updated (rrr.hpp, base/all.hpp, base/misc.hpp, base/threading.hpp, rpc/request_queue.hpp, reactor/quorum_event.h, reactor/fiber.h, rpc/idempotency.hpp). +24.6 MB BMI. Wallclock flat vs strop alone — basetypes BMI builds in parallel. |
+| base/debugging (no-shim) | 20.98 | 5 | 102.0 | 10.42 | debugging.hpp deleted; 5 includers updated. `verify` template + `print_stack_trace` + GMF forward-decl of `get_exec_path` to keep its call site at global-module attachment. likely/unlikely inline functions dropped (unused externally; inlined `__builtin_expect` in verify). |
 

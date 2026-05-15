@@ -2,7 +2,6 @@
 
 
 // Former `rrr:public` exports are folded into this root module.
-#include "base/debugging.hpp"
 // "base/unittest.hpp" is intentionally NOT re-exported through the
 // umbrella: it defines free-form `EXPECT_EQ` / `EXPECT_TRUE` /
 // `EXPECT_FALSE` / `EXPECT_BINARY_OP_GENERATOR` macros that collide
@@ -61,6 +60,7 @@
 // module's already-imported std), so umbrella imports for modularized
 // rrr submodules sit at the bottom of the textual chain.
 import rrr.basetypes;
+import rrr.debugging;
 import rrr.strop;
 
 namespace base = rrr;
