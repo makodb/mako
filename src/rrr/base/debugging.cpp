@@ -8,17 +8,10 @@ module;
 #include <string.h>
 #include <assert.h>
 
-// Forward declaration of get_exec_path, kept in the GMF so the symbol
-// has global-module attachment (matches the non-module definition in
-// base/misc.cpp). Declaring it in module purview would give the call
-// site a `@rrr.debugging` attachment that fails to link.
-namespace rrr {
-const char* get_exec_path();
-}
-
 export module rrr.debugging;
 
 import std;
+import rrr.misc; // for get_exec_path
 
 export namespace rrr {
 

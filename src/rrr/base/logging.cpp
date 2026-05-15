@@ -7,17 +7,11 @@ module;
 #include <string.h>
 #include <sys/time.h>
 
-// Forward declarations of helpers provided by other (still-textual)
-// rrr TUs. Kept in the GMF so the call sites have global-module
-// attachment that matches the non-module definitions in base/misc.cpp.
-namespace rrr {
-void time_now_str(char* now);
-}
-
 export module rrr.logging;
 
 import std;
 import rrr.debugging;
+import rrr.misc; // for time_now_str
 
 export namespace rrr {
 
