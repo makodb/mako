@@ -921,25 +921,15 @@ struct Serializable {
   }
 };
 
-// the `SerializableConcept<T>` C++20 concept
-// was retired in this commit.  It described the "T has save/load/kind"
-// shape, but it duplicated what `SerializableFacade` already enforces
-// at proxy construction time (and what `pro::proxy_cast<T*>` enforces
-// at downcast time, returning nullptr if T is wrong).  The concept's
-// only practical role was disambiguating overloads in
-// `marshallable_cast<T>` / `wrap_typed_marshallable<T>` /
-// `MarshallDeputy(shared_ptr<T>)` between the Marshallable subclass
-// path and the bridge path; that disambiguation now uses just
-// `!std::is_base_of_v<Marshallable, T>` and trusts the proxy library
-// to reject wrong-shaped T at instantiation / runtime.
-//
-// In exchange for slightly worse compile errors when a non-
-// Serializable T sneaks into a bridge overload, we drop the concept
-// boilerplate (one less abstraction in the marshal layer).  The
-// underlying contract — `save(BinaryWriteArchive&) const`,
-// `load(BinaryReadArchive&)`, `kind() const -> int32_t` — is still
-// what every Serializable-migrated type implements; it's just no
-// longer expressed as a separate template-constraint predicate.
+// The structural contract for a Serializable-migrated T is:
+//   - void save(BinaryWriteArchive&) const
+//   - void load(BinaryReadArchive&)
+//   - int32_t kind() const
+// Overload disambiguation between the Marshallable subclass path
+// and the Serializable bridge path uses
+// `!std::is_base_of_v<Marshallable, T>`; shape mismatches surface
+// as instantiation-time template errors rather than a separate
+// constraint predicate.
 
 // Construct a SerializableProxy that owns a T constructed from the
 // forwarded arguments (default-constructed if no args). T just needs

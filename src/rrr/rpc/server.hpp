@@ -329,11 +329,9 @@ class ServerConnection {
     // legacy `out_` Marshal-as-syscall-buffer + `pending_write_update_`
     // poll-loop write plumbing is bypassed.
     //
-    // Boxed for the same `pro::proxy<F>` cyclic-constraint workaround
-    // applied to `ClientConnection::direct_channel_`. Mutable +
-    // SpinMutex so the const `reply<F>` template path can lock it
-    // briefly to dispatch a frame from any thread (mirrors the
-    // client-side `direct_channel_` discipline).
+    // Mutable + SpinMutex so the const `reply<F>` template path can
+    // lock it briefly to dispatch a frame from any thread (mirrors
+    // the client-side `direct_channel_` discipline).
     mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>>
         channel_proxy_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
     rusty::Cell<bool> channel_mode_{false};
@@ -675,10 +673,6 @@ class Server: public NoCopy {
     // -> listener.set_on_accept(...) -> listener->listen(addr)` instead
     // of the legacy `ServerListener`'s `socket(2)+bind(2)+listen(2)+
     // accept(2)+epoll` path.
-    //
-    // `Box`ed because `pro::proxy<F>` triggers a cyclic-constraint
-    // diagnostic when used directly as the value type of `rusty::Option`
-    // (same workaround applied to `ClientConnection::factory_`).
     rusty::Option<rusty::Box<ChannelFactoryProxy>> channel_factory_{rusty::None};
 
     // channel-mode listener +
