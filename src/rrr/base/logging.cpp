@@ -1,36 +1,83 @@
+module;
 
-// import std; replacement — see <std_compat.hpp> for rationale.
+#include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-
-// @c-compat-added
-#include <pthread.h>
-
-#include <assert.h>
-
-
-#include <stdarg.h>
 #include <string.h>
 #include <sys/time.h>
 
+// Forward declarations of helpers provided by other (still-textual)
+// rrr TUs. Kept in the GMF so the call sites have global-module
+// attachment that matches the non-module definitions in base/misc.cpp.
+namespace rrr {
+void time_now_str(char* now);
+}
 
-
-
-#include "logging.hpp"
-
-
-#include "../rrr.hpp"
+export module rrr.logging;
 
 import std;
+import rrr.debugging;
 
-// External safety annotations for functions used in this module
-// @external: {
-//   std::__atomic_base::load: [unsafe]
-//   std::__atomic_base::store: [unsafe]
-//   std::__atomic_base::fetch_add: [unsafe]
-//   std::__atomic_base::fetch_sub: [unsafe]
-// }
+export namespace rrr {
+
+class Log {
+    static int level_s;
+    static FILE* fp_s;
+    static std::ostream* stm_s;
+    static pthread_mutex_t m_s;
+
+    static void log_v(int level, int line, const char* file, const char* fmt, va_list args);
+public:
+
+    enum {
+        FATAL = 0, ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4
+    };
+
+    static void set_file(FILE* fp);
+    static void set_level(int level);
+
+    static void log(int level, int line, const char* file, const char* fmt, ...);
+
+    static void fatal(int line, const char* file, const char* fmt, ...);
+    static void error(int line, const char* file, const char* fmt, ...);
+    static void warn(int line, const char* file, const char* fmt, ...);
+    static void info(int line, const char* file, const char* fmt, ...);
+    static void debug(int line, const char* file, const char* fmt, ...);
+
+    static void fatal(const char* fmt, ...);
+    static void error(const char* fmt, ...);
+    static void warn(const char* fmt, ...);
+    static void info(const char* fmt, ...);
+    static void debug(const char* fmt, ...);
+};
+
+template <typename... Args>
+inline void Log_debug(const char* fmt, Args&&... args) {
+    Log::debug(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_info(const char* fmt, Args&&... args) {
+    Log::info(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_warn(const char* fmt, Args&&... args) {
+    Log::warn(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_error(const char* fmt, Args&&... args) {
+    Log::error(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void Log_fatal(const char* fmt, Args&&... args) {
+    Log::fatal(fmt, std::forward<Args>(args)...);
+}
+
+} // export namespace rrr
 
 namespace rrr {
 
@@ -39,22 +86,19 @@ FILE* Log::fp_s = stdout;
 std::ostream* Log::stm_s = &std::cout;
 pthread_mutex_t Log::m_s = PTHREAD_MUTEX_INITIALIZER;
 
-// @unsafe - Implementation uses mutex operations
 void Log::set_level(int level) {
-    Pthread_mutex_lock(&m_s);
+    pthread_mutex_lock(&m_s);
     level_s = level;
-    Pthread_mutex_unlock(&m_s);
+    pthread_mutex_unlock(&m_s);
 }
 
-// @unsafe - Implementation uses mutex operations
 void Log::set_file(FILE* fp) {
     verify(fp != nullptr);
-    Pthread_mutex_lock(&m_s);
+    pthread_mutex_lock(&m_s);
     fp_s = fp;
-    Pthread_mutex_unlock(&m_s);
+    pthread_mutex_unlock(&m_s);
 }
 
-// @unsafe - Returns pointer into input string (raw pointer arithmetic)
 static const char* basename(const char* fpath) {
     if (fpath == nullptr) {
         return nullptr;
@@ -72,10 +116,9 @@ static const char* basename(const char* fpath) {
     return &fpath[idx];
 }
 
-// @unsafe - Uses vsprintf to format strings into stack buffer
 void Log::log_v(int level, int line, const char* file, const char* fmt, va_list args) {
     static char indicator[] = { 'F', 'E', 'W', 'I', 'D' };
-    assert(level <= Log::DEBUG);
+    if (level > Log::DEBUG) std::abort();
     if (level <= level_s) {
       const char* filebase = basename(file);
       if (filebase == nullptr) {
@@ -94,7 +137,6 @@ void Log::log_v(int level, int line, const char* file, const char* fmt, va_list 
     }
 }
 
-// @unsafe - Variadic function using va_list
 void Log::log(int level, int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -102,7 +144,6 @@ void Log::log(int level, int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
-// @unsafe - Variadic function that calls abort
 void Log::fatal(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -111,7 +152,6 @@ void Log::fatal(int line, const char* file, const char* fmt, ...) {
     abort();
 }
 
-// @unsafe - Variadic function using va_list
 void Log::error(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -119,7 +159,6 @@ void Log::error(int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
-// @unsafe - Variadic function using va_list
 void Log::warn(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -127,7 +166,6 @@ void Log::warn(int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
-// @unsafe - Variadic function using va_list
 void Log::info(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -135,7 +173,6 @@ void Log::info(int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
-// @unsafe - Variadic function using va_list
 void Log::debug(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -144,7 +181,6 @@ void Log::debug(int line, const char* file, const char* fmt, ...) {
 }
 
 
-// @unsafe - Variadic function that calls abort
 void Log::fatal(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -153,7 +189,6 @@ void Log::fatal(const char* fmt, ...) {
     abort();
 }
 
-// @unsafe - Variadic function using va_list
 void Log::error(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -161,7 +196,6 @@ void Log::error(const char* fmt, ...) {
     va_end(args);
 }
 
-// @unsafe - Variadic function using va_list
 void Log::warn(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -169,7 +203,6 @@ void Log::warn(const char* fmt, ...) {
     va_end(args);
 }
 
-// @unsafe - Variadic function using va_list
 void Log::info(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -177,7 +210,6 @@ void Log::info(const char* fmt, ...) {
     va_end(args);
 }
 
-// @unsafe - Variadic function using va_list
 void Log::debug(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -185,4 +217,4 @@ void Log::debug(const char* fmt, ...) {
     va_end(args);
 }
 
-} // namespace base
+} // namespace rrr

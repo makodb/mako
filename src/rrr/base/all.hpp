@@ -3,7 +3,6 @@
 //#include "unittest.hpp"
 
 
-#include "logging.hpp"
 #include "misc.hpp"
 #include "threading.hpp"
 
@@ -11,4 +10,5 @@
 // #include <vector>` order).
 import rrr.basetypes;
 import rrr.debugging;
+import rrr.logging;
 import rrr.strop;

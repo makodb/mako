@@ -33,7 +33,6 @@
 #include "rpc/callbacks.hpp"
 #include "base/misc.hpp"
 #include "base/threading.hpp"
-#include "base/logging.hpp"
 #include "base/all.hpp"
 #include "misc/cpuinfo.hpp"
 #include "misc/marshal.hpp"
@@ -61,6 +60,7 @@
 // rrr submodules sit at the bottom of the textual chain.
 import rrr.basetypes;
 import rrr.debugging;
+import rrr.logging;
 import rrr.strop;
 
 namespace base = rrr;
