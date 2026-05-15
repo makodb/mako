@@ -9,7 +9,7 @@
 #include <cstring>
 
 
-#include "internal_protocol.hpp"
+import rrr.internal_protocol;
 
 /**
  * SRPC Channel Frame Codec.

@@ -22,9 +22,9 @@
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
-#include "../rpc/internal_protocol.hpp"
 
 import std;
+import rrr.internal_protocol;
 
 namespace rrr {
 namespace {

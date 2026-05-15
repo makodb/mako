@@ -1,28 +1,15 @@
-#pragma once
+module;
 
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
+export module rrr.internal_protocol;
 
+import std;
 
+export namespace rrr {
 
-
-namespace rrr {
-
-// Reserved RPC ID for internal heartbeat probes exchanged by ClientConnection.
 constexpr int32_t kInternalHeartbeatRpcId = std::numeric_limits<int32_t>::min();
 
-// Response-frame extension flag (high bit in <size> field).
-// Wire format remains: <size> <header...> <payload...>
-// If this flag is set, response header includes <server_instance_id> after <error_code>.
 constexpr uint32_t kResponseHeaderExtFlag = 0x80000000u;
 constexpr uint32_t kResponseSizeMask = 0x7fffffffu;
 
@@ -39,4 +26,4 @@ inline constexpr int32_t encode_response_size(int32_t payload_size, bool extende
     return static_cast<int32_t>(extended_header ? (base | kResponseHeaderExtFlag) : base);
 }
 
-} // namespace rrr
+} // export namespace rrr

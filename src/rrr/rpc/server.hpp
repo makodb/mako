@@ -72,8 +72,8 @@ import rrr.epoll_wrapper;
 
 
 #include "channel.hpp"
-#include "internal_protocol.hpp"
 
+import rrr.internal_protocol;
 import rrr.utils;
 
 namespace rrr {
