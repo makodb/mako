@@ -27,6 +27,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/alarm.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/dball.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/netinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
@@ -78,7 +79,7 @@ if(NOT TARGET rrr)
         # base/debugging.cpp omitted — module unit.
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
+        # misc/marshal.cpp omitted — module unit.
         # base/strop.cpp omitted — converted to a C++23 module interface
         # unit (see RRR_MODULE_SRC). rusty-cpp cannot resolve module
         # imports yet; revisit when the checker handles BMI paths.

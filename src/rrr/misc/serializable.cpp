@@ -18,14 +18,6 @@ module;
 #include <rusty/hashset.hpp>
 #include <rusty/vec.hpp>
 
-// Forward-declarations in GMF (global-module attachment) so the
-// convenience-constructor declarations below name types whose full
-// definitions live in marshal.hpp.
-namespace rrr {
-class MarshalSink;
-class MarshalSource;
-}
-
 export module rrr.serializable;
 
 import std;

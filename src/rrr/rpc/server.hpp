@@ -71,6 +71,7 @@
 import rrr.channel;
 import rrr.epoll_wrapper;
 import rrr.internal_protocol;
+import rrr.serializable;
 import rrr.utils;
 
 namespace rrr {

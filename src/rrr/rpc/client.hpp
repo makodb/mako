@@ -42,8 +42,10 @@ import rrr.connection_state;
 import rrr.heartbeat;
 import rrr.errors;
 import rrr.load_balancer;
+import rrr.marshal;
 import rrr.reconnect_policy;
 import rrr.request_options;
+import rrr.serializable;
 
 namespace rrr {
 
