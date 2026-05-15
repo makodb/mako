@@ -1,10 +1,14 @@
 // Minimal test for mako_core library
 // Tests basic functionality without gtest dependency
 
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+
 #include "../rrr.hpp"
 #include "mako/varint.h"
 #include "mako/macros.h"
+
+import std;
 
 using namespace rrr;
 

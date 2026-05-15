@@ -1,32 +1,15 @@
-#include <iostream>
+#include <string.h>
+
 #include <assert.h>
-#include<cstring>
 #include <stdio.h>
-#include <thread>
-#include <vector>
-#include <iostream>
-#include <queue>
-#include <sstream>
-#include <iostream>
-#include <sstream>
-#include <fstream>
-#include <string>
-#include <iomanip>
-#include <exception>
-#include <fstream>
-#include <thread>
-#include <vector>
-#include <iostream>
-#include <thread>
-#include <mutex>
-#include <functional>
 #include <stdlib.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <condition_variable>
 #include <glob.h>
 #include <sys/time.h>
 #include "deptran/s_main.h"
+
+import std;
 
 int main(int argc, char **argv){
   vector<std::string> paxos_config{"config/1c1s1p.yml", "config/occ_paxos.yml"};

@@ -1,7 +1,11 @@
+#include <stdint.h>
+#include <stdlib.h>
+
 #include "deptran/s_main.h"
 #include <assert.h>
-#include <iostream>
 #include "rrr/rrr.hpp"
+
+import std;
 
 using namespace std;
 using namespace rrr;
