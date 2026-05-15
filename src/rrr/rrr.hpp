@@ -22,7 +22,6 @@
 #include "rpc/circuit_breaker.hpp"
 #include "rpc/connection_metrics.hpp"
 #include "rpc/connection_state.hpp"
-#include "rpc/errors.hpp"
 #include "rpc/heartbeat.hpp"
 #include "rpc/internal_protocol.hpp"
 #include "rpc/reconnect_policy.hpp"
@@ -56,6 +55,7 @@
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.epoll_wrapper;
+import rrr.errors;
 import rrr.logging;
 import rrr.misc;
 import rrr.rand;

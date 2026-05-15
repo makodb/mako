@@ -14,8 +14,7 @@
 #include <rusty/rusty.hpp>
 #include <rusty/function.hpp>
 
-#include "errors.hpp"
-
+import rrr.errors;
 import rrr.threading;
 
 namespace rrr {
