@@ -35,6 +35,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
 )

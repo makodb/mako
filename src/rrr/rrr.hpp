@@ -19,7 +19,6 @@
 #include "rpc/circuit_breaker.hpp"
 #include "rpc/connection_metrics.hpp"
 #include "rpc/heartbeat.hpp"
-#include "rpc/reconnect_policy.hpp"
 #include "rpc/callbacks.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
@@ -57,6 +56,7 @@ import rrr.misc;
 import rrr.netinfo;
 import rrr.pollable_proxy;
 import rrr.rand;
+import rrr.reconnect_policy;
 import rrr.request_options;
 import rrr.stat;
 import rrr.strop;
