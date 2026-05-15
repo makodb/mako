@@ -25,6 +25,13 @@ function(mako_add_masstree_tests)
     target_link_libraries(test_masstree mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree COMMAND test_masstree)
 
+    # Masstree property-based test (std::map oracle, seeded RNG)
+    add_executable(test_masstree_property ${MASSTREE_TEST_DIR}/test_masstree_property.cc)
+    target_include_directories(test_masstree_property PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_property PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_property mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_property COMMAND test_masstree_property)
+
     # Masstree internals tests (threadinfo, globalepoch, RCU)
     add_executable(test_masstree_internals ${MASSTREE_TEST_DIR}/test_masstree_internals.cc)
     target_include_directories(test_masstree_internals PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
