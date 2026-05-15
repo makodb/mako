@@ -14,8 +14,9 @@
 #include <rusty/rusty.hpp>
 #include <rusty/function.hpp>
 
-#include "../base/threading.hpp"  // SpinMutex<T>
 #include "errors.hpp"
+
+import rrr.threading;
 
 namespace rrr {
 

@@ -18,14 +18,10 @@
 #include <rusty/option.hpp>
 #include <rusty/vecdeque.hpp>
 
-#include "../base/threading.hpp"  // SpinMutex<T>
-
-
-
-
 #include "../misc/marshal.hpp"
 
 import rrr.basetypes;
+import rrr.threading;
 
 
 namespace rrr {

@@ -12,10 +12,11 @@
 #include <rusty/option.hpp>
 
 
-#include "../base/threading.hpp"
 #include "channel.hpp"
 #include "../reactor/event.h"
 #include "../reactor/reactor.h"
+
+import rrr.threading;
 
 /**
  * `FiberChannel` — fiber-blocking wrapper over a

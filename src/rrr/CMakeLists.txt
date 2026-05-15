@@ -22,6 +22,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_MODULE_SRC})
 

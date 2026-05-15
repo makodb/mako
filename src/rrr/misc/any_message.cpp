@@ -20,7 +20,7 @@
 
 #include <rusty/hashmap.hpp>
 
-#include "../base/threading.hpp"
+import rrr.threading;
 
 import std;
 

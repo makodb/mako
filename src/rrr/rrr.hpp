@@ -31,7 +31,6 @@
 #include "rpc/utils.hpp"
 #include "rpc/load_balancer.hpp"
 #include "rpc/callbacks.hpp"
-#include "base/threading.hpp"
 #include "base/all.hpp"
 #include "misc/cpuinfo.hpp"
 #include "misc/marshal.hpp"
@@ -62,5 +61,6 @@ import rrr.debugging;
 import rrr.logging;
 import rrr.misc;
 import rrr.strop;
+import rrr.threading;
 
 namespace base = rrr;

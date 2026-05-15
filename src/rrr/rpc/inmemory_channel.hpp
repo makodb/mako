@@ -84,9 +84,9 @@
 #include <rusty/option.hpp>
 #include <rusty/sync/weak.hpp>
 
-#include "../base/threading.hpp"  // SpinMutex<T>
-
 #include "channel.hpp"
+
+import rrr.threading;
 
 namespace rrr {
 

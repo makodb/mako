@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include <rusty/arc.hpp>
 
-#include "../base/threading.hpp"  // rrr::SpinMutex
+import rrr.threading;
 
 
 #include <sys/time.h>

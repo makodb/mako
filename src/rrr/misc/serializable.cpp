@@ -18,7 +18,7 @@
 
 #include <rusty/hashmap.hpp>
 
-#include "../base/threading.hpp"
+import rrr.threading;
 #include "marshal.hpp"
 
 namespace rrr {
