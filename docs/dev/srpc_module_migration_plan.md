@@ -109,6 +109,16 @@ continue.
 - **`import std;` cost**: importing `std` from every partition is
   cheap once `std.pcm` exists — but verify the per-partition BMI size
   stays reasonable.
+- **Multiple-attachment trap for rusty/STL templates**: if a templated
+  type like `rusty::HashMap<K,V>` appears in the public BMI of *N*
+  rrr modules AND in the textual `#include` chain of a consumer,
+  clang can hit "declaration X attached to named module rrr.foo can't
+  be attached to other modules" once N grows past ~2. Manifested
+  while merging the reactor cluster (rrr.reactor would be the 3rd
+  attachment of `rusty::HashMap::operator()` after rrr.threading and
+  consumer-textual). Solving requires either header units for rusty
+  (build-system change) or a single `rrr.rusty_prelude` module that
+  everything else imports.
 
 ## Out of scope / deferred
 
@@ -120,6 +130,16 @@ continue.
 - **`RPC_TEST_HOOKS`** (CMakeLists.txt:191–194): per-TU define no
   longer works once consumers go modular. Decide when the first file
   touching it is converted.
+- **Reactor cluster** (event, fiber_impl, quorum_event, reactor.h/.cc):
+  ~3000 lines, mutually-referenced via forward decls. Attempted merge
+  into single `rrr.reactor` module hit the multi-attachment trap on
+  rusty templates (see watchlist) — every consumer that already
+  imports rrr.threading + rrr.idempotency + rrr.any_message (each of
+  which has rusty::HashMap in its BMI) plus textual rusty/* includes
+  would see rrr.reactor as a 4th attachment of `rusty::HashMap::operator()`
+  and fail. Unblocks ~6 downstream files (alock, fiber.h, future.h,
+  client, server, fiber_channel, tcp_channel).
+- **rpc client/server cluster**: blocks on reactor cluster.
 
 ## References
 
@@ -137,6 +157,7 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | Step | Wallclock (s) | PCM count | PCM total (MB) | librrr.a (MB) | Notes |
 |------|--------------:|----------:|---------------:|---------------:|-------|
 | baseline | 16.86 | 2 | 28.5 | 10.07 | clang 19, cmake 3.31 |
+| **37 modules (current)** | **83.05** | **~40** | **~480** | **~9.7** | base/* (7), misc/* + alarm/cpuinfo/dball/netinfo/rand/serializable/serializable_envelope/stat/marshal/any_message (11), reactor/epoll_wrapper, rpc/* (15: utils, errors, request_options, internal_protocol, pollable_proxy, load_balancer, connection_state, reconnect_policy, callbacks, heartbeat, connection_metrics, circuit_breaker, channel, idempotency, request_queue, completion_tracker, frame_codec, inmemory_channel, base/unittest, base/callback_wrapper). 4.93× baseline, 10× ceiling. |
 | base/strop (shim, superseded) | 15.63 | 3 | 53.0 | 10.02 | Approach abandoned. |
 | base/strop (no-shim) | 20.65 | 3 | 53.0 | 10.51 | strop.hpp deleted; rrr.hpp + base/all.hpp import the module. Also fixed transitive: dball.hpp + misc.hpp now `#include <rusty/function.hpp>` directly. |
 | base/basetypes (no-shim) | 20.66 | 4 | 77.6 | 10.47 | basetypes.hpp deleted; 7 includers updated (rrr.hpp, base/all.hpp, base/misc.hpp, base/threading.hpp, rpc/request_queue.hpp, reactor/quorum_event.h, reactor/fiber.h, rpc/idempotency.hpp). +24.6 MB BMI. Wallclock flat vs strop alone — basetypes BMI builds in parallel. |
