@@ -37,9 +37,8 @@
 #include "../base/all.hpp"
 #include "../base/callback_wrapper.hpp"
 
-#include "dball.hpp"
-
 import rrr.alarm;
+import rrr.dball;
 
 namespace rrr {
 

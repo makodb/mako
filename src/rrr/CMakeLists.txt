@@ -25,6 +25,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/alarm.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/misc/dball.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/netinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp

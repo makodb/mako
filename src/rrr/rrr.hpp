@@ -11,7 +11,6 @@
 // de-modularization the textual `#include` would expose them
 // globally. Tests that need the old rrr-internal helpers can
 // include `<base/unittest.hpp>` explicitly.
-#include "misc/dball.hpp"
 #include "reactor/fiber_impl.h"
 #include "rpc/channel.hpp"
 #include "rpc/frame_codec.hpp"
@@ -48,6 +47,7 @@
 import rrr.alarm;
 import rrr.basetypes;
 import rrr.cpuinfo;
+import rrr.dball;
 import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
