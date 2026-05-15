@@ -17,7 +17,6 @@
 #include "rpc/tcp_channel.hpp"
 #include "rpc/fiber_channel.hpp"
 #include "rpc/circuit_breaker.hpp"
-#include "rpc/connection_metrics.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
@@ -42,6 +41,7 @@
 import rrr.alarm;
 import rrr.basetypes;
 import rrr.callbacks;
+import rrr.connection_metrics;
 import rrr.connection_state;
 import rrr.cpuinfo;
 import rrr.dball;

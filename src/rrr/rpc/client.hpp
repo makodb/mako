@@ -33,10 +33,10 @@ import rrr.epoll_wrapper;
 #include "channel.hpp"
 #include "fiber_channel.hpp"
 #include "request_queue.hpp"
-#include "connection_metrics.hpp"
 #include "circuit_breaker.hpp"
 
 import rrr.callbacks;
+import rrr.connection_metrics;
 import rrr.connection_state;
 import rrr.heartbeat;
 import rrr.errors;

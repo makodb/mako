@@ -31,6 +31,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
