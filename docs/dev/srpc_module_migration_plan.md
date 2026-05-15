@@ -152,4 +152,5 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | rpc/internal_protocol (header-only → module) | 38.66 | 14 | 175.3 | — | Wire-protocol constants + constexpr helpers for response header extension flag. 4 includers updated (frame_codec.hpp, server.hpp, rrr.hpp, and one test). Same `<cstdint>` GMF gotcha. |
 | misc/stat + misc/netinfo (header-only → modules) | 38.23 | 16 | 175.4 | — | Two trivially-isolated headers — AvgStat (POD) and NetInfo (singleton reading /sys/class/net/...). 1 includer each (rrr.hpp). |
 | misc/alarm (header-only → module) | 38.41 | 17 | 175.5 | — | Alarm inherits FrequentJob (rrr.misc), uses rrr::PollThread* pointer-only. GMF forward-decl `namespace rrr { class PollThread; }` keeps the pointer in global-module attachment that matches reactor.h's full decl. 2 includers updated (rrr.hpp, misc/alock.hpp). |
+| misc/cpuinfo (header-only → module) | 39.60 | 18 | 175.6 | — | CPUInfo singleton reading /proc/PID/{net/dev,stat} + /proc/meminfo. Uses Log_debug from rrr.logging. Sole consumer: rrr.hpp. |
 

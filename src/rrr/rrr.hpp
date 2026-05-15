@@ -25,7 +25,6 @@
 #include "rpc/load_balancer.hpp"
 #include "rpc/callbacks.hpp"
 #include "base/all.hpp"
-#include "misc/cpuinfo.hpp"
 #include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
 #include "reactor/event.h"
@@ -49,6 +48,7 @@
 // rrr submodules sit at the bottom of the textual chain.
 import rrr.alarm;
 import rrr.basetypes;
+import rrr.cpuinfo;
 import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
