@@ -444,6 +444,85 @@ private:
   // enabled (no caller set `bypass_to_socket_=true`).
 };
 
+// ---------------------------------------------------------------------------
+// Marshal ↔ Archive bridges (relocated from serializable.hpp).
+//
+// MarshalSink wraps an `rrr::Marshal*` and forwards `write(p, n)` to
+// `Marshal::write(p, n)`, so new `BinaryWriteArchive`-based code can
+// emit bytes directly into an existing `Marshal` buffer without the
+// caller having to allocate a separate `BufferSink` and copy.
+//
+// MarshalSource is the dual: wraps a `Marshal*` and forwards
+// `read(p, n)` to `Marshal::read(p, n)`.
+//
+// Lifetime: non-owning. Caller owns the underlying `Marshal` and must
+// keep it alive for the lifetime of the Sink/Source.
+//
+// Defined inline here (with Marshal's full class def in scope) to
+// avoid the impl-side cycle that originally forced these into
+// serializable.cpp.
+// ---------------------------------------------------------------------------
+
+class MarshalSink {
+  Marshal* m_;
+ public:
+  explicit MarshalSink(Marshal* m) noexcept : m_(m) {}
+
+  Marshal* marshal() const noexcept { return m_; }
+
+  void write(const void* p, size_t n) {
+    size_t actual = m_->write(p, n);
+    verify(actual == n);
+  }
+};
+
+class MarshalSource {
+  Marshal* m_;
+ public:
+  explicit MarshalSource(Marshal* m) noexcept : m_(m) {}
+
+  Marshal* marshal() const noexcept { return m_; }
+
+  size_t read(void* p, size_t n) {
+    return m_->read(p, n);
+  }
+};
+
+class MarshalSinkAdapter : public SinkBase {
+  MarshalSink* sink_;
+ public:
+  explicit MarshalSinkAdapter(MarshalSink* s) noexcept : sink_(s) {}
+  void write(const void* p, size_t n) override { sink_->write(p, n); }
+  MarshalSink* sink() const noexcept { return sink_; }
+};
+
+class MarshalSourceAdapter : public SourceBase {
+  MarshalSource* source_;
+ public:
+  explicit MarshalSourceAdapter(MarshalSource* s) noexcept : source_(s) {}
+  size_t read(void* p, size_t n) override { return source_->read(p, n); }
+  MarshalSource* source() const noexcept { return source_; }
+};
+
+inline SinkProxy make_sink_proxy(MarshalSink* sink) {
+  return rusty::make_box<MarshalSinkAdapter>(sink);
+}
+inline SourceProxy make_source_proxy(MarshalSource* source) {
+  return rusty::make_box<MarshalSourceAdapter>(source);
+}
+
+// Inline definitions of the BinaryWriteArchive/BinaryReadArchive
+// convenience constructors that take MarshalSink*/MarshalSource*.
+// Declarations live in serializable.hpp; bodies are here so the
+// full class def for MarshalSink/MarshalSource (just above) is in
+// scope. This separation breaks the impl-side cycle that used to
+// require serializable.cpp to include marshal.hpp.
+inline BinaryWriteArchive::BinaryWriteArchive(MarshalSink* sink)
+    : sink_(make_sink_proxy(sink)) {}
+
+inline BinaryReadArchive::BinaryReadArchive(MarshalSource* source)
+    : source_(make_source_proxy(source)) {}
+
 // @unsafe
 // @lifetime: (&'a, const i8&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) {

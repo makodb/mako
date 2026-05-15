@@ -60,7 +60,7 @@ namespace rrr {
 template<typename U>
 rusty::RefMut<Marshal>& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
     rrr::MarshalSource src(&*guard);
-    rrr::BinaryReadArchive ar(&src);
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&src));
     ar >> value;
     return guard;
 }
@@ -68,7 +68,7 @@ rusty::RefMut<Marshal>& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
 template<typename U>
 rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
     rrr::MarshalSource src(&*guard);
-    rrr::BinaryReadArchive ar(&src);
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&src));
     ar >> value;
     return std::move(guard);
 }

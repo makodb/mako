@@ -57,12 +57,16 @@
 
 namespace rrr {
 
-// Forward declaration so Phase 3a's `MarshalSink` / `MarshalSource`
-// can hold a `Marshal*` without dragging the heavy `marshal.hpp`
-// header into every translation unit that uses the new archive
-// system. Method bodies for those classes live in
-// `marshal_archive.cpp`.
-class Marshal;
+// `MarshalSink` / `MarshalSource` (formerly here) now live in
+// marshal.hpp alongside the `Marshal` class they wrap — moving them
+// breaks the impl-side cycle (serializable.cpp no longer needs
+// marshal.hpp's full Marshal class def to implement member functions
+// declared in serializable.hpp). Forward-declared here for the
+// BinaryWriteArchive/BinaryReadArchive convenience constructors below;
+// constructor bodies are defined inline in marshal.hpp where the full
+// class def is in scope.
+class MarshalSink;
+class MarshalSource;
 
 // ---------------------------------------------------------------------------
 // Layer 1+2: Sink / Source virtual base classes.
@@ -286,84 +290,6 @@ inline SourceProxy make_source_proxy(FdSource* source) {
 }
 
 // ---------------------------------------------------------------------------
-// Marshal ↔ Archive bridges.
-//
-// MarshalSink wraps an `rrr::Marshal*` and forwards `write(p, n)` to
-// `Marshal::write(p, n)`, so new `BinaryWriteArchive`-based code can
-// emit bytes directly into an existing `Marshal` buffer without the
-// caller having to allocate a separate `BufferSink` and copy.
-//
-// MarshalSource is the dual: wraps a `Marshal*` and forwards
-// `read(p, n)` to `Marshal::read(p, n)`. Wire format is byte-for-byte
-// identical, so a Marshal accumulated by old
-// `Marshal::operator<<` calls can be drained by a `BinaryReadArchive`
-// over `MarshalSource` and produce the same decoded values.
-//
-// Lifetime: non-owning. Caller owns the underlying `Marshal` and must
-// keep it alive for the lifetime of the Sink/Source.
-//
-// Method bodies live in `marshal_archive.cpp` to avoid pulling
-// `marshal.hpp` into every translation unit that uses this header.
-// ---------------------------------------------------------------------------
-
-class MarshalSink {
-  Marshal* m_;
- public:
-  explicit MarshalSink(Marshal* m) noexcept : m_(m) {}
-
-  Marshal* marshal() const noexcept { return m_; }
-
-  // @unsafe - delegates to Marshal::write; verifies the underlying
-  // chunk allocator accepted all n bytes.
-  void write(const void* p, size_t n);
-};
-
-class MarshalSource {
-  Marshal* m_;
- public:
-  explicit MarshalSource(Marshal* m) noexcept : m_(m) {}
-
-  Marshal* marshal() const noexcept { return m_; }
-
-  // Returns the number of bytes actually read. May return < n at EOF
-  // (consistent with BufferSource / FdSource).
-  size_t read(void* p, size_t n);
-};
-
-class MarshalSinkAdapter : public SinkBase {
-  MarshalSink* sink_;
- public:
-  explicit MarshalSinkAdapter(MarshalSink* s) noexcept : sink_(s) {}
-  void write(const void* p, size_t n) override { sink_->write(p, n); }
-
-  // Symmetric with MarshalSourceAdapter::source(); exposed for the
-  // MarshallDeputy archive operator<< (currently it doesn't need
-  // this — save flows through the M→S adapter chain — but keeping
-  // the API parallel for future use).
-  MarshalSink* sink() const noexcept { return sink_; }
-};
-
-class MarshalSourceAdapter : public SourceBase {
-  MarshalSource* source_;
- public:
-  explicit MarshalSourceAdapter(MarshalSource* s) noexcept : source_(s) {}
-  size_t read(void* p, size_t n) override { return source_->read(p, n); }
-
-  // Used by the MarshallDeputy archive operator>> to recover the
-  // underlying Marshal — the operator detours through legacy
-  // operator>>(Marshal&, MarshallDeputy&) since the MarshallDeputy
-  // wire format lacks a length prefix at the payload-bytes layer.
-  MarshalSource* source() const noexcept { return source_; }
-};
-
-inline SinkProxy make_sink_proxy(MarshalSink* sink) {
-  return rusty::make_box<MarshalSinkAdapter>(sink);
-}
-inline SourceProxy make_source_proxy(MarshalSource* source) {
-  return rusty::make_box<MarshalSourceAdapter>(source);
-}
-
-// ---------------------------------------------------------------------------
 // Layer 3: Binary archive — knows the wire format.
 //
 // Wire format (BYTE-FOR-BYTE COMPATIBLE with the existing `Marshal`
@@ -398,8 +324,8 @@ class BinaryWriteArchive {
       : sink_(make_sink_proxy(sink)) {}
 
   // Convenience: build directly atop a concrete MarshalSink.
-  explicit BinaryWriteArchive(MarshalSink* sink)
-      : sink_(make_sink_proxy(sink)) {}
+  // Defined inline in marshal.hpp (MarshalSink full def is there).
+  explicit BinaryWriteArchive(MarshalSink* sink);
 
   // Expose the inner SinkProxy so callers can dynamic_cast to recover
   // the concrete adapter type (e.g.
@@ -590,8 +516,8 @@ class BinaryReadArchive {
       : source_(make_source_proxy(source)) {}
 
   // Convenience: build directly atop a concrete MarshalSource.
-  explicit BinaryReadArchive(MarshalSource* source)
-      : source_(make_source_proxy(source)) {}
+  // Defined inline in marshal.hpp (MarshalSource full def is there).
+  explicit BinaryReadArchive(MarshalSource* source);
 
   // Expose the inner SourceProxy so callers can dynamic_cast to
   // recover the concrete adapter type. Used by the MarshallDeputy

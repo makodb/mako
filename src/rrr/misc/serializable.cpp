@@ -10,33 +10,17 @@
 // Lookups are read-mostly — registrations happen at static init time,
 // before any RPC traffic. SpinMutex is fine for the low contention.
 //
-// MarshalSink / MarshalSource bridges. Method bodies live
-// here so `serializable.hpp` can forward-declare `class Marshal`
-// and avoid pulling the heavy `marshal.hpp` header into every TU.
+// MarshalSink/MarshalSource bridges relocated to marshal.cpp — their
+// impls need Marshal's full class def, and moving them there avoids
+// a cycle for the eventual module conversion of this file.
 
 #include "serializable.hpp"
 
 #include <rusty/hashmap.hpp>
 
 import rrr.threading;
-#include "marshal.hpp"
 
 namespace rrr {
-
-// ---- Marshal ↔ Archive bridges --------------------------
-
-void MarshalSink::write(const void* p, size_t n) {
-  // @unsafe { Marshal::write writes to its internal chunk list }
-  size_t actual = m_->write(p, n);
-  // Marshal's chunk allocator can always accept the bytes (it grows
-  // as needed); a short return is a programming error at this layer.
-  verify(actual == n);
-}
-
-size_t MarshalSource::read(void* p, size_t n) {
-  // @unsafe { Marshal::read drains from its internal chunk list }
-  return m_->read(p, n);
-}
 
 // ---- SerializableRegistry --------------------------------
 
