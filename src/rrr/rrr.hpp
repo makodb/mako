@@ -12,8 +12,6 @@
 // globally. Tests that need the old rrr-internal helpers can
 // include `<base/unittest.hpp>` explicitly.
 #include "misc/dball.hpp"
-#include "misc/netinfo.hpp"
-#include "misc/stat.hpp"
 #include "reactor/fiber_impl.h"
 #include "rpc/channel.hpp"
 #include "rpc/frame_codec.hpp"
@@ -57,8 +55,10 @@ import rrr.errors;
 import rrr.internal_protocol;
 import rrr.logging;
 import rrr.misc;
+import rrr.netinfo;
 import rrr.rand;
 import rrr.request_options;
+import rrr.stat;
 import rrr.strop;
 import rrr.threading;
 import rrr.utils;

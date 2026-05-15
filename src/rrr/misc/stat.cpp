@@ -1,21 +1,12 @@
-#pragma once
+module;
 
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
+export module rrr.stat;
 
+import std;
 
-
-
-namespace rrr {
+export namespace rrr {
 
 class AvgStat {
 public:
@@ -25,7 +16,6 @@ public:
     int64_t max_;
     int64_t min_;
 
-    // @safe - Simple initialization
     AvgStat(): n_stat_(0), sum_(0), avg_(0), max_(0), min_(0) {}
 
     void sample(int64_t s = 1) {
@@ -44,7 +34,6 @@ public:
         min_ = 0;
     }
 
-    // @unsafe
     AvgStat reset() {
         AvgStat stat;
         stat = *this;
@@ -52,8 +41,6 @@ public:
         return stat;
     }
 
-    // Note: Removed const to workaround rusty-cpp bug where @unsafe doesn't work for pointer operations in const inline methods
-    // @unsafe - Copies current statistics (uses pointer dereference)
     AvgStat peek() {
         AvgStat result = *this;
         return result;
@@ -64,4 +51,4 @@ public:
     }
 };
 
-} // namespace rrr
+} // export namespace rrr
