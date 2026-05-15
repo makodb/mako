@@ -46,6 +46,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
