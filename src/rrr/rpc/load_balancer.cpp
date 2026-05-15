@@ -1,51 +1,28 @@
-#pragma once
-
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
-/**
- * Load balancing strategies for RPC client pools.
- * Load Balancing Strategies.
- *
- * Provides different strategies for selecting clients from a pool:
- * - RANDOM: Random selection (default, fast)
- * - ROUND_ROBIN: Sequential cycling through clients
- * - LEAST_CONNECTIONS: Select client with fewest in-flight requests
- * - LEAST_LATENCY: Select client with lowest average latency
- */
-
+module;
 
 #include <rusty/cell.hpp>
 #include <rusty/arc.hpp>
+#include <cstdint>
 
+// Forward decl in GMF — Client is fully declared in client.hpp (global
+// module) and is only referenced here as a name. Declaring it in
+// module purview would give the forward-decl module attachment that
+// clashes with client.hpp's global-module declaration.
+namespace rrr { class Client; }
 
+export module rrr.load_balancer;
 
+import std;
 
-#include "connection_metrics.hpp"
+export namespace rrr {
 
-namespace rrr {
-
-// Forward declaration
-class Client;
-
-/**
- * @safe - Enum representing load balancing strategies.
- */
 enum class LoadBalancingStrategy : uint8_t {
-    RANDOM = 0,           // Random selection (default)
-    ROUND_ROBIN = 1,      // Sequential cycling
-    LEAST_CONNECTIONS = 2, // Fewest in-flight requests
-    LEAST_LATENCY = 3     // Lowest average latency
+    RANDOM = 0,
+    ROUND_ROBIN = 1,
+    LEAST_CONNECTIONS = 2,
+    LEAST_LATENCY = 3
 };
 
-// @safe - Convert strategy to string for logging
 inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strategy) {
     switch (strategy) {
         case LoadBalancingStrategy::RANDOM: return "RANDOM";
@@ -56,16 +33,10 @@ inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strat
     }
 }
 
-/**
- * @safe - Load balancer state for tracking selection state.
- * Uses rusty::Cell for thread-safe interior mutability.
- */
 class LoadBalancerState {
-    // Round-robin index per address
     rusty::Cell<size_t> round_robin_index_{0};
 
 public:
-    // @safe - Get next index for round-robin
     size_t next_round_robin_index(size_t pool_size) {
         if (pool_size == 0) return 0;
         size_t current = round_robin_index_.get();
@@ -74,27 +45,13 @@ public:
         return current;
     }
 
-    // @safe - Reset state
     void reset() {
         round_robin_index_.set(0);
     }
 };
 
-/**
- * @safe - Helper class for load balancing selection logic.
- * Stateless - all state is in LoadBalancerState.
- */
 class LoadBalancer {
 public:
-    /**
-     * @safe - Select a client index using the specified strategy.
-     *
-     * @param strategy The load balancing strategy to use
-     * @param clients Vector of clients to choose from
-     * @param state State for stateful strategies (e.g., round-robin)
-     * @param rand_value Random value for RANDOM strategy
-     * @return Selected index, or pool_size if no suitable client found
-     */
     template<typename ClientVec>
     static size_t select(
         LoadBalancingStrategy strategy,
@@ -124,17 +81,14 @@ public:
     }
 
 private:
-    // @safe - Random selection
     static size_t select_random(size_t pool_size, size_t rand_value) {
         return rand_value % pool_size;
     }
 
-    // @safe - Round-robin selection
     static size_t select_round_robin(size_t pool_size, LoadBalancerState& state) {
         return state.next_round_robin_index(pool_size);
     }
 
-    // @safe - Select client with smallest explicit in-flight request count.
     template<typename ClientVec>
     static size_t select_least_connections(const ClientVec& clients) {
         size_t best_idx = 0;
@@ -153,7 +107,6 @@ private:
         return best_idx;
     }
 
-    // @safe - Select client with lowest average latency
     template<typename ClientVec>
     static size_t select_least_latency(const ClientVec& clients) {
         size_t best_idx = 0;
@@ -164,7 +117,6 @@ private:
             const auto& metrics = client->metrics();
             uint64_t avg_latency = metrics.avg_latency_us();
 
-            // Skip clients with no latency data (use max latency)
             if (avg_latency == 0 && metrics.requests_completed() == 0) {
                 continue;
             }
@@ -179,4 +131,4 @@ private:
     }
 };
 
-} // namespace rrr
+} // export namespace rrr

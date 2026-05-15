@@ -21,7 +21,6 @@
 #include "rpc/connection_state.hpp"
 #include "rpc/heartbeat.hpp"
 #include "rpc/reconnect_policy.hpp"
-#include "rpc/load_balancer.hpp"
 #include "rpc/callbacks.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
@@ -52,6 +51,7 @@ import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
 import rrr.internal_protocol;
+import rrr.load_balancer;
 import rrr.logging;
 import rrr.misc;
 import rrr.netinfo;
