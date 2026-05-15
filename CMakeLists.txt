@@ -555,6 +555,35 @@ if(DEFINED ENV{MAKO_ASAN} AND "$ENV{MAKO_ASAN}" STREQUAL "1")
     add_link_options(-fsanitize=address)
 endif()
 
+# UndefinedBehaviorSanitizer (MAKO_UBSAN=1 in env). Compatible with jemalloc
+# and with the other sanitizers in principle; we still keep them
+# independently configurable so the matrix runs cleanly.
+set(MAKO_UBSAN_ENABLED OFF)
+if(DEFINED ENV{MAKO_UBSAN} AND "$ENV{MAKO_UBSAN}" STREQUAL "1")
+    set(MAKO_UBSAN_ENABLED ON)
+    message(STATUS "MAKO_UBSAN=1: building with -fsanitize=undefined.")
+    list(APPEND CXXFLAGS -fsanitize=undefined -fno-omit-frame-pointer)
+    list(APPEND LDFLAGS  -fsanitize=undefined)
+    add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=undefined)
+endif()
+
+# ThreadSanitizer (MAKO_TSAN=1 in env). Like ASan, TSan replaces malloc and is
+# incompatible with jemalloc; force libc malloc. Mutually exclusive with ASan.
+set(MAKO_TSAN_ENABLED OFF)
+if(DEFINED ENV{MAKO_TSAN} AND "$ENV{MAKO_TSAN}" STREQUAL "1")
+    if(MAKO_ASAN_ENABLED)
+        message(FATAL_ERROR "MAKO_TSAN=1 cannot be combined with MAKO_ASAN=1.")
+    endif()
+    set(MAKO_TSAN_ENABLED ON)
+    message(STATUS "MAKO_TSAN=1: building with -fsanitize=thread; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.")
+    set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_TSAN" FORCE)
+    list(APPEND CXXFLAGS -fsanitize=thread -fno-omit-frame-pointer)
+    list(APPEND LDFLAGS  -fsanitize=thread)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+endif()
+
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
   message(STATUS "Raft lab testing fiber enabled")
