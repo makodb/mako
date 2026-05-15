@@ -14,10 +14,10 @@
 
 
 
-#include "channel.hpp"
 #include "frame_codec.hpp"
 #include "../reactor/reactor.h"
 
+import rrr.channel;
 import rrr.pollable_proxy;
 import rrr.threading;
 

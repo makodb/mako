@@ -84,8 +84,7 @@
 #include <rusty/option.hpp>
 #include <rusty/sync/weak.hpp>
 
-#include "channel.hpp"
-
+import rrr.channel;
 import rrr.threading;
 
 namespace rrr {

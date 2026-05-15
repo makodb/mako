@@ -68,11 +68,8 @@
 #include "../misc/marshal.hpp"
 #include "../reactor/reactor.h"
 
+import rrr.channel;
 import rrr.epoll_wrapper;
-
-
-#include "channel.hpp"
-
 import rrr.internal_protocol;
 import rrr.utils;
 

@@ -12,10 +12,10 @@
 #include <rusty/option.hpp>
 
 
-#include "channel.hpp"
 #include "../reactor/event.h"
 #include "../reactor/reactor.h"
 
+import rrr.channel;
 import rrr.threading;
 
 /**
