@@ -13,7 +13,6 @@
 // include `<base/unittest.hpp>` explicitly.
 #include "misc/dball.hpp"
 #include "misc/netinfo.hpp"
-#include "misc/rand.hpp"
 #include "misc/stat.hpp"
 #include "reactor/fiber_impl.h"
 #include "rpc/channel.hpp"
@@ -60,6 +59,7 @@ import rrr.basetypes;
 import rrr.debugging;
 import rrr.logging;
 import rrr.misc;
+import rrr.rand;
 import rrr.strop;
 import rrr.threading;
 
