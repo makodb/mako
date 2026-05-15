@@ -1,10 +1,5 @@
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <vector>
-#include <utility>
-#include <string>
-
+#include <stdint.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <sched.h>
 #include <unistd.h>
@@ -30,8 +25,6 @@
 #include "benchmarks/sto/sync_util.hh"
 #include "rpc_setup.h"
 #include "cpu_throttler.h"
-#include <chrono>
-#include <thread>
 
 #ifdef USE_JEMALLOC
 #include <jemalloc/jemalloc.h>
@@ -41,6 +34,8 @@ extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp
 #ifdef USE_TCMALLOC
 #include <google/heap-profiler.h>
 #endif
+
+import std;
 
 using namespace std;
 using namespace util;

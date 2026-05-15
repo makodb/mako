@@ -1,21 +1,15 @@
+#include <string.h>
+#include <time.h>
+
 #ifdef CONFIG_H
 #include CONFIG_H
 #endif
 #include "masstree/config.h"
 
 #include "rocksdb_persistence.h"
-#include <sstream>
-#include <iomanip>
-#include <chrono>
-#include <algorithm>
-#include <ctime>
-#include <cstring>
 #include "../deptran/s_main.h"
 
-#include <unordered_map>  
-#include <memory>       
-#include <atomic>         
-#include <functional>    
+import std;
 
 // @safe
 template<typename T>

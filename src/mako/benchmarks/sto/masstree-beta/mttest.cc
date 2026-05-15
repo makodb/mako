@@ -67,8 +67,8 @@
 #include "kvrow.hh"
 #include "kvio.hh"
 #include "clp.h"
-#include <algorithm>
-#include <numeric>
+
+import std;
 
 static std::vector<int> cores;
 volatile bool timeout[2] = {false, false};

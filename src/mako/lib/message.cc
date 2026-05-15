@@ -18,12 +18,12 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-#include <mutex>
-
 #define BACKTRACE_ON_PANIC 1
 #if BACKTRACE_ON_PANIC
 #include <execinfo.h>
 #endif
+
+import std;
 
 #define TIMESTAMP_BASE62 0
 #define TIMESTAMP_NUMERIC 1

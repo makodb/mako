@@ -1,7 +1,5 @@
-#include <iostream>
 #include <assert.h>
-#include <random>
-#include <climits>
+#include <limits.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -17,6 +15,8 @@
 #include "randgen.hh"
 
 #include "MassTrans.hh"
+
+import std;
 
 // size of array (for hashtables or other non-array structures, this is the
 // size of the key space)

@@ -61,8 +61,9 @@
 #include "masstree_remove.hh"
 #include "masstree_scan.hh"
 #include "msgpack.hh"
-#include <algorithm>
-#include <deque>
+
+import std;
+
 using lcdf::StringAccum;
 
 enum { CKState_Quit, CKState_Uninit, CKState_Ready, CKState_Go };

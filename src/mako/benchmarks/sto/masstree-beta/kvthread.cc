@@ -17,12 +17,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <new>
 #include <sys/mman.h>
 #if HAVE_SUPERPAGE && !NOSUPERPAGE
 #include <sys/types.h>
 #include <dirent.h>
 #endif
+
+import std;
 
 threadinfo *threadinfo::allthreads;
 #if ENABLE_ASSERTIONS

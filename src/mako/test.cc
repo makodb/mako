@@ -1,8 +1,5 @@
-#include <iostream>
-#include <functional>
-#include <unordered_map>
-#include <tuple>
-#include <set>
+#include <stdint.h>
+#include <stddef.h>
 #include <unistd.h>
 
 #include "circbuf.h"
@@ -24,6 +21,8 @@
 #ifdef PROTO2_CAN_DISABLE_GC
 #include "txn_proto2_impl.h"
 #endif
+
+import std;
 
 #define MYREC_KEY_FIELDS(x, y) \
   x(int32_t,k0) \

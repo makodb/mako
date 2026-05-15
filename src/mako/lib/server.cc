@@ -1,8 +1,3 @@
-#include <iostream>
-#include <random>
-#include <chrono>
-#include <thread>
-#include <algorithm>
 #include "lib/fasttransport.h"
 #include "lib/timestamp.h"
 #include "lib/server.h"
@@ -17,6 +12,8 @@
 #endif
 #include "deptran/s_main.h"
 #include "benchmarks/sto/sync_util.hh"
+
+import std;
 
 std::function<int()> ss_callback_ = nullptr;
 void register_sync_util_ss(std::function<int()> cb) {

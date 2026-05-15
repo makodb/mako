@@ -6,8 +6,9 @@
  *   there is only one table in the micro-benchmark: items shared by all worker threads
  */
 
+#include <stdint.h>
+#include <stddef.h>
 #include <sys/time.h>
-#include <string>
 #include <ctype.h>
 #include <stdlib.h>
 #if defined(__APPLE__)
@@ -19,9 +20,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <getopt.h>
-
-#include <set>
-#include <vector>
 
 #include "../txn.h"
 #include "../macros.h"
@@ -48,11 +46,11 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "common.h"
 #include "deptran/s_main.h"
 #include "benchmarks/sto/multiversion.hh"
-#include "atomic"
-#include <chrono>
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 #include "benchmarks/tpcc_sharding.h"
+
+import std;
 
 using namespace std;
 using namespace util;

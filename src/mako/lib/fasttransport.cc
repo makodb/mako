@@ -16,9 +16,6 @@
 #include <event2/event.h>
 #include <event2/thread.h>
 
-#include <memory>
-#include <random>
-
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fcntl.h>
@@ -27,11 +24,12 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <signal.h>
-#include <thread>
 
 #ifdef MAKO_ENABLE_ERPC
 #include "lib/erpc_backend.h"
 #endif
+
+import std;
 
 static std::mutex fasttransport_lock;
 static volatile bool fasttransport_initialized = false;

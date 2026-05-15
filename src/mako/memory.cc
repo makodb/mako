@@ -1,9 +1,9 @@
 #include "macros.h" // for TRAP_LARGE_ALLOOCATIONS
 
+import std;
+
 #ifdef TRAP_LARGE_ALLOOCATIONS
 
-#include <new>
-#include <iostream>
 #include <stdlib.h>
 #include <stdint.h>
 #include <execinfo.h>

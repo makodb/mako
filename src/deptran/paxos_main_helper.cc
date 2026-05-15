@@ -17,7 +17,8 @@
 #include "paxos/server.h"
 #include "network_client/network_impl.h"
 #include <time.h>
-#include <chrono>
+
+import std;
 
 using namespace janus;
 using namespace network_client;
