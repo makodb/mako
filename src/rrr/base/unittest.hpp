@@ -1,56 +1,9 @@
 #pragma once
 
-// import std; replacement — see <std_compat.hpp> for rationale.
-#include <std_compat.hpp>
-
-// @c-compat-added
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
-
-#include <rusty/rusty.hpp>
-
-
-
-
-
-namespace rrr {
-
-class TestCase {
-    const char* group_;
-    const char* name_;
-    int failures_;
-public:
-    TestCase(const TestCase&) = delete;
-    TestCase& operator=(const TestCase&) = delete;
-    TestCase(const char* _group, const char* _name)
-        : group_(_group), name_(_name), failures_(0) { }
-    virtual ~TestCase() {}
-    virtual void run() = 0;
-    const char* group() { return group_; }
-    const char* name() { return name_; }
-    void reset() { failures_ = 0; }
-    void fail();
-    int failures() { return failures_; }
-};
-
-// singleton
-class TestMgr {
-    TestMgr() :tests_() { }
-    static TestMgr* instance_s;
-    rusty::Vec<TestCase*> tests_;
-public:
-    static TestMgr* instance();
-    TestCase* reg(TestCase*);
-    int parse_args(int argc, char* argv[], bool* show_help, bool* list_tests, rusty::Vec<TestCase*>* selected);
-    void matched_tests(const char* match, rusty::Vec<TestCase*>* matched);
-    int run(int argc, char* argv[]);
-};
-
-} // namespace base
+// Module shim: classes come from rrr.unittest. Macros stay textual
+// here since macros can't be exported via modules.
+#include <iostream>
+import rrr.unittest;
 
 #define TEST_CLASS_NAME(group, name) \
     TestCase_ ## group ## _ ## name

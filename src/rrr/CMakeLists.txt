@@ -24,6 +24,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/alarm.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
@@ -89,7 +90,7 @@ if(NOT TARGET rrr)
         # base/strop.cpp omitted — converted to a C++23 module interface
         # unit (see RRR_MODULE_SRC). rusty-cpp cannot resolve module
         # imports yet; revisit when the checker handles BMI paths.
-        ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
+        # base/unittest.cpp omitted — module unit.
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
         # removed misc/recorder.cpp — class
         # deleted; was unused after Phase 4e-35.
