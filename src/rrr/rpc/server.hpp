@@ -66,8 +66,9 @@
 
 #include "../base/all.hpp"
 #include "../misc/marshal.hpp"
-#include "../reactor/epoll_wrapper.h"
 #include "../reactor/reactor.h"
+
+import rrr.epoll_wrapper;
 
 
 #include "channel.hpp"

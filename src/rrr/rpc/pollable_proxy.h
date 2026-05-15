@@ -3,7 +3,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 
-#include "../reactor/epoll_wrapper.h"
+import rrr.epoll_wrapper;
 
 
 namespace rrr {

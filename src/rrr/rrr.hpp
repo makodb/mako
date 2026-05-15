@@ -34,7 +34,6 @@
 #include "misc/cpuinfo.hpp"
 #include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
-#include "reactor/epoll_wrapper.h"
 #include "reactor/event.h"
 // removed `#include "misc/recorder.hpp"`
 // — `Recorder` class deleted; was unused after Phase 4e-35.
@@ -57,6 +56,7 @@
 // rrr submodules sit at the bottom of the textual chain.
 import rrr.basetypes;
 import rrr.debugging;
+import rrr.epoll_wrapper;
 import rrr.logging;
 import rrr.misc;
 import rrr.rand;

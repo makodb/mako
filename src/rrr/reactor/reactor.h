@@ -97,7 +97,8 @@
 #include "event.h"
 #include "quorum_event.h"
 #include "fiber_impl.h"
-#include "epoll_wrapper.h"
+
+import rrr.epoll_wrapper;
 
 namespace rrr {
 
