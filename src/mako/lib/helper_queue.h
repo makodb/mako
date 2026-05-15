@@ -1,7 +1,6 @@
 #ifndef _LIB_HELPER_QUEUE_H_
 #define _LIB_HELPER_QUEUE_H_
 
-#include <exception>  // Needed by asio (pulled via rpc.h) under libc++.
 #include "rpc.h"
 
 // Forward declare erpc::ReqHandle to break a circular include cycle:

@@ -13,7 +13,6 @@
 #include <stddef.h>
 #include <string.h>
 
-#include <exception>  // asio needs it under libc++
 #include <gtest/gtest.h>
 #include <unistd.h>
 
