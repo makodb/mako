@@ -1,5 +1,9 @@
-#include <iostream>
-#include <thread>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/uio.h>
@@ -9,6 +13,8 @@
 #include "txn_proto2_impl.h"
 #include "counter.h"
 #include "util.h"
+
+import std;
 
 using namespace std;
 using namespace util;

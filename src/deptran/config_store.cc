@@ -3,10 +3,14 @@
  * @brief Implementation of RocksDB-backed configuration storage.
  */
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include "config_store.h"
-#include <cstring>
 
 #include "rrr/rrr.hpp"
+
+import std;
 
 namespace janus {
 

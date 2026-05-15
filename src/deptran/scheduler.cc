@@ -1,3 +1,7 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <inttypes.h>
+
 #include "__dep__.h"
 #include "constants.h"
 #include "tx.h"
@@ -15,8 +19,9 @@
 #include "raft/server.h"
 #include "config.h"
 
-#include <algorithm>
 #include <gperftools/profiler.h>
+
+import std;
 
 namespace janus {
 

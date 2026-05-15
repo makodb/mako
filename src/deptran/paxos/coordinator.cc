@@ -1,11 +1,13 @@
 
+#include <stdint.h>
+
 #include "../__dep__.h"
 #include "../constants.h"
 #include "coordinator.h"
 #include "commo.h"
 #include "paxos_worker.h"
-#include <cstdlib>
-#include <ctime>
+
+import std;
 
 namespace janus {
 

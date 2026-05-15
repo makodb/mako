@@ -3,10 +3,12 @@
  * Tests exponential backoff, jitter, max delay/retries, and presets.
  */
 
+#include <stdint.h>
+
 #include <gtest/gtest.h>
-#include <cmath>
-#include <set>
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 

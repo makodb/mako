@@ -3,8 +3,12 @@
  * @brief Implementation of ShardingPolicyCache.
  */
 
+#include <stdint.h>
+#include <stddef.h>
+
 #include "sharding_policy_cache.h"
-#include <cstring>
+
+import std;
 
 namespace janus {
 

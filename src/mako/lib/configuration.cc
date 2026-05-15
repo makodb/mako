@@ -6,9 +6,12 @@
  *
  **********************************************************************/
 
+#include <stddef.h>
+
 #include "lib/configuration.h"
 #include "lib/assert.h"
-#include <algorithm>
+
+import std;
 
 namespace transport
 {

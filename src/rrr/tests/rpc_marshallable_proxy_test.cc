@@ -1,5 +1,6 @@
+#include <stdint.h>
+
 #include <gtest/gtest.h>
-#include <type_traits>
 #include "../rrr.hpp"
 #include "../misc/serializable.hpp"  // wrap_serializable, serializable_cast
 #include "deptran/classic/tpc_command.h"
@@ -7,6 +8,8 @@
 #include "deptran/raft/replicated_db.h"
 #include "deptran/rcc/dep_graph.h"
 #include "deptran/paxos_worker.h"
+
+import std;
 
 using namespace rrr;
 

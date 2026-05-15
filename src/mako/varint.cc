@@ -1,8 +1,13 @@
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 
 #include "varint.h"
 #include "macros.h"
 #include "util.h"
+
+import std;
 
 using namespace std;
 using namespace util;

@@ -1,11 +1,12 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include <unistd.h>
 #include <time.h>
 #include <string.h>
 #include <numa.h>
 #include <sched.h>
-#include <iostream>
-#include <thread>
-#include <atomic>
 
 #include "rcu.h"
 #include "silo_runtime.h"
@@ -14,6 +15,8 @@
 #include "thread.h"
 #include "counter.h"
 #include "lockguard.h"
+
+import std;
 
 using namespace std;
 using namespace util;

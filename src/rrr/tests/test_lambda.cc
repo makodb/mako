@@ -1,8 +1,11 @@
+#include <stdint.h>
+
 #include <stdio.h>
 #include <time.h>
 #include "../rrr.hpp"
 
-#include <functional>
+
+import std;
 #define CALL_TIMES 10000
 
 uint64_t copy_func(const std::function<uint64_t(void)> &foo) {

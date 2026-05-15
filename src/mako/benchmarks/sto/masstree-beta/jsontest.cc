@@ -16,8 +16,12 @@
  * legally binding.
  */
 
+#include <stdint.h>
+#include <stdlib.h>
+
 #include "json.hh"
-#include <unordered_map>
+
+import std;
 using namespace lcdf;
 
 #define CHECK(x) do { if (!(x)) { std::cerr << __FILE__ << ":" << __LINE__ << ": test '" << #x << "' failed\n"; exit(1); } } while (0)

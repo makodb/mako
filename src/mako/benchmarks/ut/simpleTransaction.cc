@@ -2,17 +2,17 @@
 // Created by weihshen on 2/3/21.
 //
 
-#include <iostream>
-#include <random>
-#include <chrono>
-#include <thread>
-#include <algorithm>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "benchmarks/bench.h"
 #include "benchmarks/mbta_wrapper.hh"
 #include "benchmarks/tpcc.h"
 #include "benchmarks/benchmark_config.h"
 #include "common.h"
 #include "benchmarks/sto/sync_util.hh"
+
+import std;
 using namespace std;
 
 

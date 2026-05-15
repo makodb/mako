@@ -1,15 +1,15 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "__dep__.h"
-#include <iostream>
-#include <vector>
 #include <sys/time.h>
-#include <thread>
-#include <string>
-#include <cstring>
 #include <unistd.h>
 #include "concurrentqueue.h"
 #include "helloworld_client/helloworld_impl.h"
 #include <pthread.h>
-#include <chrono>
+
+import std;
 typedef std::chrono::high_resolution_clock Clock;
 
 using namespace janus;

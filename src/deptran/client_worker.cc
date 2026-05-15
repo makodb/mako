@@ -1,4 +1,8 @@
-#include <cmath>
+#include <stdint.h>
+#include <stdio.h>
+#include <math.h>
+#include <inttypes.h>
+
 #include "client_worker.h"
 
 // The wait_recordplace macro is defined in rrr/reactor/event.h but macros do
@@ -16,6 +20,8 @@
 #include "workload.h"
 #include "coordinator.h"
 #include "benchmark_control_rpc.h"
+
+import std;
 
 namespace janus {
 

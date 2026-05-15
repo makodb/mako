@@ -1,4 +1,6 @@
 
+#include <stdint.h>
+
 #include "commo.h"
 #include "../rcc/graph.h"
 #include "../rcc/graph_marshaler.h"
@@ -7,7 +9,8 @@
 #include "../command_marshaler.h"
 #include "../rcc_rpc.h"
 #include "macros.h"
-#include <utility>
+
+import std;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]

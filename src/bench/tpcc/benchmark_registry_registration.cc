@@ -1,4 +1,3 @@
-#include <utility>
 
 #include "deptran/benchmark_registry.h"
 #include "deptran/constants.h"
@@ -18,6 +17,8 @@
 #include "bench/tpcc_real_dist/procedure.h"
 #include "bench/tpcc_real_dist/sharding.h"
 #include "bench/tpcc_real_dist/workload.h"
+
+import std;
 
 extern "C" void janus_register_bench_factories(void) {
   auto& registry = janus::BenchmarkRegistry::Instance();

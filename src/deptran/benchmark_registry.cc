@@ -1,6 +1,7 @@
 #include "benchmark_registry.h"
 
-#include <utility>
+
+import std;
 
 namespace janus {
 

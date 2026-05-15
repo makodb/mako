@@ -1,4 +1,5 @@
-#include <iostream>
+#include <stdlib.h>
+
 #include <assert.h>
 #include <stdio.h>
 
@@ -8,6 +9,8 @@
 #include "Queue.hh"
 #include "Transaction.hh"
 #include "IntStr.hh"
+
+import std;
 
 #define N 100
 

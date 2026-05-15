@@ -1,7 +1,5 @@
-#include <iostream>
-#include <fstream>
-#include <stdexcept>
-#include <optional>
+
+import std;
 
 // g++ disk.cpp -o disk  -lboost_thread -lboost_system
 

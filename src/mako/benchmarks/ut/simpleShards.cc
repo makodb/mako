@@ -2,11 +2,10 @@
 // Created by weihshen on 2/3/21.
 //
 
-#include <iostream>
-#include <random>
-#include <chrono>
-#include <thread>
-#include <algorithm>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "benchmarks/bench.h"
 #include "benchmarks/mbta_wrapper.hh"
 #include "benchmarks/tpcc.h"
@@ -16,6 +15,8 @@
 #include "deptran/s_main.h"
 #include "benchmarks/sto/Transaction.hh"
 #include "benchmarks/sto/sync_util.hh"
+
+import std;
 using namespace std;
 using namespace mako;
 

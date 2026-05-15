@@ -1,3 +1,7 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "replication_helper.h"
 
 #include "__dep__.h"
@@ -8,12 +12,8 @@
 #include "client_worker.h"
 #include "paxos_worker.h"  // ElectionState definition lives here
 
-#include <algorithm>
-#include <cctype>
-#include <iostream>
-#include <optional>
-#include <string_view>
-#include <unordered_map>
+
+import std;
 
 using namespace janus;
 

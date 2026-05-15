@@ -1,6 +1,7 @@
 #include "network_impl.h"
 
-#include <chrono>
+
+import std;
 
 static inline long long getCurrentTimeMillis2() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -1,3 +1,9 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+
 #include "server.h"
 // #include "paxos_worker.h"
 #include "exec.h"
@@ -6,7 +12,8 @@
 #include "../classic/tpc_command.h"
 #include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
-#include <limits>
+
+import std;
 
 // @external: {
 //   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]

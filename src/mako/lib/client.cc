@@ -1,9 +1,14 @@
-#include <iostream>
-#include <random>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/common.h"
 #include "benchmarks/sto/Interface.hh"
+
+import std;
 
 std::function<int()> sc_callback_ = nullptr;
 void register_sync_util_sc(std::function<int()> cb) {

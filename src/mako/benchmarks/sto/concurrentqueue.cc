@@ -1,7 +1,9 @@
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <assert.h>
-#include <random>
-#include <climits>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -9,6 +11,8 @@
 #include "clp.h"
 #include "Queue.hh"
 #include "randgen.hh"
+
+import std;
 
 // size of queue
 #define QUEUE_SZ 4096

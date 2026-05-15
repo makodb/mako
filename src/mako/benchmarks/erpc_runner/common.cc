@@ -1,5 +1,8 @@
+#include <stddef.h>
+
 #include "common.h"
-#include <iostream>
+
+import std;
 
 
 size_t calculate_req_msg_size(void *req, DATA_TYPE req_type) {

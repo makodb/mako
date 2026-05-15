@@ -10,12 +10,14 @@
  * function is implemented separately in the mako library.
  */
 
+#include <stdint.h>
+
 #include "mako/benchmarks/tpcc_sharding.h"
 #include "sharding_policy_cache.h"
 #include "sharding_policy_builder.h"
 #include "config_client.h"
-#include <chrono>
-#include <iostream>
+
+import std;
 
 namespace mako {
 

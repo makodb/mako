@@ -1,6 +1,11 @@
 //#include "all.h"
-#include <algorithm>
-#include <cctype>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+
 
 #include "__dep__.h"
 #include "multi_value.h"
@@ -14,6 +19,8 @@
 #include "rcc/dep_graph.h"
 #include "rcc/graph_marshaler.h"
 #include "workload.h"
+
+import std;
 
 
 namespace janus {

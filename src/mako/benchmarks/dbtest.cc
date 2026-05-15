@@ -1,10 +1,11 @@
-#include <iostream>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <csignal>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <unistd.h>
 #include <mako.hh>
+
+import std;
 
 using namespace std;
 using namespace util;

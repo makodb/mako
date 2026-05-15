@@ -1,4 +1,6 @@
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+
 #include <assert.h>
 #include <stdio.h>
 
@@ -7,6 +9,8 @@
 #include "Transaction.hh"
 #include "simple_str.hh"
 #include "randgen.hh"
+
+import std;
 
 #define DS 0
 #define USE_STRINGS 1

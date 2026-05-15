@@ -1,7 +1,7 @@
 #include "helloworld_impl.h"
 
-#include <chrono>
-#include <thread>
+
+import std;
 
 namespace helloworld_client {
 

@@ -1,6 +1,8 @@
+#include <stdint.h>
+
 #include "config_client.h"
-#include <thread>
-#include <chrono>
+
+import std;
 
 namespace janus {
 

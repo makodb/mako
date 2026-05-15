@@ -1,9 +1,12 @@
 // Minimal test for Fragile compiler - tests basic rrr library functions
 // This file is intentionally simple with no template edge cases
 
-#include <iostream>
-#include <functional>
+#include <stdint.h>
+#include <time.h>
+
 #include "../rrr.hpp"
+
+import std;
 
 using namespace rrr;
 

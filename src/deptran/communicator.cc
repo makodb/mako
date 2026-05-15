@@ -1,4 +1,8 @@
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+
 #include "communicator.h"
 #include "coordinator.h"
 #include "classic/coordinator.h"
@@ -9,9 +13,10 @@
 #include "classic/tpc_command.h"
 #include "procedure.h"
 #include "rcc_rpc.h"
-#include <typeinfo>
 #include <rusty/vec.hpp>
 #include "RW_command.h"
+
+import std;
 
 namespace janus {
 

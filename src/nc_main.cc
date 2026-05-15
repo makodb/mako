@@ -1,18 +1,18 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "__dep__.h"
 #include "deptran/s_main.h"
-#include <iostream>
-#include <vector>
 #include <sys/time.h>
-#include <thread>
-#include <string>
-#include <cstring>
 #include <unistd.h>
 #include "concurrentqueue.h"
 #include "network_client/network_impl.h"
 #include "nc_util.h"
 #include "deptran/communicator.h"
 #include <pthread.h>
-#include <chrono>
+
+import std;
 
 typedef std::chrono::high_resolution_clock Clock;
 

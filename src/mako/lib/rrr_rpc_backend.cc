@@ -6,6 +6,10 @@
  *
  **********************************************************************/
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "rrr_rpc_backend.h"
 #include "lib/assert.h"
 #include "lib/common.h"
@@ -14,10 +18,9 @@
 #include "thread.h"
 #include "benchmarks/sto/sync_util.hh"
 
-#include <chrono>
-#include <thread>
-#include <cstring>
 #include <inttypes.h>
+
+import std;
 
 using namespace mako;
 

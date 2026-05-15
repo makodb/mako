@@ -6,6 +6,10 @@
  *
  **********************************************************************/
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "erpc_backend.h"
 #include "erpc_request_handle.h"
 #include "lib/assert.h"
@@ -17,9 +21,10 @@
 
 #include <util.h>
 #include <numa.h>
-#include <thread>
 #include <sched.h>
 #include <inttypes.h>
+
+import std;
 
 using namespace mako;
 

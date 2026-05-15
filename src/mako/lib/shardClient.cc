@@ -1,5 +1,8 @@
 
-#include <iostream>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #include "lib/fasttransport.h"
 #include "lib/promise.h"
 #include "lib/client.h"
@@ -8,6 +11,8 @@
 #include "lib/common.h"
 #include "lib/shard_router.h"
 #include "benchmarks/sto/Interface.hh"
+
+import std;
 
 namespace mako
 {

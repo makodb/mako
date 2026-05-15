@@ -1,8 +1,13 @@
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "ReplayDB.h"
-#include <random>
-#include <algorithm>
-#include <unordered_set>
 #include "ThreadPool.h"
+
+import std;
 
 // @unsafe: uses memcpy and pointer arithmetic
 // Single timestamp system: extracts timestamp and latency tracker from buffer

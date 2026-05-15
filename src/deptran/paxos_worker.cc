@@ -1,11 +1,13 @@
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include "paxos/server.h"
 #include "paxos/commo.h"
 #include "rrr/misc/serializable.hpp"
 #include "service.h"
-#include <chrono>
-#include <thread>
-#include <cstdlib>
-#include <ctime>
+
+import std;
 
 namespace janus {
 // Paxos worker thread

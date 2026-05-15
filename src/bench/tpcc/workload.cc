@@ -1,5 +1,8 @@
+#include <stdint.h>
+
 #include "workload.h"
-#include <limits>
+
+import std;
 
 namespace janus {
 

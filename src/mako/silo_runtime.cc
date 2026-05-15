@@ -5,6 +5,12 @@
  * @safe - Uses RustyCpp smart pointers for memory safety
  */
 
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "silo_runtime.h"
 #include "ticker.h"
 #include "rcu.h"
@@ -15,8 +21,8 @@
 
 #include <sys/mman.h>
 #include <numa.h>
-#include <iostream>
-#include <cstring>
+
+import std;
 
 using namespace util;
 

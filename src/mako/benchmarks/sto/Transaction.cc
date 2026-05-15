@@ -1,14 +1,18 @@
 // @unsafe: entire file uses STO with complex template instantiations, mutable fields, and interior mutability
+#include <stdint.h>
+#include <stddef.h>
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+
 #include "Transaction.hh"
-#include <typeinfo>
-#include <atomic>
-#include <array>
-#include <iostream>
 #include "MassTrans.hh"
 #include "deptran/s_main.h"
 #include "benchmarks/sto/sync_util.hh"
 #include "lib/common.h"
 #include "benchmarks/benchmark_config.h"
+
+import std;
 
 #ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))

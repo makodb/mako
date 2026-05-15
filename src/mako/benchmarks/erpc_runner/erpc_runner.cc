@@ -1,7 +1,9 @@
+#include <string.h>
+#include <time.h>
+
 #include "erpc_runner.h"
-#include <iostream>
-#include <ctime>
-#include <cstdio>
+
+import std;
 
 using namespace std;
 
