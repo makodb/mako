@@ -40,6 +40,14 @@ function(mako_add_masstree_tests)
     add_test(NAME test_masstree_concurrent COMMAND test_masstree_concurrent)
     set_tests_properties(test_masstree_concurrent PROPERTIES TIMEOUT 60)
 
+    # Masstree per-key linearizability check
+    add_executable(test_masstree_linearizability ${MASSTREE_TEST_DIR}/test_masstree_linearizability.cc)
+    target_include_directories(test_masstree_linearizability PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_linearizability PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_linearizability mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_linearizability COMMAND test_masstree_linearizability)
+    set_tests_properties(test_masstree_linearizability PROPERTIES TIMEOUT 60)
+
     # Masstree internals tests (threadinfo, globalepoch, RCU)
     add_executable(test_masstree_internals ${MASSTREE_TEST_DIR}/test_masstree_internals.cc)
     target_include_directories(test_masstree_internals PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
