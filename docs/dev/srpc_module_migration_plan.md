@@ -254,14 +254,48 @@ continue.
   on clang 22 (commit-pending) as a single `rrr.reactor` module
   (~2860 lines in `src/rrr/reactor/reactor.cpp`) — see the
   multi-attachment-trap entry above for the toolchain switch.
-- **rpc client/server cluster** (`alock.cpp`, `fiber.h`, `future.h`,
-  `client.{cpp,hpp}`, `server.{cpp,hpp}`, `fiber_channel.{cpp,hpp}`,
-  `tcp_channel.{cpp,hpp}`): not yet converted to module units, but
-  no longer blocked. With `rrr.reactor` available, these consumers
-  switched from textual `#include "../reactor/reactor.h"` to
-  `import rrr.reactor;` and the build still works. Converting them
-  to their own modules is a follow-up — they're currently regular
-  `.cpp` files that just consume the rrr.reactor BMI.
+- **rpc client/server cluster** — followups split out:
+  - `reactor/fiber.h` → **converted** to `rrr.fiber` module
+    (commit-pending). `this_fiber::*` namespace.
+  - `reactor/future.h` → **converted** to `rrr.future` module
+    (commit-pending). FiberPromise / FiberFuture templates.
+  - `misc/alock.{hpp,cpp}` → **converted** to `rrr.alock` module
+    (commit-pending). Despite using
+    `Reactor::create_event<IntEvent>()` in module purview (same
+    cross-module template-member call that crashes fiber_channel),
+    alock compiled cleanly — the codegen bug is sensitive to
+    something narrower than the obvious call shape.
+  - `rpc/tcp_channel.{hpp,cpp}` → **converted** to
+    `rrr.tcp_channel` module (commit-pending). Largest of the rpc
+    siblings; no `create_sp_event<>` in purview so it compiled
+    without workarounds.
+  - `rpc/server.{hpp,cpp}` → **converted** to `rrr.server` module
+    (commit-pending). 1700 lines combined.
+  - `rpc/client.{hpp,cpp}` → **converted** to `rrr.client` module
+    (commit-pending). 4810 lines combined; biggest single module.
+    The GMF forward-decl of `class Client` in `rrr.load_balancer`
+    keeps working under clang 22.
+  - `rpc/fiber_channel.{hpp,cpp}` → **deferred**. Two distinct
+    clang 22 bugs block this:
+    1. Codegen crash at `EmitScalarExpr` inside
+       `EmitReturnStmt`/`EmitIfStmt` when instantiating libc++
+       container templates (e.g. `std::vector<uint8_t>::assign`)
+       in a module-owned function body. Workaround: include
+       `<rusty/rusty.hpp>` (or `<vector>` / `<deque>`) in the
+       module's GMF to pre-instantiate the templates.
+    2. Once (1) is worked around, the resulting BMI plus
+       benchmark_service.h's `<rusty/async.hpp>` (which carries
+       `rusty::Waker`) and rpcbench.cc's `import std;` interact
+       such that `__libcpp_allocate<std::shared_ptr<rusty::Waker>>`
+       sees two attachments of
+       `operator new(size_t, std::align_val_t)` and clang reports
+       it as ambiguous. The other modules dodge this through some
+       interaction we don't fully understand — fiber_channel is
+       the first to expose it.
+    fiber_channel stays as a regular `.hpp`+`.cpp` pair consuming
+    `rrr.reactor`. Revisit when either a newer clang fixes the
+    codegen bug, or we can sort out the operator-new attachment
+    surface across the rrr modules.
 
 ## References
 
@@ -301,4 +335,10 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | rpc/load_balancer (header-only → module) | — | 21 | — | — | LoadBalancingStrategy enum, LoadBalancerState, LoadBalancer with templated `select<>`. Forward-decl `class Client` MUST go in GMF (global-module attachment) — putting it in `export namespace rrr` caused 5 TUs to fail with "Client in module rrr.load_balancer follows declaration in global module". Same gotcha as PollThreadWorker earlier. |
 | rpc/connection_state (header-only → module) | 38.64 | 22 | 175.6 | — | ConnectionState enum + ConnectionStateMachine class (rusty::Cell + rusty::Function callback). 6-state lifecycle with valid-transition table. 2 includers updated. |
 | **reactor cluster (clang 22)** | **67.5** | **~41** | **—** | **12.7** | event + fiber_impl + quorum_event + reactor + fiber_context_runtime merged into single `rrr.reactor` module (2860 lines). Toolchain switched to clang 22 (Homebrew) to bypass the multi-attachment trap. `src/compat/rusty/function.hpp` shim wired onto rrr include path (adds `<cstdlib>` before delegating to upstream; no third-party patch). 6 consumer hpp/h updated to import rrr.reactor. Clean build incl. rpcbench: 67s. |
+| reactor/fiber (no-shim) | — | 42 | — | — | `this_fiber::*` inline wrappers around Fiber::current_fiber/sleep. ~120 lines. Single consumer (rrr.hpp). |
+| reactor/future (no-shim) | — | 43 | — | — | FiberPromise<T> / FiberFuture<T> templates over BoxEvent<T>. ~220 lines. Single consumer (rrr.hpp). |
+| misc/alock (no-shim) | — | 44 | — | — | Async-queued lock (~1515 lines combined). Uses `Reactor::create_event<IntEvent>()` in purview — same shape that crashes fiber_channel — but compiled cleanly. Imports rrr.alarm/dball/threading/reactor/etc. |
+| rpc/tcp_channel (no-shim) | — | 45 | — | — | TcpConnection / TcpListener / TcpFactory + adapter glue (~1430 lines combined). No `create_sp_event<>` in purview; built without workarounds. Required adding `import rrr.epoll_wrapper;` for PollMode constants. |
+| rpc/server (no-shim) | — | 46 | — | — | RPC server + DeferredReply (~1713 lines combined). Required adding `import rrr.tcp_channel;` for TcpFactory. |
+| rpc/client (no-shim) | **75** | **47** | — | — | Largest single module (~4810 lines combined). Future / FutureGroup / ClientConnection / Client / ClientPool / bulk-reconnect. Kept `using namespace std;` inside the impl block to avoid rewriting hundreds of unqualified `list`/`string`. fiber_channel.hpp included textually in GMF (rrr.fiber_channel deferred). Clean build incl. rpcbench: 75s, librrr.a ~13 MB. |
 
