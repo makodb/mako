@@ -22,7 +22,6 @@
 #include "rpc/request_queue.hpp"
 #include "rpc/completion_tracker.hpp"
 #include "rpc/client.hpp"
-#include "rpc/server.hpp"
 
 // Imports go AFTER textual `#include`s. libc++ rejects the order
 // `import std; ... #include <vector>` (the include lands after the
@@ -54,6 +53,7 @@ import rrr.rand;
 import rrr.reactor;
 import rrr.reconnect_policy;
 import rrr.request_options;
+import rrr.server;
 import rrr.stat;
 import rrr.strop;
 import rrr.tcp_channel;
