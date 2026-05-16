@@ -351,7 +351,48 @@ inside Tier 3.1 was out of scope.
 
 ---
 
-## Finding 6 — Ephemeral threads on `concurrent_btree` SIGABRT — **root cause identified**
+## Finding 6 — Ephemeral threads on `concurrent_btree` SIGABRT — **graceful-fail path landed**
+
+A graceful registration API has been added on top of the original
+abort path (which is preserved for legacy callers):
+
+```cpp
+SiloRuntime* rt = SiloRuntime::Current();      // or your own Create()
+if (!rt->try_register_current_thread()) {
+    // Pool is exhausted — this thread cannot use masstree.
+    // Refuse the request, or fall back to another data structure.
+    return Error::TooManyThreads;
+}
+// Safe to call masstree ops from here on.
+```
+
+Helpers added (in `src/mako/core.{h,cc}` and
+`src/mako/silo_runtime.{h,cc}`):
+
+  * `coreid::try_current_core_id()` — non-lazy lookup, returns -1
+    if the thread has no core_id for the current runtime. Never
+    aborts.
+  * `SiloRuntime::try_allocate_core_id()` — same as
+    `allocate_core_id()` but returns -1 on cap exhaustion.
+  * `SiloRuntime::try_register_current_thread()` — idempotent: binds
+    the calling thread to this runtime (and its MasstreeContext) and
+    reserves a core_id slot. Returns false iff the pool is full.
+
+The original `allocate_core_id()` / lazy `coreid::core_id()` paths
+still abort on cap exhaustion — backward-compat for existing
+long-lived-thread callers that do not need a failure signal.
+
+Tests (`test_masstree_multi_instance.cc`):
+
+  * `TryRegisterCurrentThreadFailsGracefullyAtCap` — spawns
+    NMAXCORES + 8 threads against a fresh runtime; asserts exactly
+    NMAXCORES return true and 8 return false.
+  * `TryRegisterCurrentThreadIsIdempotent` — verifies repeated calls
+    from the same thread do not consume additional slots.
+
+The original analysis below is preserved for posterity.
+
+
 
 **Where**: any workload that repeatedly spawns a fresh `std::thread`,
 performs a small batch of `concurrent_btree` ops, and exits. The
