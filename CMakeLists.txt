@@ -883,10 +883,18 @@ set(TXLOG_HELPER_SRC
 add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
     ${DEPTRAN_CORE_SRC}
-    ${RRR_SRC}
+    # ${RRR_SRC} removed — rrr is built as a separate library via the
+    # `rrr` target (which owns the FILE_SET CXX_MODULES). Compiling
+    # these .cpp/.cc files here would re-emit module interface units
+    # outside a FILE_SET. Downstream binaries pick rrr up via
+    # `txlog_core`'s PUBLIC link to the `rrr` target.
     ${MEMDB_SRC}
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
+# Pull in rrr's PUBLIC include dirs + module BMI paths so deptran/
+# memdb .cc files that `#include "rrr/rrr.hpp"` find both the
+# umbrella header and the imports it references.
+target_link_libraries(txlog_core_obj PUBLIC rrr)
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -934,6 +942,7 @@ target_link_libraries(txlog_bench_obj PUBLIC txlog_core_obj)
 add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
 target_link_libraries(txlog_core
     PUBLIC
+    rrr
     yaml-cpp
     pthread
     rocksdb

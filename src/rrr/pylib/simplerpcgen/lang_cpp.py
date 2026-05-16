@@ -226,7 +226,7 @@ def emit_typed_proxy_future_wrapper(func, f):
             if len(output_fields) > 0:
                 f.writeln("auto __reply_guard__ = __fu__->get_reply();")
                 f.writeln("rrr::MarshalSource __reply_src__(&*__reply_guard__);")
-                f.writeln("rrr::BinaryReadArchive __reply_ar__(&__reply_src__);")
+                f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));")
                 for _, field_name in output_fields:
                     f.writeln("__reply_ar__ >> __typed_resp__.%s;" % field_name)
             f.writeln("return %s::Ok(__typed_resp__);" % result_type)
@@ -356,7 +356,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # to the archive's read API.
                         if len(input_fields) > 0:
                             f.writeln("rrr::MarshalSource __req_src__(&req->m);")
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(&__req_src__);")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));")
                             for _, field_name in input_fields:
                                 f.writeln("__req_ar__ >> __typed_req__.%s;" % field_name)
                         f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
@@ -380,7 +380,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
                             f.writeln("rrr::MarshalSource __req_src__(&req->m);")
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(&__req_src__);")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));")
                             for _, field_name in input_fields:
                                 f.writeln("__req_ar__ >> __typed_req__.%s;" % field_name)
                         f.writeln("auto __fiber_req__ = std::move(req);")
@@ -421,7 +421,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
                             f.writeln("rrr::MarshalSource __req_src__(&req->m);")
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(&__req_src__);")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));")
                             for _, field_name in input_fields:
                                 f.writeln("__req_ar__ >> __typed_req__.%s;" % field_name)
                         f.writeln("auto __async_req__ = std::move(req);")
@@ -461,7 +461,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
                             f.writeln("rrr::MarshalSource __req_src__(&req->m);")
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(&__req_src__);")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));")
                             for _, field_name in input_fields:
                                 f.writeln("__req_ar__ >> __typed_req__.%s;" % field_name)
                         f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
@@ -566,7 +566,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                             # comment in `emit_typed_proxy_future_wrapper`.
                             f.writeln("auto __reply_guard__ = __fu__->get_reply();")
                             f.writeln("rrr::MarshalSource __reply_src__(&*__reply_guard__);")
-                            f.writeln("rrr::BinaryReadArchive __reply_ar__(&__reply_src__);")
+                            f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));")
                             for param in sync_out_params:
                                 f.writeln("__reply_ar__ >> *%s;" % param)
                         f.writeln("}")

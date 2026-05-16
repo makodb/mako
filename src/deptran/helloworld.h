@@ -73,7 +73,7 @@ private:
         {
             RpcTxnReadRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(&__req_src__);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
             rrr::DeferredReply __defer__(
@@ -121,7 +121,7 @@ public:
             RpcTxnReadResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(&__reply_src__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
             __reply_ar__ >> __typed_resp__.val;
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }

@@ -15,6 +15,26 @@ import rrr.misc; // for get_exec_path
 
 export namespace rrr {
 
+// Restored after modularization: deptran code (RW_command.cc,
+// copilot/server.cc, …) still uses `likely(x)` / `unlikely(x)` as
+// branch-prediction hints. The original inline forms lived in
+// base/debugging.hpp; the modularization commit dropped them with
+// "unused externally" in the message, which was incorrect.
+//
+// erpc's `third-party/erpc/src/common.h` defines `likely(x)` /
+// `unlikely(x)` as preprocessor macros. Wrap in `#ifndef` so we
+// don't fight the macros when the erpc header has already won.
+#ifndef likely
+[[nodiscard]] inline bool likely(bool value) noexcept {
+    return __builtin_expect(value, true);
+}
+#endif
+#ifndef unlikely
+[[nodiscard]] inline bool unlikely(bool value) noexcept {
+    return __builtin_expect(value, false);
+}
+#endif
+
 void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));
 
 /**
