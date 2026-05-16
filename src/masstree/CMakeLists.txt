@@ -146,6 +146,16 @@ function(mako_add_masstree_tests)
     target_link_libraries(test_masstree_headers mako ${TEST_LINK_LIBS} pthread)
     add_test(NAME test_masstree_headers COMMAND test_masstree_headers)
 
+    # Minimal reproducer for sanitizer-findings.md Finding 6.
+    # Gated on MAKO_REPRO_FINDING6=1 because the binary aborts by
+    # design — CTest must not pick it up by default.
+    if(DEFINED ENV{MAKO_REPRO_FINDING6} AND "$ENV{MAKO_REPRO_FINDING6}" STREQUAL "1")
+        add_executable(repro_finding6 ${MASSTREE_TEST_DIR}/repro_finding6.cc)
+        target_include_directories(repro_finding6 PRIVATE ${TEST_INCLUDE_DIRS})
+        target_compile_options(repro_finding6 PRIVATE ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(repro_finding6 mako ${TEST_LINK_LIBS} pthread)
+    endif()
+
     # libFuzzer differential harness — gated on MAKO_FUZZER=1 (Tier 6).
     # Not wired into ctest; intended to be invoked by hand or via
     # OSS-Fuzz. See docs/masstree-test-plan.md for the toolchain

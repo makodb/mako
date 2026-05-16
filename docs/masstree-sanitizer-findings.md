@@ -351,50 +351,100 @@ inside Tier 3.1 was out of scope.
 
 ---
 
-## Finding 6 — Ephemeral threads on `concurrent_btree` SIGABRT
+## Finding 6 — Ephemeral threads on `concurrent_btree` SIGABRT — **root cause identified**
 
-**Where**: discovered while wiring Tier 8 (soak). When a soak driver
-repeatedly spawns short-lived `std::thread` workers that perform
-small batches of `concurrent_btree` ops and then exit (~200
-spawn/join cycles per second), the test reliably aborts (SIGABRT)
-within seconds. No diagnostic message is printed before the abort,
-so the trap appears to be an internal `INVARIANT`/`ALWAYS_ASSERT`
-whose message is lost because stderr isn't flushed before
-`abort()` — or a direct trap with no message.
+**Where**: any workload that repeatedly spawns a fresh `std::thread`,
+performs a small batch of `concurrent_btree` ops, and exits. The
+masstree-test-plan Tier 8 soak driver originally did this; the
+abort surfaces within 1–5 s on a release build.
 
-**Reproduces**:
-- Bare invocation: aborts in 2–5 s.
-- Under `gdb -batch`: runs to completion. The race window is
-  scheduling-sensitive.
-- Under ASan: aborts identically, no extra diagnostic. So this is
-  not a heap UAF in the usual sense.
+**Reproducer**: `src/masstree/tests/repro_finding6.cc`. Build with
+`MAKO_REPRO_FINDING6=1 cmake ...` (gated so CTest does not pick it
+up by default). Standalone run aborts at exit code 134 after ≤2
+spawn cycles; under `gdb -batch` or `strace -f` it runs much
+longer because thread setup is slowed enough that the underlying
+counter takes longer to hit its cap.
 
-**Workload that triggers**: any pattern where a fresh `std::thread`
-calls `tree.insert` / `tree.remove` on a `concurrent_btree`, exits,
-then a new thread takes its place — repeated hundreds of times.
-The pre-existing long-lived-threads tests
-(`test_masstree_concurrent`, `test_masstree_memory`,
-`test_masstree_soak` minus the ephemeral driver) all run clean.
+**Root cause** (strace + `-k` stack walk pinpointed):
 
-**Suspected root cause**: per-thread RCU state that's lazily
-initialized on first tree op (via `simple_threadinfo` constructed
-inside each `mbtree::insert`) but never explicitly torn down on
-thread exit. Each new thread inherits a slot that the prior thread
-left in a stale state. The mako runtime's RCU bookkeeping (see
-`src/mako/rcu.h` / `ticker.h`) has thread-local slots; on Linux
-they get cleaned up only when the destructor of the `thread_local`
-fires, which depends on the runtime's TLS implementation.
+```
+abort()
+  ← SiloRuntime::allocate_core_id()       src/mako/silo_runtime.cc:113
+  ← ...                                   repro_finding6 / libmako
+```
 
-**Workaround in Tier 8**: the soak test does NOT use ephemeral
-threads. Workers are long-lived, spawned once and joined at the
-end of the run.
+```cpp
+unsigned SiloRuntime::allocate_core_id() {
+    unsigned id = core_count_.fetch_add(1, std::memory_order_acq_rel);
+    ALWAYS_ASSERT(id < NMaxCores);
+    return id;
+}
+```
 
-**Recommendation**: this is the most actionable finding so far. If
-Masstree consumers in this project ever pool threads dynamically
-(thread pools that grow/shrink, request-per-thread RPC handlers,
-etc.), they will hit this. The fix is either:
-1. Document that callers MUST call a teardown hook
-   (`rcu::s_instance.pin_current_thread`'s inverse) before thread
-   exit; OR
-2. Register a `thread_local` sentinel whose destructor calls the
-   teardown automatically.
+`core_count_` is a **monotonic** counter. Each thread that ever
+touches the masstree allocator path consumes one slot. The slot is
+**never released** when the thread exits. `NMAXCORES = 1 << 9 = 512`
+(see `src/mako/macros.h:50`). So spawn #513 trips the assert.
+
+The "no diagnostic message" mystery is the release-build
+`ALWAYS_ASSERT` macro (`src/mako/macros.h:72`):
+
+```cpp
+#define ALWAYS_ASSERT(expr) (likely((expr)) ? (void)0 : abort())
+```
+
+— bare `abort()`, no `write(2, ...)`, no fprintf. strace confirms
+no stderr write happens before the `tgkill(... SIGABRT)`.
+
+**Why gdb / strace mask the bug**: both slow per-thread setup enough
+that the program executes more "useful" code between thread
+creations, but the counter eventually still hits 512.
+
+**Why long-lived threads work**: each thread allocates a core_id
+once. The fixed test pool (4 writers + 2 readers + N scanners) is
+nowhere near 512 IDs.
+
+**Fix sketch (not landed here)**:
+
+The cleanest fix is a `thread_local` sentinel that releases the
+allocated `core_id` on thread exit and a freelist in `SiloRuntime`
+that `allocate_core_id` pops from before falling back to
+`fetch_add`. Roughly:
+
+```cpp
+class SiloRuntime {
+    std::atomic<unsigned> core_count_{0};
+    rusty::Mutex<std::vector<unsigned>> free_ids_{{}};
+public:
+    unsigned allocate_core_id() {
+        {
+            auto guard = free_ids_.lock().unwrap();
+            if (!guard->empty()) { unsigned id = guard->back(); guard->pop_back(); return id; }
+        }
+        unsigned id = core_count_.fetch_add(1, std::memory_order_acq_rel);
+        ALWAYS_ASSERT(id < NMaxCores);
+        return id;
+    }
+    void release_core_id(unsigned id) {
+        free_ids_.lock().unwrap()->push_back(id);
+    }
+};
+
+// Per-thread RAII sentinel:
+struct CoreIdGuard {
+    SiloRuntime* rt;  unsigned id;
+    ~CoreIdGuard() { if (rt) rt->release_core_id(id); }
+};
+thread_local CoreIdGuard tl_core_id_guard;
+```
+
+The caller path that currently calls `allocate_core_id()` (chain
+runs from `threadinfo::make` or the simple_threadinfo allocator)
+would set `tl_core_id_guard = {this, allocate_core_id()}` on
+first use.
+
+The minimum-effort interim mitigation is to bump `NMAXCORES`
+(the macro definition is one line in `src/mako/macros.h:50`),
+but that just kicks the can — any consumer with >512 unique
+thread lifetimes still hits it. The freelist fix is roughly 20
+lines and should be the actual landing.
