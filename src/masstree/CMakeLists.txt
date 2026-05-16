@@ -48,6 +48,16 @@ function(mako_add_masstree_tests)
     add_test(NAME test_masstree_linearizability COMMAND test_masstree_linearizability)
     set_tests_properties(test_masstree_linearizability PROPERTIES TIMEOUT 60)
 
+    # Masstree memory & RCU correctness probes — under ASan these
+    # become real LSan/UAF detectors; under a normal build they pass
+    # as functional checks.
+    add_executable(test_masstree_memory ${MASSTREE_TEST_DIR}/test_masstree_memory.cc)
+    target_include_directories(test_masstree_memory PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_memory PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_memory mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_memory COMMAND test_masstree_memory)
+    set_tests_properties(test_masstree_memory PROPERTIES TIMEOUT 60)
+
     # Masstree libFuzzer differential harness — gated on MAKO_FUZZER=1.
     # Not wired into ctest; intended to be invoked by hand or via
     # OSS-Fuzz.

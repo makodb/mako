@@ -216,17 +216,37 @@ sanitizer) is the remaining piece.
 
 ---
 
-## Tier 4 — Memory & resource correctness
+## Tier 4 — Memory & resource correctness — partially wired
 
 **Goal:** catch leaks, fragmentation, RCU mis-reclamation.
 
-- ASan & LSan jobs in CI (verify currently wired).
-- Explicit deferred-free → reader → epoch-advance test.
-- Allocator failure injection (malloc-null path); may be deferred.
-- Pool exhaustion test: insert millions of keys, assert no
-  pathological fragmentation.
-- Leak gate: full test run; assert allocator reports zero leaks
-  (jemalloc hooks).
+`src/masstree/tests/test_masstree_memory.cc` adds three tests that
+double as ASan/LSan detectors:
+
+| Test | What it asserts | What ASan/LSan turns it into |
+|---|---|---|
+| `MassiveInsertRemoveSizeReturnsToZero` | Insert 100 k, remove all, size == 0 | LSan flags any per-key allocation still live at exit |
+| `RepeatedFillEmptyCyclesAreStable` | 1,000 fill-empty cycles, size == 0 each | LSan catches RCU-deferred frees that never run |
+| `ReadersSurviveAggressiveWriterChurn` | 2-second 4-writer/2-reader churn; stable keys keep returning correct values | ASan catches a UAF where RCU reclaims a node a reader is mid-traversal of |
+
+All three pass clean in both regular and ASan builds (3 tests, ~2.2 s
+total). Combined with Tier 3.1's ASan run of `test_masstree_concurrent`,
+the existing coverage answers most of the original Tier 4 checklist:
+
+- ASan & LSan jobs: wired in Tier 3.1 (`MAKO_ASAN=1`); LSan default-on
+  catches process-exit leaks.
+- Deferred-free → reader → epoch-advance test:
+  `ReadersSurviveAggressiveWriterChurn` plus
+  `LongRunningReadersAcrossEpochs` from `test_masstree_concurrent`.
+- Leak gate: ASan's LSan at process exit.
+
+Open items left for later (not implemented in this iteration):
+
+- Allocator failure injection (malloc-null path) — would require
+  hooking `rcu::alloc` to fault-inject on a schedule. Deferred.
+- Pool fragmentation soak with RSS accounting (`/proc/self/statm`).
+  Skipped because RSS is too noisy across hosts to gate on; a manual
+  inspection workflow would be more useful than a CI assertion.
 
 ---
 
