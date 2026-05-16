@@ -2,12 +2,17 @@
 #include <stddef.h>
 
 
+#include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
 
+// Required by Masstree's RCU machinery when concurrent_btree is used.
+volatile mrcu_epoch_type globalepoch = 1;
+
 using PerfTree = single_threaded_btree;
+using PerfTreeMT = concurrent_btree;
 
 struct ScenarioResult {
   std::string name;
@@ -22,6 +27,9 @@ struct BenchmarkConfig {
   // Each scenario is run `repetitions` times; the best (max ops/sec) is
   // reported. Higher reps trade wall time for noise resistance.
   size_t repetitions = 1;
+  // Thread counts for the concurrent_btree scenarios. Empty disables
+  // them entirely (single-thread scenarios still run).
+  std::vector<size_t> thread_counts;
 };
 
 struct BenchmarkSummary {
@@ -84,6 +92,11 @@ class BenchmarkHarness {
     summary.results.push_back(BestOf([this]{ return RunMixedReadWrite(); }));
     summary.results.push_back(BestOf([this]{ return RunRangeScan(); }));
     summary.results.push_back(BestOf([this]{ return RunSequentialRemove(); }));
+    for (size_t t : cfg_.thread_counts) {
+      summary.results.push_back(BestOf([this, t]{ return RunParallelInsert(t); }));
+      summary.results.push_back(BestOf([this, t]{ return RunParallelLookup(t); }));
+      summary.results.push_back(BestOf([this, t]{ return RunParallelMixed(t); }));
+    }
     return summary;
   }
 
@@ -234,6 +247,102 @@ class BenchmarkHarness {
     }
   }
 
+  // ---- Multi-threaded scenarios on concurrent_btree --------------------
+  //
+  // Values are encoded into the pointer itself (uintptr_t) so no per-op
+  // heap allocation distorts the measurement. Threads launch under a
+  // single atomic "go" flag so the wall-clock interval used for ops/sec
+  // brackets the parallel work, not the thread spin-up.
+
+  static PerfTreeMT::value_type EncodeValue(uint64_t v) {
+    return reinterpret_cast<PerfTreeMT::value_type>(static_cast<uintptr_t>(v));
+  }
+
+  static std::string ScenarioName(const char* base, size_t threads) {
+    std::ostringstream os;
+    os << base << "_t" << threads;
+    return os.str();
+  }
+
+  template <typename WorkerFn>
+  static std::chrono::nanoseconds RunParallel(size_t threads, WorkerFn&& fn) {
+    std::atomic<bool> go{false};
+    std::vector<std::thread> workers;
+    workers.reserve(threads);
+    for (size_t t = 0; t < threads; ++t) {
+      workers.emplace_back([&, t]() {
+        while (!go.load(std::memory_order_acquire)) {
+          std::this_thread::yield();
+        }
+        fn(t);
+      });
+    }
+    auto wall_start = std::chrono::steady_clock::now();
+    go.store(true, std::memory_order_release);
+    for (auto& w : workers) w.join();
+    return std::chrono::steady_clock::now() - wall_start;
+  }
+
+  ScenarioResult RunParallelInsert(size_t threads) {
+    PerfTreeMT tree;
+    const size_t per_thread = cfg_.key_count / threads;
+    const size_t total = per_thread * threads;
+    auto dur = RunParallel(threads, [&](size_t tid) {
+      const uint64_t base = static_cast<uint64_t>(tid) * per_thread;
+      for (size_t i = 0; i < per_thread; ++i) {
+        const uint64_t k = base + i;
+        tree.insert(u64_varkey(k), EncodeValue(k));
+      }
+    });
+    return {ScenarioName("parallel_insert", threads),
+            OpsPerSecond(total, dur), total};
+  }
+
+  ScenarioResult RunParallelLookup(size_t threads) {
+    PerfTreeMT tree;
+    for (uint64_t k = 0; k < cfg_.key_count; ++k) {
+      tree.insert(u64_varkey(k), EncodeValue(k));
+    }
+    const size_t per_thread = cfg_.key_count * cfg_.lookup_rounds / threads;
+    const size_t total = per_thread * threads;
+    auto dur = RunParallel(threads, [&](size_t tid) {
+      std::mt19937_64 rng(0xA5A5'0000ull ^ tid);
+      std::uniform_int_distribution<uint64_t> pick(0, cfg_.key_count - 1);
+      PerfTreeMT::value_type out = nullptr;
+      for (size_t i = 0; i < per_thread; ++i) {
+        tree.search(u64_varkey(pick(rng)), out);
+      }
+    });
+    return {ScenarioName("parallel_lookup", threads),
+            OpsPerSecond(total, dur), total};
+  }
+
+  ScenarioResult RunParallelMixed(size_t threads) {
+    PerfTreeMT tree;
+    for (uint64_t k = 0; k < cfg_.key_count; ++k) {
+      tree.insert(u64_varkey(k), EncodeValue(k));
+    }
+    const size_t per_thread = cfg_.key_count * cfg_.lookup_rounds / threads;
+    const size_t total = per_thread * threads;
+    constexpr double kReadRatio = 0.8;
+    auto dur = RunParallel(threads, [&](size_t tid) {
+      std::mt19937_64 rng(0xC1C1'0000ull ^ tid);
+      std::uniform_int_distribution<uint64_t> pick(0, cfg_.key_count - 1);
+      std::uniform_real_distribution<double> mix(0.0, 1.0);
+      PerfTreeMT::value_type out = nullptr;
+      for (size_t i = 0; i < per_thread; ++i) {
+        const uint64_t k = pick(rng);
+        if (mix(rng) < kReadRatio) {
+          tree.search(u64_varkey(k), out);
+        } else {
+          tree.insert(u64_varkey(k), EncodeValue(k));
+        }
+      }
+    });
+    return {ScenarioName("parallel_mixed", threads),
+            OpsPerSecond(total, dur), total};
+  }
+
   BenchmarkConfig cfg_;
   std::vector<u64_varkey> keys_;
   std::vector<size_t> sequential_order_;
@@ -345,10 +454,32 @@ void PrintUsage(const char* prog) {
             << "  [--lookup-rounds M]     iterations for lookup/mixed/scan (default 4)\n"
             << "  [--scan-window W]       range-scan width (default 256)\n"
             << "  [--repetitions R]       run each scenario R times; report best (default 1)\n"
+            << "  [--threads LIST]        comma-separated thread counts for the\n"
+            << "                          concurrent_btree scenarios, e.g. \"1,2,4,8\"\n"
+            << "                          (default: no multi-thread scenarios)\n"
             << "  [--output file]         write per-scenario JSON results\n"
             << "  [--baseline file]       compare against earlier --output file\n"
-            << "  [--fail-on-regress PCT] with --baseline, exit 1 if any scenario\n"
+            << "  [--fail-on-regress PCT] with --baseline, exit 2 if any scenario\n"
             << "                          is more than PCT %% slower (default off)\n";
+}
+
+std::vector<size_t> ParseThreadList(const std::string& s) {
+  std::vector<size_t> out;
+  size_t i = 0;
+  while (i < s.size()) {
+    size_t j = s.find(',', i);
+    if (j == std::string::npos) j = s.size();
+    if (j > i) {
+      try {
+        size_t n = std::stoull(s.substr(i, j - i));
+        if (n > 0) out.push_back(n);
+      } catch (...) {
+        throw std::runtime_error("invalid --threads list: " + s);
+      }
+    }
+    i = j + 1;
+  }
+  return out;
 }
 
 }  // namespace
@@ -373,6 +504,8 @@ int main(int argc, char** argv) {
       config.scan_window = std::stoull(argv[++i]);
     } else if (arg == "--repetitions" && i + 1 < argc) {
       config.repetitions = std::stoull(argv[++i]);
+    } else if (arg == "--threads" && i + 1 < argc) {
+      config.thread_counts = ParseThreadList(argv[++i]);
     } else if (arg == "--output" && i + 1 < argc) {
       output_path = argv[++i];
     } else if (arg == "--baseline" && i + 1 < argc) {

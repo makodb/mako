@@ -262,9 +262,19 @@ Knobs:
 - `--fail-on-regress PCT` (with `--baseline`) exit 2 if any scenario
   is more than PCT % slower than baseline
 
-Multi-thread coverage (`concurrent_btree` at 1/2/4/8/16/32 threads) is
-not yet wired here; if you want it sooner, layer it in alongside the
-single-thread scenarios.
+Multi-thread coverage (added on top of the six single-thread scenarios
+above) — pass `--threads "1,2,4,8"` (any comma-separated list) to add
+three concurrent scenarios per thread count, named with a `_tN` suffix:
+
+| Scenario | What it measures |
+|---|---|
+| `parallel_insert_tN` | N threads inserting disjoint key ranges into one tree |
+| `parallel_lookup_tN` | N threads point-looking up a pre-filled tree |
+| `parallel_mixed_tN` | N threads doing 80/20 read/write on a pre-filled tree |
+
+The threads launch under a single atomic "go" flag so the wall-clock
+window used for ops/sec brackets the parallel work, not thread spin-up.
+Default is no multi-thread scenarios (back-compat).
 
 ### 5.2 Regression-gate workflow
 
