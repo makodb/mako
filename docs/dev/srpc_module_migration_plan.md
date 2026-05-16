@@ -275,44 +275,66 @@ continue.
     (commit-pending). 4810 lines combined; biggest single module.
     The GMF forward-decl of `class Client` in `rrr.load_balancer`
     keeps working under clang 22.
-  - `rpc/fiber_channel.{hpp,cpp}` → **deferred** on clang 22.
-    Diagnosed root cause (see below); no in-tree workaround that
-    keeps fiber_channel as a real module without major
-    restructuring.
+  - `rpc/fiber_channel.{hpp,cpp}` → **converted** to
+    `rrr.fiber_channel` module (commit-pending). Required a
+    1-line anchor shim — see the diagnostic below.
 
   **fiber_channel module diagnostic** (May 2026, clang 22.1.5):
 
-  Bisection. Setup A: `rrr.fiber_channel` module with the real
-  `FiberChannel` class, `fiber_channel.hpp` deleted, regular
-  `fiber_channel.cpp` replaced by the module unit, `rrr.client`
-  uses `import rrr.fiber_channel`. Result: rpcbench.cc fails with
-  ambiguous `operator new(size_t, std::align_val_t)` in
-  `std::__libcpp_allocate<std::shared_ptr<rusty::Waker>>` (and
-  `<rusty::Task<void>>`). Setup B: same module body but rename
-  the class to `DiagFiberChannel` (alongside the unchanged
-  `fiber_channel.hpp+cpp` pair so the real `FiberChannel` is
-  still textual-global). Result: clean build, even with
-  `rrr.client` explicitly `import rrr.fiber_channel`-ing the
-  Diag module.
+  Symptom. Replacing `fiber_channel.hpp`+regular `.cpp` with a
+  module unit caused `rpcbench.cc` to fail with ambiguous
+  `operator new(size_t, std::align_val_t)` inside
+  `std::__libcpp_allocate<std::shared_ptr<rusty::Waker>>`
+  (and `<rusty::Task<void>>`) instantiations — two candidates at
+  the same `__new/global_new_delete.h:49` source line, attached
+  to different module ownerships.
 
-  Conclusion. The trigger is `rrr.client` actually *resolving* the
-  name `FiberChannel` against the module-exported declaration
-  (attached to `rrr.fiber_channel`) rather than against the
-  textual `fiber_channel.hpp`'s global-module declaration. When
-  client uses a module-attached `FiberChannel`, clang attaches
-  some operator-new machinery to `rrr.fiber_channel`'s BMI;
-  rpcbench.cc later imports the umbrella (transitively pulling
-  `rrr.fiber_channel` via `rrr.client`) and ALSO `import std;`s
-  the canonical operator new. The two attachments overload-
-  resolve to the same source line with different
-  module-ownership and clang calls it ambiguous. This is
-  upstream-bug territory and similar in shape to the
-  multi-attachment trap that blocked the reactor cluster on
-  clang 19. There's no clean in-tree workaround that keeps
-  `FiberChannel` exported by a module — splitting via PIMPL
-  would work but isn't worth ~2-3 hours of code shuffling for
-  one file. fiber_channel stays as a regular `.hpp`+`.cpp` pair
-  consuming `rrr.reactor`. Revisit when a newer clang lands.
+  Bisection. (a) Module exports a same-named `FiberChannel`,
+  `.hpp` deleted → fails. (b) Module exports a renamed
+  `DiagFiberChannel` alongside the unchanged `.hpp`+`.cpp` pair
+  → clean, even when `rrr.client` explicitly imports the diag
+  module. (c) Module exports only a forward-decl of
+  `FiberChannel`, `.hpp` deleted → ambiguity stays *latent*
+  (compile fails earlier with "incomplete type" in `client.cpp`,
+  so we never reach the `operator new` site). (d) Module
+  exports a full `FiberChannel` definition, `.hpp` deleted,
+  rrr.hpp DOES NOT include any `fiber_channel.hpp` chain →
+  fails. (e) Same as (d) but `rrr.hpp` `#include`s a
+  `fiber_channel.hpp` shim that contains `#include <memory>` and
+  nothing else, BEFORE `import rrr.fiber_channel;` → **clean**.
+
+  Conclusion / mechanism. The textual `<memory>` reached from
+  `rrr.hpp` ahead of the import anchors libc++'s `operator new`
+  declarations in the global module from rpcbench.cc's
+  perspective. Without it, importing `rrr.fiber_channel` seems
+  to introduce a second attachment for the same `operator new`
+  signature that `import std;` already provides, which clang 22
+  resolves as an ambiguous overload rather than merging. Why
+  fiber_channel specifically (and not e.g. tcp_channel or
+  client which look the same on the surface) trips this — still
+  not fully understood; we observe it empirically. clang's BMI
+  dump (`-module-file-info`) does not reveal an obvious
+  attachment difference between the failing and passing setups.
+  This is a clang 22 module-attachment quirk, likely related to
+  the broader pattern that bit the reactor cluster on clang 19,
+  but with a different surface.
+
+  Applied workaround. `src/rrr/rpc/fiber_channel.hpp` is now a
+  6-line anchor shim:
+  ```
+  #pragma once
+  // Anchor shim. The real FiberChannel declaration lives in the
+  // rrr.fiber_channel module. <memory> pins libc++ operator new
+  // in global-module attachment for downstream TUs.
+  #include <memory>
+  ```
+  `src/rrr/rrr.hpp` keeps the textual `#include
+  "rpc/fiber_channel.hpp"` AND adds `import rrr.fiber_channel;`
+  to its import list. The order matters — the textual include
+  must precede the import. `src/rrr/rpc/client.cpp` drops its
+  own textual `#include "fiber_channel.hpp"` because the
+  import covers it. Revisit when a newer clang stops needing
+  the anchor.
 
   Independent clang 22 codegen crash (separate from the
   attachment issue above): in a module-purview function body,
@@ -367,4 +389,5 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | rpc/tcp_channel (no-shim) | — | 45 | — | — | TcpConnection / TcpListener / TcpFactory + adapter glue (~1430 lines combined). No `create_sp_event<>` in purview; built without workarounds. Required adding `import rrr.epoll_wrapper;` for PollMode constants. |
 | rpc/server (no-shim) | — | 46 | — | — | RPC server + DeferredReply (~1713 lines combined). Required adding `import rrr.tcp_channel;` for TcpFactory. |
 | rpc/client (no-shim) | **75** | **47** | — | — | Largest single module (~4810 lines combined). Future / FutureGroup / ClientConnection / Client / ClientPool / bulk-reconnect. Kept `using namespace std;` inside the impl block to avoid rewriting hundreds of unqualified `list`/`string`. fiber_channel.hpp included textually in GMF (rrr.fiber_channel deferred). Clean build incl. rpcbench: 75s, librrr.a ~13 MB. |
+| **rpc/fiber_channel (with anchor shim)** | **77** | **48** | — | **13.4** | Migration done — 48/48 modules. fiber_channel.hpp shrinks to a 6-line `#include <memory>` anchor shim that rrr.hpp `#include`s ahead of `import rrr.fiber_channel;` to pin libc++ `operator new` in global-module attachment. Without the shim, downstream TUs (e.g. rpcbench.cc) fail with ambiguous `operator new(size_t, std::align_val_t)` in `__libcpp_allocate` instantiations — a clang 22 module-attachment quirk specific to this module. client.cpp drops its textual fiber_channel.hpp include. Clean build incl. rpcbench: 77s, librrr.a 13.4 MB. |
 
