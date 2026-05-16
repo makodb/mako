@@ -491,3 +491,66 @@ TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
         EXPECT_GE(seen, 1) << "ctx " << i << " has no threadinfos";
     }
 }
+
+// Test 7: Default-context fallback.
+//
+// Threads that never call BindCurrentThread should fall back to a
+// process-wide singleton allocated lazily on first use. This test
+// fires N threads that all call Current() roughly simultaneously
+// and asserts they observe the same pointer — which exercises the
+// rusty::Once init we migrated to in f4c05a99. Also asserts that a
+// thread which subsequently binds an explicit context sees that
+// context's pointer (not the singleton) until it unbinds back to
+// nullptr.
+TEST_F(MasstreeMultiInstanceTest, DefaultContextFallbackIsStable) {
+    constexpr int kThreads = 16;
+    std::vector<MasstreeContext*> observed(kThreads, nullptr);
+
+    // Barrier so every thread races into Current() at roughly the
+    // same moment; maximizes the chance of triggering any Once-init
+    // race that would let two threads see different defaults.
+    std::atomic<int> ready{0};
+    std::atomic<bool> go{false};
+
+    std::vector<std::thread> workers;
+    workers.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        workers.emplace_back([i, &observed, &ready, &go]() {
+            ready.fetch_add(1, std::memory_order_release);
+            while (!go.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            // No BindCurrentThread() — so Current() must fall back
+            // to the lazily-created singleton.
+            observed[i] = MasstreeContext::Current();
+        });
+    }
+    while (ready.load(std::memory_order_acquire) < kThreads) {
+        std::this_thread::yield();
+    }
+    go.store(true, std::memory_order_release);
+    for (auto& t : workers) t.join();
+
+    // All threads must observe the same non-null singleton pointer.
+    ASSERT_NE(observed[0], nullptr);
+    for (int i = 1; i < kThreads; ++i) {
+        EXPECT_EQ(observed[i], observed[0])
+            << "thread " << i << " saw a different default context";
+    }
+
+    // Calling Current() from the test thread (also unbound) must
+    // yield the same singleton.
+    EXPECT_EQ(MasstreeContext::Current(), observed[0]);
+
+    // After binding an explicit context the same thread must see
+    // the explicit one; after unbinding it must fall back to the
+    // singleton again.
+    MasstreeContext* explicit_ctx = MasstreeContext::Create();
+    ASSERT_NE(explicit_ctx, nullptr);
+    MasstreeContext::BindCurrentThread(explicit_ctx);
+    EXPECT_EQ(MasstreeContext::Current(), explicit_ctx);
+
+    MasstreeContext::BindCurrentThread(nullptr);
+    EXPECT_EQ(MasstreeContext::Current(), observed[0])
+        << "unbinding did not fall back to the default singleton";
+}
