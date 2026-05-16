@@ -23,13 +23,13 @@
 #include "rpc/completion_tracker.hpp"
 #include "rpc/client.hpp"
 #include "rpc/server.hpp"
-#include "misc/alock.hpp"
 
 // Imports go AFTER textual `#include`s. libc++ rejects the order
 // `import std; ... #include <vector>` (the include lands after the
 // module's already-imported std), so umbrella imports for modularized
 // rrr submodules sit at the bottom of the textual chain.
 import rrr.alarm;
+import rrr.alock;
 import rrr.basetypes;
 import rrr.callbacks;
 import rrr.channel;
