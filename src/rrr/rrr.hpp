@@ -26,7 +26,6 @@
 #include "rpc/client.hpp"
 #include "rpc/server.hpp"
 #include "misc/alock.hpp"
-#include "reactor/fiber.h"
 
 // Imports go AFTER textual `#include`s. libc++ rejects the order
 // `import std; ... #include <vector>` (the include lands after the
@@ -44,6 +43,7 @@ import rrr.dball;
 import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
+import rrr.fiber;
 import rrr.heartbeat;
 import rrr.internal_protocol;
 import rrr.load_balancer;
