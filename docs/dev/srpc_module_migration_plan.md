@@ -391,3 +391,74 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | rpc/client (no-shim) | **75** | **47** | — | — | Largest single module (~4810 lines combined). Future / FutureGroup / ClientConnection / Client / ClientPool / bulk-reconnect. Kept `using namespace std;` inside the impl block to avoid rewriting hundreds of unqualified `list`/`string`. fiber_channel.hpp included textually in GMF (rrr.fiber_channel deferred). Clean build incl. rpcbench: 75s, librrr.a ~13 MB. |
 | **rpc/fiber_channel (with anchor shim)** | **77** | **48** | — | **13.4** | Migration done — 48/48 modules. fiber_channel.hpp shrinks to a 6-line `#include <memory>` anchor shim that rrr.hpp `#include`s ahead of `import rrr.fiber_channel;` to pin libc++ `operator new` in global-module attachment. Without the shim, downstream TUs (e.g. rpcbench.cc) fail with ambiguous `operator new(size_t, std::align_val_t)` in `__libcpp_allocate` instantiations — a clang 22 module-attachment quirk specific to this module. client.cpp drops its textual fiber_channel.hpp include. Clean build incl. rpcbench: 77s, librrr.a 13.4 MB. |
 
+## Whole-project compile-time comparison
+
+Targeting `txlog_core` (which links rrr, deptran, and memdb) gives a
+fairer "how does this affect the project that uses rrr" reading than
+rrr-alone. Both rows below are clean builds, `-j32`, clang 22.1.5, same
+`cmake` invocation as the metrics table above.
+
+| Config                              | rrr-alone (s) | txlog_core (s) | Notes |
+|-------------------------------------|--------------:|---------------:|-------|
+| Pre-mod (commit `9e763f32`)         |          16.0 |           75.3 | rrr is a flat list of `.cpp` files, no `FILE_SET CXX_MODULES`. |
+| Modular (HEAD + downstream fix-ups) |          65.5 |          150.9 | 48 named modules + anchor shim for fiber_channel. |
+| Slowdown                            |         4.1×  |          2.0×  | Whole-project ratio is smaller because deptran/memdb compile times dilute. |
+
+**Outcome: modularization made the project measurably slower to build,
+not faster.** The benefit we hoped for — that modular BMIs would
+amortize across consumers and beat textual `#include` re-parsing — did
+not materialize at this scale (48 modules, ~2 dozen direct consumers
+inside rrr + ~40 external consumers reaching it via `rrr.hpp`). On
+clang 22 the slowdown comes from (a) serialized BMI compilation along
+the rrr module dep-graph (alock → reactor → threading → …) limiting
+the effective `-j32`, and (b) consumers' BMI loads getting paid per-TU
+since `import rrr.foo;` is not cacheable across TUs the way a header
+in `-fmodule-map-file=` would be.
+
+These numbers do **not** account for any downstream compile-time wins
+in deptran/memdb consumers — those still `#include "rrr/rrr.hpp"` (an
+umbrella header that fans out to the imports), so they pay the
+import-fanout cost on every TU. A future pass that flips consumers to
+`import rrr;` may recover some of the loss, but on current evidence
+the migration is a net regression on this codebase.
+
+## Downstream consumer fix-ups (post-migration)
+
+Three regressions surfaced once the modular rrr started being consumed
+by deptran/memdb. Fixed in a single commit:
+
+1. **`txlog_core_obj` was re-emitting rrr's module interface units.**
+   The CMake target was globbing `${RRR_SRC}` as plain `.cpp`/`.cc`
+   files, but the modular rrr targets now declare those same files via
+   `FILE_SET CXX_MODULES`. Compiling them a second time outside any
+   file set produces "provides module X but is not in FILE_SET
+   CXX_MODULES" errors. Fix: drop `${RRR_SRC}` from `txlog_core_obj`'s
+   source list and `target_link_libraries(txlog_core_obj PUBLIC rrr)`
+   so the modular library is reachable from deptran/memdb TUs. Also
+   added `rrr` to `txlog_core`'s PUBLIC link list.
+
+2. **`rcc_rpc.h` still called the dropped `BinaryReadArchive(MarshalSource*)`
+   convenience constructor.** The MarshalSink/Source cycle fix during
+   modularization left only the proxy-taking constructor. Patched the
+   code generator (`src/rrr/pylib/simplerpcgen/lang_cpp.py`, six emit
+   sites) to wrap with `rrr::make_source_proxy(&...)`, then regenerated
+   `src/deptran/rcc_rpc.h` via `./bin/rpcgen --cpp --python
+   src/deptran/rcc_rpc.rpc`. The same wrap was applied manually to
+   hand-written generated-style headers (`network.h`, `helloworld.h`)
+   and the two Raft Marshal paths (`rocksdb_log_storage.hpp` and
+   `replicated_db.cc`'s `to_marshal`/`from_marshal`).
+
+3. **`likely(x)` / `unlikely(x)` unresolved in deptran.** An earlier
+   pass dropped these inline helpers from `base/debugging.hpp` with the
+   claim "unused externally", which was wrong — `RW_command.cc` and
+   `copilot/server.cc` still reference them. Restored them inside the
+   `export namespace rrr` block of `rrr.debugging`, guarded by
+   `#ifndef likely` / `#ifndef unlikely` so erpc's macro form
+   (`third-party/erpc/src/common.h`) wins where it's already in scope.
+
+After these fixes, `make -j32 txlog_core` is clean on the modular HEAD.
+Pre-existing breakage in `src/mako/benchmarks/tpcc.cc` (template
+SFINAE) and `src/mako/lib/erpc_backend.cc` (missing `numa_max_node` /
+libnuma) is unrelated to the migration and reproduces on the
+pre-modularization commit equally.
+
