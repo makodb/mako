@@ -17,11 +17,6 @@ module;
 #include <rusty/option.hpp>
 #include <rusty/rusty.hpp>
 
-// fiber_channel is not yet modular (clang 22 codegen bug — see plan
-// doc and the deferred task). Include it textually in GMF; consumers
-// of rrr.client get FiberChannel via this header chain.
-#include "fiber_channel.hpp"
-
 export module rrr.client;
 
 import std;
@@ -35,6 +30,7 @@ import rrr.connection_state;
 import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
+import rrr.fiber_channel;
 import rrr.heartbeat;
 import rrr.internal_protocol;
 import rrr.load_balancer;

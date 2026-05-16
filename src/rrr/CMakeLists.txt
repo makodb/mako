@@ -48,6 +48,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp

@@ -41,6 +41,7 @@ import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
 import rrr.fiber;
+import rrr.fiber_channel;
 import rrr.future;
 import rrr.heartbeat;
 import rrr.internal_protocol;
