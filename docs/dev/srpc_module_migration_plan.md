@@ -186,23 +186,58 @@ continue.
   **Resolved on clang 22 (May 2026)**. Installed Homebrew clang 22.1.5
   at `/home/users/shuai/.linuxbrew/`. Reran the minimal reproducer
   (`/tmp/multiattach_test/`): all three modules and the main TU compile
-  cleanly — no multi-attachment error. Smoke-tested in-tree by adding a
-  disposable `rrr._trap_smoke` module containing
-  `rusty::HashMap<std::string, std::int32_t>` and importing it through
-  `rrr.hpp` alongside `rrr.any_message` and `rrr.inmemory_channel`
-  (also `HashMap<std::string, …>`). Built `rrr` + `rpcbench` cleanly,
-  confirming the fix holds on the real codebase. The clang19 behaviour
-  of attaching implicit template instantiations to the using-module's
+  cleanly — no multi-attachment error. The clang19 behaviour of
+  attaching implicit template instantiations to the using-module's
   purview is corrected in clang 22 (instantiations now follow the
-  template's owning module, matching the C++23 standard). Reactor
-  cluster merge can proceed once we switch the build to clang 22.
+  template's owning module, matching the C++23 standard).
 
-  Build with clang 22: `CC=/home/users/shuai/.linuxbrew/bin/clang
-  CXX=/home/users/shuai/.linuxbrew/bin/clang++ cmake -G Ninja -B build
-  -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-L/home/users/shuai/.linuxbrew/opt/llvm/lib
-  -Wl,-rpath,/home/users/shuai/.linuxbrew/opt/llvm/lib -stdlib=libc++"`.
-  The linker-flag carveouts pin libc++ 22 (the system libc++ 19 lacks
-  some clang-22 ABI symbols like `std::__hash_memory`).
+  **Reactor cluster merged on clang 22** (commit-pending). Combined
+  `event.h/.cc` + `fiber_impl.h/.cc` + `quorum_event.h/.cc`
+  + `reactor.h/.cc` + `fiber_context_runtime.cc` into a single
+  `src/rrr/reactor/reactor.cpp` named-module interface unit
+  (`rrr.reactor`, ~2860 lines). The cluster's classes
+  (`rrr::Event`, `rrr::Fiber`, `rrr::Reactor`, `janus::QuorumEvent`,
+  `rrr::fiber_task_t`, …) form a mutually-recursive web of forward
+  declarations and out-of-line member definitions; a single module
+  unit is the natural shape — separate module interfaces would need
+  circular `import` lines (which the standard forbids). The arch-
+  specific context-switch trampolines stay outside the module:
+  `fiber_context_x86_64.cc` and `fiber_context_aarch64.cc` are tiny
+  `extern "C"` asm-only TUs and don't need module attachment.
+
+  Consumers updated to `import rrr.reactor;` instead of
+  `#include "reactor/{event,fiber_impl,quorum_event,reactor}.h"`:
+  `rrr/rrr.hpp` (umbrella), `rrr/rpc/{fiber_channel,tcp_channel,
+  client,server}.hpp`, `rrr/reactor/{fiber,future}.h`. `rrr.alarm`
+  switched from a GMF forward-decl of `PollThread` to importing
+  `rrr.reactor` directly — clang 22 rejects the GMF forward-decl
+  when another imported module exports the same class. Also added
+  `#include <rusty/box.hpp>` to `rpc/tcp_channel.hpp` (its
+  `rusty::make_box` use was previously satisfied by reactor.h's
+  transitive textual include, which the module BMI no longer
+  provides as a textual-include shim).
+
+  Build with clang 22: `cmake -G Ninja -B build -S .
+  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_C_COMPILER=/home/users/shuai/.linuxbrew/bin/clang
+  -DCMAKE_CXX_COMPILER=/home/users/shuai/.linuxbrew/bin/clang++
+  -DCMAKE_EXE_LINKER_FLAGS="-L/home/users/shuai/.linuxbrew/opt/llvm/lib
+  -Wl,-rpath,/home/users/shuai/.linuxbrew/opt/llvm/lib -stdlib=libc++"
+  -DCMAKE_SHARED_LINKER_FLAGS=<same>`. The linker-flag carveouts pin
+  libc++ 22 (the system libc++ 19 lacks some clang-22 ABI symbols
+  like `std::__hash_memory`). The `-DCMAKE_C_COMPILER` / `_CXX_`
+  flags must be set explicitly on the command line — environment
+  CC/CXX get ignored because the top-level `CMakeLists.txt` already
+  forces `set(CMAKE_CXX_COMPILER "clang++" CACHE STRING …)` before
+  `project()`. libc++ 22 stops transitively reaching `<cstdlib>` via
+  rusty header includes, so `rusty/function.hpp`'s `std::abort()`
+  calls become unresolved. Fix: the pre-existing
+  `src/compat/rusty/function.hpp` shim
+  (`#include <cstdlib>; #include_next <rusty/function.hpp>`) is now
+  wired onto the rrr include path via `target_include_directories(
+  rrr BEFORE PUBLIC src/compat)`. No upstream rusty-cpp change.
+  Clean build (rrr + rpcbench): 67s, librrr.a 12.7 MB (vs clang19's
+  83s / 9.7 MB — both within noise).
 
 ## Out of scope / deferred
 
@@ -215,15 +250,18 @@ continue.
   longer works once consumers go modular. Decide when the first file
   touching it is converted.
 - **Reactor cluster** (event, fiber_impl, quorum_event, reactor.h/.cc):
-  ~3000 lines, mutually-referenced via forward decls. Attempted merge
-  into single `rrr.reactor` module hit the multi-attachment trap on
-  rusty templates (see watchlist) — every consumer that already
-  imports rrr.threading + rrr.idempotency + rrr.any_message (each of
-  which has rusty::HashMap in its BMI) plus textual rusty/* includes
-  would see rrr.reactor as a 4th attachment of `rusty::HashMap::operator()`
-  and fail. Unblocks ~6 downstream files (alock, fiber.h, future.h,
-  client, server, fiber_channel, tcp_channel).
-- **rpc client/server cluster**: blocks on reactor cluster.
+  ~3000 lines, mutually-referenced via forward decls. **Merged**
+  on clang 22 (commit-pending) as a single `rrr.reactor` module
+  (~2860 lines in `src/rrr/reactor/reactor.cpp`) — see the
+  multi-attachment-trap entry above for the toolchain switch.
+- **rpc client/server cluster** (`alock.cpp`, `fiber.h`, `future.h`,
+  `client.{cpp,hpp}`, `server.{cpp,hpp}`, `fiber_channel.{cpp,hpp}`,
+  `tcp_channel.{cpp,hpp}`): not yet converted to module units, but
+  no longer blocked. With `rrr.reactor` available, these consumers
+  switched from textual `#include "../reactor/reactor.h"` to
+  `import rrr.reactor;` and the build still works. Converting them
+  to their own modules is a follow-up — they're currently regular
+  `.cpp` files that just consume the rrr.reactor BMI.
 
 ## References
 
@@ -262,4 +300,5 @@ build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
 | misc/dball (header-only → module) | 39.72 | 20 | 175.6 | — | DragonBall event-driven primitive + ConcurrentDragonBall typedef. 2 includers updated (rrr.hpp, alock.hpp). |
 | rpc/load_balancer (header-only → module) | — | 21 | — | — | LoadBalancingStrategy enum, LoadBalancerState, LoadBalancer with templated `select<>`. Forward-decl `class Client` MUST go in GMF (global-module attachment) — putting it in `export namespace rrr` caused 5 TUs to fail with "Client in module rrr.load_balancer follows declaration in global module". Same gotcha as PollThreadWorker earlier. |
 | rpc/connection_state (header-only → module) | 38.64 | 22 | 175.6 | — | ConnectionState enum + ConnectionStateMachine class (rusty::Cell + rusty::Function callback). 6-state lifecycle with valid-transition table. 2 includers updated. |
+| **reactor cluster (clang 22)** | **67.5** | **~41** | **—** | **12.7** | event + fiber_impl + quorum_event + reactor + fiber_context_runtime merged into single `rrr.reactor` module (2860 lines). Toolchain switched to clang 22 (Homebrew) to bypass the multi-attachment trap. `src/compat/rusty/function.hpp` shim wired onto rrr include path (adds `<cstdlib>` before delegating to upstream; no third-party patch). 6 consumer hpp/h updated to import rrr.reactor. Clean build incl. rpcbench: 67s. |
 
