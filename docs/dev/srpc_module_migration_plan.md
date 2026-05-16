@@ -275,27 +275,53 @@ continue.
     (commit-pending). 4810 lines combined; biggest single module.
     The GMF forward-decl of `class Client` in `rrr.load_balancer`
     keeps working under clang 22.
-  - `rpc/fiber_channel.{hpp,cpp}` → **deferred**. Two distinct
-    clang 22 bugs block this:
-    1. Codegen crash at `EmitScalarExpr` inside
-       `EmitReturnStmt`/`EmitIfStmt` when instantiating libc++
-       container templates (e.g. `std::vector<uint8_t>::assign`)
-       in a module-owned function body. Workaround: include
-       `<rusty/rusty.hpp>` (or `<vector>` / `<deque>`) in the
-       module's GMF to pre-instantiate the templates.
-    2. Once (1) is worked around, the resulting BMI plus
-       benchmark_service.h's `<rusty/async.hpp>` (which carries
-       `rusty::Waker`) and rpcbench.cc's `import std;` interact
-       such that `__libcpp_allocate<std::shared_ptr<rusty::Waker>>`
-       sees two attachments of
-       `operator new(size_t, std::align_val_t)` and clang reports
-       it as ambiguous. The other modules dodge this through some
-       interaction we don't fully understand — fiber_channel is
-       the first to expose it.
-    fiber_channel stays as a regular `.hpp`+`.cpp` pair consuming
-    `rrr.reactor`. Revisit when either a newer clang fixes the
-    codegen bug, or we can sort out the operator-new attachment
-    surface across the rrr modules.
+  - `rpc/fiber_channel.{hpp,cpp}` → **deferred** on clang 22.
+    Diagnosed root cause (see below); no in-tree workaround that
+    keeps fiber_channel as a real module without major
+    restructuring.
+
+  **fiber_channel module diagnostic** (May 2026, clang 22.1.5):
+
+  Bisection. Setup A: `rrr.fiber_channel` module with the real
+  `FiberChannel` class, `fiber_channel.hpp` deleted, regular
+  `fiber_channel.cpp` replaced by the module unit, `rrr.client`
+  uses `import rrr.fiber_channel`. Result: rpcbench.cc fails with
+  ambiguous `operator new(size_t, std::align_val_t)` in
+  `std::__libcpp_allocate<std::shared_ptr<rusty::Waker>>` (and
+  `<rusty::Task<void>>`). Setup B: same module body but rename
+  the class to `DiagFiberChannel` (alongside the unchanged
+  `fiber_channel.hpp+cpp` pair so the real `FiberChannel` is
+  still textual-global). Result: clean build, even with
+  `rrr.client` explicitly `import rrr.fiber_channel`-ing the
+  Diag module.
+
+  Conclusion. The trigger is `rrr.client` actually *resolving* the
+  name `FiberChannel` against the module-exported declaration
+  (attached to `rrr.fiber_channel`) rather than against the
+  textual `fiber_channel.hpp`'s global-module declaration. When
+  client uses a module-attached `FiberChannel`, clang attaches
+  some operator-new machinery to `rrr.fiber_channel`'s BMI;
+  rpcbench.cc later imports the umbrella (transitively pulling
+  `rrr.fiber_channel` via `rrr.client`) and ALSO `import std;`s
+  the canonical operator new. The two attachments overload-
+  resolve to the same source line with different
+  module-ownership and clang calls it ambiguous. This is
+  upstream-bug territory and similar in shape to the
+  multi-attachment trap that blocked the reactor cluster on
+  clang 19. There's no clean in-tree workaround that keeps
+  `FiberChannel` exported by a module — splitting via PIMPL
+  would work but isn't worth ~2-3 hours of code shuffling for
+  one file. fiber_channel stays as a regular `.hpp`+`.cpp` pair
+  consuming `rrr.reactor`. Revisit when a newer clang lands.
+
+  Independent clang 22 codegen crash (separate from the
+  attachment issue above): in a module-purview function body,
+  instantiating libc++ container templates (e.g.
+  `std::vector<uint8_t>::assign`, `::resize`) for the first time
+  crashes `EmitScalarExpr` inside `EmitReturnStmt`/`EmitIfStmt`.
+  Workaround that the other rpc modules use: pre-instantiate via
+  `#include <rusty/rusty.hpp>` (or `<vector>` / `<deque>` etc.)
+  in the GMF.
 
 ## References
 
