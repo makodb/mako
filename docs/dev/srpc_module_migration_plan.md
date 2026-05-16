@@ -120,6 +120,90 @@ continue.
   (build-system change) or a single `rrr.rusty_prelude` module that
   everything else imports.
 
+  **Reproducer (May 2026)**: three named modules each in their GMF
+  `#include <rusty/hashmap.hpp>` and in module purview declare a struct
+  with field `rusty::HashMap<std::string, V_i>` (different V_i per
+  module). A fourth TU that imports all three fails with the trap
+  citing `RustyHash<std::string>::operator()` attached to mod_a (the
+  first-imported module). The implicit instantiation
+  `RustyHash<std::string>` is the SAME specialization across all three
+  uses (V doesn't affect K's hash struct), so clang attaches it once
+  per importing module and rejects the third attachment.
+
+  **Investigated fixes (May 2026, none viable in clang 19 + CMake 3.31)**:
+  - *Header units (C++23 standard fix)*. Per the standard, declarations
+    in an importable header unit attach to the global module, and
+    implicit instantiations triggered from any consumer module also
+    attach globally — exactly what the trap needs. Verified by hand
+    that a `rusty/hashmap.hpp` header unit fixes the reproducer: build
+    the BMI with `clang -fmodule-header=user --precompile`, then
+    consumers `import <rusty/hashmap.hpp>;` instead of `#include`-ing
+    it. Multi-attachment goes away.
+    Blockers preventing rrr from adopting this:
+    1. CMake 3.31 rejects `FILE_SET TYPE CXX_MODULE_HEADER_UNITS`
+       (only `HEADERS` and `CXX_MODULES` are valid types). Custom
+       `add_custom_command` can build the .pcm, but…
+    2. `clang-scan-deps-19` does not recognize the named form
+       `-fmodule-file=<rusty/hashmap.hpp>=PATH` as marking the header
+       importable. It rejects `import <rusty/hashmap.hpp>;` with
+       "header file ... cannot be imported because it is not known to
+       be a header unit".
+    3. The bare form `-fmodule-file=PATH` DOES make the BMI loadable
+       (no name needed), but it loads eagerly into every TU it's
+       passed to. Since the rusty header transitively includes libc++
+       (`<vector>`, `<utility>`, `<string>`), and rrr modules also
+       reach libc++ via `import std;` and `std_compat.hpp`'s textual
+       includes, eager-load triggers libc++ redefinition errors
+       (`redefinition of 'to_array'`, etc.) — the BMI's textual libc++
+       declarations clash with the consumer's modular/textual ones.
+    Net: header units are the right fix in principle but the
+    clang19+CMake3.31+scan-deps combo can't drive them cleanly.
+  - *`rrr.rusty_prelude` wrapper module with using-declarations*. The
+    prelude does `#include <rusty/hashmap.hpp>` in its GMF (global
+    module attachment) and re-exports types via `export namespace rusty
+    { using ::rusty::HashMap; using ::RustyHash; }`. Consumers `import
+    rrr.rusty_prelude;` and use `rusty::HashMap`. The reproducer still
+    fails with the same error — clang attaches the implicit
+    instantiation `RustyHash<std::string>::operator()` to the
+    instantiating consumer module's purview regardless of the
+    template's GMF home. Per the C++ standard implicit instantiations
+    should follow the template's owning module, but clang19's
+    behaviour is to attach to the using module. This is the
+    fundamental obstacle: no module-level wrapper helps as long as the
+    use happens in named-module purview.
+  - *Explicit instantiation + extern template in the prelude*. Would
+    require enumerating every (K,V) pair the codebase instantiates
+    (brittle; rusty containers have many) and adding `extern template`
+    declarations visible to every consumer. Deferred — not pursued
+    against this much surface area for one cluster.
+  - *PIMPL the trap-prone HashMap fields out of module purview*.
+    Wrap `rusty::HashMap<std::string, V>` inside non-templated
+    classes whose definitions live in non-module `.cpp` files (global
+    module attachment). Viable but invasive — would touch
+    `rrr.any_message`, `rrr.inmemory_channel`, and reactor.h's
+    `clients_`/`dangling_ips_`/`fd_to_pollable_`/`mode_` members.
+
+  **Resolved on clang 22 (May 2026)**. Installed Homebrew clang 22.1.5
+  at `/home/users/shuai/.linuxbrew/`. Reran the minimal reproducer
+  (`/tmp/multiattach_test/`): all three modules and the main TU compile
+  cleanly — no multi-attachment error. Smoke-tested in-tree by adding a
+  disposable `rrr._trap_smoke` module containing
+  `rusty::HashMap<std::string, std::int32_t>` and importing it through
+  `rrr.hpp` alongside `rrr.any_message` and `rrr.inmemory_channel`
+  (also `HashMap<std::string, …>`). Built `rrr` + `rpcbench` cleanly,
+  confirming the fix holds on the real codebase. The clang19 behaviour
+  of attaching implicit template instantiations to the using-module's
+  purview is corrected in clang 22 (instantiations now follow the
+  template's owning module, matching the C++23 standard). Reactor
+  cluster merge can proceed once we switch the build to clang 22.
+
+  Build with clang 22: `CC=/home/users/shuai/.linuxbrew/bin/clang
+  CXX=/home/users/shuai/.linuxbrew/bin/clang++ cmake -G Ninja -B build
+  -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-L/home/users/shuai/.linuxbrew/opt/llvm/lib
+  -Wl,-rpath,/home/users/shuai/.linuxbrew/opt/llvm/lib -stdlib=libc++"`.
+  The linker-flag carveouts pin libc++ 22 (the system libc++ 19 lacks
+  some clang-22 ABI symbols like `std::__hash_memory`).
+
 ## Out of scope / deferred
 
 - **Borrow checking**: stays disabled for rrr during the migration
