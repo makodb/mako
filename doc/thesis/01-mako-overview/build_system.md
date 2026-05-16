@@ -143,7 +143,7 @@ The build reads `env.txt` to determine the network transport backend (`CMakeList
 
 | Value | Backend | Description |
 |-------|---------|-------------|
-| `eth` | Ethernet | TCP/IP via ASIO (default), fake eRPC |
+| `eth` | Ethernet | TCP/IP via POSIX sockets (default), fake eRPC |
 | `ib` | InfiniBand | RoCE support, real eRPC |
 | `dpdk` | DPDK | Kernel bypass, real eRPC |
 

@@ -179,8 +179,8 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # typedefs for backwards compatibility.
     add_compile_definitions(_LIBCPP_ENABLE_CXX20_REMOVED_BINDER_TYPEDEFS)
     add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION)
-    # asio (in third-party/erpc) uses std::result_of which libc++ removed in
-    # C++20. Re-enable via the libc++ back-compat macro.
+    # libc++ removed std::result_of in C++20; re-enable for transitive
+    # consumers that still reference it.
     add_compile_definitions(_LIBCPP_ENABLE_CXX20_REMOVED_TYPE_TRAITS)
     # libc++ 19's __bit_reference declares friend functions without the
     # abi_tag attribute on line ~974 and then redeclares the same functions
@@ -206,10 +206,6 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # measurable cost is tiny (single-digit-percent on hot hashmap
     # paths); the build wins are clang21+ compatibility today.
     add_compile_definitions(RUSTY_PORTABLE_INTRINSICS=1)
-    # asio uses std::nested_exception / std::make_exception_ptr without
-    # including <exception>; libstdc++ pulls it transitively, libc++ doesn't.
-    # Manually #include <exception> in the asio-using consumer headers under
-    # src/mako/lib/ and src/mako/benchmarks/.
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(FATAL_ERROR
         "GCC named-module build for `import rrr;` currently hits a compiler ICE on this codebase. "
@@ -477,7 +473,6 @@ set(BORROW_CHECKER_INCLUDE_PATHS
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/masstree-beta
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
 )
 
@@ -635,8 +630,8 @@ if(DEFINED ABORT_ON_LOCKED)
   list(APPEND CXXFLAGS -DSTO_ABORT_ON_LOCKED=${ABORT_ON_LOCKED})
 endif()
 
-# ASIO and libevent flags
-list(APPEND CXXFLAGS ${ASIO_CFLAGS} ${LIBEVENT_CFLAGS})
+# libevent flags
+list(APPEND CXXFLAGS ${LIBEVENT_CFLAGS})
 
 set(LDFLAGS
   -lpthread
@@ -674,10 +669,7 @@ if(DEFINED CUSTOM_LDPATH)
   set(LDFLAGS "${LDFLAGS} ${CUSTOM_LDPATH}")
 endif()
 
-set(ASIO_PATH "${ERPC_PATH}/third_party/asio")
-set(ASIO_CFLAGS -I${ASIO_PATH}/include)
-
-set(CFLAGS ${ASIO_CFLAGS})
+set(CFLAGS "")
 if(env STREQUAL "ib")
   separate_arguments(ERPC_CFLAGS_IB_LIST UNIX_COMMAND "${ERPC_CFLAGS_IB}")
   list(APPEND CFLAGS ${ERPC_CFLAGS_IB_LIST})
@@ -707,7 +699,6 @@ pkg_check_modules(PROTOBUF REQUIRED protobuf)
 pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
-list(APPEND CXXFLAGS ${ASIO_CFLAGS})
 list(APPEND CXXFLAGS -fno-omit-frame-pointer)
 
 # Source files
@@ -1262,7 +1253,6 @@ function(add_apps exec_name exec_path)
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
       ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
       ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
-      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
       ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
@@ -1751,7 +1741,6 @@ if(BUILD_TESTS)
         ${TEST_INCLUDE_DIRS}
         ${GTEST_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include
     )
     target_compile_options(test_erpc_integration PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_erpc_integration

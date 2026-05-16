@@ -3,7 +3,7 @@
 	url = https://github.com/jbeder/yaml-cpp/
 [submodule "third-party/erpc"]
 	path = third-party/erpc
-	url = https://github.com/shenweihai1/erpc
+	url = https://github.com/shuaimu/eRPC
 [submodule "third-party/makocon"]
 	path = third-party/makocon
 	url = https://github.com/Jiyang-Wu/MakoCon

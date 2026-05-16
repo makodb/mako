@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include <exception>  // asio via erpc rpc.h uses std::nested_exception; libc++ does not pull it transitively
 #include "rpc.h"
 #include "rpc_constants.h"
 #include "util/numautils.h"
