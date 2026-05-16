@@ -1,11 +1,18 @@
 /**
  * test_masstree_multi_instance.cc
  *
- * Stress tests for multiple independent Masstree instances.
+ * Tests for multiple independent Masstree instances.
  * Verifies that MasstreeContext properly isolates:
  * - Epoch counters
  * - Thread registries
  * - RCU operations
+ *
+ * Uses pure upstream Masstree only: Masstree::basic_table<P> with
+ * raw tcursor / unlocked_tcursor calls, threadinfo from
+ * masstree/kvthread.hh, and MasstreeContext for the per-instance
+ * epoch / allthreads state. Deliberately NOT the Mako mbtree
+ * wrapper, so the cap-bound coreid/SiloRuntime allocator path is
+ * out of scope — those tests live in test_silo_runtime.cc.
  */
 
 #include <stdint.h>
@@ -15,15 +22,70 @@
 
 #include "masstree/masstree_context.h"
 #include "masstree/kvthread.hh"
-#include "mako/masstree_btree.h"
-#include "mako/varkey.h"
+#include "masstree/masstree.hh"
+#include "masstree/masstree_get.hh"
+#include "masstree/masstree_insert.hh"
+#include "masstree/masstree_print.hh"
+#include "masstree/masstree_remove.hh"
+#include "masstree/masstree_struct.hh"
+#include "masstree/masstree_tcursor.hh"
 
 import std;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;
 
-using TestTree = single_threaded_btree;
+// ----------------------------------------------------------------------
+// Pure-Masstree test plumbing.
+//
+// PureParams matches upstream Masstree::nodeparams<> with a uint64_t*
+// value type and the kvthread.hh threadinfo. NO Mako symbols are
+// referenced — no simple_threadinfo, no rcu::s_instance, no coreid,
+// no mbtree wrapper.
+// ----------------------------------------------------------------------
+
+struct PureParams : public Masstree::nodeparams<> {
+    typedef uint64_t* value_type;
+    typedef Masstree::value_print<value_type> value_print_type;
+    typedef threadinfo threadinfo_type;
+};
+
+using PureTable = Masstree::basic_table<PureParams>;
+
+// Encode a uint64_t as an 8-byte big-endian key so lex order matches
+// numeric order. Returned by value (stack-allocated string lives for
+// the surrounding statement; cursors copy the bytes they need).
+inline std::string be_u64(uint64_t v) {
+    std::string s(8, '\0');
+    for (int i = 7; i >= 0; --i) {
+        s[i] = static_cast<char>(v & 0xff);
+        v >>= 8;
+    }
+    return s;
+}
+
+// Insert via raw tcursor. Caller-managed RCU (must be inside
+// ti.rcu_start() / ti.rcu_stop()). Returns true iff the key was new.
+inline bool pure_insert(PureTable& t, threadinfo& ti, const std::string& k,
+                        uint64_t* v) {
+    Masstree::tcursor<PureParams> lp(t, k.data(), static_cast<int>(k.size()));
+    bool found = lp.find_insert(ti);
+    if (!found) ti.observe_phantoms(lp.node());
+    lp.value() = v;
+    lp.finish(1, ti);
+    return !found;
+}
+
+// Search via raw unlocked_tcursor. Returns true if found and writes
+// the value into *out.
+inline bool pure_search(const PureTable& t, threadinfo& ti,
+                        const std::string& k, uint64_t** out) {
+    Masstree::unlocked_tcursor<PureParams> lp(t, k.data(),
+                                              static_cast<int>(k.size()));
+    bool found = lp.find_unlocked(ti);
+    if (found) *out = lp.value();
+    return found;
+}
 
 class MasstreeMultiInstanceTest : public ::testing::Test {
 protected:
@@ -41,9 +103,9 @@ protected:
         // Note: contexts are not deleted as threadinfos persist
     }
 
-    TestTree::value_type MakeValue(uint64_t v) {
+    uint64_t* StashValue(uint64_t v) {
         storage_.emplace_back(std::make_unique<uint64_t>(v));
-        return reinterpret_cast<TestTree::value_type>(storage_.back().get());
+        return storage_.back().get();
     }
 
     MasstreeContext* ctx1_;
@@ -213,80 +275,69 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
 TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
     const int NUM_KEYS = 10000;
 
-    // Create two Masstree instances
-    TestTree tree1;
-    TestTree tree2;
+    // Two pure-Masstree tables, one per MasstreeContext. The
+    // initialization threadinfos are short-lived setup workers
+    // bound to each context.
+    PureTable tree1, tree2;
+    {
+        std::thread init1([this, &tree1]() {
+            MasstreeContext::BindCurrentThread(ctx1_);
+            threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 4001);
+            tree1.initialize(*ti);
+        });
+        std::thread init2([this, &tree2]() {
+            MasstreeContext::BindCurrentThread(ctx2_);
+            threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 4002);
+            tree2.initialize(*ti);
+        });
+        init1.join();
+        init2.join();
+    }
 
     std::atomic<bool> tree1_done{false};
     std::atomic<bool> tree2_done{false};
     std::atomic<bool> stop_epoch{false};
 
-    // Storage for values
-    std::vector<std::unique_ptr<uint64_t>> value_storage1;
-    std::vector<std::unique_ptr<uint64_t>> value_storage2;
-    auto make_value1 = [&](uint64_t v) -> TestTree::value_type {
-        value_storage1.emplace_back(std::make_unique<uint64_t>(v));
-        return reinterpret_cast<TestTree::value_type>(value_storage1.back().get());
-    };
-    auto make_value2 = [&](uint64_t v) -> TestTree::value_type {
-        value_storage2.emplace_back(std::make_unique<uint64_t>(v));
-        return reinterpret_cast<TestTree::value_type>(value_storage2.back().get());
-    };
+    // Value storage lives across both workers; each lambda's
+    // captured back-reference holds raw pointers into it.
+    std::vector<std::unique_ptr<uint64_t>> values1, values2;
+    auto make_v1 = [&](uint64_t v) { values1.emplace_back(std::make_unique<uint64_t>(v)); return values1.back().get(); };
+    auto make_v2 = [&](uint64_t v) { values2.emplace_back(std::make_unique<uint64_t>(v)); return values2.back().get(); };
 
-    // Storage for keys
-    std::vector<u64_varkey> keys1;
-    std::vector<u64_varkey> keys2;
-    keys1.reserve(NUM_KEYS);
-    keys2.reserve(NUM_KEYS);
-    for (int i = 0; i < NUM_KEYS; ++i) {
-        keys1.emplace_back(static_cast<uint64_t>(i));
-        keys2.emplace_back(static_cast<uint64_t>(i + 1000000));  // Different key space
-    }
-
-    // Worker for tree1 (single-threaded tree access)
     std::thread worker1([&]() {
         MasstreeContext::BindCurrentThread(ctx1_);
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 5000);
-
         ti->rcu_start();
 
-        // Insert all keys
         for (int i = 0; i < NUM_KEYS; ++i) {
-            tree1.insert(keys1[i], make_value1(i));
-            if (i % 100 == 0) {
-                ti->rcu_quiesce();
-            }
+            const std::string k = be_u64(static_cast<uint64_t>(i));
+            pure_insert(tree1, *ti, k, make_v1(i));
+            if (i % 100 == 0) ti->rcu_quiesce();
         }
-
-        // Verify all keys are searchable
         for (int i = 0; i < NUM_KEYS; ++i) {
-            TestTree::value_type found{};
-            EXPECT_TRUE(tree1.search(keys1[i], found)) << "tree1 missing key " << i;
+            const std::string k = be_u64(static_cast<uint64_t>(i));
+            uint64_t* out = nullptr;
+            EXPECT_TRUE(pure_search(tree1, *ti, k, &out)) << "tree1 missing key " << i;
         }
 
         ti->rcu_stop();
         tree1_done = true;
     });
 
-    // Worker for tree2 (single-threaded tree access)
     std::thread worker2([&]() {
         MasstreeContext::BindCurrentThread(ctx2_);
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 6000);
-
         ti->rcu_start();
 
-        // Insert all keys
         for (int i = 0; i < NUM_KEYS; ++i) {
-            tree2.insert(keys2[i], make_value2(i + 1000000));
-            if (i % 100 == 0) {
-                ti->rcu_quiesce();
-            }
+            const std::string k = be_u64(static_cast<uint64_t>(i + 1000000));
+            pure_insert(tree2, *ti, k, make_v2(i + 1000000));
+            if (i % 100 == 0) ti->rcu_quiesce();
         }
-
-        // Verify all keys are searchable
         for (int i = 0; i < NUM_KEYS; ++i) {
-            TestTree::value_type found{};
-            EXPECT_TRUE(tree2.search(keys2[i], found)) << "tree2 missing key " << i;
+            const std::string k = be_u64(static_cast<uint64_t>(i + 1000000));
+            uint64_t* out = nullptr;
+            EXPECT_TRUE(pure_search(tree2, *ti, k, &out)) << "tree2 missing key " << i;
         }
 
         ti->rcu_stop();
@@ -300,7 +351,6 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     });
-
     std::thread epoch2([this, &stop_epoch]() {
         while (!stop_epoch.load()) {
             ctx2_->increment_epoch(2);
@@ -308,7 +358,6 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
         }
     });
 
-    // Wait for tree workers
     worker1.join();
     worker2.join();
 
@@ -319,12 +368,18 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
     EXPECT_TRUE(tree1_done.load());
     EXPECT_TRUE(tree2_done.load());
 
-    // Cross-check: tree1 should NOT have tree2 keys and vice versa
+    // Cross-check: tree1 should NOT have tree2's keys and vice versa.
+    // Need a threadinfo bound to *some* context for the cursor calls.
+    threadinfo* check_ti = threadinfo::make(threadinfo::TI_PROCESS, 7000);
+    check_ti->rcu_start();
     for (int i = 0; i < 100; ++i) {
-        TestTree::value_type found{};
-        EXPECT_FALSE(tree1.search(keys2[i], found)) << "tree1 should not have tree2 key " << i;
-        EXPECT_FALSE(tree2.search(keys1[i], found)) << "tree2 should not have tree1 key " << i;
+        const std::string k1 = be_u64(static_cast<uint64_t>(i));
+        const std::string k2 = be_u64(static_cast<uint64_t>(i + 1000000));
+        uint64_t* out = nullptr;
+        EXPECT_FALSE(pure_search(tree1, *check_ti, k2, &out)) << "tree1 should not have tree2 key " << i;
+        EXPECT_FALSE(pure_search(tree2, *check_ti, k1, &out)) << "tree2 should not have tree1 key " << i;
     }
+    check_ti->rcu_stop();
 }
 
 // Test 5: Stress test with multiple RCU operations per context
@@ -425,38 +480,37 @@ TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
         contexts.push_back(ctx);
     }
 
-    // Each worker gets its own tree, its own key space, and its own
-    // context. Storage vectors are owned by the worker so values
-    // outlive each tree until join() returns.
-    std::vector<TestTree> trees(kContexts);
+    // Each worker gets its own pure-Masstree table, its own key
+    // space, and its own context. PureTable is default-constructible
+    // but each instance must be initialize()'d under a threadinfo
+    // bound to the right context — done inside the worker.
+    std::vector<PureTable> trees(kContexts);
     std::atomic<int> failures{0};
 
     std::vector<std::thread> workers;
     workers.reserve(kContexts);
     for (int i = 0; i < kContexts; ++i) {
-        workers.emplace_back([this, i, &trees, &contexts, &failures]() {
+        workers.emplace_back([i, &trees, &contexts, &failures]() {
             MasstreeContext::BindCurrentThread(contexts[i]);
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 10000 + i);
             if (ti == nullptr) { ++failures; return; }
             if (ti->context() != contexts[i]) { ++failures; return; }
 
+            trees[i].initialize(*ti);
             ti->rcu_start();
 
             std::vector<std::unique_ptr<uint64_t>> value_storage;
-            std::vector<u64_varkey> keys;
-            keys.reserve(kKeysPerWorker);
             const uint64_t base = static_cast<uint64_t>(i) * 1'000'000ull;
             for (int k = 0; k < kKeysPerWorker; ++k) {
-                keys.emplace_back(base + k);
+                const std::string key = be_u64(base + k);
                 value_storage.emplace_back(std::make_unique<uint64_t>(base + k));
-                trees[i].insert(
-                    keys.back(),
-                    reinterpret_cast<TestTree::value_type>(value_storage.back().get()));
+                pure_insert(trees[i], *ti, key, value_storage.back().get());
                 if ((k & 0x7F) == 0) ti->rcu_quiesce();
             }
             for (int k = 0; k < kKeysPerWorker; ++k) {
-                TestTree::value_type found{};
-                if (!trees[i].search(keys[k], found)) ++failures;
+                const std::string key = be_u64(base + k);
+                uint64_t* out = nullptr;
+                if (!pure_search(trees[i], *ti, key, &out)) ++failures;
             }
 
             ti->rcu_stop();
@@ -466,19 +520,29 @@ TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
 
     EXPECT_EQ(failures.load(), 0);
 
-    // Cross-check: each tree owns exactly its stripe of keys, no
-    // other context's keys appear in it.
+    // Cross-check: no tree contains keys from a different stripe.
+    // Bind to ctx1 (arbitrarily) for a check-thread cursor pass.
+    threadinfo* check_ti = nullptr;
+    {
+        std::thread setup([this, &check_ti]() {
+            MasstreeContext::BindCurrentThread(ctx1_);
+            check_ti = threadinfo::make(threadinfo::TI_PROCESS, 11000);
+        });
+        setup.join();
+    }
+    ASSERT_NE(check_ti, nullptr);
+    check_ti->rcu_start();
     for (int i = 0; i < kContexts; ++i) {
-        EXPECT_EQ(trees[i].size(), static_cast<size_t>(kKeysPerWorker)) << "ctx " << i;
-        // Spot-check that the FIRST key of every OTHER stripe is absent.
+        // Spot-check: the FIRST key of every OTHER stripe is absent.
         for (int j = 0; j < kContexts; ++j) {
             if (j == i) continue;
-            u64_varkey other_key(static_cast<uint64_t>(j) * 1'000'000ull);
-            TestTree::value_type found{};
-            EXPECT_FALSE(trees[i].search(other_key, found))
+            const std::string other_key = be_u64(static_cast<uint64_t>(j) * 1'000'000ull);
+            uint64_t* out = nullptr;
+            EXPECT_FALSE(pure_search(trees[i], *check_ti, other_key, &out))
                 << "tree " << i << " unexpectedly has key from stripe " << j;
         }
     }
+    check_ti->rcu_stop();
 
     // Each context's allthreads list must contain at least the
     // threadinfo we registered above (one per worker).
@@ -564,27 +628,28 @@ TEST_F(MasstreeMultiInstanceTest, DefaultContextFallbackIsStable) {
 // the context that was bound at make() time, and the trees built
 // while bound to each ctx contain only that ctx's keys.
 TEST_F(MasstreeMultiInstanceTest, RebindAcrossContextsKeepsBothConsistent) {
-    TestTree tree_a, tree_b;
+    PureTable tree_a, tree_b;
     constexpr int kKeys = 200;
     std::vector<std::unique_ptr<uint64_t>> values_a, values_b;
-    auto make_value = [](std::vector<std::unique_ptr<uint64_t>>& store, uint64_t v) {
+    auto make_value = [](std::vector<std::unique_ptr<uint64_t>>& store, uint64_t v) -> uint64_t* {
         store.emplace_back(std::make_unique<uint64_t>(v));
-        return reinterpret_cast<TestTree::value_type>(store.back().get());
+        return store.back().get();
     };
 
     const uint64_t base_a = 0;
     const uint64_t base_b = 1ull << 20;
 
-    // Phase 1: bind ctx1_, register a threadinfo, fill tree_a.
+    // Phase 1: bind ctx1_, register a threadinfo, initialize and fill tree_a.
     MasstreeContext::BindCurrentThread(ctx1_);
     EXPECT_EQ(MasstreeContext::Current(), ctx1_);
     threadinfo* ti_a = threadinfo::make(threadinfo::TI_PROCESS, 20001);
     ASSERT_NE(ti_a, nullptr);
     EXPECT_EQ(ti_a->context(), ctx1_);
+    tree_a.initialize(*ti_a);
     ti_a->rcu_start();
     for (int i = 0; i < kKeys; ++i) {
-        u64_varkey k(base_a + i);
-        tree_a.insert(k, make_value(values_a, base_a + i));
+        const std::string k = be_u64(base_a + i);
+        pure_insert(tree_a, *ti_a, k, make_value(values_a, base_a + i));
     }
     ti_a->rcu_stop();
 
@@ -594,7 +659,7 @@ TEST_F(MasstreeMultiInstanceTest, RebindAcrossContextsKeepsBothConsistent) {
     ctx2_->increment_epoch(4);
     EXPECT_EQ(ctx1_->get_epoch(), ctx1_epoch_before);
 
-    // Phase 2: REBIND to ctx2_, register a new threadinfo, fill tree_b.
+    // Phase 2: REBIND to ctx2_, register a new threadinfo, initialize and fill tree_b.
     MasstreeContext::BindCurrentThread(ctx2_);
     EXPECT_EQ(MasstreeContext::Current(), ctx2_);
     threadinfo* ti_b = threadinfo::make(threadinfo::TI_PROCESS, 20002);
@@ -602,10 +667,11 @@ TEST_F(MasstreeMultiInstanceTest, RebindAcrossContextsKeepsBothConsistent) {
     EXPECT_EQ(ti_b->context(), ctx2_)
         << "threadinfo created after rebind must belong to the newly-bound context";
     EXPECT_NE(ti_b, ti_a) << "threadinfo::make should not recycle across contexts";
+    tree_b.initialize(*ti_b);
     ti_b->rcu_start();
     for (int i = 0; i < kKeys; ++i) {
-        u64_varkey k(base_b + i);
-        tree_b.insert(k, make_value(values_b, base_b + i));
+        const std::string k = be_u64(base_b + i);
+        pure_insert(tree_b, *ti_b, k, make_value(values_b, base_b + i));
     }
     ti_b->rcu_stop();
 
@@ -625,16 +691,20 @@ TEST_F(MasstreeMultiInstanceTest, RebindAcrossContextsKeepsBothConsistent) {
     EXPECT_TRUE(on_list(ctx2_, ti_b));
     EXPECT_FALSE(on_list(ctx1_, ti_b));
 
-    // Both trees retain only their own keys.
-    EXPECT_EQ(tree_a.size(), static_cast<size_t>(kKeys));
-    EXPECT_EQ(tree_b.size(), static_cast<size_t>(kKeys));
+    // Both trees retain only their own keys. Reuse ti_a for the
+    // verification cursors — it's still bound to ctx1_ but cursors
+    // are tree-local so reads against tree_b work too.
+    ti_a->rcu_start();
     for (int i = 0; i < kKeys; ++i) {
-        TestTree::value_type v{};
-        EXPECT_TRUE(tree_a.search(u64_varkey(base_a + i), v));
-        EXPECT_FALSE(tree_a.search(u64_varkey(base_b + i), v));
-        EXPECT_TRUE(tree_b.search(u64_varkey(base_b + i), v));
-        EXPECT_FALSE(tree_b.search(u64_varkey(base_a + i), v));
+        const std::string ka = be_u64(base_a + i);
+        const std::string kb = be_u64(base_b + i);
+        uint64_t* v = nullptr;
+        EXPECT_TRUE (pure_search(tree_a, *ti_a, ka, &v));
+        EXPECT_FALSE(pure_search(tree_a, *ti_a, kb, &v));
+        EXPECT_TRUE (pure_search(tree_b, *ti_a, kb, &v));
+        EXPECT_FALSE(pure_search(tree_b, *ti_a, ka, &v));
     }
+    ti_a->rcu_stop();
 }
 
 // (Tests for SiloRuntime::try_register_current_thread — the Mako-side
