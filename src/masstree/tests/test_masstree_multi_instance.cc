@@ -401,3 +401,93 @@ TEST_F(MasstreeMultiInstanceTest, RcuStressTest) {
     EXPECT_GT(ctx1_->get_epoch(), 1u);
     EXPECT_GT(ctx2_->get_epoch(), 1u);
 }
+
+// Test 6: Many-context scaling.
+//
+// Existing tests use exactly two contexts; this one spins up N=16 to
+// stress: (a) the s_next_context_id_ atomic under burst creation,
+// (b) MasstreeContext-bound worker threads running in parallel
+// without cross-contamination, and (c) the per-context epoch
+// counter at scale. Each context owns its own tree; each worker
+// inserts a disjoint key stripe and then reads the whole tree back.
+TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
+    constexpr int kContexts = 16;
+    constexpr int kKeysPerWorker = 1000;
+
+    std::vector<MasstreeContext*> contexts;
+    contexts.reserve(kContexts);
+    std::set<int> seen_ids;
+    for (int i = 0; i < kContexts; ++i) {
+        MasstreeContext* ctx = MasstreeContext::Create();
+        ASSERT_NE(ctx, nullptr) << "ctx " << i;
+        // Context IDs must be unique across the burst creation.
+        EXPECT_TRUE(seen_ids.insert(ctx->id()).second) << "duplicate id " << ctx->id();
+        contexts.push_back(ctx);
+    }
+
+    // Each worker gets its own tree, its own key space, and its own
+    // context. Storage vectors are owned by the worker so values
+    // outlive each tree until join() returns.
+    std::vector<TestTree> trees(kContexts);
+    std::atomic<int> failures{0};
+
+    std::vector<std::thread> workers;
+    workers.reserve(kContexts);
+    for (int i = 0; i < kContexts; ++i) {
+        workers.emplace_back([this, i, &trees, &contexts, &failures]() {
+            MasstreeContext::BindCurrentThread(contexts[i]);
+            threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 10000 + i);
+            if (ti == nullptr) { ++failures; return; }
+            if (ti->context() != contexts[i]) { ++failures; return; }
+
+            ti->rcu_start();
+
+            std::vector<std::unique_ptr<uint64_t>> value_storage;
+            std::vector<u64_varkey> keys;
+            keys.reserve(kKeysPerWorker);
+            const uint64_t base = static_cast<uint64_t>(i) * 1'000'000ull;
+            for (int k = 0; k < kKeysPerWorker; ++k) {
+                keys.emplace_back(base + k);
+                value_storage.emplace_back(std::make_unique<uint64_t>(base + k));
+                trees[i].insert(
+                    keys.back(),
+                    reinterpret_cast<TestTree::value_type>(value_storage.back().get()));
+                if ((k & 0x7F) == 0) ti->rcu_quiesce();
+            }
+            for (int k = 0; k < kKeysPerWorker; ++k) {
+                TestTree::value_type found{};
+                if (!trees[i].search(keys[k], found)) ++failures;
+            }
+
+            ti->rcu_stop();
+        });
+    }
+    for (auto& t : workers) t.join();
+
+    EXPECT_EQ(failures.load(), 0);
+
+    // Cross-check: each tree owns exactly its stripe of keys, no
+    // other context's keys appear in it.
+    for (int i = 0; i < kContexts; ++i) {
+        EXPECT_EQ(trees[i].size(), static_cast<size_t>(kKeysPerWorker)) << "ctx " << i;
+        // Spot-check that the FIRST key of every OTHER stripe is absent.
+        for (int j = 0; j < kContexts; ++j) {
+            if (j == i) continue;
+            u64_varkey other_key(static_cast<uint64_t>(j) * 1'000'000ull);
+            TestTree::value_type found{};
+            EXPECT_FALSE(trees[i].search(other_key, found))
+                << "tree " << i << " unexpectedly has key from stripe " << j;
+        }
+    }
+
+    // Each context's allthreads list must contain at least the
+    // threadinfo we registered above (one per worker).
+    for (int i = 0; i < kContexts; ++i) {
+        int seen = 0;
+        for (threadinfo* ti = contexts[i]->get_allthreads(); ti; ti = ti->next()) {
+            EXPECT_EQ(ti->context(), contexts[i]) << "ctx " << i << " contaminated";
+            ++seen;
+        }
+        EXPECT_GE(seen, 1) << "ctx " << i << " has no threadinfos";
+    }
+}
