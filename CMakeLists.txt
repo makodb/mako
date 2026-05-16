@@ -774,13 +774,10 @@ set(MAKO_SRCFILES
   "${W}/txn.cc"
   "${W}/txn_proto2_impl.cc"
   "${W}/varint.cc"
-  "${MASSTREE_DIR}/compiler.cc"
-  "${MASSTREE_DIR}/str.cc"
-  "${MASSTREE_DIR}/string.cc"
-  "${MASSTREE_DIR}/straccum.cc"
-  "${MASSTREE_DIR}/json.cc"
-  "${MASSTREE_DIR}/kvthread.cc"
-  "${MASSTREE_DIR}/masstree_context.cc"
+  # Masstree's .cc files have been lifted into the standalone
+  # `masstree` static library (see src/masstree/CMakeLists.txt). They
+  # are linked into libmako via target_link_libraries(mako PUBLIC
+  # masstree) below.
   "${W}/silo_runtime.cc"
   "${W}/benchmarks/bench.cc"
   "${W}/benchmarks/encstress.cc"
@@ -1217,7 +1214,7 @@ target_include_directories(mako PUBLIC
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit rrr module BMI paths from txlog_core_obj.
-target_link_libraries(mako PUBLIC txlog_core_obj)
+target_link_libraries(mako PUBLIC txlog_core_obj masstree)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
