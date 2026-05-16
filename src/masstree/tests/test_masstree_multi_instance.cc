@@ -554,3 +554,85 @@ TEST_F(MasstreeMultiInstanceTest, DefaultContextFallbackIsStable) {
     EXPECT_EQ(MasstreeContext::Current(), observed[0])
         << "unbinding did not fall back to the default singleton";
 }
+
+// Test 8: Rebind across contexts mid-thread.
+//
+// Existing tests bind a context once per thread and leave it. This
+// one drives the bind/work/rebind/work/rebind-back pattern from a
+// single thread and asserts both contexts end up with consistent
+// state: independent epoch counters, threadinfo registered against
+// the context that was bound at make() time, and the trees built
+// while bound to each ctx contain only that ctx's keys.
+TEST_F(MasstreeMultiInstanceTest, RebindAcrossContextsKeepsBothConsistent) {
+    TestTree tree_a, tree_b;
+    constexpr int kKeys = 200;
+    std::vector<std::unique_ptr<uint64_t>> values_a, values_b;
+    auto make_value = [](std::vector<std::unique_ptr<uint64_t>>& store, uint64_t v) {
+        store.emplace_back(std::make_unique<uint64_t>(v));
+        return reinterpret_cast<TestTree::value_type>(store.back().get());
+    };
+
+    const uint64_t base_a = 0;
+    const uint64_t base_b = 1ull << 20;
+
+    // Phase 1: bind ctx1_, register a threadinfo, fill tree_a.
+    MasstreeContext::BindCurrentThread(ctx1_);
+    EXPECT_EQ(MasstreeContext::Current(), ctx1_);
+    threadinfo* ti_a = threadinfo::make(threadinfo::TI_PROCESS, 20001);
+    ASSERT_NE(ti_a, nullptr);
+    EXPECT_EQ(ti_a->context(), ctx1_);
+    ti_a->rcu_start();
+    for (int i = 0; i < kKeys; ++i) {
+        u64_varkey k(base_a + i);
+        tree_a.insert(k, make_value(values_a, base_a + i));
+    }
+    ti_a->rcu_stop();
+
+    // Snapshot ctx1_'s epoch so we can assert ctx2_ work doesn't
+    // touch it.
+    const mrcu_epoch_type ctx1_epoch_before = ctx1_->get_epoch();
+    ctx2_->increment_epoch(4);
+    EXPECT_EQ(ctx1_->get_epoch(), ctx1_epoch_before);
+
+    // Phase 2: REBIND to ctx2_, register a new threadinfo, fill tree_b.
+    MasstreeContext::BindCurrentThread(ctx2_);
+    EXPECT_EQ(MasstreeContext::Current(), ctx2_);
+    threadinfo* ti_b = threadinfo::make(threadinfo::TI_PROCESS, 20002);
+    ASSERT_NE(ti_b, nullptr);
+    EXPECT_EQ(ti_b->context(), ctx2_)
+        << "threadinfo created after rebind must belong to the newly-bound context";
+    EXPECT_NE(ti_b, ti_a) << "threadinfo::make should not recycle across contexts";
+    ti_b->rcu_start();
+    for (int i = 0; i < kKeys; ++i) {
+        u64_varkey k(base_b + i);
+        tree_b.insert(k, make_value(values_b, base_b + i));
+    }
+    ti_b->rcu_stop();
+
+    // Phase 3: rebind back to ctx1_, confirm Current() switches back
+    // and ctx1_'s pre-existing threadinfo is still on ctx1_'s list.
+    MasstreeContext::BindCurrentThread(ctx1_);
+    EXPECT_EQ(MasstreeContext::Current(), ctx1_);
+
+    auto on_list = [](MasstreeContext* ctx, threadinfo* target) {
+        for (threadinfo* ti = ctx->get_allthreads(); ti; ti = ti->next()) {
+            if (ti == target) return true;
+        }
+        return false;
+    };
+    EXPECT_TRUE(on_list(ctx1_, ti_a));
+    EXPECT_FALSE(on_list(ctx2_, ti_a));
+    EXPECT_TRUE(on_list(ctx2_, ti_b));
+    EXPECT_FALSE(on_list(ctx1_, ti_b));
+
+    // Both trees retain only their own keys.
+    EXPECT_EQ(tree_a.size(), static_cast<size_t>(kKeys));
+    EXPECT_EQ(tree_b.size(), static_cast<size_t>(kKeys));
+    for (int i = 0; i < kKeys; ++i) {
+        TestTree::value_type v{};
+        EXPECT_TRUE(tree_a.search(u64_varkey(base_a + i), v));
+        EXPECT_FALSE(tree_a.search(u64_varkey(base_b + i), v));
+        EXPECT_TRUE(tree_b.search(u64_varkey(base_b + i), v));
+        EXPECT_FALSE(tree_b.search(u64_varkey(base_a + i), v));
+    }
+}
