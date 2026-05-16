@@ -276,6 +276,15 @@ The threads launch under a single atomic "go" flag so the wall-clock
 window used for ops/sec brackets the parallel work, not thread spin-up.
 Default is no multi-thread scenarios (back-compat).
 
+**Workload sizing for credible multi-thread numbers**: at the default
+`--keys 32768`, the parallel section can complete in milliseconds at
+high thread counts, so launch overhead and imbalance dominate. Pass
+`--keys 1048576` (1 M) or larger when running anything past ~4 threads.
+On a 32-core / 64-thread Threadripper 2990WX with 1 M keys we observe
+roughly 11× lookup / mixed scaling t1→t16 and ~6× insert scaling
+t1→t16, with all three flattening or dropping slightly at t32 (write
+contention on internal nodes plus the dual-die NUMA hop).
+
 ### 5.2 Regression-gate workflow
 
 Per-hardware baselines aren't checked into the repo — what counts as a
