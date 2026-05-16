@@ -43,6 +43,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/completion_tracker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp

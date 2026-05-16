@@ -21,7 +21,6 @@
 #include "rpc/idempotency.hpp"
 #include "rpc/request_queue.hpp"
 #include "rpc/completion_tracker.hpp"
-#include "rpc/client.hpp"
 
 // Imports go AFTER textual `#include`s. libc++ rejects the order
 // `import std; ... #include <vector>` (the include lands after the
@@ -33,6 +32,7 @@ import rrr.basetypes;
 import rrr.callbacks;
 import rrr.channel;
 import rrr.circuit_breaker;
+import rrr.client;
 import rrr.connection_metrics;
 import rrr.connection_state;
 import rrr.cpuinfo;
