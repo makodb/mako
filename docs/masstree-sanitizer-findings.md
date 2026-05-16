@@ -333,3 +333,53 @@ inside Tier 3.1 was out of scope.
 - **None of the five findings affected the test suite's pass rate**
   (113/113 passed under each sanitizer once the suppressions were in
   place). They were all surfaced as out-of-band warnings.
+
+---
+
+## Finding 6 — Ephemeral threads on `concurrent_btree` SIGABRT
+
+**Where**: discovered while wiring Tier 8 (soak). When a soak driver
+repeatedly spawns short-lived `std::thread` workers that perform
+small batches of `concurrent_btree` ops and then exit (~200
+spawn/join cycles per second), the test reliably aborts (SIGABRT)
+within seconds. No diagnostic message is printed before the abort,
+so the trap appears to be an internal `INVARIANT`/`ALWAYS_ASSERT`
+whose message is lost because stderr isn't flushed before
+`abort()` — or a direct trap with no message.
+
+**Reproduces**:
+- Bare invocation: aborts in 2–5 s.
+- Under `gdb -batch`: runs to completion. The race window is
+  scheduling-sensitive.
+- Under ASan: aborts identically, no extra diagnostic. So this is
+  not a heap UAF in the usual sense.
+
+**Workload that triggers**: any pattern where a fresh `std::thread`
+calls `tree.insert` / `tree.remove` on a `concurrent_btree`, exits,
+then a new thread takes its place — repeated hundreds of times.
+The pre-existing long-lived-threads tests
+(`test_masstree_concurrent`, `test_masstree_memory`,
+`test_masstree_soak` minus the ephemeral driver) all run clean.
+
+**Suspected root cause**: per-thread RCU state that's lazily
+initialized on first tree op (via `simple_threadinfo` constructed
+inside each `mbtree::insert`) but never explicitly torn down on
+thread exit. Each new thread inherits a slot that the prior thread
+left in a stale state. The mako runtime's RCU bookkeeping (see
+`src/mako/rcu.h` / `ticker.h`) has thread-local slots; on Linux
+they get cleaned up only when the destructor of the `thread_local`
+fires, which depends on the runtime's TLS implementation.
+
+**Workaround in Tier 8**: the soak test does NOT use ephemeral
+threads. Workers are long-lived, spawned once and joined at the
+end of the run.
+
+**Recommendation**: this is the most actionable finding so far. If
+Masstree consumers in this project ever pool threads dynamically
+(thread pools that grow/shrink, request-per-thread RPC handlers,
+etc.), they will hit this. The fix is either:
+1. Document that callers MUST call a teardown hook
+   (`rcu::s_instance.pin_current_thread`'s inverse) before thread
+   exit; OR
+2. Register a `thread_local` sentinel whose destructor calls the
+   teardown automatically.

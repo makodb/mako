@@ -421,16 +421,34 @@ All 4 layered tests pass clean under both regular and ASan builds
 
 ---
 
-## Tier 8 — Long-running soak / chaos
+## Tier 8 — Long-running soak / chaos — partially wired
 
-**Goal:** catch slow leaks, epoch-advancement bugs, perf drift.
+`src/masstree/tests/test_masstree_soak.cc` runs a sustained mixed
+workload (writers, removers, readers, scanners) on a shared
+`concurrent_btree` for a bounded duration. Default 30 s
+(CTest-friendly); set `MASSTREE_SOAK_SECONDS=N` to extend, e.g.
+`MASSTREE_SOAK_SECONDS=86400` for a weekly 24-hour run. CTest TIMEOUT
+property is 120 s so the default fits; the env-var override pushes
+through it for manual long runs.
 
-- 24-hour soak (weekly, not per-commit):
-  - Random workload + memory accounting.
-  - Epoch advancement + GC pressure under sustained load.
-  - Assert: flat memory, no slow leaks, no perf drift.
-- Thread join/leave churn: threads register/deregister with
-  `MasstreeContext` repeatedly during workload.
+What it catches above and beyond Tier 3's shorter stress:
+
+- Slow leaks invisible in a 2-second window (paired with LSan).
+- Epoch-counter wrap edge cases that require many cycles.
+- Race classes that depend on uncommon scheduling — longer wall
+  time → more chances to interleave the wrong way.
+
+Stable-key invariant: a fixed 8,192-key range is never written
+after setup. Readers continually verify these keys; any mismatch
+or missing key bumps an atomic failure counter that the test
+asserts is zero at the end.
+
+**Not wired**: thread join/leave churn (workers that spawn briefly,
+do a batch, then exit, repeated continuously). The earlier version
+of the soak test included that and reliably reproduced a SIGABRT
+inside `concurrent_btree` — see Finding 6 in
+`docs/masstree-sanitizer-findings.md`. Until that's investigated
+the soak runs with long-lived workers only.
 
 ---
 
