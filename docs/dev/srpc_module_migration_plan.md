@@ -415,6 +415,12 @@ the effective `-j32`, and (b) consumers' BMI loads getting paid per-TU
 since `import rrr.foo;` is not cacheable across TUs the way a header
 in `-fmodule-map-file=` would be.
 
+**Decision (2026-05-16): kept.** The 2× whole-project slowdown is an
+acceptable cost for the structural payoff (clearer ownership, fewer
+textual-include pitfalls, removal of the GMF-vs-purview attachment
+landmines that bit the prior big-bang attempt). The migration stays on
+`worktree-srpc` and will be merged forward.
+
 These numbers do **not** account for any downstream compile-time wins
 in deptran/memdb consumers — those still `#include "rrr/rrr.hpp"` (an
 umbrella header that fans out to the imports), so they pay the
