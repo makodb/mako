@@ -395,20 +395,29 @@ system clang 19.
 
 ---
 
-## Tier 7 — Masstree-specific scenarios
+## Tier 7 — Masstree-specific scenarios — wired
 
-**Goal:** cover the design's signature edge cases.
+**Goal:** cover the design's signature edge cases — the ones that
+arise from Masstree being a trie of B+trees indexed by 8-byte
+slices, not a flat B-tree.
 
-- Layer explosion: keys with 100+ shared prefix bytes
-  (deeply nested layers). Test memory bound and lookup cost.
-- Layer collapse on removal: insert enough keys to create N layers,
-  remove all, assert layers reclaimed.
-- Key compression boundary: keys ending exactly on slice boundary
-  vs one byte over.
-- Variable key length within same node: mix 5-byte and 200-byte
-  keys in the same leaf.
-- Empty-string key.
-- Keys containing embedded null bytes.
+`src/masstree/tests/test_masstree_layered.cc` covers the new ground:
+
+| Test | Targets |
+|---|---|
+| `DeepLayerKeysRoundTrip` | 64-byte shared prefix → 8 nested layers; 32 keys split the deepest layer's leaf. |
+| `LayerCollapseOnRemoval` | 24-byte shared prefix → 3 layers; insert 64 keys then remove all. Under LSan this catches a missed layer-free in `masstree_remove.hh`. |
+| `MixedLengthKeysInOneLeaf` | Same 8-byte first slice, suffixes of length {0, 1, 7, 8, 50, 200, 1000} bytes — stresses keylenx packing and forward-scan ordering across wildly different key lengths. |
+| `SliceBoundaryFuzz` | Every length L in 1..32 inserted in shuffled order, half removed, then reinserted — cross-product of "just under 8B", "exactly 8B", "8B + 1", etc. |
+
+Already covered earlier:
+
+- Empty-string key — Tier 1 `EmptyKeyRoundTrip`.
+- Keys with embedded null bytes — Tier 1 `KeyShapes/embedded_nulls`.
+- 8/9/16/17-byte single keys in isolation — Tier 1 parameterized shapes.
+
+All 4 layered tests pass clean under both regular and ASan builds
+(~0 ms wall; tiny histories that exercise specific code paths).
 
 ---
 

@@ -58,6 +58,14 @@ function(mako_add_masstree_tests)
     add_test(NAME test_masstree_memory COMMAND test_masstree_memory)
     set_tests_properties(test_masstree_memory PROPERTIES TIMEOUT 60)
 
+    # Masstree layered / slice-boundary edge cases — Tier 7. Layer
+    # collapse test doubles as LSan probe for missed layer frees.
+    add_executable(test_masstree_layered ${MASSTREE_TEST_DIR}/test_masstree_layered.cc)
+    target_include_directories(test_masstree_layered PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_layered PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_layered mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_layered COMMAND test_masstree_layered)
+
     # Masstree libFuzzer differential harness — gated on MAKO_FUZZER=1.
     # Not wired into ctest; intended to be invoked by hand or via
     # OSS-Fuzz.
