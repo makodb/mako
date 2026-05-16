@@ -584,6 +584,33 @@ if(DEFINED ENV{MAKO_TSAN} AND "$ENV{MAKO_TSAN}" STREQUAL "1")
     add_link_options(-fsanitize=thread)
 endif()
 
+# libFuzzer coverage instrumentation (MAKO_FUZZER=1 in env). The fuzz
+# *target* binary links the fuzzer runtime via -fsanitize=fuzzer (which
+# provides main); every other TU is built with -fsanitize=fuzzer-no-link
+# so libFuzzer can steer mutations from edge feedback throughout libmako.
+# Implies MAKO_ASAN since the libFuzzer + ASan combo is the standard
+# pairing — incompatible with TSan because both instrumentations use
+# the same coverage hooks.
+set(MAKO_FUZZER_ENABLED OFF CACHE INTERNAL "Tier 6 libFuzzer build")
+if(DEFINED ENV{MAKO_FUZZER} AND "$ENV{MAKO_FUZZER}" STREQUAL "1")
+    if(MAKO_TSAN_ENABLED)
+        message(FATAL_ERROR "MAKO_FUZZER=1 cannot be combined with MAKO_TSAN=1.")
+    endif()
+    set(MAKO_FUZZER_ENABLED ON CACHE INTERNAL "Tier 6 libFuzzer build" FORCE)
+    if(NOT MAKO_ASAN_ENABLED)
+        set(MAKO_ASAN_ENABLED ON)
+        message(STATUS "MAKO_FUZZER=1 implies MAKO_ASAN=1; enabling -fsanitize=address.")
+        set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_FUZZER" FORCE)
+        list(APPEND CXXFLAGS -fsanitize=address -fno-omit-frame-pointer)
+        list(APPEND LDFLAGS  -fsanitize=address)
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    endif()
+    message(STATUS "MAKO_FUZZER=1: building with -fsanitize=fuzzer-no-link for edge coverage.")
+    list(APPEND CXXFLAGS -fsanitize=fuzzer-no-link)
+    add_compile_options(-fsanitize=fuzzer-no-link)
+endif()
+
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
   message(STATUS "Raft lab testing fiber enabled")

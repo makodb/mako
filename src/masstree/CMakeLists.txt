@@ -48,6 +48,28 @@ function(mako_add_masstree_tests)
     add_test(NAME test_masstree_linearizability COMMAND test_masstree_linearizability)
     set_tests_properties(test_masstree_linearizability PROPERTIES TIMEOUT 60)
 
+    # Masstree libFuzzer differential harness — gated on MAKO_FUZZER=1.
+    # Not wired into ctest; intended to be invoked by hand or via
+    # OSS-Fuzz.
+    #
+    # KNOWN BLOCKER on Debian/Ubuntu hosts: the system
+    # libclang_rt.fuzzer-x86_64.a shipped with libclang-rt-19-dev is
+    # built against libstdc++ (its strings carry the std::__cxx11 ABI
+    # tag), and this project builds with -stdlib=libc++. The two ABIs
+    # cannot satisfy each other's std::string references in a single
+    # link, even with -lstdc++ added and --as-needed disabled. The fuzz
+    # target source compiles but does not link on the affected hosts.
+    #
+    # To actually run the fuzzer you need a libc++-built compiler-rt.
+    # See docs/masstree-test-plan.md, Tier 6, for the workaround.
+    if(MAKO_FUZZER_ENABLED)
+        add_executable(fuzz_masstree ${MASSTREE_TEST_DIR}/fuzz_masstree.cc)
+        target_include_directories(fuzz_masstree PRIVATE ${TEST_INCLUDE_DIRS})
+        target_compile_options(fuzz_masstree PRIVATE ${TEST_COMPILE_OPTIONS} -fsanitize=fuzzer)
+        target_link_libraries(fuzz_masstree mako ${TEST_LINK_LIBS} yaml-cpp pthread)
+        target_link_options(fuzz_masstree PRIVATE -fsanitize=fuzzer)
+    endif()
+
     # Masstree internals tests (threadinfo, globalepoch, RCU)
     add_executable(test_masstree_internals ${MASSTREE_TEST_DIR}/test_masstree_internals.cc)
     target_include_directories(test_masstree_internals PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

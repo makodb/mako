@@ -318,14 +318,57 @@ Threshold tuning notes:
 
 ---
 
-## Tier 6 — Fuzzing
+## Tier 6 — Fuzzing — wired (with a known link blocker on this host)
 
 **Goal:** catch the bugs the test suite was not designed to think about.
 **Why sixth:** once Tiers 1 + 2 are in place, fuzzing finds deep bugs fast.
 
-- libFuzzer (or AFL) harness: bytes → op stream → tree + oracle.
-- Run overnight in CI, or continuously via OSS-Fuzz if open-sourced.
-- Differential fuzzing vs `absl::btree_map` / `std::map` as oracle.
+`src/masstree/tests/fuzz_masstree.cc` is a libFuzzer differential
+harness: each invocation decodes the fuzzer-supplied byte string into
+a sequence of `{insert, insert_if_absent, remove, search}` ops on a
+short keyspace and applies each op to both Masstree and a
+`std::map<std::string,uint64_t>` oracle. Any divergence in return
+value, value payload, or final forward-scan output `abort()`s, which
+libFuzzer treats as a finding and minimizes the input.
+
+Build via the `MAKO_FUZZER=1` cmake toggle (implies `MAKO_ASAN=1`,
+strips jemalloc, instruments the whole build with
+`-fsanitize=fuzzer-no-link`; the fuzz target additionally links
+`-fsanitize=fuzzer` to pull in the libFuzzer runtime + `main`):
+
+```bash
+mkdir build_fuzz && cd build_fuzz
+MAKO_FUZZER=1 cmake .. -GNinja
+ninja fuzz_masstree
+mkdir corpus
+./fuzz_masstree -max_total_time=60 -max_len=4096 corpus/
+```
+
+### Known blocker on Debian/Ubuntu hosts
+
+On a stock `libclang-rt-19-dev` install the link **fails** with
+unresolved `std::__cxx11::basic_string` references inside
+`libclang_rt.fuzzer-x86_64.a`. Root cause: the distro fuzzer runtime
+is compiled against libstdc++, and this project uses
+`-stdlib=libc++`. The two ABIs cannot satisfy each other's std::string
+references in a single link, even with `-lstdc++ -Wl,--no-as-needed`
+added at the end of the link line.
+
+The fuzz target source itself is correct — gtest, ASan, and UBSan
+runs of test_masstree_property exercise the same code path against
+the same oracle without divergence. The Tier 6 wiring is ready to
+run once a libc++-built libFuzzer runtime is available.
+
+**Workarounds**, roughly in order of effort:
+
+1. Build compiler-rt's libFuzzer from source against libc++
+   (~30 min one-time cost; produces a libc++-compatible
+   `libclang_rt.fuzzer-x86_64.a` to drop in).
+2. Switch the project to libstdc++ for the fuzz build only —
+   requires rebuilding libmako without `-stdlib=libc++`, large
+   blast radius.
+3. Run the fuzz harness via OSS-Fuzz, whose toolchain images
+   bundle a matching fuzzer runtime.
 
 ---
 
