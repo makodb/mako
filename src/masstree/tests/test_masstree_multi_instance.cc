@@ -636,3 +636,49 @@ TEST_F(MasstreeMultiInstanceTest, RebindAcrossContextsKeepsBothConsistent) {
         EXPECT_FALSE(tree_b.search(u64_varkey(base_a + i), v));
     }
 }
+
+// Test 9: Context teardown / leak check.
+//
+// MasstreeContext intentionally leaks across the rest of this
+// suite because the threadinfo list it points at outlives the
+// process and threadinfos are not unregistered. That makes
+// destroying a *populated* context dangerous (the linked list
+// would dangle). But contexts that never had a thread registered
+// CAN be destroyed safely — they own only their own scalars and
+// the rusty::Mutex<MutPtr<threadinfo>> wrapper.
+//
+// This test documents that contract and locks it in: build a
+// burst of contexts, advance their epochs, then destroy them
+// without ever registering a threadinfo. Under ASan/LSan this
+// becomes a real leak detector — if a context's destructor leaks
+// the rusty::Mutex's internal pthread_mutex_t or any other state,
+// LSan reports it at process exit.
+TEST_F(MasstreeMultiInstanceTest, EmptyContextsAreDestructibleAndLeakFree) {
+    constexpr int kContexts = 32;
+
+    // Create, exercise, and destroy each context in turn.
+    // Heap-allocate so we hit the operator-new / operator-delete
+    // path (Create() uses `new`); raw delete mirrors what a future
+    // teardown helper would call.
+    for (int round = 0; round < 3; ++round) {
+        std::vector<MasstreeContext*> batch;
+        batch.reserve(kContexts);
+        for (int i = 0; i < kContexts; ++i) {
+            MasstreeContext* ctx = MasstreeContext::Create();
+            ASSERT_NE(ctx, nullptr);
+            // Exercise: bump the epoch a few times so the std::atomic
+            // path runs and the destructor has to release a counter
+            // value other than the initial one.
+            ctx->increment_epoch(2);
+            ctx->set_epoch(ctx->get_epoch() + 10);
+            // get_allthreads() under the new rusty::Mutex path must
+            // work even with no threads registered.
+            EXPECT_EQ(ctx->get_allthreads(), nullptr);
+            batch.push_back(ctx);
+        }
+        for (MasstreeContext* ctx : batch) {
+            delete ctx;
+        }
+    }
+    // LSan at process exit checks for leaked allocations.
+}
