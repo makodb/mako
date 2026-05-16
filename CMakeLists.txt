@@ -1691,8 +1691,10 @@ if(BUILD_TESTS)
     target_compile_options(bench_future PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(bench_future ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
 
-    # Masstree-specific tests and benchmarks are maintained in src/masstree/CMakeLists.txt.
-    mako_add_masstree_tests()
+    # Masstree-specific tests and benchmarks are defined in
+    # src/masstree/tests/CMakeLists.txt. Pulled in here so they only
+    # build when BUILD_TESTS is ON.
+    add_subdirectory(src/masstree/tests)
 
     # Reactor/Event System Tests
     add_executable(test_reactor src/rrr/tests/test_reactor.cc)
