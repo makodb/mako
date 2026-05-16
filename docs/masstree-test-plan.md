@@ -452,13 +452,29 @@ the soak runs with long-lived workers only.
 
 ---
 
-## Tier 9 — Build & API gates
+## Tier 9 — Build & API gates — partially wired
 
 **Goal:** prevent accidental ABI breaks and transitive-include rot.
 
-- `nm`-based public-symbol gate: catches accidental ABI changes.
-- Header self-containment: each public header compiles standalone.
-- Build matrix: C++17 + C++20, gcc + clang.
+`src/masstree/tests/test_masstree_headers.cc` is a header
+self-containment sentinel. It #includes every public Masstree header
+plus the mako-side wrappers, and instantiates both
+`single_threaded_btree` and `concurrent_btree` so the templates are
+actually compiled. If a future refactor drops a forward declaration
+or starts depending on a transitive include from an unrelated header,
+this TU fails to compile before a downstream consumer notices.
+
+Not wired (deferred, low priority for a template-heavy header-only
+library):
+
+- `nm`-based public-symbol gate. Less meaningful here because the
+  public API is templated (`mbtree<P>`) — there is no stable ABI
+  surface to diff between commits the way there would be for a C
+  library.
+- Multi-`-std=` compiler matrix (C++17 / C++20 / C++23). The
+  project already pins `gnu++23`; adding additional std modes would
+  require duplicated build targets. Worth doing if Masstree ever
+  ships as a standalone library outside this project.
 
 ---
 

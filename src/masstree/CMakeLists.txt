@@ -76,6 +76,17 @@ function(mako_add_masstree_tests)
     add_test(NAME test_masstree_soak COMMAND test_masstree_soak)
     set_tests_properties(test_masstree_soak PROPERTIES TIMEOUT 120)
 
+    # Masstree header self-containment sentinel — Tier 9. Compiles
+    # every public masstree + mako-wrapper header together and
+    # instantiates both tree types. Catches transitive-include rot
+    # before downstream consumers do. No runtime behavior; runs as
+    # a ctest target solely to verify the binary launches.
+    add_executable(test_masstree_headers ${MASSTREE_TEST_DIR}/test_masstree_headers.cc)
+    target_include_directories(test_masstree_headers PRIVATE ${TEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_headers PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_headers mako ${TEST_LINK_LIBS} pthread)
+    add_test(NAME test_masstree_headers COMMAND test_masstree_headers)
+
     # Masstree libFuzzer differential harness — gated on MAKO_FUZZER=1.
     # Not wired into ctest; intended to be invoked by hand or via
     # OSS-Fuzz.
