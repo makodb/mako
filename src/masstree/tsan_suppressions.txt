@@ -32,6 +32,7 @@ race:kpermuter.hh
 # Compiler intrinsics for fence / relax — surfaced incidentally.
 race:masstree/compiler.hh
 
-# Mako spinlock — see note (2) above.
-race:spinlock::lock
-race:spinlock::unlock
+# The src/mako/spinlock.h entries that used to live here were
+# removed once the spinlock was migrated to std::atomic<uint32_t>
+# with explicit acquire/release ordering. See
+# docs/masstree-sanitizer-findings.md, Finding 5 (fixed).

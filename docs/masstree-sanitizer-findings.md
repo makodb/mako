@@ -238,7 +238,22 @@ so that real new races elsewhere still surface.
 
 ---
 
-## Finding 5 — `src/mako/spinlock.h` plain `volatile uint32_t`
+## Finding 5 — `src/mako/spinlock.h` plain `volatile uint32_t` — **FIXED**
+
+Resolved by rewriting `src/mako/spinlock.h` to use
+`std::atomic<uint32_t>` with explicit acquire/release ordering
+(`compare_exchange_weak(..., acquire, relaxed)` in `lock`,
+`store(0, release)` in `unlock`, relaxed loads in the
+test-and-test-and-set spin). `COMPILER_MEMORY_FENCE` was dropped
+because the atomic orderings subsume it. The corresponding
+`race:spinlock::lock` / `race:spinlock::unlock` entries in
+`src/masstree/tsan_suppressions.txt` were removed; TSan runs of
+test_masstree, test_masstree_property, test_masstree_concurrent,
+and test_masstree_multi_instance all report 0 races afterwards.
+
+The original analysis below is preserved for posterity.
+
+
 
 **Where**: `src/mako/spinlock.h:22–52`
 
