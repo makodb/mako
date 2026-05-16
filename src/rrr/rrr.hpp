@@ -12,7 +12,6 @@
 // globally. Tests that need the old rrr-internal helpers can
 // include `<base/unittest.hpp>` explicitly.
 #include "rpc/frame_codec.hpp"
-#include "rpc/tcp_channel.hpp"
 #include "rpc/fiber_channel.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
@@ -57,6 +56,7 @@ import rrr.reconnect_policy;
 import rrr.request_options;
 import rrr.stat;
 import rrr.strop;
+import rrr.tcp_channel;
 import rrr.threading;
 import rrr.utils;
 
