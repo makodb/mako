@@ -37,6 +37,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp

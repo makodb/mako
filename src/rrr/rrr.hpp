@@ -22,7 +22,6 @@
 #include "rpc/idempotency.hpp"
 #include "rpc/request_queue.hpp"
 #include "rpc/completion_tracker.hpp"
-#include "reactor/future.h"
 #include "rpc/client.hpp"
 #include "rpc/server.hpp"
 #include "misc/alock.hpp"
@@ -44,6 +43,7 @@ import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;
 import rrr.fiber;
+import rrr.future;
 import rrr.heartbeat;
 import rrr.internal_protocol;
 import rrr.load_balancer;
