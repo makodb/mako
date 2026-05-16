@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 #include <rusty/sync/weak.hpp>
@@ -15,10 +16,10 @@
 
 
 #include "frame_codec.hpp"
-#include "../reactor/reactor.h"
 
 import rrr.channel;
 import rrr.pollable_proxy;
+import rrr.reactor;
 import rrr.threading;
 
 /**

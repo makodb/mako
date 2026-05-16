@@ -42,11 +42,10 @@
 
 
 
-#include "fiber_impl.h"
-#include "event.h"
 #include "future.h"
 
 import rrr.basetypes;
+import rrr.reactor;
 
 namespace rrr {
 

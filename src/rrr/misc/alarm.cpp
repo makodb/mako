@@ -3,17 +3,19 @@ module;
 #include <rusty/rusty.hpp>
 #include <cstdint>
 
-// PollThread is fully defined in reactor.h (still a textual header).
-// Forward-declare in GMF so the pointer-only use here has
-// global-module attachment that matches reactor.h's declaration.
-namespace rrr { class PollThread; }
-
 export module rrr.alarm;
 
 import std;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.misc;
+// PollThread used as a pointer here; the full definition lives in
+// `rrr.reactor`. clang 22 rejects a GMF forward-decl
+// (`namespace rrr { class PollThread; }`) when another imported module
+// also exports PollThread — the GMF decl and the module's exported
+// decl can't coexist for the same name. Importing the module that
+// owns PollThread is the supported pattern.
+import rrr.reactor;
 
 export namespace rrr {
 

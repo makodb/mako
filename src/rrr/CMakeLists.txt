@@ -36,6 +36,7 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
@@ -66,6 +67,19 @@ if(NOT TARGET rrr)
             FILE_SET rrr_modules TYPE CXX_MODULES FILES ${RRR_MODULE_SRC}
         )
     endif()
+    # `src/compat` ships shims that fix third-party header gotchas
+    # without modifying the submodule (e.g.
+    # `compat/rusty/function.hpp` adds `#include <cstdlib>` before
+    # delegating to the upstream `rusty/function.hpp` via
+    # `#include_next`). It MUST come BEFORE
+    # `third-party/rusty-cpp/include` on the include path so the
+    # shim wins for the names it overrides — use the BEFORE keyword
+    # since target_include_directories(... PUBLIC ...) otherwise
+    # appends (root-level include_directories() entries already place
+    # third-party before src/compat).
+    target_include_directories(rrr BEFORE PUBLIC
+        ${CMAKE_SOURCE_DIR}/src/compat
+    )
     target_include_directories(rrr PUBLIC
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/rrr

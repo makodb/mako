@@ -66,11 +66,11 @@
 
 #include "../base/all.hpp"
 #include "../misc/marshal.hpp"
-#include "../reactor/reactor.h"
 
 import rrr.channel;
 import rrr.epoll_wrapper;
 import rrr.internal_protocol;
+import rrr.reactor;
 import rrr.serializable;
 import rrr.utils;
 

@@ -25,9 +25,9 @@
 
 #include "../base/all.hpp"
 #include "../misc/marshal.hpp"
-#include "../reactor/reactor.h"
 
 import rrr.epoll_wrapper;
+import rrr.reactor;
 
 
 #include "fiber_channel.hpp"

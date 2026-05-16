@@ -11,21 +11,17 @@
 // de-modularization the textual `#include` would expose them
 // globally. Tests that need the old rrr-internal helpers can
 // include `<base/unittest.hpp>` explicitly.
-#include "reactor/fiber_impl.h"
 #include "rpc/frame_codec.hpp"
 #include "rpc/tcp_channel.hpp"
 #include "rpc/fiber_channel.hpp"
 #include "base/all.hpp"
 #include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
-#include "reactor/event.h"
 // removed `#include "misc/recorder.hpp"`
 // — `Recorder` class deleted; was unused after Phase 4e-35.
 #include "rpc/idempotency.hpp"
 #include "rpc/request_queue.hpp"
-#include "reactor/quorum_event.h"
 #include "rpc/completion_tracker.hpp"
-#include "reactor/reactor.h"
 #include "reactor/future.h"
 #include "rpc/client.hpp"
 #include "rpc/server.hpp"
@@ -56,6 +52,7 @@ import rrr.misc;
 import rrr.netinfo;
 import rrr.pollable_proxy;
 import rrr.rand;
+import rrr.reactor;
 import rrr.reconnect_policy;
 import rrr.request_options;
 import rrr.stat;

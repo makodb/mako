@@ -46,11 +46,7 @@
 
 #include <rusty/option.hpp>
 
-
-
-
-#include "event.h"
-#include "reactor.h"
+import rrr.reactor;
 
 namespace rrr {
 
