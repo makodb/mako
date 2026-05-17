@@ -4127,14 +4127,18 @@ void Client::close() const {
     const bool was_connected = conn.connected();
     conn.mark_closing();
     if (was_connected) {
-      // @unsafe - schedules channel proxy close on poll thread
-      auto conn_arc = guard->as_ref().unwrap().clone();
-      auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
-        auto* mut_conn = const_cast<ClientConnection*>(conn_arc.get());
-        mut_conn->close();
-      }));
-      auto close_job_base = rusty::Arc<Job>(close_job);
-      poll_thread_worker_->add(std::move(close_job_base));
+      // @unsafe - schedules channel proxy close on poll thread; uses
+      // const_cast inside the lambda and calls non-borrow-checked
+      // PollThread::add (an unannotated reactor primitive).
+      {
+        auto conn_arc = guard->as_ref().unwrap().clone();
+        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
+          auto* mut_conn = const_cast<ClientConnection*>(conn_arc.get());
+          mut_conn->close();
+        }));
+        auto close_job_base = rusty::Arc<Job>(close_job);
+        poll_thread_worker_->add(std::move(close_job_base));
+      }
     }
     // Don't clear connection to None - we need it for reconnect()
   }

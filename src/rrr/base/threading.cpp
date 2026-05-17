@@ -109,8 +109,11 @@ public:
     SpinLock(SpinLock&&) = delete;
     SpinLock& operator=(SpinLock&&) = delete;
 
-    // @unsafe - Uses address-of operator for nanosleep call
-    // SAFETY: Only takes address of stack-allocated timespec which remains valid throughout nanosleep
+    // @safe - parity with Rust's `Mutex::lock`. The atomic compare/exchange
+    // and load operations are memory-safe; the only genuinely unsafe call
+    // (`nanosleep(&t, nullptr)` — passes the address of a stack-local
+    // `timespec` to a libc syscall) is encapsulated in the @unsafe block
+    // below.
     void lock() override {
         // Fast path: try to acquire lock immediately
         bool expected = false;
@@ -138,12 +141,18 @@ public:
         while (!locked_.compare_exchange_weak(expected, true,
                                               std::memory_order_acquire,
                                               std::memory_order_relaxed)) {
-            nanosleep(&t, nullptr);
+            // @unsafe - nanosleep(&t, ...) takes the address of a stack-local
+            // timespec and passes it to a libc syscall. The address is valid
+            // for the duration of the call (timespec is on this stack frame).
+            {
+                nanosleep(&t, nullptr);
+            }
             expected = false;
         }
     }
 
-    // @unsafe - Calls std::atomic::store
+    // @safe - parity with Rust's `Mutex` drop / `unlock`. `std::atomic::store`
+    // is memory-safe; the prior `@unsafe` annotation was over-conservative.
     void unlock() {
         locked_.store(false, std::memory_order_release);
     }
