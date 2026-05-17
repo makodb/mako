@@ -14,6 +14,10 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/option.hpp>
+#include <rusty/thread.hpp>
+#include <rusty/vec.hpp>
+
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
@@ -41,23 +45,25 @@ inline uint64_t FromValue(TestTree::value_type v) {
 }
 
 // Trips `*stop` after `deadline` and joins automatically.
+// JoinHandle's destructor auto-joins, so the Option wrapping it gives us
+// "set stop, then let destruction join" without an explicit join call.
 struct Watchdog {
   std::atomic<bool>* stop;
-  std::thread t;
+  rusty::Option<rusty::thread::JoinHandle<void>> t;
   Watchdog(std::atomic<bool>* s, std::chrono::milliseconds deadline)
       : stop(s) {
-    t = std::thread([s, deadline]() {
+    t = rusty::thread::spawn([s, deadline]() {
       const auto end = std::chrono::steady_clock::now() + deadline;
       while (!s->load(std::memory_order_relaxed) &&
              std::chrono::steady_clock::now() < end) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        rusty::thread::sleep(std::chrono::milliseconds(10));
       }
       s->store(true, std::memory_order_release);
     });
   }
   ~Watchdog() {
     stop->store(true, std::memory_order_release);
-    if (t.joinable()) t.join();
+    // ~Option -> ~JoinHandle joins the watchdog thread.
   }
 };
 
@@ -74,18 +80,17 @@ TEST(MasstreeConcurrent, InsertersDisjointRanges) {
   constexpr int kThreads = 4;
   constexpr size_t kPerThread = 5000;
 
-  std::vector<std::thread> writers;
-  writers.reserve(kThreads);
+  auto writers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
   for (int t = 0; t < kThreads; ++t) {
-    writers.emplace_back([&tree, t]() {
+    writers.push(rusty::thread::spawn([&tree, t]() {
       const uint64_t base = static_cast<uint64_t>(t) * kPerThread;
       for (size_t i = 0; i < kPerThread; ++i) {
         const uint64_t v = base + i;
         ASSERT_TRUE(tree.insert(K(v), ToValue(v))) << "thread " << t << " val " << v;
       }
-    });
+    }));
   }
-  for (auto& w : writers) w.join();
+  for (auto& w : writers) { auto _ = w.join(); }
 
   ASSERT_EQ(tree.size(), kThreads * kPerThread);
   for (uint64_t v = 0; v < kThreads * kPerThread; ++v) {
@@ -112,17 +117,16 @@ TEST(MasstreeConcurrent, RemoversDisjointRanges) {
   }
   ASSERT_EQ(tree.size(), kTotal);
 
-  std::vector<std::thread> removers;
-  removers.reserve(kThreads);
+  auto removers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
   for (int t = 0; t < kThreads; ++t) {
-    removers.emplace_back([&tree, t]() {
+    removers.push(rusty::thread::spawn([&tree, t]() {
       const uint64_t base = static_cast<uint64_t>(t) * kPerThread;
       for (size_t i = 0; i < kPerThread; ++i) {
         ASSERT_TRUE(tree.remove(K(base + i)));
       }
-    });
+    }));
   }
-  for (auto& r : removers) r.join();
+  for (auto& r : removers) { auto _ = r.join(); }
 
   ASSERT_EQ(tree.size(), 0u);
   for (uint64_t v = 0; v < kTotal; ++v) {
@@ -153,10 +157,10 @@ TEST(MasstreeConcurrent, StableKeysVisibleUnderChurn) {
   std::atomic<bool> stop{false};
   Watchdog wd(&stop, std::chrono::milliseconds(2000));
 
-  std::vector<std::thread> threads;
-  threads.reserve(kWriters + kReaders);
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+      kWriters + kReaders);
   for (int t = 0; t < kWriters; ++t) {
-    threads.emplace_back([&tree, &stop, t]() {
+    threads.push(rusty::thread::spawn([&tree, &stop, t]() {
       const uint64_t base = kChurnBase + static_cast<uint64_t>(t) * kChurnPerWriter;
       while (!stop.load(std::memory_order_acquire)) {
         for (uint64_t i = 0; i < kChurnPerWriter; ++i) {
@@ -166,12 +170,12 @@ TEST(MasstreeConcurrent, StableKeysVisibleUnderChurn) {
           tree.remove(K(base + i));
         }
       }
-    });
+    }));
   }
   std::atomic<uint64_t> mismatches{0};
   std::atomic<uint64_t> missing{0};
   for (int t = 0; t < kReaders; ++t) {
-    threads.emplace_back([&tree, &stop, &mismatches, &missing]() {
+    threads.push(rusty::thread::spawn([&tree, &stop, &mismatches, &missing]() {
       while (!stop.load(std::memory_order_acquire)) {
         for (uint64_t v = 0; v < kStableCount; ++v) {
           TestTree::value_type out = nullptr;
@@ -182,9 +186,9 @@ TEST(MasstreeConcurrent, StableKeysVisibleUnderChurn) {
           }
         }
       }
-    });
+    }));
   }
-  for (auto& th : threads) th.join();
+  for (auto& th : threads) { auto _ = th.join(); }
 
   EXPECT_EQ(missing.load(), 0u);
   EXPECT_EQ(mismatches.load(), 0u);
@@ -213,10 +217,10 @@ TEST(MasstreeConcurrent, ScannersSeeSortedOutputUnderInserters) {
   constexpr uint64_t kWriterBase = 1u << 20;
   constexpr uint64_t kWriterStride = 1024;
 
-  std::vector<std::thread> threads;
-  threads.reserve(kWriters + kScanners);
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+      kWriters + kScanners);
   for (int t = 0; t < kWriters; ++t) {
-    threads.emplace_back([&tree, &stop, t]() {
+    threads.push(rusty::thread::spawn([&tree, &stop, t]() {
       const uint64_t base = kWriterBase + static_cast<uint64_t>(t) * kWriterStride;
       while (!stop.load(std::memory_order_acquire)) {
         for (uint64_t i = 0; i < kWriterStride; ++i) {
@@ -226,49 +230,49 @@ TEST(MasstreeConcurrent, ScannersSeeSortedOutputUnderInserters) {
           tree.remove(K(base + i));
         }
       }
-    });
+    }));
   }
 
   std::atomic<uint64_t> bad_order{0};
   std::atomic<uint64_t> bad_value{0};
   std::atomic<uint64_t> scans_run{0};
   for (int t = 0; t < kScanners; ++t) {
-    threads.emplace_back([&tree, &stop, &bad_order, &bad_value, &scans_run]() {
+    threads.push(rusty::thread::spawn([&tree, &stop, &bad_order, &bad_value, &scans_run]() {
       class Cb : public TestTree::search_range_callback {
        public:
-        std::vector<uint64_t> keys_seen;
-        std::vector<uint64_t> values_seen;
+        // uint64_t is trivially destructible, so rusty::Vec<uint64_t>'s
+        // destructor is noexcept and satisfies the base class's
+        // implicitly-noexcept virtual ~callback().
+        rusty::Vec<uint64_t> keys_seen;
+        rusty::Vec<uint64_t> values_seen;
         bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
           // Keys here are u64_varkey big-endian encoded — but for sorted-order
           // checking we only need the byte representation to be monotonic,
           // which u64_varkey is (because the key was inserted with that
           // encoding). Just record the string and compare to previous.
-          if (!keys_seen.empty() && k.length() == 8) {
-            // empty
-          }
           // We don't decode here; we just collect raw bytes and check sort
           // via the std::string of the key. Use the value as the integer.
-          keys_seen.push_back(FromValue(v));      // monotonic if scan is sorted
-          values_seen.push_back(FromValue(v));
+          keys_seen.push(FromValue(v));      // monotonic if scan is sorted
+          values_seen.push(FromValue(v));
           (void)k;
-          return keys_seen.size() < 8192;
+          return keys_seen.len() < 8192;
         }
       };
       while (!stop.load(std::memory_order_acquire)) {
         Cb cb;
         u64_varkey lo(0);
         tree.search_range_call(lo, nullptr, cb);
-        for (size_t i = 1; i < cb.keys_seen.size(); ++i) {
+        for (size_t i = 1; i < cb.keys_seen.len(); ++i) {
           if (cb.keys_seen[i] <= cb.keys_seen[i - 1]) ++bad_order;
         }
-        for (size_t i = 0; i < cb.keys_seen.size(); ++i) {
+        for (size_t i = 0; i < cb.keys_seen.len(); ++i) {
           if (cb.keys_seen[i] != cb.values_seen[i]) ++bad_value;
         }
         ++scans_run;
       }
-    });
+    }));
   }
-  for (auto& th : threads) th.join();
+  for (auto& th : threads) { auto _ = th.join(); }
 
   EXPECT_GT(scans_run.load(), 0u);
   EXPECT_EQ(bad_order.load(), 0u);
@@ -300,13 +304,13 @@ TEST(MasstreeConcurrent, LongRunningReadersAcrossEpochs) {
   constexpr uint64_t kChurnBase = 1u << 20;
   constexpr uint64_t kPerWriter = 4096;
 
-  std::vector<std::thread> threads;
-  threads.reserve(kReaders + kWriters);
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+      kReaders + kWriters);
   std::atomic<uint64_t> reader_failures{0};
   std::atomic<uint64_t> reader_iters{0};
 
   for (int r = 0; r < kReaders; ++r) {
-    threads.emplace_back([&tree, &stop, &reader_failures, &reader_iters]() {
+    threads.push(rusty::thread::spawn([&tree, &stop, &reader_failures, &reader_iters]() {
       while (!stop.load(std::memory_order_acquire)) {
         for (uint64_t v = 0; v < kStableCount; ++v) {
           TestTree::value_type out = nullptr;
@@ -316,10 +320,10 @@ TEST(MasstreeConcurrent, LongRunningReadersAcrossEpochs) {
         }
         ++reader_iters;
       }
-    });
+    }));
   }
   for (int w = 0; w < kWriters; ++w) {
-    threads.emplace_back([&tree, &stop, w]() {
+    threads.push(rusty::thread::spawn([&tree, &stop, w]() {
       const uint64_t base = kChurnBase + static_cast<uint64_t>(w) * kPerWriter;
       while (!stop.load(std::memory_order_acquire)) {
         for (uint64_t i = 0; i < kPerWriter; ++i) {
@@ -329,9 +333,9 @@ TEST(MasstreeConcurrent, LongRunningReadersAcrossEpochs) {
           tree.remove(K(base + i));
         }
       }
-    });
+    }));
   }
-  for (auto& t : threads) t.join();
+  for (auto& t : threads) { auto _ = t.join(); }
 
   EXPECT_EQ(reader_failures.load(), 0u);
   EXPECT_GT(reader_iters.load(), 0u);
