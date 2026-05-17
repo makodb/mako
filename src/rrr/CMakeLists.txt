@@ -95,37 +95,68 @@ if(NOT TARGET rrr)
     target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
     target_link_libraries(rrr pthread)
 
-    # RRR files for borrow checking (explicit list to control what gets checked)
+    # RRR files for borrow checking — every non-test C++ module unit in rrr
+    # except for the two genuine exclusions called out at the bottom.
     set(RRR_BORROW_SRC
-        # The previous reactor/fiber_impl.cc, event.cc, quorum_event.cc,
-        # reactor.cc files were merged into rrr.reactor (reactor.cpp). The
-        # consolidated module is wired in below.
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
-        # Module units: rusty-cpp now handles C++23 named modules via
-        # `--compile-commands compile_commands.json`, so the previous
-        # "omitted — module unit" entries are wired in below.
+        # base/
         ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/callback_wrapper.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
+        # misc/
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/alarm.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/dball.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/netinfo.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
-        # removed misc/recorder.cpp — class
-        # deleted; was unused after Phase 4e-35.
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
+        # reactor/ — (fiber_impl.cc, event.cc, quorum_event.cc, reactor.cc were
+        # merged into rrr.reactor / reactor.cpp during modularization.)
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
+        # rpc/
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
-        # rpc/server.cpp omitted — triggers a clang-22 libclang crash when
-        # parsed as a borrow-check input (separate from the codegen-crash
-        # workarounds documented in srpc_module_migration_plan.md).
-        # Re-enable once the upstream libclang issue is resolved.
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/completion_tracker.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
+        # rpc/fiber_channel.cpp omitted — same clang-22 libclang crash as
+        # rpc/server.cpp ("Failed to parse file: Crash"). Likely the same
+        # libclang bug triggered by `create_sp_event<>`-shaped patterns in
+        # module purview. Re-enable when upstream is fixed.
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_queue.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
+        # Exclusions (each with a reason):
+        # - rpc/server.cpp: triggers a clang-22 libclang crash when parsed as
+        #   a borrow-check input. Re-enable once the upstream libclang fix
+        #   lands.
+        # - reactor/fiber_context_{aarch64,x86_64}.cc: arch-specific inline
+        #   `__asm__ volatile(...)` context-switch trampolines (~30 lines
+        #   each). C++ semantics don't reach them.
     )
 
     if(ENABLE_BORROW_CHECKING AND RRR_BORROW_SRC)
