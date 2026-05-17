@@ -78,17 +78,13 @@ class StorageBank {
 class BenchmarkHarness {
  public:
   explicit BenchmarkHarness(BenchmarkConfig cfg)
-      : cfg_(std::move(cfg)) {
-    // keys_ stays std::vector — u64_varkey is self-referential (the
-    // varkey base stores a pointer into its own `obj` member), so the
-    // push() move on rusty::Vec would leave dangling pointers in the
-    // moved-from temporary. Same fix as in test_masstree.cc.
-    keys_.reserve(cfg_.key_count);
+      : cfg_(std::move(cfg)),
+        keys_(rusty::Vec<u64_varkey>::with_capacity(cfg_.key_count)),
+        sequential_order_(rusty::Vec<size_t>::with_capacity(cfg_.key_count)) {
     for (size_t i = 0; i < cfg_.key_count; ++i) {
-      keys_.emplace_back(static_cast<uint64_t>(i));
+      keys_.push(u64_varkey(static_cast<uint64_t>(i)));
+      sequential_order_.push(i);
     }
-    sequential_order_ = rusty::Vec<size_t>::with_capacity(cfg_.key_count);
-    for (size_t i = 0; i < cfg_.key_count; ++i) sequential_order_.push(i);
   }
 
   BenchmarkSummary RunAll() {
@@ -351,7 +347,7 @@ class BenchmarkHarness {
   }
 
   BenchmarkConfig cfg_;
-  std::vector<u64_varkey> keys_;       // see ctor: self-referential, must stay std::vector
+  rusty::Vec<u64_varkey> keys_;
   rusty::Vec<size_t> sequential_order_;
   std::mt19937_64 rng_{42};
 };
