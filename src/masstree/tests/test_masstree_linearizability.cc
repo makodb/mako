@@ -16,7 +16,7 @@
 //   1. The order is consistent with the wall-clock partial order
 //      (op A precedes op B in the order iff A.end_seq < B.begin_seq,
 //      using strict less-than).
-//   2. Applied left-to-right to an std::optional<uint64_t> register
+//   2. Applied left-to-right to a rusty::Option<uint64_t> register
 //      oracle, every op's observed return value matches the oracle's
 //      predicted return.
 //
@@ -31,6 +31,11 @@
 #include <stddef.h>
 
 #include <gtest/gtest.h>
+
+#include <rusty/btreemap.hpp>
+#include <rusty/option.hpp>
+#include <rusty/thread.hpp>
+#include <rusty/vec.hpp>
 
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
@@ -71,7 +76,7 @@ struct Op {
   uint64_t ret_value;    // recorded value for Search hits
 };
 
-using KeyState = std::optional<uint64_t>;
+using KeyState = rusty::Option<uint64_t>;
 
 struct ApplyResult {
   bool ok;
@@ -79,31 +84,32 @@ struct ApplyResult {
 };
 
 ApplyResult Apply(const Op& op, KeyState state) {
-  ApplyResult r{false, state};
+  ApplyResult r{false, std::move(state)};
   switch (op.kind) {
     case OpKind::Insert: {
-      const bool expected = !state.has_value();
+      const bool expected = !r.new_state.is_some();
       r.ok = (op.ret_bool == expected);
       r.new_state = op.value;
       break;
     }
     case OpKind::InsertIfAbsent: {
-      const bool expected = !state.has_value();
+      const bool expected = !r.new_state.is_some();
       r.ok = (op.ret_bool == expected);
       if (expected) r.new_state = op.value;
       break;
     }
     case OpKind::Remove: {
-      const bool expected = state.has_value();
+      const bool expected = r.new_state.is_some();
       r.ok = (op.ret_bool == expected);
-      r.new_state = std::nullopt;
+      r.new_state = rusty::None;
       break;
     }
     case OpKind::Search: {
-      const bool expected_found = state.has_value();
+      const bool expected_found = r.new_state.is_some();
       if (op.ret_bool != expected_found) {
         r.ok = false;
-      } else if (op.ret_bool && state.value() != op.ret_value) {
+      } else if (op.ret_bool &&
+                 std::as_const(r.new_state).unwrap() != op.ret_value) {
         r.ok = false;
       } else {
         r.ok = true;
@@ -115,10 +121,10 @@ ApplyResult Apply(const Op& op, KeyState state) {
   return r;
 }
 
-bool TryLinearize(std::vector<Op*>& pending, KeyState state) {
-  if (pending.empty()) return true;
+bool TryLinearize(rusty::Vec<Op*>& pending, KeyState state) {
+  if (pending.is_empty()) return true;
 
-  for (size_t i = 0; i < pending.size(); ++i) {
+  for (size_t i = 0; i < pending.len(); ++i) {
     Op* candidate = pending[i];
 
     // Check candidate has no required predecessor among pending ops.
@@ -131,27 +137,29 @@ bool TryLinearize(std::vector<Op*>& pending, KeyState state) {
     }
     if (has_predecessor) continue;
 
-    auto ar = Apply(*candidate, state);
+    // state must be cloned because Apply takes by value (it constructs
+    // ApplyResult.new_state from the move) and we still need the original
+    // for sibling branches in the search.
+    auto ar = Apply(*candidate, state.clone());
     if (!ar.ok) continue;
 
     // Remove candidate, recurse.
     std::swap(pending[i], pending.back());
-    pending.pop_back();
-    if (TryLinearize(pending, ar.new_state)) return true;
-    pending.push_back(candidate);
+    auto _ = pending.pop();
+    if (TryLinearize(pending, std::move(ar.new_state))) return true;
+    pending.push(candidate);
     std::swap(pending[i], pending.back());
   }
   return false;
 }
 
-bool CheckPerKeyLinearizability(std::vector<Op>& ops_for_key) {
+bool CheckPerKeyLinearizability(rusty::Vec<Op>& ops_for_key) {
   // Sort by begin_seq for a more constrained (faster) search.
   std::sort(ops_for_key.begin(), ops_for_key.end(),
             [](const Op& a, const Op& b) { return a.begin_seq < b.begin_seq; });
-  std::vector<Op*> pending;
-  pending.reserve(ops_for_key.size());
-  for (auto& o : ops_for_key) pending.push_back(&o);
-  return TryLinearize(pending, std::nullopt);
+  auto pending = rusty::Vec<Op*>::with_capacity(ops_for_key.len());
+  for (auto& o : ops_for_key) pending.push(&o);
+  return TryLinearize(pending, rusty::None);
 }
 
 const char* KindName(OpKind k) {
@@ -164,7 +172,7 @@ const char* KindName(OpKind k) {
   return "?";
 }
 
-std::string DumpOps(const std::vector<Op>& ops) {
+std::string DumpOps(const rusty::Vec<Op>& ops) {
   std::ostringstream os;
   for (const auto& o : ops) {
     os << "  t" << o.thread_id << " [" << o.begin_seq << "," << o.end_seq << "] "
@@ -188,8 +196,10 @@ void RunLinearizabilitySession(uint64_t seed) {
   constexpr int kOpsPerThread = 30;
   constexpr int kKeyspace = 8;
 
-  std::vector<std::vector<Op>> per_thread(kThreads);
-  for (auto& v : per_thread) v.reserve(kOpsPerThread);
+  auto per_thread = rusty::Vec<rusty::Vec<Op>>::with_capacity(kThreads);
+  for (int t = 0; t < kThreads; ++t) {
+    per_thread.push(rusty::Vec<Op>::with_capacity(kOpsPerThread));
+  }
 
   std::array<uint64_t, kThreads> thread_seeds{};
   for (auto& s : thread_seeds) s = master_rng();
@@ -231,27 +241,34 @@ void RunLinearizabilitySession(uint64_t seed) {
       }
 
       op.end_seq = clock.fetch_add(1, std::memory_order_seq_cst);
-      log.push_back(op);
+      log.push(op);
     }
   };
 
-  std::vector<std::thread> threads;
-  threads.reserve(kThreads);
-  for (int t = 0; t < kThreads; ++t) threads.emplace_back(thread_body, t);
-  for (auto& th : threads) th.join();
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
+  for (int t = 0; t < kThreads; ++t) {
+    threads.push(rusty::thread::spawn(thread_body, t));
+  }
+  for (auto& th : threads) { auto _ = th.join(); }
 
   // Bucket ops by key.
-  std::map<uint64_t, std::vector<Op>> per_key;
+  rusty::BTreeMap<uint64_t, rusty::Vec<Op>> per_key;
   for (auto& pt : per_thread) {
-    for (auto& op : pt) per_key[op.key].push_back(op);
+    for (auto& op : pt) {
+      if (!per_key.contains_key(op.key)) {
+        per_key.insert(op.key, rusty::Vec<Op>::new_());
+      }
+      per_key.get_mut(op.key).unwrap().push(op);
+    }
   }
 
-  for (auto& [k, ops] : per_key) {
+  for (auto entry : per_key) {
+    auto& [k, ops] = entry;
     const bool ok = CheckPerKeyLinearizability(ops);
     ASSERT_TRUE(ok)
         << "non-linearizable history at key=" << k
         << " seed=0x" << std::hex << seed << std::dec
-        << " ops=" << ops.size() << "\n"
+        << " ops=" << ops.len() << "\n"
         << DumpOps(ops);
   }
 }
