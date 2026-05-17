@@ -2435,6 +2435,43 @@ if(BUILD_TESTS)
     )
     add_test(NAME SiloAllocatorTupleTests COMMAND test_silo_allocator_tuple)
 
+    # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
+    # because its subject matter is the SiloRuntime, not Masstree).
+    add_executable(test_silo_runtime tests/test_silo_runtime.cc)
+    target_include_directories(test_silo_runtime PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_silo_runtime
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        pthread)
+    add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
+
+    # Test: Multi-site Silo stress.
+    add_executable(test_silo_multi_site_stress tests/test_silo_multi_site_stress.cc)
+    target_include_directories(test_silo_multi_site_stress PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_silo_multi_site_stress PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_silo_multi_site_stress
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        pthread)
+    add_test(NAME test_silo_multi_site_stress COMMAND test_silo_multi_site_stress)
+
+    # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
+    # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
+    # is not picked up by ctest.
+    if(DEFINED ENV{MAKO_REPRO_FINDING6} AND "$ENV{MAKO_REPRO_FINDING6}" STREQUAL "1")
+        add_executable(repro_finding6 tests/repro_finding6.cc)
+        target_include_directories(repro_finding6 PRIVATE ${TEST_INCLUDE_DIRS})
+        target_compile_options(repro_finding6 PRIVATE ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(repro_finding6 mako ${TEST_LINK_LIBS} pthread)
+    endif()
+
     # Test: STO Transaction (TRcu)
     add_executable(test_sto_transaction tests/test_sto_transaction.cc)
     target_link_libraries(test_sto_transaction

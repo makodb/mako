@@ -146,16 +146,6 @@ function(mako_add_masstree_tests)
     target_link_libraries(test_masstree_headers mako ${TEST_LINK_LIBS} pthread)
     add_test(NAME test_masstree_headers COMMAND test_masstree_headers)
 
-    # Minimal reproducer for sanitizer-findings.md Finding 6.
-    # Gated on MAKO_REPRO_FINDING6=1 because the binary aborts by
-    # design — CTest must not pick it up by default.
-    if(DEFINED ENV{MAKO_REPRO_FINDING6} AND "$ENV{MAKO_REPRO_FINDING6}" STREQUAL "1")
-        add_executable(repro_finding6 ${MASSTREE_TEST_DIR}/repro_finding6.cc)
-        target_include_directories(repro_finding6 PRIVATE ${TEST_INCLUDE_DIRS})
-        target_compile_options(repro_finding6 PRIVATE ${TEST_COMPILE_OPTIONS})
-        target_link_libraries(repro_finding6 mako ${TEST_LINK_LIBS} pthread)
-    endif()
-
     # libFuzzer differential harness — gated on MAKO_FUZZER=1 (Tier 6).
     # Not wired into ctest; intended to be invoked by hand or via
     # OSS-Fuzz. See docs/masstree-test-plan.md for the toolchain
@@ -183,28 +173,13 @@ function(mako_add_masstree_tests)
     target_link_libraries(test_masstree_multi_instance mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree_multi_instance COMMAND test_masstree_multi_instance)
 
-    # SiloRuntime per-site isolation.
-    add_executable(test_silo_runtime ${MASSTREE_TEST_DIR}/test_silo_runtime.cc)
-    target_include_directories(test_silo_runtime PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_silo_runtime mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
-
-    # Multi-site Silo stress.
-    add_executable(test_silo_multi_site_stress ${MASSTREE_TEST_DIR}/test_silo_multi_site_stress.cc)
-    target_include_directories(test_silo_multi_site_stress PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_silo_multi_site_stress PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_silo_multi_site_stress mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_silo_multi_site_stress COMMAND test_silo_multi_site_stress)
-
-    # Borrow checking for Silo tests
-    # Note: compare_key and increment functions now have correct @unsafe annotations.
-    # Full borrow checking is disabled because other Masstree code (nodeversion.hh,
-    # string.hh) has violations that require broader refactoring.
-    # if(ENABLE_BORROW_CHECKING)
-    #     add_borrow_check_target(test_silo_runtime)
-    #     add_borrow_check_target(test_silo_multi_site_stress)
-    # endif()
+    # NOTE: test_silo_runtime, test_silo_multi_site_stress, and
+    # repro_finding6 used to live here but were moved to the top-
+    # level tests/ directory (and wired from the root CMakeLists)
+    # because their subject matter is the Mako SiloRuntime / Mako
+    # allocator, not Masstree. The masstree/tests folder is for
+    # tests that exercise Masstree behaviour; Mako-side tests
+    # belong with their siblings in tests/.
 
     # On-demand performance benchmark.
     set(MASSTREE_PERF_SRC "${MASSTREE_TEST_DIR}/masstree_perf.cc")
