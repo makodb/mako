@@ -134,10 +134,7 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
-        # rpc/fiber_channel.cpp omitted — same clang-22 libclang crash as
-        # rpc/server.cpp ("Failed to parse file: Crash"). Likely the same
-        # libclang bug triggered by `create_sp_event<>`-shaped patterns in
-        # module purview. Re-enable when upstream is fixed.
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
@@ -148,12 +145,20 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_queue.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
+        # Notes on parse-recovery:
+        # - rpc/server.cpp and rpc/fiber_channel.cpp trip a libclang-22 crash
+        #   on the first parse attempt (clang++ CLI compiles them fine — it's
+        #   a libclang-specific bug). rusty-cpp's parser detects the crash
+        #   and retries with module args dropped (keeps `import std;` only),
+        #   producing a partial AST. Findings against these two files are
+        #   missing cross-module callee-name resolution, so they show up as
+        #   `Calling non-safe function 'unknown'` and may include false
+        #   positives. Once upstream libclang is fixed the recovery will
+        #   become a no-op and findings will gain full precision.
         # Exclusions (each with a reason):
-        # - rpc/server.cpp: triggers a clang-22 libclang crash when parsed as
-        #   a borrow-check input. Re-enable once the upstream libclang fix
-        #   lands.
         # - reactor/fiber_context_{aarch64,x86_64}.cc: arch-specific inline
         #   `__asm__ volatile(...)` context-switch trampolines (~30 lines
         #   each). C++ semantics don't reach them.

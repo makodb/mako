@@ -425,7 +425,9 @@ public:
         reply(req, error_code, [](BinaryWriteArchive&) {});
     }
 
-    // @safe - Delegates to thread pool (currently a no-op stub)
+    // @unsafe - Invokes the caller-supplied `rusty::Function<void()>` callback
+    // inline. The callback's body is opaque to the borrow checker; treating
+    // the wrapper as @unsafe matches the out-of-line definition.
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
     int run_async(rusty::Function<void()> f);
 
@@ -540,7 +542,9 @@ public:
         // req_ automatically cleaned up by rusty::Box destructor
     }
 
-    // @safe - Executes callback inline; returns error on empty callback.
+    // @unsafe - Invokes the caller-supplied `rusty::Function<void()>` callback
+    // inline; returns EINVAL on empty callback. Treated as @unsafe for the
+    // same reason as the ServerConnection overload above.
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
     int run_async(rusty::Function<void()> f);
 
@@ -781,7 +785,9 @@ public:
     // @safe - Signals shutdown to waiting threads
     void do_shutdown();
 
-    // @safe - Blocks until shutdown is signaled
+    // @unsafe - Blocks the caller on `shutdown_cond_.wait_while(...)`. The
+    // wait predicate runs arbitrary code under the mutex; treating the
+    // wrapper as @unsafe matches the out-of-line definition.
     void wait_for_shutdown();
 
     // === Graceful Shutdown API ===
@@ -791,7 +797,9 @@ public:
      * Hooks are called in order of registration during the CLOSING phase.
      * @param hook Callback function to execute during shutdown
      */
-    // @safe - Thread-safe hook registration
+    // @unsafe - Stores the caller-supplied hook for later invocation. The
+    // hook is opaque and will be called during shutdown; treating the
+    // registration site as @unsafe matches the out-of-line definition.
     void add_shutdown_hook(ShutdownHook hook);
 
     /**
