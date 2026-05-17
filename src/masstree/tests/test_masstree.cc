@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/box.hpp>
+#include <rusty/vec.hpp>
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
@@ -22,12 +24,16 @@ inline varkey vk(const std::string& s) {
 class MasstreeTest : public ::testing::Test {
  protected:
   TestTree tree_;
-  std::vector<std::unique_ptr<uint64_t>> storage_;
+  // Possible thanks to the rusty::Vec destructor being conditional
+  // on T's noexcept-ness — uint64_t and rusty::Box<uint64_t> are
+  // both noexcept-destructible, so Vec<Box<uint64_t>> is too, and
+  // MasstreeTest's implicit ~MasstreeTest() remains noexcept and
+  // does not violate ::testing::Test's noexcept virtual destructor.
+  rusty::Vec<rusty::Box<uint64_t>> storage_;
 
   TestTree::value_type MakeValue(uint64_t v) {
-    storage_.emplace_back(std::make_unique<uint64_t>(v));
-    auto* raw = reinterpret_cast<TestTree::value_type>(storage_.back().get());
-    return raw;
+    storage_.push(rusty::Box<uint64_t>::make(v));
+    return reinterpret_cast<TestTree::value_type>(storage_.back().get());
   }
 
   static uint64_t Decode(TestTree::value_type v) {
