@@ -42,6 +42,8 @@ void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));
  * Use verify() when the test is crucial for both debug and release binary.
  */
 template <typename Expr>
+// @safe - pure precondition check; aborts on failure (parity with Rust's
+// `assert!` macro). No memory operations, no caller-visible side effects.
 inline void verify(const Expr& expr,
                    const std::source_location& loc = std::source_location::current()) {
   const bool ok = static_cast<bool>(expr);

@@ -2009,8 +2009,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
     auto status = event.status_.get();
     if (status == Event::WAIT) {
       const auto& wakeup_time = event.wakeup_time_;
-      // @unsafe - verify is external
-      { verify(wakeup_time > 0); }
+      verify(wakeup_time > 0);
       if (time_now >= wakeup_time) {
         if (event.is_ready()) {
           event.status_.set(Event::READY);

@@ -2890,7 +2890,11 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
     auto pending_guard = pending_fu_.lock().unwrap();
     auto fu_ptr = pending_guard->get(xid);
     if (fu_ptr.is_some()) {
-      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());  // Copy Arc before remove
+      // @unsafe - HashMap::get returns Option<V*> (raw pointer); the deref
+      // here is intentional. Cloning the Arc is otherwise safe.
+      {
+        fu_opt = rusty::Some(fu_ptr.unwrap()->clone());
+      }
       pending_guard->remove(xid);
     }
   }  // Drop lock before notifying callback/future waiters
