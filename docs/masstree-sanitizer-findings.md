@@ -351,7 +351,31 @@ inside Tier 3.1 was out of scope.
 
 ---
 
-## Finding 6 — Ephemeral threads on `concurrent_btree` SIGABRT — **graceful-fail path landed**
+## Finding 6 — Ephemeral threads on `concurrent_btree` SIGABRT — **graceful-fail path landed; not a Masstree issue**
+
+**Important framing**: the bug lives in Mako's allocator layer, not
+in Masstree. Pure upstream Masstree has no thread cap at all — its
+`threadinfo::make()` just prepends to a per-context linked list.
+The abort surfaces only when client code uses Mako's `mbtree`
+wrapper (`concurrent_btree` / `single_threaded_btree`), which
+routes Masstree's allocations through Mako's `rcu::s_instance` and
+`coreid::core_id()` — and *those* are the things bound by
+`SiloRuntime::NMAXCORES = 512`.
+
+The contrast is locked in by tests:
+
+  * `MasstreeMultiInstanceTest.PureMasstreeAcceptsUnboundedEphemeralThreads`
+    spawns 5,000 ephemeral threads (10× Mako's cap) against a
+    `Masstree::basic_table<PureParams>` with `threadinfo` from
+    kvthread.hh. Passes cleanly in ~7 s.
+  * `src/masstree/tests/repro_finding6.cc` runs the same pattern on
+    `concurrent_btree` (Mako wrapper). Aborts after ≤2 cycles.
+    Gated on `MAKO_REPRO_FINDING6=1` so CTest doesn't pick it up.
+
+For Mako consumers who need to keep using `mbtree` and want a
+graceful failure instead of an abort:
+
+
 
 A graceful registration API has been added on top of the original
 abort path (which is preserved for legacy callers):

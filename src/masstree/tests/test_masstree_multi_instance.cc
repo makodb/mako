@@ -712,6 +712,75 @@ TEST_F(MasstreeMultiInstanceTest, RebindAcrossContextsKeepsBothConsistent) {
 // They belong with the SiloRuntime tests, not here, because the cap
 // is a SiloRuntime concept, not a Masstree concept.)
 
+// Counterpart to Finding 6: pure Masstree has no thread cap.
+//
+// The original Finding 6 abort happened in Mako's allocator layer
+// (SiloRuntime::allocate_core_id → ALWAYS_ASSERT(id < NMaxCores))
+// when an mbtree<masstree_params> (concurrent_btree) was used from
+// ephemeral threads: each new thread lifetime consumed a core_id
+// slot irreversibly. Pure upstream Masstree has no such cap;
+// threadinfo::make() just prepends to a per-context linked list.
+//
+// This test proves the distinction: 5,000 ephemeral threads (well
+// past Mako's 512 cap) each register a fresh threadinfo, perform a
+// short batch of pure-Masstree tree ops, and exit. Cleanly
+// completes — no abort. Same workload on concurrent_btree triggers
+// the SIGABRT documented in docs/masstree-sanitizer-findings.md
+// (Finding 6); see repro_finding6.cc.
+TEST_F(MasstreeMultiInstanceTest, PureMasstreeAcceptsUnboundedEphemeralThreads) {
+    PureTable tree;
+    {
+        // Initialize the tree under a setup threadinfo bound to ctx1_.
+        std::thread init([this, &tree]() {
+            MasstreeContext::BindCurrentThread(ctx1_);
+            threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 50000);
+            tree.initialize(*ti);
+        });
+        init.join();
+    }
+
+    constexpr int kEphemerals = 5000;       // ~10× Mako's NMAXCORES cap
+    constexpr int kOpsPerThread = 16;
+
+    std::atomic<int> completed{0};
+    std::atomic<int> failures{0};
+
+    // Sequential spawn/join — the exact pattern that aborts on
+    // concurrent_btree. Each iteration is short, but the cumulative
+    // thread count is what matters.
+    for (int gen = 0; gen < kEphemerals; ++gen) {
+        std::thread eph([this, gen, &tree, &completed, &failures]() {
+            MasstreeContext::BindCurrentThread(ctx1_);
+            threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 50001 + gen);
+            if (ti == nullptr) { ++failures; return; }
+
+            ti->rcu_start();
+
+            // Each ephemeral writes to its own key stripe so we
+            // don't fight for the same leaf with previous gens.
+            const uint64_t base = (1ull << 30) + static_cast<uint64_t>(gen) * kOpsPerThread;
+            for (int i = 0; i < kOpsPerThread; ++i) {
+                // Encode the value into the pointer itself — no
+                // per-op heap allocation distorting the measurement.
+                auto* v = reinterpret_cast<uint64_t*>(
+                    static_cast<uintptr_t>(base + i));
+                pure_insert(tree, *ti, be_u64(base + i), v);
+            }
+            for (int i = 0; i < kOpsPerThread; ++i) {
+                uint64_t* out = nullptr;
+                if (!pure_search(tree, *ti, be_u64(base + i), &out)) ++failures;
+            }
+
+            ti->rcu_stop();
+            ++completed;
+        });
+        eph.join();
+    }
+
+    EXPECT_EQ(completed.load(), kEphemerals);
+    EXPECT_EQ(failures.load(), 0);
+}
+
 // Test 9: Context teardown / leak check.
 //
 // MasstreeContext intentionally leaks across the rest of this
