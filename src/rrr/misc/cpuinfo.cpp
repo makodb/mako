@@ -1,0 +1,226 @@
+module;
+
+#include <rusty/rusty.hpp>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <sys/times.h>
+#include <unistd.h>
+
+#ifdef __linux__
+#include <sys/sysinfo.h>
+#endif
+
+export module rrr.cpuinfo;
+
+import std;
+import rrr.logging;
+
+export namespace rrr {
+
+class CPUInfo {
+private:
+    unsigned long last_bytes_rxed[10], last_bytes_txed[10], last_mem_usage[10];
+    clock_t last_ticks_[10], last_user_ticks_[10], last_kernel_ticks_[10];
+    double last_cpu, last_txed, last_rxed, last_mem;
+    long long total_mem;
+    long page_size;
+    int index = 0;
+    pid_t pid_;
+    std::recursive_mutex mtx_;
+    CPUInfo() {
+        const std::lock_guard<std::recursive_mutex> lock (mtx_);
+#ifdef __linux__
+        struct tms tms_buf;
+        rusty::Vec<double> result;
+        struct sysinfo mem_info;
+
+        sysinfo(&mem_info);
+        total_mem = mem_info.totalram;
+        total_mem *= mem_info.mem_unit;
+        total_mem /= 1024;
+        Log_debug("total amount of ram is: %lld", total_mem);
+
+        page_size = sysconf(_SC_PAGE_SIZE) / 1024;
+
+        last_ticks_[index] = times(&tms_buf);
+        last_kernel_ticks_[index] = tms_buf.tms_stime;
+        last_user_ticks_[index] = tms_buf.tms_utime;
+
+        pid_ = ::getpid();
+        get_network(std::to_string(pid_), result, last_ticks_[index]);
+        get_memory(std::to_string(pid_), result, last_ticks_[index]);
+
+        index++;
+#else
+        last_cpu = last_txed = last_rxed = last_mem = 0.0;
+        total_mem = 0;
+        page_size = 0;
+        index = 0;
+        pid_ = ::getpid();
+#endif
+    }
+
+    rusty::Vec<double> get_cpu_stat() {
+        const std::lock_guard<std::recursive_mutex> lock (mtx_);
+
+        struct tms tms_buf;
+        clock_t ticks;
+        rusty::Vec<double> result;
+        double cpu_total;
+        clock_t last_ticks;
+
+        ticks = times(&tms_buf);
+        if(index < 10) last_ticks = last_ticks_[index-1];
+        else last_ticks = last_ticks_[9];
+
+        Log_debug("ticks: %d -> %d", last_ticks, ticks);
+        if (ticks <= last_ticks + 60){
+            if(index < 10){
+                return {-1.0, -1.0, -1.0, -1.0};
+            } else{
+                return {last_cpu, last_txed, last_rxed, last_mem};
+            }
+        }
+
+        if(index < 10){
+            last_kernel_ticks_[index] = tms_buf.tms_stime;
+            last_user_ticks_[index] = tms_buf.tms_utime;
+            last_ticks_[index] = ticks;
+            index++;
+        } else{
+            for(int i = 0; i < 9; i++){
+                last_kernel_ticks_[i] = last_kernel_ticks_[i+1];
+                last_user_ticks_[i] = last_user_ticks_[i+1];
+                last_ticks_[i] = last_ticks_[i+1];
+            }
+            last_kernel_ticks_[9] = tms_buf.tms_stime;
+            last_user_ticks_[9] = tms_buf.tms_utime;
+            last_ticks_[9] = ticks;
+        }
+
+        if(index < 10){
+            cpu_total = -1.0;
+        } else{
+            cpu_total = (tms_buf.tms_stime - last_kernel_ticks_[8]) +
+                (tms_buf.tms_utime - last_user_ticks_[8]);
+            cpu_total /= (ticks - last_ticks_[8]);
+        }
+        last_cpu = cpu_total;
+
+        if(index < 10) result.push(-1.0);
+        else result.push(cpu_total);
+
+        get_network(std::to_string(pid_), result, ticks);
+        get_memory(std::to_string(pid_), result, ticks);
+        return result;
+    }
+
+    void get_network(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
+#ifndef __linux__
+        (void) pid;
+        (void) ticks;
+        result.push(-1.0);
+        result.push(-1.0);
+        return;
+#else
+        double tx_total = -1.0, rx_total = -1.0;
+        std::string line;
+        unsigned long txed = 0, rxed = 0;
+        std::ifstream netfile("/proc/"+pid+"/net/dev");
+
+        for(int i = 0; i < 4; i++){
+            getline(netfile, line);
+        }
+
+        int i = 1;
+        char* token = strtok(&line[0], " ");
+        while(token != NULL){
+            token = strtok(NULL, " ");
+            if(i == 1){
+                txed = strtoul(token, NULL, 0);
+            }
+            if(i == 9){
+                rxed = strtoul(token, NULL, 0);
+                break;
+            }
+            i++;
+        }
+
+        if(index < 10) {
+            last_bytes_txed[index] = txed;
+            last_bytes_rxed[index] = rxed;
+        } else{
+            for(int i = 0; i < 9; i++){
+                last_bytes_txed[i] = last_bytes_txed[i+1];
+                last_bytes_rxed[i] = last_bytes_rxed[i+1];
+            }
+            last_bytes_txed[9] = txed;
+            last_bytes_rxed[9] = rxed;
+        }
+
+        if(ticks != last_ticks_[0]){
+            if(index < 10){
+                tx_total = -1.0;
+                rx_total = -1.0;
+            } else{
+                tx_total = (txed-last_bytes_txed[8])/(ticks - last_ticks_[8]);
+                rx_total = (rxed-last_bytes_rxed[8])/(ticks - last_ticks_[8]);
+            }
+        }
+
+        result.push(tx_total);
+        result.push(rx_total);
+
+        last_txed = tx_total;
+        last_rxed = rx_total;
+#endif
+    }
+
+    void get_memory(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
+#ifndef __linux__
+        (void) pid;
+        (void) ticks;
+        result.push(-1.0);
+        return;
+#else
+        long rss;
+        double mem_usage, mem_total = -1.0;
+        std::string ignore;
+
+        std::ifstream stat_file("/proc/"+pid+"/stat", std::ios_base::in);
+
+        stat_file >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore
+                  >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore
+                  >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore >> ignore >> rss;
+
+        mem_usage = rss * page_size;
+
+        if(index < 10) {
+            last_mem_usage[index] = mem_usage;
+        } else{
+            for(int i = 0; i < 9; i++){
+                last_mem_usage[i] = last_mem_usage[i+1];
+            }
+            last_mem_usage[9] = mem_usage;
+        }
+
+        if(ticks != last_ticks_[0]){
+            if(index < 10) mem_total = -1;
+            else mem_total = (mem_usage - last_mem_usage[8])/(ticks - last_ticks_[8]);
+        }
+
+        result.push(mem_total);
+
+        last_mem = mem_total;
+#endif
+    }
+
+public:
+    static rusty::Vec<double> cpu_stat() {
+        static CPUInfo cpu_info;
+        return cpu_info.get_cpu_stat();
+    }
+};
+
+} // export namespace rrr

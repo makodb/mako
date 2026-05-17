@@ -1,21 +1,147 @@
-#include <rusty/arc.hpp>
-#include <rusty/cell.hpp>
-#include <rusty/option.hpp>
+// rrr.fiber_channel — fiber-blocking wrapper over a
+// `ChannelConnectionProxy` (formerly fiber_channel.hpp +
+// fiber_channel.cpp).
+//
+// The channel layer's primitive is callback-driven: every backend
+// (TcpConnection, in-memory channel, …) only has to implement
+// `set_on_frame` / `set_on_closed` / `set_on_error`. That keeps
+// backends simple but pushes callback-shaped code into every
+// consumer. `FiberChannel` provides loop-shaped ergonomics on top:
+//
+//   FiberChannel fc(channel_proxy);
+//   while (auto frame = fc.recv_frame()) {
+//       handle(*frame);
+//   }
+//
+// `recv_frame()` suspends the calling fiber until a frame arrives or
+// the channel is closed. `send_frame(...)` forwards to the proxy
+// (non-suspending — the proxy's outbound queue is internally
+// thread-safe).
+//
+// Threading: must be constructed, destroyed, and `recv_frame()`-ed
+// on the reactor (poll) thread. Only **one fiber** may call
+// `recv_frame()` at a time; the underlying `IntEvent` is
+// single-waiter. `send_frame(...)`, `close()`, and `is_closed()` are
+// safe from any thread.
+//
+// Lifetime: the wrapper installs lambda callbacks on the proxy that
+// capture `this`. The proxy is owned by the wrapper, so the lambdas
+// can never outlive the wrapper. On destruction, the proxy is
+// dropped, destroying the callback closures held by the underlying
+// connection — so callbacks stop firing before any other state is
+// torn down.
+//
+// Clang 22 quirk: importing `rrr.fiber_channel` into a TU that also
+// `import std;`s makes clang ambiguate
+// `operator new(size_t, std::align_val_t)` inside
+// `std::__libcpp_allocate<std::shared_ptr<rusty::Waker>>`
+// instantiations. The other rpc modules don't exhibit this; we
+// found no in-module workaround. The workaround lives in
+// `fiber_channel.hpp` (a 1-line `#include <memory>` shim) which
+// `rrr/rrr.hpp` `#include`s *before* `import rrr.fiber_channel;`.
+// That textual anchor pins libc++'s `operator new` in the global
+// module ahead of the import, and the ambiguity disappears. Empirical
+// — see docs/dev/srpc_module_migration_plan.md for the diagnostic.
+module;
 
-#include "fiber_channel.hpp"
-#include "../rrr.hpp"
+#include <cstddef>
+#include <cstdint>
 
-// `import std;` after every textual `#include` — libc++ rejects
-// textual STL emitted after the import.
+// `<rusty/rusty.hpp>` pre-instantiates libc++ container templates
+// (e.g. `std::vector<uint8_t>::assign`, `std::deque<>::push_back`).
+// Without this, clang 22 crashes CodeGen at `EmitScalarExpr` inside
+// `EmitReturnStmt` when those instantiations are emitted from
+// module-purview function bodies. Same trick as in other rpc
+// modules.
+#include <rusty/rusty.hpp>
+
+export module rrr.fiber_channel;
+
 import std;
+import rrr.channel;
+import rrr.reactor;
+import rrr.threading;
+
+export namespace rrr {
+
+/**
+ * Heap-owned copy of an inbound frame's payload. The wrapping is
+ * necessary because the channel-layer `ChannelFrame::payload` is
+ * only valid for the duration of the `on_frame` callback.
+ */
+struct OwnedFrame {
+    std::vector<std::uint8_t> bytes;
+};
+
+class FiberChannel {
+ public:
+    explicit FiberChannel(ChannelConnectionProxy ch);
+    ~FiberChannel();
+
+    FiberChannel(const FiberChannel&)            = delete;
+    FiberChannel& operator=(const FiberChannel&) = delete;
+    FiberChannel(FiberChannel&&)                 = delete;
+    FiberChannel& operator=(FiberChannel&&)      = delete;
+
+    /**
+     * Suspend the calling fiber until a frame arrives or the channel
+     * is closed.
+     *
+     *   - Returns `Some(frame)` when a frame is available.
+     *   - Returns `None` after the channel has been closed *and* all
+     *     queued frames have been delivered.
+     */
+    rusty::Option<OwnedFrame> recv_frame();
+
+    /** Forward to the channel proxy. Non-suspending. Thread-safe. */
+    ChannelError send_frame(const ChannelFrame& f);
+
+    /**
+     * Forward to the channel proxy. Idempotent. Thread-safe. The
+     * actual `on_closed` callback fires later on the reactor thread,
+     * waking any parked `recv_frame()`.
+     */
+    void close();
+
+    bool is_closed() const;
+
+    /** Underlying channel proxy access (non-owning). For tests. */
+    ChannelConnectionProxy& channel_for_test() { return ch_; }
+
+ private:
+    void on_inbound_frame(const ChannelFrame& f);
+    void on_inbound_closed(ChannelError reason);
+    void on_inbound_error(ChannelError err, std::string_view msg);
+
+    void signal_pending_recv();
+
+    ChannelConnectionProxy ch_;
+
+    // Inbound queue. Touched by the on_frame callback (poll thread)
+    // and by recv_frame (also poll thread). Both paths run on the
+    // same thread but we keep a SpinMutex as a defensive guard so
+    // that any future cross-thread close paths stay safe.
+    SpinMutex<std::deque<OwnedFrame>> queue_{std::deque<OwnedFrame>{}};
+
+    // Single-shot event used to wake a parked recv_frame fiber. We
+    // create a fresh `IntEvent` per wait (since the codebase's
+    // `IntEvent` does not support re-arming after `DONE`).
+    // `pending_recv_event_` is set when a recv fiber is parked and
+    // cleared when it wakes.
+    std::shared_ptr<IntEvent> pending_recv_event_;
+
+    rusty::Cell<bool> closed_{false};
+};
+
+}  // export namespace rrr
 
 namespace rrr {
 
 FiberChannel::FiberChannel(ChannelConnectionProxy ch)
     : ch_(std::move(ch)) {
 
-    // Install callbacks. Each fires on the reactor (poll) thread;
-    // we forward to member methods that touch local state.
+    // Install callbacks. Each fires on the reactor (poll) thread; we
+    // forward to member methods that touch local state.
     ch_->set_on_frame([this](const ChannelFrame& f) {
         on_inbound_frame(f);
     });
@@ -28,15 +154,11 @@ FiberChannel::FiberChannel(ChannelConnectionProxy ch)
 }
 
 FiberChannel::~FiberChannel() {
-    // Detach callbacks before the proxy destructor runs to make
-    // sure any in-flight callback dispatch can't race with member
-    // teardown. `set_on_*({})` resets to the default-constructed
-    // (unset) wrapper.
+    // Detach callbacks before the proxy destructor runs to make sure
+    // any in-flight callback dispatch can't race with member teardown.
     ch_->set_on_frame ({});
     ch_->set_on_closed({});
     ch_->set_on_error ({});
-    // The proxy is dropped here; underlying connection holds no
-    // further reference to `this`.
 }
 
 void FiberChannel::on_inbound_frame(const ChannelFrame& f) {
@@ -56,22 +178,13 @@ void FiberChannel::on_inbound_closed(ChannelError /*reason*/) {
 
 void FiberChannel::on_inbound_error(ChannelError /*err*/,
                                     std::string_view /*msg*/) {
-    // The channel-layer contract follows fatal errors with
-    // `on_closed`, so the fiber wakeup happens there. Non-fatal
-    // errors (rare) are silently ignored at this layer; the upper
-    // RPC layer can install its own on_error hook on the proxy if
-    // it cares. For sub-leaf 4c1 the FiberChannel owns the on_error
-    // slot, but we don't surface it through `recv_frame()` —
-    // sub-leaf 4d will revisit if needed.
+    // Fatal errors are followed by on_closed; non-fatal errors are
+    // silently ignored at this layer.
 }
 
 void FiberChannel::signal_pending_recv() {
     auto event = pending_recv_event_;  // copy shared_ptr defensively
     if (event) {
-        // `IntEvent::set` is fine to call multiple times; only the
-        // first transition to ready wakes the fiber. Subsequent
-        // sets are no-ops. We pass `1` to satisfy the default
-        // `target_=1`.
         event->set(1);
     }
 }
@@ -82,24 +195,16 @@ ChannelError FiberChannel::send_frame(const ChannelFrame& f) {
 
 bool FiberChannel::is_closed() const {
     if (closed_.get()) return true;
-    // Consult the proxy as well: a caller may have closed it from
-    // another thread before the reactor processed `on_closed`. The
-    // const_cast matches how `send_frame` reaches a non-const facade
-    // method through interior-mutable backends.
     auto& mut_ch = const_cast<ChannelConnectionProxy&>(ch_);
     return mut_ch->is_closed();
 }
 
 void FiberChannel::close() {
     ch_->close();
-    // The on_closed callback fires later on the reactor thread.
 }
 
 rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
     while (true) {
-        // Try the queue first. If a frame is available, return it —
-        // even if `closed_` is set, drain queued frames before
-        // returning None so no inbound data is lost.
         {
             auto guard = queue_.lock().unwrap();
             if (!guard->empty()) {
@@ -113,30 +218,19 @@ rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
             return rusty::None;
         }
 
-        // Empty + open: park the fiber. Allocate a fresh IntEvent
-        // (the codebase's IntEvent doesn't support re-arming once
-        // `DONE`). The callback path uses `pending_recv_event_` to
-        // signal it.
         auto event = Reactor::create_sp_event<IntEvent>();
         pending_recv_event_ = event;
 
-        // Race: if a frame arrived between the queue-empty check
-        // above and this point, the callback's `signal_pending_recv`
-        // already saw the previous (null or stale) event. Solve by
-        // re-checking the queue before suspending.
         {
             auto guard = queue_.lock().unwrap();
             if (!guard->empty() || closed_.get()) {
                 pending_recv_event_.reset();
-                // Loop back; the next iteration will see the queue.
                 continue;
             }
         }
 
-        event->wait();  // suspend fiber
-
+        event->wait();
         pending_recv_event_.reset();
-        // Loop and re-check.
     }
 }
 

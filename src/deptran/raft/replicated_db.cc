@@ -105,7 +105,7 @@ void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
 // @unsafe - Marshal I/O is not borrow-checked
 Marshal& ReplicatedDBCommand::to_marshal(Marshal& m) const {
   rrr::MarshalSink sink(&m);
-  rrr::BinaryWriteArchive ar(&sink);
+  rrr::BinaryWriteArchive ar(rrr::make_sink_proxy(&sink));
   save(ar);
   return m;
 }
@@ -113,7 +113,7 @@ Marshal& ReplicatedDBCommand::to_marshal(Marshal& m) const {
 // @unsafe - Marshal I/O is not borrow-checked
 Marshal& ReplicatedDBCommand::from_marshal(Marshal& m) {
   rrr::MarshalSource source(&m);
-  rrr::BinaryReadArchive ar(&source);
+  rrr::BinaryReadArchive ar(rrr::make_source_proxy(&source));
   load(ar);
   return m;
 }

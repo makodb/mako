@@ -1,48 +1,91 @@
+module;
 
-// import std; replacement — see <std_compat.hpp> for rationale.
-
-// @c-compat-added
-
-#include <sys/types.h>
-#include <stdarg.h>
-#include <assert.h>
-#include <pthread.h>
-#include <inttypes.h>
 #include <rusty/result.hpp>
 
-
 #include <fcntl.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
-
-
-
-
-
-#include "utils.hpp"
-
-
-#include "../rrr.hpp"
+export module rrr.utils;
 
 import std;
+import rrr.logging;
 
-// Note: std::atomic public API (load, store, etc.) is annotated in event.h
-// No external annotations needed here - utils.cpp doesn't use atomics directly
+export namespace rrr {
 
+class AddrInfo {
+private:
+    struct addrinfo* info_{nullptr};
 
-using namespace std;
+public:
+    AddrInfo() = default;
+    explicit AddrInfo(struct addrinfo* info) : info_(info) {}
+
+    AddrInfo(const AddrInfo&) = delete;
+    AddrInfo& operator=(const AddrInfo&) = delete;
+
+    AddrInfo(AddrInfo&& other) noexcept : info_(other.info_) {
+        other.info_ = nullptr;
+    }
+
+    AddrInfo& operator=(AddrInfo&& other) noexcept {
+        if (this != &other) {
+            reset();
+            info_ = other.info_;
+            other.info_ = nullptr;
+        }
+        return *this;
+    }
+
+    ~AddrInfo() {
+        reset();
+    }
+
+    struct addrinfo* get() const { return info_; }
+    struct addrinfo* operator->() const { return info_; }
+    struct addrinfo& operator*() const { return *info_; }
+    explicit operator bool() const { return info_ != nullptr; }
+
+    struct addrinfo* release() {
+        auto* p = info_;
+        info_ = nullptr;
+        return p;
+    }
+
+    void reset(struct addrinfo* info = nullptr) {
+        if (info_) {
+            freeaddrinfo(info_);
+        }
+        info_ = info;
+    }
+
+    static rusty::Result<AddrInfo, int> resolve(
+        const char* host,
+        const char* service,
+        const struct addrinfo* hints
+    ) {
+        struct addrinfo* result = nullptr;
+        int r = getaddrinfo(host, service, hints, &result);
+        if (r != 0) {
+            return rusty::Err<AddrInfo, int>(r);
+        }
+        return rusty::Ok<AddrInfo, int>(AddrInfo(result));
+    }
+};
+
+int set_nonblocking(int fd, bool nonblocking);
+int find_open_port();
+std::string get_host_name();
+
+} // export namespace rrr
 
 namespace rrr {
 
-// @unsafe - Calls fcntl (external unsafe)
-// SAFETY: fcntl is POSIX-compliant, fd must be valid
 int set_nonblocking(int fd, bool nonblocking) {
     int ret = fcntl(fd, F_GETFL, 0);
     if (ret != -1) {
@@ -55,8 +98,6 @@ int set_nonblocking(int fd, bool nonblocking) {
     return ret;
 }
 
-// @unsafe - Uses address-of operations for socket functions
-// SAFETY: All pointers remain valid throughout function scope
 int find_open_port() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -64,7 +105,6 @@ int find_open_port() {
         return -1;
     }
 
-    // Use AddrInfo RAII wrapper - automatically frees on scope exit
     auto addr_result = AddrInfo::resolve("0.0.0.0", nullptr, nullptr);
     if (addr_result.is_err()) {
         Log_error("Failed to getaddrinfo");
@@ -87,14 +127,13 @@ int find_open_port() {
         if (getsockname(fd, (sockaddr*)&addr, &addrlen) != 0) {
             Log_error("Failed to get socket address");
             ::close(fd);
-            return -1;  // AddrInfo automatically freed
+            return -1;
         }
 
         port = i;
         break;
     }
 
-    // AddrInfo automatically freed when local_addr goes out of scope
     ::close(fd);
 
     if (port != -1) {
@@ -106,7 +145,6 @@ int find_open_port() {
     return -1;
 }
 
-// @unsafe - Uses raw buffer for gethostname system call
 std::string get_host_name() {
     char buffer[1024];
     if (gethostname(buffer, 1024) != 0) {

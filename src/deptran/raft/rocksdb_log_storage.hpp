@@ -97,7 +97,7 @@ private:
     bool serialize_entry(const LogEntry& entry, std::string* out) const {
         Marshal m;
         rrr::MarshalSink sink(&m);
-        BinaryWriteArchive writer(&sink);
+        BinaryWriteArchive writer(rrr::make_sink_proxy(&sink));
         entry.save(writer);
         size_t size = m.content_size();
         out->resize(size);
@@ -115,7 +115,7 @@ private:
         Marshal m;
         m.write(data.data(), data.size());  // @unsafe - write string bytes into Marshal
         rrr::MarshalSource src(&m);
-        BinaryReadArchive reader(&src);
+        BinaryReadArchive reader(rrr::make_source_proxy(&src));
         out->load(reader);
         return true;
     }
