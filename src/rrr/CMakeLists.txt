@@ -97,29 +97,35 @@ if(NOT TARGET rrr)
 
     # RRR files for borrow checking (explicit list to control what gets checked)
     set(RRR_BORROW_SRC
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber_impl.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/event.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/quorum_event.cc
+        # The previous reactor/fiber_impl.cc, event.cc, quorum_event.cc,
+        # reactor.cc files were merged into rrr.reactor (reactor.cpp). The
+        # consolidated module is wired in below.
         ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cc
-        # base/logging.cpp omitted — module unit.
-        # base/misc.cpp omitted — module unit.
-        # base/basetypes.cpp omitted — module unit (see RRR_MODULE_SRC).
-        # base/debugging.cpp omitted — module unit.
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
+        # Module units: rusty-cpp now handles C++23 named modules via
+        # `--compile-commands compile_commands.json`, so the previous
+        # "omitted — module unit" entries are wired in below.
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
-        # misc/any_message.cpp omitted — module unit.
-        # misc/marshal.cpp omitted — module unit.
-        # base/strop.cpp omitted — converted to a C++23 module interface
-        # unit (see RRR_MODULE_SRC). rusty-cpp cannot resolve module
-        # imports yet; revisit when the checker handles BMI paths.
-        # base/unittest.cpp omitted — module unit.
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
         # removed misc/recorder.cpp — class
         # deleted; was unused after Phase 4e-35.
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
+        # rpc/server.cpp omitted — triggers a clang-22 libclang crash when
+        # parsed as a borrow-check input (separate from the codegen-crash
+        # workarounds documented in srpc_module_migration_plan.md).
+        # Re-enable once the upstream libclang issue is resolved.
     )
 
     if(ENABLE_BORROW_CHECKING AND RRR_BORROW_SRC)
@@ -133,6 +139,26 @@ if(NOT TARGET rrr)
         target_compile_options(rrr_borrow PUBLIC ${RRR_CXXFLAGS})
 
         add_borrow_check_target(rrr_borrow)
+
+        # The rrr target owns the FILE_SET CXX_MODULES and is what emits the
+        # per-source `.o.modmap` response files (which list `-fmodule-file=`
+        # for every dependent BMI) plus the BMIs themselves. If we run the
+        # borrow checks before `rrr` has compiled, libclang sees neither —
+        # parses proceed with "module 'std' not found" warnings and degraded
+        # analysis. Force each individual check target to depend on the
+        # `rrr` library target so ninja serializes them after BMI emission.
+        # (Adding the dep only to `borrow_check_all_rrr_borrow` is not enough
+        # — that's an aggregate, but ninja can still parallelize each per-file
+        # check target without seeing the group-level dep.)
+        foreach(_BORROW_SRC ${RRR_BORROW_SRC})
+            if(_BORROW_SRC MATCHES "\\.(cpp|cc|cxx)$")
+                get_filename_component(_BORROW_FILE_NAME ${_BORROW_SRC} NAME_WE)
+                set(_BORROW_CHECK_NAME "borrow_check_rrr_borrow_${_BORROW_FILE_NAME}")
+                if(TARGET ${_BORROW_CHECK_NAME})
+                    add_dependencies(${_BORROW_CHECK_NAME} rrr)
+                endif()
+            endif()
+        endforeach()
 
         add_custom_target(borrow_check_rrr
             DEPENDS borrow_check_all_rrr_borrow
