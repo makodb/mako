@@ -18,6 +18,10 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include <rusty/box.hpp>
+#include <rusty/btreemap.hpp>
+#include <rusty/vec.hpp>
+
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
@@ -67,14 +71,14 @@ class ByteStream {
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   TestTree tree;
-  std::map<std::string, uint64_t> oracle;
+  rusty::BTreeMap<std::string, uint64_t> oracle;
   // Heap-backed value storage so the pointers Masstree retains stay
   // alive until tree destruction. libFuzzer creates a fresh
   // (tree, oracle) per invocation, so growth is bounded by the input
   // length.
-  std::vector<std::unique_ptr<uint64_t>> storage;
+  rusty::Vec<rusty::Box<uint64_t>> storage;
   auto MakeValue = [&](uint64_t v) -> TestTree::value_type {
-    storage.emplace_back(std::make_unique<uint64_t>(v));
+    storage.push(rusty::Box<uint64_t>::make(v));
     return reinterpret_cast<TestTree::value_type>(storage.back().get());
   };
   auto Decode = [](TestTree::value_type p) -> uint64_t {
@@ -98,8 +102,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       case 0: {  // insert (always overwrites; returns true iff new key)
         if (!s.has(8)) return 0;
         const uint64_t v = s.u64();
-        const bool oracle_was_new = (oracle.find(key) == oracle.end());
-        oracle[key] = v;
+        const bool oracle_was_new = !oracle.contains_key(key);
+        oracle.insert(key, v);
         const bool tree_was_new = tree.insert(vk(key), MakeValue(v));
         if (tree_was_new != oracle_was_new) Diverge("insert.return");
         break;
@@ -107,24 +111,24 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       case 1: {  // insert_if_absent
         if (!s.has(8)) return 0;
         const uint64_t v = s.u64();
-        const bool oracle_existed = (oracle.find(key) != oracle.end());
+        const bool oracle_existed = oracle.contains_key(key);
         const bool tree_inserted = tree.insert_if_absent(vk(key), MakeValue(v));
         if (tree_inserted == oracle_existed) Diverge("insert_if_absent.return");
-        if (tree_inserted) oracle[key] = v;
+        if (tree_inserted) oracle.insert(key, v);
         break;
       }
       case 2: {  // remove
-        const bool oracle_existed = (oracle.erase(key) > 0);
+        const bool oracle_existed = oracle.remove(key).is_some();
         const bool tree_removed = tree.remove(vk(key));
         if (tree_removed != oracle_existed) Diverge("remove.return");
         break;
       }
       case 3: {  // search
-        const auto it = oracle.find(key);
+        auto oracle_val = oracle.get(key);
         TestTree::value_type out = nullptr;
         const bool tree_found = tree.search(vk(key), out);
-        if (tree_found != (it != oracle.end())) Diverge("search.return");
-        if (tree_found && Decode(out) != it->second) Diverge("search.value");
+        if (tree_found != oracle_val.is_some()) Diverge("search.return");
+        if (tree_found && Decode(out) != oracle_val.unwrap()) Diverge("search.value");
         break;
       }
     }
@@ -134,6 +138,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // sorted order with matching values.
   class Cb : public TestTree::search_range_callback {
    public:
+    // std::vector kept here — same reason as test_masstree_property.cc:
+    // base class virtual dtor is implicitly noexcept and rusty::Vec<pair<...>>
+    // adds no value over std::vector for a callback's transient buffer.
     std::vector<std::pair<std::string, uint64_t>> seen;
     bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
       seen.emplace_back(std::string(k.data(), k.length()),
@@ -146,7 +153,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   varkey lo = vk(empty_key);
   tree.search_range_call(lo, nullptr, cb);
 
-  if (cb.seen.size() != oracle.size()) Diverge("scan.size");
+  if (cb.seen.size() != oracle.len()) Diverge("scan.size");
   size_t i = 0;
   for (const auto& [k, v] : oracle) {
     if (cb.seen[i].first != k) Diverge("scan.key");
