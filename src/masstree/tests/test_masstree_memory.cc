@@ -18,6 +18,9 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/thread.hpp>
+#include <rusty/vec.hpp>
+
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
@@ -111,10 +114,10 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
   std::atomic<uint64_t> reader_failures{0};
   std::atomic<uint64_t> reader_ops{0};
 
-  std::vector<std::thread> threads;
-  threads.reserve(kWriters + kReaders);
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+      kWriters + kReaders);
   for (int w = 0; w < kWriters; ++w) {
-    threads.emplace_back([&, w]() {
+    threads.push(rusty::thread::spawn([&, w]() {
       const uint64_t base = kChurnBase + static_cast<uint64_t>(w) * kChurnPerWriter;
       while (!stop.load(std::memory_order_acquire)) {
         for (uint64_t i = 0; i < kChurnPerWriter; ++i) {
@@ -124,10 +127,10 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
           tree.remove(K(base + i));
         }
       }
-    });
+    }));
   }
   for (int r = 0; r < kReaders; ++r) {
-    threads.emplace_back([&]() {
+    threads.push(rusty::thread::spawn([&]() {
       while (!stop.load(std::memory_order_acquire)) {
         for (uint64_t k = 0; k < kStable; ++k) {
           TestTree::value_type out = nullptr;
@@ -138,11 +141,11 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
           ++reader_ops;
         }
       }
-    });
+    }));
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+  rusty::thread::sleep(std::chrono::milliseconds(2000));
   stop.store(true, std::memory_order_release);
-  for (auto& t : threads) t.join();
+  for (auto& t : threads) { auto _ = t.join(); }
 
   EXPECT_EQ(reader_failures.load(), 0u);
   EXPECT_GT(reader_ops.load(), 0u);
