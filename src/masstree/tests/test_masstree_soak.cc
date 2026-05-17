@@ -32,6 +32,9 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/thread.hpp>
+#include <rusty/vec.hpp>
+
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
@@ -146,19 +149,19 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
     }
   };
 
-  std::vector<std::thread> threads;
-  threads.reserve(kWriters + kRemovers + kReaders + kScanners);
-  for (int w = 0; w < kWriters; ++w) threads.emplace_back(writer_body, w);
-  for (int r = 0; r < kRemovers; ++r) threads.emplace_back(remover_body, r);
-  for (int r = 0; r < kReaders; ++r) threads.emplace_back(reader_body);
-  for (int s = 0; s < kScanners; ++s) threads.emplace_back(scanner_body);
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+      kWriters + kRemovers + kReaders + kScanners);
+  for (int w = 0; w < kWriters; ++w) threads.push(rusty::thread::spawn(writer_body, w));
+  for (int r = 0; r < kRemovers; ++r) threads.push(rusty::thread::spawn(remover_body, r));
+  for (int r = 0; r < kReaders; ++r) threads.push(rusty::thread::spawn(reader_body));
+  for (int s = 0; s < kScanners; ++s) threads.push(rusty::thread::spawn(scanner_body));
 
   while (std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    rusty::thread::sleep(std::chrono::milliseconds(200));
   }
   stop.store(true, std::memory_order_release);
 
-  for (auto& t : threads) t.join();
+  for (auto& t : threads) { auto _ = t.join(); }
 
   EXPECT_EQ(reader_failures.load(), 0u)
       << "reader_ops=" << reader_ops.load()
