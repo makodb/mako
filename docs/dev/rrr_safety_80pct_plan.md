@@ -223,7 +223,7 @@ The loop must NOT:
   `// @unsafe` overrides preserved. Also fixed an LOC-script bug where
   multi-line `// @safe -` annotation comments containing `;` (e.g.
   "// overrides; ...") spuriously cleared pending → Future/Client class
-  annotations from Tier 4 also weren't being credited. Commit d5028a19;
+  annotations from Tier 4 also weren't being credited. Commit 54a2d98a;
   borrow_check_rrr 45/45 clean; ratio 6.3% → 7.2% (after script fix).
 - [ ] Reactor (reactor/reactor.cpp)
 - [ ] IdempotencyTracker (rpc/idempotency.cpp)
