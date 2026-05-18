@@ -31,6 +31,8 @@ inline const char* connection_state_to_string(ConnectionState state) {
     }
 }
 
+// @safe - Pure state machine: rusty::Cell<ConnectionState> + rusty::Function
+// callback. No raw pointers, syscalls, or operator-overload chains.
 class ConnectionStateMachine {
 private:
     rusty::Cell<ConnectionState> state_{ConnectionState::NEW};
