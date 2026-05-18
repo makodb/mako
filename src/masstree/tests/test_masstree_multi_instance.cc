@@ -495,10 +495,14 @@ TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
     // Each worker gets its own pure-Masstree table, its own key
     // space, and its own context. PureTable is default-constructible
     // but each instance must be initialize()'d under a threadinfo
-    // bound to the right context — done inside the worker.
-    // PureTable owns raw masstree state and is not trivially movable,
-    // so we keep std::vector for the default-constructed N-element pattern.
-    std::vector<PureTable> trees(kContexts);
+    // bound to the right context — done inside the worker. We push
+    // empty (root_=nullptr) tables and let workers initialize them
+    // in place. basic_table's move ctor properly transfers ownership
+    // of root_, so even if Vec ever reallocated post-initialize the
+    // pointers would migrate correctly — but with_capacity guarantees
+    // no reallocation here.
+    auto trees = rusty::Vec<PureTable>::with_capacity(kContexts);
+    for (int i = 0; i < kContexts; ++i) trees.push(PureTable{});
     std::atomic<int> failures{0};
 
     auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kContexts);
