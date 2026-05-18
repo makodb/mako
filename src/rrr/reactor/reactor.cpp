@@ -780,11 +780,10 @@ class Reactor {
   // Returns true if at least one stackless task was polled.
   bool process_stackless_tasks() const;
 
-  // @safe - Arc::make wrapper with localized unsafe allocation boundary.
+  // @safe - Arc::make is @safe in the library.
   template <typename U, typename... Args>
   static rusty::Arc<U> make_arc(Args&&... args) {
-    // @unsafe
-    { return rusty::Arc<U>::make(std::forward<Args>(args)...); }
+    return rusty::Arc<U>::make(std::forward<Args>(args)...);
   }
 
  public:

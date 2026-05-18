@@ -701,17 +701,15 @@ public:
         return channel_factory_.is_some();
     }
 
-    // @safe - Registers legacy virtual service and transfers ownership to Server.
+    // @safe - rusty::Vec::push/size/operator[] + Box move + Service proxy
+    // dispatch are all @safe at the boundary.
     // Must be called before start().
     void reg_service(rusty::Box<Service> svc) {
-        // @unsafe
-        {
         pending_services_.push(make_service_proxy_from_box(std::move(svc)));
         // Get index AFTER push - this is the position of the service we just added
         size_t svc_index = pending_services_.size() - 1;
         // Register handlers using the index (service is safely stored in pending_services_)
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
-        }
     }
 
     void reg_service_proxy(ServiceProxy proxy) {
@@ -720,17 +718,13 @@ public:
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
     }
 
-    // @safe - Registers typed service implementation without inheriting Service.
-    // Must be called before start().
+    // @safe - Same composition as the legacy overload.
     template <ServiceLike T>
       requires (!std::derived_from<T, Service>)
     void reg_service(rusty::Box<T> svc) {
-        // @unsafe
-        {
         pending_services_.push(make_service_proxy_from_typed_box<T>(std::move(svc)));
         size_t svc_index = pending_services_.size() - 1;
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
-        }
     }
 
     /**
@@ -755,14 +749,11 @@ public:
     // Must be called before start().
     int reg_rpc(i32 rpc_id, size_t svc_index) {
         // disallow duplicate rpc_id
-        // @unsafe
-        {
-            if (pending_rpc_to_service_.contains_key(rpc_id)) {
-                return EEXIST;
-            }
-            pending_rpc_to_service_.insert(rpc_id, svc_index);
-            return 0;
+        if (pending_rpc_to_service_.contains_key(rpc_id)) {
+            return EEXIST;
         }
+        pending_rpc_to_service_.insert(rpc_id, svc_index);
+        return 0;
     }
 
     // @safe - Registers an RPC ID for fast inline dispatch on server side.
@@ -908,16 +899,13 @@ public:
         }
     }
 
-    // @safe - Returns the number of registered services
+    // @safe - Option ops + Vec::size are @safe in the library.
     // Can be called before or after start().
     size_t service_count() const {
-        // @unsafe
-        {
         if (ctx_.is_some()) {
             return ctx_.as_ref().unwrap()->services.size();
         }
         return pending_services_.size();
-        }
     }
 
     // Returns the server address (copy to avoid reference through Arc)
