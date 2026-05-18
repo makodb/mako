@@ -561,17 +561,14 @@ public:
         }
         replied_ = true;
 
-        // @unsafe - weak pointer upgrade (safe operation, but rusty-cpp needs annotation)
-        {
-            auto sconn_opt = weak_sconn_.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                // No const_cast needed: reply() is now a const method with interior mutability
-                sconn->reply(*req_, 0, archive_reply_);
-            } else {
-                // Connection closed, silently drop reply
-                Log_debug("Connection closed before reply sent, dropping reply");
-            }
+        auto sconn_opt = weak_sconn_.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            // No const_cast needed: reply() is now a const method with interior mutability
+            sconn->reply(*req_, 0, archive_reply_);
+        } else {
+            // Connection closed, silently drop reply
+            Log_debug("Connection closed before reply sent, dropping reply");
         }
         // Object will be destroyed when it goes out of scope, destructor calls cleanup_()
     }
@@ -585,15 +582,12 @@ public:
         }
         replied_ = true;
 
-        // @unsafe - weak pointer upgrade (safe operation, but rusty-cpp needs annotation)
-        {
-            auto sconn_opt = weak_sconn_.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                sconn->reply(*req_, error_code);
-            } else {
-                Log_debug("Connection closed before error reply sent, dropping reply");
-            }
+        auto sconn_opt = weak_sconn_.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            sconn->reply(*req_, error_code);
+        } else {
+            Log_debug("Connection closed before error reply sent, dropping reply");
         }
     }
 };
@@ -843,27 +837,34 @@ public:
     /**
      * Get count of pending (in-flight) requests.
      */
-    // @unsafe - Uses std::atomic::load
+    // @safe - Atomic load is encapsulated in the inner @unsafe block.
     int pending_request_count() const {
-        return pending_requests_->load(std::memory_order_relaxed);  // @unsafe
+        // @unsafe { std::atomic::load is not borrow-checked }
+        { return pending_requests_->load(std::memory_order_relaxed); }
     }
 
     /**
      * Increment pending request count. Called when starting to process a request.
      */
-    // @unsafe - Uses std::atomic::fetch_add
+    // @safe - Atomic fetch_add is encapsulated in the inner @unsafe block.
     void increment_pending() {
-        auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
-        pending_ptr->fetch_add(1, std::memory_order_relaxed);  // @unsafe
+        // @unsafe { const_cast on Box ptr + std::atomic::fetch_add }
+        {
+            auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
+            pending_ptr->fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     /**
      * Decrement pending request count. Called when request completes.
      */
-    // @unsafe - Uses std::atomic::fetch_sub
+    // @safe - Atomic fetch_sub is encapsulated in the inner @unsafe block.
     void decrement_pending() {
-        auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
-        pending_ptr->fetch_sub(1, std::memory_order_relaxed);  // @unsafe
+        // @unsafe { const_cast on Box ptr + std::atomic::fetch_sub }
+        {
+            auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
+            pending_ptr->fetch_sub(1, std::memory_order_relaxed);
+        }
     }
 
     // @safe - Toggle dropping of internal heartbeat probe replies.

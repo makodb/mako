@@ -429,16 +429,16 @@ public:
         sl.lock();
     }
 
-    // @unsafe - Calls std::atomic::store (external unsafe)
-    // SAFETY: Thread-safe atomic store operation
+    // @safe - Single atomic store; encapsulated in the inner @unsafe block.
     void signal() {
-        flag_.store(1, std::memory_order_release);
+        // @unsafe { std::atomic<int>::store }
+        { flag_.store(1, std::memory_order_release); }
     }
 
-    // @unsafe - Calls std::atomic::store (external unsafe)
-    // SAFETY: Thread-safe atomic store operation
+    // @safe - Single atomic store; encapsulated in the inner @unsafe block.
     void bcast() {
-        flag_.store(1, std::memory_order_release);
+        // @unsafe { std::atomic<int>::store }
+        { flag_.store(1, std::memory_order_release); }
     }
 };
 

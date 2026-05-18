@@ -109,24 +109,21 @@ struct BufferingConfig {
     OverflowStrategy overflow = OverflowStrategy::DROP_OLDEST;
     bool enabled = true;
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static BufferingConfig defaults() {
-        // @unsafe { struct construction }
         return BufferingConfig{};
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static BufferingConfig disabled() {
-        // @unsafe { struct construction }
         BufferingConfig config;
         config.enabled = false;
         config.behavior = DisconnectBehavior::FAIL_FAST;
         return config;
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     RequestQueueConfig to_queue_config() const {
-        // @unsafe { struct construction }
         RequestQueueConfig qc;
         qc.max_size = max_pending;
         qc.default_ttl_ms = default_ttl_ms;
@@ -2737,12 +2734,15 @@ using namespace std;
 
 namespace rrr {
 // Helper function to get current time in milliseconds
-// @unsafe - Uses std::chrono which is not borrow-checked (but is memory-safe)
+// @safe - std::chrono use is encapsulated in the inner @unsafe block.
 static uint64_t current_time_ms() {
-    auto now = std::chrono::steady_clock::now();
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count());
+    // @unsafe { std::chrono::steady_clock::now + duration_cast }
+    {
+        auto now = std::chrono::steady_clock::now();
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count());
+    }
 }
 
 // 4g4: the migration switch (`srpc_use_channel()` and the test-only

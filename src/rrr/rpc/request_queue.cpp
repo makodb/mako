@@ -54,22 +54,26 @@ struct QueuedRequest {
         , ttl_ms(30000)
     {}
 
-    // @unsafe - Uses std::chrono
+    // @safe - std::chrono use is encapsulated in the inner @unsafe block.
     bool is_expired() const {
-        // @unsafe { std::chrono operations }
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - timestamp).count();
-        return static_cast<uint32_t>(elapsed_ms) > ttl_ms;
+        // @unsafe { std::chrono::steady_clock::now + duration_cast }
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - timestamp).count();
+            return static_cast<uint32_t>(elapsed_ms) > ttl_ms;
+        }
     }
 
-    // @unsafe - Uses std::chrono
+    // @safe - std::chrono use is encapsulated in the inner @unsafe block.
     uint32_t age_ms() const {
-        // @unsafe { std::chrono operations }
-        auto now = std::chrono::steady_clock::now();
-        return static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - timestamp).count());
+        // @unsafe { std::chrono::steady_clock::now + duration_cast }
+        {
+            auto now = std::chrono::steady_clock::now();
+            return static_cast<uint32_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - timestamp).count());
+        }
     }
 };
 
@@ -82,33 +86,29 @@ struct RequestQueueConfig {
     OverflowStrategy overflow_strategy = OverflowStrategy::DROP_OLDEST;
     bool enabled = true;
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig defaults() {
-        // @unsafe { struct construction }
         return RequestQueueConfig{};
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig small() {
-        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.max_size = 10;
         config.default_ttl_ms = 5000;
         return config;
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig large() {
-        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.max_size = 10000;
         config.default_ttl_ms = 60000;
         return config;
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig disabled() {
-        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.enabled = false;
         config.max_size = 0;
