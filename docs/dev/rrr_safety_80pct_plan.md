@@ -241,7 +241,7 @@ The loop must NOT:
   per-method annotations — only unannotated bodies in @safe classes
   gain from inheritance.
 - [x] CompletionTracker (rpc/completion_tracker.cpp) — class-level
-  `// @safe`. Commit (pending); ratio 6.2% → 6.7% (+107 LOC).
+  `// @safe`. Commit ce802ff5; ratio 6.2% → 6.7% (+107 LOC).
 - [ ] CircuitBreaker (rpc/circuit_breaker.cpp)
 - [ ] HeartbeatManager (rpc/heartbeat.cpp)
 - [ ] ConnectionStateMachine (rpc/connection_state.cpp)
