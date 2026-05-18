@@ -123,12 +123,8 @@ class MasstreeKeyShape
 
 namespace {
 
-// gtest's ::testing::ValuesIn requires Container::value_type, which
-// rusty::Vec does not expose (Rust collections don't use that
-// typedef). Keep this one piece of glue as std::vector since it's a
-// pure gtest interface.
-std::vector<KeyShape> AllShapes() {
-  return {
+rusty::Vec<KeyShape> AllShapes() {
+  return rusty::Vec<KeyShape>({
       {"1byte",         "x"},
       {"7byte",         "1234567"},
       {"8byte_boundary","12345678"},
@@ -138,7 +134,7 @@ std::vector<KeyShape> AllShapes() {
       {"64byte",        std::string(64,  'b')},
       {"256byte",       std::string(256, 'c')},
       {"embedded_nulls",std::string("\x01\x00\x02\x00\x03\x00\x04", 7)},
-  };
+  });
 }
 
 }  // namespace
