@@ -82,15 +82,11 @@ struct PropertyState {
   void FullScanMatchesOracle(uint64_t seed, size_t step) const {
     class Cb : public TestTree::search_range_callback {
      public:
-      // std::vector is kept here (not rusty::Vec) because the base
-      // class's virtual destructor is implicitly noexcept; rusty::Vec
-      // is noexcept-destructible only when T is — std::pair<string,...>
-      // is fine, but keeping std::vector mirrors the layered-test
-      // pattern and avoids surprises if T changes.
-      std::vector<std::pair<std::string, uint64_t>> seen;
+      rusty::Vec<std::pair<std::string, uint64_t>> seen;
       bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
-        seen.emplace_back(std::string(k.data(), k.length()),
-                          *reinterpret_cast<const uint64_t*>(v));
+        seen.push(std::pair<std::string, uint64_t>(
+            std::string(k.data(), k.length()),
+            *reinterpret_cast<const uint64_t*>(v)));
         return true;
       }
     };
@@ -99,7 +95,7 @@ struct PropertyState {
     varkey lo = vk(empty);
     tree.search_range_call(lo, nullptr, cb);
 
-    ASSERT_EQ(cb.seen.size(), oracle.len())
+    ASSERT_EQ(cb.seen.len(), oracle.len())
         << "seed=" << std::hex << seed << " step=" << std::dec << step;
 
     size_t i = 0;
@@ -175,9 +171,9 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
 
       class CollectAll : public TestTree::search_range_callback {
        public:
-        std::vector<std::string> seen;  // see Cb comment above
+        rusty::Vec<std::string> seen;
         bool invoke(const TestTree::string_type& k, TestTree::value_type) override {
-          seen.emplace_back(k.data(), k.length());
+          seen.push(std::string(k.data(), k.length()));
           return true;
         }
       };
@@ -187,7 +183,7 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
       s.tree.search_range_call(lo, &hi, cb);
 
       auto expected = s.oracle.range_rusty(lo_s, hi_s);
-      ASSERT_EQ(cb.seen.size(), expected.len())
+      ASSERT_EQ(cb.seen.len(), expected.len())
           << "seed=" << std::hex << seed << " step=" << std::dec << step
           << " lo.size=" << lo_s.size() << " hi.size=" << hi_s.size();
       for (size_t i = 0; i < expected.len(); ++i) {

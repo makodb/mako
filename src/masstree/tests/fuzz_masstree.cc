@@ -138,13 +138,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // sorted order with matching values.
   class Cb : public TestTree::search_range_callback {
    public:
-    // std::vector kept here — same reason as test_masstree_property.cc:
-    // base class virtual dtor is implicitly noexcept and rusty::Vec<pair<...>>
-    // adds no value over std::vector for a callback's transient buffer.
-    std::vector<std::pair<std::string, uint64_t>> seen;
+    rusty::Vec<std::pair<std::string, uint64_t>> seen;
     bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
-      seen.emplace_back(std::string(k.data(), k.length()),
-                        *reinterpret_cast<const uint64_t*>(v));
+      seen.push(std::pair<std::string, uint64_t>(
+          std::string(k.data(), k.length()),
+          *reinterpret_cast<const uint64_t*>(v)));
       return true;
     }
   };
@@ -153,7 +151,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   varkey lo = vk(empty_key);
   tree.search_range_call(lo, nullptr, cb);
 
-  if (cb.seen.size() != oracle.len()) Diverge("scan.size");
+  if (cb.seen.len() != oracle.len()) Diverge("scan.size");
   size_t i = 0;
   for (const auto& [k, v] : oracle) {
     if (cb.seen[i].first != k) Diverge("scan.key");

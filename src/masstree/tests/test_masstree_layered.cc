@@ -162,13 +162,9 @@ TEST(MasstreeLayered, MixedLengthKeysInOneLeaf) {
   // for len 0, 'a'..'f' for the rest).
   class Cb : public TestTree::search_range_callback {
    public:
-    // std::vector is kept here (not rusty::Vec) because the base
-    // class's virtual destructor is implicitly noexcept; rusty::Vec's
-    // destructor is not, which would make Cb's overriding destructor
-    // "more lax" than the base.
-    std::vector<std::string> keys;
+    rusty::Vec<std::string> keys;
     bool invoke(const TestTree::string_type& k, TestTree::value_type) override {
-      keys.emplace_back(k.data(), k.length());
+      keys.push(std::string(k.data(), k.length()));
       return true;
     }
   };
@@ -176,7 +172,7 @@ TEST(MasstreeLayered, MixedLengthKeysInOneLeaf) {
   const std::string lo_str = head;  // start at "ABCDEFGH"
   varkey lo = vk(lo_str);
   tree.search_range_call(lo, nullptr, cb);
-  ASSERT_EQ(cb.keys.size(), specs.size());
+  ASSERT_EQ(cb.keys.len(), specs.len());
   EXPECT_TRUE(std::is_sorted(cb.keys.begin(), cb.keys.end()));
 }
 
