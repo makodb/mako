@@ -2021,7 +2021,6 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 
   // Extract events that are READY or TIMEOUT (timed out)
-  // @unsafe - rusty::Function constructor
   {
     auto timed_out = guard->extract_if(
       rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2033,7 +2032,6 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 
   // Remove events that are DONE (shouldn't happen often, but clean up)
-  // @unsafe - rusty::Function constructor
   {
     guard->retain(
       rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2066,7 +2064,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           (*waiting_guard)[i]->test();
         }
         // Extract READY events
-        // @unsafe - rusty::Function constructor
         {
           auto ready_from_waiting = waiting_guard->extract_if(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2079,7 +2076,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           }
         }
         // Remove DONE events
-        // @unsafe - rusty::Function constructor
         {
           waiting_guard->retain(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2095,7 +2091,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         for (size_t i = 0; i < composite_guard->len(); ++i) {
           (*composite_guard)[i]->test();
         }
-        // @unsafe - rusty::Function constructor
         {
           auto ready_from_composite = composite_guard->extract_if(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2107,7 +2102,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
             found_ready_events = true;
           }
         }
-        // @unsafe - rusty::Function constructor
         {
           composite_guard->retain(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(

@@ -1094,9 +1094,8 @@ public:
         return buffering_config_;
     }
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - RequestQueue::size is @safe (lock + VecDeque::size).
     size_t pending_request_count() const {
-        // @unsafe { RequestQueue::size }
         return pending_queue_.size();
     }
 
@@ -1118,10 +1117,9 @@ public:
     }
 #endif
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - RequestQueue::clear_all is @safe.
     // Note: const because pending_queue_ is mutable
     void clear_pending_requests(int error_code = ECONNABORTED) const {
-        // @unsafe { RequestQueue::clear_all }
         pending_queue_.clear_all(error_code);
     }
 
@@ -1142,7 +1140,9 @@ public:
      *
      * @param callback Function to call on restart detection
      */
-    // @unsafe - rusty::Function assignment through const (interior mutability via mutable)
+    // @safe - rusty::Function move-assign is @safe; interior mutability via
+    // mutable on_server_restart_ is sound because the assignment happens
+    // through a const method that owns the only thread-visible reference.
     void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
         on_server_restart_ = std::move(callback);
     }
@@ -1155,7 +1155,8 @@ public:
      * @param new_id The new server instance ID
      * @return true if server restart was detected, false otherwise
      */
-    // @unsafe - Updates Cell and may call callback (rusty::Function operations)
+    // @safe - rusty::Cell get/set + rusty::Function operator bool / call are
+    // @safe in the library; Log_info template shim is @safe.
     bool check_server_instance(uint64_t new_id) const {
         uint64_t old_id = server_instance_id_.get();
 
@@ -1165,7 +1166,6 @@ public:
         // Detect restart: old ID was set (non-zero) and differs from new ID
         if (old_id != 0 && old_id != new_id) {
             Log_info("Server restart detected: old_id=%lu new_id=%lu", old_id, new_id);
-            // @unsafe { rusty::Function::operator bool and callback execution }
             if (on_server_restart_) {
                 on_server_restart_(old_id, new_id);
             }
@@ -2183,21 +2183,19 @@ public:
         return guard->is_some();
     }
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - ClientConnection::pending_request_count is @safe.
     size_t pending_request_count() const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            // @unsafe { ClientConnection::pending_request_count }
             return guard->as_ref().unwrap()->pending_request_count();
         }
         return 0;
     }
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - ClientConnection::clear_pending_requests is @safe.
     void clear_pending_requests(int error_code = ECONNABORTED) const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            // @unsafe { ClientConnection::clear_pending_requests }
             guard->as_ref().unwrap()->clear_pending_requests(error_code);
         }
     }
@@ -3234,7 +3232,8 @@ CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
   return circuit_breaker_.config();
 }
 
-// @unsafe - Uses RequestQueue methods (not borrow-checked)
+// @safe - No-op stub returning a constant. (The RequestQueue methods
+// it nominally documents are themselves @safe in Tier 2 anyway.)
 // 4g3c2: replay_pending_requests() reduced to a no-op stub. The
 // underlying queue (`pending_queue_`) is always empty in channel mode
 // because `queue_request<F>(...)` was deleted in 4g3b. The function
