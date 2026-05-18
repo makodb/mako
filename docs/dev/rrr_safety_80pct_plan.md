@@ -210,7 +210,13 @@ The loop must NOT:
 (Newest entries on top. Each entry: phase ID, item, commit SHA, delta.)
 
 ### Phase 0
-- [ ] Fix `/tmp/safety_loc.py` out-of-class inheritance bug.
+- [x] Fix LOC script + relocate into repo as `scripts/rrr_safety_loc.py`.
+  Restricts out-of-class method detection to brace depth==0 (file scope) and
+  anchors the regex to type-prefix patterns (not control-flow keywords).
+  Net effect: tightens classification rather than growing @safe — the
+  earlier estimate of "+4-6pp" was wrong. Honest baseline after the fix:
+  @safe 6.3%, @unsafe 9.9%, inner @unsafe-block 3.3%, unannotated 80.5%
+  of in-fn LOC.
 
 ### Phase 1 — class-level @safe
 - [ ] Server (rpc/server.cpp)
