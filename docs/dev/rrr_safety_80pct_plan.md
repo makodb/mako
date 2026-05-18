@@ -231,7 +231,7 @@ The loop must NOT:
   so the flip mainly credits inline class-body methods. Bigger reactor
   wins (PollThreadWorker* / Reactor::loop) live in Phases 2 + 3.
 - [x] IdempotencyKeyGenerator + IdempotencyCache (rpc/idempotency.cpp)
-  — class-level `// @safe` added to both classes. Commit (pending).
+  — class-level `// @safe` added to both classes. Commit 1f4d6b5a.
   Also fixed second LOC-script bug: `pending_for_class` leaked across
   function-body `{` consumption, falsely crediting some classes as
   `@safe` / `@unsafe` from a stale annotation many lines earlier.
