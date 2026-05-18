@@ -674,11 +674,14 @@ class Reactor {
   static rusty::Rc<Reactor> get_reactor();
   // @unsafe - Returns thread-local disk reactor instance
   static rusty::Rc<Reactor> get_disk_reactor();
-  static thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;
-  static thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
-  // Thread-local current fiber with single-threaded Rc
-  // Wrapped in RefCell for explicit interior mutability (Cell<T> requires trivially_copyable)
-  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_;
+  // `inline` keeps these in vague linkage. Without it, clang 21 emits the
+  // module-attached class-static thread_local storage as a strong external
+  // in every TU that uses it via an inline accessor, causing duplicate-
+  // definition linker errors. clang 22 happened to avoid this; we use
+  // `inline` to make the linkage explicit and toolchain-independent.
+  static inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_{};
+  static inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_{};
+  static inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_{};
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   // Using Cell for safe interior mutability (int is trivially copyable)
@@ -998,8 +1001,9 @@ public:
 
 private:
     // Thread-local storage for current worker (raw pointer for internal use only)
-    // Only accessed via with_current_worker() which provides safe reference access
-    static thread_local PollThreadWorker* current_worker_;
+    // Only accessed via with_current_worker() which provides safe reference access.
+    // `inline` keeps the symbol in vague linkage — see Reactor::sp_reactor_th_ above.
+    static inline thread_local PollThreadWorker* current_worker_ = nullptr;
 
 private:
     // @unsafe - For testing: get number of epoll Remove() calls
@@ -1639,14 +1643,10 @@ inline void stackless_profile_report_periodic() {
 
 }  // namespace
 
-thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
-thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
-thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> Reactor::sp_running_fiber_th_{};
+// sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
+// `static inline thread_local` in the class declaration above (vague linkage).
+// Same for PollThreadWorker::current_worker_.
 thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> Reactor::clients_{};
-
-// Thread-local storage for PollThreadWorker (raw pointer for direct access)
-// Safe because worker outlives all fibers on its thread
-thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
 thread_local rusty::HashSet<std::string> Reactor::dangling_ips_{};
 SpinLock Reactor::trying_job_;
 
