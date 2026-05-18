@@ -247,7 +247,7 @@ The loop must NOT:
 - [x] HeartbeatManager (rpc/heartbeat.cpp) — class-level `// @safe`.
   Commit 8f4bf96d; ratio 7.2% → 7.6% (+88 LOC).
 - [x] ConnectionStateMachine (rpc/connection_state.cpp) — class-level
-  `// @safe`. Commit (pending); ratio 7.6% → 7.9% (+70 LOC).
+  `// @safe`. Commit ed12702e; ratio 7.6% → 7.9% (+70 LOC).
 - [ ] TcpListener subset (rpc/tcp_channel.cpp)
 - [ ] LoadBalancer (rpc/load_balancer.cpp)
 - [ ] RequestQueue class @safe completion (rpc/request_queue.cpp)
