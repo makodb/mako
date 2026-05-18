@@ -244,7 +244,8 @@ The loop must NOT:
   `// @safe`. Commit ce802ff5; ratio 6.2% → 6.7% (+107 LOC).
 - [x] CircuitBreaker (rpc/circuit_breaker.cpp) — class-level `// @safe`.
   Commit a12f0ee8; ratio 6.7% → 7.2% (+118 LOC).
-- [ ] HeartbeatManager (rpc/heartbeat.cpp)
+- [x] HeartbeatManager (rpc/heartbeat.cpp) — class-level `// @safe`.
+  Commit (pending); ratio 7.2% → 7.6% (+88 LOC).
 - [ ] ConnectionStateMachine (rpc/connection_state.cpp)
 - [ ] TcpListener subset (rpc/tcp_channel.cpp)
 - [ ] LoadBalancer (rpc/load_balancer.cpp)
