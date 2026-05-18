@@ -658,6 +658,12 @@ class Fiber {
  * - Events never outlive their fibers (weak refs)
  * - Loop() only called from owning thread
  */
+// @safe - Single-threaded reactor; data lives in RefCell / Cell / Rc /
+// HashMap with rusty borrow rules. Methods that genuinely cross into
+// unsafe territory (fiber context switching via Fiber::yield_ /
+// continue_, raw pointer access through the class-static thread_local
+// fields, get_reactor returning thread-local Rc) carry their own
+// `// @unsafe` overrides; the rest is now analyzed as @safe by default.
 class Reactor {
  public:
   // Default constructor - all fields have default constructors

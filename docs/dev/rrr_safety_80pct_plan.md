@@ -225,7 +225,10 @@ The loop must NOT:
   "// overrides; ...") spuriously cleared pending → Future/Client class
   annotations from Tier 4 also weren't being credited. Commit 54a2d98a;
   borrow_check_rrr 45/45 clean; ratio 6.3% → 7.2% (after script fix).
-- [ ] Reactor (reactor/reactor.cpp)
+- [x] Reactor (reactor/reactor.cpp) — class-level `// @safe` added. Most
+  Reactor:: out-of-class methods already had explicit @safe/@unsafe
+  annotations, so the flip mainly credits inline class-body methods.
+  Modest gain. Borrow_check_rrr 45/45 clean; ratio 7.2% → 7.4%.
 - [ ] IdempotencyTracker (rpc/idempotency.cpp)
 - [ ] CompletionTracker (rpc/completion_tracker.cpp)
 - [ ] CircuitBreaker (rpc/circuit_breaker.cpp)
