@@ -230,7 +230,16 @@ The loop must NOT:
   Most Reactor:: out-of-class methods already had explicit annotations,
   so the flip mainly credits inline class-body methods. Bigger reactor
   wins (PollThreadWorker* / Reactor::loop) live in Phases 2 + 3.
-- [ ] IdempotencyTracker (rpc/idempotency.cpp)
+- [x] IdempotencyKeyGenerator + IdempotencyCache (rpc/idempotency.cpp)
+  — class-level `// @safe` added to both classes. Commit (pending).
+  Also fixed second LOC-script bug: `pending_for_class` leaked across
+  function-body `{` consumption, falsely crediting some classes as
+  `@safe` / `@unsafe` from a stale annotation many lines earlier.
+  Honest baseline post-fix: 6.2% @safe / 9.5% @unsafe / 3.3% inner-block /
+  81.0% unannotated. This iteration's class flip on idempotency.cpp
+  doesn't move the ratio because every method already had explicit
+  per-method annotations — only unannotated bodies in @safe classes
+  gain from inheritance.
 - [ ] CompletionTracker (rpc/completion_tracker.cpp)
 - [ ] CircuitBreaker (rpc/circuit_breaker.cpp)
 - [ ] HeartbeatManager (rpc/heartbeat.cpp)

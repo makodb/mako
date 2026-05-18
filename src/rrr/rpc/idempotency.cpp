@@ -194,10 +194,12 @@ struct CachedResponse {
 // ===========================================================================
 
 /**
- * @safe - Thread-safe generator for unique idempotency keys
+ * Thread-safe generator for unique idempotency keys.
  *
  * Each client should have its own generator with a unique client_id.
  */
+// @safe - Uses rusty::Cell for thread-safe interior mutability;
+// no raw pointers, syscalls, or operator-overload chains.
 class IdempotencyKeyGenerator {
     rusty::Cell<uint64_t> client_id_{0};
     rusty::Cell<uint64_t> sequence_{0};
@@ -246,6 +248,9 @@ public:
  *   4. Store response in cache
  *   5. Return response
  */
+// @safe - LRU cache backed by rusty::Mutex<State> with rusty::Cell for
+// config. The Marshal-bearing cached response is moved through @unsafe
+// blocks at the boundary; the rest of the class is @safe.
 class IdempotencyCache {
     // Configuration (Cell for interior mutability)
     rusty::Cell<IdempotencyConfig> config_;

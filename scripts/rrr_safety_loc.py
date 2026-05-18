@@ -167,6 +167,10 @@ def classify_file(path):
                 elif pending in ("safe", "unsafe"):
                     func_stack.append((pending, depth))
                     pending = None
+                    # Also clear pending_for_class — it shouldn't survive
+                    # past a function-body open, or it'll leak onto the
+                    # next class declaration we encounter.
+                    pending_for_class = None
                 elif out_of_class_name is not None:
                     inherited = class_annotations.get(out_of_class_name)
                     if inherited == "safe":
