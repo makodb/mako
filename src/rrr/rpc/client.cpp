@@ -333,20 +333,16 @@ class Future {
 public:
 
     // Factory method for Arc creation
-    // @safe - Creates Future wrapped in Arc for memory safety
+    // @safe - Arc::make is @safe in the library.
     static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
-        // SAFETY: Arc::make is the only construction path; constructor is private.
-        // @unsafe
-        {
-            return rusty::Arc<Future>::make(xid, attr);
-        }
+        return rusty::Arc<Future>::make(xid, attr);
     }
 
-    // @safe - Uses rusty::Mutex
+    // @safe - rusty::Mutex::lock / Result::unwrap / MutexGuard::operator* are
+    // all @safe in the library.
     bool ready() const {
-        // @unsafe
-        { auto guard = state_.lock().unwrap();
-        return (*guard).ready; }
+        auto guard = state_.lock().unwrap();
+        return (*guard).ready;
     }
 
     // @safe - Uses rusty::Mutex and rusty::Condvar together
@@ -369,34 +365,29 @@ public:
         return ready() && !timed_out();
     }
 
-    // @safe - Uses rusty::Mutex
+    // @safe - rusty::Mutex::lock + MutexGuard ops are @safe.
     bool timed_out() const {
-        // @unsafe
-        { auto guard = state_.lock().unwrap();
-        return (*guard).timed_out; }
+        auto guard = state_.lock().unwrap();
+        return (*guard).timed_out;
     }
 
-    // @safe - Registers a completion callback and returns true if caller should suspend.
-    // Returns false when the future is already completed (ready or timed out).
+    // @safe - rusty::Mutex::lock + rusty::Vec::push + rusty::Function move
+    // are @safe. unwrap() on poisoned mutex intentionally panics, matching
+    // existing policy.
     bool add_completion_callback(rusty::Function<void()> callback) const {
-        // SAFETY: unwrap() on poisoned mutex intentionally panics, matching existing policy.
-        // @unsafe
-        {
-            auto guard = state_.lock().unwrap();
-            if (guard->ready || guard->timed_out) {
-                return false;
-            }
-            guard->completion_callbacks.push(std::move(callback));
-            return true;
+        auto guard = state_.lock().unwrap();
+        if (guard->ready || guard->timed_out) {
+            return false;
         }
+        guard->completion_callbacks.push(std::move(callback));
+        return true;
     }
 
-    // @safe - Returns guard for reply (Rust-idiomatic lifetime safety)
-    // Caller holds the guard, ensuring the reference can't outlive it
+    // @safe - rusty::RefCell::borrow_mut is @safe (RefCell namespace).
+    // Caller holds the guard, ensuring the reference can't outlive it.
     rusty::RefMut<Marshal> get_reply() const {
         wait();
-        // @unsafe
-        { return reply_.borrow_mut(); }
+        return reply_.borrow_mut();
     }
 
     // @safe - Calls wait methods, uses @unsafe for timed_wait which uses std::chrono
@@ -1862,10 +1853,9 @@ public:
         return -1;
     }
 
-    // @safe - Simple getter (string copy is safe)
+    // @safe - Returning std::string by value is a safe copy.
     std::string host() const {
-        // @unsafe
-        { return host_; }
+        return host_;
     }
 
     // @safe - Jetpack: pause/resume for flow control (Cell for interior mutability)
@@ -2013,13 +2003,9 @@ public:
         poll_thread_worker_(poll_thread_worker) { }
 
     // Factory method to create Client with Arc
-    // @safe - Returns Arc<Client>
+    // @safe - Arc::make is @safe in the library.
     static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
-        // SAFETY: Arc::make is the only construction path; constructor is private.
-        // @unsafe
-        {
-            return rusty::Arc<Client>::make(poll_thread_worker);
-        }
+        return rusty::Arc<Client>::make(poll_thread_worker);
     }
 
     /**
@@ -2032,31 +2018,28 @@ public:
      *   - Ok(Arc<Future>) on success
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
-    // @safe - Thread-safe RPC request with lambda for marshaling
+    // @safe - Thread-safe RPC request with lambda for marshaling.
+    // RefCell::borrow / Option / Cell::set / ClientConnection::request are
+    // all @safe at their boundaries; the marshaling write_fn is also @safe.
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
         return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn));
-        }
     }
 
     // @safe - Convenience overload without callback
     template<typename F>
     FutureResult request(i32 rpc_id, F&& write_fn) const {
-        // @unsafe
-        { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
+        return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
     }
 
     // @safe - Convenience overload for requests with no arguments
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        // @unsafe
-        { return request(rpc_id, attr, [](BinaryWriteArchive&) {}); }
+        return request(rpc_id, attr, [](BinaryWriteArchive&) {});
     }
 
     // Slim async-callback request — no Arc<Future> allocation.  See
@@ -2082,12 +2065,10 @@ public:
      * Send an RPC request with explicit options for timeout and retry.
      * Sets the options on the returned Future for use with wait_with_options().
      */
-    // @safe - Thread-safe RPC request with options
+    // @safe - Thread-safe RPC request with options.
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
@@ -2095,15 +2076,13 @@ public:
         rpc_id_.set(rpc_id);
         return guard->as_ref().unwrap()->request_with_options(
             rpc_id, options, attr, std::forward<F>(write_fn));
-        }
     }
 
     // @safe - Convenience overload without FutureAttr
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       F&& write_fn) const {
-        // @unsafe
-        { return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn)); }
+        return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
     }
 
     // @safe - Sets connection validity
@@ -2115,18 +2094,15 @@ public:
      * Set the reconnection policy for this client.
      * The policy controls automatic reconnection behavior after failures.
      */
-    // @safe - Sets reconnection policy
+    // @safe - Cell::set + RefCell::borrow + Option + ClientConnection delegate.
     void set_reconnect_policy(const ReconnectPolicy& policy) const {
         pending_reconnect_policy_.set(policy);
 
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             // const_cast needed since ClientConnection::set_reconnect_policy is not const
             auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
             conn.set_reconnect_policy(policy);
-        }
         }
     }
 
@@ -2202,13 +2178,10 @@ public:
         }
     }
 
-    // @safe - Check if reconnection is in progress
+    // @safe - RefCell::borrow + Option ops are @safe.
     bool is_reconnecting() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->is_reconnecting();
-        }
     }
 
     /**
@@ -2272,37 +2245,28 @@ public:
     // a peer identifier should use `host()` (or `peer_address()` on
     // the underlying channel proxy in the future).
 
-    // @safe - Returns host string
+    // @safe - RefCell::borrow + Option + ClientConnection::host (safe getter).
     std::string host() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->host();
         }
         return "";
-        }
     }
 
-    // @safe - Returns connection status
+    // @safe - RefCell::borrow + Option + ClientConnection::connected.
     bool connected() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->connected();
-        }
     }
 
-    // @safe - Returns current connection state
+    // @safe - RefCell::borrow + Option + ClientConnection::connection_state.
     ConnectionState connection_state() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->connection_state();
         }
         return ConnectionState::NEW;
-        }
     }
 
     /**
@@ -2328,17 +2292,14 @@ public:
         return false;
     }
 
-    // @safe - Returns a clone of the connection Option
-    // Returns None if not connected, Some(Arc<ClientConnection>) if connected
+    // @safe - RefCell::borrow + Option + Arc::clone are @safe.
+    // Returns None if not connected, Some(Arc<ClientConnection>) if connected.
     rusty::Option<rusty::Arc<ClientConnection>> connection() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return rusty::Some(guard->as_ref().unwrap().clone());
         }
         return rusty::None;
-        }
     }
 
     // === Server Restart Detection API ===
@@ -2347,16 +2308,13 @@ public:
      * Get the last known server instance ID.
      * Returns 0 if no ID has been set yet or no connection exists.
      */
-    // @safe - Delegates to ClientConnection
+    // @safe - RefCell::borrow + Option + ClientConnection::server_instance_id.
     uint64_t server_instance_id() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->server_instance_id();
         }
         return 0;
-        }
     }
 
     /**
@@ -2399,18 +2357,15 @@ public:
      *
      * @param config The keepalive configuration to apply
      */
-    // @safe - Uses Cell for interior mutability
+    // @safe - Cell::set + RefCell::borrow + Option + ClientConnection::set_keepalive.
     void set_keepalive(const KeepaliveConfig& config) const {
         // Always store locally (for use in connect() if called before connection exists)
         pending_keepalive_config_.set(config);
 
         // If connection exists, also apply immediately
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_keepalive(config);
-        }
         }
     }
 
