@@ -285,9 +285,10 @@ struct FutureAttr {
     FutureCallback callback;
 };
 
-// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
+// @safe - Methods that genuinely cross into unsafe ops (network I/O,
+// std::chrono use, etc.) carry their own `// @unsafe` overrides; the
+// rest of the class is now analyzed as @safe by default.
 // Uses rusty::Arc for memory safety, RefCell/Cell for interior mutability
-// MIGRATED: Now uses rusty::Arc<Future> instead of RefCounted for memory safety
 class Future {
     friend class rusty::Arc<Future>;  // Allow Arc to construct/destroy
     friend class Client;              // Client needs to call private constructor and set error
@@ -1934,11 +1935,12 @@ struct hash<rusty::Arc<rrr::ClientConnection>> {
 // ===========================================================================
 export namespace rrr {
 
-// @unsafe - RPC client facade that owns a ClientConnection
-// (Marked unsafe due to mutable field for interior mutability)
-// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
-// Client provides the user-facing API, ClientConnection handles socket I/O
-// Similar to Server/ServerConnection pattern
+// @safe - The interior-mutable `mutable RefCell<...>` field is sound
+// because RefCell enforces runtime borrow rules. Methods that drive
+// socket I/O through ClientConnection carry their own `// @unsafe`
+// overrides; the rest of the class is analyzed as @safe by default.
+// Client provides the user-facing API, ClientConnection handles socket I/O.
+// Similar to Server/ServerConnection pattern.
 class Client {
     // The underlying connection that handles socket I/O
     // RefCell for interior mutability (const methods need to delegate to connection)
