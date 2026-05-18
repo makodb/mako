@@ -3,11 +3,19 @@
 ## Status
 
 - **Open** upstream LLVM bug — not yet reported (collected here for filing).
-- **Workaround landed**: rusty-cpp's parser detects the libclang `Crash`
-  error and retries the parse with module args dropped (keeps `import std;`
-  only). The borrow check survives but loses cross-module callee resolution
-  on the affected TUs.
-- Affected files in rrr: `src/rrr/rpc/server.cpp`, `src/rrr/rpc/fiber_channel.cpp`.
+- **Production toolchain switched to clang 21.1.8** (Homebrew
+  `llvm@21`). clang 21 doesn't have the parse crash and also doesn't
+  have the clang-19 multi-attachment trap, so both server.cpp and
+  fiber_channel.cpp borrow-check with full-info findings. See
+  [`srpc_module_migration_plan.md`](srpc_module_migration_plan.md) for
+  the build invocation.
+- **Workaround landed** (kept for the record / clang-22 fallback):
+  rusty-cpp's parser detects the libclang `Crash` error and retries
+  the parse with module args dropped (keeps `import std;` only). The
+  borrow check survives but loses cross-module callee resolution on
+  the affected TUs.
+- Affected files in rrr (when running against clang-22 libclang):
+  `src/rrr/rpc/server.cpp`, `src/rrr/rpc/fiber_channel.cpp`.
 
 ## Summary
 
@@ -74,32 +82,33 @@ enough.
   doesn't reach user-defined types like
   `rusty::Box<ChannelFactoryProxy>`.
 
-## clang-19 vs clang-22 comparison (definitive)
+## clang-19 vs clang-21 vs clang-22 comparison (definitive)
 
 Built `rrr` with clang 19 in `build_clang19/`, producing matching
 clang-19 PCMs for every module except `rrr.server` (which clang-19
 itself can't compile due to a separate, documented multi-attachment
-bug on `rusty::HashMap::operator()`).
-
-Pointed a libclang-19-linked rusty-cpp at `build_clang19/compile_commands.json`:
+bug on `rusty::HashMap::operator()`). Built with clang 21 in
+`build_clang21/`, which is the new production toolchain.
 
 | Setup | server.cpp | fiber_channel.cpp |
 |---|---|---|
-| libclang 22 + clang-22 PCMs (production) | First-attempt **Crash**; recovers via std-only retry; degraded analysis | First-attempt **Crash**; recovers via std-only retry; degraded analysis |
-| libclang 19 + clang-19 PCMs (matched, this test) | **Clean parse**, 6 full-info findings | **Clean parse**, 3 full-info findings |
+| libclang 22 + clang-22 PCMs (former production) | First-attempt **Crash**; recovers via std-only retry; degraded analysis | First-attempt **Crash**; recovers via std-only retry; degraded analysis |
+| **libclang 21 + clang-21 PCMs (current production)** | **Clean parse**, full-info findings | **Clean parse**, full-info findings |
+| libclang 19 + clang-19 PCMs (matched, see caveat) | **Clean parse**, 6 full-info findings | **Clean parse**, 3 full-info findings |
 | libclang 19 + clang-22 PCMs (mismatched) | PCM version-mismatch error; recovers cleanly | Same |
 
 Combined with the fact that `clang++ -fsyntax-only` compiles the
 source without issue, this is conclusively a **libclang-22
-regression** introduced between clang 19 and clang 22.
+regression** introduced between clang 19 and clang 22, and fixed (or
+never introduced) on the clang-21 branch.
 
-## Why we don't downgrade
+## Why we use clang 21 (and not clang 19 or clang 22)
 
 clang 19 has its own showstopper: `rusty::HashMap<K, V>::operator()`
 gets multi-attached across module boundaries (instantiations from
 `rrr.reactor` clash with the same instantiation in `rrr.server`),
-which clang 22 explicitly fixed. We hit this in this very
-investigation:
+which clang 21/22 explicitly fixed. We hit this when trying to
+produce matching clang-19 PCMs:
 
 ```
 rusty-cpp/include/rusty/hashmap.hpp:77:12: error: declaration
@@ -107,8 +116,40 @@ rusty-cpp/include/rusty/hashmap.hpp:77:12: error: declaration
   attached to other modules
 ```
 
-Reverting to clang 19 trades a recoverable libclang parse crash for
-an unrecoverable production-build failure. Net negative.
+clang 22 has the libclang parse-crash regression documented in this
+file.
+
+clang 21 has neither problem. It is the sweet spot: stricter compile
+checks than clang 19 (it caught the duplicate `class Client`
+forward-decl in `rpc/load_balancer.cpp` that clang 22 was silently
+accepting — see commit `df2388f6`), clean parse on the borrow-check
+pipeline, and full-info findings across all 45 module units.
+
+### Source fixups required for the clang-21 switch
+
+Two small source changes were needed to ride on clang 21:
+
+1. `rpc/load_balancer.cpp` — drop the GMF forward-decl `namespace
+   rrr { class Client; }`. clang 21 (correctly) rejects re-declaring a
+   class that's fully declared in another imported module's purview.
+   Commit `df2388f6`.
+
+2. `reactor/reactor.cpp` — convert class-static `thread_local`
+   members (`Reactor::sp_reactor_th_`, `Reactor::sp_disk_reactor_th_`,
+   `Reactor::sp_running_fiber_th_`, `PollThreadWorker::current_worker_`)
+   to `static inline thread_local`. clang 21 emits the module-attached
+   TLS storage as a strong external in every TU that uses it via an
+   inline accessor (e.g. `is_on_poll_thread()`), producing
+   duplicate-definition linker errors at executable-link time:
+
+   ```
+   multiple definition of `TLS init function for
+     rrr::Reactor@rrr.reactor::sp_reactor_th_';
+   ```
+
+   `inline` puts the symbol in vague linkage so the linker dedupes.
+   clang 22 happened to keep these in vague linkage already; clang 21
+   needs the `inline` to be explicit. Commit `8f62ed80`.
 
 ## Possible upstream classification
 
