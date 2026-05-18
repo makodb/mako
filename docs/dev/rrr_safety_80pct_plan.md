@@ -219,7 +219,12 @@ The loop must NOT:
   of in-fn LOC.
 
 ### Phase 1 — class-level @safe
-- [ ] Server (rpc/server.cpp)
+- [x] Server (rpc/server.cpp) — class-level `// @safe` with method-level
+  `// @unsafe` overrides preserved. Also fixed an LOC-script bug where
+  multi-line `// @safe -` annotation comments containing `;` (e.g.
+  "// overrides; ...") spuriously cleared pending → Future/Client class
+  annotations from Tier 4 also weren't being credited. Commit d5028a19;
+  borrow_check_rrr 45/45 clean; ratio 6.3% → 7.2% (after script fix).
 - [ ] Reactor (reactor/reactor.cpp)
 - [ ] IdempotencyTracker (rpc/idempotency.cpp)
 - [ ] CompletionTracker (rpc/completion_tracker.cpp)

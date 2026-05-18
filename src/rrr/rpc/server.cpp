@@ -592,8 +592,12 @@ public:
     }
 };
 
-// @unsafe - Main RPC server managing connections
-// SAFETY: Thread-safe connection management with spinlocks
+// @safe - Methods that genuinely cross into unsafe ops (socket I/O via the
+// channel-layer's TcpListener, Pthread / std::atomic primitives, raw
+// pointer extraction from ChannelListenerProxy, etc.) carry their own
+// `// @unsafe` overrides; the rest of the class is now analyzed as @safe
+// by default. Mirrors the Tier-4 flip on `Client`.
+// Thread-safe connection management uses rusty::SpinMutex.
 class Server: public NoCopy {
     friend class ServerConnection;
  public:

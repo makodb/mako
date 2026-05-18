@@ -200,12 +200,15 @@ def classify_file(path):
                     func_stack.pop()
                 depth -= 1
 
-            # Drop pending annotation if line had a `;` and didn't open a body.
-            if pending in ("safe", "unsafe") and ";" in line and opens == 0:
+            # Drop pending annotation if line had a `;` (in code, not in a
+            # comment) and didn't open a body — that's a forward-decl, not a
+            # definition. Strip comments before the `;` check or multi-line
+            # annotation comments like `// overrides; the rest...` would
+            # spuriously clear pending.
+            if pending in ("safe", "unsafe") and ";" in stripped and opens == 0:
                 pending = None
                 pending_for_class = None
-            # Drop stale pending_out_of_class if a `;` arrives without `{`.
-            if pending_out_of_class is not None and ";" in line and opens == 0:
+            if pending_out_of_class is not None and ";" in stripped and opens == 0:
                 pending_out_of_class = None
 
     bkts["total"] = total
