@@ -1310,7 +1310,10 @@ private:
     // @unsafe - Apply keepalive options to socket
     // Called after socket creation in connect()
     void apply_keepalive_options();
-    // @safe - Enqueue one internal heartbeat probe packet.
+    // @unsafe - Builds a Marshal body via operator<< (rusty-cpp treats
+    // operator overloads as @unsafe by default) and dispatches it through
+    // the channel proxy. The function is internally safe but its body uses
+    // patterns the analyzer flags; mark the wrapper @unsafe to match.
     void enqueue_heartbeat_probe() const;
     // @safe - Evaluate circuit breaker gate and update metrics.
     bool allow_request_with_circuit_metrics() const;
@@ -4055,7 +4058,10 @@ bool ClientConnection::check_pending_write_update() const {
       return false;
     }
     if (heartbeat_manager_.should_send_heartbeat()) {
-      enqueue_heartbeat_probe();
+      // @unsafe
+      {
+        enqueue_heartbeat_probe();
+      }
       heartbeat_manager_.on_heartbeat_sent();
       return true;
     }

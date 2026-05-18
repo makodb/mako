@@ -1034,6 +1034,11 @@ struct SerializableRegistryMap {
   rusty::HashMap<int32_t, SerializableRegistry::Factory> map;
 };
 
+// @unsafe - Returns a reference into a process-wide static singleton; the
+// caller treats the returned reference as `'static`-lifetime, which rusty-cpp
+// doesn't express. Marked @unsafe rather than @safe so the analyzer doesn't
+// demand a `@lifetime: () -> &'a where 'a: 'static` annotation it can't yet
+// model.
 SpinMutex<SerializableRegistryMap>& registry() {
   static SpinMutex<SerializableRegistryMap> r;
   return r;

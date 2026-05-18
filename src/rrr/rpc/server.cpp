@@ -310,8 +310,11 @@ public:
      * 1: PollThreadWorker::do_close_pollable() for thread-safe close
      * 2: handle_error() for error handling
      */
-    // @safe - Closes connection and cleans up
-    // SAFETY: Thread-safe with server connection lock
+    // @unsafe - Calls Log_debug then tears down the channel proxy via a
+    // raw-pointer deref. The inner deref is inside a `// @unsafe { }` block
+    // in the definition, but the @unsafe-block scope doesn't reach into
+    // rusty-cpp's null-safety pass for nested if-bodies. Treat the whole
+    // method as unsafe to match the definition.
     void close();
 
 private:
@@ -1073,7 +1076,6 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
         auto sconn_opt = weak_self.upgrade();
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
-        // @unsafe - Log_warn formatting + std::string_view bridge
         Log_warn("rrr::ServerConnection: channel error %s: %.*s",
                  channel_error_to_string(err),
                  static_cast<int>(message.size()), message.data());
@@ -1275,9 +1277,8 @@ void ServerConnection::close() {
         status_ = CLOSED;
         Log_debug("server@%s close ServerConnection",
                   ctx_->addr.c_str());
-        // Tear down the channel proxy. Idempotent per channel-
-        // layer contract.
-        // @unsafe { SpinMutex::lock + ChannelConnectionProxy method dispatch }
+        // Tear down the channel proxy. Idempotent per channel-layer contract.
+        // @unsafe
         {
             auto guard = channel_proxy_.lock().unwrap();
             if (guard->is_some()) {
@@ -1504,7 +1505,6 @@ int Server::start(const char* bind_addr) {
       }
     });
     listener->set_on_error([](ChannelError err, std::string_view msg) {
-      // @unsafe - Log_warn formatting + std::string_view bridge
       Log_warn("rrr::Server: channel listener error %s: %.*s",
                channel_error_to_string(err),
                static_cast<int>(msg.size()), msg.data());

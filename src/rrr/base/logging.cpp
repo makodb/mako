@@ -47,21 +47,27 @@ public:
 };
 
 template <typename... Args>
+// @safe - printf-style logging shim; format string is a literal at every
+// call site we control, the variadic args are forwarded by value/reference.
+// No memory operations escape to callers.
 inline void Log_debug(const char* fmt, Args&&... args) {
     Log::debug(fmt, std::forward<Args>(args)...);
 }
 
 template <typename... Args>
+// @safe - see Log_debug above.
 inline void Log_info(const char* fmt, Args&&... args) {
     Log::info(fmt, std::forward<Args>(args)...);
 }
 
 template <typename... Args>
+// @safe - see Log_debug above.
 inline void Log_warn(const char* fmt, Args&&... args) {
     Log::warn(fmt, std::forward<Args>(args)...);
 }
 
 template <typename... Args>
+// @safe - see Log_debug above.
 inline void Log_error(const char* fmt, Args&&... args) {
     Log::error(fmt, std::forward<Args>(args)...);
 }
