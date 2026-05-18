@@ -2580,17 +2580,20 @@ class ClientPool {
     // owns a shared reference to PollThread
     rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker_;
 
-    // guard cache_
-    SpinLock l_;
-    // @safe - Uses rusty::Arc<Client> for thread-safe reference counting
-    // SAFETY: Arc provides thread-safe reference counting with polymorphism support
-    rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache_;
+    // Mutex-protected state. Bundling cache + load-balancer state in a
+    // single SpinMutex matches the access pattern (get_client touches
+    // both under one lock) and replaces the prior `SpinLock l_ +
+    // unprotected fields` pattern with rusty's RAII guard.
+    struct PoolState {
+        // @safe - rusty::Arc<Client> for thread-safe reference counting.
+        rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache;
+        // Load balancer state per address (for round-robin tracking).
+        rusty::BTreeMap<std::string, LoadBalancerState> lb_state;
+    };
+    mutable SpinMutex<PoolState> state_;
 
     // Pool configuration (Cell for interior mutability)
     rusty::Cell<PoolConfig> config_;
-
-    // Load balancer state per address (for round-robin tracking)
-    rusty::BTreeMap<std::string, LoadBalancerState> lb_state_;
 
     // Helper: Check if a client is considered healthy
     // @safe - Uses metrics to determine health
@@ -4335,7 +4338,8 @@ bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
 ClientPool::~ClientPool() {
   // rusty::BTreeMap iter `operator*()` returns
   // `std::tuple<const K&, V&>` (post-2026-04 API).
-  for (auto&& [_addr, clients] : cache_) {
+  auto guard = state_.lock().unwrap();
+  for (auto&& [_addr, clients] : guard->cache) {
     for (auto& client : clients) {
       client->close();
     }
@@ -4347,11 +4351,11 @@ ClientPool::~ClientPool() {
   }
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap ops + is_client_healthy are all @safe.
 size_t ClientPool::get_healthy_client_count(const std::string& addr) {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t count = 0;
-  auto clients_opt = cache_.get(addr);
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     // rusty::BTreeMap::get returns `Option<V&>` (post-2026-04
     // API), so unwrap() yields a reference, not a pointer.
@@ -4362,15 +4366,14 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
       }
     }
   }
-  l_.unlock();
   return count;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops + is_client_healthy are @safe.
 size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t removed = 0;
-  auto clients_opt = cache_.get(addr);
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`; unwrap() yields a
     // reference. Use `.` instead of `->`, drop the `*` deref.
@@ -4396,26 +4399,24 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
 
     // Remove empty entries from cache
     if (clients.is_empty()) {
-      cache_.remove(addr);
+      guard->cache.remove(addr);
     }
   }
-  l_.unlock();
   return removed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops + is_idle/close are @safe.
 size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_time_ms) {
-  l_.lock();
-  size_t closed = 0;
   auto cfg = config_.get();
 
   // If idle timeout is 0, no timeout
   if (cfg.idle_timeout_ms == 0) {
-    l_.unlock();
     return 0;
   }
 
-  auto clients_opt = cache_.get(addr);
+  auto guard = state_.lock().unwrap();
+  size_t closed = 0;
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`.
     auto& clients = clients_opt.unwrap();
@@ -4437,26 +4438,25 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
     clients = std::move(kept);
 
     if (clients.is_empty()) {
-      cache_.remove(addr);
+      guard->cache.remove(addr);
     }
   }
-  l_.unlock();
   return closed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
 size_t ClientPool::remove_all_unhealthy() {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t total_removed = 0;
   auto cfg = config_.get();
 
   // BTreeMap::keys() now returns `keys_range` (a transient
   // iterator-shaped object), not `Vec<K>`. Drain into a Vec so the
-  // subsequent loop body — which mutates `cache_` via `remove(...)`
+  // subsequent loop body — which mutates `cache` via `remove(...)`
   // — doesn't iterate while modifying.
   rusty::Vec<std::string> keys;
   {
-    auto it = cache_.keys();
+    auto it = guard->cache.keys();
     keys.reserve(it.len());
     for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
       keys.push(std::string(opt.unwrap()));
@@ -4464,7 +4464,7 @@ size_t ClientPool::remove_all_unhealthy() {
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = cache_.get(addr);
+    auto clients_opt = guard->cache.get(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -4492,28 +4492,26 @@ size_t ClientPool::remove_all_unhealthy() {
     }
   }
   for (const auto& addr : empty_keys) {
-    cache_.remove(addr);
+    guard->cache.remove(addr);
   }
-  l_.unlock();
   return total_removed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
 size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
-  l_.lock();
-  size_t total_closed = 0;
   auto cfg = config_.get();
-
   if (cfg.idle_timeout_ms == 0) {
-    l_.unlock();
     return 0;
   }
+
+  auto guard = state_.lock().unwrap();
+  size_t total_closed = 0;
 
   // same drain pattern as remove_all_unhealthy above —
   // BTreeMap::keys() returns a transient `keys_range`.
   rusty::Vec<std::string> keys;
   {
-    auto it = cache_.keys();
+    auto it = guard->cache.keys();
     keys.reserve(it.len());
     for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
       keys.push(std::string(opt.unwrap()));
@@ -4521,7 +4519,7 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = cache_.get(addr);
+    auto clients_opt = guard->cache.get(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -4548,33 +4546,31 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
     }
   }
   for (const auto& addr : empty_keys) {
-    cache_.remove(addr);
+    guard->cache.remove(addr);
   }
-  l_.unlock();
   return total_closed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
 size_t ClientPool::total_client_count() {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t count = 0;
   // BTreeMap iter returns `tuple<const K&, V&>`.
-  for (auto&& [_addr, clients] : cache_) {
+  for (auto&& [_addr, clients] : guard->cache) {
     count += clients.size();
   }
-  l_.unlock();
   return count;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap::len are @safe.
 size_t ClientPool::address_count() {
-  l_.lock();
-  size_t count = cache_.len();
-  l_.unlock();
-  return count;
+  auto guard = state_.lock().unwrap();
+  return guard->cache.len();
 }
 
-// @unsafe - Reconnects all clients for a specific address
+// @unsafe - Async reconnect loop uses nanosleep + std::atomic for batching.
+// The state_ access at the top is @safe; the reconnection driver below is
+// what makes this function unsafe overall.
 ClientPool::BulkReconnectResult ClientPool::reconnect_all(
     const std::string& addr, const BulkReconnectConfig& config) {
 
@@ -4583,8 +4579,8 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
   // Collect clients to reconnect
   rusty::Vec<rusty::Arc<Client>> clients_to_reconnect;
   {
-    l_.lock();
-    auto clients_opt = cache_.get(addr);
+    auto guard = state_.lock().unwrap();
+    auto clients_opt = guard->cache.get(addr);
     if (clients_opt.is_some()) {
       // BTreeMap::get returns `Option<V&>`.
       auto& clients = clients_opt.unwrap();
@@ -4597,7 +4593,6 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
         }
       }
     }
-    l_.unlock();
   }
 
   result.total = clients_to_reconnect.size() + result.skipped;
@@ -4664,19 +4659,19 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
   return result;
 }
 
-// @unsafe - Reconnects all clients across all addresses
+// @unsafe - Delegates to per-address reconnect_all which has the async
+// driver. The state_ snapshot taken at the top is @safe.
 ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectConfig& config) {
   BulkReconnectResult total_result{0, 0, 0, 0};
 
   // Get list of addresses
   rusty::Vec<std::string> addresses;
   {
-    l_.lock();
+    auto guard = state_.lock().unwrap();
     // BTreeMap iter returns `tuple<const K&, V&>`.
-    for (auto&& [addr, _clients] : cache_) {
+    for (auto&& [addr, _clients] : guard->cache) {
       addresses.push(addr);
     }
-    l_.unlock();
   }
 
   // Reconnect each address
@@ -4691,25 +4686,25 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
   return total_result;
 }
 
-// @unsafe - Gets cached or creates new client connections
-// Now includes health checking, automatic reconnection, and load balancing
+// @unsafe - Drives Client::connect / reconnect synchronously; the state_
+// lock + BTreeMap ops are @safe but the network I/O underneath is not.
 rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
   auto cfg = config_.get();
   int num_connections = cfg.min_connections;
 
-  l_.lock();
+  auto guard = state_.lock().unwrap();
 
   // Get or create load balancer state for this address
-  auto lb_state_opt = lb_state_.get(addr);
+  auto lb_state_opt = guard->lb_state.get(addr);
   if (lb_state_opt.is_none()) {
-    lb_state_.insert(addr, LoadBalancerState{});
-    lb_state_opt = lb_state_.get(addr);
+    guard->lb_state.insert(addr, LoadBalancerState{});
+    lb_state_opt = guard->lb_state.get(addr);
   }
   // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
   auto& lb_state = lb_state_opt.unwrap();
 
-  auto clients_opt = cache_.get(addr);
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     auto& clients = clients_opt.unwrap();
     int client_count = static_cast<int>(clients.size());
@@ -4773,7 +4768,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
         sp_cl = rusty::Some(clients[rand_() % clients.size()].clone());
       } else {
         // Remove from cache if we can't connect
-        cache_.remove(addr);
+        guard->cache.remove(addr);
       }
     }
   } else {
@@ -4791,11 +4786,10 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     }
     if (ok) {
       sp_cl = rusty::Some(parallel_clients[rand_() % parallel_clients.size()].clone());
-      cache_.insert(addr, std::move(parallel_clients));
+      guard->cache.insert(addr, std::move(parallel_clients));
     }
     // If not ok, parallel_clients automatically cleaned up by Arc
   }
-  l_.unlock();
   return sp_cl;
 }
 
