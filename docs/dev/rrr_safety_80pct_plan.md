@@ -265,7 +265,15 @@ The loop must NOT:
   Commit 75496f62; ratio 15.4% → 16.0% (+76 LOC).
 
 ### Phase 1 — namespace-level @safe
-- [ ] rpc/inmemory_channel.cpp
+- [blocked] rpc/inmemory_channel.cpp — namespace `// @safe` flip fired
+  17 violations (raw `InMemoryConnectionState*` pointers + const_cast
+  via `mut_state` pattern in InMemoryListener::accept_for_connect and
+  make_channel_pair_for_testing, raw-ptr arithmetic in
+  InMemoryChannel::send_frame, plus "use of uninitialized variable"
+  on locally-declared callback / latch flags inside send_frame and
+  close). The raw-ptr issues need a refactor (rusty::Arc::get_mut
+  / rusty::MutPtr) — beyond Phase 1 mechanical scope. Reverted;
+  follow-up in Phase 3.
 - [ ] rpc/frame_codec.cpp
 - [ ] rpc/internal_protocol.cpp
 - [ ] rpc/request_options.cpp
