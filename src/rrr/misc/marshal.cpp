@@ -21,6 +21,7 @@ export module rrr.marshal;
 import std;
 import rrr.basetypes;
 import rrr.debugging;
+import rrr.misc;
 import rrr.serializable;
 import rrr.threading;
 

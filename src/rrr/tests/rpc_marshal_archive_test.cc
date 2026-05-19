@@ -34,6 +34,7 @@
 #include "../misc/serializable_envelope.hpp"
 
 import std;
+import rrr.basetypes;
 
 namespace rrr {
 namespace {
