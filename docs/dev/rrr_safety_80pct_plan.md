@@ -358,7 +358,10 @@ The loop must NOT:
   strlen/strncmp, pointer arithmetic). `format_decimal` and `strsplit`
   inherit namespace @safe (std::string + ostringstream + rusty::Vec).
   Commit 1dc137d7; ratio 23.4% → **23.8%** (+54 LOC).
-- [ ] base/callback_wrapper.cpp
+- [x] base/callback_wrapper.cpp — both `export namespace rrr` and the
+  inner `namespace detail` `// @safe`. CallbackWrapper is a pure
+  forwarder over `rusty::Arc<rusty::Function<Sig>>`. No per-method
+  overrides needed. Ratio 23.8% → **23.8%** (+4 LOC).
 - [ ] base/misc.cpp
 - [ ] base/unittest.cpp
 - [ ] reactor/epoll_wrapper.cc
