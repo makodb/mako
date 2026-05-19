@@ -404,11 +404,21 @@ or SP-5 doesn't fit in one iteration, the loop will tick it
 `[blocked]` and move on; downstream consumers will then be picked
 up the next time that library work lands.
 
-- [ ] inmemory_channel.cpp retry — apply the per-method `// @unsafe`
-  pattern to `InMemoryListener::accept_for_connect`,
-  `make_channel_pair_for_testing`, `InMemoryChannel::send_frame`, and
-  `close`. Initialize uninit-flagged locals to `0`/`false` like the
-  rand.cpp fix. Goal: namespace `@safe` for the rest of the 844 LOC.
+- [x] inmemory_channel.cpp retry — both `export namespace rrr` and the
+  impl `namespace rrr` `// @safe`. Per-method `// @unsafe` on every
+  method routing through a `mut_state` / `mut_conn` / `mut_listener` /
+  `mut_factory` const_cast helper (InMemoryChannel: 9 methods +
+  mut_state; InMemoryChannelAdapter: 8 methods + mut_conn;
+  InMemoryListenerAdapter: 4 methods + mut_listener;
+  InMemoryFactoryAdapter: 2 methods + mut_factory). Also @unsafe on
+  `accept_for_connect`, `connect`, `make_listener`, and
+  `make_channel_pair_for_testing` (each does an inline `const_cast`).
+  `InMemoryChannel::send_frame` carries an extra rationale: raw
+  `uint8_t*` byte slicing through `bytes.assign(f.payload, f.payload +
+  f.size)`. `InMemorySwitchboard::find_listener` keeps the body @safe
+  with an inline `// @unsafe { val_opt.unwrap()->upgrade() }` block
+  around the Option-deref. Ratio 25.5% → **26.8%** (+165 @safe LOC;
+  unannotated dropped 311 LOC).
 - [ ] rpc/utils.cpp retry — namespace `@safe` + per-method
   `// @unsafe` on every syscall-touching function (`getaddrinfo`,
   `fcntl`, `socket`/`bind`/`getsockname`, `gethostname`) and on
