@@ -10,6 +10,13 @@ export module rrr.channel;
 import std;
 import rrr.callback_wrapper;
 
+// @safe - virtual interfaces only (ChannelConnectionBase /
+// ChannelListenerBase / ChannelFactoryBase have no method bodies),
+// a constexpr error-name lookup, and the POD `ChannelFrame` /
+// `ConnectResult` structs. The raw `const uint8_t* payload` field
+// on `ChannelFrame` is a transport-level non-owning view (the
+// SinkProxy contract pins the bytes for the call duration); no
+// method here dereferences it.
 export namespace rrr {
 
 enum class ChannelError : int {
