@@ -302,7 +302,10 @@ The loop must NOT:
   gethostname) and AddrInfo holds a raw `struct addrinfo*`. Namespace
   flip would fire violations across the whole file with no net @safe
   gain. Leave unannotated; it's a thin syscall wrapper by design.
-- [ ] rpc/pollable_proxy.cpp
+- [x] rpc/pollable_proxy.cpp — namespace `// @safe` + per-method
+  `// @unsafe` on `mut_poll()` (const_cast through Arc::get).
+  Commit (pending); ratio unchanged at 19.3% (file is mostly virtual
+  interface decls + one-line delegators).
 - [ ] rpc/reconnect_policy.cpp
 - [ ] misc/serializable_envelope.cpp
 - [ ] misc/netinfo.cpp

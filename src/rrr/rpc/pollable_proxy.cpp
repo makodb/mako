@@ -7,6 +7,10 @@ export module rrr.pollable_proxy;
 
 import std;
 
+// @safe - Pollable interface + thin Arc<T>-wrapping adapter. The
+// adapter's `mut_poll()` helper does a const_cast<T&> through
+// rusty::Arc<T>::get() — that one method carries an explicit
+// `// @unsafe` override below; everything else is pure delegation.
 export namespace rrr {
 
 class PollableBase {
@@ -42,6 +46,10 @@ class PollableTypedArcAdapter : public PollableBase {
   bool is_closed() const override { return poll_->is_closed(); }
 
  private:
+  // @unsafe - const_cast through Arc::get() returning T*; lifts the
+  // const-ness so the adapter can invoke non-const Pollable hooks
+  // (handle_read/write/error, content_size, close). Callers guarantee
+  // single-threaded access via the poll thread.
   T& mut_poll() { return const_cast<T&>(*poll_.get()); }
   rusty::Arc<T> poll_;
 };
