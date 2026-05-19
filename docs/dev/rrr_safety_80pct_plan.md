@@ -461,9 +461,9 @@ up the next time that library work lands.
   can read/write/seek without dropping out of the borrow check. Both
   `read` and `write` now move the raw `uint8_t*` extraction (via
   private `get_data`/`get_mut_data`) and the `std::memcpy` into
-  inline `// @unsafe { }` blocks. Submodule commit d9795f0.
-  frame_codec.cpp and serializable_envelope.cpp adopt the Cursor
-  next.
+  inline `// @unsafe { }` blocks. Submodule commit d9795f0;
+  parent commit 060223e2. frame_codec.cpp and serializable_envelope.cpp
+  adopt the Cursor next.
 - [ ] frame_codec.cpp retry — adopt the new cursor in `encode_into`,
   `FrameStreamReader::next_frame`, `consume_frame`,
   `compact_if_needed`. Namespace `@safe` once the raw `uint8_t*`
