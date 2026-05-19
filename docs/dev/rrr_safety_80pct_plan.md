@@ -295,7 +295,8 @@ The loop must NOT:
   pending @safe via the `;` check) got zero credit. After fix: ratio
   16.8% → 18.3% (+186 LOC; the gain retroactively credits earlier
   namespace flips too).
-- [ ] rpc/errors.cpp
+- [x] rpc/errors.cpp — namespace `// @safe`. Commit (pending);
+  ratio 18.3% → 19.3% (+114 LOC).
 - [ ] rpc/utils.cpp
 - [ ] rpc/pollable_proxy.cpp
 - [ ] rpc/reconnect_policy.cpp
