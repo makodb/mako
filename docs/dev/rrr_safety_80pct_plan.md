@@ -389,6 +389,55 @@ The loop must NOT:
   accessor. Commit 596d31e6; ratio 24.9% → **25.5%** (+81 LOC).
   **Phase 1 complete:** ratio rose 6.4% → 25.5% over iters 0–35.
 
+### Phase 1 — unblock retries (subplan from 2026-05-18)
+
+The six Phase 1 namespace-level `[blocked]` items above were marked
+blocked under the early-Phase-1 "namespace `@safe`; revert all on any
+finding" approach. The late-Phase-1 pattern — namespace `@safe` plus
+per-method `// @unsafe` overrides on the offending methods only —
+postdates those decisions and likely unblocks most of them.
+
+Items are ordered by independence: retries that don't depend on new
+library work first, then `rusty::sys::fs` (SP-1) plus its consumers,
+then the Cursor/Marshal refactor (SP-5) plus its consumers. If SP-1
+or SP-5 doesn't fit in one iteration, the loop will tick it
+`[blocked]` and move on; downstream consumers will then be picked
+up the next time that library work lands.
+
+- [ ] inmemory_channel.cpp retry — apply the per-method `// @unsafe`
+  pattern to `InMemoryListener::accept_for_connect`,
+  `make_channel_pair_for_testing`, `InMemoryChannel::send_frame`, and
+  `close`. Initialize uninit-flagged locals to `0`/`false` like the
+  rand.cpp fix. Goal: namespace `@safe` for the rest of the 844 LOC.
+- [ ] rpc/utils.cpp retry — namespace `@safe` + per-method
+  `// @unsafe` on every syscall-touching function (`getaddrinfo`,
+  `fcntl`, `socket`/`bind`/`getsockname`, `gethostname`) and on
+  `AddrInfo`'s raw `struct addrinfo*` ownership. Modest gain
+  expected.
+- [ ] SP-1: `rusty::sys::fs` wrapper — add
+  `rusty::sys::fs::read_to_string` (and minimal companions) to the
+  rusty-cpp submodule with `@safe` annotations, then bump the
+  submodule. Standalone iteration; netinfo + cpuinfo adopt it next.
+- [ ] netinfo.cpp retry — adopt `rusty::sys::fs::read_to_string` for
+  the `/sys/class/net/.../{rx,tx}_bytes` reads; per-method
+  `// @unsafe` on the `times()`-using ctor; namespace `@safe`.
+- [ ] cpuinfo.cpp retry — same shape: `rusty::sys::fs::read_to_string`
+  for `/proc/{pid}/{stat,net/dev}`; per-method `// @unsafe` on
+  ctor's `times()` + `getpid()`; namespace `@safe`.
+- [ ] SP-5: Marshal byte-ops decision — design + add a
+  `rusty::io::Cursor<Vec<u8>>` (or equivalent) in rusty-cpp; the
+  goal is to give frame_codec / serializable_envelope a non-raw byte
+  path. Likely multi-iteration; if it doesn't fit in one pass, mark
+  blocked and the loop continues.
+- [ ] frame_codec.cpp retry — adopt the new cursor in `encode_into`,
+  `FrameStreamReader::next_frame`, `consume_frame`,
+  `compact_if_needed`. Namespace `@safe` once the raw `uint8_t*`
+  arithmetic is gone.
+- [ ] misc/serializable_envelope.cpp retry — same shape: route the
+  Marshal `operator<<` / `operator>>` chains through the cursor,
+  drop the `const_cast<SerializableEnvelope&>` shim, namespace
+  `@safe`.
+
 ### Phase 2 — easy raw-pointer refactors
 - [blocked] ChannelConnectionProxy / ChannelFactoryProxy → rusty::Box<Base>
   — alias is currently `std::unique_ptr<Base>` in `rpc/channel.cpp`.
