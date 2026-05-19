@@ -144,11 +144,13 @@ public:
     // Uses virtual dispatch to avoid raw pointer capture and static_cast
     virtual void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
 
-    // Return a typed pointer to the underlying service instance. Default
-    // returns `this`; the typed-box adapter overrides this to return its
-    // wrapped concrete T*. Used by `Server::for_each_service` for
-    // cleanup hooks that need to inspect the concrete service.
-    virtual void* __get_service__() { return static_cast<void*>(this); }
+    // Return a reference to the underlying Service instance. Default
+    // returns `*this`; the typed-box adapter overrides this to return
+    // its Service-shaped adapter self (the wrapped concrete T is not
+    // a Service). Used by `Server::for_each_service` for cleanup hooks
+    // that need to inspect the concrete service.
+    // @safe - returns a reference to `*this`; no cast through void*.
+    virtual Service& __get_service__() { return *this; }
 };
 
 using ServiceProxy = rusty::Box<Service>;
@@ -189,11 +191,12 @@ class ServiceTypedBoxAdapter : public Service {
     svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
   }
 
-  // Returns `this` (the adapter itself, which IS a Service). The wrapped
+  // Returns `*this` (the adapter itself, which IS a Service). The wrapped
   // T does not inherit `Service`, so we can't expose it through a
-  // Service*-shaped callback; callers needing the concrete T should
+  // Service&-shaped callback; callers needing the concrete T should
   // hold the typed handle separately.
-  void* __get_service__() override { return static_cast<void*>(static_cast<Service*>(this)); }
+  // @safe - returns a reference to `*this`; no cast through void*.
+  Service& __get_service__() override { return *this; }
 
  private:
   rusty::Box<T> svc_;
@@ -898,7 +901,7 @@ public:
         auto& ctx = ctx_.as_ref().unwrap();
         for (size_t i = 0; i < ctx->services.size(); ++i) {
             auto guard = ctx->services[i].borrow_mut();
-            callback(*static_cast<Service*>((*guard)->__get_service__()));
+            callback((*guard)->__get_service__());
         }
         }
     }

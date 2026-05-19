@@ -544,7 +544,18 @@ up the next time that library work lands.
   the submodule on `main` with the latest commit), (d) import the
   new module from each consuming rrr file and replace the syscall
   call sites. Multi-iteration effort spanning two repos. Defer.
-- [ ] ServiceProxy::__get_service__() → rusty::Arc<Service>
+- [x] ServiceProxy::__get_service__() → `Service&` (minimum mechanical
+  change). Changed signature from `void* __get_service__()` to
+  `Service& __get_service__()` on Service and ServiceTypedBoxAdapter;
+  updated the for_each_service callback at server.cpp:894 to pass
+  the reference directly (no `static_cast<Service*>` unwrap). Both
+  methods are now `// @safe`. Did NOT migrate to `rusty::Arc<Service>`
+  because there is only one caller and `Service&` already eliminates
+  the unsafe `static_cast<void*>` / `static_cast<Service*>` ops;
+  an Arc migration would also require ServiceProxy to flip from
+  `Box<Service>` to `Arc<Service>`. Ratio holds at **28.9%** (the
+  lines were already in @safe context — the casts were the only
+  unsafe ops and they're now gone).
 
 ### Phase 3 — remaining unsafe paths
 - [ ] alock.cpp WaitDieALock::ALock* → rusty::Weak<ALock>
