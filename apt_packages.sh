@@ -113,4 +113,18 @@ sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 200 ||
 sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 200 || true
 sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-21 200 || true
 
+# apt.llvm.org's libc++-21-dev splits the layout: libc++.modules.json lands
+# in /lib/x86_64-linux-gnu/ while the .cppm files live in
+# /usr/lib/llvm-21/share/libc++/v1/. The JSON's relative `source-path`
+# entries (`../share/libc++/v1/std.cppm`) resolve against the JSON's
+# directory, producing /lib/share/libc++/v1/std.cppm — which doesn't exist
+# — and CMake's CXX_MODULE_STD discovery aborts ("Cannot find source file").
+# Rewrite the relative paths to absolute so discovery works regardless of
+# where clang -print-file-name finds the JSON.
+MODULES_JSON="/lib/x86_64-linux-gnu/libc++.modules.json"
+if [ -f "${MODULES_JSON}" ]; then
+    sudo sed -i 's|"\.\./share/libc++/v1|"/usr/lib/llvm-21/share/libc++/v1|g' "${MODULES_JSON}"
+    echo "Patched ${MODULES_JSON} to use absolute source paths."
+fi
+
 echo "Package installation complete"
