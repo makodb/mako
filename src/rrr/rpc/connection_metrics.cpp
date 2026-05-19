@@ -7,6 +7,8 @@ export module rrr.connection_metrics;
 
 import std;
 
+// @safe - Pure rusty::Cell<uint64_t>-backed counter metrics with simple
+// getters/setters. No raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
 class ConnectionMetrics {
