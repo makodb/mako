@@ -274,7 +274,13 @@ The loop must NOT:
   close). The raw-ptr issues need a refactor (rusty::Arc::get_mut
   / rusty::MutPtr) — beyond Phase 1 mechanical scope. Reverted;
   follow-up in Phase 3.
-- [ ] rpc/frame_codec.cpp
+- [blocked] rpc/frame_codec.cpp — namespace `// @safe` flip fired 7
+  violations. The codec encodes/decodes frames on raw `uint8_t*` byte
+  pointers (frame_codec_encode_into, FrameStreamReader::next_frame,
+  consume_frame, compact_if_needed) — that's the wire-protocol path
+  and inherently raw-ptr-arithmetic. Either refactor to a
+  `Cursor<Vec<u8>>` abstraction (Phase 4 territory; perf-sensitive) or
+  keep file unannotated. Reverted.
 - [ ] rpc/internal_protocol.cpp
 - [ ] rpc/request_options.cpp
 - [ ] rpc/connection_metrics.cpp
