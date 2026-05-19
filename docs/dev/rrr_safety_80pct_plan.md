@@ -477,10 +477,22 @@ up the next time that library work lands.
   iteration — frame_codec is the transport hot path and the cursor
   port needs benchmarks first. SP-5 follow-up. Commit c5f5ee77;
   ratio 28.1% → **28.4%** (+32 @safe LOC).
-- [ ] misc/serializable_envelope.cpp retry — same shape: route the
-  Marshal `operator<<` / `operator>>` chains through the cursor,
-  drop the `const_cast<SerializableEnvelope&>` shim, namespace
-  `@safe`.
+- [x] misc/serializable_envelope.cpp retry — `export namespace rrr`
+  and `class SerializableEnvelope` `// @safe`. Per-method
+  `// @unsafe` on `unpack` (raw `T*` via dynamic_cast), const
+  `unpack`, `unpack_shared` (raw-ptr lambda-deleter shared_ptr),
+  const `unpack_shared`, `is_a` (calls unpack), `save` (Marshal
+  operator<< chain), `load` (Marshal operator>> chain), and on the
+  4 free-function operators: `marshallable_cast` const overload
+  (const_cast), `operator<<(BinaryWriteArchive&,…)`, `operator>>
+  (BinaryReadArchive&,…)`, `operator<<(Marshal&,…)`, `operator>>
+  (Marshal&,…)`. Trivial accessors (`kind`, `has_value`,
+  `operator bool`, `operator==`/`!=`, `refresh_kind`), the
+  ctors/assign-from-shared_ptr, `pack`/`pack_aliased` factories
+  inherit namespace @safe. Cursor adoption for the Marshal sink/
+  source is a future SP-5 follow-up — wire-format identical to
+  frame_codec which is also still on the labeling path.
+  Ratio 28.4% → **28.9%** (+71 @safe LOC).
 
 ### Phase 2 — easy raw-pointer refactors
 - [blocked] ChannelConnectionProxy / ChannelFactoryProxy → rusty::Box<Base>
