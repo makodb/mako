@@ -390,7 +390,25 @@ The loop must NOT:
   **Phase 1 complete:** ratio rose 6.4% → 25.5% over iters 0–35.
 
 ### Phase 2 — easy raw-pointer refactors
-- [ ] ChannelConnectionProxy / ChannelFactoryProxy → rusty::Box<Base>
+- [blocked] ChannelConnectionProxy / ChannelFactoryProxy → rusty::Box<Base>
+  — alias is currently `std::unique_ptr<Base>` in `rpc/channel.cpp`.
+  Flipping to `rusty::Box<Base>` would break two patterns the codebase
+  relies on heavily:
+  (a) `rusty::Box<T>` has `Box() = delete` — no default-null state. 19
+      call sites use `ChannelConnectionProxy{}` / `ChannelListenerProxy{}` /
+      `ChannelFactoryProxy{}` to build "empty / failure" sentinels (most
+      live in `inmemory_channel.cpp`, `tcp_channel.cpp`, and the channel
+      tests). They'd all need rewriting to either return an `Option<Box>`
+      or hold an explicit failure flag.
+  (b) 12 bare `ChannelConnectionProxy var;` / `ChannelListenerProxy var;`
+      declarations expect default-null and would not compile against
+      `rusty::Box`.
+  `ConnectResult.connection` would also need to flip to
+  `rusty::Option<rusty::Box<ChannelConnectionBase>>` and every caller
+  pattern would need adjusting. This is a multi-iteration refactor with
+  call-site fan-out into rrr's tests; not a one-iteration mechanical
+  change. Defer until a dedicated Phase 2 sub-plan covers the
+  Option-conversion sweep.
 - [ ] Reactor::PollThreadWorker* → rusty::Weak<PollThreadWorker>
 - [ ] rusty::sys::* syscall wrappers
 - [ ] ServiceProxy::__get_service__() → rusty::Arc<Service>
