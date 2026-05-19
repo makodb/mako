@@ -16,8 +16,15 @@ export module rrr.cpuinfo;
 import std;
 import rrr.logging;
 
+// @safe - CPUInfo: process-level cpu/network/memory sampling. The
+// ctor, `get_cpu_stat`, `get_network`, and `get_memory` all carry
+// per-method `// @unsafe` because they do syscalls (sysinfo, sysconf,
+// times, getpid) and parse /proc files via std::ifstream +
+// operator>> / strtok / strtoul. The `cpu_stat()` factory just hands
+// out the static instance and inherits namespace @safe.
 export namespace rrr {
 
+// @safe - see file header.
 class CPUInfo {
 private:
     unsigned long last_bytes_rxed[10], last_bytes_txed[10], last_mem_usage[10];
@@ -28,6 +35,8 @@ private:
     int index = 0;
     pid_t pid_;
     std::recursive_mutex mtx_;
+    // @unsafe - sysinfo + sysconf + times + getpid syscalls; std::recursive_mutex
+    // lock; calls get_network / get_memory which are themselves @unsafe.
     CPUInfo() {
         const std::lock_guard<std::recursive_mutex> lock (mtx_);
 #ifdef __linux__
@@ -61,6 +70,8 @@ private:
 #endif
     }
 
+    // @unsafe - times() syscall, std::recursive_mutex lock, and dispatch
+    // into the @unsafe get_network / get_memory helpers.
     rusty::Vec<double> get_cpu_stat() {
         const std::lock_guard<std::recursive_mutex> lock (mtx_);
 
@@ -116,6 +127,9 @@ private:
         return result;
     }
 
+    // @unsafe - std::ifstream + getline + strtok with raw `char*` and
+    // strtoul on raw `char*` tokens. SP-5 (Cursor) is the eventual
+    // refactor target.
     void get_network(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
 #ifndef __linux__
         (void) pid;
@@ -177,6 +191,9 @@ private:
 #endif
     }
 
+    // @unsafe - std::ifstream + a 24-step `operator>>` chain parsing
+    // /proc/{pid}/stat into a `long rss` field. SP-5 (Cursor) is the
+    // eventual refactor target.
     void get_memory(const std::string& pid, rusty::Vec<double>& result, clock_t ticks){
 #ifndef __linux__
         (void) pid;

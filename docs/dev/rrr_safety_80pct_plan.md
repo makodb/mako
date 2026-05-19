@@ -445,9 +445,17 @@ up the next time that library work lands.
   inside an inline `// @unsafe { }` block but otherwise stay @safe.
   `net_stat()` factory inherits @safe. Commit 3699b217; ratio
   27.2% → **27.5%** (+38 @safe LOC).
-- [ ] cpuinfo.cpp retry — same shape: `rusty::sys::fs::read_to_string`
-  for `/proc/{pid}/{stat,net/dev}`; per-method `// @unsafe` on
-  ctor's `times()` + `getpid()`; namespace `@safe`.
+- [x] cpuinfo.cpp retry — `export namespace rrr` and `class CPUInfo`
+  `// @safe`. Per-method `// @unsafe` on the four heavy methods:
+  ctor (sysinfo + sysconf + times + getpid), `get_cpu_stat`
+  (times() + dispatch into @unsafe helpers), `get_network`
+  (ifstream + getline + strtok + strtoul), `get_memory` (ifstream +
+  24-step `operator>>` chain). `cpu_stat()` factory inherits @safe.
+  Adoption of `rusty::sys::fs::read_to_string` inside get_network /
+  get_memory is left for a SP-5 follow-up — the file's parse paths
+  are gnarlier than the netinfo.cpp pattern (strtok mutates the
+  string in place; the stat file uses a deep operator>> chain).
+  Ratio 27.5% → **28.1%** (+69 @safe LOC).
 - [ ] SP-5: Marshal byte-ops decision — design + add a
   `rusty::io::Cursor<Vec<u8>>` (or equivalent) in rusty-cpp; the
   goal is to give frame_codec / serializable_envelope a non-raw byte
