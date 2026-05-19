@@ -262,7 +262,7 @@ The loop must NOT:
   level `// @safe`. Commit d4ea8534; ratio 14.9% → 15.4% (+67 LOC).
 - [x] RequestQueue class @safe completion (rpc/request_queue.cpp) —
   class-level `// @safe` added. Methods were already @safe from Tier 2.
-  Commit (pending); ratio 15.4% → 16.0% (+76 LOC).
+  Commit 75496f62; ratio 15.4% → 16.0% (+76 LOC).
 
 ### Phase 1 — namespace-level @safe
 - [ ] rpc/inmemory_channel.cpp
