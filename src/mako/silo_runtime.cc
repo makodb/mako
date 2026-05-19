@@ -116,6 +116,41 @@ unsigned SiloRuntime::allocate_core_id() {
     return id;
 }
 
+// @safe - Non-aborting variant. See header for semantics.
+int SiloRuntime::try_allocate_core_id() {
+    unsigned id = core_count_.fetch_add(1, std::memory_order_acq_rel);
+    if (id >= NMaxCores) {
+        // Pool exhausted. We deliberately leave the over-incremented
+        // counter as-is; every subsequent caller will see
+        // id >= NMaxCores and also return -1, which is the desired
+        // "no more slots" behaviour.
+        return -1;
+    }
+    return static_cast<int>(id);
+}
+
+// @safe - See header for the full contract.
+bool SiloRuntime::try_register_current_thread() {
+    // (1) Bind. Idempotent guards inside Current() / BindCurrentThread.
+    if (Current() != this) {
+        SiloRuntime::BindCurrentThread(this);
+        MasstreeContext::BindCurrentThread(masstree_ctx_.get());
+    }
+    // (2) Short-circuit if already registered for this runtime.
+    if (coreid::try_current_core_id() != -1) {
+        return true;
+    }
+    // (3) Reserve a slot or report exhaustion.
+    int id = try_allocate_core_id();
+    if (id < 0) return false;
+    // (4) Publish the assignment. set_core_id's preconditions are
+    // satisfied by construction: this runtime's core_count_ is now
+    // > id (just fetch_add'd), id < NMaxCores (checked above), and
+    // tl_core_id == -1 because try_current_core_id() returned -1.
+    coreid::set_core_id(static_cast<unsigned>(id));
+    return true;
+}
+
 // @safe
 int SiloRuntime::allocate_contiguous_aligned_block(unsigned n, unsigned alignment) {
     using namespace util;

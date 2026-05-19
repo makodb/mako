@@ -62,6 +62,18 @@ coreid::set_core_id(unsigned cid)
   tl_runtime_id = runtime->id();
 }
 
+// @safe - Non-lazy: returns -1 if no assignment exists for the current runtime.
+int
+coreid::try_current_core_id()
+{
+  SiloRuntime* runtime = get_current_runtime();
+  int runtime_id = get_runtime_id(runtime);
+  if (tl_core_id == -1 || tl_runtime_id != runtime_id) {
+    return -1;
+  }
+  return tl_core_id;
+}
+
 // @safe
 unsigned
 coreid::num_cpus_online()

@@ -341,6 +341,16 @@ private:
       return cur;
     }
 
+    // libc++ >= 19's heap / sort algorithms use the random-access
+    // iterator concept and require operator[]. The class otherwise
+    // satisfies random-access (has +=, -=, +, -, distance), so the
+    // missing operator[] was just an oversight.
+    inline ObjType &
+    operator[](int n) const
+    {
+      return p[n];
+    }
+
   protected:
     inline small_iterator_(ObjType *p) : p(p) {}
 
@@ -496,6 +506,17 @@ private:
       iterator_ cur = *this;
       --(*this);
       return cur;
+    }
+
+    // libc++ >= 19's heap / sort algorithms require operator[] on
+    // random-access iterators; the class otherwise satisfies the
+    // concept (has +=, -=, +, -, distance).
+    inline ObjType &
+    operator[](int n) const
+    {
+      if (unlikely(large))
+        return large_it[n];
+      return small_it[n];
     }
 
   protected:

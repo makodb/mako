@@ -555,6 +555,62 @@ if(DEFINED ENV{MAKO_ASAN} AND "$ENV{MAKO_ASAN}" STREQUAL "1")
     add_link_options(-fsanitize=address)
 endif()
 
+# UndefinedBehaviorSanitizer (MAKO_UBSAN=1 in env). Compatible with jemalloc
+# and with the other sanitizers in principle; we still keep them
+# independently configurable so the matrix runs cleanly.
+set(MAKO_UBSAN_ENABLED OFF)
+if(DEFINED ENV{MAKO_UBSAN} AND "$ENV{MAKO_UBSAN}" STREQUAL "1")
+    set(MAKO_UBSAN_ENABLED ON)
+    message(STATUS "MAKO_UBSAN=1: building with -fsanitize=undefined.")
+    list(APPEND CXXFLAGS -fsanitize=undefined -fno-omit-frame-pointer)
+    list(APPEND LDFLAGS  -fsanitize=undefined)
+    add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=undefined)
+endif()
+
+# ThreadSanitizer (MAKO_TSAN=1 in env). Like ASan, TSan replaces malloc and is
+# incompatible with jemalloc; force libc malloc. Mutually exclusive with ASan.
+set(MAKO_TSAN_ENABLED OFF)
+if(DEFINED ENV{MAKO_TSAN} AND "$ENV{MAKO_TSAN}" STREQUAL "1")
+    if(MAKO_ASAN_ENABLED)
+        message(FATAL_ERROR "MAKO_TSAN=1 cannot be combined with MAKO_ASAN=1.")
+    endif()
+    set(MAKO_TSAN_ENABLED ON)
+    message(STATUS "MAKO_TSAN=1: building with -fsanitize=thread; forcing USE_MALLOC_MODE=0 (libc malloc), stripping -ljemalloc.")
+    set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_TSAN" FORCE)
+    list(APPEND CXXFLAGS -fsanitize=thread -fno-omit-frame-pointer)
+    list(APPEND LDFLAGS  -fsanitize=thread)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+endif()
+
+# libFuzzer coverage instrumentation (MAKO_FUZZER=1 in env). The fuzz
+# *target* binary links the fuzzer runtime via -fsanitize=fuzzer (which
+# provides main); every other TU is built with -fsanitize=fuzzer-no-link
+# so libFuzzer can steer mutations from edge feedback throughout libmako.
+# Implies MAKO_ASAN since the libFuzzer + ASan combo is the standard
+# pairing — incompatible with TSan because both instrumentations use
+# the same coverage hooks.
+set(MAKO_FUZZER_ENABLED OFF CACHE INTERNAL "Tier 6 libFuzzer build")
+if(DEFINED ENV{MAKO_FUZZER} AND "$ENV{MAKO_FUZZER}" STREQUAL "1")
+    if(MAKO_TSAN_ENABLED)
+        message(FATAL_ERROR "MAKO_FUZZER=1 cannot be combined with MAKO_TSAN=1.")
+    endif()
+    set(MAKO_FUZZER_ENABLED ON CACHE INTERNAL "Tier 6 libFuzzer build" FORCE)
+    if(NOT MAKO_ASAN_ENABLED)
+        set(MAKO_ASAN_ENABLED ON)
+        message(STATUS "MAKO_FUZZER=1 implies MAKO_ASAN=1; enabling -fsanitize=address.")
+        set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode forced to libc by MAKO_FUZZER" FORCE)
+        list(APPEND CXXFLAGS -fsanitize=address -fno-omit-frame-pointer)
+        list(APPEND LDFLAGS  -fsanitize=address)
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    endif()
+    message(STATUS "MAKO_FUZZER=1: building with -fsanitize=fuzzer-no-link for edge coverage.")
+    list(APPEND CXXFLAGS -fsanitize=fuzzer-no-link)
+    add_compile_options(-fsanitize=fuzzer-no-link)
+endif()
+
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
   message(STATUS "Raft lab testing fiber enabled")
@@ -718,13 +774,10 @@ set(MAKO_SRCFILES
   "${W}/txn.cc"
   "${W}/txn_proto2_impl.cc"
   "${W}/varint.cc"
-  "${MASSTREE_DIR}/compiler.cc"
-  "${MASSTREE_DIR}/str.cc"
-  "${MASSTREE_DIR}/string.cc"
-  "${MASSTREE_DIR}/straccum.cc"
-  "${MASSTREE_DIR}/json.cc"
-  "${MASSTREE_DIR}/kvthread.cc"
-  "${MASSTREE_DIR}/masstree_context.cc"
+  # Masstree's .cc files have been lifted into the standalone
+  # `masstree` static library (see src/masstree/CMakeLists.txt). They
+  # are linked into libmako via target_link_libraries(mako PUBLIC
+  # masstree) below.
   "${W}/silo_runtime.cc"
   "${W}/benchmarks/bench.cc"
   "${W}/benchmarks/encstress.cc"
@@ -1170,7 +1223,7 @@ target_include_directories(mako PUBLIC
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit rrr module BMI paths from txlog_core_obj.
-target_link_libraries(mako PUBLIC txlog_core_obj)
+target_link_libraries(mako PUBLIC txlog_core_obj masstree)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
@@ -1647,7 +1700,9 @@ if(BUILD_TESTS)
     target_compile_options(bench_future PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(bench_future ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
 
-    # Masstree-specific tests and benchmarks are maintained in src/masstree/CMakeLists.txt.
+    # Masstree-specific tests and benchmarks are defined in
+    # src/masstree/CMakeLists.txt as a deferred function so they only
+    # fire after BUILD_TESTS / TEST_INCLUDE_DIRS / etc. are ready.
     mako_add_masstree_tests()
 
     # Reactor/Event System Tests
@@ -2388,6 +2443,43 @@ if(BUILD_TESTS)
         ${GTEST_INCLUDE_DIRS}
     )
     add_test(NAME SiloAllocatorTupleTests COMMAND test_silo_allocator_tuple)
+
+    # Test: SiloRuntime per-site isolation (moved out of src/masstree/tests
+    # because its subject matter is the SiloRuntime, not Masstree).
+    add_executable(test_silo_runtime tests/test_silo_runtime.cc)
+    target_include_directories(test_silo_runtime PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_silo_runtime
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        pthread)
+    add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
+
+    # Test: Multi-site Silo stress.
+    add_executable(test_silo_multi_site_stress tests/test_silo_multi_site_stress.cc)
+    target_include_directories(test_silo_multi_site_stress PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_silo_multi_site_stress PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_silo_multi_site_stress
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        pthread)
+    add_test(NAME test_silo_multi_site_stress COMMAND test_silo_multi_site_stress)
+
+    # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
+    # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
+    # is not picked up by ctest.
+    if(DEFINED ENV{MAKO_REPRO_FINDING6} AND "$ENV{MAKO_REPRO_FINDING6}" STREQUAL "1")
+        add_executable(repro_finding6 tests/repro_finding6.cc)
+        target_include_directories(repro_finding6 PRIVATE ${TEST_INCLUDE_DIRS})
+        target_compile_options(repro_finding6 PRIVATE ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(repro_finding6 mako ${TEST_LINK_LIBS} pthread)
+    endif()
 
     # Test: STO Transaction (TRcu)
     add_executable(test_sto_transaction tests/test_sto_transaction.cc)

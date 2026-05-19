@@ -13,8 +13,8 @@
 #define MASSTREE_CONTEXT_H
 
 #include <atomic>
-#include <mutex>
 #include <cstdint>
+#include <rusty/mutex.hpp>
 #include <rusty/ptr.hpp>
 
 class threadinfo;
@@ -26,7 +26,7 @@ typedef uint64_t mrcu_epoch_type;
  *
  * Each context maintains its own:
  * - Epoch counter for RCU memory reclamation
- * - List of registered threadinfo objects
+ * - List of registered threadinfo objects (mutex-protected head)
  *
  * Thread binding:
  * - Call BindCurrentThread(ctx) to associate current thread with a context
@@ -34,8 +34,21 @@ typedef uint64_t mrcu_epoch_type;
  * - If no context is bound, returns a default global context (backward compat)
  *
  * RustyCpp Safety Annotations:
- * - @safe: Pure getters that don't call std:: functions
- * - @unsafe: Functions using std::atomic, std::lock_guard, std::call_once, or 'new'
+ * - @safe: pure getters that don't reach into std:: facilities directly
+ * - @unsafe: paths that still call std::atomic, the C++ `new` operator,
+ *   or unwrap a rusty::Result (the LockResult returned by rusty::Mutex)
+ *
+ * Migration notes (vs the prior version):
+ * - `std::mutex allthreads_lock_` plus `std::atomic<MutPtr<threadinfo>>
+ *   allthreads_` collapsed into one `rusty::Mutex<MutPtr<threadinfo>>`.
+ *   Readers now take the lock briefly; both register_threadinfo and
+ *   get_allthreads are called outside the hot insert/lookup path, so
+ *   the cost is negligible vs the gain of a single sync primitive.
+ * - `std::once_flag` + `std::call_once` migrated to `rusty::Once`.
+ * - `std::atomic<mrcu_epoch_type> epoch_` retained: hot-path RCU
+ *   counter with explicit memory ordering, no rusty equivalent.
+ * - `std::atomic<int> s_next_context_id_` retained: one-shot
+ *   fetch_add, wrapping a mutex around it would be overkill.
  */
 class MasstreeContext {
 public:
@@ -69,12 +82,10 @@ public:
     }
 
     // Thread registry
-    // @unsafe { std::atomic::load is not borrow-checked }
-    rusty::MutPtr<threadinfo> get_allthreads() const {
-        return allthreads_.load(std::memory_order_acquire);
-    }
+    // @unsafe { rusty::Mutex::lock returns LockResult; unwrap is @unsafe }
+    rusty::MutPtr<threadinfo> get_allthreads() const;
 
-    // @unsafe { std::lock_guard, std::atomic::store are not borrow-checked }
+    // @unsafe { rusty::Mutex::lock returns LockResult; unwrap is @unsafe }
     void register_threadinfo(rusty::MutPtr<threadinfo> ti);
 
     // @safe - Returns copy of int value
@@ -83,7 +94,7 @@ public:
     // @safe - Assigns thread-local pointer
     static void BindCurrentThread(rusty::MutPtr<MasstreeContext> ctx);
 
-    // @unsafe { std::call_once is not borrow-checked }
+    // @unsafe { rusty::Once::call_once is not borrow-checked }
     static rusty::MutPtr<MasstreeContext> Current();
 
     // @unsafe { Uses 'new' operator }
@@ -92,8 +103,11 @@ public:
 private:
     int context_id_;
     std::atomic<mrcu_epoch_type> epoch_{1};
-    std::atomic<rusty::MutPtr<threadinfo>> allthreads_{nullptr};
-    std::mutex allthreads_lock_;
+    // Head of the registered-thread linked list, protected by the
+    // mutex. Folding the head pointer into the lock removes the
+    // earlier "lock-free read via atomic, serialize writers via
+    // separate mutex" split that's easy to get wrong.
+    mutable rusty::Mutex<rusty::MutPtr<threadinfo>> allthreads_{nullptr};
 
     static std::atomic<int> s_next_context_id_;
 };

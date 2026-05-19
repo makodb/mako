@@ -15,6 +15,9 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/hashset.hpp>
+#include <rusty/thread.hpp>
+#include <rusty/vec.hpp>
 
 // Masstree headers
 #include "masstree/masstree_context.h"
@@ -69,23 +72,23 @@ TEST_F(MasstreeInternalsTest, ThreadInfoCreation) {
 // Test 2: Multiple ThreadInfo Creation
 TEST_F(MasstreeInternalsTest, MultipleThreadInfoCreation) {
     const int COUNT = 5;
-    std::vector<threadinfo*> infos;
+    auto infos = rusty::Vec<threadinfo*>::with_capacity(COUNT);
 
     for (int i = 0; i < COUNT; ++i) {
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 2000 + i);
         ASSERT_NE(ti, nullptr);
         EXPECT_EQ(ti->index(), 2000 + i);
-        infos.push_back(ti);
+        infos.push(ti);
     }
 
     // Verify all are in the list
-    std::set<threadinfo*> found_set;
+    rusty::HashSet<threadinfo*> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
         found_set.insert(t);
     }
 
     for (auto* ti : infos) {
-        EXPECT_TRUE(found_set.count(ti) > 0)
+        EXPECT_TRUE(found_set.contains(ti))
             << "threadinfo with index " << ti->index() << " not found in list";
     }
 }
@@ -228,35 +231,36 @@ TEST_F(MasstreeInternalsTest, ThreadPurposes) {
 // Test 10: Multi-threaded ThreadInfo Creation
 TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     const int NUM_THREADS = 4;
-    std::vector<std::thread> threads;
+    auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
     std::atomic<int> created{0};
-    std::vector<threadinfo*> thread_infos(NUM_THREADS, nullptr);
+    auto thread_infos = rusty::Vec<threadinfo*>::with_capacity(NUM_THREADS);
+    for (int i = 0; i < NUM_THREADS; ++i) thread_infos.push(nullptr);
 
     for (int i = 0; i < NUM_THREADS; ++i) {
-        threads.emplace_back([i, &created, &thread_infos]() {
+        threads.push(rusty::thread::spawn([i, &created, &thread_infos]() {
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 6000 + i);
             ASSERT_NE(ti, nullptr);
             EXPECT_EQ(ti->index(), 6000 + i);
             thread_infos[i] = ti;
             created++;
-        });
+        }));
     }
 
     for (auto& t : threads) {
-        t.join();
+        auto _ = t.join();
     }
 
     EXPECT_EQ(created.load(), NUM_THREADS);
 
     // Verify all threadinfos are in the context's list
-    std::set<threadinfo*> found_set;
+    rusty::HashSet<threadinfo*> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
         found_set.insert(t);
     }
 
     for (int i = 0; i < NUM_THREADS; ++i) {
         EXPECT_NE(thread_infos[i], nullptr);
-        EXPECT_TRUE(found_set.count(thread_infos[i]) > 0)
+        EXPECT_TRUE(found_set.contains(thread_infos[i]))
             << "Thread " << i << "'s threadinfo not found in context's list";
     }
 }
@@ -264,11 +268,11 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
 // Test 11: Multi-threaded RCU Operations
 TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
     const int NUM_THREADS = 4;
-    std::vector<std::thread> threads;
+    auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
     std::atomic<int> completed{0};
 
     for (int i = 0; i < NUM_THREADS; ++i) {
-        threads.emplace_back([i, &completed]() {
+        threads.push(rusty::thread::spawn([i, &completed]() {
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 7000 + i);
             ASSERT_NE(ti, nullptr);
 
@@ -287,17 +291,17 @@ TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
             ti->rcu_stop();
 
             completed++;
-        });
+        }));
     }
 
     // Main thread advances epoch periodically
     for (int i = 0; i < 10 && completed.load() < NUM_THREADS; ++i) {
         ctx_->increment_epoch(2);
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        rusty::thread::sleep(std::chrono::milliseconds(10));
     }
 
     for (auto& t : threads) {
-        t.join();
+        auto _ = t.join();
     }
 
     EXPECT_EQ(completed.load(), NUM_THREADS);
@@ -330,9 +334,9 @@ TEST_F(MasstreeInternalsTest, GlobalEpochShared) {
 // Test 13: Allthreads list integrity
 TEST_F(MasstreeInternalsTest, AllthreadsListIntegrity) {
     // Create several threadinfos
-    std::vector<threadinfo*> infos;
+    auto infos = rusty::Vec<threadinfo*>::with_capacity(10);
     for (int i = 0; i < 10; ++i) {
-        infos.push_back(threadinfo::make(threadinfo::TI_PROCESS, 9000 + i));
+        infos.push(threadinfo::make(threadinfo::TI_PROCESS, 9000 + i));
     }
 
     // Walk the list and count - should be consistent
