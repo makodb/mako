@@ -326,8 +326,8 @@ The loop must NOT:
   + rand_r calls in inner `// @unsafe { }` blocks inside rand/rand_double/
   rand_str so percentage_true/nu_rand/weighted_select inherit class @safe.
   Per-method `// @unsafe` on create_key/delete_key/get_seed/rdtsc/destroy.
-  Switched `(int)ret.length()` to `static_cast<int>` in int2str_n. Ratio
-  20.0% → **20.4%** (+54 LOC).
+  Switched `(int)ret.length()` to `static_cast<int>` in int2str_n. Commit
+  1b633ec9; ratio 20.0% → **20.4%** (+54 LOC).
 - [ ] misc/dball.cpp
 - [ ] misc/alarm.cpp
 - [ ] base/basetypes.cpp
