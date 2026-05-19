@@ -352,7 +352,7 @@ The loop must NOT:
   reinterpret_cast<std::istream*>, free) and the anonymous
   `read_line_from_pipe` helper (fgets into a raw `char[4096]`). The
   pre-existing `verify` template's `// @safe` annotation is preserved.
-  Ratio 22.7% → **23.4%** (+77 LOC).
+  Commit e3458edd; ratio 22.7% → **23.4%** (+77 LOC).
 - [ ] base/strop.cpp
 - [ ] base/callback_wrapper.cpp
 - [ ] base/misc.cpp
