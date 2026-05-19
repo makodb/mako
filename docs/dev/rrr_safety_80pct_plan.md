@@ -443,8 +443,8 @@ up the next time that library work lands.
   small inline `// @unsafe { }` block (preserves silent-zero-on-junk
   semantics). The ctor and `get_net_stat` keep `times(&tms_buf)`
   inside an inline `// @unsafe { }` block but otherwise stay @safe.
-  `net_stat()` factory inherits @safe. Ratio 27.2% → **27.5%**
-  (+38 @safe LOC).
+  `net_stat()` factory inherits @safe. Commit 3699b217; ratio
+  27.2% → **27.5%** (+38 @safe LOC).
 - [ ] cpuinfo.cpp retry — same shape: `rusty::sys::fs::read_to_string`
   for `/proc/{pid}/{stat,net/dev}`; per-method `// @unsafe` on
   ctor's `times()` + `getpid()`; namespace `@safe`.
