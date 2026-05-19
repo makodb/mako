@@ -27,6 +27,8 @@ inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strat
     }
 }
 
+// @safe - rusty::Cell-backed round-robin counter. No raw pointers,
+// syscalls, or operator-overload chains.
 class LoadBalancerState {
     rusty::Cell<size_t> round_robin_index_{0};
 
@@ -44,6 +46,8 @@ public:
     }
 };
 
+// @safe - Pure stateless dispatch over LoadBalancingStrategy enum.
+// All static methods take rusty primitives + size_t; no @unsafe ops.
 class LoadBalancer {
 public:
     template<typename ClientVec>
