@@ -409,7 +409,23 @@ The loop must NOT:
   call-site fan-out into rrr's tests; not a one-iteration mechanical
   change. Defer until a dedicated Phase 2 sub-plan covers the
   Option-conversion sweep.
-- [ ] Reactor::PollThreadWorker* → rusty::Weak<PollThreadWorker>
+- [blocked] Reactor::PollThreadWorker* → rusty::Weak<PollThreadWorker>
+  — the raw pointer `static inline thread_local PollThreadWorker*
+  current_worker_` (reactor/reactor.cpp:1011) is an *intentional*
+  workaround. The spawn-lambda holds the worker through
+  `borrow_mut()` for the entire poll_loop lifetime
+  (reactor.cpp:2585–2588: `auto guard = worker->borrow_mut(); …
+  current_worker_ = &*guard;`). The comment on line 2583 spells it
+  out: "Using raw pointer avoids RefCell re-borrow issues in fibers".
+  Replacing with `rusty::Weak<RefCell<PollThreadWorker>>` would force
+  callers (`add_pollable_from_current_thread`,
+  `is_on_poll_thread`, fiber re-entry sites) to
+  `upgrade().borrow_mut()`, which would panic the RefCell because the
+  outer poll_loop guard already holds the unique borrow. A proper
+  fix needs ownership restructuring (drop the RefCell layer, expose
+  `&mut PollThreadWorker` through a different primitive, or split
+  worker state by-field so per-method borrows don't collide). Not a
+  one-iteration change. Defer.
 - [ ] rusty::sys::* syscall wrappers
 - [ ] ServiceProxy::__get_service__() → rusty::Arc<Service>
 
