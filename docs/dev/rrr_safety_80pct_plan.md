@@ -371,7 +371,14 @@ The loop must NOT:
   (getdelim+free). `clamp`/`insert_into_map`/`erase` templates and
   Job/OneTimeJob inherit namespace @safe. Commit 14f4d549; ratio
   23.8% → **24.2%** (+42 LOC).
-- [ ] base/unittest.cpp
+- [x] base/unittest.cpp — both `export namespace rrr` and the impl
+  `namespace rrr` `// @safe`. Per-method `// @unsafe` on `TestMgr::
+  instance` (raw `new TestMgr` + static raw-ptr cache), `TestMgr::reg`
+  (raw `TestCase*` param/return), `TestMgr::matched_tests` (raw
+  `const char*` + raw out-vec), `TestMgr::parse_args` (raw `char* argv[]`
+  + raw `bool*` out-params), `TestMgr::run` (raw argv + printf +
+  `delete t` / `delete this`). `TestCase::fail`/`reset`/`group`/`name`/
+  `failures` inherit @safe. Ratio 24.2% → **24.9%** (+83 LOC).
 - [ ] reactor/epoll_wrapper.cc
 
 ### Phase 2 — easy raw-pointer refactors
