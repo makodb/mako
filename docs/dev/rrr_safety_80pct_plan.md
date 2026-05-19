@@ -319,7 +319,9 @@ The loop must NOT:
 - [x] misc/stat.cpp — namespace `// @safe`. AvgStat is a POD with int64
   counters + arithmetic. Commit a9bb96ca; ratio 19.8% → **20.0%**
   (+22 LOC). **20% milestone reached!**
-- [ ] misc/cpuinfo.cpp
+- [blocked] misc/cpuinfo.cpp — CPUInfo opens /proc/{pid}/net/dev and
+  /proc/{pid}/stat via std::ifstream, plus `times()` and `getpid()`
+  syscalls. Same shape as netinfo.cpp. Same Phase 3 candidate.
 - [ ] misc/rand.cpp
 - [ ] misc/dball.cpp
 - [ ] misc/alarm.cpp
