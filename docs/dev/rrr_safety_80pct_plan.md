@@ -248,7 +248,16 @@ The loop must NOT:
   Commit 8f4bf96d; ratio 7.2% → 7.6% (+88 LOC).
 - [x] ConnectionStateMachine (rpc/connection_state.cpp) — class-level
   `// @safe`. Commit ed12702e; ratio 7.6% → 7.9% (+70 LOC).
-- [ ] TcpListener subset (rpc/tcp_channel.cpp)
+- [x] TcpListener subset (rpc/tcp_channel.cpp) — class-level `// @safe`
+  + per-method `// @unsafe` overrides on listen/close/fd-touching
+  handle_* methods + local_address/set_on_accept/set_on_error.
+  Also fixed third LOC-script bug: namespaces were being treated as
+  unannotated function bodies, masking everything inside as "in fn".
+  After fix, "in fn" LOC drops from 22,478 to 12,206 — the namespace
+  preamble (includes, type aliases, comments, free declarations) is
+  now correctly classified as "other". Of the genuine in-fn LOC:
+  14.9% @safe / 18.6% @unsafe / 6.0% inner-block / 60.5% unannotated.
+  Commit (pending).
 - [ ] LoadBalancer (rpc/load_balancer.cpp)
 - [ ] RequestQueue class @safe completion (rpc/request_queue.cpp)
 

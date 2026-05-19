@@ -50,6 +50,10 @@ FILES = [
 INLINE_UNSAFE_BLOCK = re.compile(r"^\s*//\s*@unsafe\s*\{")
 FUNCTION_ANNOT = re.compile(r"^\s*//\s*@(safe|unsafe)\b(?!\s*\{)")
 CLASS_DECL = re.compile(r"^\s*(?:export\s+)?(?:class|struct)\s+(\w+)")
+# `namespace X {` or `namespace X::Y {` or `export namespace X {`. We track
+# namespaces separately so they don't masquerade as function bodies and break
+# the "are we at file scope?" check used for out-of-class method detection.
+NAMESPACE_DECL = re.compile(r"^\s*(?:export\s+)?namespace\b")
 # Out-of-class method definition. Must start the line with a return-type-looking
 # token (not a control-flow keyword) and contain `ClassName::name(`. We further
 # restrict matches to depth==0 below to avoid false positives on function calls.
@@ -84,7 +88,9 @@ def classify_file(path):
     # Active scope stacks.
     func_stack = []         # [(label, opening_depth)]
     class_stack = []        # [(class_name, opening_depth)]
+    namespace_stack = []    # [opening_depth] — namespaces don't get labels
     unsafe_block_stack = [] # [opening_depth]
+    namespace_at_open = False  # marks that the next `{` opens a namespace
 
     # Pending out-of-class def name from a multi-line signature.
     pending_out_of_class = None
@@ -124,29 +130,28 @@ def classify_file(path):
 
             stripped = strip_line_comment(line)
             class_match = CLASS_DECL.search(stripped)
+            namespace_match = NAMESPACE_DECL.search(stripped)
             class_name_at_open = None
             if class_match and "{" in stripped:
                 class_name_at_open = class_match.group(1)
+            if namespace_match and "{" in stripped and class_match is None:
+                namespace_at_open = True
 
             # Out-of-class definition heuristic: only consider it a function
-            # definition if we're at file scope (depth == 0 before processing
-            # this line's opens). And only if the line matches the strict
-            # OUT_OF_CLASS_METHOD pattern (starts with a type-like prefix,
-            # not a control-flow keyword).
+            # definition if we're at file or namespace scope (no class or
+            # function on the active stacks). The depth itself can be > 0
+            # because of enclosing namespaces.
+            at_file_or_namespace_scope = (not class_stack) and (not func_stack)
             out_of_class_name = None
-            if depth == 0 and pending is None:
+            if at_file_or_namespace_scope and pending is None:
                 m_oc = OUT_OF_CLASS_METHOD.search(stripped)
                 if m_oc:
                     cand = m_oc.group(1)
                     if cand in class_annotations:
-                        # Match. If `{` is on this line, attach now;
-                        # otherwise, remember it for when `{` arrives.
                         if "{" in stripped:
                             out_of_class_name = cand
                         else:
                             pending_out_of_class = cand
-            # If we previously stashed a pending_out_of_class because the
-            # signature was multi-line, and now `{` arrives, use it.
             if pending_out_of_class is not None and "{" in stripped and pending is None:
                 out_of_class_name = pending_out_of_class
                 pending_out_of_class = None
@@ -164,12 +169,15 @@ def classify_file(path):
                     pending_for_class = None
                     pending = None
                     class_name_at_open = None  # only first `{` opens the class
+                elif namespace_at_open:
+                    namespace_stack.append(depth)
+                    namespace_at_open = False
+                    # Don't clear pending — a class declaration following the
+                    # namespace's `{` shouldn't have its pending annotation
+                    # eaten.
                 elif pending in ("safe", "unsafe"):
                     func_stack.append((pending, depth))
                     pending = None
-                    # Also clear pending_for_class — it shouldn't survive
-                    # past a function-body open, or it'll leak onto the
-                    # next class declaration we encounter.
                     pending_for_class = None
                 elif out_of_class_name is not None:
                     inherited = class_annotations.get(out_of_class_name)
@@ -200,6 +208,8 @@ def classify_file(path):
                     unsafe_block_stack.pop()
                 elif class_stack and class_stack[-1][1] == depth:
                     class_stack.pop()
+                elif namespace_stack and namespace_stack[-1] == depth:
+                    namespace_stack.pop()
                 elif func_stack and func_stack[-1][1] == depth:
                     func_stack.pop()
                 depth -= 1

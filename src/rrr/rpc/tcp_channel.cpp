@@ -299,6 +299,10 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
  * (`handle_read`, `handle_error`, `poll_mode`, ...) run on the poll
  * thread.
  */
+// @safe - State is rusty::Cell / Option / SpinMutex / Arc. Methods that
+// genuinely touch the raw `listen_fd_` int via syscalls (listen, close,
+// fd, handle_read, handle_write, handle_error, check_pending_write_update)
+// carry their own `// @unsafe` overrides at the out-of-class definitions.
 class TcpListener {
  public:
     TcpListener();
@@ -1027,6 +1031,7 @@ TcpListener::~TcpListener() {
     }
 }
 
+// @unsafe - socket / bind / listen / setsockopt syscalls.
 ChannelError TcpListener::listen(std::string_view addr) {
     if (closed_.get()) {
         return ChannelError::AddressInUse;
@@ -1112,6 +1117,7 @@ void TcpListener::set_self_weak(rusty::sync::Weak<TcpListener> self_weak) {
     self_weak_ = rusty::Some(std::move(self_weak));
 }
 
+// @unsafe - ::close() syscall on the raw listen_fd_.
 void TcpListener::close() {
     if (closed_.get()) return;
     closed_.set(true);
@@ -1127,15 +1133,18 @@ bool TcpListener::is_closed() const {
     return closed_.get();
 }
 
+// @unsafe - std::string copy constructor isn't borrow-checked.
 std::string TcpListener::local_address() const {
     return bound_address_;
 }
 
+// @unsafe - SpinMutex::lock + CallbackWrapper move-assign (not @safe).
 void TcpListener::set_on_accept(OnAcceptCallback cb) {
     auto guard = on_accept_.lock().unwrap();
     *guard = std::move(cb);
 }
 
+// @unsafe - SpinMutex::lock + CallbackWrapper move-assign (not @safe).
 void TcpListener::set_on_error(OnErrorCallback cb) {
     auto guard = on_error_.lock().unwrap();
     *guard = std::move(cb);
@@ -1153,6 +1162,7 @@ std::size_t TcpListener::content_size() {
     return 0;
 }
 
+// @unsafe - accept() / getsockname / setsockopt syscalls on listen_fd_.
 bool TcpListener::handle_read() {
     if (closed_.get()) return false;
     if (listen_fd_ < 0) return false;
@@ -1258,10 +1268,12 @@ bool TcpListener::handle_read() {
     return any_progress;
 }
 
+// @unsafe - Pollable interface; never fires for a listener.
 int TcpListener::handle_write() {
     return PollMode::NO_CHANGE;
 }
 
+// @unsafe - Drives on_error callback after listen_fd_ failure.
 void TcpListener::handle_error() {
     if (closed_.get()) return;
     {
@@ -1273,6 +1285,7 @@ void TcpListener::handle_error() {
     close();
 }
 
+// @unsafe - Pollable interface; never fires for a listener.
 bool TcpListener::check_pending_write_update() const {
     return false;
 }
