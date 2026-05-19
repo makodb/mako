@@ -29,6 +29,16 @@ import rrr.misc;
 import rrr.reactor;
 import rrr.threading;
 
+// @safe - ALock async queued lock + WaitDieALock / WoundDieALock /
+// TimeoutALock variants + ALockGroup. The big request-queue methods
+// (vlock, abort, wait_die, wound_die, lock_all, sanity_check,
+// read_acquire-over-vec) carry per-method `// @unsafe` because they
+// iterate raw `std::list<lock_req_t>` iterators, invoke external
+// callbacks, dispatch through DragonBall heap pointers, and (in
+// ALockGroup) keep raw `ALock*` BTreeMap keys — the
+// Phase 3 ALock* → Weak<ALock> refactor stays blocked. The trivial
+// accessors (cas_status, get_status, set_status, ctors, get_next_id,
+// write_acquire/read_acquire scalar overload) inherit class @safe.
 // ===========================================================================
 // Class declarations (from former alock.hpp)
 // ===========================================================================
@@ -48,6 +58,7 @@ using ALockWoundCallback  = detail::CallbackWrapper<int() const>;
 
 inline constexpr uint64_t ALOCK_TIMEOUT = 200000; // 0.2s
 
+// @safe - see file header.
 class ALock {
  public:
   enum type_t { RLOCK, WLOCK };
@@ -117,6 +128,7 @@ class ALock {
   virtual ~ALock();
 };
 
+// @safe - see file header.
 class WaitDieALock: public ALock {
  protected:
   struct lock_req_t {
@@ -307,6 +319,7 @@ class WaitDieALock: public ALock {
   virtual void abort(uint64_t id) override;
 };
 
+// @safe - see file header.
 class WoundDieALock: public ALock {
  protected:
   struct lock_req_t {
@@ -497,6 +510,7 @@ class WoundDieALock: public ALock {
   virtual void abort(uint64_t id) override;
 };
 
+// @safe - see file header.
 class TimeoutALock: public ALock {
  protected:
   virtual uint64_t vlock(uint64_t owner,
@@ -639,6 +653,10 @@ class TimeoutALock: public ALock {
 
 };
 
+// @safe - see file header. ALockGroup keeps raw `ALock*` BTreeMap
+// keys (the Phase 3 → Weak<ALock> refactor stays blocked), so
+// methods that iterate those maps or take a raw `ALock*` parameter
+// carry per-method `// @unsafe`.
 class ALockGroup {
  public:
 
@@ -765,6 +783,11 @@ class ALockGroup {
 // ===========================================================================
 // Implementation (from former alock.cpp)
 // ===========================================================================
+// @safe - impl namespace. Out-of-class definitions of vlock / abort /
+// wound_die / lock_all and the two ALock::lock_sync overloads all
+// carry per-method `// @unsafe` because they iterate raw
+// `std::list<lock_req_t>` iterators, dispatch external callbacks,
+// and (in ALockGroup) traverse raw `ALock*` BTreeMap keys.
 namespace rrr {
 
 ALock::ALock()
@@ -936,6 +959,8 @@ WaitDieALock::wd_status_t WaitDieALock::wait_die(type_t type, int64_t priority) 
     }
 }
 
+// @unsafe - takes address-of (`&lock_req`) on stored `std::list`
+// elements to pass into write_acquire / read_acquire helpers.
 void WaitDieALock::abort(uint64_t id) {
     if (done_) {
         return;
@@ -1145,6 +1170,8 @@ uint64_t WoundDieALock::vlock(uint64_t owner,
     return id;
 }
 
+// @unsafe - takes address-of (`&lock_req`) on stored `std::list`
+// elements to pass into write_acquire / read_acquire helpers.
 void WoundDieALock::abort(uint64_t id) {
     if (done_)
         return;
@@ -1313,6 +1340,9 @@ uint64_t TimeoutALock::vlock(uint64_t owner,
     return id;
 }
 
+// @unsafe - takes address-of (`&req`) on stored `std::list` elements
+// + raw `ALockReq*` Vec parameter (collects pointers into the
+// `requests_` list).
 uint32_t TimeoutALock::lock_all(rusty::Vec<ALockReq*>& lock_reqs) {
     verify(status_ == FREE && n_rlock_ == 0);
 
@@ -1405,7 +1435,8 @@ void TimeoutALock::abort(uint64_t id) {
         requests_.erase(it);
 
         if (status_ == FREE) {
-            lock_all(lock_reqs);
+            // @unsafe { lock_all is @unsafe (raw `ALockReq*` Vec). }
+            { lock_all(lock_reqs); }
         }
     } else if (req.cas_status(ALockReq::WAIT, ALockReq::ABORT)) {
         // cancel timeout.
