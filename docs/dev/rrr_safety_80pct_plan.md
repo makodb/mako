@@ -257,7 +257,7 @@ The loop must NOT:
   preamble (includes, type aliases, comments, free declarations) is
   now correctly classified as "other". Of the genuine in-fn LOC:
   14.9% @safe / 18.6% @unsafe / 6.0% inner-block / 60.5% unannotated.
-  Commit (pending).
+  Commit b209eb89.
 - [ ] LoadBalancer (rpc/load_balancer.cpp)
 - [ ] RequestQueue class @safe completion (rpc/request_queue.cpp)
 
