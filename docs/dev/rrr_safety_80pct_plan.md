@@ -353,7 +353,11 @@ The loop must NOT:
   `read_line_from_pipe` helper (fgets into a raw `char[4096]`). The
   pre-existing `verify` template's `// @safe` annotation is preserved.
   Commit e3458edd; ratio 22.7% → **23.4%** (+77 LOC).
-- [ ] base/strop.cpp
+- [x] base/strop.cpp — `namespace rrr` `// @safe`. Per-method
+  `// @unsafe` on `startswith` and `endswith` (raw `const char*`,
+  strlen/strncmp, pointer arithmetic). `format_decimal` and `strsplit`
+  inherit namespace @safe (std::string + ostringstream + rusty::Vec).
+  Ratio 23.4% → **23.8%** (+54 LOC).
 - [ ] base/callback_wrapper.cpp
 - [ ] base/misc.cpp
 - [ ] base/unittest.cpp
