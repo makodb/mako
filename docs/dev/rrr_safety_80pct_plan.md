@@ -330,7 +330,7 @@ The loop must NOT:
   1b633ec9; ratio 20.0% → **20.4%** (+54 LOC).
 - [x] misc/dball.cpp — class `DragonBall` `// @safe`. Inline
   `// @unsafe { }` block around the `delete this` self-destruct in
-  `trigger()`. Ratio 20.4% → **20.5%** (+16 LOC).
+  `trigger()`. Commit 5f2b0796; ratio 20.4% → **20.5%** (+16 LOC).
 - [ ] misc/alarm.cpp
 - [ ] base/basetypes.cpp
 - [ ] base/debugging.cpp
