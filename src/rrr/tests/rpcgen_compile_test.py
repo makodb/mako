@@ -61,6 +61,10 @@ def load_cmake_module_compile_context(
 
         def pick_entry() -> dict | None:
             preferred_suffixes = (
+                # rpc_marshal_archive_test.cc imports rrr.serializable_envelope
+                # which mako_commands.h (pulled in via rcc_rpc.h) transitively
+                # requires. Try its modmap first.
+                "src/rrr/tests/rpc_marshal_archive_test.cc",
                 "src/rrr/tests/test_rpc.cc",
                 "src/rrr/tests/rpc_docs_symbols_test.cc",
             )
