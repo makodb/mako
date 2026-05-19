@@ -435,8 +435,8 @@ up the next time that library work lands.
   io::Error>`. Annotated `// @safe`; body wraps `std::ifstream` in a
   single inline `// @unsafe { }` block so no FILE* / ifstream handle
   escapes. Exposed via `rusty.cppm` and `rusty.hpp`. Submodule
-  commit 6ed675e; ratio unchanged (no rrr files modified — adoption
-  comes next).
+  commit 6ed675e; parent commit 7e7d9957. Ratio unchanged at 27.2%
+  (no rrr files modified — adoption comes next).
 - [ ] netinfo.cpp retry — adopt `rusty::sys::fs::read_to_string` for
   the `/sys/class/net/.../{rx,tx}_bytes` reads; per-method
   `// @unsafe` on the `times()`-using ctor; namespace `@safe`.
