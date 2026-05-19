@@ -475,8 +475,8 @@ up the next time that library work lands.
   structs (`FrameHeader`, `FrameView`, `FrameDecodeStatus`) inherit
   namespace @safe. Did NOT rewrite onto `rusty::io::Cursor` in this
   iteration — frame_codec is the transport hot path and the cursor
-  port needs benchmarks first. SP-5 follow-up. Ratio 28.1% →
-  **28.4%** (+32 @safe LOC).
+  port needs benchmarks first. SP-5 follow-up. Commit c5f5ee77;
+  ratio 28.1% → **28.4%** (+32 @safe LOC).
 - [ ] misc/serializable_envelope.cpp retry — same shape: route the
   Marshal `operator<<` / `operator>>` chains through the cursor,
   drop the `const_cast<SerializableEnvelope&>` shim, namespace
