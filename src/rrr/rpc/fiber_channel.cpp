@@ -62,6 +62,15 @@ import rrr.channel;
 import rrr.reactor;
 import rrr.threading;
 
+// @safe - FiberChannel: fiber-blocking wrapper over a
+// `ChannelConnectionProxy`. Bodies use SpinMutex<std::deque> for the
+// inbound queue, `rusty::Cell<bool>` for the closed flag, and
+// IntEvent for parking. Per-method `// @unsafe` overrides cover the
+// ctor (which installs lambda callbacks through `ch_->set_on_*` —
+// std::unique_ptr deref + rusty::Function ctor chain), the dtor
+// (same set_on_* detach), `on_inbound_frame` (raw `const uint8_t*`
+// byte arithmetic into the std::vector buffer), and `is_closed`
+// (const_cast through the ChannelConnectionProxy).
 export namespace rrr {
 
 /**
@@ -73,6 +82,7 @@ struct OwnedFrame {
     std::vector<std::uint8_t> bytes;
 };
 
+// @safe - see file header.
 class FiberChannel {
  public:
     explicit FiberChannel(ChannelConnectionProxy ch);
@@ -135,8 +145,13 @@ class FiberChannel {
 
 }  // export namespace rrr
 
+// @safe - impl namespace. Out-of-class definitions inherit their
+// per-method `// @safe` / `// @unsafe` from the matching declarations
+// in the export namespace above.
 namespace rrr {
 
+// @unsafe - `ch_->set_on_*` driven through std::unique_ptr deref +
+// rusty::Function ctor chain on three captured `[this]` lambdas.
 FiberChannel::FiberChannel(ChannelConnectionProxy ch)
     : ch_(std::move(ch)) {
 
@@ -153,6 +168,7 @@ FiberChannel::FiberChannel(ChannelConnectionProxy ch)
     });
 }
 
+// @unsafe - `ch_->set_on_*({})` detach driven through std::unique_ptr deref.
 FiberChannel::~FiberChannel() {
     // Detach callbacks before the proxy destructor runs to make sure
     // any in-flight callback dispatch can't race with member teardown.
@@ -161,6 +177,8 @@ FiberChannel::~FiberChannel() {
     ch_->set_on_error ({});
 }
 
+// @unsafe - `bytes.assign(f.payload, f.payload + f.size)` raw
+// `const uint8_t*` arithmetic.
 void FiberChannel::on_inbound_frame(const ChannelFrame& f) {
     OwnedFrame copy;
     copy.bytes.assign(f.payload, f.payload + f.size);
@@ -185,20 +203,27 @@ void FiberChannel::on_inbound_error(ChannelError /*err*/,
 void FiberChannel::signal_pending_recv() {
     auto event = pending_recv_event_;  // copy shared_ptr defensively
     if (event) {
-        event->set(1);
+        // @unsafe { IntEvent::set is not annotated @safe yet. }
+        {
+            event->set(1);
+        }
     }
 }
 
+// @unsafe - std::unique_ptr deref through `ch_->send_frame(f)`.
 ChannelError FiberChannel::send_frame(const ChannelFrame& f) {
     return ch_->send_frame(f);
 }
 
+// @unsafe - const_cast through the ChannelConnectionProxy reference
+// + std::unique_ptr deref.
 bool FiberChannel::is_closed() const {
     if (closed_.get()) return true;
     auto& mut_ch = const_cast<ChannelConnectionProxy&>(ch_);
     return mut_ch->is_closed();
 }
 
+// @unsafe - std::unique_ptr deref through `ch_->close()`.
 void FiberChannel::close() {
     ch_->close();
 }
@@ -229,7 +254,11 @@ rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
             }
         }
 
-        event->wait();
+        // @unsafe { Event::wait is the fiber-suspending primitive,
+        //           not annotated @safe yet. }
+        {
+            event->wait();
+        }
         pending_recv_event_.reset();
     }
 }
