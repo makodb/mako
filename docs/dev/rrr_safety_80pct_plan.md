@@ -362,7 +362,15 @@ The loop must NOT:
   inner `namespace detail` `// @safe`. CallbackWrapper is a pure
   forwarder over `rusty::Arc<rusty::Function<Sig>>`. No per-method
   overrides needed. Commit b82e63f8; ratio holds at **23.8%** (+4 LOC).
-- [ ] base/misc.cpp
+- [x] base/misc.cpp — both `export namespace rrr` and the impl
+  `namespace rrr` `// @safe`. Per-method `// @unsafe` on `rdtsc`
+  (inline asm), `FrequentJob::Ready` (rrr::Time::now), `make_int`
+  (raw `char*` byte writer), `time_now_str` (time+localtime_r+
+  gettimeofday into raw `char*`), `get_ncpu` (sysconf), `get_exec_path`
+  (snprintf+readlink+static `char[PATH_MAX]`), `getline`
+  (getdelim+free). `clamp`/`insert_into_map`/`erase` templates and
+  Job/OneTimeJob inherit namespace @safe. Ratio 23.8% → **24.2%**
+  (+42 LOC).
 - [ ] base/unittest.cpp
 - [ ] reactor/epoll_wrapper.cc
 
