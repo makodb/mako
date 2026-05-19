@@ -16,23 +16,34 @@ export module rrr.utils;
 import std;
 import rrr.logging;
 
+// @safe - thin syscall wrappers. AddrInfo owns a raw `struct
+// addrinfo*` from getaddrinfo / freeaddrinfo, so every accessor /
+// mover that touches the pointer carries `// @unsafe`. The free
+// functions set_nonblocking / find_open_port / get_host_name are all
+// pure syscalls (fcntl, socket/bind/getsockname/close, gethostname)
+// and are `// @unsafe`. Default ctor + `operator bool` (nullptr
+// check) inherit namespace @safe.
 export namespace rrr {
 
+// @safe - see file header.
 class AddrInfo {
 private:
     struct addrinfo* info_{nullptr};
 
 public:
     AddrInfo() = default;
+    // @unsafe - takes raw `struct addrinfo*` ownership without checking.
     explicit AddrInfo(struct addrinfo* info) : info_(info) {}
 
     AddrInfo(const AddrInfo&) = delete;
     AddrInfo& operator=(const AddrInfo&) = delete;
 
+    // @unsafe - raw pointer swap on the `info_` field.
     AddrInfo(AddrInfo&& other) noexcept : info_(other.info_) {
         other.info_ = nullptr;
     }
 
+    // @unsafe - calls reset() (freeaddrinfo) and raw pointer swap.
     AddrInfo& operator=(AddrInfo&& other) noexcept {
         if (this != &other) {
             reset();
@@ -42,21 +53,27 @@ public:
         return *this;
     }
 
+    // @unsafe - dtor runs freeaddrinfo via reset().
     ~AddrInfo() {
         reset();
     }
 
+    // @unsafe - returns the raw `struct addrinfo*`.
     struct addrinfo* get() const { return info_; }
+    // @unsafe - returns the raw `struct addrinfo*` for `->` access.
     struct addrinfo* operator->() const { return info_; }
+    // @unsafe - dereferences the raw `struct addrinfo*`.
     struct addrinfo& operator*() const { return *info_; }
     explicit operator bool() const { return info_ != nullptr; }
 
+    // @unsafe - swap-out + return raw `struct addrinfo*` (ownership transfer).
     struct addrinfo* release() {
         auto* p = info_;
         info_ = nullptr;
         return p;
     }
 
+    // @unsafe - `freeaddrinfo` libc call on the raw `struct addrinfo*`.
     void reset(struct addrinfo* info = nullptr) {
         if (info_) {
             freeaddrinfo(info_);
@@ -64,6 +81,7 @@ public:
         info_ = info;
     }
 
+    // @unsafe - `getaddrinfo` libc call returning raw `struct addrinfo*`.
     static rusty::Result<AddrInfo, int> resolve(
         const char* host,
         const char* service,
@@ -84,8 +102,11 @@ std::string get_host_name();
 
 } // export namespace rrr
 
+// @safe - impl namespace. All three free functions are pure syscall
+// wrappers and carry per-method `// @unsafe` below.
 namespace rrr {
 
+// @unsafe - fcntl(F_GETFL / F_SETFL) syscall.
 int set_nonblocking(int fd, bool nonblocking) {
     int ret = fcntl(fd, F_GETFL, 0);
     if (ret != -1) {
@@ -98,6 +119,8 @@ int set_nonblocking(int fd, bool nonblocking) {
     return ret;
 }
 
+// @unsafe - socket / bind / getsockname / close syscalls + C-style
+// casts of `sockaddr_in*` to `sockaddr*` + raw `ai_addr` deref.
 int find_open_port() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -145,6 +168,7 @@ int find_open_port() {
     return -1;
 }
 
+// @unsafe - gethostname syscall into a raw `char[1024]`.
 std::string get_host_name() {
     char buffer[1024];
     if (gethostname(buffer, 1024) != 0) {

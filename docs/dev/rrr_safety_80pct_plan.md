@@ -419,11 +419,15 @@ up the next time that library work lands.
   with an inline `// @unsafe { val_opt.unwrap()->upgrade() }` block
   around the Option-deref. Commit 98322cca; ratio 25.5% → **26.8%**
   (+165 @safe LOC; unannotated dropped 311 LOC).
-- [ ] rpc/utils.cpp retry — namespace `@safe` + per-method
-  `// @unsafe` on every syscall-touching function (`getaddrinfo`,
-  `fcntl`, `socket`/`bind`/`getsockname`, `gethostname`) and on
-  `AddrInfo`'s raw `struct addrinfo*` ownership. Modest gain
-  expected.
+- [x] rpc/utils.cpp retry — both `export namespace rrr` and the impl
+  `namespace rrr` `// @safe`. AddrInfo's per-method `// @unsafe` on
+  the explicit raw-ptr ctor, move ctor, move-assign, dtor, get,
+  operator->, operator*, release, reset (freeaddrinfo), resolve
+  (getaddrinfo). The free functions `set_nonblocking` (fcntl),
+  `find_open_port` (socket/bind/getsockname/close + sockaddr* casts),
+  and `get_host_name` (gethostname into a raw `char[1024]`) are all
+  `// @unsafe`. Default ctor + `operator bool` (nullptr check)
+  inherit namespace @safe. Ratio 26.8% → **27.2%** (+44 @safe LOC).
 - [ ] SP-1: `rusty::sys::fs` wrapper — add
   `rusty::sys::fs::read_to_string` (and minimal companions) to the
   rusty-cpp submodule with `@safe` annotations, then bump the
