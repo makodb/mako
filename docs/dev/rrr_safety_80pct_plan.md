@@ -61,57 +61,57 @@ should land 1–3 classes or 1 file.
 
 **Class-level `// @safe` candidates** (ordered by LOC payoff):
 
-- [ ] `Server` (rpc/server.cpp) — mirror what Tier 4 did for `Client`.
+- [x] `Server` (rpc/server.cpp) — mirror what Tier 4 did for `Client`.
   Methods using sockets / `Pthread_*` keep method-level `// @unsafe`.
   Expected gain: ~600 LOC.
-- [ ] `Reactor` (reactor/reactor.cpp) — large; the fiber context-switch
+- [x] `Reactor` (reactor/reactor.cpp) — large; the fiber context-switch
   methods (`Fiber::yield_`, `Fiber::continue_`, `Fiber::run`) keep
   method-level `// @unsafe`. Loop and check_timeout get @unsafe blocks
   for the few raw ops. Expected gain: ~1,500 LOC.
-- [ ] `IdempotencyTracker` (rpc/idempotency.cpp) — already 199 safe /
+- [x] `IdempotencyTracker` (rpc/idempotency.cpp) — already 199 safe /
   264 unannotated. Class-level @safe + a few method overrides should
   push to >90% safe. Expected gain: ~260 LOC.
-- [ ] `CompletionTracker` (rpc/completion_tracker.cpp) — similar shape.
+- [x] `CompletionTracker` (rpc/completion_tracker.cpp) — similar shape.
   Expected gain: ~210 LOC.
-- [ ] `CircuitBreaker` (rpc/circuit_breaker.cpp). Expected gain: ~150 LOC.
-- [ ] `HeartbeatManager` (rpc/heartbeat.cpp). Expected gain: ~200 LOC.
-- [ ] `ConnectionStateMachine` (rpc/connection_state.cpp). Expected gain:
+- [x] `CircuitBreaker` (rpc/circuit_breaker.cpp). Expected gain: ~150 LOC.
+- [x] `HeartbeatManager` (rpc/heartbeat.cpp). Expected gain: ~200 LOC.
+- [x] `ConnectionStateMachine` (rpc/connection_state.cpp). Expected gain:
   ~150 LOC.
-- [ ] `TcpListener` (rpc/tcp_channel.cpp) — the listener half is mostly
+- [x] `TcpListener` (rpc/tcp_channel.cpp) — the listener half is mostly
   safe; the `TcpConnection` half stays @unsafe. Expected gain: ~400 LOC.
-- [ ] `LoadBalancer` (rpc/load_balancer.cpp). Expected gain: ~100 LOC.
-- [ ] `RequestQueue` (rpc/request_queue.cpp) — partial Tier 2 already.
+- [x] `LoadBalancer` (rpc/load_balancer.cpp). Expected gain: ~100 LOC.
+- [x] `RequestQueue` (rpc/request_queue.cpp) — partial Tier 2 already.
   Class-level @safe completes it. Expected gain: ~80 LOC.
 
 **Namespace-level `// @safe` candidates** (whole files where every
 function should be @safe):
 
-- [ ] `rpc/inmemory_channel.cpp` — 844 LOC, zero annotations today.
+- [x] `rpc/inmemory_channel.cpp` — 844 LOC, zero annotations today.
   All rusty internals, no syscalls. Expected gain: ~800 LOC.
-- [ ] `rpc/frame_codec.cpp` — 335 LOC unannotated. Expected gain: ~330.
-- [ ] `rpc/internal_protocol.cpp` — small. Expected gain: ~80.
-- [ ] `rpc/request_options.cpp`. Expected gain: ~100.
-- [ ] `rpc/connection_metrics.cpp`. Expected gain: ~250.
-- [ ] `rpc/callbacks.cpp`. Expected gain: ~100.
-- [ ] `rpc/errors.cpp`. Expected gain: ~80.
-- [ ] `rpc/utils.cpp` — has `getaddrinfo()`; needs per-method @unsafe.
+- [x] `rpc/frame_codec.cpp` — 335 LOC unannotated. Expected gain: ~330.
+- [x] `rpc/internal_protocol.cpp` — small. Expected gain: ~80.
+- [x] `rpc/request_options.cpp`. Expected gain: ~100.
+- [x] `rpc/connection_metrics.cpp`. Expected gain: ~250.
+- [x] `rpc/callbacks.cpp`. Expected gain: ~100.
+- [x] `rpc/errors.cpp`. Expected gain: ~80.
+- [x] `rpc/utils.cpp` — has `getaddrinfo()`; needs per-method @unsafe.
   Expected gain: ~120.
-- [ ] `rpc/pollable_proxy.cpp`. Expected gain: ~50.
-- [ ] `rpc/reconnect_policy.cpp`. Expected gain: ~150.
-- [ ] `misc/serializable_envelope.cpp`. Expected gain: ~200.
-- [ ] `misc/netinfo.cpp`. Expected gain: ~50.
-- [ ] `misc/stat.cpp`. Expected gain: ~80.
-- [ ] `misc/cpuinfo.cpp`. Expected gain: ~150.
-- [ ] `misc/rand.cpp`. Expected gain: ~30.
-- [ ] `misc/dball.cpp`. Expected gain: ~100.
-- [ ] `misc/alarm.cpp`. Expected gain: ~80.
-- [ ] `base/basetypes.cpp` — POD types only. Expected gain: ~470.
-- [ ] `base/debugging.cpp`. Expected gain: ~100.
-- [ ] `base/strop.cpp`. Expected gain: ~100.
-- [ ] `base/callback_wrapper.cpp`. Expected gain: ~80.
-- [ ] `base/misc.cpp`. Expected gain: ~100.
-- [ ] `base/unittest.cpp`. Expected gain: ~100.
-- [ ] `reactor/epoll_wrapper.cc` — has epoll syscalls; needs per-method
+- [x] `rpc/pollable_proxy.cpp`. Expected gain: ~50.
+- [x] `rpc/reconnect_policy.cpp`. Expected gain: ~150.
+- [x] `misc/serializable_envelope.cpp`. Expected gain: ~200.
+- [x] `misc/netinfo.cpp`. Expected gain: ~50.
+- [x] `misc/stat.cpp`. Expected gain: ~80.
+- [x] `misc/cpuinfo.cpp`. Expected gain: ~150.
+- [x] `misc/rand.cpp`. Expected gain: ~30.
+- [x] `misc/dball.cpp`. Expected gain: ~100.
+- [x] `misc/alarm.cpp`. Expected gain: ~80.
+- [x] `base/basetypes.cpp` — POD types only. Expected gain: ~470.
+- [x] `base/debugging.cpp`. Expected gain: ~100.
+- [x] `base/strop.cpp`. Expected gain: ~100.
+- [x] `base/callback_wrapper.cpp`. Expected gain: ~80.
+- [x] `base/misc.cpp`. Expected gain: ~100.
+- [x] `base/unittest.cpp`. Expected gain: ~100.
+- [x] `reactor/epoll_wrapper.cc` — has epoll syscalls; needs per-method
   @unsafe. Expected gain: ~150.
 
 Estimated Phase 1 gain: ~7,000–8,000 LOC. Resulting ratio: **~40%**.
