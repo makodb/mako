@@ -10,6 +10,12 @@ export module rrr.basetypes;
 
 import std;
 
+// @safe - POD/value-type helpers + small classes (SparseInt, v32/v64,
+// NoCopy, RefCounted, Counter, Time, Timer, Rand, Enumerator,
+// MergedEnumerator). Methods that hit syscalls (clock_gettime, select,
+// gettimeofday, pthread_self) or do raw `char*` byte slicing via
+// `reinterpret_cast<char*>` carry per-method `// @unsafe` overrides
+// below; everything else is pure arithmetic / bit math.
 export namespace rrr {
 
 template<typename T>
@@ -93,7 +99,10 @@ public:
         int r = atomic_fetch_sub_acq_rel(refcnt_, 1) - 1;
         if (r < 0) std::abort();
         if (r == 0) {
-            delete this;
+            // @unsafe { self-destruct when refcount hits zero }
+            {
+                delete this;
+            }
         }
         return r;
     }
@@ -119,6 +128,7 @@ class Time {
 public:
     static const uint64_t RRR_USEC_PER_SEC = 1000000;
 
+    // @unsafe - clock_gettime syscall.
     static uint64_t now(bool accurate = false) {
       struct timespec spec;
 #ifdef __APPLE__
@@ -133,6 +143,7 @@ public:
       return spec.tv_sec * RRR_USEC_PER_SEC + spec.tv_nsec/1000;
     }
 
+    // @unsafe - select() syscall used as a sleep primitive.
     static void sleep(uint64_t t) {
         struct timeval tv;
         tv.tv_usec = t % RRR_USEC_PER_SEC;
@@ -199,6 +210,8 @@ class MergedEnumerator: public Enumerator<T> {
     rusty::Vec<merge_helper> q_;
 
 public:
+    // @unsafe - takes raw `Enumerator<T>*`; calls std::push_heap on raw
+    // iterator pair.
     void add_source(Enumerator<T>* src) {
         if (src && src->has_next()) {
             q_.push(merge_helper(src->next(), src));
@@ -210,6 +223,8 @@ public:
     bool has_next() override {
         return !q_.is_empty();
     }
+    // @unsafe - raw `Enumerator<T>*` dereference + std::pop/push_heap on
+    // raw iterator pairs.
     T next() override {
         if (q_.is_empty()) std::abort();
         std::pop_heap(q_.begin(), q_.end());
@@ -226,6 +241,11 @@ public:
 
 } // export namespace rrr
 
+// @safe - impl block: buf_size/val_size are pure switch math; the
+// dump/load_* methods do `reinterpret_cast<char*>` + raw `char*`
+// byte slicing so they carry per-method `// @unsafe`; Timer::* and
+// Rand::* hit `gettimeofday` / `pthread_self` and carry per-method
+// `// @unsafe`.
 namespace rrr {
 
 size_t SparseInt::buf_size(char byte0) {
@@ -272,6 +292,7 @@ size_t SparseInt::val_size(i64 val) {
     }
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 size_t SparseInt::dump(i32 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -313,6 +334,7 @@ size_t SparseInt::dump(i32 val, char* buf) {
     }
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 size_t SparseInt::dump(i64 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -395,6 +417,7 @@ size_t SparseInt::dump(i64 val, char* buf) {
     }
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 i32 SparseInt::load_i32(const char* buf) {
     i32 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -418,6 +441,7 @@ i32 SparseInt::load_i32(const char* buf) {
     return val;
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 i64 SparseInt::load_i64(const char* buf) {
     i64 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -445,11 +469,13 @@ Timer::Timer() : begin_(), end_() {
     reset();
 }
 
+// @unsafe - gettimeofday syscall.
 void Timer::start() {
     reset();
     gettimeofday(&begin_, nullptr);
 }
 
+// @unsafe - gettimeofday syscall.
 void Timer::stop() {
     gettimeofday(&end_, nullptr);
 }
@@ -461,6 +487,7 @@ void Timer::reset() {
     end_.tv_usec = 0;
 }
 
+// @unsafe - gettimeofday syscall on the live-elapsed branch.
 double Timer::elapsed() const {
     if (begin_.tv_sec == 0 && begin_.tv_usec == 0) std::abort();
     if (end_.tv_sec == 0 && end_.tv_usec == 0) {
@@ -471,6 +498,7 @@ double Timer::elapsed() const {
     return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
+// @unsafe - gettimeofday + pthread_self + reinterpret_cast<uintptr_t>(this).
 Rand::Rand() : rand_() {
     struct timeval now;
     gettimeofday(&now, nullptr);

@@ -336,7 +336,15 @@ The loop must NOT:
   `rrr::PollThread *holder` field is never dereferenced and
   `set_holder` is a no-op stub. No per-method overrides needed.
   Commit a64a2a96; ratio 20.5% → **20.8%** (+32 LOC).
-- [ ] base/basetypes.cpp
+- [x] base/basetypes.cpp — both `export namespace rrr` and the impl
+  `namespace rrr` `// @safe`. Per-method `// @unsafe` overrides on
+  `Time::now`/`Time::sleep` (clock_gettime, select), on the four
+  `SparseInt::dump`/`load_*` impls (reinterpret_cast<char*> + raw byte
+  slicing), on `Timer::start`/`stop`/`elapsed` (gettimeofday), on
+  `Rand::Rand` (gettimeofday + pthread_self + reinterpret_cast<uintptr_t>),
+  on `MergedEnumerator::add_source`/`next` (raw `Enumerator<T>*` + raw
+  iterator pairs). Inline `// @unsafe { delete this }` around the
+  RefCounted release self-destruct. Ratio 20.8% → **22.7%** (+237 LOC).
 - [ ] base/debugging.cpp
 - [ ] base/strop.cpp
 - [ ] base/callback_wrapper.cpp
