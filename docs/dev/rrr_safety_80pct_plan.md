@@ -427,7 +427,8 @@ up the next time that library work lands.
   `find_open_port` (socket/bind/getsockname/close + sockaddr* casts),
   and `get_host_name` (gethostname into a raw `char[1024]`) are all
   `// @unsafe`. Default ctor + `operator bool` (nullptr check)
-  inherit namespace @safe. Ratio 26.8% → **27.2%** (+44 @safe LOC).
+  inherit namespace @safe. Commit a543ab51; ratio 26.8% → **27.2%**
+  (+44 @safe LOC).
 - [ ] SP-1: `rusty::sys::fs` wrapper — add
   `rusty::sys::fs::read_to_string` (and minimal companions) to the
   rusty-cpp submodule with `@safe` annotations, then bump the
