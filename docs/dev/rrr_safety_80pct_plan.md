@@ -492,7 +492,9 @@ up the next time that library work lands.
   inherit namespace @safe. Cursor adoption for the Marshal sink/
   source is a future SP-5 follow-up — wire-format identical to
   frame_codec which is also still on the labeling path.
-  Ratio 28.4% → **28.9%** (+71 @safe LOC).
+  Commit 7fa7a0b2; ratio 28.4% → **28.9%** (+71 @safe LOC).
+  **Phase 1 unblock subplan complete:** 8/8 items ticked, ratio
+  rose 25.5% → 28.9% across iters 39–46.
 
 ### Phase 2 — easy raw-pointer refactors
 - [blocked] ChannelConnectionProxy / ChannelFactoryProxy → rusty::Box<Base>
