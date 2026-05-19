@@ -344,7 +344,8 @@ The loop must NOT:
   `Rand::Rand` (gettimeofday + pthread_self + reinterpret_cast<uintptr_t>),
   on `MergedEnumerator::add_source`/`next` (raw `Enumerator<T>*` + raw
   iterator pairs). Inline `// @unsafe { delete this }` around the
-  RefCounted release self-destruct. Ratio 20.8% → **22.7%** (+237 LOC).
+  RefCounted release self-destruct. Commit 0cf788a2; ratio 20.8% →
+  **22.7%** (+237 LOC).
 - [ ] base/debugging.cpp
 - [ ] base/strop.cpp
 - [ ] base/callback_wrapper.cpp
