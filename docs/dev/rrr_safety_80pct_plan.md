@@ -282,7 +282,7 @@ The loop must NOT:
   `Cursor<Vec<u8>>` abstraction (Phase 4 territory; perf-sensitive) or
   keep file unannotated. Reverted.
 - [x] rpc/internal_protocol.cpp — namespace `// @safe`. Pure constexpr
-  bit-twiddling. Commit (pending); ratio unchanged (file body is tiny;
+  bit-twiddling. Commit fc9be1ad; ratio unchanged (file body is tiny;
   inline constexpr functions don't move LOC counters).
 - [ ] rpc/request_options.cpp
 - [ ] rpc/connection_metrics.cpp
