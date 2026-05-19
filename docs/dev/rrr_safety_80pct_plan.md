@@ -312,7 +312,10 @@ The loop must NOT:
   one `const_cast<SerializableEnvelope&>` for the const-shim path.
   Marshal operator overloads are inherently @unsafe in rusty-cpp's
   model. Phase 4 territory (Marshal byte-ops decision).
-- [ ] misc/netinfo.cpp
+- [blocked] misc/netinfo.cpp — every method does file I/O via
+  std::ifstream against /sys/class/net/ens4/statistics/{rx,tx}_bytes
+  plus a `times()` syscall in the ctor. No @safe surface area. Phase
+  3 candidate once a `rusty::sys::fs` reader exists.
 - [ ] misc/stat.cpp
 - [ ] misc/cpuinfo.cpp
 - [ ] misc/rand.cpp
