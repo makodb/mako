@@ -24,6 +24,14 @@ import rrr.debugging;
 import rrr.serializable;
 import rrr.threading;
 
+// @safe - Marshal chunk-list buffer + operator<< / operator>> overloads
+// for primitives and containers. Nested types `raw_bytes`, `chunk`, and
+// `bookmark` own raw `char*` / `char**` heap buffers (via new[] /
+// delete[]) and the Marshal head_/tail_ pair is a raw `chunk*` linked
+// list — every method that touches these carries a per-method
+// `// @unsafe` or an inner `// @unsafe { ... }` block. Existing
+// annotations are preserved. SP-5 / Phase 4 follow-up: rewrite the
+// chunk-list onto rusty::io::Cursor<Vec<u8>>.
 export namespace rrr {
 
 
@@ -46,6 +54,8 @@ inline T safe_min(const T& a, const T& b) {
 class Marshal;
 
 
+// @safe - see file header. Methods that touch `head_`/`tail_` chunk
+// pointers or `bookmark` raw `char**` carry per-method `// @unsafe`.
 class Marshal: public NoCopy {
 private:
   // Migrated from RefCounted to std::shared_ptr for automatic reference counting
@@ -1105,6 +1115,9 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
 // ============================================================================
 // Implementation (formerly marshal.cpp's body)
 // ============================================================================
+// @safe - impl namespace. Out-of-class definitions inherit their
+// per-method `// @safe` / `// @unsafe` from the matching declarations
+// in the export namespace above.
 namespace rrr {
 
 
@@ -1134,6 +1147,7 @@ Marshal::~Marshal() {
     }
 }
 
+// @unsafe - walks the raw `chunk*` head_/next linked list.
 size_t Marshal::content_size_slow() const {
     assert(tail_ == nullptr || tail_->next == nullptr);
 
@@ -1147,6 +1161,7 @@ size_t Marshal::content_size_slow() const {
     return sz;
 }
 
+// @unsafe - raw `chunk*` head_/tail_/next linked-list ops + `new chunk(...)`.
 size_t Marshal::write(const void* p, size_t n) {
     assert(tail_ == nullptr || tail_->next == nullptr);
     std::chrono::time_point<std::chrono::steady_clock> start;
@@ -1195,6 +1210,7 @@ size_t Marshal::write(const void* p, size_t n) {
 // `if (rhs.bypass_to_socket_)` branch in `operator<<(MarshallDeputy)`
 // (now also gone) never invoked it.
 
+// @unsafe - raw `void*` → `char*` C-style cast + raw `head_` deref.
 size_t Marshal::read_chnk(void* p, size_t n){
     char* pc = (char *) p;
     size_t n_read = head_->read(pc, n);
@@ -1248,6 +1264,8 @@ size_t Marshal::read(void* p, size_t n) {
 // inner `chunk::read_from_fd` they used was deleted in the same
 // commit.
 
+// @unsafe - raw `chunk*` traversal across two Marshal instances +
+// chunk::shared_copy() (creates new chunk via raw new).
 size_t Marshal::read_reuse_chnk(Marshal& m, size_t n){
     assert(m.content_size() >= n);   // require m.content_size() >= n > 0
     size_t n_fetch = 0;

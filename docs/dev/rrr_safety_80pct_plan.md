@@ -600,6 +600,18 @@ up the next time that library work lands.
 - [ ] Pthread_* → rusty::sync::* wrappers
 
 ### Phase 4 — stretch
-- [ ] Marshal byte ops decision (refactor / external annot / quarantine)
+- [x] Marshal byte ops decision — **chose labeling (option 3 of the
+  Phase 4 menu) over Cursor refactor/external annot**. Added namespace
+  `// @safe` on both `export namespace rrr` and the impl `namespace
+  rrr`; class `Marshal` `// @safe`. Triaged 15 borrow-check violations
+  by adding per-method `// @unsafe` overrides on the four methods
+  routing through the raw `chunk*` head_/tail_/next linked list and
+  raw `char*` casts: `Marshal::content_size_slow`, `Marshal::write`,
+  `Marshal::read_chnk`, `Marshal::read_reuse_chnk`. All existing
+  per-method `// @safe` / `// @unsafe` annotations on operator<< /
+  operator>> overloads, chunk methods, bookmark methods, set_bookmark,
+  read, peek, read_from_marshal preserved. Cursor port deferred (hot
+  wire path; needs perf benchmarks first). Ratio 28.9% → **31.6%**
+  (+321 @safe LOC; unannotated dropped 353 LOC).
 - [ ] Fiber context quarantine
 - [ ] rcc_rpc.h codegen rewrite
