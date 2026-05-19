@@ -580,7 +580,23 @@ up the next time that library work lands.
   `pylib/simplerpcgen/lang_cpp.py` codegen because the generated
   `rcc_rpc.h` uses `shared_ptr<Marshallable>` directly. Multi-iteration
   effort spanning the whole project. Defer.
-- [ ] Reactor::loop tight @unsafe block scoping
+- [blocked] Reactor::loop tight @unsafe block scoping
+  — three things gate this:
+  (a) The existing `// @unsafe - rusty-cpp false positive` comment at
+      reactor.cpp:2049 documents that rusty-cpp's init-tracking can't
+      prove `bool found_ready_events` is set before the do-while/while
+      interplay reads it; hoisting the declaration outside the
+      do-while did not silence the false positive.
+  (b) The `rusty::Function<bool(const std::shared_ptr<Event>&)>(...)`
+      predicate ctors at the extract_if / retain call sites are not
+      annotated `@safe` in the current rusty-cpp release (Tier 2.2
+      flipped the bare ctor but apparently not the from-lambda
+      conversion path).
+  (c) The body calls `check_timeout` which is per-method `// @unsafe`.
+  Fixing all three needs either (a) a rusty-cpp init-tracking patch,
+  (b) more @safe annotations on rusty::Function, and (c) check_timeout
+  to be re-scoped too. Beyond a single-iteration mechanical change.
+  Defer.
 - [ ] Pthread_* → rusty::sync::* wrappers
 
 ### Phase 4 — stretch
