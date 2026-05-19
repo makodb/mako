@@ -307,7 +307,11 @@ The loop must NOT:
   Commit 9bb655bd; ratio unchanged at 19.3% (tiny file).
 - [x] rpc/reconnect_policy.cpp — namespace `// @safe`. Commit b460ca77;
   ratio 19.3% → 19.8% (+63 LOC). One step from the 20% milestone.
-- [ ] misc/serializable_envelope.cpp
+- [blocked] misc/serializable_envelope.cpp — file revolves around Marshal
+  `operator<<` / `operator>>` chains for envelope wire encoding, plus
+  one `const_cast<SerializableEnvelope&>` for the const-shim path.
+  Marshal operator overloads are inherently @unsafe in rusty-cpp's
+  model. Phase 4 territory (Marshal byte-ops decision).
 - [ ] misc/netinfo.cpp
 - [ ] misc/stat.cpp
 - [ ] misc/cpuinfo.cpp
