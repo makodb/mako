@@ -553,9 +553,9 @@ up the next time that library work lands.
   because there is only one caller and `Service&` already eliminates
   the unsafe `static_cast<void*>` / `static_cast<Service*>` ops;
   an Arc migration would also require ServiceProxy to flip from
-  `Box<Service>` to `Arc<Service>`. Ratio holds at **28.9%** (the
-  lines were already in @safe context — the casts were the only
-  unsafe ops and they're now gone).
+  `Box<Service>` to `Arc<Service>`. Commit 97ab8d44; ratio holds at
+  **28.9%** (the lines were already in @safe context — the casts
+  were the only unsafe ops and they're now gone).
 
 ### Phase 3 — remaining unsafe paths
 - [ ] alock.cpp WaitDieALock::ALock* → rusty::Weak<ALock>
