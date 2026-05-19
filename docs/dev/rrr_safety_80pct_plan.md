@@ -286,7 +286,7 @@ The loop must NOT:
   inline constexpr functions don't move LOC counters).
 - [x] rpc/request_options.cpp — namespace `// @safe`. Commit eabaffe4;
   ratio 16.0% → 16.1% (+6 LOC).
-- [x] rpc/connection_metrics.cpp — namespace `// @safe`. Commit (pending);
+- [x] rpc/connection_metrics.cpp — namespace `// @safe`. Commit fa602d6f;
   ratio 16.1% → 16.8% (+90 LOC).
 - [ ] rpc/callbacks.cpp
 - [ ] rpc/errors.cpp
