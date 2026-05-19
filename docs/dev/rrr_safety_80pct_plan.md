@@ -328,7 +328,9 @@ The loop must NOT:
   Per-method `// @unsafe` on create_key/delete_key/get_seed/rdtsc/destroy.
   Switched `(int)ret.length()` to `static_cast<int>` in int2str_n. Commit
   1b633ec9; ratio 20.0% → **20.4%** (+54 LOC).
-- [ ] misc/dball.cpp
+- [x] misc/dball.cpp — class `DragonBall` `// @safe`. Inline
+  `// @unsafe { }` block around the `delete this` self-destruct in
+  `trigger()`. Ratio 20.4% → **20.5%** (+16 LOC).
 - [ ] misc/alarm.cpp
 - [ ] base/basetypes.cpp
 - [ ] base/debugging.cpp
