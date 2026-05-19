@@ -378,7 +378,8 @@ The loop must NOT:
   `const char*` + raw out-vec), `TestMgr::parse_args` (raw `char* argv[]`
   + raw `bool*` out-params), `TestMgr::run` (raw argv + printf +
   `delete t` / `delete this`). `TestCase::fail`/`reset`/`group`/`name`/
-  `failures` inherit @safe. Ratio 24.2% → **24.9%** (+83 LOC).
+  `failures` inherit @safe. Commit 714b2aa1; ratio 24.2% → **24.9%**
+  (+83 LOC).
 - [ ] reactor/epoll_wrapper.cc
 
 ### Phase 2 — easy raw-pointer refactors
