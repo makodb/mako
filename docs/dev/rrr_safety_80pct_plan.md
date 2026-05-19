@@ -456,11 +456,14 @@ up the next time that library work lands.
   are gnarlier than the netinfo.cpp pattern (strtok mutates the
   string in place; the stat file uses a deep operator>> chain).
   Commit df8483b7; ratio 27.5% → **28.1%** (+69 @safe LOC).
-- [ ] SP-5: Marshal byte-ops decision — design + add a
-  `rusty::io::Cursor<Vec<u8>>` (or equivalent) in rusty-cpp; the
-  goal is to give frame_codec / serializable_envelope a non-raw byte
-  path. Likely multi-iteration; if it doesn't fit in one pass, mark
-  blocked and the loop continues.
+- [x] SP-5: Marshal byte-ops decision — `rusty::io::Cursor<T>`
+  already existed; annotated its public API `@safe` so client code
+  can read/write/seek without dropping out of the borrow check. Both
+  `read` and `write` now move the raw `uint8_t*` extraction (via
+  private `get_data`/`get_mut_data`) and the `std::memcpy` into
+  inline `// @unsafe { }` blocks. Submodule commit d9795f0.
+  frame_codec.cpp and serializable_envelope.cpp adopt the Cursor
+  next.
 - [ ] frame_codec.cpp retry — adopt the new cursor in `encode_into`,
   `FrameStreamReader::next_frame`, `consume_frame`,
   `compact_if_needed`. Namespace `@safe` once the raw `uint8_t*`
