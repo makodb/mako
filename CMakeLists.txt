@@ -174,6 +174,21 @@ add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 # rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # Mako requires clang >= 21. Specifically, rusty-cpp's
+    # `platform::threading::scoped_lock` / `unique_lock` / `shared_lock`
+    # aliases rely on alias-template CTAD (C++20), which clang 18 (the
+    # default on Ubuntu 24.04 noble) rejects. Clang 19 fixes most cases
+    # but we standardize on 21 to match the CI image.
+    # To install: `apt install -y clang-21 libc++-21-dev libc++abi-21-dev`
+    # from the apt.llvm.org noble repo, or use the `mako-ci-ubuntu24` image.
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "21.0")
+        message(FATAL_ERROR
+            "Mako requires Clang 21 or newer (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
+            "Older Clang lacks alias-template CTAD support that rusty-cpp's "
+            "platform::threading aliases depend on. "
+            "Install clang-21 via apt.llvm.org (Ubuntu) or Homebrew (macOS).")
+    endif()
+
     # libc++ removed std::unary_function/binary_function (LWG3820, C++20);
     # some in-tree Masstree code still references them. Re-enable the old
     # typedefs for backwards compatibility.
