@@ -281,7 +281,9 @@ The loop must NOT:
   and inherently raw-ptr-arithmetic. Either refactor to a
   `Cursor<Vec<u8>>` abstraction (Phase 4 territory; perf-sensitive) or
   keep file unannotated. Reverted.
-- [ ] rpc/internal_protocol.cpp
+- [x] rpc/internal_protocol.cpp — namespace `// @safe`. Pure constexpr
+  bit-twiddling. Commit (pending); ratio unchanged (file body is tiny;
+  inline constexpr functions don't move LOC counters).
 - [ ] rpc/request_options.cpp
 - [ ] rpc/connection_metrics.cpp
 - [ ] rpc/callbacks.cpp
