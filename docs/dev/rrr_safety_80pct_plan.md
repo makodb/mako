@@ -259,7 +259,7 @@ The loop must NOT:
   14.9% @safe / 18.6% @unsafe / 6.0% inner-block / 60.5% unannotated.
   Commit b209eb89.
 - [x] LoadBalancer + LoadBalancerState (rpc/load_balancer.cpp) — class-
-  level `// @safe`. Commit (pending); ratio 14.9% → 15.4% (+67 LOC).
+  level `// @safe`. Commit d4ea8534; ratio 14.9% → 15.4% (+67 LOC).
 - [ ] RequestQueue class @safe completion (rpc/request_queue.cpp)
 
 ### Phase 1 — namespace-level @safe
