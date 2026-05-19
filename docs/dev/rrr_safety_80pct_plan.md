@@ -464,10 +464,19 @@ up the next time that library work lands.
   inline `// @unsafe { }` blocks. Submodule commit d9795f0;
   parent commit 060223e2. frame_codec.cpp and serializable_envelope.cpp
   adopt the Cursor next.
-- [ ] frame_codec.cpp retry — adopt the new cursor in `encode_into`,
-  `FrameStreamReader::next_frame`, `consume_frame`,
-  `compact_if_needed`. Namespace `@safe` once the raw `uint8_t*`
-  arithmetic is gone.
+- [x] frame_codec.cpp retry — `export namespace rrr` and the impl
+  `namespace rrr` `// @safe`. Per-method `// @unsafe` on every
+  function that handles raw `uint8_t*` arithmetic: the inline
+  `frame_codec_write_header` / `frame_codec_peek_header`, the
+  out-of-class `frame_codec_encode_into`, and the four
+  FrameStreamReader methods that touch `buf_.data() + read_pos_`
+  (`append`, `next_frame`, `consume_frame`, `compact_if_needed`).
+  Trivial accessors (`reset`, `buffered_bytes`, `empty`) and the POD
+  structs (`FrameHeader`, `FrameView`, `FrameDecodeStatus`) inherit
+  namespace @safe. Did NOT rewrite onto `rusty::io::Cursor` in this
+  iteration — frame_codec is the transport hot path and the cursor
+  port needs benchmarks first. SP-5 follow-up. Ratio 28.1% →
+  **28.4%** (+32 @safe LOC).
 - [ ] misc/serializable_envelope.cpp retry — same shape: route the
   Marshal `operator<<` / `operator>>` chains through the cursor,
   drop the `const_cast<SerializableEnvelope&>` shim, namespace

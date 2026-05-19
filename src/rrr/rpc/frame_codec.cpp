@@ -8,6 +8,16 @@ export module rrr.frame_codec;
 import std;
 import rrr.internal_protocol;
 
+// @safe - wire-protocol frame codec. The free codec functions and the
+// FrameStreamReader methods that take or compute on raw `uint8_t*` /
+// `const uint8_t*` (write_header / peek_header / encode_into /
+// FrameStreamReader::append / next_frame / consume_frame /
+// compact_if_needed) carry per-method `// @unsafe` because they do
+// raw pointer arithmetic + std::memcpy / std::memmove on the
+// transport hot path. The trivial accessors (reset, buffered_bytes,
+// empty) and the POD structs inherit namespace @safe.
+// SP-5 follow-up: rewrite this codec on top of `rusty::io::Cursor`
+// once perf benchmarks of the cursor path are in.
 export namespace rrr {
 
 
@@ -78,6 +88,7 @@ struct FrameHeader {
  * The on-wire size is written in host byte order to match the existing
  * `Marshal::write_bookmark` semantics.
  */
+// @unsafe - writes the 4-byte size prefix into a raw `uint8_t*` via memcpy.
 inline bool frame_codec_write_header(std::uint8_t* out_buf,
                                      std::int32_t payload_size,
                                      bool extended_header_flag) {
@@ -106,6 +117,7 @@ inline bool frame_codec_write_header(std::uint8_t* out_buf,
  * frame as fully present. `FrameStreamReader` does that comparison
  * internally.
  */
+// @unsafe - reads the 4-byte size prefix out of a raw `const uint8_t*` via memcpy.
 inline FrameDecodeStatus frame_codec_peek_header(const std::uint8_t* buf,
                                                  std::size_t available,
                                                  FrameHeader& out_header) {
@@ -159,6 +171,8 @@ struct FrameView {
  * before issuing one `send(2)` syscall — this is what the TCP backend
  * will use to drain its outbound queue without one syscall per frame.
  */
+// @unsafe - takes a raw `const uint8_t*` payload, advances `out.data() +
+// offset` to write the header + memcpy the payload bytes.
 bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
                              const std::uint8_t* payload,
                              std::int32_t payload_size,
@@ -195,6 +209,8 @@ class FrameStreamReader {
 
     // Append `size` bytes from `data` to the internal buffer.
     // No-op if `size == 0`. `data` may be null only if `size == 0`.
+    // @unsafe - takes a raw `const uint8_t*` (pointer + size pair from
+    // the transport).
     void append(const std::uint8_t* data, std::size_t size);
 
     // Try to view the next frame in the buffer.
@@ -204,11 +220,14 @@ class FrameStreamReader {
     //   - `Malformed`       — header decoded to a negative payload size;
     //                         caller should treat the stream as
     //                         corrupted and call `reset()`.
+    // @unsafe - computes `buf_.data() + read_pos_` and stores a raw
+    // `const uint8_t*` payload pointer into the out FrameView.
     FrameDecodeStatus next_frame(FrameView& out_view) const;
 
     // Drop the most recently peeked frame from the buffer. Must be
     // preceded by a `Complete` from `next_frame`. Calling without a
     // preceding `Complete` is a no-op.
+    // @unsafe - re-peeks the header via raw `buf_.data() + read_pos_`.
     void consume_frame();
 
     // Drop everything in the buffer (e.g., after a malformed frame or
@@ -230,6 +249,8 @@ class FrameStreamReader {
 
 }  // export namespace rrr
 
+// @safe - impl namespace. Out-of-class definitions inherit their
+// per-method `// @unsafe` from the matching declarations above.
 namespace rrr {
 
 namespace {
@@ -246,6 +267,8 @@ constexpr std::size_t kCompactThresholdBytes = 64 * 1024;
 // frame_codec_encode_into
 // ---------------------------------------------------------------------------
 
+// @unsafe - see export declaration: raw `const uint8_t*` payload +
+// `out.data() + offset` arithmetic + memcpy.
 bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
                              const std::uint8_t* payload,
                              std::int32_t payload_size,
@@ -280,11 +303,14 @@ bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
 FrameStreamReader::FrameStreamReader() = default;
 FrameStreamReader::~FrameStreamReader() = default;
 
+// @unsafe - takes raw `const uint8_t*` data + size pair from transport.
 void FrameStreamReader::append(const std::uint8_t* data, std::size_t size) {
     if (size == 0) return;
     buf_.insert(buf_.end(), data, data + size);
 }
 
+// @unsafe - `buf_.data() + read_pos_` arithmetic; stores a raw
+// `const uint8_t*` payload pointer into the out FrameView.
 FrameDecodeStatus FrameStreamReader::next_frame(FrameView& out_view) const {
     const std::size_t available = buffered_bytes();
     const std::uint8_t* head = buf_.data() + read_pos_;
@@ -307,6 +333,7 @@ FrameDecodeStatus FrameStreamReader::next_frame(FrameView& out_view) const {
     return FrameDecodeStatus::Complete;
 }
 
+// @unsafe - re-peeks the header via raw `buf_.data() + read_pos_`.
 void FrameStreamReader::consume_frame() {
     const std::size_t available = buffered_bytes();
     if (available < kFrameHeaderSize) return;
@@ -332,6 +359,7 @@ std::size_t FrameStreamReader::buffered_bytes() const {
     return buf_.size() - read_pos_;
 }
 
+// @unsafe - `std::memmove` from `buf_.data() + read_pos_` to `buf_.data()`.
 void FrameStreamReader::compact_if_needed() {
     if (read_pos_ == 0) return;
     if (read_pos_ < kCompactThresholdBytes) return;
