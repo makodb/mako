@@ -12,8 +12,15 @@ export module rrr.rand;
 import std;
 import rrr.debugging;
 
+// @safe - RandomGenerator: mostly pure helpers (int2str_n, formatting,
+// percentage math). The pthread-keyed seed plumbing (create_key,
+// delete_key, get_seed, rdtsc, destroy) and the rand_r entry points
+// (rand/rand_double/rand_str) carry per-method `// @unsafe` overrides
+// because they touch raw `unsigned int*` from pthread_getspecific,
+// inline asm, malloc, and pthread C-API calls.
 export namespace rrr {
 
+// @safe - see file header.
 class RandomGenerator {
 private:
 #if defined(__APPLE__) || defined(__clang__)
@@ -63,14 +70,18 @@ pthread_key_t RandomGenerator::seed_key_;
 pthread_once_t RandomGenerator::seed_key_once_ = PTHREAD_ONCE_INIT;
 pthread_once_t RandomGenerator::delete_key_once_ = PTHREAD_ONCE_INIT;
 
+// @unsafe - pthread_key_create with raw `free` function pointer.
 void RandomGenerator::create_key() {
     pthread_key_create(&seed_key_, free);
 }
 
+// @unsafe - pthread_key_delete on raw pthread key.
 void RandomGenerator::delete_key() {
     pthread_key_delete(seed_key_);
 }
 
+// @unsafe - returns raw `unsigned int*` from pthread_getspecific;
+// malloc + C-style casts + pointer deref to seed the slot.
 unsigned int *RandomGenerator::get_seed() {
     pthread_once(&seed_key_once_, create_key);
     unsigned int *seed = (unsigned int *)pthread_getspecific(seed_key_);
@@ -89,12 +100,16 @@ int RandomGenerator::nu_constant = 0;
 
 int RandomGenerator::rand(int min, int max) {
     verify(max >= min);
+    int r = 0;
+    // @unsafe { get_seed returns raw unsigned int*; rand_r dereferences it }
+    {
 #if defined(__APPLE__) || defined(__clang__)
-    unsigned int *seed = get_seed();
-    int r = rand_r(seed);
+        unsigned int *seed = get_seed();
+        r = rand_r(seed);
 #else
-    int r = rand_r(&seed_);
+        r = rand_r(&seed_);
 #endif
+    }
     return (r % (max - min + 1)) + min;
 }
 
@@ -102,22 +117,30 @@ double RandomGenerator::rand_double(double min, double max) {
     if (max == min)
         return min;
     verify(max > min);
+    int r = 0;
+    // @unsafe { get_seed returns raw unsigned int*; rand_r dereferences it }
+    {
 #if defined(__APPLE__) || defined(__clang__)
-    unsigned int *seed = get_seed();
-    int r = rand_r(seed);
+        unsigned int *seed = get_seed();
+        r = rand_r(seed);
 #else
-    int r = rand_r(&seed_);
+        r = rand_r(&seed_);
 #endif
-    return ((double)r) / ((double)RAND_MAX / (max - min)) + min;
+    }
+    return (static_cast<double>(r)) / (static_cast<double>(RAND_MAX) / (max - min)) + min;
 }
 
 std::string RandomGenerator::rand_str(int length) {
+    int r = 0;
+    // @unsafe { get_seed returns raw unsigned int*; rand_r dereferences it }
+    {
 #if defined(__APPLE__) || defined(__clang__)
-    unsigned int *seed = get_seed();
-    int r = rand_r(seed);
+        unsigned int *seed = get_seed();
+        r = rand_r(seed);
 #else
-    int r = rand_r(&seed_);
+        r = rand_r(&seed_);
 #endif
+    }
     if (length <= 0)
         return std::to_string(r);
     else
@@ -126,20 +149,20 @@ std::string RandomGenerator::rand_str(int length) {
 
 std::string RandomGenerator::int2str_n(int i, int length) {
     std::string ret = std::to_string(i);
-    if ((int)ret.length() < length) {
-        while ((int)ret.length() < length) {
+    if (static_cast<int>(ret.length()) < length) {
+        while (static_cast<int>(ret.length()) < length) {
             ret = std::string("0").append(ret);
         }
         return ret;
     }
-    else if ((int)ret.length() > length) {
+    else if (static_cast<int>(ret.length()) > length) {
         ret = ret.substr(ret.length() - length, length);
     }
     return ret;
 }
 
 bool RandomGenerator::percentage_true(double p) {
-    if (rand_double((double)0, (double)100) <= p)
+    if (rand_double(0.0, 100.0) <= p)
         return true;
     else
         return false;
@@ -158,6 +181,7 @@ int RandomGenerator::nu_rand(int a, int x, int y) {
     return ((r1 | r2) + nu_constant) % (y - x + 1) + x;
 }
 
+// @unsafe - inline `rdtsc` asm + clock_gettime syscall.
 unsigned long long RandomGenerator::rdtsc() {
 #if defined(__APPLE__)
     return static_cast<unsigned long long>(mach_absolute_time());
@@ -190,6 +214,7 @@ unsigned int RandomGenerator::weighted_select(const std::vector<double> &weight_
     return --i;
 }
 
+// @unsafe - pthread_once + raw pthread key teardown.
 void RandomGenerator::destroy() {
 #if defined(__APPLE__) || defined(__clang__)
     pthread_once(&delete_key_once_, delete_key);
