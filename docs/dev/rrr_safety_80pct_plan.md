@@ -611,7 +611,7 @@ up the next time that library work lands.
   per-method `// @safe` / `// @unsafe` annotations on operator<< /
   operator>> overloads, chunk methods, bookmark methods, set_bookmark,
   read, peek, read_from_marshal preserved. Cursor port deferred (hot
-  wire path; needs perf benchmarks first). Ratio 28.9% → **31.6%**
-  (+321 @safe LOC; unannotated dropped 353 LOC).
+  wire path; needs perf benchmarks first). Commit e6850039; ratio
+  28.9% → **31.6%** (+321 @safe LOC; unannotated dropped 353 LOC).
 - [ ] Fiber context quarantine
 - [ ] rcc_rpc.h codegen rewrite
