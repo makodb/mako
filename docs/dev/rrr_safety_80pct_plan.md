@@ -361,7 +361,7 @@ The loop must NOT:
 - [x] base/callback_wrapper.cpp — both `export namespace rrr` and the
   inner `namespace detail` `// @safe`. CallbackWrapper is a pure
   forwarder over `rusty::Arc<rusty::Function<Sig>>`. No per-method
-  overrides needed. Ratio 23.8% → **23.8%** (+4 LOC).
+  overrides needed. Commit b82e63f8; ratio holds at **23.8%** (+4 LOC).
 - [ ] base/misc.cpp
 - [ ] base/unittest.cpp
 - [ ] reactor/epoll_wrapper.cc
