@@ -6,6 +6,8 @@ module;
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
 #include <rusty/hashmap.hpp>
+#include <rusty/option.hpp>
+#include <rusty/result.hpp>
 
 export module rrr.any_message;
 
@@ -14,9 +16,17 @@ import rrr.debugging;
 import rrr.serializable;
 import rrr.threading;
 
+// @safe - AnyMessage: shared_ptr-backed typed wire payload; the
+// runtime AnyMessageRegistry maps registered names to factory
+// closures. Methods that drive a Marshal operator<</>> chain
+// (`save`, `load`, the four free operator helpers), do a
+// dynamic_cast to a raw `T*` (`unpack`), or escape a raw
+// `const std::string*` (`name_for_type` and its callers) carry
+// per-method `// @unsafe` below.
 export namespace rrr {
 
 
+// @safe - see file header.
 class AnyMessage {
  public:
   AnyMessage() = default;
@@ -68,6 +78,10 @@ class AnyMessage {
 // std::type_index → registered name. Stored behind a SpinMutex
 // (registrations run at static init time, lookups are concurrent
 // across reactor threads during RPC dispatch).
+// @safe - see file header. `name_for_type` returns a raw
+// `const std::string*` into the SpinMutex-owned HashMap; that
+// method and its caller `AnyMessage::is_a<T>` / `AnyMessage::pack<T>`
+// carry per-method `// @unsafe`.
 class AnyMessageRegistry {
  public:
   // rusty::Function is move-only; the registry stores each factory by
@@ -122,6 +136,8 @@ inline int reg_any_message_as(std::string name) {
 
 // ---- Inlines that rely on the registry ------------------------------
 
+// @unsafe - dereferences raw `const std::string*` returned by
+// AnyMessageRegistry::name_for_type.
 template <typename T>
 inline bool AnyMessage::is_a() const {
   const std::string* name = AnyMessageRegistry::name_for_type(
@@ -130,6 +146,7 @@ inline bool AnyMessage::is_a() const {
   return type_name_ == *name;
 }
 
+// @unsafe - dynamic_cast through `payload_.get()` returning raw `T*`.
 template <typename T>
 inline std::shared_ptr<T> AnyMessage::unpack() const {
   if (!is_a<T>()) return nullptr;
@@ -141,6 +158,7 @@ inline std::shared_ptr<T> AnyMessage::unpack() const {
   return nullptr;
 }
 
+// @unsafe - `new AnyMessage(...)` raw allocation passed into shared_ptr.
 template <typename T>
 inline std::shared_ptr<AnyMessage> AnyMessage::pack_as(
     std::string name, std::shared_ptr<T> val) {
@@ -151,6 +169,8 @@ inline std::shared_ptr<AnyMessage> AnyMessage::pack_as(
       new AnyMessage(std::move(name), std::move(payload)));
 }
 
+// @unsafe - dereferences raw `const std::string*` from name_for_type
+// and forwards to the @unsafe pack_as.
 template <typename T>
 inline std::shared_ptr<AnyMessage> AnyMessage::pack(std::shared_ptr<T> val) {
   const std::string* name = AnyMessageRegistry::name_for_type(
@@ -163,12 +183,16 @@ inline std::shared_ptr<AnyMessage> AnyMessage::pack(std::shared_ptr<T> val) {
 
 // ---- Free archive operators -----------------------------------------
 
+// @unsafe - forwards to `am.save(ar)` which drives a Marshal
+// operator<< chain.
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
                                       const AnyMessage& am) {
   am.save(ar);
   return ar;
 }
 
+// @unsafe - forwards to `am.load(ar)` which drives a Marshal
+// operator>> chain.
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
                                      AnyMessage& am) {
   am.load(ar);
@@ -181,8 +205,15 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
 // ============================================================================
 // Implementation (formerly any_message.cpp's body)
 // ============================================================================
+// @safe - impl namespace. The two AnyMessage save/load entries below
+// inherit class @safe but carry per-method `// @unsafe` for the
+// Marshal operator chain + shared_ptr deref. The registry helpers
+// inherit class @safe directly except `create` and `name_for_type`,
+// which return raw pointer / forward an Option-of-pointer deref.
 namespace rrr {
 
+// @unsafe - `ar << type_name_` Marshal operator<< chain + raw
+// shared_ptr deref to call payload_->save.
 void AnyMessage::save(BinaryWriteArchive& ar) const {
   ar << type_name_;
   if (payload_) {
@@ -190,6 +221,8 @@ void AnyMessage::save(BinaryWriteArchive& ar) const {
   }
 }
 
+// @unsafe - `ar >> type_name_` Marshal operator>> chain + raw
+// shared_ptr deref to call payload_->load.
 void AnyMessage::load(BinaryReadArchive& ar) {
   ar >> type_name_;
   payload_ = AnyMessageRegistry::create(type_name_);
@@ -213,6 +246,9 @@ SpinMutex<AnyMessageRegistryMap>& registry() {
 
 }  // namespace
 
+// @unsafe - SpinMutex::lock().unwrap() + HashMap::get / contains_key /
+// insert pattern not yet recognized as @safe here (annotation
+// discovery limitation across the AnyMessageRegistryMap struct).
 int AnyMessageRegistry::register_type(std::string name,
                                       std::type_index ti,
                                       Factory factory) {
@@ -227,6 +263,8 @@ int AnyMessageRegistry::register_type(std::string name,
   return 0;
 }
 
+// @unsafe - SpinMutex::lock().unwrap() + HashMap::get + invocation
+// through `*entry.unwrap()` (Option-of-pointer deref).
 SerializableProxy AnyMessageRegistry::create(const std::string& name) {
   auto guard = registry().lock().unwrap();
   auto entry = guard->by_name.get(name);
@@ -234,6 +272,9 @@ SerializableProxy AnyMessageRegistry::create(const std::string& name) {
   return (*entry.unwrap())();
 }
 
+// @unsafe - returns a raw `const std::string*` into the SpinMutex-
+// owned HashMap. Callers must not outlive the guard's borrow window;
+// in practice each caller dereferences immediately and discards.
 const std::string* AnyMessageRegistry::name_for_type(std::type_index ti) {
   auto guard = registry().lock().unwrap();
   size_t hash = ti.hash_code();
@@ -242,16 +283,19 @@ const std::string* AnyMessageRegistry::name_for_type(std::type_index ti) {
   return entry.unwrap();
 }
 
+// @unsafe - SpinMutex::lock().unwrap() + HashMap::get + Option::is_some.
 bool AnyMessageRegistry::is_registered_name(const std::string& name) {
   auto guard = registry().lock().unwrap();
   return guard->by_name.get(name).is_some();
 }
 
+// @unsafe - same pattern as is_registered_name.
 bool AnyMessageRegistry::is_registered_type(std::type_index ti) {
   auto guard = registry().lock().unwrap();
   return guard->name_by_type_hash.get(ti.hash_code()).is_some();
 }
 
+// @unsafe - SpinMutex::lock().unwrap() + HashMap::clear().
 void AnyMessageRegistry::clear_for_testing() {
   auto guard = registry().lock().unwrap();
   guard->by_name.clear();
