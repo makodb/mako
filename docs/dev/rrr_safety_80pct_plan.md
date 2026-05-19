@@ -455,7 +455,7 @@ up the next time that library work lands.
   get_memory is left for a SP-5 follow-up — the file's parse paths
   are gnarlier than the netinfo.cpp pattern (strtok mutates the
   string in place; the stat file uses a deep operator>> chain).
-  Ratio 27.5% → **28.1%** (+69 @safe LOC).
+  Commit df8483b7; ratio 27.5% → **28.1%** (+69 @safe LOC).
 - [ ] SP-5: Marshal byte-ops decision — design + add a
   `rusty::io::Cursor<Vec<u8>>` (or equivalent) in rusty-cpp; the
   goal is to give frame_codec / serializable_envelope a non-raw byte
