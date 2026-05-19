@@ -331,7 +331,11 @@ The loop must NOT:
 - [x] misc/dball.cpp — class `DragonBall` `// @safe`. Inline
   `// @unsafe { }` block around the `delete this` self-destruct in
   `trigger()`. Commit 5f2b0796; ratio 20.4% → **20.5%** (+16 LOC).
-- [ ] misc/alarm.cpp
+- [x] misc/alarm.cpp — class `Alarm` `// @safe`. Methods use
+  `rusty::BTreeMap` + `rusty::Function` + `rrr::Time::now()`. The raw
+  `rrr::PollThread *holder` field is never dereferenced and
+  `set_holder` is a no-op stub. No per-method overrides needed. Ratio
+  20.5% → **20.8%** (+32 LOC).
 - [ ] base/basetypes.cpp
 - [ ] base/debugging.cpp
 - [ ] base/strop.cpp
