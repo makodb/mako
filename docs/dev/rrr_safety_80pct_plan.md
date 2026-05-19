@@ -558,7 +558,18 @@ up the next time that library work lands.
   were the only unsafe ops and they're now gone).
 
 ### Phase 3 — remaining unsafe paths
-- [ ] alock.cpp WaitDieALock::ALock* → rusty::Weak<ALock>
+- [blocked] alock.cpp WaitDieALock::ALock* → rusty::Weak<ALock>
+  — plan named the wrong class. The raw `ALock*` BTreeMap keys
+  actually live on `ALockGroup` (alock.cpp:642), not WaitDieALock:
+  `rusty::BTreeMap<ALock*, uint64_t> locked_` and
+  `rusty::BTreeMap<ALock*, ALock::type_t> tolock_`. Converting these
+  to `rusty::BTreeMap<rusty::Weak<ALock>, ...>` requires (a) ALock
+  to be Rc/Arc-managed from creation, (b) every `tolock_.insert(alock,
+  type)` callsite to downgrade, (c) every iter `[alock, ...]` body
+  to upgrade + handle the None case. There are also downstream
+  consumers in `src/deptran/2pl/tx.h` and `src/deptran/2pl/scheduler.cc`
+  — refactoring this touches the deptran codebase too. Multi-iteration
+  effort spanning two subsystems. Defer.
 - [ ] serializable.cpp std::shared_ptr<Marshallable> → rusty::Arc
 - [ ] Reactor::loop tight @unsafe block scoping
 - [ ] Pthread_* → rusty::sync::* wrappers
