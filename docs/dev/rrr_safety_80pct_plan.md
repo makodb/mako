@@ -297,7 +297,11 @@ The loop must NOT:
   namespace flips too).
 - [x] rpc/errors.cpp — namespace `// @safe`. Commit 6707c2e8;
   ratio 18.3% → 19.3% (+114 LOC).
-- [ ] rpc/utils.cpp
+- [blocked] rpc/utils.cpp — every substantial function does syscalls
+  (getaddrinfo, fcntl F_GETFL/F_SETFL, socket/bind/getsockname,
+  gethostname) and AddrInfo holds a raw `struct addrinfo*`. Namespace
+  flip would fire violations across the whole file with no net @safe
+  gain. Leave unannotated; it's a thin syscall wrapper by design.
 - [ ] rpc/pollable_proxy.cpp
 - [ ] rpc/reconnect_policy.cpp
 - [ ] misc/serializable_envelope.cpp
