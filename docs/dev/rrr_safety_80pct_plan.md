@@ -417,8 +417,8 @@ up the next time that library work lands.
   `uint8_t*` byte slicing through `bytes.assign(f.payload, f.payload +
   f.size)`. `InMemorySwitchboard::find_listener` keeps the body @safe
   with an inline `// @unsafe { val_opt.unwrap()->upgrade() }` block
-  around the Option-deref. Ratio 25.5% → **26.8%** (+165 @safe LOC;
-  unannotated dropped 311 LOC).
+  around the Option-deref. Commit 98322cca; ratio 25.5% → **26.8%**
+  (+165 @safe LOC; unannotated dropped 311 LOC).
 - [ ] rpc/utils.cpp retry — namespace `@safe` + per-method
   `// @unsafe` on every syscall-touching function (`getaddrinfo`,
   `fcntl`, `socket`/`bind`/`getsockname`, `gethostname`) and on
