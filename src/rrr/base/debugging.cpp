@@ -13,6 +13,11 @@ export module rrr.debugging;
 import std;
 import rrr.misc; // for get_exec_path
 
+// @safe - debugging primitives. `verify()` is a pure precondition
+// check; `likely`/`unlikely` are `__builtin_expect` wrappers. The
+// `print_stack_trace` impls (both __APPLE__ and Linux branches) use
+// backtrace + popen/pclose + raw char arrays + reinterpret_cast and
+// carry per-method `// @unsafe` below.
 export namespace rrr {
 
 // Restored after modularization: deptran code (RW_command.cc,
@@ -60,10 +65,16 @@ inline void verify(const Expr& expr,
 
 } // export namespace rrr
 
+// @safe - impl namespace: only `print_stack_trace` lives here and it
+// carries its own per-method `// @unsafe` overrides; the anonymous
+// helper `read_line_from_pipe` is also `// @unsafe`.
 namespace rrr {
 
 #ifdef __APPLE__
 
+// @unsafe - backtrace/backtrace_symbols, popen/pclose, fprintf,
+// reinterpret_cast<std::istream*>, raw `char**` from backtrace_symbols,
+// `free(str_frames)`. Heavy libc + raw-pointer plumbing.
 void print_stack_trace(FILE* fp) {
     const int max_trace = 1024;
     void* callstack[max_trace];
@@ -107,6 +118,7 @@ void print_stack_trace(FILE* fp) {
 #else // no __APPLE__
 
 namespace {
+// @unsafe - fgets into a raw `char[4096]` buffer from libc FILE*.
 inline std::string read_line_from_pipe(FILE* fp) {
     char buf[4096];
     if (fgets(buf, sizeof(buf), fp) == nullptr) {
@@ -120,6 +132,9 @@ inline std::string read_line_from_pipe(FILE* fp) {
 }
 }
 
+// @unsafe - backtrace/backtrace_symbols, popen/pclose, fprintf,
+// snprintf into raw `char[32]`, raw `char**` from backtrace_symbols,
+// `free(str_frames)`. Heavy libc + raw-pointer plumbing.
 void print_stack_trace(FILE* fp) {
     const int max_trace = 1024;
     void* callstack[max_trace];

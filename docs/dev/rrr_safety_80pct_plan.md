@@ -346,7 +346,13 @@ The loop must NOT:
   iterator pairs). Inline `// @unsafe { delete this }` around the
   RefCounted release self-destruct. Commit 0cf788a2; ratio 20.8% →
   **22.7%** (+237 LOC).
-- [ ] base/debugging.cpp
+- [x] base/debugging.cpp — both `export namespace rrr` and the impl
+  `namespace rrr` `// @safe`. Per-method `// @unsafe` on both
+  `print_stack_trace` variants (backtrace, popen/pclose, raw `char**`,
+  reinterpret_cast<std::istream*>, free) and the anonymous
+  `read_line_from_pipe` helper (fgets into a raw `char[4096]`). The
+  pre-existing `verify` template's `// @safe` annotation is preserved.
+  Ratio 22.7% → **23.4%** (+77 LOC).
 - [ ] base/strop.cpp
 - [ ] base/callback_wrapper.cpp
 - [ ] base/misc.cpp
