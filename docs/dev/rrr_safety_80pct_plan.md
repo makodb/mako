@@ -357,7 +357,7 @@ The loop must NOT:
   `// @unsafe` on `startswith` and `endswith` (raw `const char*`,
   strlen/strncmp, pointer arithmetic). `format_decimal` and `strsplit`
   inherit namespace @safe (std::string + ostringstream + rusty::Vec).
-  Ratio 23.4% → **23.8%** (+54 LOC).
+  Commit 1dc137d7; ratio 23.4% → **23.8%** (+54 LOC).
 - [ ] base/callback_wrapper.cpp
 - [ ] base/misc.cpp
 - [ ] base/unittest.cpp
