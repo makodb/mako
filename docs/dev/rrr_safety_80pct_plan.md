@@ -429,10 +429,14 @@ up the next time that library work lands.
   `// @unsafe`. Default ctor + `operator bool` (nullptr check)
   inherit namespace @safe. Commit a543ab51; ratio 26.8% → **27.2%**
   (+44 @safe LOC).
-- [ ] SP-1: `rusty::sys::fs` wrapper — add
-  `rusty::sys::fs::read_to_string` (and minimal companions) to the
-  rusty-cpp submodule with `@safe` annotations, then bump the
-  submodule. Standalone iteration; netinfo + cpuinfo adopt it next.
+- [x] SP-1: `rusty::sys::fs` wrapper — added new
+  `third-party/rusty-cpp/include/rusty/sys/fs.hpp` exporting
+  `rusty::sys::fs::read_to_string(path) -> Result<std::string,
+  io::Error>`. Annotated `// @safe`; body wraps `std::ifstream` in a
+  single inline `// @unsafe { }` block so no FILE* / ifstream handle
+  escapes. Exposed via `rusty.cppm` and `rusty.hpp`. Submodule
+  commit 6ed675e; ratio unchanged (no rrr files modified — adoption
+  comes next).
 - [ ] netinfo.cpp retry — adopt `rusty::sys::fs::read_to_string` for
   the `/sys/class/net/.../{rx,tx}_bytes` reads; per-method
   `// @unsafe` on the `times()`-using ctor; namespace `@safe`.
