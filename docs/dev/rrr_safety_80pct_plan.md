@@ -316,7 +316,9 @@ The loop must NOT:
   std::ifstream against /sys/class/net/ens4/statistics/{rx,tx}_bytes
   plus a `times()` syscall in the ctor. No @safe surface area. Phase
   3 candidate once a `rusty::sys::fs` reader exists.
-- [ ] misc/stat.cpp
+- [x] misc/stat.cpp — namespace `// @safe`. AvgStat is a POD with int64
+  counters + arithmetic. Commit (pending); ratio 19.8% → **20.0%**
+  (+22 LOC). **20% milestone reached!**
 - [ ] misc/cpuinfo.cpp
 - [ ] misc/rand.cpp
 - [ ] misc/dball.cpp
