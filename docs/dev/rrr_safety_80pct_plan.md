@@ -426,7 +426,17 @@ The loop must NOT:
   `&mut PollThreadWorker` through a different primitive, or split
   worker state by-field so per-method borrows don't collide). Not a
   one-iteration change. Defer.
-- [ ] rusty::sys::* syscall wrappers
+- [blocked] rusty::sys::* syscall wrappers
+  — this is a library-design task, not an rrr-only mechanical change.
+  Unblocking netinfo.cpp / cpuinfo.cpp / rpc/utils.cpp (all currently
+  [blocked] for syscall reasons) requires `rusty::sys::fs` and
+  similar wrappers to exist in the rusty-cpp third-party submodule
+  first. That means: (a) design the API surface, (b) add the
+  wrappers to `third-party/rusty-cpp/include/rusty/sys/`, (c)
+  upstream/coordinate the submodule bump (CLAUDE.md guidance keeps
+  the submodule on `main` with the latest commit), (d) import the
+  new module from each consuming rrr file and replace the syscall
+  call sites. Multi-iteration effort spanning two repos. Defer.
 - [ ] ServiceProxy::__get_service__() → rusty::Arc<Service>
 
 ### Phase 3 — remaining unsafe paths
