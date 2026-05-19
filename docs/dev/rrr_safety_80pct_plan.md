@@ -369,8 +369,8 @@ The loop must NOT:
   gettimeofday into raw `char*`), `get_ncpu` (sysconf), `get_exec_path`
   (snprintf+readlink+static `char[PATH_MAX]`), `getline`
   (getdelim+free). `clamp`/`insert_into_map`/`erase` templates and
-  Job/OneTimeJob inherit namespace @safe. Ratio 23.8% → **24.2%**
-  (+42 LOC).
+  Job/OneTimeJob inherit namespace @safe. Commit 14f4d549; ratio
+  23.8% → **24.2%** (+42 LOC).
 - [ ] base/unittest.cpp
 - [ ] reactor/epoll_wrapper.cc
 
