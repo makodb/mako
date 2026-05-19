@@ -284,7 +284,8 @@ The loop must NOT:
 - [x] rpc/internal_protocol.cpp — namespace `// @safe`. Pure constexpr
   bit-twiddling. Commit fc9be1ad; ratio unchanged (file body is tiny;
   inline constexpr functions don't move LOC counters).
-- [ ] rpc/request_options.cpp
+- [x] rpc/request_options.cpp — namespace `// @safe`. Commit (pending);
+  ratio 16.0% → 16.1% (+6 LOC).
 - [ ] rpc/connection_metrics.cpp
 - [ ] rpc/callbacks.cpp
 - [ ] rpc/errors.cpp
