@@ -260,7 +260,9 @@ The loop must NOT:
   Commit b209eb89.
 - [x] LoadBalancer + LoadBalancerState (rpc/load_balancer.cpp) — class-
   level `// @safe`. Commit d4ea8534; ratio 14.9% → 15.4% (+67 LOC).
-- [ ] RequestQueue class @safe completion (rpc/request_queue.cpp)
+- [x] RequestQueue class @safe completion (rpc/request_queue.cpp) —
+  class-level `// @safe` added. Methods were already @safe from Tier 2.
+  Commit (pending); ratio 15.4% → 16.0% (+76 LOC).
 
 ### Phase 1 — namespace-level @safe
 - [ ] rpc/inmemory_channel.cpp

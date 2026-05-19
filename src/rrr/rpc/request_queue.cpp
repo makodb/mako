@@ -139,6 +139,10 @@ struct RequestQueueConfig {
  *       // Process request
  *   }
  */
+// @safe - SpinMutex<VecDeque<QueuedRequest>>-backed pending-request queue.
+// All public methods are already explicitly @safe from Tier 2; class-level
+// annotation lets the constructor and any future unannotated helpers
+// inherit @safe by default.
 class RequestQueue {
 private:
     RequestQueueConfig config_;
