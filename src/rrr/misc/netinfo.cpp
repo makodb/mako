@@ -5,58 +5,63 @@ module;
 #include <cstdlib>
 #include <sys/times.h>
 
+#include <rusty/sys/fs.hpp>
+
 export module rrr.netinfo;
 
 import std;
 
+// @safe - NetInfo: gauges rx/tx bytes/second on ens4. The file reads
+// go through `rusty::sys::fs::read_to_string` (no FILE*/ifstream
+// escapes). Residual `times()` syscall and `strtoul` parses are
+// wrapped in inline `// @unsafe { }` blocks.
 export namespace rrr {
 
+// @safe - see file header.
 class NetInfo {
 private:
     clock_t last_ticks_;
     unsigned long last_bytes_rxed, last_bytes_txed;
+
+    static unsigned long parse_bytes(std::string_view path) {
+        auto r = rusty::sys::fs::read_to_string(path);
+        if (r.is_err()) return 0;
+        std::string s = r.unwrap();
+        unsigned long v = 0;
+        // @unsafe { strtoul takes raw `const char*` + a `char**` endptr;
+        //           matches the original silent-zero-on-junk semantics. }
+        {
+            v = strtoul(s.c_str(), NULL, 0);
+        }
+        return v;
+    }
+
     NetInfo() {
-        struct tms tms_buf;
-
-        last_ticks_ = times(&tms_buf);
-
-        std::string line1;
-        std::ifstream rxfile("/sys/class/net/ens4/statistics/rx_bytes");
-        getline(rxfile, line1);
-        unsigned long rxed = strtoul(line1.c_str(), NULL, 0);
-        rxfile.close();
-
-        std::string line2;
-        std::ifstream txfile("/sys/class/net/ens4/statistics/tx_bytes");
-        getline(txfile, line2);
-        unsigned long txed = strtoul(line2.c_str(), NULL, 0);
-        txfile.close();
-
-        last_bytes_rxed = rxed;
-        last_bytes_txed = txed;
+        clock_t t = 0;
+        // @unsafe { `times(&tms_buf)` syscall takes a raw `struct tms*`. }
+        {
+            struct tms tms_buf;
+            t = times(&tms_buf);
+        }
+        last_ticks_ = t;
+        last_bytes_rxed = parse_bytes("/sys/class/net/ens4/statistics/rx_bytes");
+        last_bytes_txed = parse_bytes("/sys/class/net/ens4/statistics/tx_bytes");
     }
 
     double get_net_stat() {
-        struct tms tms_buf;
-        clock_t ticks;
-        double ret = 0.0;
-
-        ticks = times(&tms_buf);
+        clock_t ticks = 0;
+        // @unsafe { `times(&tms_buf)` syscall takes a raw `struct tms*`. }
+        {
+            struct tms tms_buf;
+            ticks = times(&tms_buf);
+        }
         if (ticks <= last_ticks_ + 1000000)
             return -1.0;
 
-        std::string line1;
-        std::ifstream rxfile("/sys/class/net/ens4/statistics/rx_bytes");
-        getline(rxfile, line1);
-        unsigned long rxed = strtoul(line1.c_str(), NULL, 0);
-        rxfile.close();
+        unsigned long rxed = parse_bytes("/sys/class/net/ens4/statistics/rx_bytes");
+        unsigned long txed = parse_bytes("/sys/class/net/ens4/statistics/tx_bytes");
 
-        std::string line2;
-        std::ifstream txfile("/sys/class/net/ens4/statistics/tx_bytes");
-        getline(txfile, line2);
-        unsigned long txed = strtoul(line2.c_str(), NULL, 0);
-        txfile.close();
-
+        double ret = 0.0;
         ret += (txed - last_bytes_txed) + (rxed - last_bytes_rxed);
         ret /= (ticks - last_ticks_);
 

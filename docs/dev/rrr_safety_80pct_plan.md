@@ -437,9 +437,14 @@ up the next time that library work lands.
   escapes. Exposed via `rusty.cppm` and `rusty.hpp`. Submodule
   commit 6ed675e; parent commit 7e7d9957. Ratio unchanged at 27.2%
   (no rrr files modified — adoption comes next).
-- [ ] netinfo.cpp retry — adopt `rusty::sys::fs::read_to_string` for
-  the `/sys/class/net/.../{rx,tx}_bytes` reads; per-method
-  `// @unsafe` on the `times()`-using ctor; namespace `@safe`.
+- [x] netinfo.cpp retry — `export namespace rrr` and `class NetInfo`
+  `// @safe`. Extracted a `parse_bytes(path)` helper that calls
+  `rusty::sys::fs::read_to_string` and parses with `strtoul` in a
+  small inline `// @unsafe { }` block (preserves silent-zero-on-junk
+  semantics). The ctor and `get_net_stat` keep `times(&tms_buf)`
+  inside an inline `// @unsafe { }` block but otherwise stay @safe.
+  `net_stat()` factory inherits @safe. Ratio 27.2% → **27.5%**
+  (+38 @safe LOC).
 - [ ] cpuinfo.cpp retry — same shape: `rusty::sys::fs::read_to_string`
   for `/proc/{pid}/{stat,net/dev}`; per-method `// @unsafe` on
   ctor's `times()` + `getpid()`; namespace `@safe`.
