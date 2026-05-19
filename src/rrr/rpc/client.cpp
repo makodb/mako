@@ -48,6 +48,12 @@ import rrr.threading;
 // ===========================================================================
 // Block 1: forward decls (from former client.hpp:50-78)
 // ===========================================================================
+// @safe - first-half namespace block: Future / FutureGroup / TypedFuture
+// awaiters + the BufferingConfig / KeepaliveConfig / PoolConfig POD
+// structs. ClientConnection (declared in the second block below)
+// retains its class-level `// @unsafe`. Methods that genuinely cross
+// into network I/O / socket fd / Marshal byte ops keep their
+// existing per-method `// @unsafe` annotations.
 export namespace rrr {
 
 // Stream operator for RefMut<Marshal> — supports the
@@ -81,6 +87,10 @@ rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 // ===========================================================================
 // Block 2: Future, FutureGroup, ClientConnection (from former client.hpp:130-1963)
 // ===========================================================================
+// @safe - second-half namespace block. Same rules as block 1; the
+// ClientConnection class declared inside retains its class-level
+// `// @unsafe` and every method that crosses into network I/O or
+// Marshal ops carries an existing per-method override.
 export namespace rrr {
 
 // 4g4: the migration switch (`srpc_use_channel()`,
@@ -1923,6 +1933,10 @@ struct hash<rusty::Arc<rrr::ClientConnection>> {
 // ===========================================================================
 // Block 3: Client facade + bulk-reconnect (from former client.hpp:1976-end)
 // ===========================================================================
+// @safe - third-half namespace block: Client + ClientPool facades.
+// Same rules as blocks 1 and 2 — existing class-level and per-method
+// annotations stand; network-touching methods retain their
+// `// @unsafe`.
 export namespace rrr {
 
 // @safe - The interior-mutable `mutable RefCell<...>` field is sound
@@ -2690,6 +2704,9 @@ public:
 // the impl block compiles without rewriting hundreds of call sites.
 using namespace std;
 
+// @safe - impl namespace. Out-of-class definitions inherit their
+// existing per-method `// @safe` / `// @unsafe` annotations from the
+// matching declarations in the export blocks above.
 namespace rrr {
 // Helper function to get current time in milliseconds
 // @safe - std::chrono use is encapsulated in the inner @unsafe block.
