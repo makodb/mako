@@ -304,8 +304,7 @@ The loop must NOT:
   gain. Leave unannotated; it's a thin syscall wrapper by design.
 - [x] rpc/pollable_proxy.cpp — namespace `// @safe` + per-method
   `// @unsafe` on `mut_poll()` (const_cast through Arc::get).
-  Commit (pending); ratio unchanged at 19.3% (file is mostly virtual
-  interface decls + one-line delegators).
+  Commit 9bb655bd; ratio unchanged at 19.3% (tiny file).
 - [ ] rpc/reconnect_policy.cpp
 - [ ] misc/serializable_envelope.cpp
 - [ ] misc/netinfo.cpp
