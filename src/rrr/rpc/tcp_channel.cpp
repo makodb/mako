@@ -49,6 +49,14 @@ import rrr.threading;
 // ===========================================================================
 // Class declarations (from former tcp_channel.hpp)
 // ===========================================================================
+// @safe - TCP channel backend. State on TcpConnection / TcpListener /
+// TcpFactory is rusty::Cell / SpinMutex / Arc / Option. Methods that
+// drive socket / fd syscalls (socket / bind / listen / accept / send /
+// recv / close / fcntl / getsockname) or that thread through
+// const_cast `mut_conn` / `mut_listener` / `mut_factory` helpers
+// carry per-method `// @unsafe`. The Phase 1 TcpListener half was
+// already labeled; this iteration extends the same labeling to
+// TcpConnection, its two adapters, TcpFactory, and the adapter set.
 export namespace rrr {
 
 class TcpConnection;
@@ -71,6 +79,10 @@ inline constexpr std::size_t kTcpConnectionOutboundHighWaterDefault =
  * the class itself is non-copyable / non-movable so that pointers held
  * by adapters remain stable.
  */
+// @safe - see file header. Socket-fd syscall methods (send_frame,
+// flush, close, handle_read, handle_write, handle_error,
+// drain_outbound_locked, dtor, deliver_on_closed_locked) carry their
+// own per-method `// @unsafe`.
 class TcpConnection {
  public:
     /**
@@ -219,14 +231,22 @@ class TcpConnectionChannelAdapter : public ChannelConnectionBase {
     explicit TcpConnectionChannelAdapter(rusty::Arc<TcpConnection> conn)
         : conn_(std::move(conn)) {}
 
+    // @unsafe - forwards through mut_conn() const_cast.
     ChannelError send_frame(const ChannelFrame& f) override { return mut_conn().send_frame(f); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         flush() override                            { mut_conn().flush(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         close() override                            { mut_conn().close(); }
+    // @unsafe - forwards into TcpConnection::is_closed (touches closed_ Cell).
     bool         is_closed() const override                  { return conn_->is_closed(); }
+    // @unsafe - forwards into TcpConnection::peer_address (touches peer_address_ string).
     std::string  peer_address() const override               { return conn_->peer_address(); }
 
+    // @unsafe - forwards through mut_conn() const_cast.
     void set_on_frame (OnFrameCallback  cb) override { mut_conn().set_on_frame (std::move(cb)); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void set_on_closed(OnClosedCallback cb) override { mut_conn().set_on_closed(std::move(cb)); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void set_on_error (OnErrorCallback  cb) override { mut_conn().set_on_error (std::move(cb)); }
 
  private:
@@ -235,6 +255,7 @@ class TcpConnectionChannelAdapter : public ChannelConnectionBase {
     // (e.g. `send_frame`, `close`, `set_on_*`) on the underlying
     // connection, so we cast through here. Mirrors the
     // `PollableTypedArcAdapter::mut_poll` idiom in `pollable_proxy.h`.
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpConnection& mut_conn() { return const_cast<TcpConnection&>(*conn_.get()); }
     rusty::Arc<TcpConnection> conn_;
 };
@@ -244,17 +265,27 @@ class TcpConnectionPollableAdapter : public PollableBase {
     explicit TcpConnectionPollableAdapter(rusty::Arc<TcpConnection> conn)
         : conn_(std::move(conn)) {}
 
+    // @unsafe - forwards into TcpConnection::fd (returns the raw fd int).
     int  fd() const override                          { return conn_->fd(); }
+    // @unsafe - forwards into TcpConnection::poll_mode.
     int  poll_mode() const override                   { return conn_->poll_mode(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     std::size_t content_size() override               { return mut_conn().content_size(); }
+    // @unsafe - forwards through mut_conn() const_cast (recv syscall path).
     bool handle_read() override                       { return mut_conn().handle_read(); }
+    // @unsafe - forwards through mut_conn() const_cast (send syscall path).
     int  handle_write() override                      { return mut_conn().handle_write(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void handle_error() override                      { mut_conn().handle_error(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void close() override                             { mut_conn().close(); }
+    // @unsafe - forwards into TcpConnection::is_closed.
     bool is_closed() const override                   { return conn_->is_closed(); }
+    // @unsafe - forwards into TcpConnection::check_pending_write_update.
     bool check_pending_write_update() const override  { return conn_->check_pending_write_update(); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpConnection& mut_conn() { return const_cast<TcpConnection&>(*conn_.get()); }
     rusty::Arc<TcpConnection> conn_;
 };
@@ -394,15 +425,20 @@ class TcpListenerChannelAdapter : public ChannelListenerBase {
     explicit TcpListenerChannelAdapter(rusty::Arc<TcpListener> listener)
         : listener_(std::move(listener)) {}
 
+    // @unsafe - forwards through mut_listener() const_cast.
     ChannelError listen(std::string_view a) override { return mut_listener().listen(a); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void         close() override                    { mut_listener().close(); }
     bool         is_closed() const override          { return listener_->is_closed(); }
     std::string  local_address() const override      { return listener_->local_address(); }
 
+    // @unsafe - forwards through mut_listener() const_cast.
     void set_on_accept(OnAcceptCallback cb) override { mut_listener().set_on_accept(std::move(cb)); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void set_on_error (OnErrorCallback  cb) override { mut_listener().set_on_error (std::move(cb)); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
     rusty::Arc<TcpListener> listener_;
 };
@@ -412,17 +448,24 @@ class TcpListenerPollableAdapter : public PollableBase {
     explicit TcpListenerPollableAdapter(rusty::Arc<TcpListener> listener)
         : listener_(std::move(listener)) {}
 
+    // @unsafe - forwards into TcpListener::fd (raw listen_fd_).
     int  fd() const override                          { return listener_->fd(); }
     int  poll_mode() const override                   { return listener_->poll_mode(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     std::size_t content_size() override               { return mut_listener().content_size(); }
+    // @unsafe - forwards through mut_listener() const_cast (accept syscall path).
     bool handle_read() override                       { return mut_listener().handle_read(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     int  handle_write() override                      { return mut_listener().handle_write(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void handle_error() override                      { mut_listener().handle_error(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void close() override                             { mut_listener().close(); }
     bool is_closed() const override                   { return listener_->is_closed(); }
     bool check_pending_write_update() const override  { return listener_->check_pending_write_update(); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
     rusty::Arc<TcpListener> listener_;
 };
@@ -496,11 +539,14 @@ class TcpFactoryAdapter : public ChannelFactoryBase {
     explicit TcpFactoryAdapter(rusty::Arc<TcpFactory> factory)
         : factory_(std::move(factory)) {}
 
+    // @unsafe - forwards through mut_factory() const_cast (socket+connect path).
     ConnectResult        connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    // @unsafe - forwards through mut_factory() const_cast.
     ChannelListenerProxy make_listener() override                { return mut_factory().make_listener(); }
     const char*          backend_name() const override           { return factory_->backend_name(); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpFactory& mut_factory() { return const_cast<TcpFactory&>(*factory_.get()); }
     rusty::Arc<TcpFactory> factory_;
 };
@@ -514,6 +560,14 @@ inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory
 // ===========================================================================
 // Implementation (from former tcp_channel.cpp)
 // ===========================================================================
+// @safe - impl namespace. Out-of-class definitions inherit their
+// per-method `// @safe` / `// @unsafe` from the matching declarations
+// in the export namespace; the syscall-heavy bodies (TcpConnection::
+// dtor / send_frame / drain_outbound_locked / handle_read /
+// handle_write / handle_error / close, TcpListener::listen / close /
+// handle_read / handle_error / dtor, TcpFactory::connect /
+// make_listener) all carry per-method `// @unsafe` at their
+// definition sites.
 namespace rrr {
 
 namespace {
@@ -636,6 +690,8 @@ void TcpConnection::set_poll_thread(rusty::Arc<PollThread> pt) {
     poll_thread_ = rusty::Some(std::move(pt));
 }
 
+// @unsafe - drives drain_outbound_locked (which is @unsafe for raw
+// `uint8_t*` arithmetic + send syscall).
 void TcpConnection::flush() {
     if (closed_.get()) return;
 
@@ -727,6 +783,9 @@ std::size_t TcpConnection::content_size() {
     return guard->size() + inbound_.buffered_bytes();
 }
 
+// @unsafe - recv(2) syscall into a raw `char` scratch buffer +
+// FrameStreamReader::append / next_frame / consume_frame are all
+// @unsafe + raw `uint8_t*` payload pointers stored on the FrameView.
 bool TcpConnection::handle_read() {
     if (closed_.get()) return false;
 
@@ -826,6 +885,8 @@ bool TcpConnection::handle_read() {
     return any_progress;
 }
 
+// @unsafe - drives drain_outbound_locked (which is @unsafe for raw
+// `uint8_t*` arithmetic + send syscall).
 int TcpConnection::handle_write() {
     if (closed_.get()) return PollMode::NO_CHANGE;
 
@@ -884,6 +945,8 @@ bool TcpConnection::check_pending_write_update() const {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// @unsafe - raw `uint8_t*` pointer arithmetic + send(2) syscall +
+// pointer dereference on the outbound buffer.
 ChannelError TcpConnection::drain_outbound_locked(
     std::vector<std::uint8_t>& buf) {
 
@@ -995,6 +1058,8 @@ std::string sockaddr_to_string(const sockaddr_in& sa) {
 // Parse a "host:port" address into an IPv4 `sockaddr_in`. Accepts
 // dotted-quad host literals (no DNS) and decimal port. Returns true
 // on success.
+// @unsafe - takes address-of (`&out`) on caller's sockaddr_in to pass
+// into inet_pton.
 bool parse_inet4_addr(std::string_view addr, sockaddr_in& out) {
     auto colon = addr.find_last_of(':');
     if (colon == std::string_view::npos) return false;
@@ -1310,6 +1375,9 @@ ChannelError TcpListener::listen_errno_to_channel_error(int err) {
 TcpFactory::TcpFactory(rusty::Arc<PollThread> poll_thread)
     : poll_thread_(std::move(poll_thread)) {}
 
+// @unsafe - socket(2) / connect(2) / setsockopt(2) / fcntl(2) syscalls
+// + reinterpret_cast<sockaddr*> on the sockaddr_in + PollThread::
+// add_proxy is @unsafe + raw fd handling.
 ConnectResult TcpFactory::connect(std::string_view addr) {
     sockaddr_in sa;
     if (!parse_inet4_addr(addr, sa)) {
