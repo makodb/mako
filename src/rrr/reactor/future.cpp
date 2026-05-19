@@ -17,6 +17,12 @@ export module rrr.future;
 import std;
 import rrr.reactor;
 
+// @safe - FiberPromise<T> / FiberFuture<T>: one-shot async value
+// delivery between fibers. State is a `std::shared_ptr<BoxEvent<T>>`.
+// The methods that drive `state_->set`/`state_->wait`/`state_->get`
+// (and the `const_cast<BoxEvent<T>*>` shim in the const FiberFuture::
+// get) carry per-method `// @unsafe` because the rusty event types
+// aren't fully @safe-annotated yet.
 export namespace rrr {
 
 // Forward declaration
@@ -42,9 +48,12 @@ class FiberFuture;
  *   // Later...
  *   promise.set_value("hello");  // Unblocks future.get()
  */
+// @safe - see file header.
 template <typename T>
 class FiberPromise {
  public:
+  // @unsafe - Reactor::create_sp_event constructs through shared_ptr
+  // and depends on Reactor internals not fully @safe-annotated.
   FiberPromise() : state_(Reactor::create_sp_event<BoxEvent<T>>()) {}
 
   // Non-copyable (each promise is unique)
@@ -74,6 +83,8 @@ class FiberPromise {
    * Set the value, fulfilling the promise. Can only be called once;
    * subsequent calls throw. Unblocks any fiber waiting on the future.
    */
+  // @unsafe - shared_ptr deref through `state_->is_set_` and
+  // `state_->set(value)` (BoxEvent::set not annotated @safe).
   void set_value(const T& value) {
     if (!state_) {
       throw std::logic_error("FiberPromise has no state (moved-from?)");
@@ -85,6 +96,8 @@ class FiberPromise {
   }
 
   /** Move-flavoured `set_value`. */
+  // @unsafe - shared_ptr deref through `state_->is_set_` and
+  // `state_->set(std::move(value))`.
   void set_value(T&& value) {
     if (!state_) {
       throw std::logic_error("FiberPromise has no state (moved-from?)");
@@ -117,6 +130,7 @@ class FiberPromise {
  *
  * @tparam T The type of value to receive
  */
+// @safe - see file header.
 template <typename T>
 class FiberFuture {
  public:
@@ -139,6 +153,9 @@ class FiberFuture {
    * paired FiberPromise sets a value. Can be called multiple times —
    * returns the same value each time.
    */
+  // @unsafe - shared_ptr deref + `state_->wait()` (Event::wait not
+  // annotated @safe) + `state_->get()` returns a reference into the
+  // shared state.
   T& get() {
     if (!state_) {
       throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
@@ -150,6 +167,8 @@ class FiberFuture {
   }
 
   /** Const-flavoured `get`. */
+  // @unsafe - `const_cast<BoxEvent<T>*>(state_.get())` through the
+  // shared_ptr + `->wait()` invocation.
   const T& get() const {
     if (!state_) {
       throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
@@ -164,6 +183,7 @@ class FiberFuture {
    * Wait for the value with timeout. Returns true if ready, false if
    * timed out. `timeout_us == 0` means no timeout (block indefinitely).
    */
+  // @unsafe - shared_ptr deref + `state_->wait(timeout_us)`.
   bool wait_for(uint64_t timeout_us) {
     if (!state_) {
       return false;
