@@ -7,6 +7,8 @@ export module rrr.reconnect_policy;
 
 import std;
 
+// @safe - POD ReconnectPolicy struct + ReconnectCalculator (stateless
+// backoff math). No raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
 struct ReconnectPolicy {

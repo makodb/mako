@@ -305,7 +305,8 @@ The loop must NOT:
 - [x] rpc/pollable_proxy.cpp — namespace `// @safe` + per-method
   `// @unsafe` on `mut_poll()` (const_cast through Arc::get).
   Commit 9bb655bd; ratio unchanged at 19.3% (tiny file).
-- [ ] rpc/reconnect_policy.cpp
+- [x] rpc/reconnect_policy.cpp — namespace `// @safe`. Commit (pending);
+  ratio 19.3% → 19.8% (+63 LOC). One step from the 20% milestone.
 - [ ] misc/serializable_envelope.cpp
 - [ ] misc/netinfo.cpp
 - [ ] misc/stat.cpp
