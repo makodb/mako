@@ -288,7 +288,13 @@ The loop must NOT:
   ratio 16.0% → 16.1% (+6 LOC).
 - [x] rpc/connection_metrics.cpp — namespace `// @safe`. Commit fa602d6f;
   ratio 16.1% → 16.8% (+90 LOC).
-- [ ] rpc/callbacks.cpp
+- [x] rpc/callbacks.cpp — namespace `// @safe`. Commit (pending).
+  Also fixed fourth LOC-script bug: namespace annotations weren't being
+  recorded as a fallback for function-body inheritance, so files with a
+  `using` declaration after the namespace open (which consumed the
+  pending @safe via the `;` check) got zero credit. After fix: ratio
+  16.8% → 18.3% (+186 LOC; the gain retroactively credits earlier
+  namespace flips too).
 - [ ] rpc/errors.cpp
 - [ ] rpc/utils.cpp
 - [ ] rpc/pollable_proxy.cpp

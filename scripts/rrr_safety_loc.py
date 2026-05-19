@@ -88,7 +88,9 @@ def classify_file(path):
     # Active scope stacks.
     func_stack = []         # [(label, opening_depth)]
     class_stack = []        # [(class_name, opening_depth)]
-    namespace_stack = []    # [opening_depth] — namespaces don't get labels
+    namespace_stack = []    # [(label, opening_depth)] — label is the
+                            # `@safe`/`@unsafe` annotation that preceded
+                            # this `namespace X {`, if any
     unsafe_block_stack = [] # [opening_depth]
     namespace_at_open = False  # marks that the next `{` opens a namespace
 
@@ -170,11 +172,15 @@ def classify_file(path):
                     pending = None
                     class_name_at_open = None  # only first `{` opens the class
                 elif namespace_at_open:
-                    namespace_stack.append(depth)
+                    # Record namespace annotation if there's a pending one;
+                    # later function/class bodies inside this namespace will
+                    # inherit through namespace_stack when neither their own
+                    # annotation nor an enclosing class annotation applies.
+                    ns_label = pending if pending in ("safe", "unsafe") else None
+                    namespace_stack.append((ns_label, depth))
                     namespace_at_open = False
-                    # Don't clear pending — a class declaration following the
-                    # namespace's `{` shouldn't have its pending annotation
-                    # eaten.
+                    pending = None
+                    pending_for_class = None
                 elif pending in ("safe", "unsafe"):
                     func_stack.append((pending, depth))
                     pending = None
@@ -189,16 +195,23 @@ def classify_file(path):
                         func_stack.append(("unannotated", depth))
                     out_of_class_name = None
                 else:
-                    # Inherit from innermost class with a recorded annotation.
-                    cls_label = None
+                    # Inherit from innermost class or namespace with a
+                    # recorded annotation. Classes take precedence over
+                    # namespaces when both have one.
+                    inherited = None
                     for cname, _ in reversed(class_stack):
                         ann = class_annotations.get(cname)
                         if ann is not None:
-                            cls_label = ann
+                            inherited = ann
                             break
-                    if cls_label == "safe":
+                    if inherited is None:
+                        for ns_label, _ in reversed(namespace_stack):
+                            if ns_label is not None:
+                                inherited = ns_label
+                                break
+                    if inherited == "safe":
                         func_stack.append(("safe", depth))
-                    elif cls_label == "unsafe":
+                    elif inherited == "unsafe":
                         func_stack.append(("unsafe", depth))
                     else:
                         func_stack.append(("unannotated", depth))
@@ -208,7 +221,7 @@ def classify_file(path):
                     unsafe_block_stack.pop()
                 elif class_stack and class_stack[-1][1] == depth:
                     class_stack.pop()
-                elif namespace_stack and namespace_stack[-1] == depth:
+                elif namespace_stack and namespace_stack[-1][1] == depth:
                     namespace_stack.pop()
                 elif func_stack and func_stack[-1][1] == depth:
                     func_stack.pop()

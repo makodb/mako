@@ -9,6 +9,9 @@ import std;
 import rrr.errors;
 import rrr.threading;
 
+// @safe - Callback registry/dispatch. All operations go through rusty
+// primitives (SpinMutex / Vec / Arc / Function). No raw pointers,
+// syscalls, or operator-overload chains.
 export namespace rrr {
 
 using ConnectionCallback = rusty::Arc<rusty::Function<void() const>>;
