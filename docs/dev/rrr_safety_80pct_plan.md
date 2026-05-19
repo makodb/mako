@@ -334,8 +334,8 @@ The loop must NOT:
 - [x] misc/alarm.cpp — class `Alarm` `// @safe`. Methods use
   `rusty::BTreeMap` + `rusty::Function` + `rrr::Time::now()`. The raw
   `rrr::PollThread *holder` field is never dereferenced and
-  `set_holder` is a no-op stub. No per-method overrides needed. Ratio
-  20.5% → **20.8%** (+32 LOC).
+  `set_holder` is a no-op stub. No per-method overrides needed.
+  Commit a64a2a96; ratio 20.5% → **20.8%** (+32 LOC).
 - [ ] base/basetypes.cpp
 - [ ] base/debugging.cpp
 - [ ] base/strop.cpp
