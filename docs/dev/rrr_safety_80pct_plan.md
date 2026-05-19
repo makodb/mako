@@ -380,7 +380,13 @@ The loop must NOT:
   `delete t` / `delete this`). `TestCase::fail`/`reset`/`group`/`name`/
   `failures` inherit @safe. Commit 714b2aa1; ratio 24.2% → **24.9%**
   (+83 LOC).
-- [ ] reactor/epoll_wrapper.cc
+- [x] reactor/epoll_wrapper.cc — both `export namespace rrr` and the
+  impl `namespace rrr` `// @safe`. Per-method `// @unsafe` on every
+  Epoll syscall path: ctor (kqueue/epoll_create), move-assign + dtor
+  (::close), `Add` / `Remove` / `Update` (kevent / epoll_ctl), and
+  both `Wait` overloads (kevent / epoll_wait). `Pollable` is a pure
+  virtual interface with no bodies; `Epoll::fd()` is the only safe
+  accessor. Ratio 24.9% → **25.5%** (+81 LOC).
 
 ### Phase 2 — easy raw-pointer refactors
 - [ ] ChannelConnectionProxy / ChannelFactoryProxy → rusty::Box<Base>

@@ -23,6 +23,11 @@ export module rrr.epoll_wrapper;
 import std;
 import rrr.debugging;
 
+// @safe - kqueue/epoll wrapper. The Pollable virtual interface has
+// no bodies, PollMode/PollReady are constexpr int sets, and Epoll's
+// `fd()` just returns the stored fd. Every other Epoll method does a
+// kqueue/epoll syscall (kevent, epoll_create/ctl/wait, ::close) and
+// carries a per-method `// @unsafe` override below.
 export namespace rrr {
 using std::shared_ptr;
 
@@ -68,6 +73,7 @@ class Epoll {
   volatile bool* pause;
   volatile bool* stop;
 
+  // @unsafe - kqueue() / epoll_create syscall to allocate the poll fd.
   Epoll() {
 #ifdef USE_KQUEUE
     poll_fd_ = kqueue();
@@ -81,6 +87,7 @@ class Epoll {
     other.poll_fd_ = -1;
   }
 
+  // @unsafe - ::close syscall on the old fd before adopting the moved-from fd.
   Epoll& operator=(Epoll&& other) noexcept {
     if (this != &other) {
       if (poll_fd_ != -1) {
@@ -95,6 +102,8 @@ class Epoll {
   Epoll(const Epoll&) = delete;
   Epoll& operator=(const Epoll&) = delete;
 
+  // @unsafe - kevent / epoll_ctl syscall plumbing with bzero/memset
+  // and errno-driven EEXIST retry.
   int Add(int fd, int poll_mode) {
 #ifdef USE_KQUEUE
     struct kevent ev;
@@ -135,6 +144,7 @@ class Epoll {
   }
 
 
+  // @unsafe - kevent / epoll_ctl(EPOLL_CTL_DEL) syscall + bzero/memset.
   int Remove(int fd) {
     remove_count_++;
 #ifdef USE_KQUEUE
@@ -160,6 +170,8 @@ class Epoll {
   }
 
 
+  // @unsafe - kevent / epoll_ctl(EPOLL_CTL_MOD) syscall, bzero/memset,
+  // and errno-driven EBADF/ENOENT tolerance.
   int Update(int fd, int new_mode, int old_mode) {
 #ifdef USE_KQUEUE
     struct kevent ev;
@@ -210,6 +222,8 @@ class Epoll {
 
   void Wait();
 
+  // @unsafe - kevent / epoll_wait blocking syscall + raw `evlist[max_nev]`
+  // stack buffer + dispatch into the caller-supplied ReadyHandler.
   template<typename ReadyHandler>
   void Wait(ReadyHandler&& on_ready) {
     const int max_nev = 100;
@@ -259,6 +273,7 @@ class Epoll {
 #endif
   }
 
+  // @unsafe - ::close syscall on the owned poll fd.
   ~Epoll() {
     if (poll_fd_ != -1) {
       ::close(poll_fd_);
@@ -273,8 +288,12 @@ class Epoll {
 
 } // export namespace rrr
 
+// @safe - impl namespace. The only out-of-class def here is the
+// nullary Epoll::Wait() forwarder; the borrow checker sees the
+// template Wait<>() overload it calls as already `// @unsafe`.
 namespace rrr {
 
+// @unsafe - forwards to the kevent/epoll_wait syscall in Wait<ReadyHandler>.
 void Epoll::Wait() {
     Wait([](int /*fd*/, int /*ready_events*/) {});
 }
