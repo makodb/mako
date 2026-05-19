@@ -23,12 +23,15 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/vec.hpp>
+#include <rusty/btreemap.hpp>
+#include <rusty/btreeset.hpp>
+#include <rusty/hashmap.hpp>
+#include <rusty/hashset.hpp>
+
 #include "../misc/marshal.hpp"
 #include "../misc/serializable.hpp"
-#include "../misc/serializable.hpp"
 #include "../misc/serializable_envelope.hpp"
-
-import std;
 
 import std;
 
@@ -1091,7 +1094,7 @@ TEST(MarshalSinkBridge, WriteIntoMarshalProducesIdenticalBytes) {
   // (b) via MarshalSink.
   Marshal m;
   MarshalSink mark_sink(&m);
-  BinaryWriteArchive mark_writer(&mark_sink);
+  BinaryWriteArchive mark_writer(make_sink_proxy(&mark_sink));
   mark_writer << i << s << v;
   auto bridge_bytes = drain_marshal(m);
 
@@ -1109,7 +1112,7 @@ TEST(MarshalSinkBridge, MixedMarshalAndArchiveWrites) {
 
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive writer(&sink);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
     writer << static_cast<int32_t>(2);
   }
 
@@ -1138,7 +1141,7 @@ TEST(MarshalSourceBridge, ReadOldMarshalBytesViaArchive) {
   m << i << s << v;
 
   MarshalSource src(&m);
-  BinaryReadArchive reader(&src);
+  BinaryReadArchive reader(make_source_proxy(&src));
 
   int32_t i2;
   std::string s2;
@@ -1158,7 +1161,7 @@ TEST(MarshalBridges, RoundTripThroughMarshalSinkAndSource) {
 
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive writer(&sink);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
     writer << static_cast<int32_t>(7);
     writer << static_cast<int64_t>(-99);
     writer << std::string("hello");
@@ -1167,7 +1170,7 @@ TEST(MarshalBridges, RoundTripThroughMarshalSinkAndSource) {
   }
 
   MarshalSource src(&m);
-  BinaryReadArchive reader(&src);
+  BinaryReadArchive reader(make_source_proxy(&src));
 
   int32_t a;
   int64_t b;
@@ -1191,7 +1194,7 @@ TEST(MarshalSourceBridge, ShortReadAtEofMatchesBufferSourceSemantics) {
 
   MarshalSource src(&m);
   int32_t v;
-  BinaryReadArchive reader(&src);
+  BinaryReadArchive reader(make_source_proxy(&src));
   reader >> v;
   EXPECT_EQ(v, 1);
 

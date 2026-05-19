@@ -4,12 +4,6 @@ module;
 #include <rusty/arc.hpp>
 #include <cstdint>
 
-// Forward decl in GMF — Client is fully declared in client.hpp (global
-// module) and is only referenced here as a name. Declaring it in
-// module purview would give the forward-decl module attachment that
-// clashes with client.hpp's global-module declaration.
-namespace rrr { class Client; }
-
 export module rrr.load_balancer;
 
 import std;
