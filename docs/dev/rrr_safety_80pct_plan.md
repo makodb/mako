@@ -570,7 +570,16 @@ up the next time that library work lands.
   consumers in `src/deptran/2pl/tx.h` and `src/deptran/2pl/scheduler.cc`
   — refactoring this touches the deptran codebase too. Multi-iteration
   effort spanning two subsystems. Defer.
-- [ ] serializable.cpp std::shared_ptr<Marshallable> → rusty::Arc
+- [blocked] serializable.cpp std::shared_ptr<Marshallable> → rusty::Arc
+  — 43 occurrences of `shared_ptr<Marshallable>` across 20 files,
+  the vast majority in deptran (raft, mencius, copilot, scheduler,
+  tx, coordinator, procedure, RW_command). The Phase 3 plan note
+  explicitly flags this as the largest single refactor: "estimate
+  1-2 weeks of careful work because every existing RPC service
+  definition is downstream." It also requires updating
+  `pylib/simplerpcgen/lang_cpp.py` codegen because the generated
+  `rcc_rpc.h` uses `shared_ptr<Marshallable>` directly. Multi-iteration
+  effort spanning the whole project. Defer.
 - [ ] Reactor::loop tight @unsafe block scoping
 - [ ] Pthread_* → rusty::sync::* wrappers
 
