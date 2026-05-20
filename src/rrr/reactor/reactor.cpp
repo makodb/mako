@@ -2064,7 +2064,6 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 }
 
-// @unsafe - rusty-cpp false positive: found_ready_events IS initialized inside do-while loop
 void Reactor::loop(bool infinite, bool do_check_timeout) const {
   verify(rusty::thread::current_id() == thread_id_.get());
 
@@ -2137,7 +2136,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       // Check timeouts using RefCell-based check_timeout
       if (do_check_timeout) {
         size_t before = ready_events.len();
-        check_timeout(ready_events);
+        // @unsafe { check_timeout is per-method @unsafe due to raw
+        // std::shared_ptr<Event> handling + Status::TIMEOUT mutation. }
+        { check_timeout(ready_events); }
         if (ready_events.len() > before) {
           found_ready_events = true;
         }
