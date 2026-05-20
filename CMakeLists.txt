@@ -33,24 +33,49 @@ endif()
 #
 # If the caller pre-set CMAKE_CXX_COMPILER (e.g. `cmake -DCMAKE_CXX_COMPILER=...`),
 # respect that — but still gate it on the version check below.
+# Search hints for the brew llvm@21 keg. Brew on macOS / Linuxbrew
+# doesn't symlink versioned names (clang++-21) — it only installs
+# `clang` / `clang++` inside the keg, which points at clang-21. So
+# we add the keg's bin dir as an explicit HINT, and accept both
+# `clang++-21` (apt.llvm.org convention) and `clang++` from inside
+# the llvm@21 keg.
+set(MAKO_CLANG21_HINTS
+    /home/linuxbrew/.linuxbrew/opt/llvm@21/bin
+    $ENV{HOMEBREW_PREFIX}/opt/llvm@21/bin
+    /opt/homebrew/opt/llvm@21/bin
+    /usr/local/opt/llvm@21/bin
+)
+# Many users have a per-user brew root under their home dir.
+if(DEFINED ENV{HOME})
+    list(APPEND MAKO_CLANG21_HINTS $ENV{HOME}/.linuxbrew/opt/llvm@21/bin)
+endif()
+
 if(NOT DEFINED CMAKE_C_COMPILER)
-    find_program(MAKO_CLANG_21 NAMES clang-21)
+    find_program(MAKO_CLANG_21 NAMES clang-21 clang HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANG_21)
+        find_program(MAKO_CLANG_21 NAMES clang-21)
+    endif()
     if(NOT MAKO_CLANG_21)
         message(FATAL_ERROR
-            "Mako requires Clang 21 (could not find `clang-21` on PATH). "
-            "Install via apt.llvm.org (Ubuntu) or pass explicit "
-            "-DCMAKE_C_COMPILER=/path/to/clang-21 to cmake. "
+            "Mako requires Clang 21 (could not find `clang-21` on PATH or in "
+            "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
+            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
+            "pass explicit -DCMAKE_C_COMPILER=/path/to/clang-21 to cmake. "
             "See the comment at CMakeLists.txt:19 for the rationale.")
     endif()
     set(CMAKE_C_COMPILER "${MAKO_CLANG_21}" CACHE STRING "C compiler")
 endif()
 if(NOT DEFINED CMAKE_CXX_COMPILER)
-    find_program(MAKO_CLANGXX_21 NAMES clang++-21)
+    find_program(MAKO_CLANGXX_21 NAMES clang++-21 clang++ HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANGXX_21)
+        find_program(MAKO_CLANGXX_21 NAMES clang++-21)
+    endif()
     if(NOT MAKO_CLANGXX_21)
         message(FATAL_ERROR
-            "Mako requires Clang 21 (could not find `clang++-21` on PATH). "
-            "Install via apt.llvm.org (Ubuntu) or pass explicit "
-            "-DCMAKE_CXX_COMPILER=/path/to/clang++-21 to cmake. "
+            "Mako requires Clang 21 (could not find `clang++-21` on PATH or in "
+            "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
+            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
+            "pass explicit -DCMAKE_CXX_COMPILER=/path/to/clang++-21 to cmake. "
             "See the comment at CMakeLists.txt:19 for the rationale.")
     endif()
     set(CMAKE_CXX_COMPILER "${MAKO_CLANGXX_21}" CACHE STRING "C++ compiler")
@@ -59,12 +84,36 @@ endif()
 # Enable compile_commands.json generation for language servers (clangd, etc.)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Brew's llvm@21 keg on Linux does NOT auto-add its own lib/ to the
+# linker's search path. Headers from the keg's libc++ inline-reference
+# symbols (e.g. std::__1::__hash_memory) that the system's apt
+# /usr/lib/x86_64-linux-gnu/libc++.so (from llvm-19) doesn't export, so
+# `clang++ -stdlib=libc++ -lc++` resolves to the wrong libc++ and the
+# link fails on hash-table code (gtest, rusty::HashMap, etc.).
+#
+# Workaround: if the selected clang lives inside a Homebrew keg, add
+# the keg's lib/ to the linker search path with an rpath so binaries
+# can find the right libc++ at runtime too. apt.llvm.org installs are
+# unaffected — clang-21 there ships in /usr/bin and uses the matching
+# /usr/lib/llvm-21/lib/libc++.so via its built-in search.
+get_filename_component(MAKO_CLANG_BINDIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+get_filename_component(MAKO_CLANG_ROOT "${MAKO_CLANG_BINDIR}" DIRECTORY)
+set(MAKO_BREW_LIBCXX_FLAGS "")
+if(EXISTS "${MAKO_CLANG_ROOT}/lib/libc++.so")
+    # Match brew/linuxbrew (path contains `Cellar/llvm` or `opt/llvm`).
+    if(MAKO_CLANG_ROOT MATCHES "(Cellar|opt)/llvm")
+        set(MAKO_BREW_LIBCXX_FLAGS
+            "-L${MAKO_CLANG_ROOT}/lib -Wl,-rpath,${MAKO_CLANG_ROOT}/lib")
+        message(STATUS "Using Homebrew libc++ from ${MAKO_CLANG_ROOT}/lib")
+    endif()
+endif()
+
 # Force libc++ at toolchain-detect time (before project()). CMake's
 # `import std;` machinery rejects libstdc++ and will refuse to create the
 # __CMAKE::CXX23 target unless libc++ is the detected standard library.
 set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++")
-set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ ${MAKO_BREW_LIBCXX_FLAGS}")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ ${MAKO_BREW_LIBCXX_FLAGS}")
 
 project(mako)
 
