@@ -61,10 +61,6 @@ def load_cmake_module_compile_context(
 
         def pick_entry() -> dict | None:
             preferred_suffixes = (
-                # rpc_marshal_archive_test.cc imports rrr.serializable_envelope
-                # which mako_commands.h (pulled in via rcc_rpc.h) transitively
-                # requires. Try its modmap first.
-                "src/rrr/tests/rpc_marshal_archive_test.cc",
                 "src/rrr/tests/test_rpc.cc",
                 "src/rrr/tests/rpc_docs_symbols_test.cc",
             )
@@ -165,6 +161,17 @@ def compile_header(
         cmake_cxx, cmake_flags, cmake_build_dir = compile_context
         cmd = [cmake_cxx] + cmake_flags + ["-fsyntax-only", "-x", "c++", "-"]
         run_cwd = str(cmake_build_dir)
+        # The donor TU's modmap only lists the modules IT imports, so any
+        # module the generated .h pulls in transitively that the donor
+        # doesn't use is unknown. Augment by adding every `rrr.*.pcm` in
+        # the build dir as an explicit `-fmodule-file=name=path` flag.
+        # (Late `-fmodule-file` entries don't conflict with the modmap's
+        # earlier ones; clang dedups on the module name.)
+        rrr_pcm_dir = cmake_build_dir / "src/rrr/CMakeFiles/rrr.dir"
+        if rrr_pcm_dir.is_dir():
+            for pcm in sorted(rrr_pcm_dir.glob("rrr.*.pcm")):
+                mod_name = pcm.stem  # "rrr.frame_codec" from "rrr.frame_codec.pcm"
+                cmd.append(f"-fmodule-file={mod_name}={pcm}")
     else:
         cmd = [cxx, "-std=c++23", "-w", "-fsyntax-only", "-x", "c++", "-"]
     for d in include_dirs:
