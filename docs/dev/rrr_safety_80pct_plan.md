@@ -661,6 +661,6 @@ up the next time that library work lands.
   per-method `// @unsafe` overrides on socket/marshal/raw-pointer
   paths (close, bind_channel, decode_request_and_dispatch,
   dispatch_response_frame_via_channel, run_async). No new violations.
-  Commit <TBD>; ratio 51.5% → **53.8%**.
+  Commit 1239e189; ratio 51.5% → **53.8%**.
 - [ ] Fiber context quarantine
 - [ ] rcc_rpc.h codegen rewrite
