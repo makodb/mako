@@ -42,6 +42,7 @@ jobs:
       MAKO_CPU_LIMIT: "5"                     # CPU throttling for dbtest workers
       MAKO_THROTTLE_CYCLE_MS: "100"           # Throttle duty-cycle period (ms)
       MAKO_MAX_WAIT_SECONDS: "180"            # Allow slower throttled runs to finish
+      MAKO_STARTUP_TIMEOUT_SEC: "300"          # dbtest replicated-startup watchdog (peers may take >120s on CI under throttling)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
