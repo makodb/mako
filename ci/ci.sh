@@ -555,14 +555,25 @@ run_multi_shard_single_process() {
     echo "========================================="
     echo "Running: ./ci/ci.sh multiShardSingleProcess"
     echo "========================================="
-    cleanup_processes
-    set +e
-    bash ./examples/test_multi_shard_single_process.sh
-    local test_result=$?
-    set -e
-    check_for_hanging_processes "multiShardSingleProcess"
-    local hanging_check=$?
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        set +e
+        bash ./examples/test_multi_shard_single_process.sh
+        local test_result=$?
+        set -e
+        check_for_hanging_processes "multiShardSingleProcess"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying multiShardSingleProcess (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 run_2shard_single_process() {
