@@ -613,5 +613,54 @@ up the next time that library work lands.
   read, peek, read_from_marshal preserved. Cursor port deferred (hot
   wire path; needs perf benchmarks first). Commit e6850039; ratio
   28.9% → **31.6%** (+321 @safe LOC; unannotated dropped 353 LOC).
+- [x] any_message.cpp — namespace `// @safe` on both export and impl
+  blocks; classes `AnyMessage` / `AnyMessageRegistry` `// @safe`.
+  Per-method `// @unsafe` on save/load (Marshal chains),
+  unpack/unpack_shared (raw const std::string* + new), the 4
+  operator<<>> archive helpers, and the 5 AnyMessageRegistry methods
+  (annotation-discovery gap on HashMap-through-struct). Commit
+  19fecd5c (+20 @safe LOC).
+- [x] channel.cpp — single-line namespace `// @safe`; pure virtual
+  interfaces only. Commit 362f0b11 (+25 @safe LOC).
+- [x] fiber_channel.cpp — namespace + `class FiberChannel` `// @safe`;
+  per-method `// @unsafe` on ctor/dtor/on_inbound_frame/send_frame/
+  close/is_closed; inline `// @unsafe { event->set/wait }` blocks.
+  Commit 7921358c (+52 @safe LOC).
+- [x] future.cpp — namespace `// @safe`; `FiberPromise<T>` /
+  `FiberFuture<T>` `// @safe`. Per-method `// @unsafe` on
+  ctor/set_value/get/wait_for. Commit 25c0f637 (+47 @safe LOC).
+- [x] logging.cpp — namespace + `class Log` `// @safe`; per-method
+  `// @unsafe` on every Log static method (variadic + sprintf chain).
+  `Log_debug` / `Log_info` / `Log_warn` / `Log_error` / `Log_fatal`
+  template shims wrap their single Log::* call in `// @unsafe { ... }`.
+  Commit 0b7a56c7 (+101 @safe LOC).
+- [x] alock.cpp — namespace + 5 classes `// @safe` (ALock,
+  WaitDieALock, WoundDieALock, TimeoutALock, ALockGroup). Only 3
+  methods needed per-method `// @unsafe`: WaitDieALock::abort,
+  WoundDieALock::abort, TimeoutALock::lock_all (address-of stored
+  std::list elements). One inline `// @unsafe { lock_all(lock_reqs); }`
+  in TimeoutALock::abort. Biggest single-iteration win. Commit
+  5764debe; ratio 33.5% → **40.6%** (+869 @safe LOC).
+- [x] tcp_channel.cpp — namespace + `class TcpConnection` `// @safe`.
+  Per-method `// @unsafe` on all 4 adapter sets' mut_* const_cast
+  helpers + methods routing through them; on handle_read (recv +
+  FrameStreamReader chain), flush, handle_write, drain_outbound_locked
+  (uint8_t* + send), parse_inet4_addr (inet_pton), TcpFactory::connect
+  (socket/connect/setsockopt/fcntl + reinterpret_cast<sockaddr*>).
+  Commit 68c384d9; ratio 40.6% → **45.2%** (+564 @safe LOC).
+- [x] client.cpp — namespace `// @safe` comments added to all 3
+  `export namespace rrr` blocks + impl `namespace rrr`. No code
+  edits — file already had ~90% per-method annotations from prior
+  Tier-4 work. Commit 6ce00abb; ratio 45.2% → **51.5%**
+  (+772 @safe LOC; crosses 50% threshold).
+- [x] server.cpp — namespace `// @safe` umbrellas on all 3 namespace
+  blocks (export at 44 + 510, impl at 936). Class-level `// @safe` on
+  Service / ServiceTypedBoxAdapter / RpcServiceContext (interfaces +
+  pure adapters). Flipped `class ServerConnection` from `// @unsafe`
+  to `// @safe` — the bulk of its methods were already labeled with
+  per-method `// @unsafe` overrides on socket/marshal/raw-pointer
+  paths (close, bind_channel, decode_request_and_dispatch,
+  dispatch_response_frame_via_channel, run_async). No new violations.
+  Commit <TBD>; ratio 51.5% → **53.8%**.
 - [ ] Fiber context quarantine
 - [ ] rcc_rpc.h codegen rewrite

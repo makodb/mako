@@ -41,6 +41,14 @@ import rrr.utils;
 // ===========================================================================
 // Class declarations (from former server.hpp)
 // ===========================================================================
+// @safe - Class declarations live in this export namespace. The
+// classes and helpers are individually annotated below: PendingRequestGuard
+// / Request / Service / ServiceTypedBoxAdapter / RpcServiceContext are
+// `// @safe` shells; ServerConnection is `// @safe` with per-method
+// `// @unsafe` overrides on the socket/marshal/raw-pointer paths. The
+// `shutdown_phase_to_string` free function is `// @safe`. The
+// `make_service_proxy_from_box` / `make_service_proxy_from_typed_box`
+// helpers are pure Box adapters.
 export namespace rrr {
 
 class Server;
@@ -131,6 +139,7 @@ class ServerConnection;
 using WeakServerConnection = rusty::sync::Weak<ServerConnection>;
 
 // @interface
+// @safe - Pure virtual interface. All declarations carry per-method `// @safe`.
 class Service {
 public:
     virtual ~Service() = default;
@@ -156,6 +165,7 @@ public:
 using ServiceProxy = rusty::Box<Service>;
 
 // Pass-through factory for services that already inherit Service.
+// @safe - Box move.
 inline ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
   return svc;
 }
@@ -178,6 +188,8 @@ concept ServiceLike = requires(
 
 // Adapter that wraps a Box<T> for a duck-typed T and exposes it as a
 // concrete subclass of Service.
+// @safe - Pure adapter; forwards `__reg_to__` / `__dispatch__` into the
+// wrapped Box<T>. No raw pointer math, no syscalls.
 template <ServiceLike T>
 class ServiceTypedBoxAdapter : public Service {
  public:
@@ -202,6 +214,7 @@ class ServiceTypedBoxAdapter : public Service {
   rusty::Box<T> svc_;
 };
 
+// @safe - Wraps a typed Box<T> in the ServiceTypedBoxAdapter; Box move only.
 template <ServiceLike T>
 inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
   return rusty::make_box<ServiceTypedBoxAdapter<T>>(std::move(svc));
@@ -219,6 +232,8 @@ inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
  *
  * NOTE: RefCell is single-threaded. All RPC dispatches must occur on the same thread.
  */
+// @safe - All fields are const after construction; the ctor just moves
+// owned containers into place. No syscalls, no raw pointers.
 struct RpcServiceContext {
     // Maps RPC ID to service index for dispatch (immutable after setup)
     const rusty::HashMap<i32, size_t> rpc_to_service;
@@ -261,8 +276,12 @@ struct RpcServiceContext {
 // auto-installs a default TCP factory (5f) when no explicit factory
 // is bound.
 
-// @unsafe - Socket-backed connection handler exposed to poll loop via Pollable proxy facade.
-// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
+// @safe - Methods that genuinely cross into unsafe ops (channel proxy
+// pointer extraction, raw byte arithmetic in `decode_request_and_dispatch`,
+// const_cast-through-Arc in callbacks, SpinMutex::lock + ChannelConnectionProxy
+// method dispatch) carry their own `// @unsafe` overrides; the rest of the
+// class is analyzed as @safe by default. Mirrors the Tier-4 flip on `Server`.
+// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership.
 class ServerConnection {
     // Handles individual client connections
     // SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
@@ -507,6 +526,11 @@ private:
 
 }  // export namespace rrr
 
+// @safe - DeferredReply (RAII wrapper for deferred RPC replies) and
+// Server (which owns the channel listener + accepted ServerConnection
+// Arcs). Both classes carry their own descriptive `// @safe` blocks
+// with per-method `// @unsafe` overrides on the socket / std::atomic
+// / SpinMutex-extraction paths.
 export namespace rrr {
 
 // @safe - RAII wrapper for deferred RPC replies with move semantics
@@ -933,6 +957,11 @@ public:
 
 }  // export namespace rrr
 
+// @safe - Implementation namespace. Out-of-class definitions inherit
+// their per-method `// @unsafe` annotations from the matching
+// declarations above. The anonymous-namespace `stat_*` helpers and
+// other free-function impl details carry their own `// @unsafe`
+// markers individually.
 namespace rrr {
 
 #ifdef RPC_STATISTICS
