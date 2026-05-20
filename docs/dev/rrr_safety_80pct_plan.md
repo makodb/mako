@@ -580,23 +580,19 @@ up the next time that library work lands.
   `pylib/simplerpcgen/lang_cpp.py` codegen because the generated
   `rcc_rpc.h` uses `shared_ptr<Marshallable>` directly. Multi-iteration
   effort spanning the whole project. Defer.
-- [blocked] Reactor::loop tight @unsafe block scoping
-  — three things gate this:
-  (a) The existing `// @unsafe - rusty-cpp false positive` comment at
-      reactor.cpp:2049 documents that rusty-cpp's init-tracking can't
-      prove `bool found_ready_events` is set before the do-while/while
-      interplay reads it; hoisting the declaration outside the
-      do-while did not silence the false positive.
-  (b) The `rusty::Function<bool(const std::shared_ptr<Event>&)>(...)`
-      predicate ctors at the extract_if / retain call sites are not
-      annotated `@safe` in the current rusty-cpp release (Tier 2.2
-      flipped the bare ctor but apparently not the from-lambda
-      conversion path).
-  (c) The body calls `check_timeout` which is per-method `// @unsafe`.
-  Fixing all three needs either (a) a rusty-cpp init-tracking patch,
-  (b) more @safe annotations on rusty::Function, and (c) check_timeout
-  to be re-scoped too. Beyond a single-iteration mechanical change.
-  Defer.
+- [x] Reactor::loop tight @unsafe block scoping
+  — all three original blockers resolved:
+  (a) Fixed in rusty-cpp by the recent init-tracker overhaul
+      (`has_initializer` flag + 3-signal detection covers the
+      `bool x = true;` inside-do-while pattern).
+  (b) Resolved at some point — the from-lambda conversion now
+      matches the `@safe` annotation on the `rusty::Function` ctor.
+  (c) Wrapped the single `check_timeout(ready_events)` call in a
+      tight inline `// @unsafe { ... }` block.
+  Commit 8c7b09a5; ratio 63.0% → **63.1%** (~120 LOC of Reactor::loop
+  body now analyzed as @safe by default; the inline @unsafe blocks
+  on Event status mutation + Weak::upgrade + continue_fiber paths
+  remain).
 - [ ] Pthread_* → rusty::sync::* wrappers
 
 ### Phase 4 — stretch
