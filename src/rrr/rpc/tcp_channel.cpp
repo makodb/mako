@@ -34,6 +34,7 @@ module;
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+#include <rusty/os/fd.hpp>
 #include <rusty/sync/weak.hpp>
 
 export module rrr.tcp_channel;
@@ -168,7 +169,12 @@ class TcpConnection {
     // State
     // -----------------------------------------------------------------------
 
-    int fd_;
+    // Owned file descriptor — RAII-closes on drop. Replaces the
+    // previous raw `int fd_` (kept the name) so call sites that
+    // mutate the fd life cycle do so by move-assigning a fresh
+    // `OwnedFd{}` (which closes the prior fd in its destructor) and
+    // call sites that need the integer pass `fd_.as_raw_fd()`.
+    rusty::os::fd::OwnedFd fd_;
     std::string peer_address_;
 
     std::size_t outbound_high_water_ = kTcpConnectionOutboundHighWaterDefault;
@@ -330,10 +336,13 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
  * (`handle_read`, `handle_error`, `poll_mode`, ...) run on the poll
  * thread.
  */
-// @safe - State is rusty::Cell / Option / SpinMutex / Arc. Methods that
-// genuinely touch the raw `listen_fd_` int via syscalls (listen, close,
-// fd, handle_read, handle_write, handle_error, check_pending_write_update)
-// carry their own `// @unsafe` overrides at the out-of-class definitions.
+// @safe - State is rusty::Cell / Option / SpinMutex / Arc /
+// rusty::os::fd::OwnedFd (RAII-closes listen_fd_ on drop). Methods
+// that genuinely touch the raw fd via syscalls (listen, fd,
+// handle_read) carry their own `// @unsafe` overrides at the
+// out-of-class definitions; `close()` is now @safe — it just
+// move-assigns an empty OwnedFd, whose destructor handles the
+// ::close().
 class TcpListener {
  public:
     TcpListener();
@@ -407,7 +416,8 @@ class TcpListener {
     // State
     // -----------------------------------------------------------------------
 
-    int         listen_fd_ = -1;
+    // Owned listen file descriptor — RAII-closes on drop.
+    rusty::os::fd::OwnedFd listen_fd_;
     std::string bound_address_;
 
     rusty::Cell<bool> closed_{false};
@@ -584,21 +594,14 @@ constexpr std::size_t kRecvScratchBytes = 64 * 1024;
 // ---------------------------------------------------------------------------
 
 TcpConnection::TcpConnection(int fd, std::string peer_address)
-    : fd_(fd),
+    : fd_(rusty::os::fd::OwnedFd::from_raw_fd(fd)),
       peer_address_(std::move(peer_address)) {}
 
 TcpConnection::~TcpConnection() {
-    if (!closed_.get()) {
-        // Best-effort cleanup. We can't fire callbacks here — the user
-        // already dropped their handle, so there's nothing to deliver
-        // to. Just close the fd.
-        if (fd_ >= 0) {
-            // @unsafe — system call
-            ::close(fd_);
-            fd_ = -1;
-        }
-        closed_.set(true);
-    }
+    // OwnedFd's destructor handles the ::close() — no manual cleanup
+    // needed. We still latch closed_ so any concurrent observer sees
+    // the closed state.
+    closed_.set(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +682,7 @@ ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
     // thread (those tests are single-threaded — flag-poll is fine).
     if (poll_thread_.is_some() && !PollThreadWorker::is_on_poll_thread()) {
         poll_thread_.as_ref().unwrap()->update_mode(
-            fd_, PollMode::READ | PollMode::WRITE);
+            fd_.as_raw_fd(), PollMode::READ | PollMode::WRITE);
     } else {
         pending_write_update_.set(true);
     }
@@ -725,13 +728,12 @@ void TcpConnection::close() {
     closed_.set(true);
 
     // Shutdown the write side to flush kernel buffers and signal the
-    // peer; then close the fd. `::shutdown` may fail if the socket is
-    // already half-closed — we ignore that.
-    if (fd_ >= 0) {
-        // @unsafe — system call
-        ::shutdown(fd_, SHUT_RDWR);
-        ::close(fd_);
-        fd_ = -1;
+    // peer; then drop the OwnedFd to RAII-close. `::shutdown` may fail
+    // if the socket is already half-closed — we ignore that.
+    if (fd_.is_valid()) {
+        // @unsafe { ::shutdown is libc — initiates orderly TCP close. }
+        { ::shutdown(fd_.as_raw_fd(), SHUT_RDWR); }
+        fd_ = rusty::os::fd::OwnedFd{};
     }
 
     // Deliver `on_closed(ChannelError::None)` exactly once.
@@ -766,7 +768,7 @@ void TcpConnection::set_on_error(OnErrorCallback cb) {
 // ---------------------------------------------------------------------------
 
 int TcpConnection::fd() const {
-    return fd_;
+    return fd_.as_raw_fd();
 }
 
 int TcpConnection::poll_mode() const {
@@ -793,8 +795,10 @@ bool TcpConnection::handle_read() {
     bool any_progress = false;
 
     while (true) {
-        // @unsafe — system call
-        ssize_t n = ::recv(fd_, scratch, sizeof(scratch), 0);
+        ssize_t n;
+        // @unsafe { ::recv libc syscall — reads raw bytes into the
+        //           scratch buffer. }
+        { n = ::recv(fd_.as_raw_fd(), scratch, sizeof(scratch), 0); }
         if (n > 0) {
             inbound_.append(scratch, static_cast<std::size_t>(n));
             any_progress = true;
@@ -811,11 +815,7 @@ bool TcpConnection::handle_read() {
             // Peer closed cleanly. Signal the listener; do not fire
             // on_error — this isn't a fault, it's a graceful close.
             closed_.set(true);
-            // @unsafe — system call
-            if (fd_ >= 0) {
-                ::close(fd_);
-                fd_ = -1;
-            }
+            fd_ = rusty::os::fd::OwnedFd{};  // RAII close
             deliver_on_closed_locked(ChannelError::None);
             return false;
         }
@@ -836,11 +836,7 @@ bool TcpConnection::handle_read() {
             }
         }
         closed_.set(true);
-        if (fd_ >= 0) {
-            // @unsafe — system call
-            ::close(fd_);
-            fd_ = -1;
-        }
+        fd_ = rusty::os::fd::OwnedFd{};  // RAII close
         deliver_on_closed_locked(ch);
         return false;
     }
@@ -872,11 +868,7 @@ bool TcpConnection::handle_read() {
             }
         }
         closed_.set(true);
-        if (fd_ >= 0) {
-            // @unsafe — system call
-            ::close(fd_);
-            fd_ = -1;
-        }
+        fd_ = rusty::os::fd::OwnedFd{};  // RAII close
         inbound_.reset();
         deliver_on_closed_locked(ChannelError::Internal);
         return false;
@@ -915,11 +907,7 @@ int TcpConnection::handle_write() {
         }
     }
     closed_.set(true);
-    if (fd_ >= 0) {
-        // @unsafe — system call
-        ::close(fd_);
-        fd_ = -1;
-    }
+    fd_ = rusty::os::fd::OwnedFd{};  // RAII close
     deliver_on_closed_locked(result);
     return PollMode::READ;  // Stop watching writes; closed.
 }
@@ -954,7 +942,7 @@ ChannelError TcpConnection::drain_outbound_locked(
     while (offset < buf.size()) {
         const std::size_t remaining = buf.size() - offset;
         // @unsafe — system call
-        ssize_t n = ::send(fd_, buf.data() + offset, remaining, MSG_NOSIGNAL);
+        ssize_t n = ::send(fd_.as_raw_fd(), buf.data() + offset, remaining, MSG_NOSIGNAL);
         if (n > 0) {
             offset += static_cast<std::size_t>(n);
             if (static_cast<std::size_t>(n) < remaining) {
@@ -1088,13 +1076,7 @@ bool parse_inet4_addr(std::string_view addr, sockaddr_in& out) {
 
 TcpListener::TcpListener() = default;
 
-TcpListener::~TcpListener() {
-    if (listen_fd_ >= 0) {
-        // @unsafe — system call
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-    }
-}
+TcpListener::~TcpListener() = default;  // OwnedFd RAII-closes listen_fd_
 
 // @unsafe - socket / bind / listen / setsockopt syscalls.
 ChannelError TcpListener::listen(std::string_view addr) {
@@ -1157,7 +1139,7 @@ ChannelError TcpListener::listen(std::string_view addr) {
         bound_address_ = std::string(addr);
     }
 
-    listen_fd_ = fd;
+    listen_fd_ = rusty::os::fd::OwnedFd::from_raw_fd(fd);
     listened_.set(true);
 
     // Auto-register with the poll thread if the factory wired one in.
@@ -1182,16 +1164,11 @@ void TcpListener::set_self_weak(rusty::sync::Weak<TcpListener> self_weak) {
     self_weak_ = rusty::Some(std::move(self_weak));
 }
 
-// @unsafe - ::close() syscall on the raw listen_fd_.
 void TcpListener::close() {
     if (closed_.get()) return;
     closed_.set(true);
 
-    if (listen_fd_ >= 0) {
-        // @unsafe — system call
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-    }
+    listen_fd_ = rusty::os::fd::OwnedFd{};  // RAII close
 }
 
 bool TcpListener::is_closed() const {
@@ -1216,7 +1193,7 @@ void TcpListener::set_on_error(OnErrorCallback cb) {
 }
 
 int TcpListener::fd() const {
-    return listen_fd_;
+    return listen_fd_.as_raw_fd();
 }
 
 int TcpListener::poll_mode() const {
@@ -1230,7 +1207,7 @@ std::size_t TcpListener::content_size() {
 // @unsafe - accept() / getsockname / setsockopt syscalls on listen_fd_.
 bool TcpListener::handle_read() {
     if (closed_.get()) return false;
-    if (listen_fd_ < 0) return false;
+    if (!listen_fd_.is_valid()) return false;
 
     bool any_progress = false;
     while (true) {
@@ -1239,7 +1216,7 @@ bool TcpListener::handle_read() {
         std::memset(&peer, 0, sizeof(peer));
 
         // @unsafe — system call
-        int conn_fd = ::accept(listen_fd_,
+        int conn_fd = ::accept(listen_fd_.as_raw_fd(),
                                reinterpret_cast<sockaddr*>(&peer), &peer_len);
         if (conn_fd < 0) {
             const int err = errno;
