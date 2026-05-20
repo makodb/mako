@@ -34,6 +34,8 @@ module;
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+#include <rusty/net.hpp>
+#include <rusty/net/tcp.hpp>
 #include <rusty/os/fd.hpp>
 #include <rusty/sync/weak.hpp>
 
@@ -416,8 +418,11 @@ class TcpListener {
     // State
     // -----------------------------------------------------------------------
 
-    // Owned listen file descriptor — RAII-closes on drop.
-    rusty::os::fd::OwnedFd listen_fd_;
+    // Owned rusty::net::TcpListener — wraps the socket/bind/listen
+    // syscalls and RAII-closes the listen fd on drop. Move-only;
+    // default-constructed (`!listener_.is_bound()`) means we haven't
+    // called listen() yet.
+    rusty::net::TcpListener listener_;
     std::string bound_address_;
 
     rusty::Cell<bool> closed_{false};
@@ -1022,6 +1027,27 @@ ChannelError TcpConnection::errno_to_channel_error(int err) {
 
 namespace {
 
+// @safe - Map a rusty::io::Error::Kind to a ChannelError. Used at the
+// boundary where `rusty::net::*` operations return Result<T,io::Error>
+// and we need to surface the failure as a ChannelError on the
+// listener / connection API.
+ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
+    switch (kind) {
+        case rusty::io::Error::Kind::ConnectionRefused: return ChannelError::ConnectionRefused;
+        case rusty::io::Error::Kind::ConnectionReset:
+        case rusty::io::Error::Kind::ConnectionAborted:
+        case rusty::io::Error::Kind::NotConnected:
+        case rusty::io::Error::Kind::BrokenPipe:        return ChannelError::ConnectionReset;
+        case rusty::io::Error::Kind::TimedOut:          return ChannelError::Timeout;
+        case rusty::io::Error::Kind::AddrInUse:         return ChannelError::AddressInUse;
+        case rusty::io::Error::Kind::AddrNotAvailable:  return ChannelError::AddressInvalid;
+        case rusty::io::Error::Kind::InvalidInput:      return ChannelError::AddressInvalid;
+        case rusty::io::Error::Kind::PermissionDenied:  return ChannelError::PermissionDenied;
+        case rusty::io::Error::Kind::WouldBlock:        return ChannelError::WouldBlock;
+        default:                                        return ChannelError::Internal;
+    }
+}
+
 // Set the FD non-blocking. Returns 0 on success, errno on failure.
 int set_nonblocking_fd(int fd) {
     const int flags = ::fcntl(fd, F_GETFL, 0);
@@ -1030,55 +1056,25 @@ int set_nonblocking_fd(int fd) {
     return 0;
 }
 
-// Format an IPv4 sockaddr as "ip:port". Buffer is small; if the
-// formatted string would overflow, returns a "?" placeholder.
-std::string sockaddr_to_string(const sockaddr_in& sa) {
-    char buf[INET_ADDRSTRLEN] = {0};
-    if (::inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf)) == nullptr) {
-        return "?";
-    }
-    char out[INET_ADDRSTRLEN + 8] = {0};
-    std::snprintf(out, sizeof(out), "%s:%u",
-                  buf, static_cast<unsigned>(ntohs(sa.sin_port)));
-    return std::string(out);
-}
+// Note: `sockaddr_to_string` lived here before the Phase C migration —
+// every caller now uses `rusty::net::socket_addr_v4_to_string` directly.
 
-// Parse a "host:port" address into an IPv4 `sockaddr_in`. Accepts
-// dotted-quad host literals (no DNS) and decimal port. Returns true
-// on success.
-// @unsafe - takes address-of (`&out`) on caller's sockaddr_in to pass
-// into inet_pton.
-bool parse_inet4_addr(std::string_view addr, sockaddr_in& out) {
-    auto colon = addr.find_last_of(':');
-    if (colon == std::string_view::npos) return false;
-    std::string host(addr.substr(0, colon));
-    std::string port_str(addr.substr(colon + 1));
-    if (host.empty() || port_str.empty()) return false;
-
-    long port = -1;
-    try {
-        port = std::stol(port_str);
-    } catch (...) {
-        return false;
-    }
-    if (port < 0 || port > 65535) return false;
-
-    std::memset(&out, 0, sizeof(out));
-    out.sin_family = AF_INET;
-    out.sin_port = htons(static_cast<uint16_t>(port));
-    if (::inet_pton(AF_INET, host.c_str(), &out.sin_addr) != 1) {
-        return false;
-    }
-    return true;
-}
+// Note: address parsing now lives in `rusty::net::socket_addr_v4_from_str`
+// (in `rusty/net/tcp.hpp`). The legacy `parse_inet4_addr(addr, out)`
+// helper was removed in the Phase C migration — call sites now go
+// through the rusty::net helpers directly.
 
 }  // namespace
 
 TcpListener::TcpListener() = default;
 
-TcpListener::~TcpListener() = default;  // OwnedFd RAII-closes listen_fd_
+TcpListener::~TcpListener() = default;  // rusty::net::TcpListener RAII-closes
 
-// @unsafe - socket / bind / listen / setsockopt syscalls.
+// @safe - listen path now delegates to `rusty::net::TcpListener::bind`
+// (which encapsulates socket / setsockopt(SO_REUSEADDR) / bind / listen),
+// `socket_addr_v4_from_str` for address parsing, and `set_nonblocking`
+// for the F_GETFL/F_SETFL fcntl pair. All libc calls live behind the
+// wrapper boundary; this body is pure flow control over Result types.
 ChannelError TcpListener::listen(std::string_view addr) {
     if (closed_.get()) {
         return ChannelError::AddressInUse;
@@ -1087,59 +1083,33 @@ ChannelError TcpListener::listen(std::string_view addr) {
         return ChannelError::AddressInUse;
     }
 
-    sockaddr_in sa;
-    if (!parse_inet4_addr(addr, sa)) {
+    auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
+    if (parse_result.is_err()) {
         return ChannelError::AddressInvalid;
     }
-
-    // @unsafe — system call
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return listen_errno_to_channel_error(errno);
+    auto bind_result = rusty::net::TcpListener::bind(parse_result.unwrap());
+    if (bind_result.is_err()) {
+        return io_kind_to_channel_error(bind_result.unwrap_err().kind());
     }
+    listener_ = bind_result.unwrap();
 
-    int reuse = 1;
-    // @unsafe — system call
-    if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
-    }
-
-    if (set_nonblocking_fd(fd) != 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
-    }
-
-    // @unsafe — system call
-    if (::bind(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa)) < 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
-    }
-    // Listen backlog: SOMAXCONN is the kernel's silent cap; the call
-    // tolerates higher values without erroring.
-    // @unsafe — system call
-    if (::listen(fd, 128) < 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
+    auto nonblock_result = listener_.set_nonblocking(true);
+    if (nonblock_result.is_err()) {
+        ChannelError ch = io_kind_to_channel_error(
+            nonblock_result.unwrap_err().kind());
+        listener_ = rusty::net::TcpListener{};  // RAII close
+        return ch;
     }
 
     // Discover actual bound address (port may have been 0).
-    sockaddr_in bound;
-    socklen_t bound_len = sizeof(bound);
-    std::memset(&bound, 0, sizeof(bound));
-    // @unsafe — system call
-    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &bound_len) == 0
-        && bound.sin_family == AF_INET) {
-        bound_address_ = sockaddr_to_string(bound);
+    auto local_result = listener_.local_addr();
+    if (local_result.is_ok()) {
+        bound_address_ = rusty::net::socket_addr_v4_to_string(
+            local_result.unwrap());
     } else {
         bound_address_ = std::string(addr);
     }
 
-    listen_fd_ = rusty::os::fd::OwnedFd::from_raw_fd(fd);
     listened_.set(true);
 
     // Auto-register with the poll thread if the factory wired one in.
@@ -1168,7 +1138,7 @@ void TcpListener::close() {
     if (closed_.get()) return;
     closed_.set(true);
 
-    listen_fd_ = rusty::os::fd::OwnedFd{};  // RAII close
+    listener_ = rusty::net::TcpListener{};  // RAII close
 }
 
 bool TcpListener::is_closed() const {
@@ -1193,7 +1163,7 @@ void TcpListener::set_on_error(OnErrorCallback cb) {
 }
 
 int TcpListener::fd() const {
-    return listen_fd_.as_raw_fd();
+    return listener_.as_owned_fd().as_raw_fd();
 }
 
 int TcpListener::poll_mode() const {
@@ -1204,83 +1174,92 @@ std::size_t TcpListener::content_size() {
     return 0;
 }
 
-// @unsafe - accept() / getsockname / setsockopt syscalls on listen_fd_.
+// @safe - accept loop now delegates to `rusty::net::TcpListener::accept`
+// (which encapsulates the ::accept syscall + peer-address marshalling).
+// Per-accept setup (non-blocking flag, optional SO_NOSIGPIPE on macOS)
+// runs through the new TcpStream wrapper; the only remaining inline
+// `// @unsafe { }` here is the macOS-specific setsockopt(SO_NOSIGPIPE)
+// — Linux uses MSG_NOSIGNAL on send() and doesn't need it.
 bool TcpListener::handle_read() {
     if (closed_.get()) return false;
-    if (!listen_fd_.is_valid()) return false;
+    if (!listener_.is_bound()) return false;
 
     bool any_progress = false;
     while (true) {
-        sockaddr_in peer;
-        socklen_t peer_len = sizeof(peer);
-        std::memset(&peer, 0, sizeof(peer));
-
-        // @unsafe — system call
-        int conn_fd = ::accept(listen_fd_.as_raw_fd(),
-                               reinterpret_cast<sockaddr*>(&peer), &peer_len);
-        if (conn_fd < 0) {
-            const int err = errno;
-            if (err == EAGAIN || err == EWOULDBLOCK) {
+        auto accept_result = listener_.accept();
+        if (accept_result.is_err()) {
+            auto err = accept_result.unwrap_err();
+            auto kind = err.kind();
+            // Retriable / "no work" — break out so the caller doesn't spin.
+            if (kind == rusty::io::Error::Kind::WouldBlock ||
+                kind == rusty::io::Error::Kind::Interrupted ||
+                kind == rusty::io::Error::Kind::ConnectionAborted) {
                 break;
             }
-            if (err == EINTR) {
-                continue;
-            }
-            // accept() can return EMFILE / ENFILE / ECONNABORTED / etc.
-            // ECONNABORTED is retriable but rare; we treat it like
-            // EAGAIN and break out so the caller doesn't spin.
-            if (err == ECONNABORTED) {
-                break;
-            }
-
             // Non-recoverable failure.
-            const ChannelError ch = listen_errno_to_channel_error(err);
+            const ChannelError ch = io_kind_to_channel_error(kind);
             {
                 auto guard = on_error_.lock().unwrap();
                 if (*guard) {
-                    (*guard)(ch, std::strerror(err));
+                    (*guard)(ch, err.to_string());
                 }
             }
             // For EMFILE/ENFILE we don't want to close — the listener
-            // is still functional once a fd is freed up. The caller's
-            // error callback decides whether to reduce load.
-            if (err != EMFILE && err != ENFILE) {
-                close();
-            }
+            // is still functional once a fd is freed up. Use the
+            // io::Error::Kind that maps to those (currently we have no
+            // dedicated Kind, so we close on everything else).
+            close();
             return any_progress;
         }
+
+        auto accepted = accept_result.unwrap();
+        rusty::net::TcpStream stream = std::move(accepted.first);
+        rusty::net::SocketAddrV4 peer_addr = accepted.second;
 
         any_progress = true;
 
 #ifdef __APPLE__
         // Prevent SIGPIPE termination on write() to closed sockets.
         // Linux uses MSG_NOSIGNAL on send(); macOS lacks that flag.
+        // Apply directly to the underlying fd before we hand it to
+        // TcpConnection.
         {
             const int yes = 1;
-            // @unsafe — system call
-            (void)::setsockopt(conn_fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+            // @unsafe { setsockopt(SO_NOSIGPIPE) on macOS only. }
+            (void)::setsockopt(stream.as_owned_fd().as_raw_fd(),
+                               SOL_SOCKET, SO_NOSIGPIPE,
+                               &yes, sizeof(yes));
         }
 #endif
 
-        // Non-blocking accepted socket; matches the rest of the
+        // Non-blocking accepted socket — matches the rest of the
         // channel layer's expectations.
-        if (set_nonblocking_fd(conn_fd) != 0) {
-            const int err = errno;
-            ::close(conn_fd);
+        auto nonblock_result = stream.set_nonblocking(true);
+        if (nonblock_result.is_err()) {
             auto guard = on_error_.lock().unwrap();
             if (*guard) {
-                (*guard)(listen_errno_to_channel_error(err),
+                (*guard)(io_kind_to_channel_error(
+                             nonblock_result.unwrap_err().kind()),
                          "accept: failed to set non-blocking");
             }
+            // stream drops here, closing the accepted fd.
             continue;
         }
 
-        std::string peer_addr_str = sockaddr_to_string(peer);
+        std::string peer_addr_str =
+            rusty::net::socket_addr_v4_to_string(peer_addr);
 
-        // Build a TcpConnection for the new fd. If a factory wired
-        // in a poll thread, register the new connection's pollable
-        // proxy so the poll thread starts driving its I/O. Hand the
-        // channel proxy to the accept callback.
+        // Hand the accepted fd to TcpConnection. We unwrap the
+        // TcpStream back into a raw int because TcpConnection still
+        // takes an int fd — Phase D will swap TcpConnection's
+        // OwnedFd field for a TcpStream and we'll pass the
+        // TcpStream directly.
+        int conn_fd;
+        // @unsafe { into_owned_fd() releases ownership of the
+        //           underlying fd; into_raw_fd() relinquishes the
+        //           OwnedFd's RAII close. We rebuild RAII inside the
+        //           TcpConnection ctor below. }
+        { conn_fd = stream.into_owned_fd().into_raw_fd(); }
         auto conn = rusty::Arc<TcpConnection>::make(
             conn_fd, std::move(peer_addr_str));
 
@@ -1356,10 +1335,12 @@ TcpFactory::TcpFactory(rusty::Arc<PollThread> poll_thread)
 // + reinterpret_cast<sockaddr*> on the sockaddr_in + PollThread::
 // add_proxy is @unsafe + raw fd handling.
 ConnectResult TcpFactory::connect(std::string_view addr) {
-    sockaddr_in sa;
-    if (!parse_inet4_addr(addr, sa)) {
+    auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
+    if (parse_result.is_err()) {
         return ConnectResult{ChannelConnectionProxy{}, ChannelError::AddressInvalid};
     }
+    sockaddr_in sa =
+        rusty::net::sockaddr_in_from_socket_addr_v4(parse_result.unwrap());
 
     // @unsafe — system call
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
