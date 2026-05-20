@@ -112,8 +112,15 @@ cleanup_processes() {
 
     sleep 3  # Give OS time to fully terminate processes and release ports
 
-    # Wait for ports to be released (check common test ports)
-    for i in {1..10}; do
+    # Wait up to 60s for ports to be released. Listening sockets release
+    # immediately on kill, but TCP TIME_WAIT on previously-established
+    # connections to those ports (e.g. peer-to-peer Paxos/Raft sessions
+    # the killed dbtest had open) can hold the 4-tuple for 60s by
+    # default. SO_REUSEADDR on the new bind covers the TIME_WAIT case
+    # for listen sockets, but only after lsof reports the port free —
+    # i.e. nothing is currently bound to it. 10s was too short under
+    # CI load; bump to 60.
+    for i in {1..60}; do
         if ! lsof -i :7001-8006 >/dev/null 2>&1 && ! lsof -i :31000-31100 >/dev/null 2>&1; then
             break
         fi
