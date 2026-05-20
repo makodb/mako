@@ -67,6 +67,11 @@ import rrr.pollable_proxy;
 // ===========================================================================
 // Class declarations (from former event.h, fiber_impl.h, reactor.h block 1)
 // ===========================================================================
+// @safe - Reactor / Event / Fiber declarations. Class declarations
+// carry their own annotations; methods that genuinely cross into
+// fiber context switching / raw pointer access / thread-local lookup
+// have per-method `// @unsafe` overrides. The rest is analyzed as
+// @safe by default.
 export namespace rrr {
 
 // --- from event.h --------------------------------------------------------
@@ -937,6 +942,9 @@ template<>
 struct is_send<rrr::PollCommand> : std::true_type {};
 } // namespace rusty
 
+// @safe - PollThreadWorker / PollThread declarations. Class-level
+// annotations + per-method `// @unsafe` overrides on the syscalls
+// (epoll_wait, eventfd_write, futex) and raw pointer paths.
 export namespace rrr {
 // --- from reactor.h (block 2: PollThreadWorker, PollThread) -------------
 
@@ -1125,6 +1133,7 @@ struct is_sync<rrr::PollThread> : std::true_type {};
 } // namespace rusty
 
 // --- from quorum_event.h --------------------------------------------------
+// @safe - QuorumEvent declarations under the janus namespace.
 export namespace janus {
 
 // Pulled in from former `quorum_event.h` (lines 26-29). Folded into the
@@ -1239,6 +1248,11 @@ class QuorumEvent : public Event {
 // Out-of-line definitions (from former event.cc, fiber_impl.cc, reactor.cc,
 // fiber_context_runtime.cc)
 // ===========================================================================
+// @safe - Implementation namespace. Out-of-class definitions inherit
+// per-method `// @unsafe` annotations from the declarations above.
+// The anonymous-namespace `stat_*` / `stackless_profile_*` helpers
+// (line 1582+) and other free-function impl details carry their own
+// `// @unsafe` markers individually where needed.
 namespace rrr {
 
 // --- from event.cc -------------------------------------------------------
@@ -1433,6 +1447,10 @@ int SharedIntEvent::set(const int& v) {
   return ret;
 }
 
+// @unsafe - holds a raw `IntEvent*` (`ev_ptr = ev.get()`) across the
+// retain() lambda capture to identity-compare against shared_ptr<IntEvent>
+// entries in `events_`. The shared_ptr keeps the target alive for the
+// duration of the call.
 bool SharedIntEvent::wait_until_gte(int x, int timeout) {
   if (value_ >= x) {
     return false;
@@ -2228,6 +2246,12 @@ void Reactor::display_waiting_ev() const {
 void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
   verify(rusty::thread::current_id() == thread_id_.get());
   constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+  // @unsafe - mutable atomic fields are storage for cross-thread
+  // wake-state mutations from the early_waker lambda. The struct is
+  // local to this method body and does not inherit Reactor's
+  // class-level @safe in intent — the rusty-cpp mutable-field rule
+  // fires here because libclang qualifies local types under the
+  // enclosing class scope.
   struct EarlyWakeState {
     explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
     const Reactor* reactor;
@@ -2251,6 +2275,9 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
     return;
   }
 
+  // @unsafe - mutable Task field is needed because the registered
+  // poller closure must call `task.poll(ctx)` which mutates the Task,
+  // and the closure receives `TaskState` by const Arc.
   struct TaskState {
     mutable rusty::Task<void> task;
     rusty::Arc<EarlyWakeState> early_wake;
@@ -2562,6 +2589,10 @@ PollThread::PollThread(rusty::sync::mpsc::Sender<PollCommand> sender)
       shutdown_called_(false) {
 }
 
+// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_`)
+// and passes the raw pointer into a spawned thread closure. The Arc
+// keeps the PollThread (and thus the atomic) alive until the worker
+// thread finishes; rusty-cpp can't express that lifetime relationship.
 rusty::Arc<PollThread> PollThread::create() {
   // Create MPSC channel
   auto [sender, receiver] = rusty::sync::mpsc::channel<PollCommand>();
@@ -2715,6 +2746,10 @@ void fiber_task_t::operator()() {
   resume();
 }
 
+// @unsafe - mmap stack region, install guard page via mprotect,
+// reinterpret_cast the trampoline address and stack-top into the
+// ABI-specific FiberContext (rsp/rip on x86_64, sp/pc on aarch64).
+// The whole body is raw-pointer arithmetic by design.
 void fiber_task_t::init_context() {
   std::size_t page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
   if (page_sz == 0) {
@@ -2755,6 +2790,10 @@ void fiber_task_t::init_context() {
 #endif
 }
 
+// @unsafe - fiber context switch via raw `fiber_task_t*` thread-local
+// (`tls_active_task_`) save/restore + `&caller_ctx_`/`&fiber_ctx_`
+// address-of into `fiber_swap_context`. The whole call is the fiber-
+// switching primitive.
 void fiber_task_t::resume() {
   if (state_ == State::FINISHED) {
     return;
@@ -2765,6 +2804,8 @@ void fiber_task_t::resume() {
   tls_active_task_ = old;
 }
 
+// @unsafe - companion to resume() — `&fiber_ctx_`/`&caller_ctx_` into
+// the fiber-switching primitive.
 void fiber_task_t::yield_to_caller() {
   verify(state_ == State::RUNNING);
   state_ = State::SUSPENDED;
@@ -2774,12 +2815,15 @@ void fiber_task_t::yield_to_caller() {
   }
 }
 
+// @unsafe - reads the raw `fiber_task_t*` thread-local set by resume()
+// and dispatches into the fiber's entry routine.
 void fiber_task_t::entry_trampoline() {
   auto* task = tls_active_task_;
   verify(task != nullptr);
   task->entry();
 }
 
+// @unsafe - uses raw `this` for the fiber-finished callback dispatch.
 [[noreturn]] void fiber_task_t::entry() {
   state_ = State::RUNNING;
   verify(static_cast<bool>(fn_));
@@ -2792,6 +2836,7 @@ void fiber_task_t::entry_trampoline() {
 }  // namespace rrr (definitions)
 
 // --- from quorum_event.cc ------------------------------------------------
+// @safe - QuorumEvent impl. Methods carry per-method annotations.
 namespace janus {
 
 using rrr::Event;
