@@ -145,58 +145,23 @@ static abstract_db* initShardDB(int shard_idx, bool is_leader, const std::string
   return db;
 }
 
-// Initialize and start transports for multi-shard mode
+// Initialize and start transports for multi-shard mode.
+//
+// In multi-shard single-process mode the per-shard "server" FastTransports
+// bind base_port + 0 (e.g. 31000, 31100). Worker ShardClients bind
+// base_port + par_id (0..warehouses-1) on the same shard, so par_id=0 of
+// each shard collides with the manager and panics with AddressInUse.
+// ctx->transport is never read anywhere, so the manager's transports are
+// unused; skip binding entirely until cross-shard RPC is actually wired
+// through the manager instead of through per-worker ShardClients.
 static bool initMultiShardTransports(const std::vector<int>& local_shard_indices) {
-  auto& benchConfig = BenchmarkConfig::getInstance();
-  transport::Configuration* config = benchConfig.getConfig();
-
-  if (!config) {
+  if (!BenchmarkConfig::getInstance().getConfig()) {
     Warning("Cannot initialize multi-shard transports: no configuration");
     return false;
   }
-
-  Notice("Initializing MultiTransportManager for %zu shards", local_shard_indices.size());
-
-  // Create MultiTransportManager
-  g_multi_transport_manager = new mako::MultiTransportManager();
-
-  // Determine local IP from first shard's configuration
-  std::string local_ip = config->shard(local_shard_indices[0], benchConfig.getClusterRole()).host;
-
-  // Initialize all transports
-  bool success = g_multi_transport_manager->InitializeAll(
-    config->configFile,
-    local_shard_indices,
-    local_ip,
-    benchConfig.getCluster(),
-    1,  // st_nr_req_types
-    12, // end_nr_req_types
-    0,  // phy_port (0 for TCP)
-    0   // numa_node
-  );
-
-  if (!success) {
-    Warning("Failed to initialize MultiTransportManager");
-    delete g_multi_transport_manager;
-    g_multi_transport_manager = nullptr;
-    return false;
-  }
-
-  // Store transport references in each ShardContext
-  for (int shard_idx : local_shard_indices) {
-    ShardContext* ctx = benchConfig.getShardContext(shard_idx);
-    if (ctx) {
-      ctx->transport = g_multi_transport_manager->GetTransport(shard_idx);
-      Notice("Assigned transport to ShardContext for shard %d", shard_idx);
-    }
-  }
-
-  // Start all transport event loops in separate threads
-  g_multi_transport_manager->RunAll();
-
-  Notice("MultiTransportManager initialized and running for %zu shards",
+  Notice("Skipping MultiTransportManager init for %zu shards "
+         "(per-shard transports unused in single-process mode)",
          local_shard_indices.size());
-
   return true;
 }
 
