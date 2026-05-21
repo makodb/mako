@@ -1518,6 +1518,13 @@ if(BUILD_TESTS)
     target_compile_options(bench_marshal PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(bench_marshal ${RPC_TEST_LINK_LIBS} pthread)
 
+    # MarshalV2 Microbenchmark — same scenarios on the Cursor<Vec<u8>>
+    # prototype (rrr.marshal_v2). For A/B comparison vs bench_marshal.
+    add_executable(bench_marshal_v2 src/rrr/tests/bench_marshal_v2.cc)
+    target_include_directories(bench_marshal_v2 PRIVATE ${TEST_INCLUDE_DIRS})
+    target_compile_options(bench_marshal_v2 PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(bench_marshal_v2 ${RPC_TEST_LINK_LIBS} pthread)
+
     # MakoClientService Unit Tests
     add_executable(test_client_service tests/test_client_service.cc)
     target_include_directories(test_client_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

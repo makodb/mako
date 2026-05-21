@@ -69,3 +69,49 @@ if any of:
 
 These thresholds are stated up front so the comparison in Marshal-4
 is a yes/no, not a judgment call.
+
+## Prototype results (Marshal V2, Vec<uint8_t> + read_pos)
+
+Captured 2026-05-21 on the same dev box, side-by-side with the
+baseline above, after two perf fixes in `third-party/rusty-cpp`:
+  - `Vec::extend_from_slice` / `Vec::write` now memcpy trivially-
+    copyable T instead of looping `push()` per element.
+  - `Vec::reserve` grows geometrically (`max(new_capacity, 2*capacity)`)
+    instead of allocating exactly the requested capacity — a sequence
+    of `reserve(size+8)` calls now amortizes to O(N) total rather
+    than O(N²).
+
+Without those two fixes, V2 was 6× to 33× slower on burst-write paths.
+With them, V2 wins on every scenario.
+
+| scenario                                              | baseline ns/op | V2 ns/op | delta % |
+|-------------------------------------------------------|---------------:|---------:|--------:|
+| write+read i64 (fresh Marshal each pair)              |          94.89 |    54.85 |  -42%   |
+| write+read i64 (single Marshal, drains immediately)   |          21.41 |     9.39 |  -56%   |
+| write 1024 i64 then read 1024 i64                     |       21,353   |   9,950  |  -53%   |
+| raw write(8) + read(8) (single Marshal)               |          20.69 |     9.59 |  -54%   |
+| write 1KB blob + read 1KB blob                        |         149.49 |   107.86 |  -28%   |
+| write+read std::string(100)                           |         166.04 |    81.65 |  -51%   |
+| 4*i32 + string(100) round-trip                        |         265.38 |   159.52 |  -40%   |
+| write 4KB blob (single write) + read 4KB              |         308.55 |   259.52 |  -16%   |
+| write 10x 1KB then drain 10x 1KB                      |       6,646.21 | 1,282.70 |  -81%   |
+
+Every go/no-go threshold from the prior section is met by a large
+margin:
+  - Steady-state i64 ≤ 25 ns/op:  9.39 ns/op ✓
+  - 1 KB blob ≥ 5 GB/s:           9.5 GB/s ✓ (was 5.95 GB/s)
+  - 10×1KB drain ≤ 7 µs:          1.28 µs ✓
+  - Per-Marshal ctor+dtor ≤ 100 ns: 54.85 ns ✓
+
+Decision: **proceed with the Cursor-style rewrite**. The Vec<u8> +
+read_pos approach maps cleanly to Marshal's dual-position model, and
+the perf is better across the board, not just on the chunk-walk
+scenarios.
+
+Reproducing these numbers:
+```
+cmake --build build_clang21 --target bench_marshal bench_marshal_v2 -j32
+./build_clang21/bench_marshal   # baseline
+./build_clang21/bench_marshal_v2  # prototype
+```
+
