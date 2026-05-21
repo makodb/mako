@@ -669,5 +669,20 @@ up the next time that library work lands.
   paths (close, bind_channel, decode_request_and_dispatch,
   dispatch_response_frame_via_channel, run_async). No new violations.
   Commit 1239e189; ratio 51.5% → **53.8%**.
-- [ ] Fiber context quarantine
+- [x] Fiber context quarantine — the technical quarantine was already
+  in place from prior work: `Fiber::run` / `yield_` / `continue_` are
+  `// @safe` wrappers with their bodies in inner `// @unsafe { ... }`
+  blocks; `fiber_task_t::resume` / `yield_to_caller` / `entry` /
+  `init_context` / `entry_trampoline` are `// @unsafe` with detailed
+  justifications; the asm-only TUs `fiber_context_{x86_64,aarch64}.cc`
+  can't be borrow-checked at all. This iteration locks in the intent:
+  adds explicit QUARANTINE markers to both arch-specific docstrings
+  (calling out that they cannot be made safe and listing the wrapping
+  callers in reactor.cpp), strengthens the `Fiber` class-level
+  docstring to describe the quarantine pattern explicitly, and adds
+  per-method `// @safe` overrides on the four trivial methods
+  `Fiber::Fiber(...)` / `Fiber::~Fiber` / `Fiber::finished` /
+  `Fiber::do_finalize`. The class-level annotation stays `// @unsafe`
+  per the plan's "leave @unsafe" directive — only the trivial
+  accessors flip. ratio 65.3% → **65.4%** (+10 @safe LOC).
 - [ ] rcc_rpc.h codegen rewrite

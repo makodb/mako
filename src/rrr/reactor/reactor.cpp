@@ -534,7 +534,20 @@ class Event;
  *   - Fibers use custom stackful execution
  *   - Stackful contexts are properly called "fibers"
  *
- * @unsafe - Uses rusty::Rc ownership and mutable fields for interior mutability
+ * QUARANTINE — the stackful-fiber context-switch primitive lives in
+ * `fiber_context_{x86_64,aarch64}.cc` as raw assembly, and is invoked
+ * through `fiber_task_t::resume()`/`yield_to_caller()`/`entry()` in
+ * the impl section of this file. Those callers carry `// @unsafe`
+ * annotations. The Fiber methods themselves (`run`, `yield_`,
+ * `continue_`) are `// @safe` wrappers with their bodies in inner
+ * `// @unsafe { ... }` blocks — quarantine pattern: callable from
+ * @safe code, but the unsafe operation (the asm switch + raw thread-
+ * local task save/restore) is captured at the wrapper boundary.
+ *
+ * @unsafe - Uses rusty::Rc ownership and mutable fields for interior mutability.
+ *  Per-method overrides flip the trivial accessors (`finished`,
+ *  `do_finalize`, ctor, dtor) to `@safe`; the rest stays at the class
+ *  default (`@unsafe`) by design.
  */
 class Fiber {
  public:
@@ -1520,6 +1533,9 @@ void SharedIntEvent::wait(rusty::Function<bool(int v)> f) {
 // --- from fiber_impl.cc --------------------------------------------------
 thread_local uint64_t Fiber::global_id = 0;
 
+// @safe - Trivial member-initializer ctor; std::move + post-increment of
+// a thread-local uint64_t. Cells/RefCells default-construct via class
+// initializers above; func_ takes a moved-in rusty::Function.
 Fiber::Fiber(rusty::Function<void()> func)
     : status_(INIT),
       needs_finalize_(false),
@@ -1528,6 +1544,7 @@ Fiber::Fiber(rusty::Function<void()> func)
       id(Fiber::global_id++) {
 }
 
+// @safe - Empty dtor; rusty::Box / rusty::RefCell members release on drop.
 Fiber::~Fiber() {
   // rusty::Box automatically handles cleanup
 //  verify(0);
@@ -1607,11 +1624,13 @@ void Fiber::continue_() const {
   // but you have to manually call the scheduler to loop.
 }
 
+// @safe - Reads Cell<Status>::get() and returns a bool.
 bool Fiber::finished() const {
   auto s = status_.get();
   return s == FINISHED || s == RECYCLED;
 }
 
+// @safe - One Cell<bool>::set call.
 void Fiber::do_finalize() {
   // Handle finalization logic if needed
   needs_finalize_.set(false);
