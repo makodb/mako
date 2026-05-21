@@ -24,7 +24,7 @@ fi
 # Clean up old log files
 rm -f nfs_sync_*
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 script_name="$(basename "$0")"
 binary_path="./${BUILD_DIR:-build}/dbtest"
 PROCESS_PID=""

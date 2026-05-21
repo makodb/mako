@@ -10,7 +10,7 @@ echo "========================================="
 echo "Testing 1-shard setup with RAFT replication"
 echo "========================================="
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 export MAKO_RAFT_PREFERRED_GRACE_US="${MAKO_RAFT_PREFERRED_GRACE_US:-30000000}"
 export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US:-5000000}"
 export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US:-10000000}"
