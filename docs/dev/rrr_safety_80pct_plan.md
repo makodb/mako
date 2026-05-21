@@ -607,19 +607,44 @@ up the next time that library work lands.
   (+201 @safe LOC).
 
 ### Phase 4 — stretch
-- [x] Marshal byte ops decision — **chose labeling (option 3 of the
-  Phase 4 menu) over Cursor refactor/external annot**. Added namespace
-  `// @safe` on both `export namespace rrr` and the impl `namespace
-  rrr`; class `Marshal` `// @safe`. Triaged 15 borrow-check violations
-  by adding per-method `// @unsafe` overrides on the four methods
-  routing through the raw `chunk*` head_/tail_/next linked list and
-  raw `char*` casts: `Marshal::content_size_slow`, `Marshal::write`,
-  `Marshal::read_chnk`, `Marshal::read_reuse_chnk`. All existing
-  per-method `// @safe` / `// @unsafe` annotations on operator<< /
-  operator>> overloads, chunk methods, bookmark methods, set_bookmark,
-  read, peek, read_from_marshal preserved. Cursor port deferred (hot
-  wire path; needs perf benchmarks first). Commit e6850039; ratio
-  28.9% → **31.6%** (+321 @safe LOC; unannotated dropped 353 LOC).
+- [x] Marshal byte ops decision — initially **chose labeling (option 3
+  of the Phase 4 menu)** as an interim step: added namespace `// @safe`
+  on both `export namespace rrr` and the impl `namespace rrr`; class
+  `Marshal` `// @safe`. Triaged 15 borrow-check violations by adding
+  per-method `// @unsafe` overrides on the four methods routing
+  through the raw `chunk*` head_/tail_/next linked list and raw
+  `char*` casts: `Marshal::content_size_slow`, `Marshal::write`,
+  `Marshal::read_chnk`, `Marshal::read_reuse_chnk`. Cursor port
+  deferred (hot wire path; needed perf benchmarks first). Commit
+  e6850039; ratio 28.9% → **31.6%** (+321 @safe LOC).
+  **Superseded by the Cursor rewrite below.**
+- [x] Marshal byte ops rewrite (Cursor-style) — picked option 1 of
+  the Phase 4 menu after measuring. Replaced the chunk-linked-list
+  internals of `rrr::Marshal` with a `rusty::Vec<uint8_t>` +
+  `read_pos_` cursor (the same shape as `rusty::io::Cursor` over a
+  Vec, but with separate write/read positions). Public API unchanged
+  (`write`/`read`/`peek`/`content_size`/`set_bookmark`/
+  `write_bookmark`/`read_from_marshal`/`reset`, 50+ operator<<>>
+  overloads, MarshalSink/MarshalSource adapters). Removed the
+  chunk-list private members (raw_bytes, chunk, head_/tail_) and the
+  internal-only `read_chnk` / `read_reuse_chnk`. Bookmark struct
+  simplified from `(size, char**)` to `(offset, size)`.
+  Measurement-gated: built bench_marshal microbench (9 hot-path
+  scenarios), captured baseline of chunk-list, prototyped MarshalV2
+  side-by-side, compared. Required two rusty-cpp library fixes that
+  fell out: Vec::extend_from_slice now memcpy's trivially-copyable T
+  instead of looping push() byte-by-byte; Vec::reserve grows
+  geometrically (max(new, 2*cap)) so a sequence of small
+  reserve(size+N) calls amortizes O(N) rather than O(N²).
+  Perf result: faster on every scenario between 15% and 81%.
+  Most importantly the chunk-walk drain pattern (write 10x1KB then
+  read) went from 6.6 µs → 1.25 µs (-81%) — the chunk-walk
+  overhead is gone.
+  Annotation footprint on marshal.cpp: -476 LOC overall, -372 @unsafe
+  LOC, with 51 `// @unsafe` per-method overrides collapsing to a
+  handful of inline `// @unsafe { memcpy }` blocks. Commits 7cf92cc0
+  (prototype + bench) + aeed22fe (swap); ratio 65.4% → **67.6%**.
+  Reference: docs/dev/marshal_perf_baseline.md.
 - [x] any_message.cpp — namespace `// @safe` on both export and impl
   blocks; classes `AnyMessage` / `AnyMessageRegistry` `// @safe`.
   Per-method `// @unsafe` on save/load (Marshal chains),
