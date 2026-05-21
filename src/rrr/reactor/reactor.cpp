@@ -736,12 +736,15 @@ class Reactor {
   // emitted with `W` (weak) linkage by every TU and deduped by the
   // linker. The accessor form here is functionally equivalent but
   // heavier; both would have fixed the original link error.
+  // @safe - Returns reference to function-local thread_local storage;
+  // default-constructed rusty HashMap/HashSet, no unsafe ops.
   static rusty::HashMap<std::string, rusty::Vec<PollableProxy>>& clients() {
     static thread_local rusty::HashMap<std::string,
                                        rusty::Vec<PollableProxy>>
         instance{};
     return instance;
   }
+  // @safe - Returns reference to function-local thread_local storage.
   static rusty::HashSet<std::string>& dangling_ips() {
     static thread_local rusty::HashSet<std::string> instance{};
     return instance;
