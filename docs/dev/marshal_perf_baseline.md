@@ -179,3 +179,65 @@ Diagnostic commands used:
 strace -c -e trace=brk,mmap,munmap,mprotect -- ./build_clang21/bench_marshal
 ```
 
+## Calibrated A/B: leak-fixed chunk-list vs Vec
+
+To isolate the structural perf difference (independent of the
+chunk-list leak), we benched a leak-fixed variant: same chunk-list
+implementation as the original, but with the commented-out
+`delete chnk;` in `Marshal::read()` uncommented. Same harness, same
+hardware, same run.
+
+| scenario                                              | leaky chunk | leak-fixed chunk | Vec       | chunk(fixed) vs Vec |
+|-------------------------------------------------------|------------:|-----------------:|----------:|--------------------:|
+| write+read i64 (fresh Marshal each pair)              |       94.61 |            54.63 |     54.85 | tied (Vec  +0.4%)   |
+| write+read i64 (single Marshal, drains)               |       21.44 |             9.81 |      9.39 | tied (chunk +4%)    |
+| write 1024 i64 then read 1024 i64                     |   21,353    |        10,976    |    9,950  | Vec +10%            |
+| raw write(8) + read(8) (single Marshal)               |       20.69 |             9.22 |      9.59 | tied (chunk -4%)    |
+| write 1KB blob + read 1KB blob                        |      149.49 |           110.41 |    107.86 | tied (chunk +2%)    |
+| write+read std::string(100)                           |      171.21 |           115.91 |     81.65 | **Vec +42%**        |
+| 4*i32 + string(100) round-trip                        |      265.38 |           209.30 |    159.52 | **Vec +31%**        |
+| write 4KB blob + read 4KB                             |      308.55 |           259.47 |    259.52 | tied (0%)           |
+| write 10x 1KB then drain 10x 1KB                      |    6,646.21 |         1,291.48 |  1,282.70 | tied (0%)           |
+| Max RSS                                               |   918,696 KB |        5,884 KB |   5,828 KB | tied                |
+
+### What the calibrated numbers actually say
+
+**Once the leak is fixed, the two implementations are tied on most
+scenarios.** The headline 81% improvement on the chunk-walk drain
+pattern (`write 10x1KB then drain`) collapses to **0%** in the
+calibrated comparison — that was entirely the leak. Same for the
+bulk-blob transfers (1 KB and 4 KB scenarios) and the i64
+hot-loop.
+
+**The Vec-backed Marshal has one real structural win: ~30-40%
+faster on string and string-heavy mixed payloads.** That isolates
+to the `peek()` path used by varint decode (`m >> v_len`): the
+chunk-list `peek()` walks chunks via a while loop with a branch
+per chunk; the Vec `peek()` is a single memcpy from
+`buf_.data() + read_pos_`. For payloads that decode one or more
+varints (every string operator>>, every container operator>>),
+this overhead adds up.
+
+**On RPC-shaped workloads** (4*i32 + string, payload-shape index),
+that translates to ~25-30% lower latency — a real but bounded
+structural win.
+
+### So what's the real value of the rewrite?
+
+1. **Latent-bug fix** (the leak). Production callers never hit it
+   in 5 years, but the bench was the first workload back-to-back
+   enough to surface it. A rewrite that incidentally removes the
+   foot-gun is worth something on its own.
+
+2. **30-40% faster on varint/string-heavy paths**. The peek
+   simplification (chunk-walk → straight memcpy) is genuine.
+
+3. **The safety win that motivated the rewrite in the first place**:
+   marshal.cpp -476 LOC, @unsafe LOC 382 → 10. That's the headline,
+   not the bench numbers.
+
+The bench numbers should be read as "no perf regression on bulk
+paths, modest perf win on string-heavy paths." The original
+chunk-list-headline 81% drain speedup was a measurement artifact
+of an unrelated bug, not a structural advantage of the Vec design.
+
