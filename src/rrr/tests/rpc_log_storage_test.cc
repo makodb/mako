@@ -87,14 +87,14 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
     Marshal m;
     {
         rrr::MarshalSink sink(&m);
-        rrr::BinaryWriteArchive writer(&sink);
+        rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
         original.save(writer);
     }
 
     LogEntry restored;
     {
         rrr::MarshalSource src(&m);
-        rrr::BinaryReadArchive reader(&src);
+        rrr::BinaryReadArchive reader(make_source_proxy(&src));
         restored.load(reader);
     }
 
@@ -116,7 +116,7 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
     Marshal m;
     {
         rrr::MarshalSink sink(&m);
-        rrr::BinaryWriteArchive writer(&sink);
+        rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
         original.save(writer);
     }
 

@@ -201,12 +201,12 @@ TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
   // are gone.
   Marshal m;
   MarshalSink sink(&m);
-  BinaryWriteArchive writer(&sink);
+  BinaryWriteArchive writer(make_sink_proxy(&sink));
   src.save(writer);
 
   janus::ViewData dst;
   MarshalSource source(&m);
-  BinaryReadArchive reader(&source);
+  BinaryReadArchive reader(make_source_proxy(&source));
   dst.load(reader);
 
   EXPECT_EQ(dst.view_.n_, 3);
@@ -358,14 +358,14 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
   Marshal m;
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive writer(&sink);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
     writer << outgoing;
   }
 
   rrr::AnyMessage incoming;
   {
     MarshalSource src(&m);
-    BinaryReadArchive reader(&src);
+    BinaryReadArchive reader(make_source_proxy(&src));
     reader >> incoming;
   }
   EXPECT_TRUE(incoming.is_a<janus::EmptyGraph>());
@@ -381,14 +381,14 @@ TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
   Marshal m;
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive writer(&sink);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
     writer << outgoing;
   }
 
   rrr::AnyMessage incoming;
   {
     MarshalSource src(&m);
-    BinaryReadArchive reader(&src);
+    BinaryReadArchive reader(make_source_proxy(&src));
     reader >> incoming;
   }
 

@@ -127,7 +127,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   Marshal m;
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive writer(&sink);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
     writer << outgoing;
   }
 
@@ -135,7 +135,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   AnyMessage incoming;
   {
     MarshalSource src(&m);
-    BinaryReadArchive reader(&src);
+    BinaryReadArchive reader(make_source_proxy(&src));
     reader >> incoming;
   }
 
@@ -172,13 +172,13 @@ TEST(AnyMessageTest, PackAsAdHocName) {
   Marshal m;
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive writer(&sink);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
     writer << outgoing;
   }
   AnyMessage incoming;
   {
     MarshalSource src(&m);
-    BinaryReadArchive reader(&src);
+    BinaryReadArchive reader(make_source_proxy(&src));
     reader >> incoming;
   }
   EXPECT_EQ(incoming.type_name(), "graph.alias.v1");
@@ -202,14 +202,14 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   Marshal m;
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive writer(&sink);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
     writer << outgoing;
   }
 
   AnyMessage incoming;
   {
     MarshalSource src(&m);
-    BinaryReadArchive reader(&src);
+    BinaryReadArchive reader(make_source_proxy(&src));
     reader >> incoming;
   }
   auto recovered = incoming.unpack<OtherPayload>();
@@ -237,7 +237,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   Marshal m;
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive ar(&sink);
+    BinaryWriteArchive ar(make_sink_proxy(&sink));
     ar << outgoing;
   }
 
@@ -245,7 +245,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   AnyMessage incoming;
   {
     MarshalSource source(&m);
-    BinaryReadArchive ar(&source);
+    BinaryReadArchive ar(make_source_proxy(&source));
     ar >> incoming;
   }
 
@@ -273,14 +273,14 @@ TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
   Marshal m;
   {
     MarshalSink sink(&m);
-    BinaryWriteArchive ar(&sink);
+    BinaryWriteArchive ar(make_sink_proxy(&sink));
     ar << outgoing;
   }
 
   AnyMessage incoming;
   {
     MarshalSource source(&m);
-    BinaryReadArchive ar(&source);
+    BinaryReadArchive ar(make_source_proxy(&source));
     ar >> incoming;
   }
 
