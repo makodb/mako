@@ -1652,15 +1652,21 @@ private:
 
 public:
 
-    // @unsafe - Convenience overload without callback (calls @unsafe request)
+    // @safe - Convenience overload; delegates to the @unsafe full request.
     template<typename F>
     FutureResult request(i32 rpc_id, F&& write_fn) const {
-        return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
+        // @unsafe { delegate to @unsafe request(rpc_id, attr, write_fn) }
+        {
+            return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
+        }
     }
 
-    // @unsafe - Convenience overload for requests with no arguments (calls @unsafe request)
+    // @safe - Convenience overload (no args); delegates to the @unsafe full request.
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        return request(rpc_id, attr, [](BinaryWriteArchive&) {});
+        // @unsafe { delegate to @unsafe request(rpc_id, attr, write_fn) }
+        {
+            return request(rpc_id, attr, [](BinaryWriteArchive&) {});
+        }
     }
 
     // =========================================================================
@@ -1844,11 +1850,15 @@ public:
         return FutureResult::Ok(final_fu);
     }
 
-    // @unsafe - Convenience overload without FutureAttr
+    // @safe - Convenience overload without FutureAttr; delegates to
+    // the @unsafe full request_with_options.
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       F&& write_fn) const {
-        return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
+        // @unsafe { delegate to @unsafe request_with_options(rpc_id, options, attr, write_fn) }
+        {
+            return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
+        }
     }
 
     // @safe - 4g3c3/4g3d: `ClientConnection` no longer owns an fd; the
@@ -2124,11 +2134,14 @@ public:
      * Set the buffering configuration for this client.
      * Controls whether requests are queued during disconnection.
      */
-    // @unsafe - Calls ClientConnection::set_buffering_config (interior mutability)
+    // @safe - RefCell ops + inner @unsafe set_buffering_config wrapped @unsafe.
     void set_buffering_config(const BufferingConfig& config) const {
-        auto guard = connection_.borrow();
-        if (guard->is_some()) {
-            guard->as_ref().unwrap()->set_buffering_config(config);  // @unsafe
+        // @unsafe { RefCell::borrow, Option::unwrap, @unsafe ClientConnection::set_buffering_config }
+        {
+            auto guard = connection_.borrow();
+            if (guard->is_some()) {
+                guard->as_ref().unwrap()->set_buffering_config(config);
+            }
         }
     }
 
@@ -2337,11 +2350,15 @@ public:
      *
      * @param callback Function to call on restart detection
      */
-    // @unsafe - Delegates to @unsafe ClientConnection::set_on_server_restart
+    // @safe - Inner ClientConnection::set_on_server_restart is @safe;
+    // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
     void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
-        auto guard = connection_.borrow();
-        if (guard->is_some()) {
-            guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
+        // @unsafe { RefCell::borrow, Option::unwrap }
+        {
+            auto guard = connection_.borrow();
+            if (guard->is_some()) {
+                guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
+            }
         }
     }
 
@@ -2353,11 +2370,15 @@ public:
      * @param new_id The new server instance ID
      * @return true if server restart was detected, false otherwise
      */
-    // @unsafe - Delegates to @unsafe ClientConnection::check_server_instance
+    // @safe - Inner ClientConnection::check_server_instance is @safe;
+    // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
     bool check_server_instance(uint64_t new_id) const {
-        auto guard = connection_.borrow();
-        if (guard->is_some()) {
-            return guard->as_ref().unwrap()->check_server_instance(new_id);
+        // @unsafe { RefCell::borrow, Option::unwrap }
+        {
+            auto guard = connection_.borrow();
+            if (guard->is_some()) {
+                return guard->as_ref().unwrap()->check_server_instance(new_id);
+            }
         }
         return false;
     }
@@ -3194,17 +3215,17 @@ void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const
   });
 }
 
-// @unsafe - Returns heartbeat config snapshot.
+// @safe - HeartbeatManager class is @safe; config() returns by value.
 HeartbeatConfig ClientConnection::heartbeat_config() const {
   return heartbeat_manager_.config();
 }
 
-// @unsafe - Configure circuit breaker and reset state.
+// @safe - CircuitBreaker class is @safe; set_config is @safe.
 void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
   circuit_breaker_.set_config(config);
 }
 
-// @unsafe - Returns circuit breaker config snapshot.
+// @safe - CircuitBreaker class is @safe; config() returns by value.
 CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
   return circuit_breaker_.config();
 }
@@ -3917,7 +3938,8 @@ RpcError ClientConnection::map_system_error(i32 err) {
   }
 }
 
-// @unsafe - Invoke callback manager error hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe;
+// map_system_error is @safe.
 void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const {
   if (!callback_manager_) {
     return;
@@ -3925,7 +3947,7 @@ void ClientConnection::invoke_error_callback(i32 err, const std::string& message
   callback_manager_->invoke_on_error(map_system_error(err), message);
 }
 
-// @unsafe - Invoke callback manager disconnected hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_disconnected_callback() const {
   if (!callback_manager_) {
     return;
@@ -3933,7 +3955,7 @@ void ClientConnection::invoke_disconnected_callback() const {
   callback_manager_->invoke_on_disconnected();
 }
 
-// @unsafe - Invoke callback manager reconnecting hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_reconnecting_callback() const {
   if (!callback_manager_) {
     return;
@@ -3941,7 +3963,7 @@ void ClientConnection::invoke_reconnecting_callback() const {
   callback_manager_->invoke_on_reconnecting();
 }
 
-// @unsafe - Invoke callback manager reconnected hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_reconnected_callback(bool success) const {
   if (!callback_manager_) {
     return;
@@ -3949,7 +3971,7 @@ void ClientConnection::invoke_reconnected_callback(bool success) const {
   callback_manager_->invoke_on_reconnected(success);
 }
 
-// @unsafe - Invoke callback manager connected hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_connected_callback() const {
   if (!callback_manager_) {
     return;
@@ -4134,19 +4156,27 @@ void Client::handle_free(i64 xid) const {
   }
 }
 
-// @unsafe - Pauses the connection
+// @safe - Inner ClientConnection::pause is @safe (Cell::set);
+// only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::pause() const {
-  auto guard = connection_.borrow();
-  if (guard->is_some()) {
-    guard->as_ref().unwrap()->pause();
+  // @unsafe { RefCell::borrow, Option::unwrap }
+  {
+    auto guard = connection_.borrow();
+    if (guard->is_some()) {
+      guard->as_ref().unwrap()->pause();
+    }
   }
 }
 
-// @unsafe - Resumes the connection
+// @safe - Inner ClientConnection::resume is @safe (Cell::set);
+// only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::resume() const {
-  auto guard = connection_.borrow();
-  if (guard->is_some()) {
-    guard->as_ref().unwrap()->resume();
+  // @unsafe { RefCell::borrow, Option::unwrap }
+  {
+    auto guard = connection_.borrow();
+    if (guard->is_some()) {
+      guard->as_ref().unwrap()->resume();
+    }
   }
 }
 
