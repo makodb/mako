@@ -716,18 +716,26 @@ class Reactor {
   rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
   // Host-scoped thread-local maps exposed via static accessor
-  // methods. The storage lives inside each accessor as a
-  // function-local `static thread_local`, which gives it
-  // COMDAT/vague linkage and avoids the duplicate-symbol trap that
-  // `static [inline] thread_local` class members fall into under the
-  // C++23 named-module attachment with clang-21. See
-  // `src/deptran/communicator.cc:363+` for the external consumer of
-  // `clients()`. With module-attached class-member storage, that
-  // consumer's TU and `reactor.cpp.o` both emit
-  // `rrr::Reactor@rrr.reactor::clients_` storage and the linker
-  // rejects the dup. With function-local storage there's still one
-  // copy per thread, but the accessor's inline body gets COMDAT
-  // dedup across TUs.
+  // methods. Storage lives inside each accessor as a function-local
+  // `static thread_local`, which carries COMDAT/vague linkage
+  // through the enclosing inline method.
+  //
+  // Why this pattern instead of `static thread_local M m_;` at class
+  // scope: under C++23 named modules + clang-21, a class-static TLS
+  // member declared WITHOUT `inline` (with the out-of-class definition
+  // in the impl file) is emitted as a STRONG global (`B`-class in
+  // `nm -C`) into every TU that imports the module and touches it.
+  // `src/deptran/communicator.cc` is one such consumer; with the bare
+  // `static thread_local` form, both `reactor.cpp.o` and
+  // `communicator.cc.o` emitted `rrr::Reactor@rrr.reactor::clients_`
+  // and the linker rejected the dup.
+  //
+  // `static inline thread_local M m_{};` at class scope DOES work —
+  // see `sp_reactor_th_` / `sp_disk_reactor_th_` / `sp_running_fiber_th_`
+  // and `PollThreadWorker::current_worker_` above/below, which are
+  // emitted with `W` (weak) linkage by every TU and deduped by the
+  // linker. The accessor form here is functionally equivalent but
+  // heavier; both would have fixed the original link error.
   static rusty::HashMap<std::string, rusty::Vec<PollableProxy>>& clients() {
     static thread_local rusty::HashMap<std::string,
                                        rusty::Vec<PollableProxy>>
