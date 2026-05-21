@@ -112,18 +112,24 @@ cleanup_processes() {
 
     sleep 3  # Give OS time to fully terminate processes and release ports
 
-    # Wait up to 60s for ports to be released. Listening sockets release
-    # immediately on kill, but TCP TIME_WAIT on previously-established
-    # connections to those ports (e.g. peer-to-peer Paxos/Raft sessions
-    # the killed dbtest had open) can hold the 4-tuple for 60s by
-    # default. SO_REUSEADDR on the new bind covers the TIME_WAIT case
-    # for listen sockets, but only after lsof reports the port free —
-    # i.e. nothing is currently bound to it. 10s was too short under
-    # CI load; bump to 60.
+    # Wait up to 60s for ports to be released. `lsof -i :PORT` only sees
+    # LISTEN / ESTABLISHED sockets — NOT TIME_WAIT — but TIME_WAIT on a
+    # previously-established 4-tuple to our listen port still makes
+    # bind() fail with AddressInUse even after the old process is gone.
+    # `ss -Htan` lists TCP sockets in every state including TIME_WAIT;
+    # filter by sport in any of the test port ranges.
     for i in {1..60}; do
-        if ! lsof -i :7001-8006 >/dev/null 2>&1 && ! lsof -i :31000-31100 >/dev/null 2>&1; then
-            break
-        fi
+        # `ss -Htan` output: state, recv-q, send-q, local-addr, peer-addr, ...
+        # Local-addr ends with ":PORT". Pull the trailing port and match.
+        busy_lines=$(ss -Htan 2>/dev/null | awk '
+            {
+                n = split($4, a, ":")
+                p = a[n] + 0
+                if ((p >= 7001 && p <= 8006) || (p >= 31000 && p <= 31100)) {
+                    print
+                }
+            }')
+        [ -z "$busy_lines" ] && break
         sleep 1
     done
 
