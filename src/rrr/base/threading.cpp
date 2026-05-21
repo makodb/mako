@@ -20,70 +20,107 @@ import rrr.basetypes;
 import rrr.debugging;
 import rrr.misc;
 
+// @safe
 export namespace rrr {
 
 
+// The Pthread_* wrappers below pass through a raw pointer (provided
+// by the caller) to a libc pthread_* function and `verify()` the
+// return code. The libc call itself isn't borrow-checked, so each
+// wrapper is `@safe` with the single libc call wrapped in an inline
+// `@unsafe` block.
+
+// @safe
 inline void Pthread_spin_init(pthread_spinlock_t* lock, int pshared) {
-    verify(pthread_spin_init(lock, pshared) == 0);
+    // @unsafe { libc pthread_spin_init }
+    { verify(pthread_spin_init(lock, pshared) == 0); }
 }
 
+// @safe
 inline void Pthread_spin_lock(pthread_spinlock_t* lock) {
-    verify(pthread_spin_lock(lock) == 0);
+    // @unsafe { libc pthread_spin_lock }
+    { verify(pthread_spin_lock(lock) == 0); }
 }
 
+// @safe
 inline void Pthread_spin_unlock(pthread_spinlock_t* lock) {
-    verify(pthread_spin_unlock(lock) == 0);
+    // @unsafe { libc pthread_spin_unlock }
+    { verify(pthread_spin_unlock(lock) == 0); }
 }
 
+// @safe
 inline void Pthread_spin_destroy(pthread_spinlock_t* lock) {
-    verify(pthread_spin_destroy(lock) == 0);
+    // @unsafe { libc pthread_spin_destroy }
+    { verify(pthread_spin_destroy(lock) == 0); }
 }
 
+// @safe
 inline void Pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
-    verify(pthread_mutex_init(mutex, attr) == 0);
+    // @unsafe { libc pthread_mutex_init }
+    { verify(pthread_mutex_init(mutex, attr) == 0); }
 }
 
+// @safe
 inline void Pthread_mutex_lock(pthread_mutex_t* mutex) {
-    verify(pthread_mutex_lock(mutex) == 0);
+    // @unsafe { libc pthread_mutex_lock }
+    { verify(pthread_mutex_lock(mutex) == 0); }
 }
 
+// @safe
 inline void Pthread_mutex_unlock(pthread_mutex_t* mutex) {
-    verify(pthread_mutex_unlock(mutex) == 0);
+    // @unsafe { libc pthread_mutex_unlock }
+    { verify(pthread_mutex_unlock(mutex) == 0); }
 }
 
+// @safe
 inline void Pthread_mutex_destroy(pthread_mutex_t* mutex) {
-    verify(pthread_mutex_destroy(mutex) == 0);
+    // @unsafe { libc pthread_mutex_destroy }
+    { verify(pthread_mutex_destroy(mutex) == 0); }
 }
 
+// @safe
 inline void Pthread_cond_init(pthread_cond_t* cond, const pthread_condattr_t* attr) {
-    verify(pthread_cond_init(cond, attr) == 0);
+    // @unsafe { libc pthread_cond_init }
+    { verify(pthread_cond_init(cond, attr) == 0); }
 }
 
+// @safe
 inline void Pthread_cond_destroy(pthread_cond_t* cond) {
-    verify(pthread_cond_destroy(cond) == 0);
+    // @unsafe { libc pthread_cond_destroy }
+    { verify(pthread_cond_destroy(cond) == 0); }
 }
 
+// @safe
 inline void Pthread_cond_signal(pthread_cond_t* cond) {
-    verify(pthread_cond_signal(cond) == 0);
+    // @unsafe { libc pthread_cond_signal }
+    { verify(pthread_cond_signal(cond) == 0); }
 }
 
+// @safe
 inline void Pthread_cond_broadcast(pthread_cond_t* cond) {
-    verify(pthread_cond_broadcast(cond) == 0);
+    // @unsafe { libc pthread_cond_broadcast }
+    { verify(pthread_cond_broadcast(cond) == 0); }
 }
 
+// @safe
 inline void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
-    verify(pthread_cond_wait(cond, mutex) == 0);
+    // @unsafe { libc pthread_cond_wait }
+    { verify(pthread_cond_wait(cond, mutex) == 0); }
 }
 
+// @safe
 inline void Pthread_create(pthread_t* thread,
                            const pthread_attr_t* attr,
                            void* (*func)(void*),
                            void* arg) {
-    verify(pthread_create(thread, attr, func, arg) == 0);
+    // @unsafe { libc pthread_create + raw function pointer }
+    { verify(pthread_create(thread, attr, func, arg) == 0); }
 }
 
+// @safe
 inline void Pthread_join(pthread_t thread, void** value_ptr) {
-    verify(pthread_join(thread, value_ptr) == 0);
+    // @unsafe { libc pthread_join + void** out-parameter }
+    { verify(pthread_join(thread, value_ptr) == 0); }
 }
 
 class Lockable: public NoCopy {
@@ -593,6 +630,7 @@ public:
 
 } // export namespace rrr
 
+// @safe
 namespace rrr {
 
 struct start_thread_pool_args {
@@ -600,6 +638,8 @@ struct start_thread_pool_args {
     int id_in_pool;
 };
 
+// @unsafe - pthread entry point: void* trampoline, C-style cast, raw delete,
+// nullptr return; trampoline contract is fixed by libc.
 void* ThreadPool::start_thread_pool(void* args) {
     start_thread_pool_args* t_args = (start_thread_pool_args *) args;
     t_args->thrpool->run_thread(t_args->id_in_pool);
@@ -741,6 +781,8 @@ struct GreaterByJobTime {
     }
 };
 
+// @unsafe - pthread entry point: void* trampoline, C-style cast, nullptr
+// return; trampoline contract is fixed by libc.
 void* RunLater::start_run_later(void* thiz) {
     RunLater* rl = (RunLater *) thiz;
     rl->run_later_loop();
@@ -834,6 +876,8 @@ void RunLater::try_one_job() {
     { Pthread_mutex_unlock(&m_); }
 }
 
+// @unsafe - calls non-borrow-checked try_one_job() (which is itself
+// @unsafe) and routes through `this` for member access.
 void RunLater::run_later_loop() {
     while (!should_stop_) {
         try_one_job();
@@ -852,6 +896,8 @@ void RunLater::run_later_loop() {
     }
 }
 
+// @unsafe - gettimeofday(&now, ...) takes address-of a stack-local;
+// jobs_/std::push_heap path also routes through raw iterators.
 int RunLater::run_later(double sec, rusty::Function<void()> f) {
     if (should_stop_) {
         return EPERM;
@@ -879,6 +925,7 @@ int RunLater::run_later(double sec, rusty::Function<void()> f) {
     return 0;
 }
 
+// @unsafe - gettimeofday(&now, ...) takes address-of a stack-local.
 double RunLater::max_wait() const {
     struct timeval now;
     gettimeofday(&now, nullptr);

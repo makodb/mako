@@ -593,7 +593,18 @@ up the next time that library work lands.
   body now analyzed as @safe by default; the inline @unsafe blocks
   on Event status mutation + Weak::upgrade + continue_fiber paths
   remain).
-- [ ] Pthread_* → rusty::sync::* wrappers
+- [x] Pthread_* wrappers — namespace `// @safe` umbrellas added on
+  both `export namespace rrr` (line 23) and the impl `namespace rrr`
+  (line 596). All 13 `Pthread_*` inline wrappers individually marked
+  `// @safe` with their single libc call wrapped in an inline
+  `// @unsafe { libc pthread_* }` block. Per-method `// @unsafe`
+  overrides added on the 5 implementation methods the analyzer
+  flagged: `ThreadPool::start_thread_pool`, `RunLater::start_run_later`,
+  `RunLater::run_later_loop`, `RunLater::run_later`,
+  `RunLater::max_wait`. Did NOT rename to `rusty::sync::*`
+  (refactor deferred — labeling sufficed to flip downstream
+  callers @safe by inheritance). ratio 63.5% → **65.3%**
+  (+201 @safe LOC).
 
 ### Phase 4 — stretch
 - [x] Marshal byte ops decision — **chose labeling (option 3 of the
