@@ -118,10 +118,11 @@ cleanup_processes() {
     # bind() fail with AddressInUse even after the old process is gone.
     # `ss -Htan` lists TCP sockets in every state including TIME_WAIT;
     # filter by sport in any of the test port ranges.
+    local last_busy_lines=""
     for i in {1..60}; do
         # `ss -Htan` output: state, recv-q, send-q, local-addr, peer-addr, ...
         # Local-addr ends with ":PORT". Pull the trailing port and match.
-        busy_lines=$(ss -Htan 2>/dev/null | awk '
+        last_busy_lines=$(ss -Htan 2>/dev/null | awk '
             {
                 n = split($4, a, ":")
                 p = a[n] + 0
@@ -129,9 +130,17 @@ cleanup_processes() {
                     print
                 }
             }')
-        [ -z "$busy_lines" ] && break
+        [ -z "$last_busy_lines" ] && break
         sleep 1
     done
+    if [ -n "$last_busy_lines" ]; then
+        echo "WARNING: ports still busy after 60s wait. Last ss snapshot:"
+        echo "$last_busy_lines"
+        echo "Processes (ss -tanp):"
+        ss -tanp 2>/dev/null | awk '
+            NR==1 || ($4 ~ /:(7001|7002|7003|7004|7005|7006|8006|3100[0-9]|310[0-9][0-9]|31100)$/)
+        '
+    fi
 
     cp *.log ~/results/$result/  2>/dev/null || true
     echo "Cleanup complete."
