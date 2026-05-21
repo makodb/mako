@@ -685,4 +685,17 @@ up the next time that library work lands.
   `Fiber::do_finalize`. The class-level annotation stays `// @unsafe`
   per the plan's "leave @unsafe" directive — only the trivial
   accessors flip. ratio 65.3% → **65.4%** (+10 @safe LOC).
-- [ ] rcc_rpc.h codegen rewrite
+- [x] rcc_rpc.h codegen rewrite — done in prior commits; this
+  iteration is just a documentation tick. Verified state:
+  `src/rrr/pylib/simplerpcgen/lang_cpp.py:193` emits
+  `rusty::Arc<rrr::Future>` (not `std::shared_ptr<rrr::Future>`) for
+  the generated TypedFuture wrappers; `src/deptran/rcc_rpc.h` contains
+  285 `rusty::Arc<...>` uses and **zero** `shared_ptr<...>` uses
+  (`grep -cE`). Downstream consumers (`communicator.h`, `coordinator.h`,
+  `procedure.h`, `paxos_worker.h`, `scheduler.h`, `RW_command.h`)
+  have migrated their RPC-facing payload types from
+  `shared_ptr<Marshallable>` to `janus::Command` and carry comments
+  describing the implicit-conversion shim; the rrr-side wire boundary
+  no longer touches `std::shared_ptr<Marshallable>`. ratio unchanged
+  at 65.4% (no LOC change in this commit — already credited in the
+  earlier landing).
