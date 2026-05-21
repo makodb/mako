@@ -715,8 +715,29 @@ class Reactor {
   rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
   rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
-  static thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> clients_;
-  static thread_local rusty::HashSet<std::string> dangling_ips_;
+  // Host-scoped thread-local maps exposed via static accessor
+  // methods. The storage lives inside each accessor as a
+  // function-local `static thread_local`, which gives it
+  // COMDAT/vague linkage and avoids the duplicate-symbol trap that
+  // `static [inline] thread_local` class members fall into under the
+  // C++23 named-module attachment with clang-21. See
+  // `src/deptran/communicator.cc:363+` for the external consumer of
+  // `clients()`. With module-attached class-member storage, that
+  // consumer's TU and `reactor.cpp.o` both emit
+  // `rrr::Reactor@rrr.reactor::clients_` storage and the linker
+  // rejects the dup. With function-local storage there's still one
+  // copy per thread, but the accessor's inline body gets COMDAT
+  // dedup across TUs.
+  static rusty::HashMap<std::string, rusty::Vec<PollableProxy>>& clients() {
+    static thread_local rusty::HashMap<std::string,
+                                       rusty::Vec<PollableProxy>>
+        instance{};
+    return instance;
+  }
+  static rusty::HashSet<std::string>& dangling_ips() {
+    static thread_local rusty::HashSet<std::string> instance{};
+    return instance;
+  }
   // Interior mutability using Cell<T> for safe const method access
   rusty::Cell<bool> looping_{false};
   rusty::Cell<bool> slow_{false};
@@ -1669,8 +1690,10 @@ inline void stackless_profile_report_periodic() {
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
 // Same for PollThreadWorker::current_worker_.
-thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> Reactor::clients_{};
-thread_local rusty::HashSet<std::string> Reactor::dangling_ips_{};
+// clients_ / dangling_ips_ are function-local static thread_local
+// inside Reactor::clients() / Reactor::dangling_ips() — same vague
+// linkage trick, but as accessor methods so the storage cannot get
+// emitted into importers of the module.
 SpinLock Reactor::trying_job_;
 
 // @safe - Returns current fiber with single-threaded reference counting
