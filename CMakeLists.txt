@@ -1512,18 +1512,14 @@ if(BUILD_TESTS)
     target_link_libraries(test_marshal ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_marshal COMMAND test_marshal)
 
-    # Marshal Microbenchmark (no gtest — standalone main; prints ns/op)
+    # Marshal Microbenchmark (no gtest — standalone main; prints ns/op).
+    # Measures the Vec<uint8_t>+read_pos Marshal — same harness used
+    # during the chunk-list → Vec rewrite (see
+    # docs/dev/marshal_perf_baseline.md).
     add_executable(bench_marshal src/rrr/tests/bench_marshal.cc)
     target_include_directories(bench_marshal PRIVATE ${TEST_INCLUDE_DIRS})
     target_compile_options(bench_marshal PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(bench_marshal ${RPC_TEST_LINK_LIBS} pthread)
-
-    # MarshalV2 Microbenchmark — same scenarios on the Cursor<Vec<u8>>
-    # prototype (rrr.marshal_v2). For A/B comparison vs bench_marshal.
-    add_executable(bench_marshal_v2 src/rrr/tests/bench_marshal_v2.cc)
-    target_include_directories(bench_marshal_v2 PRIVATE ${TEST_INCLUDE_DIRS})
-    target_compile_options(bench_marshal_v2 PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(bench_marshal_v2 ${RPC_TEST_LINK_LIBS} pthread)
 
     # MakoClientService Unit Tests
     add_executable(test_client_service tests/test_client_service.cc)
