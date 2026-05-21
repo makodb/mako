@@ -618,10 +618,12 @@ public:
 // Type alias for Arc weak reference to ClientConnection
 using WeakClientConnection = rusty::sync::Weak<ClientConnection>;
 
-// @unsafe - Client-side socket handler exposed to poll loop via Pollable proxy facade.
-// Similar to ServerConnection but for client-side connections
-// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
-// Note: connect() and handle_read() contain @unsafe blocks for socket I/O
+// @safe - Client-side socket handler exposed to poll loop via Pollable
+// proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
+// chains, fiber dispatch, cross-thread queues, or raw pointer ops carry
+// per-method `// @unsafe` overrides; the rest inherit `@safe` from this
+// class umbrella.
+// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership.
 class ClientConnection {
     friend class Client;
     friend class ClientPool;
