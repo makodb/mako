@@ -115,3 +115,67 @@ cmake --build build_clang21 --target bench_marshal bench_marshal_v2 -j32
 ./build_clang21/bench_marshal_v2  # prototype
 ```
 
+## Post-mortem: where did the 81% speedup actually come from?
+
+A follow-up investigation (after the swap landed) measured resource
+counters for the two implementations under the same bench load:
+
+| metric              | chunk-list | Vec-backed | ratio   |
+|---------------------|-----------:|-----------:|--------:|
+| wall time           |     2.31 s |     1.10 s |  2.1×   |
+| Max RSS             |  918,696 KB |   5,828 KB |  **158×** |
+| Minor page faults   |    232,304 |        310 |  **749×** |
+| mmap syscalls       |         80 |         52 |  1.5×   |
+
+The 918 MB RSS on the chunk-list version was the smoking gun.
+
+**Root cause**: `Marshal::read()` in the chunk-list implementation
+had a commented-out `//delete chnk;` line. Every read in steady
+state unlinked the consumed chunk from `head_` but never freed it.
+The destructor only walked from `head_` forward, so chunks already
+advanced past `head_` were leaked until process exit. The line had
+been commented out since 2020 (commit 19046c3d, "all changes" — the
+initial drop of the chunk implementation into the tree). No
+production caller ever ran a long-lived `Marshal` heavily enough
+for the leak to be noticeable; the microbench is the first
+workload that produced enough back-to-back read cycles to expose it.
+
+Working through the bench math: 50K iters × ~2 chunks consumed per
+iter × ~8 KB chunk ≈ 820 MB of leaked storage. The page-fault
+stalls from backing 232K newly-touched pages dominate wall-clock
+time on the drain pattern; that's the bulk of the headline 81%
+improvement.
+
+**Other factors** (real, but smaller without the leak):
+  - `shared_ptr<raw_bytes>` atomic refcount on chunk dtor (LOCK XADD
+    per chunk destruction, ~50-100 cycles each on x86).
+  - Triple-indirection per chunk byte access (`head_->data->ptr +
+    read_idx`) vs single-indirection on the Vec (`buf_.data() +
+    read_pos_`).
+  - Branch count: chunk read/write paths have ~5 branches per op
+    (head_==null?, fully_written?, n_write<n?, fully_read?,
+    tail_==head_?); the Vec path is mostly straight-line.
+  - Cache locality: two scattered 8 KB chunk allocations vs one
+    contiguous Vec.
+
+**Calibrated headline**: the Vec rewrite would still win every
+benchmark scenario even if the leak were fixed in the chunk-list
+implementation, but the gap on the drain pattern would shrink from
+5× to closer to 1.5-2× — the chunk-walk indirection and atomic
+ops account for a real but bounded fraction of the speedup.
+
+The rewrite **fixes the leak as a side effect**: Vec capacity is
+reused across reads (read() calls `buf_.clear()` when fully drained,
+which resets `size_` to 0 but keeps the allocation), so steady-state
+loops don't grow memory at all. This is a non-trivial latent-bug
+fix on top of the safety win.
+
+Diagnostic commands used:
+```
+# bench under /usr/bin/time -v
+/usr/bin/time -v ./build_clang21/bench_marshal
+
+# alloc syscall counts
+strace -c -e trace=brk,mmap,munmap,mprotect -- ./build_clang21/bench_marshal
+```
+
