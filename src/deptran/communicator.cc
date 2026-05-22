@@ -364,7 +364,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
           Reactor::clients().insert(rpc_cli->host(), rusty::Vec<rrr::PollableProxy>{});
         }
         auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
-        Reactor::clients().get(rpc_cli->host()).unwrap()->push(std::move(conn_proxy));
+        Reactor::clients().get(rpc_cli->host()).unwrap().push(std::move(conn_proxy));
       }
       Log_info("connect to site: %s success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);

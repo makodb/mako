@@ -750,8 +750,12 @@ private:
 
     // Reconnection policy and state
     ReconnectPolicy reconnect_policy_;
-    std::atomic<bool> reconnecting_{false};
-    std::atomic<bool> reconnect_abort_{false};
+    // mutable: std::atomic::store / .load are interior-mutable in
+    // semantics but std::atomic::store is not declared `const` (it has
+    // `volatile` overloads only). Mark mutable so const methods can
+    // legally call store() — atomic semantics make this race-free.
+    mutable std::atomic<bool> reconnecting_{false};
+    mutable std::atomic<bool> reconnect_abort_{false};
     std::string reconnect_address_;  // Address to reconnect to
 
     // Request buffering during disconnection
@@ -796,7 +800,7 @@ private:
 
     // @safe - Cancels all pending futures (has internal @unsafe blocks)
     // SAFETY: Protected by spinlock
-    void invalidate_pending_futures();
+    void invalidate_pending_futures() const;
 
     // @safe - Fail one pending future by xid if it still exists.
     // Safe to call repeatedly; only first call for a given xid has effect.
@@ -860,7 +864,7 @@ public:
      */
     // @safe - Closes connection and cleans up
     // SAFETY: Thread-safe cleanup sequence
-    void close();
+    void close() const;
 
     /**
      * Mark connection as closing without closing the socket.
@@ -868,7 +872,7 @@ public:
      * This avoids race conditions with pending CmdAddPollable commands.
      */
     // @safe - Just updates state machine
-    void mark_closing();
+    void mark_closing() const;
 
     // Public destructor for Arc compatibility
     // @safe - Simple destructor
@@ -1903,7 +1907,7 @@ public:
     bool handle_read();
 
     // @safe - Error handler
-    void handle_error();
+    void handle_error() const;
 
     // @safe - Check heartbeat tick and pending write update flag.
     bool check_pending_write_update() const;
@@ -2847,8 +2851,10 @@ ClientConnection::~ClientConnection() {
   invalidate_pending_futures();
 }
 
-// @unsafe - Cancels all pending futures with error, protected by SpinMutex
-void ClientConnection::invalidate_pending_futures() {
+// @unsafe - Cancels all pending futures with error, protected by SpinMutex.
+// const: every mutation goes through SpinMutex / Counter / Future's
+// own const-callable methods.
+void ClientConnection::invalidate_pending_futures() const {
   // Drain the slim async-callback slots first.  Move callbacks out
   // under the lock, then fire them outside the lock with ENOTCONN +
   // null reply view.
@@ -2913,7 +2919,9 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
 // bound channel proxy(ies). Close is idempotent (channel-layer
 // contract), so it's fine if `on_channel_closed_fan_out` then fires
 // `on_closed` after this method returns.
-void ClientConnection::close() {
+// const: every mutation routes through SpinMutex / Cell / Function /
+// heartbeat_manager_ — all interior-mutable.
+void ClientConnection::close() const {
   ConnectionState prev_state = state_machine_.state();
   const bool was_connected = state_machine_.is_connected();
   if (was_connected) {
@@ -2960,7 +2968,9 @@ void ClientConnection::close() {
 
 // @safe - StateMachine is @safe; only std::atomic::store and the call
 // into still-@unsafe invalidate_pending_futures need an @unsafe wrap.
-void ClientConnection::mark_closing() {
+// const: state_machine_, reconnect_abort_, and invalidate_pending_futures
+// are all const-callable.
+void ClientConnection::mark_closing() const {
   // @unsafe { std::atomic::store + invalidate_pending_futures (still @unsafe) }
   {
     reconnect_abort_.store(true, std::memory_order_release);
@@ -3209,10 +3219,9 @@ void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const
       return;
     }
     Log_warn("rrr::ClientConnection: heartbeat timeout for %s", conn->host().c_str());
-    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-    if (mut_conn != nullptr) {
-      mut_conn->handle_error();
-    }
+    // handle_error is const-callable; conn.get() returns const T* but
+    // that's fine now.
+    conn->handle_error();
   });
 }
 
@@ -3976,8 +3985,10 @@ void ClientConnection::invoke_connected_callback() const {
   callback_manager_->invoke_on_connected();
 }
 
-// @unsafe - Error handler - transitions to FAILED state
-void ClientConnection::handle_error() {
+// @unsafe - Error handler - transitions to FAILED state.
+// const: state_machine_, atomics (mutable), close/invoke_*_callback,
+// and the reconnect spawn are all callable through a const ref.
+void ClientConnection::handle_error() const {
   ConnectionState prev_state = state_machine_.state();
   const bool user_initiated_closing =
       prev_state == ConnectionState::DISCONNECTING ||
@@ -4134,8 +4145,8 @@ void Client::close() const {
       {
         auto conn_arc = guard->as_ref().unwrap().clone();
         auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
-          auto* mut_conn = const_cast<ClientConnection*>(conn_arc.get());
-          mut_conn->close();
+          // close() is const-callable; conn_arc.get() returns const T*.
+          conn_arc->close();
         }));
         auto close_job_base = rusty::Arc<Job>(close_job);
         poll_thread_worker_->add(std::move(close_job_base));

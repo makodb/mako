@@ -36,7 +36,11 @@ inline const char* connection_state_to_string(ConnectionState state) {
 class ConnectionStateMachine {
 private:
     rusty::Cell<ConnectionState> state_{ConnectionState::NEW};
-    rusty::Function<void(ConnectionState, ConnectionState)> on_state_change_;
+    // mutable: state-change callback registration happens through a
+    // const-callable setter; the body uses rusty::Function move-assign
+    // (no extra synchronization needed because set_on_state_change is
+    // called once at setup time and not concurrent with the firings).
+    mutable rusty::Function<void(ConnectionState, ConnectionState)> on_state_change_;
 
 public:
     ConnectionStateMachine() = default;
@@ -59,7 +63,10 @@ public:
         return is_valid_transition(current, new_state);
     }
 
-    bool transition_to(ConnectionState new_state) {
+    // const: state_ is rusty::Cell (interior-mutable); on_state_change_
+    // is mutable. The body's only writes are state_.set(...) and the
+    // callback invocation, both safe on a const StateMachine.
+    bool transition_to(ConnectionState new_state) const {
         ConnectionState current = state_.get();
 
         if (!is_valid_transition(current, new_state)) {
@@ -75,7 +82,8 @@ public:
         return true;
     }
 
-    void force_state(ConnectionState new_state) {
+    // const: same reason as transition_to.
+    void force_state(ConnectionState new_state) const {
         ConnectionState current = state_.get();
         state_.set(new_state);
 
@@ -84,7 +92,9 @@ public:
         }
     }
 
-    void set_on_state_change(rusty::Function<void(ConnectionState, ConnectionState)> callback) {
+    // const: on_state_change_ is mutable; one-shot registration at setup.
+    void set_on_state_change(
+        rusty::Function<void(ConnectionState, ConnectionState)> callback) const {
         on_state_change_ = std::move(callback);
     }
 
