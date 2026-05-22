@@ -538,17 +538,20 @@ class Event;
  * `fiber_context_{x86_64,aarch64}.cc` as raw assembly, and is invoked
  * through `fiber_task_t::resume()`/`yield_to_caller()`/`entry()` in
  * the impl section of this file. Those callers carry `// @unsafe`
- * annotations. The Fiber methods themselves (`run`, `yield_`,
- * `continue_`) are `// @safe` wrappers with their bodies in inner
- * `// @unsafe { ... }` blocks — quarantine pattern: callable from
- * @safe code, but the unsafe operation (the asm switch + raw thread-
- * local task save/restore) is captured at the wrapper boundary.
+ * annotations.
  *
- * @unsafe - Uses rusty::Rc ownership and mutable fields for interior mutability.
- *  Per-method overrides flip the trivial accessors (`finished`,
- *  `do_finalize`, ctor, dtor) to `@safe`; the rest stays at the class
- *  default (`@unsafe`) by design.
+ * Public API on Fiber (`run`, `yield_`, `continue_`, `create_run`,
+ * `current_fiber`, `sleep`, ctor/dtor/finished/do_finalize) is `@safe`
+ * — callers can use it from @safe code. Each method's body wraps its
+ * genuinely-unsafe internals (Rc/RefCell unwrap, fiber-runtime dispatch,
+ * std::bind / function-pointer construction) in inline `@unsafe { ... }`
+ * blocks. Two implementation-detail methods stay `@unsafe`:
+ *   - `run_wrapper(yield)`: invoked from the asm trampoline; the
+ *     contract is fixed.
+ *   - `create_run_impl(...)`: builds the heap-allocated task via raw
+ *     `new chunk` shapes the analyzer can't yet see through.
  */
+// @safe
 class Fiber {
  public:
   /**
