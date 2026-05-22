@@ -6,7 +6,7 @@ echo "========================================="
 echo "Testing 2-shard setup without replication using simpleTransactionRep"
 echo "========================================="
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 log_shard0="simple-shard0-localhost.log"
 log_shard1="simple-shard1-localhost.log"

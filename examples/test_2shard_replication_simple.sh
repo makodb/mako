@@ -15,7 +15,7 @@ if [ "$GDB_ENABLED" == "1" ]; then
     echo "[GDB] Debug mode enabled"
 fi
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 verification_marker="ALL VERIFICATIONS PASSED"
 log_s0_localhost="simple-shard0-localhost.log"

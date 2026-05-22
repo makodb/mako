@@ -92,14 +92,39 @@ sudo apt-get --assume-yes install pandoc
 # DPDK (if available)
 sudo apt-get --assume-yes install libdpdk-dev || echo "DPDK not available, skipping"
 
-# For rusty-cpp-checker and CMake module scanning: LLVM/Clang tools + Z3.
-sudo apt-get --assume-yes install llvm-18-dev libclang-18-dev clang-18 clang-tools-18 libz3-dev
-# Required by CMakeLists.txt forcing clang + -stdlib=libc++
-sudo apt-get --assume-yes install libc++-18-dev libc++abi-18-dev
+# Clang 21 from apt.llvm.org (Ubuntu 24.04 noble ships clang 18, which doesn't
+# support alias-template CTAD that the rusty-cpp platform::threading aliases
+# rely on — see CMakeLists.txt compiler-version check).
+sudo apt-get --assume-yes install software-properties-common gnupg
+wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+    | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+    | sudo tee /etc/apt/sources.list.d/llvm-21.list > /dev/null
+sudo apt-get update
 
-# Set up alternatives for clang/llvm
-sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100 || true
-sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100 || true
-sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-18 100 || true
+# For rusty-cpp-checker and CMake module scanning: LLVM/Clang tools + Z3.
+sudo apt-get --assume-yes install llvm-21-dev libclang-21-dev clang-21 clang-tools-21 libz3-dev
+# Required by CMakeLists.txt forcing clang + -stdlib=libc++
+sudo apt-get --assume-yes install libc++-21-dev libc++abi-21-dev
+
+# Set up alternatives for clang/llvm — clang-21 wins, with clang-18 left as a
+# lower-priority fallback if it happens to be installed.
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 200 || true
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 200 || true
+sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-21 200 || true
+
+# apt.llvm.org's libc++-21-dev splits the layout: libc++.modules.json lands
+# in /lib/x86_64-linux-gnu/ while the .cppm files live in
+# /usr/lib/llvm-21/share/libc++/v1/. The JSON's relative `source-path`
+# entries (`../share/libc++/v1/std.cppm`) resolve against the JSON's
+# directory, producing /lib/share/libc++/v1/std.cppm — which doesn't exist
+# — and CMake's CXX_MODULE_STD discovery aborts ("Cannot find source file").
+# Rewrite the relative paths to absolute so discovery works regardless of
+# where clang -print-file-name finds the JSON.
+MODULES_JSON="/lib/x86_64-linux-gnu/libc++.modules.json"
+if [ -f "${MODULES_JSON}" ]; then
+    sudo sed -i 's|"\.\./share/libc++/v1|"/usr/lib/llvm-21/share/libc++/v1|g' "${MODULES_JSON}"
+    echo "Patched ${MODULES_JSON} to use absolute source paths."
+fi
 
 echo "Package installation complete"

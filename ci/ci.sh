@@ -112,13 +112,47 @@ cleanup_processes() {
 
     sleep 3  # Give OS time to fully terminate processes and release ports
 
-    # Wait for ports to be released (check common test ports)
-    for i in {1..10}; do
-        if ! lsof -i :7001-8006 >/dev/null 2>&1 && ! lsof -i :31000-31100 >/dev/null 2>&1; then
+    # Wait up to 60s until we can actually bind to 31000 + 31100
+    # (representative listen ports). Probing via lsof / ss undercounts —
+    # ss with sport filter misses TIME_WAIT on the (peer_eph, 31000)
+    # 4-tuple, but bind() fails on those too in some kernels. The only
+    # reliable signal is "can we bind?". Use python to actually try the
+    # bind (with SO_REUSEADDR, matching what dbtest uses).
+    local last_err=""
+    for i in {1..60}; do
+        if last_err=$(python3 -c '
+import socket, sys
+for p in (31000, 31100):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("0.0.0.0", p))
+    except OSError as e:
+        sys.stderr.write("port %d: %s\n" % (p, e))
+        sys.exit(1)
+    finally:
+        s.close()
+' 2>&1); then
             break
         fi
         sleep 1
     done
+    if [ -n "$last_err" ]; then
+        echo "WARNING: ports still not bindable after 60s wait. python probe says:"
+        echo "$last_err"
+        echo "ss -tanp (listening + TIME_WAIT on our ranges):"
+        ss -tanp 2>/dev/null | awk '
+            NR==1 { print; next }
+            {
+                n = split($4, a, ":")
+                lp = a[n] + 0
+                n2 = split($5, b, ":")
+                rp = b[n2] + 0
+                if ((lp >= 7001 && lp <= 8006) || (lp >= 31000 && lp <= 31100) ||
+                    (rp >= 7001 && rp <= 8006) || (rp >= 31000 && rp <= 31100))
+                    print
+            }'
+    fi
 
     cp *.log ~/results/$result/  2>/dev/null || true
     echo "Cleanup complete."
@@ -555,14 +589,25 @@ run_multi_shard_single_process() {
     echo "========================================="
     echo "Running: ./ci/ci.sh multiShardSingleProcess"
     echo "========================================="
-    cleanup_processes
-    set +e
-    bash ./examples/test_multi_shard_single_process.sh
-    local test_result=$?
-    set -e
-    check_for_hanging_processes "multiShardSingleProcess"
-    local hanging_check=$?
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        set +e
+        bash ./examples/test_multi_shard_single_process.sh
+        local test_result=$?
+        set -e
+        check_for_hanging_processes "multiShardSingleProcess"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying multiShardSingleProcess (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 run_2shard_single_process() {

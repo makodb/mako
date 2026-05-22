@@ -838,6 +838,25 @@ inline basic_table<P>::basic_table()
     : root_(0) {
 }
 
+// @safe - move ctor: take ownership of other's root_ and leave other empty.
+template <typename P>
+inline basic_table<P>::basic_table(basic_table<P>&& other) noexcept
+    : root_(other.root_) {
+    other.root_ = 0;
+}
+
+// @safe - move assignment: source must not own a tree after this returns.
+// Caller is responsible for having destroy()'d the destination's prior
+// tree if it had one (we can't do it here without a threadinfo).
+template <typename P>
+inline basic_table<P>& basic_table<P>::operator=(basic_table<P>&& other) noexcept {
+    if (this != &other) {
+        root_ = other.root_;
+        other.root_ = 0;
+    }
+    return *this;
+}
+
 // @safe - returns rusty::MutPtr (borrow-checked pointer type)
 template <typename P>
 inline rusty::MutPtr<node_base<P>> basic_table<P>::root() const {

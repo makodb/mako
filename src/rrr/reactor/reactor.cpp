@@ -728,40 +728,13 @@ class Reactor {
   rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
   rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
-  // Host-scoped thread-local maps exposed via static accessor
-  // methods. Storage lives inside each accessor as a function-local
-  // `static thread_local`, which carries COMDAT/vague linkage
-  // through the enclosing inline method.
-  //
-  // Why this pattern instead of `static thread_local M m_;` at class
-  // scope: under C++23 named modules + clang-21, a class-static TLS
-  // member declared WITHOUT `inline` (with the out-of-class definition
-  // in the impl file) is emitted as a STRONG global (`B`-class in
-  // `nm -C`) into every TU that imports the module and touches it.
-  // `src/deptran/communicator.cc` is one such consumer; with the bare
-  // `static thread_local` form, both `reactor.cpp.o` and
-  // `communicator.cc.o` emitted `rrr::Reactor@rrr.reactor::clients_`
-  // and the linker rejected the dup.
-  //
-  // `static inline thread_local M m_{};` at class scope DOES work —
-  // see `sp_reactor_th_` / `sp_disk_reactor_th_` / `sp_running_fiber_th_`
-  // and `PollThreadWorker::current_worker_` above/below, which are
-  // emitted with `W` (weak) linkage by every TU and deduped by the
-  // linker. The accessor form here is functionally equivalent but
-  // heavier; both would have fixed the original link error.
-  // @safe - Returns reference to function-local thread_local storage;
-  // default-constructed rusty HashMap/HashSet, no unsafe ops.
-  static rusty::HashMap<std::string, rusty::Vec<PollableProxy>>& clients() {
-    static thread_local rusty::HashMap<std::string,
-                                       rusty::Vec<PollableProxy>>
-        instance{};
-    return instance;
-  }
-  // @safe - Returns reference to function-local thread_local storage.
-  static rusty::HashSet<std::string>& dangling_ips() {
-    static thread_local rusty::HashSet<std::string> instance{};
-    return instance;
-  }
+  // `inline` keeps these in vague linkage — see sp_reactor_th_ above for why.
+  // (Function-local-static accessor `clients()` was used during the
+  // module-attached TLS dup-symbol investigation; the `static inline
+  // thread_local` pattern at class scope is the cleaner equivalent fix
+  // that matches sp_reactor_th_ et al.)
+  static inline thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> clients_{};
+  static inline thread_local rusty::HashSet<std::string> dangling_ips_{};
   // Interior mutability using Cell<T> for safe const method access
   rusty::Cell<bool> looping_{false};
   rusty::Cell<bool> slow_{false};
@@ -1719,11 +1692,7 @@ inline void stackless_profile_report_periodic() {
 
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
-// Same for PollThreadWorker::current_worker_.
-// clients_ / dangling_ips_ are function-local static thread_local
-// inside Reactor::clients() / Reactor::dangling_ips() — same vague
-// linkage trick, but as accessor methods so the storage cannot get
-// emitted into importers of the module.
+// Same for PollThreadWorker::current_worker_, clients_, and dangling_ips_.
 SpinLock Reactor::trying_job_;
 
 // @safe - Returns current fiber with single-threaded reference counting

@@ -77,6 +77,16 @@ public:
     tl_runtime_id = -1;
   }
 
+  /**
+   * Non-lazy variant of core_id(): returns the previously-assigned core
+   * ID for this thread within the *current* runtime, or -1 if no
+   * assignment exists yet (either never allocated, or allocated for a
+   * different runtime). Unlike core_id() this never triggers an
+   * allocation, so it never aborts on cap exhaustion. Pair with
+   * SiloRuntime::try_register_current_thread() for graceful init.
+   */
+  static int try_current_core_id();
+
   // actual number of CPUs online for the system
   static unsigned num_cpus_online();
 

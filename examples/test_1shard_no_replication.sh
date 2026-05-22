@@ -12,7 +12,7 @@ echo "========================================="
 echo "Testing 1-shard setup without replication"
 echo "========================================="
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 script_name="$(basename "$0")"
 binary_path="./${BUILD_DIR:-build}/dbtest"
 SHARD0_PID=""

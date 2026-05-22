@@ -1,13 +1,22 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <rusty/box.hpp>
+#include <rusty/hashmap.hpp>
+#include <rusty/thread.hpp>
+#include <rusty/vec.hpp>
 
+#include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
 
+// Required by Masstree's RCU machinery when concurrent_btree is used.
+volatile mrcu_epoch_type globalepoch = 1;
+
 using PerfTree = single_threaded_btree;
+using PerfTreeMT = concurrent_btree;
 
 struct ScenarioResult {
   std::string name;
@@ -19,11 +28,17 @@ struct BenchmarkConfig {
   size_t key_count = 1 << 15;
   size_t lookup_rounds = 4;
   size_t scan_window = 256;
+  // Each scenario is run `repetitions` times; the best (max ops/sec) is
+  // reported. Higher reps trade wall time for noise resistance.
+  size_t repetitions = 1;
+  // Thread counts for the concurrent_btree scenarios. Empty disables
+  // them entirely (single-thread scenarios still run).
+  rusty::Vec<size_t> thread_counts;
 };
 
 struct BenchmarkSummary {
   BenchmarkConfig config;
-  std::vector<ScenarioResult> results;
+  rusty::Vec<ScenarioResult> results;
 };
 
 namespace {
@@ -46,42 +61,59 @@ double OpsPerSecond(size_t ops, std::chrono::duration<double> elapsed) {
 
 class StorageBank {
  public:
-  explicit StorageBank(size_t n) : slots_(n) {}
+  // Eager-allocate so per-key allocation cost is paid once at construction,
+  // not measured inside the benchmarked loop.
+  explicit StorageBank(size_t n) : slots_(rusty::Vec<rusty::Box<uint64_t>>::with_capacity(n)) {
+    for (size_t i = 0; i < n; ++i) slots_.push(rusty::Box<uint64_t>::make(i));
+  }
 
   PerfTree::value_type ValueFor(size_t idx) {
-    auto& slot = slots_[idx];
-    if (!slot) {
-      slot = std::make_unique<uint64_t>(idx);
-    }
-    return reinterpret_cast<PerfTree::value_type>(slot.get());
+    return reinterpret_cast<PerfTree::value_type>(slots_[idx].get());
   }
 
  private:
-  std::vector<std::unique_ptr<uint64_t>> slots_;
+  rusty::Vec<rusty::Box<uint64_t>> slots_;
 };
 
 class BenchmarkHarness {
  public:
   explicit BenchmarkHarness(BenchmarkConfig cfg)
-      : cfg_(cfg) {
-    keys_.reserve(cfg_.key_count);
+      : cfg_(std::move(cfg)),
+        keys_(rusty::Vec<u64_varkey>::with_capacity(cfg_.key_count)),
+        sequential_order_(rusty::Vec<size_t>::with_capacity(cfg_.key_count)) {
     for (size_t i = 0; i < cfg_.key_count; ++i) {
-      keys_.emplace_back(static_cast<uint64_t>(i));
+      keys_.push(u64_varkey(static_cast<uint64_t>(i)));
+      sequential_order_.push(i);
     }
-    sequential_order_.resize(cfg_.key_count);
-    std::iota(sequential_order_.begin(), sequential_order_.end(), 0);
   }
 
   BenchmarkSummary RunAll() {
     BenchmarkSummary summary;
     summary.config = cfg_;
-    summary.results.push_back(RunSequentialInsert());
-    summary.results.push_back(RunRandomInsert());
-    summary.results.push_back(RunRandomLookup());
-    summary.results.push_back(RunMixedReadWrite());
-    summary.results.push_back(RunRangeScan());
-    summary.results.push_back(RunSequentialRemove());
+    summary.results.push(BestOf([this]{ return RunSequentialInsert(); }));
+    summary.results.push(BestOf([this]{ return RunRandomInsert(); }));
+    summary.results.push(BestOf([this]{ return RunRandomLookup(); }));
+    summary.results.push(BestOf([this]{ return RunMixedReadWrite(); }));
+    summary.results.push(BestOf([this]{ return RunRangeScan(); }));
+    summary.results.push(BestOf([this]{ return RunSequentialRemove(); }));
+    for (size_t t : cfg_.thread_counts) {
+      summary.results.push(BestOf([this, t]{ return RunParallelInsert(t); }));
+      summary.results.push(BestOf([this, t]{ return RunParallelLookup(t); }));
+      summary.results.push(BestOf([this, t]{ return RunParallelMixed(t); }));
+    }
     return summary;
+  }
+
+  template <typename F>
+  ScenarioResult BestOf(F&& f) {
+    ScenarioResult best{};
+    for (size_t r = 0; r < cfg_.repetitions; ++r) {
+      ScenarioResult r_now = f();
+      if (r == 0 || r_now.ops_per_sec > best.ops_per_sec) {
+        best = r_now;
+      }
+    }
+    return best;
   }
 
  private:
@@ -114,7 +146,7 @@ class BenchmarkHarness {
     StorageBank bank(cfg_.key_count);
     PopulateTree(&tree, &bank, sequential_order_);
 
-    std::vector<size_t> order = sequential_order_;
+    auto order = sequential_order_;
     std::shuffle(order.begin(), order.end(), rng_);
 
     PerfTree::value_type tmp{};
@@ -213,15 +245,110 @@ class BenchmarkHarness {
   }
 
   void PopulateTree(PerfTree* tree, StorageBank* bank,
-                    const std::vector<size_t>& order) {
+                    const rusty::Vec<size_t>& order) {
     for (size_t idx : order) {
       tree->insert(keys_[idx], bank->ValueFor(idx));
     }
   }
 
+  // ---- Multi-threaded scenarios on concurrent_btree --------------------
+  //
+  // Values are encoded into the pointer itself (uintptr_t) so no per-op
+  // heap allocation distorts the measurement. Threads launch under a
+  // single atomic "go" flag so the wall-clock interval used for ops/sec
+  // brackets the parallel work, not the thread spin-up.
+
+  static PerfTreeMT::value_type EncodeValue(uint64_t v) {
+    return reinterpret_cast<PerfTreeMT::value_type>(static_cast<uintptr_t>(v));
+  }
+
+  static std::string ScenarioName(const char* base, size_t threads) {
+    std::ostringstream os;
+    os << base << "_t" << threads;
+    return os.str();
+  }
+
+  template <typename WorkerFn>
+  static std::chrono::nanoseconds RunParallel(size_t threads, WorkerFn&& fn) {
+    std::atomic<bool> go{false};
+    auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(threads);
+    for (size_t t = 0; t < threads; ++t) {
+      workers.push(rusty::thread::spawn([&, t]() {
+        while (!go.load(std::memory_order_acquire)) {
+          rusty::thread::yield_now();
+        }
+        fn(t);
+      }));
+    }
+    auto wall_start = std::chrono::steady_clock::now();
+    go.store(true, std::memory_order_release);
+    for (auto& w : workers) { auto _ = w.join(); }
+    return std::chrono::steady_clock::now() - wall_start;
+  }
+
+  ScenarioResult RunParallelInsert(size_t threads) {
+    PerfTreeMT tree;
+    const size_t per_thread = cfg_.key_count / threads;
+    const size_t total = per_thread * threads;
+    auto dur = RunParallel(threads, [&](size_t tid) {
+      const uint64_t base = static_cast<uint64_t>(tid) * per_thread;
+      for (size_t i = 0; i < per_thread; ++i) {
+        const uint64_t k = base + i;
+        tree.insert(u64_varkey(k), EncodeValue(k));
+      }
+    });
+    return {ScenarioName("parallel_insert", threads),
+            OpsPerSecond(total, dur), total};
+  }
+
+  ScenarioResult RunParallelLookup(size_t threads) {
+    PerfTreeMT tree;
+    for (uint64_t k = 0; k < cfg_.key_count; ++k) {
+      tree.insert(u64_varkey(k), EncodeValue(k));
+    }
+    const size_t per_thread = cfg_.key_count * cfg_.lookup_rounds / threads;
+    const size_t total = per_thread * threads;
+    auto dur = RunParallel(threads, [&](size_t tid) {
+      std::mt19937_64 rng(0xA5A5'0000ull ^ tid);
+      std::uniform_int_distribution<uint64_t> pick(0, cfg_.key_count - 1);
+      PerfTreeMT::value_type out = nullptr;
+      for (size_t i = 0; i < per_thread; ++i) {
+        tree.search(u64_varkey(pick(rng)), out);
+      }
+    });
+    return {ScenarioName("parallel_lookup", threads),
+            OpsPerSecond(total, dur), total};
+  }
+
+  ScenarioResult RunParallelMixed(size_t threads) {
+    PerfTreeMT tree;
+    for (uint64_t k = 0; k < cfg_.key_count; ++k) {
+      tree.insert(u64_varkey(k), EncodeValue(k));
+    }
+    const size_t per_thread = cfg_.key_count * cfg_.lookup_rounds / threads;
+    const size_t total = per_thread * threads;
+    constexpr double kReadRatio = 0.8;
+    auto dur = RunParallel(threads, [&](size_t tid) {
+      std::mt19937_64 rng(0xC1C1'0000ull ^ tid);
+      std::uniform_int_distribution<uint64_t> pick(0, cfg_.key_count - 1);
+      std::uniform_real_distribution<double> mix(0.0, 1.0);
+      PerfTreeMT::value_type out = nullptr;
+      for (size_t i = 0; i < per_thread; ++i) {
+        const uint64_t k = pick(rng);
+        if (mix(rng) < kReadRatio) {
+          tree.search(u64_varkey(k), out);
+        } else {
+          tree.insert(u64_varkey(k), EncodeValue(k));
+        }
+      }
+    });
+    return {ScenarioName("parallel_mixed", threads),
+            OpsPerSecond(total, dur), total};
+  }
+
   BenchmarkConfig cfg_;
-  std::vector<u64_varkey> keys_;
-  std::vector<size_t> sequential_order_;
+  rusty::Vec<u64_varkey> keys_;
+  rusty::Vec<size_t> sequential_order_;
   std::mt19937_64 rng_{42};
 };
 
@@ -238,15 +365,16 @@ void WriteJson(const BenchmarkSummary& summary, const std::string& output_path) 
   out << "  \"config\": {\n";
   out << "    \"key_count\": " << summary.config.key_count << ",\n";
   out << "    \"lookup_rounds\": " << summary.config.lookup_rounds << ",\n";
-  out << "    \"scan_window\": " << summary.config.scan_window << "\n";
+  out << "    \"scan_window\": " << summary.config.scan_window << ",\n";
+  out << "    \"repetitions\": " << summary.config.repetitions << "\n";
   out << "  },\n";
   out << "  \"results\": [\n";
-  for (size_t i = 0; i < summary.results.size(); ++i) {
+  for (size_t i = 0; i < summary.results.len(); ++i) {
     const auto& result = summary.results[i];
     out << "    { \"name\": \"" << result.name << "\", "
         << "\"ops_per_sec\": " << result.ops_per_sec << ", "
         << "\"operations\": " << result.operations << " }";
-    if (i + 1 != summary.results.size()) {
+    if (i + 1 != summary.results.len()) {
       out << ",";
     }
     out << "\n";
@@ -255,7 +383,7 @@ void WriteJson(const BenchmarkSummary& summary, const std::string& output_path) 
   out << "}\n";
 }
 
-std::unordered_map<std::string, double> LoadBaseline(const std::string& path) {
+rusty::HashMap<std::string, double> LoadBaseline(const std::string& path) {
   std::ifstream in(path);
   if (!in) {
     throw std::runtime_error("failed to open baseline file: " + path);
@@ -263,7 +391,7 @@ std::unordered_map<std::string, double> LoadBaseline(const std::string& path) {
   std::stringstream buffer;
   buffer << in.rdbuf();
   std::string content = buffer.str();
-  std::unordered_map<std::string, double> metrics;
+  rusty::HashMap<std::string, double> metrics;
   size_t pos = 0;
   while ((pos = content.find("\"name\"", pos)) != std::string::npos) {
     auto name_start = content.find('"', pos + 6);
@@ -286,7 +414,7 @@ std::unordered_map<std::string, double> LoadBaseline(const std::string& path) {
     auto ops_end = content.find_first_of(",}\n", ops_pos + 1);
     std::string token = content.substr(ops_pos + 1, ops_end - ops_pos - 1);
     try {
-      metrics[name] = std::stod(token);
+      metrics.insert(std::move(name), std::stod(token));
     } catch (...) {
       // Ignore parse failures.
     }
@@ -295,27 +423,67 @@ std::unordered_map<std::string, double> LoadBaseline(const std::string& path) {
   return metrics;
 }
 
-void PrintComparison(const BenchmarkSummary& summary,
-                     const std::unordered_map<std::string, double>& baseline) {
+// Returns the worst (most negative) percentage delta across all
+// scenarios present in both `summary` and `baseline`. A return of -3.4
+// means "the worst-regressed scenario is 3.4 % slower than baseline."
+// Scenarios missing from baseline are skipped (no comparison possible).
+double PrintComparison(const BenchmarkSummary& summary,
+                       const rusty::HashMap<std::string, double>& baseline) {
   std::cout << "Performance comparison vs. baseline:\n";
+  double worst_delta_pct = 0.0;
+  bool any_compared = false;
   for (const auto& result : summary.results) {
-    auto it = baseline.find(result.name);
-    if (it == baseline.end()) {
+    auto v_ptr = baseline.get(result.name);
+    if (v_ptr.is_none()) {
       std::cout << "  " << result.name << ": no baseline\n";
       continue;
     }
-    double delta = result.ops_per_sec - it->second;
-    double pct = it->second == 0.0 ? 0.0 : (delta / it->second) * 100.0;
+    double baseline_val = *v_ptr.unwrap();
+    double delta = result.ops_per_sec - baseline_val;
+    double pct = baseline_val == 0.0 ? 0.0 : (delta / baseline_val) * 100.0;
     std::cout << "  " << result.name << ": current=" << result.ops_per_sec
-              << " baseline=" << it->second << " ("
+              << " baseline=" << baseline_val << " ("
               << std::fixed << std::setprecision(2) << pct << "%)\n";
+    if (!any_compared || pct < worst_delta_pct) {
+      worst_delta_pct = pct;
+      any_compared = true;
+    }
   }
+  return any_compared ? worst_delta_pct : 0.0;
 }
 
 void PrintUsage(const char* prog) {
-  std::cout << "Usage: " << prog
-            << " [--keys N] [--lookup-rounds M] [--scan-window W]"
-            << " [--output file] [--baseline file]\n";
+  std::cout << "Usage: " << prog << "\n"
+            << "  [--keys N]              keyspace size (default 32768)\n"
+            << "  [--lookup-rounds M]     iterations for lookup/mixed/scan (default 4)\n"
+            << "  [--scan-window W]       range-scan width (default 256)\n"
+            << "  [--repetitions R]       run each scenario R times; report best (default 1)\n"
+            << "  [--threads LIST]        comma-separated thread counts for the\n"
+            << "                          concurrent_btree scenarios, e.g. \"1,2,4,8\"\n"
+            << "                          (default: no multi-thread scenarios)\n"
+            << "  [--output file]         write per-scenario JSON results\n"
+            << "  [--baseline file]       compare against earlier --output file\n"
+            << "  [--fail-on-regress PCT] with --baseline, exit 2 if any scenario\n"
+            << "                          is more than PCT %% slower (default off)\n";
+}
+
+rusty::Vec<size_t> ParseThreadList(const std::string& s) {
+  rusty::Vec<size_t> out;
+  size_t i = 0;
+  while (i < s.size()) {
+    size_t j = s.find(',', i);
+    if (j == std::string::npos) j = s.size();
+    if (j > i) {
+      try {
+        size_t n = std::stoull(s.substr(i, j - i));
+        if (n > 0) out.push(n);
+      } catch (...) {
+        throw std::runtime_error("invalid --threads list: " + s);
+      }
+    }
+    i = j + 1;
+  }
+  return out;
 }
 
 }  // namespace
@@ -324,6 +492,11 @@ int main(int argc, char** argv) {
   BenchmarkConfig config;
   std::string output_path;
   std::string baseline_path;
+  // Regression threshold in percent (positive number). When set
+  // alongside --baseline, the binary exits 1 if any scenario is more
+  // than this many percent slower than the baseline. A negative or
+  // unset value disables the gate.
+  double fail_on_regress_pct = -1.0;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -333,10 +506,16 @@ int main(int argc, char** argv) {
       config.lookup_rounds = std::stoull(argv[++i]);
     } else if (arg == "--scan-window" && i + 1 < argc) {
       config.scan_window = std::stoull(argv[++i]);
+    } else if (arg == "--repetitions" && i + 1 < argc) {
+      config.repetitions = std::stoull(argv[++i]);
+    } else if (arg == "--threads" && i + 1 < argc) {
+      config.thread_counts = ParseThreadList(argv[++i]);
     } else if (arg == "--output" && i + 1 < argc) {
       output_path = argv[++i];
     } else if (arg == "--baseline" && i + 1 < argc) {
       baseline_path = argv[++i];
+    } else if (arg == "--fail-on-regress" && i + 1 < argc) {
+      fail_on_regress_pct = std::stod(argv[++i]);
     } else if (arg == "--help") {
       PrintUsage(argv[0]);
       return 0;
@@ -347,8 +526,14 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (config.key_count == 0 || config.lookup_rounds == 0) {
-    std::cerr << "key count and lookup rounds must be positive numbers.\n";
+  if (config.key_count == 0 || config.lookup_rounds == 0 ||
+      config.repetitions == 0) {
+    std::cerr << "key-count, lookup-rounds, and repetitions must be positive.\n";
+    return 1;
+  }
+
+  if (fail_on_regress_pct >= 0.0 && baseline_path.empty()) {
+    std::cerr << "--fail-on-regress requires --baseline.\n";
     return 1;
   }
 
@@ -358,7 +543,8 @@ int main(int argc, char** argv) {
 
     std::cout << "Masstree micro-benchmark (keys=" << config.key_count
               << ", lookup_rounds=" << config.lookup_rounds
-              << ", scan_window=" << config.scan_window << ")\n";
+              << ", scan_window=" << config.scan_window
+              << ", repetitions=" << config.repetitions << ")\n";
     for (const auto& result : summary.results) {
       std::cout << "  " << result.name << " = "
                 << result.ops_per_sec << " ops/sec ("
@@ -369,7 +555,13 @@ int main(int argc, char** argv) {
 
     if (!baseline_path.empty()) {
       auto baseline = LoadBaseline(baseline_path);
-      PrintComparison(summary, baseline);
+      double worst_pct = PrintComparison(summary, baseline);
+      if (fail_on_regress_pct >= 0.0 && worst_pct < -fail_on_regress_pct) {
+        std::cerr << "REGRESSION: worst scenario is " << std::fixed
+                  << std::setprecision(2) << worst_pct
+                  << "%, threshold is -" << fail_on_regress_pct << "%\n";
+        return 2;
+      }
     }
   } catch (const std::exception& e) {
     std::cerr << "Benchmark failed: " << e.what() << "\n";

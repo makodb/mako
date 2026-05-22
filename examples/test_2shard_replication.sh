@@ -20,7 +20,7 @@ rm -f simple-shard0*.log simple-shard1*.log
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 script_name="$(basename "$0")"
 binary_path="./${BUILD_DIR:-build}/dbtest"
 SHARD0_LOCALHOST_PID=""

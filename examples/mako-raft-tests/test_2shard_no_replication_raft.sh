@@ -12,7 +12,7 @@ echo "========================================="
 # Clean up old log files
 rm -f nfs_sync_*
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 script_name="$(basename "$0")"
 
 pkill -9 -f "build/dbtest" 2>/dev/null || true

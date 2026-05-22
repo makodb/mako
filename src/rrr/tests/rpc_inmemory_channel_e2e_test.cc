@@ -285,6 +285,14 @@ TEST_F(InMemoryE2ETest, ServerDestroyTriggersClientDisconnect) {
 
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
+    // Disable auto-reconnect — this test only verifies the disconnect
+    // path. Leaving auto-reconnect on causes `on_channel_closed_fan_out`
+    // to spawn a detached reconnect thread when the server is dropped
+    // below; that thread races the next test's setup (the fixture's
+    // shared switchboard) and intermittently produces a `malloc():
+    // unaligned tcache chunk detected` corruption when the next test
+    // (`ConnectToUnboundAddrFailsFast`) creates a fresh PollThread.
+    client->set_reconnect_policy(ReconnectPolicy::no_retry());
     client->set_channel_factory(make_factory());
     ASSERT_EQ(client->connect("inmemory://e2e-server-3"), 0);
     EXPECT_TRUE(client->connected());

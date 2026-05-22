@@ -19,7 +19,7 @@ rm -f nfs_sync_*
 USERNAME=${USER:-$(whoami)}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-trd=${1:-6}
+trd=${1:-${MAKO_CI_TRD:-6}}
 script_name="$(basename "$0")"
 binary_path="./${BUILD_DIR:-build}/dbtest"
 SHARD0_PID=""

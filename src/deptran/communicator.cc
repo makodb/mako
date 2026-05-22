@@ -360,11 +360,11 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       // Keep a host-scoped reference to the connection through PollableProxy.
       auto conn_opt = rpc_cli->connection();
       if (conn_opt.is_some()) {
-        if (!Reactor::clients().contains_key(rpc_cli->host())) {
-          Reactor::clients().insert(rpc_cli->host(), rusty::Vec<rrr::PollableProxy>{});
+        if (!Reactor::clients_.contains_key(rpc_cli->host())) {
+          Reactor::clients_.insert(rpc_cli->host(), rusty::Vec<rrr::PollableProxy>{});
         }
         auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
-        Reactor::clients().get(rpc_cli->host()).unwrap().push(std::move(conn_proxy));
+        Reactor::clients_.get(rpc_cli->host()).unwrap().push(std::move(conn_proxy));
       }
       Log_info("connect to site: %s success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);

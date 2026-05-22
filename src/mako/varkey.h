@@ -175,6 +175,47 @@ public:
   {
   }
 
+  // obj_varkey is self-referential: the base varkey's p member points
+  // at this->obj. The defaulted copy/move ctors bitwise-copy p, which
+  // would leave it pointing at the SOURCE instance's obj — a dangling
+  // reference once the source dies. Re-point the base at our own obj
+  // on every copy/move so the type can be safely stored in any
+  // container (including rusty::Vec, whose push() always moves).
+  inline obj_varkey(const obj_varkey& other)
+    : varkey((const uint8_t *) &obj, sizeof(integral_type)),
+      obj(other.obj)
+  {
+  }
+
+  // integral_type is trivially copyable (enforced by the enable_if on
+  // typedef integral_type), so move and copy do the same work.
+  inline obj_varkey(obj_varkey&& other) noexcept
+    : varkey((const uint8_t *) &obj, sizeof(integral_type)),
+      obj(other.obj)
+  {
+  }
+
+  inline obj_varkey& operator=(const obj_varkey& other) {
+    if (this != &other) {
+      obj = other.obj;
+      // Rebind base via varkey's defaulted operator=. A freshly
+      // constructed temporary already has the correct (&this->obj, size)
+      // because `obj` is the *destination's* member in this context.
+      static_cast<varkey&>(*this) =
+          varkey((const uint8_t *) &obj, sizeof(integral_type));
+    }
+    return *this;
+  }
+
+  inline obj_varkey& operator=(obj_varkey&& other) noexcept {
+    if (this != &other) {
+      obj = other.obj;
+      static_cast<varkey&>(*this) =
+          varkey((const uint8_t *) &obj, sizeof(integral_type));
+    }
+    return *this;
+  }
+
 private:
   integral_type obj;
 };

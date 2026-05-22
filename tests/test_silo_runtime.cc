@@ -378,3 +378,62 @@ TEST_F(SiloRuntimeTest, CoreIdIsolationAcrossThreads) {
     EXPECT_EQ(site1()->core_count(), NUM_THREADS);
     EXPECT_EQ(site2()->core_count(), NUM_THREADS);
 }
+
+// Test (Finding 6): explicit thread registration fails gracefully
+// when the per-runtime core-id pool is exhausted, instead of
+// aborting the process. This exercises the Mako-side fix; the
+// underlying cap lives in SiloRuntime, not in Masstree.
+//
+// Uses a FRESH SiloRuntime so the test does not poison the
+// process-wide default runtime's pool.
+TEST(SiloRuntimeThreadCap, TryRegisterCurrentThreadFailsGracefullyAtCap) {
+    rusty::Arc<SiloRuntime> rt_arc = SiloRuntime::Create();
+    SiloRuntime* rt = rt_arc.as_ptr();
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->core_count(), 0u);
+
+    constexpr unsigned kOverhead = 8;  // a few extra threads past the cap
+    const unsigned cap = SiloRuntime::NMaxCores;
+    const unsigned kThreads = cap + kOverhead;
+
+    std::atomic<unsigned> registered{0};
+    std::atomic<unsigned> rejected{0};
+
+    std::vector<std::thread> workers;
+    workers.reserve(kThreads);
+    for (unsigned i = 0; i < kThreads; ++i) {
+        workers.emplace_back([rt, &registered, &rejected]() {
+            if (rt->try_register_current_thread()) {
+                ++registered;
+            } else {
+                ++rejected;
+            }
+        });
+    }
+    for (auto& t : workers) t.join();
+
+    EXPECT_EQ(registered.load(), cap);
+    EXPECT_EQ(rejected.load(),   kOverhead);
+}
+
+// Test (Finding 6, idempotency): try_register_current_thread is a
+// no-op (returns true without consuming a slot) for a thread that
+// already registered to the same runtime.
+TEST(SiloRuntimeThreadCap, TryRegisterCurrentThreadIsIdempotent) {
+    rusty::Arc<SiloRuntime> rt_arc = SiloRuntime::Create();
+    SiloRuntime* rt = rt_arc.as_ptr();
+    ASSERT_NE(rt, nullptr);
+
+    std::thread t([rt]() {
+        EXPECT_TRUE(rt->try_register_current_thread());
+        const unsigned core_count_after_first = rt->core_count();
+        EXPECT_EQ(core_count_after_first, 1u);
+
+        // Subsequent calls must not consume another slot.
+        for (int i = 0; i < 10; ++i) {
+            EXPECT_TRUE(rt->try_register_current_thread());
+        }
+        EXPECT_EQ(rt->core_count(), core_count_after_first);
+    });
+    t.join();
+}

@@ -139,7 +139,34 @@ public:
     // Allocate a new core ID from this runtime's ID space
     // Returns the allocated core ID
     // Thread-safe: uses atomic fetch_add
+    // ABORTS via ALWAYS_ASSERT if the pool is exhausted — prefer
+    // try_allocate_core_id() / try_register_current_thread() in code
+    // that may run on dynamically-created threads.
     unsigned allocate_core_id();
+
+    // @safe
+    // Like allocate_core_id() but returns -1 instead of aborting when
+    // the pool is exhausted. After exhaustion every subsequent call
+    // continues to return -1; the over-increment of the underlying
+    // counter is harmless because no caller reads past the cap.
+    int try_allocate_core_id();
+
+    // @safe
+    // Per-thread "I want to use masstree" registration.
+    //
+    //   1. Bind the calling thread to this SiloRuntime and to its
+    //      MasstreeContext (idempotent — no-op if already bound here).
+    //   2. Lazily reserve a core ID slot via try_allocate_core_id().
+    //   3. Set the thread's tl_core_id via coreid::set_core_id.
+    //
+    // Returns true on success. Returns false if step (2) fails because
+    // the runtime's NMAXCORES-slot pool is exhausted — the caller
+    // should treat that as "this thread cannot use masstree" and
+    // gracefully refuse the request that prompted the registration.
+    //
+    // Idempotent: calling it multiple times from the same thread on
+    // the same runtime returns true without consuming another slot.
+    bool try_register_current_thread();
 
     // @unsafe: uses atomic operations
     // Get the current core count for this runtime

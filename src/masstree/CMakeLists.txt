@@ -1,12 +1,71 @@
-# Masstree-specific test and benchmark target wiring.
+# Masstree library + test/benchmark target wiring.
+#
+# The library is defined at top level (runs unconditionally when the
+# root CMakeLists calls `add_subdirectory(src/masstree)`). The tests
+# are wrapped in `mako_add_masstree_tests()`, a function the root
+# invokes from inside `if(BUILD_TESTS)` once TEST_INCLUDE_DIRS,
+# GTEST_LIBRARIES, etc. have been set up. Keeping everything in one
+# CMakeLists makes the masstree subtree easy to scan and reorder.
+#
+# The library .cc files have no `mako/` includes — they reference
+# only other masstree headers and the STL — so libmasstree can be a
+# clean static library; libmako then PUBLICly depends on it. A touch
+# in src/deptran/ or src/mako/lib/ no longer recompiles masstree
+# sources, and vice versa.
+#
+# The root CMakeLists keeps `add_borrow_check(src/masstree/...cc)`
+# entries pointing at these source paths; borrow checking is
+# per-file, not per-target, so it doesn't care which library owns
+# them.
 
+# ----------------------------------------------------------------------
+# libmasstree
+# ----------------------------------------------------------------------
+
+set(MASSTREE_LIB_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/compiler.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/str.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/string.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/straccum.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/json.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/kvthread.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/masstree_context.cc"
+)
+
+add_library(masstree STATIC ${MASSTREE_LIB_SOURCES})
+target_include_directories(masstree PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${MASSTREE_CONFIG_INCLUDE_DIR}
+)
+# Inherit the project's standard compile options plus the forced
+# include of the generated masstree/config.h. The flag is set in the
+# root CMakeLists; if it's empty here (older builds) the option list
+# just becomes whatever was already added globally.
+if(DEFINED MASSTREE_FORCE_INCLUDE_FLAG)
+    target_compile_options(masstree PUBLIC ${MASSTREE_FORCE_INCLUDE_FLAG})
+endif()
+
+# ----------------------------------------------------------------------
+# Tests & benchmarks — deferred via function so they only fire after
+# the root CMakeLists has set BUILD_TESTS / TEST_INCLUDE_DIRS / etc.
+# ----------------------------------------------------------------------
+
+# Helper for the upstream-style "legacy" tests carried over from the
+# original Masstree GNUmakefile. They build a single .cc against the
+# minimal set of masstree source files it needs.
 function(_mako_add_masstree_legacy_test TARGET_NAME)
     add_executable(${TARGET_NAME} ${ARGN})
+    # Function is called from the root scope, so CMAKE_CURRENT_SOURCE_DIR
+    # would be the root. Use the absolute masstree path.
     target_include_directories(${TARGET_NAME} PRIVATE
-        src
-        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/masstree
     )
-    target_compile_options(${TARGET_NAME} PRIVATE ${TEST_COMPILE_OPTIONS} ${MASSTREE_FORCE_INCLUDE_FLAG})
+    target_compile_options(${TARGET_NAME} PRIVATE
+        ${TEST_COMPILE_OPTIONS}
+        ${MASSTREE_FORCE_INCLUDE_FLAG}
+    )
     target_link_libraries(${TARGET_NAME} pthread)
     add_test(NAME ${TARGET_NAME} COMMAND ${TARGET_NAME})
     set_tests_properties(${TARGET_NAME} PROPERTIES
@@ -16,53 +75,113 @@ function(_mako_add_masstree_legacy_test TARGET_NAME)
 endfunction()
 
 function(mako_add_masstree_tests)
+    # CMAKE_CURRENT_SOURCE_DIR inside a function is the caller's dir
+    # (the root), not the dir where the function was defined. Use
+    # absolute paths anchored at CMAKE_SOURCE_DIR so the function
+    # works correctly when called from the root.
     set(MASSTREE_TEST_DIR "${CMAKE_SOURCE_DIR}/src/masstree/tests")
+    set(MASSTREE_SRC_DIR  "${CMAKE_SOURCE_DIR}/src/masstree")
 
-    # Masstree unit tests (run with ctest/make test)
+    # Core b-tree regression tests (Tier 1).
     add_executable(test_masstree ${MASSTREE_TEST_DIR}/test_masstree.cc)
     target_include_directories(test_masstree PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_masstree PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_masstree mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree COMMAND test_masstree)
 
-    # Masstree internals tests (threadinfo, globalepoch, RCU)
+    # Property-based test against std::map oracle (Tier 2).
+    add_executable(test_masstree_property ${MASSTREE_TEST_DIR}/test_masstree_property.cc)
+    target_include_directories(test_masstree_property PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_property PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_property mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_property COMMAND test_masstree_property)
+
+    # Concurrent stress tests on a shared concurrent_btree (Tier 3.3-3.5).
+    add_executable(test_masstree_concurrent ${MASSTREE_TEST_DIR}/test_masstree_concurrent.cc)
+    target_include_directories(test_masstree_concurrent PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_concurrent PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_concurrent mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_concurrent COMMAND test_masstree_concurrent)
+    set_tests_properties(test_masstree_concurrent PROPERTIES TIMEOUT 60)
+
+    # Per-key linearizability check (Tier 3.2).
+    add_executable(test_masstree_linearizability ${MASSTREE_TEST_DIR}/test_masstree_linearizability.cc)
+    target_include_directories(test_masstree_linearizability PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_linearizability PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_linearizability mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_linearizability COMMAND test_masstree_linearizability)
+    set_tests_properties(test_masstree_linearizability PROPERTIES TIMEOUT 60)
+
+    # Memory & RCU correctness probes — under ASan/LSan these become
+    # real leak/UAF detectors (Tier 4).
+    add_executable(test_masstree_memory ${MASSTREE_TEST_DIR}/test_masstree_memory.cc)
+    target_include_directories(test_masstree_memory PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_memory PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_memory mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_memory COMMAND test_masstree_memory)
+    set_tests_properties(test_masstree_memory PROPERTIES TIMEOUT 60)
+
+    # Layered / slice-boundary edge cases (Tier 7). The layer-collapse
+    # test doubles as an LSan probe for missed layer frees.
+    add_executable(test_masstree_layered ${MASSTREE_TEST_DIR}/test_masstree_layered.cc)
+    target_include_directories(test_masstree_layered PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_layered PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_layered mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_layered COMMAND test_masstree_layered)
+
+    # Long-running soak (Tier 8). Default 30 s; set MASSTREE_SOAK_SECONDS=N
+    # for longer runs (clamped to 24 h in source). CTest TIMEOUT must
+    # exceed the soak length; bump it before extending the default.
+    add_executable(test_masstree_soak ${MASSTREE_TEST_DIR}/test_masstree_soak.cc)
+    target_include_directories(test_masstree_soak PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_soak PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_soak mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_masstree_soak COMMAND test_masstree_soak)
+    set_tests_properties(test_masstree_soak PROPERTIES TIMEOUT 120)
+
+    # Header self-containment sentinel (Tier 9). Build is the test.
+    add_executable(test_masstree_headers ${MASSTREE_TEST_DIR}/test_masstree_headers.cc)
+    target_include_directories(test_masstree_headers PRIVATE ${TEST_INCLUDE_DIRS})
+    target_compile_options(test_masstree_headers PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_masstree_headers mako ${TEST_LINK_LIBS} pthread)
+    add_test(NAME test_masstree_headers COMMAND test_masstree_headers)
+
+    # libFuzzer differential harness — gated on MAKO_FUZZER=1 (Tier 6).
+    # Not wired into ctest; intended to be invoked by hand or via
+    # OSS-Fuzz. See docs/masstree-test-plan.md for the toolchain
+    # requirements (libc++-built compiler-rt fuzzer runtime; on
+    # Debian/Ubuntu use brew clang 22).
+    if(MAKO_FUZZER_ENABLED)
+        add_executable(fuzz_masstree ${MASSTREE_TEST_DIR}/fuzz_masstree.cc)
+        target_include_directories(fuzz_masstree PRIVATE ${TEST_INCLUDE_DIRS})
+        target_compile_options(fuzz_masstree PRIVATE ${TEST_COMPILE_OPTIONS} -fsanitize=fuzzer)
+        target_link_libraries(fuzz_masstree mako ${TEST_LINK_LIBS} yaml-cpp pthread)
+        target_link_options(fuzz_masstree PRIVATE -fsanitize=fuzzer)
+    endif()
+
+    # Internals tests (threadinfo, globalepoch, RCU).
     add_executable(test_masstree_internals ${MASSTREE_TEST_DIR}/test_masstree_internals.cc)
     target_include_directories(test_masstree_internals PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_masstree_internals PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_masstree_internals mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree_internals COMMAND test_masstree_internals)
 
-    # Masstree multi-instance stress tests (MasstreeContext isolation)
+    # MasstreeContext multi-instance isolation stress.
     add_executable(test_masstree_multi_instance ${MASSTREE_TEST_DIR}/test_masstree_multi_instance.cc)
     target_include_directories(test_masstree_multi_instance PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_masstree_multi_instance PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_masstree_multi_instance mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree_multi_instance COMMAND test_masstree_multi_instance)
 
-    # SiloRuntime tests (per-site runtime isolation)
-    add_executable(test_silo_runtime ${MASSTREE_TEST_DIR}/test_silo_runtime.cc)
-    target_include_directories(test_silo_runtime PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_silo_runtime PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_silo_runtime mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_silo_runtime COMMAND test_silo_runtime)
+    # NOTE: test_silo_runtime, test_silo_multi_site_stress, and
+    # repro_finding6 used to live here but were moved to the top-
+    # level tests/ directory (and wired from the root CMakeLists)
+    # because their subject matter is the Mako SiloRuntime / Mako
+    # allocator, not Masstree. The masstree/tests folder is for
+    # tests that exercise Masstree behaviour; Mako-side tests
+    # belong with their siblings in tests/.
 
-    # Multi-site Silo stress tests
-    add_executable(test_silo_multi_site_stress ${MASSTREE_TEST_DIR}/test_silo_multi_site_stress.cc)
-    target_include_directories(test_silo_multi_site_stress PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_silo_multi_site_stress PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_silo_multi_site_stress mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_silo_multi_site_stress COMMAND test_silo_multi_site_stress)
-
-    # Borrow checking for Silo tests
-    # Note: compare_key and increment functions now have correct @unsafe annotations.
-    # Full borrow checking is disabled because other Masstree code (nodeversion.hh,
-    # string.hh) has violations that require broader refactoring.
-    # if(ENABLE_BORROW_CHECKING)
-    #     add_borrow_check_target(test_silo_runtime)
-    #     add_borrow_check_target(test_silo_multi_site_stress)
-    # endif()
-
-    # Masstree performance benchmark (on-demand throughput output)
+    # On-demand performance benchmark.
     set(MASSTREE_PERF_SRC "${MASSTREE_TEST_DIR}/masstree_perf.cc")
     if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
         # Use a fragile-friendly source variant to keep benchmark logic transpilable.
@@ -82,64 +201,64 @@ function(mako_add_masstree_tests)
         target_link_libraries(masstree_perf mako ${TEST_LINK_LIBS})
     endif()
 
-    # Legacy Masstree self-tests from src/masstree/GNUmakefile.in.
-    # Keep these in CTest for CI coverage while leaving mttest out of CI
-    # because it is a long-running benchmark harness by default.
+    # Legacy upstream self-tests carried over from src/masstree/GNUmakefile.in.
+    # Kept in CTest for coverage; mttest deliberately not built here because
+    # it is a long-running benchmark harness, not a unit test.
     _mako_add_masstree_legacy_test(test_masstree_legacy_string
-        src/masstree/test_string.cc
-        src/masstree/string.cc
-        src/masstree/straccum.cc
-        src/masstree/compiler.cc
+        ${MASSTREE_SRC_DIR}/test_string.cc
+        ${MASSTREE_SRC_DIR}/string.cc
+        ${MASSTREE_SRC_DIR}/straccum.cc
+        ${MASSTREE_SRC_DIR}/compiler.cc
     )
 
     _mako_add_masstree_legacy_test(test_masstree_legacy_atomics
-        src/masstree/test_atomics.cc
-        src/masstree/string.cc
-        src/masstree/straccum.cc
-        src/masstree/kvrandom.cc
-        src/masstree/json.cc
-        src/masstree/compiler.cc
-        src/masstree/kvio.cc
-        src/masstree/str.cc
+        ${MASSTREE_SRC_DIR}/test_atomics.cc
+        ${MASSTREE_SRC_DIR}/string.cc
+        ${MASSTREE_SRC_DIR}/straccum.cc
+        ${MASSTREE_SRC_DIR}/kvrandom.cc
+        ${MASSTREE_SRC_DIR}/json.cc
+        ${MASSTREE_SRC_DIR}/compiler.cc
+        ${MASSTREE_SRC_DIR}/kvio.cc
+        ${MASSTREE_SRC_DIR}/str.cc
     )
 
     _mako_add_masstree_legacy_test(test_masstree_legacy_json
-        src/masstree/jsontest.cc
-        src/masstree/string.cc
-        src/masstree/straccum.cc
-        src/masstree/json.cc
-        src/masstree/compiler.cc
+        ${MASSTREE_SRC_DIR}/jsontest.cc
+        ${MASSTREE_SRC_DIR}/string.cc
+        ${MASSTREE_SRC_DIR}/straccum.cc
+        ${MASSTREE_SRC_DIR}/json.cc
+        ${MASSTREE_SRC_DIR}/compiler.cc
     )
 
     _mako_add_masstree_legacy_test(test_masstree_legacy_msgpack
-        src/masstree/msgpacktest.cc
-        src/masstree/string.cc
-        src/masstree/straccum.cc
-        src/masstree/json.cc
-        src/masstree/compiler.cc
-        src/masstree/msgpack.cc
+        ${MASSTREE_SRC_DIR}/msgpacktest.cc
+        ${MASSTREE_SRC_DIR}/string.cc
+        ${MASSTREE_SRC_DIR}/straccum.cc
+        ${MASSTREE_SRC_DIR}/json.cc
+        ${MASSTREE_SRC_DIR}/compiler.cc
+        ${MASSTREE_SRC_DIR}/msgpack.cc
     )
 
-    if(EXISTS "${CMAKE_SOURCE_DIR}/${MASSTREE_DIR}/log.hh")
+    if(EXISTS "${MASSTREE_SRC_DIR}/log.hh")
         _mako_add_masstree_legacy_test(test_masstree_legacy_scan
-            src/masstree/scantest.cc
-            src/masstree/query_masstree.cc
-            src/masstree/value_string.cc
-            src/masstree/value_array.cc
-            src/masstree/value_versioned_array.cc
-            src/masstree/string_slice.cc
-            src/masstree/compiler.cc
-            src/masstree/json.cc
-            src/masstree/string.cc
-            src/masstree/straccum.cc
-            src/masstree/str.cc
-            src/masstree/msgpack.cc
-            src/masstree/kvrandom.cc
-            src/masstree/memdebug.cc
-            src/masstree/kvthread.cc
-            src/masstree/masstree_context.cc
+            ${MASSTREE_SRC_DIR}/scantest.cc
+            ${MASSTREE_SRC_DIR}/query_masstree.cc
+            ${MASSTREE_SRC_DIR}/value_string.cc
+            ${MASSTREE_SRC_DIR}/value_array.cc
+            ${MASSTREE_SRC_DIR}/value_versioned_array.cc
+            ${MASSTREE_SRC_DIR}/string_slice.cc
+            ${MASSTREE_SRC_DIR}/compiler.cc
+            ${MASSTREE_SRC_DIR}/json.cc
+            ${MASSTREE_SRC_DIR}/string.cc
+            ${MASSTREE_SRC_DIR}/straccum.cc
+            ${MASSTREE_SRC_DIR}/str.cc
+            ${MASSTREE_SRC_DIR}/msgpack.cc
+            ${MASSTREE_SRC_DIR}/kvrandom.cc
+            ${MASSTREE_SRC_DIR}/memdebug.cc
+            ${MASSTREE_SRC_DIR}/kvthread.cc
+            ${MASSTREE_SRC_DIR}/masstree_context.cc
         )
     else()
-        message(STATUS "Skipping test_masstree_legacy_scan: missing ${MASSTREE_DIR}/log.hh")
+        message(STATUS "Skipping test_masstree_legacy_scan: missing log.hh")
     endif()
 endfunction()

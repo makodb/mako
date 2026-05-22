@@ -71,6 +71,20 @@ class basic_table {
     // @safe - Default initialization
     inline basic_table();
 
+    // basic_table is a unique owner of root_ (the heap-allocated tree).
+    // Copy would alias two owners onto the same tree; forbid it. Move is
+    // valid as long as the source's root_ is nulled out so it can no
+    // longer be used or destroyed.
+    //
+    // Note: there is intentionally no destructor that frees root_.
+    // Node deallocation requires a threadinfo, which a dtor can't take;
+    // callers must invoke destroy(ti) explicitly. Move-then-drop a
+    // populated table leaks the tree — same as today.
+    basic_table(const basic_table&) = delete;
+    basic_table& operator=(const basic_table&) = delete;
+    inline basic_table(basic_table&& other) noexcept;
+    inline basic_table& operator=(basic_table&& other) noexcept;
+
     // @unsafe { Mutates root pointer using raw allocation }
     void initialize(threadinfo& ti);
     // @unsafe { Tears down tree via raw pointers }

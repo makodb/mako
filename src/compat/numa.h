@@ -5,10 +5,20 @@
 // not require NUMA-aware behavior. Provide stubs that preserve behavior
 // (single NUMA node) and allow the code to compile.
 //
-// Linux builds should continue to use the system <numa.h>.
+// Linux builds defer to the system <numa.h> via #include_next.
 #pragma once
 
-#if !defined(__linux__)
+#if defined(__linux__)
+
+#if defined(__has_include_next)
+#if __has_include_next(<numa.h>)
+#include_next <numa.h>
+#else
+#error "Expected system <numa.h> on Linux after compat include path"
+#endif
+#endif
+
+#else // !__linux__
 
 #include <cstdint>
 #include <cstdlib>
