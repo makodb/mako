@@ -365,11 +365,10 @@ public:
     // accept path. Tests that construct `ServerConnection` directly
     // via `Arc::make` must call this before any channel-mode code
     // path that captures the weak.
-    // @unsafe - Direct field assignment; callers must guarantee the
-    // weak refers to the same Arc that owns this object.
+    // @safe - Direct field assignment; rusty::sync::Weak move-assign is now @safe.
+    // Callers must guarantee the weak refers to the same Arc that owns this object.
     void install_self_weak_for_testing(WeakServerConnection weak) {
-        // @unsafe { Weak copy-assign }
-        { weak_self_ = std::move(weak); }
+        weak_self_ = std::move(weak);
     }
 
     /**
@@ -1070,9 +1069,7 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
     // Install callbacks BEFORE moving the proxy into the slot, so
     // the callbacks can capture a Weak<ServerConnection> without
     // holding the SpinMutex.
-    WeakServerConnection weak_self;
-    // @unsafe { Weak copy is currently treated as non-safe }
-    { weak_self = weak_self_; }
+    WeakServerConnection weak_self = weak_self_;
 
     // @unsafe - lambda capture, channel proxy mutator
     proxy->set_on_frame([weak_self](const ChannelFrame& f) {

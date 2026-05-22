@@ -988,11 +988,10 @@ public:
     // freshly-constructed-Arc init dance. Tests that construct
     // `ClientConnection` directly via `Arc::make` must call this
     // before any channel-mode code path that captures the weak.
-    // @unsafe - Direct field assignment; callers must guarantee the
-    // weak refers to the same Arc that owns this object.
+    // @safe - Direct field assignment; rusty::sync::Weak move-assign is now @safe.
+    // Callers must guarantee the weak refers to the same Arc that owns this object.
     void install_self_weak_for_testing(WeakClientConnection weak) {
-        // @unsafe { Weak copy-assign }
-        { weak_self_ = std::move(weak); }
+        weak_self_ = std::move(weak);
     }
 
     // Test-only: drive the state machine to `CONNECTED`. Production
@@ -3194,12 +3193,12 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
   }
 }
 
-// @unsafe - Configure heartbeat manager and timeout callback.
+// @safe - HeartbeatManager is @safe; Weak copy-assign is now @safe; the
+// lambda body only calls @safe methods + Log_warn (a @safe template shim).
+// One inner @unsafe block remains for the const_cast.
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
   heartbeat_manager_.set_config(config);
-  WeakClientConnection weak_conn;
-  // @unsafe - Weak copy construction is currently modeled as non-safe.
-  { weak_conn = weak_self_; }
+  WeakClientConnection weak_conn = weak_self_;
   heartbeat_manager_.set_on_timeout([weak_conn]() {
     auto conn_opt = weak_conn.upgrade();
     if (conn_opt.is_none()) {
@@ -3428,9 +3427,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   // Capture a Weak<> so the parked fiber doesn't extend the
   // connection's lifetime (which would create a cycle via
   // `fiber_channel_` ownership).
-  WeakClientConnection weak_self;
-  // @unsafe { Weak copy is currently treated as non-safe. }
-  { weak_self = weak_self_; }
+  WeakClientConnection weak_self = weak_self_;
 
   // Spawn the recv-loop fiber on the *current* thread's reactor.
   // Per the channel-layer threading contract, the recv-loop fiber
@@ -3482,9 +3479,7 @@ void ClientConnection::bind_channel_via_poll_thread(
   }
   channel_mode_.set(true);
 
-  WeakClientConnection weak_self;
-  // @unsafe { Weak copy }
-  { weak_self = weak_self_; }
+  WeakClientConnection weak_self = weak_self_;
 
   // Schedule the recv-loop fiber spawn onto the poll thread. The
   // poll thread's `trigger_job` calls `Fiber::create_run` from
@@ -3534,9 +3529,7 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
   // Capture a weak ref so the proxy's installed callbacks don't
   // extend the ClientConnection's lifetime (avoids a refcount cycle
   // through `direct_channel_` + the callbacks).
-  WeakClientConnection weak_self;
-  // @unsafe { Weak copy is currently treated as non-safe }
-  { weak_self = weak_self_; }
+  WeakClientConnection weak_self = weak_self_;
 
   // Install callbacks BEFORE moving the proxy into the slot. After
   // the move, the proxy lives in `direct_channel_`; the lambdas
@@ -4007,13 +4000,14 @@ void ClientConnection::handle_error() {
   // Trigger policy-driven reconnect automatically after transport failures.
   if (reconnect_policy_.auto_reconnect &&
       !reconnect_abort_.load(std::memory_order_acquire)) {
-    // @unsafe - std::string::empty and Weak copy are currently treated as non-safe.
+    // @unsafe - std::string::empty is STL (not borrow-checked).
     {
       if (reconnect_address_.empty()) {
         return;
       }
-      auto weak_conn = weak_self_;
-      rusty::thread::spawn([weak_conn]() {
+    }
+    auto weak_conn = weak_self_;
+    rusty::thread::spawn([weak_conn]() {
         auto conn_opt = weak_conn.upgrade();
         if (conn_opt.is_none()) {
           return;
@@ -4035,7 +4029,6 @@ void ClientConnection::handle_error() {
           }
         }
       }).detach();
-    }
   }
 }
 
