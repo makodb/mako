@@ -71,7 +71,6 @@ inline bool in_fiber_context() noexcept {
 inline void yield() noexcept {
     auto fiber = Fiber::current_fiber();
     if (fiber.is_some()) {
-        // @unsafe { fiber context switch yield }
         fiber.unwrap()->yield_();
     }
 }
@@ -80,7 +79,6 @@ inline void yield() noexcept {
  * Sleep for specified microseconds. Uses rrr::Time internally.
  */
 inline void sleep_us(uint64_t microseconds) {
-    // @unsafe { Fiber::sleep uses Time internally }
     Fiber::sleep(microseconds);
 }
 
@@ -88,7 +86,6 @@ inline void sleep_us(uint64_t microseconds) {
  * Sleep for specified milliseconds. Uses rrr::Time internally.
  */
 inline void sleep_ms(uint64_t milliseconds) {
-    // @unsafe { Fiber::sleep }
     Fiber::sleep(milliseconds * 1000);
 }
 
@@ -96,7 +93,6 @@ inline void sleep_ms(uint64_t milliseconds) {
  * Sleep for specified seconds. Uses rrr::Time internally.
  */
 inline void sleep_s(uint64_t seconds) {
-    // @unsafe { Fiber::sleep }
     Fiber::sleep(seconds * Time::RRR_USEC_PER_SEC);
 }
 
@@ -108,7 +104,6 @@ inline void sleep_until_us(uint64_t abs_time_us) {
     // @unsafe { Time::now }
     uint64_t now = Time::now(true);
     if (abs_time_us > now) {
-        // @unsafe { Fiber::sleep }
         Fiber::sleep(abs_time_us - now);
     }
 }
