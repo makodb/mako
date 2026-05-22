@@ -1066,7 +1066,7 @@ SerializableProxy SerializableRegistry::create(int32_t kind) {
   auto guard = registry().lock().unwrap();
   auto entry = guard->map.get(kind);
   verify(entry.is_some());
-  return (*entry.unwrap())();
+  return entry.unwrap()();
 }
 
 bool SerializableRegistry::is_registered(int32_t kind) {

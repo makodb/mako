@@ -316,7 +316,7 @@ public:
             misses_.set(misses_.get() + 1);
             return false;
         }
-        auto list_it = *map_it.unwrap();
+        auto list_it = map_it.unwrap();
 
         // Check TTL
         auto& entry = *list_it;
@@ -370,7 +370,7 @@ public:
         // Check if key already exists
         auto existing = map_guard->get(key);
         if (existing.is_some()) {
-            auto list_it = *existing.unwrap();
+            auto list_it = existing.unwrap();
             // Update existing entry
             auto& entry = *list_it;
             entry.error_code = error_code;
@@ -413,7 +413,7 @@ public:
         if (map_it.is_none()) {
             return false;
         }
-        auto list_it = *map_it.unwrap();
+        auto list_it = map_it.unwrap();
 
         auto list_guard = lru_list_.lock().unwrap();
         list_guard->erase(list_it);

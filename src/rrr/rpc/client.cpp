@@ -2891,11 +2891,9 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
     auto pending_guard = pending_fu_.lock().unwrap();
     auto fu_ptr = pending_guard->get(xid);
     if (fu_ptr.is_some()) {
-      // @unsafe - HashMap::get returns Option<V*> (raw pointer); the deref
-      // here is intentional. Cloning the Arc is otherwise safe.
-      {
-        fu_opt = rusty::Some(fu_ptr.unwrap()->clone());
-      }
+      // HashMap::get now returns Option<V&> (V = Arc<Future>). unwrap()
+      // yields the Arc reference; Arc::clone is @safe.
+      fu_opt = rusty::Some(fu_ptr.unwrap().clone());
       pending_guard->remove(xid);
     }
   }  // Drop lock before notifying callback/future waiters
@@ -3690,7 +3688,7 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
     auto guard = pending_fu_.lock().unwrap();
     auto fu_ptr = guard->get(v_reply_xid.get());
     if (fu_ptr.is_some()) {
-      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());
+      fu_opt = rusty::Some(fu_ptr.unwrap().clone());
       guard->remove(v_reply_xid.get());
     }
   }

@@ -2389,7 +2389,7 @@ void PollThreadWorker::poll_loop() {
       if (poll_opt.is_none()) {
         return;
       }
-      auto& poll = *poll_opt.unwrap();
+      auto& poll = poll_opt.unwrap();
 
       if (ready_events & PollReady::READABLE) {
         poll->handle_read();
@@ -2442,7 +2442,9 @@ void PollThreadWorker::poll_loop() {
         }
 
         // Invoke close callback before erasing map entry so cleanup hooks run.
-        (*proxy_opt.unwrap())->close();
+        // HashMap::get now returns Option<V&>; unwrap() is already the
+        // PollableProxy reference, no extra deref.
+        proxy_opt.unwrap()->close();
 
         fd_to_pollable_.remove(fd);
         mode_.remove(fd);
@@ -2566,8 +2568,9 @@ void PollThreadWorker::do_close_pollable(int fd) {
     poll_.Remove(fd);
   }
 
-  // Close the socket via Pollable's close() method
-  (*proxy_opt.unwrap())->close();
+  // Close the socket via Pollable's close() method.
+  // HashMap::get now returns Option<V&>; unwrap() yields the proxy ref.
+  proxy_opt.unwrap()->close();
 
   // Erase from maps, dropping storage references
   fd_to_pollable_.remove(fd);
@@ -2585,7 +2588,7 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode) {
     return;
   }
 
-  int old_mode = *mode_opt.unwrap();
+  int old_mode = mode_opt.unwrap();
   mode_.insert(fd, new_mode);
 
   if (new_mode != old_mode) {

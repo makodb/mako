@@ -269,7 +269,7 @@ SerializableProxy AnyMessageRegistry::create(const std::string& name) {
   auto guard = registry().lock().unwrap();
   auto entry = guard->by_name.get(name);
   if (entry.is_none()) return SerializableProxy{};
-  return (*entry.unwrap())();
+  return entry.unwrap()();
 }
 
 // @unsafe - returns a raw `const std::string*` into the SpinMutex-
@@ -280,7 +280,7 @@ const std::string* AnyMessageRegistry::name_for_type(std::type_index ti) {
   size_t hash = ti.hash_code();
   auto entry = guard->name_by_type_hash.get(hash);
   if (entry.is_none()) return nullptr;
-  return entry.unwrap();
+  return &entry.unwrap();
 }
 
 // @unsafe - SpinMutex::lock().unwrap() + HashMap::get + Option::is_some.

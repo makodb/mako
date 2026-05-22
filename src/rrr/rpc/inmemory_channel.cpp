@@ -495,14 +495,11 @@ InMemorySwitchboard::find_listener(const std::string& addr) const {
     if (val_opt.is_none()) {
         return rusty::None;
     }
-    // Upgrade through the pointer before any mutation invalidates it.
-    rusty::Option<rusty::Arc<InMemoryListener>> upgraded(rusty::None);
-    // @unsafe { Option::unwrap() on the get() result yields a pointer
-    //           the borrow checker treats as raw; upgrade() through it
-    //           is the supported lookup pattern. }
-    {
-        upgraded = val_opt.unwrap()->upgrade();
-    }
+    // Upgrade through the reference before any mutation invalidates it.
+    // HashMap::get now returns Option<V&> (V = Weak<InMemoryListener>),
+    // so unwrap() yields a reference — no raw pointer at the call site.
+    rusty::Option<rusty::Arc<InMemoryListener>> upgraded =
+        val_opt.unwrap().upgrade();
     if (upgraded.is_none()) {
         // The listener was destroyed without unregistering. Clean up.
         guard->remove(addr);

@@ -1190,7 +1190,7 @@ void ServerConnection::decode_request_and_dispatch(
         return;
     }
 
-    size_t svc_index = *svc_index_opt.unwrap();
+    size_t svc_index = svc_index_opt.unwrap();
     auto weak_this = weak_self_;
     if (ctx_->fast_rpc_ids.contains(rpc_id)) {
         // Fast inline dispatch — no fiber spawn.
