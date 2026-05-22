@@ -438,7 +438,7 @@ double PrintComparison(const BenchmarkSummary& summary,
       std::cout << "  " << result.name << ": no baseline\n";
       continue;
     }
-    double baseline_val = *v_ptr.unwrap();
+    double baseline_val = v_ptr.unwrap();
     double delta = result.ops_per_sec - baseline_val;
     double pct = baseline_val == 0.0 ? 0.0 : (delta / baseline_val) * 100.0;
     std::cout << "  " << result.name << ": current=" << result.ops_per_sec
