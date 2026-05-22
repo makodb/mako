@@ -11,9 +11,9 @@ export module rrr.basetypes;
 import std;
 
 // @safe - POD/value-type helpers + small classes (SparseInt, v32/v64,
-// NoCopy, RefCounted, Counter, Time, Timer, Rand, Enumerator,
-// MergedEnumerator). Methods that hit syscalls (clock_gettime, select,
-// gettimeofday, pthread_self) or do raw `char*` byte slicing via
+// NoCopy, Counter, Time, Timer, Rand, Enumerator, MergedEnumerator).
+// Methods that hit syscalls (clock_gettime, select, gettimeofday,
+// pthread_self) or do raw `char*` byte slicing via
 // `reinterpret_cast<char*>` carry per-method `// @unsafe` overrides
 // below; everything else is pure arithmetic / bit math.
 export namespace rrr {
@@ -81,33 +81,6 @@ public:
     NoCopy(NoCopy&&) = default;
     NoCopy& operator=(NoCopy&&) = default;
 };
-
-class RefCounted {
-    std::atomic<int> refcnt_;
-protected:
-    virtual ~RefCounted() = 0;
-public:
-    RefCounted(): refcnt_(1) {}
-    int ref_count() const {
-        return atomic_load_relaxed(refcnt_);
-    }
-    RefCounted* ref_copy() {
-        atomic_fetch_add_acq_rel(refcnt_, 1);
-        return this;
-    }
-    int release() {
-        int r = atomic_fetch_sub_acq_rel(refcnt_, 1) - 1;
-        if (r < 0) std::abort();
-        if (r == 0) {
-            // @unsafe { self-destruct when refcount hits zero }
-            {
-                delete this;
-            }
-        }
-        return r;
-    }
-};
-inline RefCounted::~RefCounted() {}
 
 class Counter: public NoCopy {
     std::atomic<i64> next_;

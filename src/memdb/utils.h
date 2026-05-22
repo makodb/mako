@@ -16,7 +16,6 @@ using rrr::verify;
 using base::i32;
 using base::i64;
 using base::NoCopy;
-using base::RefCounted;
 using base::Enumerator;
 using base::Log;
 using base::insert_into_map;
