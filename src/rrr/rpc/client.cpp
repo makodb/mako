@@ -2884,15 +2884,14 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
-// @unsafe - Fails one pending future if it still exists in the pending map
+// @safe - HashMap::get returns Option<V&> now; SpinMutex::lock returns
+// LockResult; Arc::clone is @safe. Only notify_ready stays @unsafe.
 void ClientConnection::fail_pending_future(i64 xid, int err) const {
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
     auto pending_guard = pending_fu_.lock().unwrap();
     auto fu_ptr = pending_guard->get(xid);
     if (fu_ptr.is_some()) {
-      // HashMap::get now returns Option<V&> (V = Arc<Future>). unwrap()
-      // yields the Arc reference; Arc::clone is @safe.
       fu_opt = rusty::Some(fu_ptr.unwrap().clone());
       pending_guard->remove(xid);
     }
@@ -2960,19 +2959,22 @@ void ClientConnection::close() {
   }
 }
 
-// @unsafe - Mark connection as closing without closing socket
-// Used by Client::close() to update state before poll thread closes socket
+// @safe - StateMachine is @safe; only std::atomic::store and the call
+// into still-@unsafe invalidate_pending_futures need an @unsafe wrap.
 void ClientConnection::mark_closing() {
-  reconnect_abort_.store(true, std::memory_order_release);
-  if (state_machine_.is_connected()) {
-    // Mark as in-progress close, but do not enter terminal state yet.
-    // The poll-thread close callback performs the actual fd close and final state transition.
-    state_machine_.transition_to(ConnectionState::DISCONNECTING);
+  // @unsafe { std::atomic::store + invalidate_pending_futures (still @unsafe) }
+  {
+    reconnect_abort_.store(true, std::memory_order_release);
+    if (state_machine_.is_connected()) {
+      // Mark as in-progress close, but do not enter terminal state yet.
+      // The poll-thread close callback performs the actual fd close and final state transition.
+      state_machine_.transition_to(ConnectionState::DISCONNECTING);
+    }
+    invalidate_pending_futures();
   }
-  invalidate_pending_futures();
 }
 
-// @unsafe - Jetpack: handle_free for explicit future cleanup
+// @safe - SpinMutex::lock + HashMap::remove + Counter::record are all @safe.
 void ClientConnection::handle_free(i64 xid) const {
   auto guard = pending_fu_.lock().unwrap();
   if (guard->remove(xid).is_some()) {
@@ -3838,7 +3840,8 @@ void ClientConnection::on_channel_closed_fan_out() {
   }
 }
 
-// @unsafe - Route allow_request through metrics (rejections + state transitions).
+// @safe - CircuitBreaker and ConnectionMetrics are both @safe classes;
+// record_circuit_state_transition is @safe.
 bool ClientConnection::allow_request_with_circuit_metrics() const {
   CircuitState before = circuit_breaker_.state();
   bool allowed = circuit_breaker_.allow_request();
@@ -3892,7 +3895,8 @@ void ClientConnection::record_circuit_state_transition(
   }
 }
 
-// @unsafe - Records success/failure in circuit breaker.
+// @safe - CircuitBreaker is @safe; should_trip_circuit_for_error is @safe;
+// record_circuit_state_transition is @safe.
 void ClientConnection::record_circuit_result(i32 err) const {
   CircuitState before = circuit_breaker_.state();
   if (err == 0) {
@@ -4148,11 +4152,15 @@ void Client::close() const {
   }
 }
 
-// @unsafe - Jetpack: handle_free for explicit future cleanup
+// @safe - Inner ClientConnection::handle_free is now @safe; only the
+// RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::handle_free(i64 xid) const {
-  auto guard = connection_.borrow();
-  if (guard->is_some()) {
-    guard->as_ref().unwrap()->handle_free(xid);
+  // @unsafe { RefCell::borrow, Option::unwrap }
+  {
+    auto guard = connection_.borrow();
+    if (guard->is_some()) {
+      guard->as_ref().unwrap()->handle_free(xid);
+    }
   }
 }
 
