@@ -6,6 +6,7 @@ module;
 #include <sys/times.h>
 
 #include <rusty/sys/fs.hpp>
+#include <rusty/sys/process.hpp>
 
 export module rrr.netinfo;
 
@@ -37,24 +38,15 @@ private:
     }
 
     NetInfo() {
-        clock_t t = 0;
-        // @unsafe { `times(&tms_buf)` syscall takes a raw `struct tms*`. }
-        {
-            struct tms tms_buf;
-            t = times(&tms_buf);
-        }
-        last_ticks_ = t;
+        const auto sample = rusty::sys::process::process_times();
+        last_ticks_ = static_cast<clock_t>(sample.wall_ticks);
         last_bytes_rxed = parse_bytes("/sys/class/net/ens4/statistics/rx_bytes");
         last_bytes_txed = parse_bytes("/sys/class/net/ens4/statistics/tx_bytes");
     }
 
     double get_net_stat() {
-        clock_t ticks = 0;
-        // @unsafe { `times(&tms_buf)` syscall takes a raw `struct tms*`. }
-        {
-            struct tms tms_buf;
-            ticks = times(&tms_buf);
-        }
+        const clock_t ticks = static_cast<clock_t>(
+            rusty::sys::process::process_times().wall_ticks);
         if (ticks <= last_ticks_ + 1000000)
             return -1.0;
 

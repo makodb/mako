@@ -2,6 +2,8 @@ module;
 
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
+#include <rusty/sys/process.hpp>
+#include <rusty/sys/time.hpp>
 
 #include <limits.h>
 #include <stdio.h>
@@ -164,19 +166,23 @@ void time_now_str(char* now) {
     now[23] = '\0';
 }
 
-// @unsafe - sysconf syscall.
+// @safe - rusty::sys::process::sysconf is @safe.
 int get_ncpu() {
-    return sysconf(_SC_NPROCESSORS_ONLN);
+    return static_cast<int>(
+        rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN));
 }
 
-// @unsafe - static `char[PATH_MAX]` buffer, snprintf, getpid + readlink
-// syscalls, returns raw `const char*` into static storage.
+// @unsafe - static `char[PATH_MAX]` buffer, snprintf, readlink syscall,
+// returns raw `const char*` into static storage. (getpid is now @safe
+// via rusty::sys::process::getpid, but the buffer/readlink plumbing
+// keeps the function as a whole @unsafe.)
 const char* get_exec_path() {
     static char path[PATH_MAX];
     static bool ready = false;
     if (!ready) {
         char link[PATH_MAX];
-        snprintf(link, sizeof(link), "/proc/%d/exe", getpid());
+        snprintf(link, sizeof(link), "/proc/%d/exe",
+                 rusty::sys::process::getpid());
         int ret = readlink(link, path, sizeof(path));
         if (ret != -1) {
             path[ret] = '\0';

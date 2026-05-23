@@ -1347,7 +1347,8 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
         uint64_t random_component = static_cast<uint64_t>(rd()) << 32 |
                                     static_cast<uint64_t>(rd());
 
-        uint64_t pid_component = static_cast<uint64_t>(getpid()) << 48;
+        uint64_t pid_component =
+            static_cast<uint64_t>(rusty::sys::process::getpid()) << 48;
 
         // Mix components with XOR for final ID
         instance_id_ = (time_component ^ random_component ^ pid_component)

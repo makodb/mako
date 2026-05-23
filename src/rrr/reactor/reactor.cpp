@@ -2797,7 +2797,8 @@ void fiber_task_t::operator()() {
 // ABI-specific FiberContext (rsp/rip on x86_64, sp/pc on aarch64).
 // The whole body is raw-pointer arithmetic by design.
 void fiber_task_t::init_context() {
-  std::size_t page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+  std::size_t page_sz =
+      static_cast<std::size_t>(rusty::sys::process::sysconf(_SC_PAGESIZE));
   if (page_sz == 0) {
     page_sz = 4096;
   }
