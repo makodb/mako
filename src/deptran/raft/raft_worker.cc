@@ -130,10 +130,6 @@ void RaftWorker::SetupService() {
   // Use as_ref().unwrap() to borrow without consuming the Option
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
-  // Create thread pool
-  uint32_t num_threads = 1;
-  thread_pool_g = base::ThreadPool::make(num_threads);
-
   // Create RPC server first (before registering services)
   rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
 
@@ -185,7 +181,6 @@ void RaftWorker::SetupHeartbeat() {
   // ServerControlServiceImpl ctor 3rd
   // `Recorder*` parameter removed; updated call site to 2 args.
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_thread_pool_g = base::ThreadPool::make(1);
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
 
   // Create shared status and pass clone to service
@@ -222,14 +217,6 @@ void RaftWorker::ShutDown() {
     delete hb_rpc_server_;  // Server destructor cleans up owned services
     hb_rpc_server_ = nullptr;
     server_status_ = rusty::None;
-  }
-
-  if (hb_thread_pool_g) {
-    // Arc auto-releases on destruction
-  }
-
-  if (thread_pool_g) {
-    // Arc auto-releases on destruction
   }
 
   // Services are now owned by rpc_server_ and deleted with it

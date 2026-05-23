@@ -20,8 +20,6 @@ void ServerWorker::SetupHeartbeat() {
   int n_io_threads = 1;
 //  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
   svr_hb_poll_thread_worker_g = svr_poll_thread_worker_.clone();
-//  hb_thread_pool_g = new rrr::ThreadPool(1);
-  hb_thread_pool_g = svr_thread_pool_;
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
 
   // Create shared status and pass clone to service
