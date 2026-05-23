@@ -2217,7 +2217,7 @@ void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
       : rusty::Option<rusty::Rc<Fiber>>{};
   }
 
-  // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
+  // RefCell::borrow_mut + Option::operator= are both @safe.
   { *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone()); }
 
   // RefCell::borrow + Option::as_ref + Fiber::finished() are all @safe.
@@ -2245,7 +2245,7 @@ void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
     }
   }
 
-  // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
+  // RefCell::borrow_mut + Option::operator= are both @safe.
   { *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber); }
 }
 

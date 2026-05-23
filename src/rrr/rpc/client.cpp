@@ -2353,7 +2353,7 @@ public:
     // @safe - Inner ClientConnection::set_on_server_restart is @safe;
     // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
     void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
-        // @unsafe { RefCell::borrow, Option::unwrap }
+        // RefCell::borrow + Option::unwrap are both @safe.
         {
             auto guard = connection_.borrow();
             if (guard->is_some()) {
@@ -2373,7 +2373,7 @@ public:
     // @safe - Inner ClientConnection::check_server_instance is @safe;
     // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
     bool check_server_instance(uint64_t new_id) const {
-        // @unsafe { RefCell::borrow, Option::unwrap }
+        // RefCell::borrow + Option::unwrap are both @safe.
         {
             auto guard = connection_.borrow();
             if (guard->is_some()) {
@@ -3286,14 +3286,14 @@ void ClientConnection::enqueue_heartbeat_probe() const {
 // Caller: the spawn body inside `on_channel_closed_fan_out` when a
 // factory is bound.
 void ClientConnection::reset_channel_mode_for_reconnect() {
-  // @unsafe { SpinMutex::lock + Option::take }
+  // SpinMutex::lock + Option::take are both @safe.
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::None;
   }
   // 4g1c: also drop the direct-channel slot so reconnect can rebind
   // a fresh proxy with fresh callbacks.
-  // @unsafe { SpinMutex::lock + Option::take }
+  // SpinMutex::lock + Option::take are both @safe.
   {
     auto guard = direct_channel_.lock().unwrap();
     *guard = rusty::None;
@@ -4152,7 +4152,7 @@ void Client::close() const {
 // @safe - Inner ClientConnection::handle_free is now @safe; only the
 // RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::handle_free(i64 xid) const {
-  // @unsafe { RefCell::borrow, Option::unwrap }
+  // RefCell::borrow + Option::unwrap are both @safe.
   {
     auto guard = connection_.borrow();
     if (guard->is_some()) {
@@ -4164,7 +4164,7 @@ void Client::handle_free(i64 xid) const {
 // @safe - Inner ClientConnection::pause is @safe (Cell::set);
 // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::pause() const {
-  // @unsafe { RefCell::borrow, Option::unwrap }
+  // RefCell::borrow + Option::unwrap are both @safe.
   {
     auto guard = connection_.borrow();
     if (guard->is_some()) {
@@ -4176,7 +4176,7 @@ void Client::pause() const {
 // @safe - Inner ClientConnection::resume is @safe (Cell::set);
 // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::resume() const {
-  // @unsafe { RefCell::borrow, Option::unwrap }
+  // RefCell::borrow + Option::unwrap are both @safe.
   {
     auto guard = connection_.borrow();
     if (guard->is_some()) {
