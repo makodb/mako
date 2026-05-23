@@ -101,7 +101,7 @@ inline void sleep_s(uint64_t seconds) {
  * If the time has already passed, returns immediately.
  */
 inline void sleep_until_us(uint64_t abs_time_us) {
-    // @unsafe { Time::now }
+    // Time::now flows through rusty::sys::time::clock_monotonic_us (@safe).
     uint64_t now = Time::now(true);
     if (abs_time_us > now) {
         Fiber::sleep(abs_time_us - now);
