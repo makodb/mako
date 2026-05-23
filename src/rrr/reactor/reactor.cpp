@@ -2045,9 +2045,8 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
 
 // @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
 void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
-  int64_t time_now = 0;  // Initialize to 0
-  // @unsafe - Time::now is external
-  { time_now = Time::now(true); }
+  // Time::now is @safe via rusty::sys::time::clock_monotonic_us.
+  int64_t time_now = Time::now(true);
 
   // @unsafe { RefCell::borrow_mut is not borrow-checked }
   auto guard = timeout_events_.borrow_mut();
@@ -2472,23 +2471,33 @@ void PollThreadWorker::process_commands() {
   }
 }
 
-// @unsafe - uses rusty::BTreeSet operations
+// @safe - rusty::BTreeSet::clone/clear/insert and rusty::Arc are @safe;
+// only the raw `Job*` extraction + virtual dispatch escapes into inner
+// @unsafe blocks.
 void PollThreadWorker::trigger_job() {
-  // Copy jobs to process (in case jobs modify the set)
+  // Copy jobs to process (in case jobs modify the set).
   rusty::BTreeSet<rusty::Arc<Job>> jobs_exec = jobs_.clone();
   jobs_.clear();
 
   for (const auto& job : jobs_exec) {
-    Job* job_ptr = const_cast<Job*>(job.get());
-    if (job_ptr->Ready()) {
-      // Capture job by value to keep the Arc alive
+    bool ready;
+    // @unsafe { const_cast<Job*> + virtual Ready() dispatch }
+    {
+      Job* job_ptr = const_cast<Job*>(job.get());
+      ready = job_ptr->Ready();
+    }
+    if (ready) {
+      // Capture job by value to keep the Arc alive.
       Fiber::create_run([job]() {
-        Job* job_ptr = const_cast<Job*>(job.get());
-        job_ptr->Work();
+        // @unsafe { const_cast<Job*> + virtual Work() dispatch }
+        {
+          Job* job_ptr = const_cast<Job*>(job.get());
+          job_ptr->Work();
+        }
       });
-      // Don't re-add ready jobs that were executed
+      // Don't re-add ready jobs that were executed.
     } else {
-      // Re-add jobs that aren't ready yet - they should be checked again later
+      // Re-add jobs that aren't ready yet - they should be checked again later.
       jobs_.insert(job);
     }
   }
@@ -2570,17 +2579,18 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode) {
   }
 }
 
-// @unsafe - uses rusty::BTreeSet::insert
+// @safe - rusty::BTreeSet::insert is @safe via namespace inheritance.
 void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
   jobs_.insert(job);
 }
 
-// @unsafe - uses rusty::BTreeSet::remove
+// @safe - rusty::BTreeSet::remove is @safe via namespace inheritance.
 void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
   jobs_.remove(job);
 }
 
-// @unsafe - uses rusty::HashSet::clone (via clear/swap)
+// @safe - the rusty::HashSet / HashMap ops are @safe; only `poll_.Remove(fd)`
+// (Epoll::Remove, a syscall-issuing path) escapes into an inner @unsafe block.
 void PollThreadWorker::process_pending_removals() {
   rusty::HashSet<int> remove_fds = pending_remove_.clone();
   pending_remove_.clear();
@@ -2590,9 +2600,10 @@ void PollThreadWorker::process_pending_removals() {
       continue;
     }
 
-    // Check if fd was NOT reused (still in mode map)
+    // Check if fd was NOT reused (still in mode map).
     if (mode_.contains_key(fd)) {
-      poll_.Remove(fd);
+      // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
+      { poll_.Remove(fd); }
     }
 
     fd_to_pollable_.remove(fd);
