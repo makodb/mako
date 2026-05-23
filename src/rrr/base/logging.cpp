@@ -1,35 +1,32 @@
 module;
 
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 
+#include <rusty/sync/atomic.hpp>
+
 export module rrr.logging;
 
 import std;
 import rrr.debugging;
 import rrr.misc; // for time_now_str
-import rrr.threading; // for Pthread_mutex_lock/unlock wrappers
 
 // @safe - Log static class is a printf-style logger. Every public
 // method takes a `const char* fmt, ...` variadic + drives
-// pthread_mutex_lock / vsprintf / std::ostream operator<< / FILE*
-// pointer writes — so each carries a per-method `// @unsafe` below.
-// The variadic Log_debug / Log_info / Log_warn / Log_error /
-// Log_fatal free-function shims keep their existing `// @safe`
-// annotations because the dispatch into Log::* is wrapped in an
-// inline `// @unsafe { }` block.
+// vsprintf / std::ostream operator<< — so each carries a
+// per-method `// @unsafe` below. The variadic Log_debug / Log_info /
+// Log_warn / Log_error / Log_fatal free-function shims keep their
+// existing `// @safe` annotations because the dispatch into
+// Log::* is wrapped in an inline `// @unsafe { }` block.
 export namespace rrr {
 
 // @safe - see file header.
 class Log {
-    static int level_s;
-    static FILE* fp_s;
+    static rusty::sync::atomic::Atomic<int> level_s;
     static std::ostream* stm_s;
-    static pthread_mutex_t m_s;
 
     // @unsafe - va_list + sprintf + vsprintf into a raw `char buf[1000]`
     // + std::ostream::operator<<.
@@ -40,11 +37,8 @@ public:
         FATAL = 0, ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4
     };
 
-    // @unsafe - writes a raw `FILE* fp` parameter into the static
-    // `fp_s` slot under Pthread_mutex_lock/unlock (themselves @safe).
-    static void set_file(FILE* fp);
-    // @safe - writes `level` into the static `level_s` slot under
-    // the @safe `Pthread_mutex_lock/unlock` wrappers.
+    // @safe - writes `level` into the static `level_s` slot via
+    // `Atomic<int>::store` (@safe).
     static void set_level(int level);
 
     // @unsafe - variadic forwards into log_v's va_list + sprintf chain.
@@ -118,29 +112,12 @@ inline void Log_fatal(const char* fmt, Args&&... args) {
 // `// @unsafe` for the raw `const char*` arithmetic.
 namespace rrr {
 
-int Log::level_s = Log::DEBUG;
-FILE* Log::fp_s = stdout;
+rusty::sync::atomic::Atomic<int> Log::level_s{Log::DEBUG};
 std::ostream* Log::stm_s = &std::cout;
-pthread_mutex_t Log::m_s = PTHREAD_MUTEX_INITIALIZER;
 
-// @safe - Pthread_mutex_* are @safe wrappers; only the `&m_s`
-// address-of escapes into a tight @unsafe block.
+// @safe - Atomic<int>::store is @safe.
 void Log::set_level(int level) {
-    // @unsafe { address-of static pthread_mutex_t m_s }
-    {
-        Pthread_mutex_lock(&m_s);
-        level_s = level;
-        Pthread_mutex_unlock(&m_s);
-    }
-}
-
-// @unsafe - Accepts a raw `FILE* fp` and writes it into the static
-// `fp_s` slot. The Pthread_mutex_* wrappers are themselves @safe.
-void Log::set_file(FILE* fp) {
-    verify(fp != nullptr);
-    Pthread_mutex_lock(&m_s);
-    fp_s = fp;
-    Pthread_mutex_unlock(&m_s);
+    level_s.store(level, rusty::sync::atomic::Ordering::Relaxed);
 }
 
 // @unsafe - raw `const char*` arithmetic + strlen + null-terminator
@@ -165,7 +142,7 @@ static const char* basename(const char* fpath) {
 void Log::log_v(int level, int line, const char* file, const char* fmt, va_list args) {
     static char indicator[] = { 'F', 'E', 'W', 'I', 'D' };
     if (level > Log::DEBUG) std::abort();
-    if (level <= level_s) {
+    if (level <= level_s.load(rusty::sync::atomic::Ordering::Relaxed)) {
       const char* filebase = basename(file);
       if (filebase == nullptr) {
           filebase = "<unknown>";
