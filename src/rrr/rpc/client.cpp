@@ -3769,7 +3769,7 @@ void ClientConnection::on_channel_closed_fan_out() {
   // a real reconnect leave the abort flag false and rely on the
   // spawn.
   if (reconnect_policy_.auto_reconnect &&
-      // @unsafe { std::string::empty }
+      // std::string::empty() is a pure const accessor, safe in @safe code.
       !reconnect_address_.empty()) {
     channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
 
