@@ -338,16 +338,16 @@ public:
         return config_.max_size;
     }
 
-    // @unsafe - Update configuration (clears queue if not empty)
+    // @safe - SpinMutex::lock is @safe; the body only assigns a
+    // RequestQueueConfig POD into the member field under the lock.
     void update_config(const RequestQueueConfig& config) {
         // Take the queue's lock to serialize against in-flight enqueue/dequeue
         // operations so config_ updates are observed atomically with respect
         // to those operations.
-        // @unsafe { SpinMutex lock, config assignment }
         auto guard = queue_.lock().unwrap();
         (void)guard;
         config_ = config;
-        // Note: Caller should clear queue before calling if needed
+        // Note: Caller should clear queue before calling if needed.
     }
 };
 
