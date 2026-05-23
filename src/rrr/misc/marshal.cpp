@@ -125,8 +125,7 @@ public:
   // @safe - Default ctor: reserve starter capacity so small writes
   // don't pay the first-grow cost.
   Marshal() {
-    // @unsafe { Vec::reserve internal allocation }
-    { buf_.reserve(kInitialCapacity); }
+    buf_.reserve(kInitialCapacity);
   }
 
   // @safe - Trivial dtor — Vec releases the heap on drop. noexcept to
@@ -137,8 +136,7 @@ public:
   // version allocated a single chunk of this size up front; here we
   // just hint the Vec to reserve. Legal to call when buf_ is empty.
   void init_block_read(std::size_t block_size) {
-    // @unsafe { Vec::reserve internal allocation }
-    { buf_.reserve(block_size); }
+    buf_.reserve(block_size);
   }
 
   // @safe - Empty when fully drained.
