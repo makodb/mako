@@ -268,7 +268,7 @@ class InMemoryChannelAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_inmemory_channel_proxy(
         rusty::Arc<InMemoryChannel> conn) {
-    return std::make_unique<InMemoryChannelAdapter>(std::move(conn));
+    return rusty::make_box<InMemoryChannelAdapter>(std::move(conn));
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ class InMemoryListenerAdapter : public ChannelListenerBase {
 
 inline ChannelListenerProxy make_inmemory_listener_proxy(
         rusty::Arc<InMemoryListener> listener) {
-    return std::make_unique<InMemoryListenerAdapter>(std::move(listener));
+    return rusty::make_box<InMemoryListenerAdapter>(std::move(listener));
 }
 
 // ---------------------------------------------------------------------------
@@ -395,9 +395,9 @@ class InMemoryFactory {
     InMemoryFactory& operator=(InMemoryFactory&&)      = delete;
 
     // ChannelFactoryBase methods.
-    ConnectResult        connect(std::string_view addr);
-    ChannelListenerProxy make_listener();
-    const char*          backend_name() const { return "inmemory"; }
+    ConnectResult                       connect(std::string_view addr);
+    rusty::Option<ChannelListenerProxy> make_listener();
+    const char*                         backend_name() const { return "inmemory"; }
 
     // Switchboard accessor (test introspection).
     const rusty::Arc<InMemorySwitchboard>& switchboard() const {
@@ -414,10 +414,10 @@ class InMemoryFactoryAdapter : public ChannelFactoryBase {
         : factory_(std::move(factory)) {}
 
     // @unsafe - forwards through mut_factory() const_cast.
-    ConnectResult        connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    ConnectResult                       connect(std::string_view addr) override { return mut_factory().connect(addr); }
     // @unsafe - forwards through mut_factory() const_cast.
-    ChannelListenerProxy make_listener() override                { return mut_factory().make_listener(); }
-    const char*          backend_name() const override           { return factory_->backend_name(); }
+    rusty::Option<ChannelListenerProxy> make_listener() override                { return mut_factory().make_listener(); }
+    const char*                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
     // @unsafe - const_cast through Arc::get<T*>().
@@ -429,7 +429,7 @@ class InMemoryFactoryAdapter : public ChannelFactoryBase {
 
 inline ChannelFactoryProxy make_inmemory_factory_proxy(
         rusty::Arc<InMemoryFactory> factory) {
-    return std::make_unique<InMemoryFactoryAdapter>(std::move(factory));
+    return rusty::make_box<InMemoryFactoryAdapter>(std::move(factory));
 }
 
 // ---------------------------------------------------------------------------
@@ -862,8 +862,7 @@ ConnectResult InMemoryFactory::connect(std::string_view addr) {
     std::string addr_str(addr);
     auto listener_opt = switchboard_->find_listener(addr_str);
     if (listener_opt.is_none()) {
-        return ConnectResult{ChannelConnectionProxy{},
-                             ChannelError::ConnectionRefused};
+        return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
     }
     auto listener = listener_opt.unwrap();
     // Use a synthesized client address. Future work could let the
@@ -877,12 +876,11 @@ ConnectResult InMemoryFactory::connect(std::string_view addr) {
     auto& mut_listener = const_cast<InMemoryListener&>(*listener.get());
     auto client_opt = mut_listener.accept_for_connect(client_address);
     if (client_opt.is_none()) {
-        return ConnectResult{ChannelConnectionProxy{},
-                             ChannelError::ConnectionRefused};
+        return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
     }
     auto client_side = client_opt.unwrap();
     return ConnectResult{
-        make_inmemory_channel_proxy(std::move(client_side)),
+        rusty::Some(make_inmemory_channel_proxy(std::move(client_side))),
         ChannelError::None,
     };
 }
@@ -909,7 +907,7 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
 
 // @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
 // wire `self_weak_` before publishing the listener.
-ChannelListenerProxy InMemoryFactory::make_listener() {
+rusty::Option<ChannelListenerProxy> InMemoryFactory::make_listener() {
     auto listener = rusty::Arc<InMemoryListener>::make(switchboard_);
     // Wire the self-weak so the listener can register itself in the
     // switchboard. Mirrors TcpFactory::make_listener.
@@ -917,7 +915,7 @@ ChannelListenerProxy InMemoryFactory::make_listener() {
         auto& mut_l = const_cast<InMemoryListener&>(*listener.get());
         mut_l.set_self_weak(rusty::sync::downgrade(listener));
     }
-    return make_inmemory_listener_proxy(std::move(listener));
+    return rusty::Some(make_inmemory_listener_proxy(std::move(listener)));
 }
 
 

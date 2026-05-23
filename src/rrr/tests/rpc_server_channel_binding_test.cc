@@ -31,11 +31,10 @@ namespace {
 class NullFactoryStub {
  public:
     ConnectResult connect(std::string_view) {
-        return ConnectResult{ChannelConnectionProxy{},
-                             ChannelError::Internal};
+        return ConnectResult{rusty::None, ChannelError::Internal};
     }
-    ChannelListenerProxy make_listener() {
-        return ChannelListenerProxy{};
+    rusty::Option<ChannelListenerProxy> make_listener() {
+        return rusty::None;
     }
     const char* backend_name() const { return "null-stub"; }
 };
@@ -44,16 +43,16 @@ class NullFactoryStubAdapter : public ChannelFactoryBase {
  public:
     explicit NullFactoryStubAdapter(std::shared_ptr<NullFactoryStub> p)
         : stub_(std::move(p)) {}
-    ConnectResult connect(std::string_view addr) override { return stub_->connect(addr); }
-    ChannelListenerProxy make_listener() override { return stub_->make_listener(); }
-    const char* backend_name() const override { return stub_->backend_name(); }
+    ConnectResult                       connect(std::string_view addr) override { return stub_->connect(addr); }
+    rusty::Option<ChannelListenerProxy> make_listener() override                { return stub_->make_listener(); }
+    const char*                         backend_name() const override           { return stub_->backend_name(); }
 
  private:
     std::shared_ptr<NullFactoryStub> stub_;
 };
 
 inline ChannelFactoryProxy make_stub_factory_proxy() {
-    return std::make_unique<NullFactoryStubAdapter>(
+    return rusty::make_box<NullFactoryStubAdapter>(
         std::make_shared<NullFactoryStub>());
 }
 
@@ -90,18 +89,11 @@ TEST_F(ServerChannelBindingTest, FactoryUnboundByDefault) {
 }
 
 // ---------------------------------------------------------------------------
-// set_channel_factory with a null proxy is a no-op.
-// ---------------------------------------------------------------------------
-
-TEST_F(ServerChannelBindingTest, SetChannelFactoryWithNullProxyIsNoop) {
-    EXPECT_FALSE(server().is_channel_factory_bound());
-    server().set_channel_factory(ChannelFactoryProxy{});
-    EXPECT_FALSE(server().is_channel_factory_bound());
-}
-
-// ---------------------------------------------------------------------------
 // set_channel_factory with a non-null proxy flips the latch.
 // ---------------------------------------------------------------------------
+// (The legacy "null proxy is a no-op" test is gone — ChannelFactoryProxy is
+// now `rusty::Box<ChannelFactoryBase>` and cannot be default-constructed,
+// so the type system enforces non-null at the call site.)
 
 TEST_F(ServerChannelBindingTest, SetChannelFactoryWithStubFlipsLatch) {
     EXPECT_FALSE(server().is_channel_factory_bound());

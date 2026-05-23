@@ -99,7 +99,7 @@ TEST_F(TcpFactoryTest, BackendNameIsTcp) {
 TEST_F(TcpFactoryTest, ConnectInvalidAddressFails) {
     auto r = mut_factory().connect("not-an-address");
     EXPECT_EQ(r.error, ChannelError::AddressInvalid);
-    EXPECT_FALSE(static_cast<bool>(r.connection));
+    EXPECT_TRUE(r.connection.is_none());
 }
 
 TEST_F(TcpFactoryTest, ConnectUnboundPortFailsConnectionRefused) {
@@ -127,7 +127,7 @@ TEST_F(TcpFactoryTest, ConnectUnboundPortFailsConnectionRefused) {
     // intercepts, ConnectionReset / Timeout. Localhost loopback in
     // a quiet test process should produce ConnectionRefused, but
     // the test stays robust against a spuriously-bound TIME_WAIT.
-    EXPECT_FALSE(static_cast<bool>(r.connection));
+    EXPECT_TRUE(r.connection.is_none());
     EXPECT_TRUE(r.error == ChannelError::ConnectionRefused
                 || r.error == ChannelError::ConnectionReset
                 || r.error == ChannelError::Timeout)
@@ -140,7 +140,7 @@ TEST_F(TcpFactoryTest, ConnectUnboundPortFailsConnectionRefused) {
 
 TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     // Server side: factory-built listener.
-    auto listener = mut_factory().make_listener();
+    auto listener = mut_factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
     const std::string local_addr = listener->local_address();
     ASSERT_FALSE(local_addr.empty());
@@ -164,11 +164,11 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     // Client side: factory.connect().
     auto cresult = mut_factory().connect(local_addr);
     ASSERT_EQ(cresult.error, ChannelError::None);
-    ASSERT_TRUE(static_cast<bool>(cresult.connection));
+    ASSERT_TRUE(cresult.connection.is_some());
 
     std::mutex client_mu;
     std::vector<std::vector<std::uint8_t>> client_received;
-    cresult.connection->set_on_frame([&](const ChannelFrame& f) {
+    cresult.connection.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
         std::lock_guard<std::mutex> g(client_mu);
         client_received.emplace_back(f.payload, f.payload + f.size);
     });
@@ -181,7 +181,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
 
     // Send a frame client → server.
     const std::uint8_t c2s[] = {0xC1, 0xC2, 0xC3, 0xC4};
-    EXPECT_EQ(cresult.connection->send_frame({c2s, sizeof(c2s)}),
+    EXPECT_EQ(cresult.connection.as_ref().unwrap()->send_frame({c2s, sizeof(c2s)}),
               ChannelError::None);
 
     EXPECT_TRUE(wait_for([&] {
@@ -218,7 +218,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
     }
 
     // Tidy up.
-    cresult.connection->close();
+    cresult.connection.as_ref().unwrap()->close();
     {
         std::lock_guard<std::mutex> g(accept_mu);
         if (server_side_conn) server_side_conn.as_ref().unwrap()->close();
@@ -231,7 +231,7 @@ TEST_F(TcpFactoryTest, EndToEndFrameRoundTrip) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
-    auto listener = mut_factory().make_listener();
+    auto listener = mut_factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
     const std::string local_addr = listener->local_address();
 
@@ -255,7 +255,7 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
         return server_conn.is_some();
     }));
 
-    cresult.connection->close();
+    cresult.connection.as_ref().unwrap()->close();
 
     EXPECT_TRUE(wait_for([&] {
         std::lock_guard<std::mutex> g(mu);
@@ -275,7 +275,7 @@ TEST_F(TcpFactoryTest, ClientCloseFiresServerOnClosed) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpFactoryTest, MultipleSequentialConnects) {
-    auto listener = mut_factory().make_listener();
+    auto listener = mut_factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
     const std::string local_addr = listener->local_address();
 
@@ -293,7 +293,7 @@ TEST_F(TcpFactoryTest, MultipleSequentialConnects) {
     for (int i = 0; i < kClients; ++i) {
         auto r = mut_factory().connect(local_addr);
         ASSERT_EQ(r.error, ChannelError::None) << "client " << i;
-        client_conns.push_back(std::move(r.connection));
+        client_conns.push_back(std::move(r.connection).unwrap());
     }
 
     EXPECT_TRUE(wait_for([&] {
@@ -324,7 +324,7 @@ TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
 
     EXPECT_STREQ(proxy->backend_name(), "tcp");
 
-    auto listener = proxy->make_listener();
+    auto listener = proxy->make_listener().unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
     const std::string local_addr = listener->local_address();
     ASSERT_FALSE(local_addr.empty());
@@ -340,14 +340,14 @@ TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
 
     auto r = proxy->connect(local_addr);
     ASSERT_EQ(r.error, ChannelError::None);
-    ASSERT_TRUE(static_cast<bool>(r.connection));
+    ASSERT_TRUE(r.connection.is_some());
 
     EXPECT_TRUE(wait_for([&] {
         std::lock_guard<std::mutex> g(mu);
         return server_conn.is_some();
     }));
 
-    r.connection->close();
+    r.connection.as_ref().unwrap()->close();
     {
         std::lock_guard<std::mutex> g(mu);
         if (server_conn) server_conn.as_ref().unwrap()->close();

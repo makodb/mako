@@ -321,8 +321,8 @@ class ServerConnection {
     // Mutable + SpinMutex so the const `reply<F>` template path can
     // lock it briefly to dispatch a frame from any thread (mirrors
     // the client-side `direct_channel_` discipline).
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>>
-        channel_proxy_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelConnectionProxy>>
+        channel_proxy_{rusty::Option<ChannelConnectionProxy>(rusty::None)};
     rusty::Cell<bool> channel_mode_{false};
 
 public:
@@ -671,7 +671,7 @@ class Server: public NoCopy {
     // of the legacy `ServerListener`'s `socket(2)+bind(2)+listen(2)+
     // accept(2)+epoll` path.
     //
-    rusty::Option<rusty::Box<ChannelFactoryProxy>> channel_factory_{rusty::None};
+    rusty::Option<ChannelFactoryProxy> channel_factory_{rusty::None};
 
     // channel-mode listener +
     // accepted-connection tracking.
@@ -690,7 +690,7 @@ class Server: public NoCopy {
     // `~Server`'s drop. SpinMutex so concurrent on_accept invocations
     // (the channel layer can fire on_accept on the poll thread while
     // a user thread iterates) stay safe.
-    rusty::Option<rusty::Box<ChannelListenerProxy>> channel_listener_{rusty::None};
+    rusty::Option<ChannelListenerProxy> channel_listener_{rusty::None};
     mutable SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>
         channel_sconns_{rusty::Vec<rusty::Arc<ServerConnection>>()};
 
@@ -718,12 +718,11 @@ public:
      * Calling with a default-constructed (null) proxy is a no-op.
      * Calling more than once replaces the previously-bound factory.
      */
-    // @unsafe - Records the factory under Box+Option interior storage.
+    // @unsafe - Records the factory under Option interior storage.
     void set_channel_factory(ChannelFactoryProxy factory) {
         if (!factory) return;
-        // @unsafe { make_box + ChannelFactoryProxy move }
-        channel_factory_ = rusty::Some(
-            rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+        // @unsafe { ChannelFactoryProxy move }
+        channel_factory_ = rusty::Some(std::move(factory));
     }
 
     // @safe - True if `set_channel_factory` has been called with a non-null proxy.
@@ -1105,11 +1104,10 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
         mut_sconn->close();
     });
 
-    // @unsafe { SpinMutex::lock + make_box + ChannelConnectionProxy move }
+    // @unsafe { SpinMutex::lock + ChannelConnectionProxy move }
     {
         auto guard = channel_proxy_.lock().unwrap();
-        *guard = rusty::Some(
-            rusty::make_box<ChannelConnectionProxy>(std::move(proxy)));
+        *guard = rusty::Some(std::move(proxy));
     }
     channel_mode_.set(true);
 }
@@ -1220,8 +1218,8 @@ void ServerConnection::decode_request_and_dispatch(
 // `reply()`.
 void ServerConnection::dispatch_response_frame_via_channel(
         const std::uint8_t* bytes, std::size_t size) const {
-    ChannelConnectionProxy* proxy = nullptr;
-    // @unsafe { SpinMutex::lock + raw pointer extraction }
+    ChannelConnectionBase* conn = nullptr;
+    // @unsafe { SpinMutex::lock + Box::get + raw pointer extraction }
     {
         auto guard = channel_proxy_.lock().unwrap();
         if (guard->is_none()) {
@@ -1230,12 +1228,11 @@ void ServerConnection::dispatch_response_frame_via_channel(
                      "Dropping reply.");
             return;
         }
-        proxy = const_cast<ChannelConnectionProxy*>(
-            guard->as_ref().unwrap().get());
+        conn = guard->as_ref().unwrap().get();
     }
     ChannelFrame frame{bytes, size};
-    // @unsafe - virtual method dispatch through Box<ChannelConnectionBase>
-    (void)(*proxy)->send_frame(frame);
+    // @unsafe - virtual method dispatch through ChannelConnectionBase*
+    (void)conn->send_frame(frame);
 }
 
 // @unsafe - Executes callback inline for API compatibility.
@@ -1300,13 +1297,12 @@ void ServerConnection::close() {
         Log_debug("server@%s close ServerConnection",
                   ctx_->addr.c_str());
         // Tear down the channel proxy. Idempotent per channel-layer contract.
-        // @unsafe
+        // @unsafe { SpinMutex::lock + Box::get + virtual dispatch }
         {
             auto guard = channel_proxy_.lock().unwrap();
             if (guard->is_some()) {
-                auto* proxy = const_cast<ChannelConnectionProxy*>(
-                    guard->as_ref().unwrap().get());
-                (*proxy)->close();
+                auto* conn = guard->as_ref().unwrap().get();
+                conn->close();
             }
         }
     }
@@ -1394,7 +1390,7 @@ Server::~Server() noexcept {
         // std::function's copyable requirement is no longer needed.
         auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
             [listener_box = std::move(channel_listener_).unwrap()]() mutable {
-                (*listener_box)->close();
+                listener_box->close();
             }));
         auto close_job_base = rusty::Arc<Job>(close_job);
         poll_thread_.as_ref().unwrap()->add(std::move(close_job_base));
@@ -1483,20 +1479,20 @@ int Server::start(const char* bind_addr) {
   // it in `channel_sconns_` so its lifetime is tied to the
   // `Server` (not the on_accept stack frame).
   if (is_channel_factory_bound()) {
-    ChannelListenerProxy listener;
-    // @unsafe { Box<ChannelFactoryProxy>::get + proxy method dispatch }
+    rusty::Option<ChannelListenerProxy> listener_opt;
+    // @unsafe { Box::get + proxy method dispatch }
     {
-      auto* factory = const_cast<ChannelFactoryProxy*>(
-          channel_factory_.as_ref().unwrap().get());
-      listener = (*factory)->make_listener();
+      auto* factory = channel_factory_.as_ref().unwrap().get();
+      listener_opt = factory->make_listener();
     }
-    if (!listener) {
+    if (listener_opt.is_none()) {
       Log_error("rrr::Server::start: factory->make_listener() returned a "
                 "null proxy (factory backend=%s)",
                 /*best-effort name*/ "unknown");
       ctx_ = rusty::None;
       return -1;
     }
+    ChannelListenerProxy listener = std::move(listener_opt).unwrap();
 
     // Capture for the on_accept lambda. `this` outlives the listener
     // because Server owns `channel_listener_` (and `channel_sconns_`)
@@ -1541,9 +1537,8 @@ int Server::start(const char* bind_addr) {
     }
 
     // Park the listener on the server so its lifetime matches Server's.
-    // @unsafe { make_box + Option assignment }
-    channel_listener_ = rusty::Some(
-        rusty::make_box<ChannelListenerProxy>(std::move(listener)));
+    // @unsafe { Option assignment }
+    channel_listener_ = rusty::Some(std::move(listener));
     return 0;
   }
 
@@ -1608,11 +1603,10 @@ void Server::stop_accepting() {
     // accepted connections in `channel_sconns_` are unaffected (they
     // continue to serve in-flight requests until drained / shut down).
     if (channel_listener_.is_some()) {
-        // @unsafe { Box::get + ChannelListenerProxy method dispatch }
+        // @unsafe { Box::get + virtual dispatch }
         {
-            auto* listener = const_cast<ChannelListenerProxy*>(
-                channel_listener_.as_ref().unwrap().get());
-            (*listener)->close();
+            auto* listener = channel_listener_.as_ref().unwrap().get();
+            listener->close();
         }
         Log_info("Server::stop_accepting: channel listener closed, "
                  "no longer accepting connections");
@@ -1714,11 +1708,10 @@ int Server::get_bound_port() const {
         return -1;
     }
     std::string local;
-    // @unsafe { Box<ChannelListenerProxy>::get + proxy method dispatch }
+    // @unsafe { Box::get + virtual dispatch }
     {
-        auto* listener = const_cast<ChannelListenerProxy*>(
-            channel_listener_.as_ref().unwrap().get());
-        local = (*listener)->local_address();
+        auto* listener = channel_listener_.as_ref().unwrap().get();
+        local = listener->local_address();
     }
     auto colon = local.rfind(':');
     if (colon == std::string::npos) {

@@ -696,7 +696,7 @@ class ClientConnection {
     // `fiber_channel_` and `factory_` (the alias is already a
     // `rusty::Box<ChannelConnectionBase>`; the outer Box keeps the
     // Option's value-type uniform across slots).
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>> direct_channel_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelConnectionProxy>> direct_channel_{rusty::Option<ChannelConnectionProxy>(rusty::None)};
 
     rusty::Cell<bool> channel_mode_{false};
 
@@ -722,7 +722,7 @@ class ClientConnection {
     // the close fan-out's reconnect spawn calls `connect_via_factory`
     // from a separate thread, which can race against user-thread
     // accessors like `is_factory_bound()` (sub-leaf 4g1).
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelFactoryProxy>>> factory_{rusty::Option<rusty::Box<ChannelFactoryProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelFactoryProxy>> factory_{rusty::Option<ChannelFactoryProxy>(rusty::None)};
 
     // Transaction ID counter for RPC requests
     // mutable because Counter uses atomics internally for thread-safe interior mutability
@@ -970,11 +970,10 @@ public:
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void bind_factory(ChannelFactoryProxy factory) {
         if (!factory) return;
-        // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
+        // @unsafe { SpinMutex::lock + ChannelFactoryProxy move }
         {
             auto guard = factory_.lock().unwrap();
-            *guard = rusty::Some(
-                rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+            *guard = rusty::Some(std::move(factory));
         }
     }
 
@@ -1400,7 +1399,7 @@ private:
             auto guard = direct_channel_.lock().unwrap();
             if (guard->is_some()) {
                 auto& mut_proxy = *guard->as_mut().unwrap();
-                return mut_proxy->send_frame(
+                return mut_proxy.send_frame(
                     ChannelFrame{body_bytes, body_size});
             }
         }
@@ -1502,7 +1501,7 @@ private:
             auto direct_guard = direct_channel_.lock().unwrap();
             if (direct_guard->is_some()) {
                 auto& proxy = *direct_guard->as_ref().unwrap();
-                if (proxy->is_closed()) {
+                if (proxy.is_closed()) {
                     record_circuit_result(ENOTCONN);
                     return FutureResult::Err(ENOTCONN);
                 }
@@ -1593,7 +1592,7 @@ public:
             auto direct_guard = direct_channel_.lock().unwrap();
             if (direct_guard->is_some()) {
                 auto& proxy = *direct_guard->as_ref().unwrap();
-                if (proxy->is_closed()) {
+                if (proxy.is_closed()) {
                     record_circuit_result(ENOTCONN);
                     return rusty::Result<void, i32>::Err(ENOTCONN);
                 }
@@ -2001,7 +2000,7 @@ class Client {
     // SpinMutex (not RefCell) because Client::connect can be called
     // from any thread and reads/consumes pending_factory_ on each
     // call — sub-leaf 4g1.
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelFactoryProxy>>> pending_factory_{rusty::Option<rusty::Box<ChannelFactoryProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelFactoryProxy>> pending_factory_{rusty::Option<ChannelFactoryProxy>(rusty::None)};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -2177,11 +2176,10 @@ public:
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void set_channel_factory(ChannelFactoryProxy factory) const {
         if (!factory) return;
-        // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
+        // @unsafe { SpinMutex::lock + ChannelFactoryProxy move }
         {
             auto guard = pending_factory_.lock().unwrap();
-            *guard = rusty::Some(
-                rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+            *guard = rusty::Some(std::move(factory));
         }
     }
 
@@ -2931,13 +2929,12 @@ void ClientConnection::close() const {
 
   // Tear down the channel proxy(ies). The channel layer's `close()`
   // is idempotent and thread-safe per the facade contract.
-  // @unsafe { SpinMutex::lock + proxy method dispatch }
+  // @unsafe { SpinMutex::lock + Box::get + proxy method dispatch }
   {
     auto guard = direct_channel_.lock().unwrap();
     if (guard->is_some()) {
-      auto* proxy = const_cast<ChannelConnectionProxy*>(
-          guard->as_ref().unwrap().get());
-      (*proxy)->close();
+      auto* conn = guard->as_ref().unwrap().get();
+      conn->close();
     }
   }
   // @unsafe { SpinMutex::lock + FiberChannel::close }
@@ -3316,7 +3313,6 @@ void ClientConnection::reset_channel_mode_for_reconnect() {
 // which already transitioned the state to CONNECTING and verified
 // the factory binding.
 int ClientConnection::connect_via_factory(const char* addr) {
-  ChannelFactoryProxy factory;
   // Take a *clone* of the bound factory so we can call `connect` on
   // it without holding the RefCell guard across what may be a
   // blocking syscall (TCP handshake, address resolution). The
@@ -3346,10 +3342,9 @@ int ClientConnection::connect_via_factory(const char* addr) {
     // while we issue the syscall doesn't introduce contention with
     // the dispatch path (which locks `fiber_channel_`, not
     // `factory_`).
-    auto* bound = const_cast<ChannelFactoryProxy*>(
-        guard->as_ref().unwrap().get());
-    ConnectResult result = (*bound)->connect(std::string_view(addr));
-    if (result.error != ChannelError::None || !result.connection) {
+    auto* bound = guard->as_ref().unwrap().get();
+    ConnectResult result = bound->connect(std::string_view(addr));
+    if (result.error != ChannelError::None || result.connection.is_none()) {
       const auto err_str = std::string("factory connect failed: ")
           + channel_error_to_string(result.error);
       Log_error("rrr::ClientConnection: %s (addr=%s)", err_str.c_str(), addr);
@@ -3370,7 +3365,7 @@ int ClientConnection::connect_via_factory(const char* addr) {
     // layer fires it) and calls decode_response_and_notify inline —
     // no IntEvent, no fiber yield, no waiting_events_ churn. This
     // works around the deeper reactor/fiber wedge documented in 4g1b.
-    bind_channel_direct(std::move(result.connection));
+    bind_channel_direct(result.connection.unwrap());
   }
 
   // Record address for the close fan-out's reconnect spawn — it
@@ -3564,10 +3559,10 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
   channel->set_on_error([](ChannelError, std::string_view) {});
 
   // Move the proxy into the slot and flip the channel-mode latch.
-  // @unsafe { make_box + SpinMutex mutation }
+  // @unsafe { SpinMutex mutation }
   {
     auto guard = direct_channel_.lock().unwrap();
-    *guard = rusty::Some(rusty::make_box<ChannelConnectionProxy>(std::move(channel)));
+    *guard = rusty::Some(std::move(channel));
   }
   channel_mode_.set(true);
 }
@@ -4242,16 +4237,14 @@ int Client::connect(const char* addr, bool client) const {
   // move-only; the factory is a one-shot push per Client lifecycle
   // (re-bind via `set_channel_factory` to install a different one —
   // affects subsequent Client::connect calls).
-  // @unsafe { SpinMutex::lock + Box deref + ChannelFactoryProxy move }
+  // @unsafe { SpinMutex::lock + ChannelFactoryProxy move }
   {
     auto guard = pending_factory_.lock().unwrap();
     if (guard->is_some()) {
-      // Move the proxy out of the boxed Option. The Box stays
-      // alive on the stack until the end of this scope; we move
-      // the inner proxy into the new ClientConnection's bind_factory
-      // (which re-boxes it on the connection side).
-      auto box = std::move(*guard).unwrap();
-      ChannelFactoryProxy moved = std::move(*box);
+      // Move the proxy out of the Option directly — the alias
+      // is `rusty::Box<ChannelFactoryBase>`, so unwrap() yields
+      // the move-only Box, no inner deref needed.
+      ChannelFactoryProxy moved = std::move(*guard).unwrap();
       mut_conn.bind_factory(std::move(moved));
       *guard = rusty::None;  // single-use; tests can re-bind
     }

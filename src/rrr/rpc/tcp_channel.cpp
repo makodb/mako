@@ -300,7 +300,7 @@ class TcpConnectionPollableAdapter : public PollableBase {
 
 inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
     rusty::Arc<TcpConnection> conn) {
-    return std::make_unique<TcpConnectionChannelAdapter>(std::move(conn));
+    return rusty::make_box<TcpConnectionChannelAdapter>(std::move(conn));
 }
 
 inline PollableProxy make_tcp_connection_pollable_proxy(
@@ -487,7 +487,7 @@ class TcpListenerPollableAdapter : public PollableBase {
 
 inline ChannelListenerProxy make_tcp_listener_channel_proxy(
     rusty::Arc<TcpListener> listener) {
-    return std::make_unique<TcpListenerChannelAdapter>(std::move(listener));
+    return rusty::make_box<TcpListenerChannelAdapter>(std::move(listener));
 }
 
 inline PollableProxy make_tcp_listener_pollable_proxy(
@@ -533,9 +533,9 @@ class TcpFactory {
     TcpFactory& operator=(TcpFactory&&)      = delete;
 
     // ChannelFactoryBase methods.
-    ConnectResult         connect(std::string_view addr);
-    ChannelListenerProxy  make_listener();
-    const char*           backend_name() const { return "tcp"; }
+    ConnectResult                       connect(std::string_view addr);
+    rusty::Option<ChannelListenerProxy> make_listener();
+    const char*                         backend_name() const { return "tcp"; }
 
     // Optional override for the connect-side IPv4 timeout (default
     // 5s). Only used when the kernel doesn't fail-fast on
@@ -555,10 +555,10 @@ class TcpFactoryAdapter : public ChannelFactoryBase {
         : factory_(std::move(factory)) {}
 
     // @unsafe - forwards through mut_factory() const_cast (socket+connect path).
-    ConnectResult        connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    ConnectResult                       connect(std::string_view addr) override { return mut_factory().connect(addr); }
     // @unsafe - forwards through mut_factory() const_cast.
-    ChannelListenerProxy make_listener() override                { return mut_factory().make_listener(); }
-    const char*          backend_name() const override           { return factory_->backend_name(); }
+    rusty::Option<ChannelListenerProxy> make_listener() override                { return mut_factory().make_listener(); }
+    const char*                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
     // @unsafe - const_cast through Arc::get<T*>().
@@ -567,7 +567,7 @@ class TcpFactoryAdapter : public ChannelFactoryBase {
 };
 
 inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
-    return std::make_unique<TcpFactoryAdapter>(std::move(factory));
+    return rusty::make_box<TcpFactoryAdapter>(std::move(factory));
 }
 
 }  // export namespace rrr
@@ -1337,7 +1337,7 @@ TcpFactory::TcpFactory(rusty::Arc<PollThread> poll_thread)
 ConnectResult TcpFactory::connect(std::string_view addr) {
     auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
     if (parse_result.is_err()) {
-        return ConnectResult{ChannelConnectionProxy{}, ChannelError::AddressInvalid};
+        return ConnectResult{rusty::None, ChannelError::AddressInvalid};
     }
     sockaddr_in sa =
         rusty::net::sockaddr_in_from_socket_addr_v4(parse_result.unwrap());
@@ -1345,7 +1345,7 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
     // @unsafe — system call
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        return ConnectResult{ChannelConnectionProxy{},
+        return ConnectResult{rusty::None,
                              connect_errno_to_channel_error(errno)};
     }
 
@@ -1364,7 +1364,7 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
     if (set_nonblocking_fd(fd) != 0) {
         const int err = errno;
         ::close(fd);
-        return ConnectResult{ChannelConnectionProxy{},
+        return ConnectResult{rusty::None,
                              connect_errno_to_channel_error(err)};
     }
 
@@ -1388,13 +1388,13 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
             int sel = ::select(fd + 1, nullptr, &wset, nullptr, &tv);
             if (sel == 0) {
                 ::close(fd);
-                return ConnectResult{ChannelConnectionProxy{},
+                return ConnectResult{rusty::None,
                                      ChannelError::Timeout};
             }
             if (sel < 0) {
                 const int sel_err = errno;
                 ::close(fd);
-                return ConnectResult{ChannelConnectionProxy{},
+                return ConnectResult{rusty::None,
                                      connect_errno_to_channel_error(sel_err)};
             }
             // Check SO_ERROR for the actual connect outcome.
@@ -1405,12 +1405,12 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
                 || so_err != 0) {
                 const int eff_err = (so_err != 0) ? so_err : errno;
                 ::close(fd);
-                return ConnectResult{ChannelConnectionProxy{},
+                return ConnectResult{rusty::None,
                                      connect_errno_to_channel_error(eff_err)};
             }
         } else if (err != EISCONN) {
             ::close(fd);
-            return ConnectResult{ChannelConnectionProxy{},
+            return ConnectResult{rusty::None,
                                  connect_errno_to_channel_error(err)};
         }
     }
@@ -1431,12 +1431,12 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
     poll_thread_->add_proxy(make_tcp_connection_pollable_proxy(conn.clone()));
 
     return ConnectResult{
-        make_tcp_connection_channel_proxy(std::move(conn)),
+        rusty::Some(make_tcp_connection_channel_proxy(std::move(conn))),
         ChannelError::None,
     };
 }
 
-ChannelListenerProxy TcpFactory::make_listener() {
+rusty::Option<ChannelListenerProxy> TcpFactory::make_listener() {
     auto listener = rusty::Arc<TcpListener>::make();
     // Wire the listener up with the poll thread + a weak self-ref so
     // it can self-register on a successful `listen(addr)` and so
@@ -1446,7 +1446,7 @@ ChannelListenerProxy TcpFactory::make_listener() {
         mut_l.set_poll_thread(poll_thread_.clone());
         mut_l.set_self_weak(rusty::sync::downgrade(listener));
     }
-    return make_tcp_listener_channel_proxy(std::move(listener));
+    return rusty::Some(make_tcp_listener_channel_proxy(std::move(listener)));
 }
 
 ChannelError TcpFactory::connect_errno_to_channel_error(int err) {

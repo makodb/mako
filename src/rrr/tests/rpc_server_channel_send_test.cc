@@ -72,7 +72,7 @@ class CapturingChannelStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_capturing_channel_proxy(
         std::shared_ptr<CapturingChannelStub> stub) {
-    return std::make_unique<CapturingChannelStubAdapter>(std::move(stub));
+    return rusty::make_box<CapturingChannelStubAdapter>(std::move(stub));
 }
 
 // Empty service used only to provide a valid `RpcServiceContext`
@@ -229,11 +229,10 @@ TEST_F(ServerChannelSendTest, ChannelModeStartsFalse) {
     EXPECT_FALSE(sconn().is_channel_mode());
 }
 
-TEST_F(ServerChannelSendTest, BindChannelWithNullProxyIsNoop) {
-    EXPECT_FALSE(sconn().is_channel_mode());
-    mut_sconn().bind_channel(ChannelConnectionProxy{});
-    EXPECT_FALSE(sconn().is_channel_mode());
-}
+// (The legacy "bind_channel with a null proxy is a no-op" test is gone —
+// ChannelConnectionProxy is now `rusty::Box<ChannelConnectionBase>` and
+// cannot be default-constructed, so the type system enforces non-null
+// at the call site.)
 
 }  // namespace
 }  // namespace rrr

@@ -33,18 +33,23 @@ class InMemoryChannelTest : public ::testing::Test {
         switchboard_ = rusty::Some(rusty::Arc<InMemorySwitchboard>::make());
         factory_arc_ = rusty::Some(
             rusty::Arc<InMemoryFactory>::make(switchboard_.as_ref().unwrap().clone()));
-        factory_ = make_inmemory_factory_proxy(factory_arc_.as_ref().unwrap().clone());
+        factory_ = rusty::Some(
+            make_inmemory_factory_proxy(factory_arc_.as_ref().unwrap().clone()));
     }
 
     void TearDown() override {
-        factory_     = ChannelFactoryProxy{};
+        factory_     = rusty::None;
         factory_arc_ = rusty::None;
         switchboard_ = rusty::None;
     }
 
+    // Box-typed `ChannelFactoryProxy` is non-nullable, so the slot
+    // is wrapped in Option to support setup/teardown reset.
+    ChannelFactoryBase& factory() { return *factory_.as_ref().unwrap().get(); }
+
     rusty::Option<rusty::Arc<InMemorySwitchboard>>  switchboard_;
     rusty::Option<rusty::Arc<InMemoryFactory>>      factory_arc_;
-    ChannelFactoryProxy                             factory_;
+    rusty::Option<ChannelFactoryProxy>              factory_{rusty::None};
 };
 
 // ---------------------------------------------------------------------------
@@ -52,13 +57,13 @@ class InMemoryChannelTest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, BackendName) {
-    EXPECT_STREQ(factory_->backend_name(), "inmemory");
+    EXPECT_STREQ(factory().backend_name(), "inmemory");
 }
 
 TEST_F(InMemoryChannelTest, ConnectToUnboundAddrReturnsRefused) {
-    auto result = factory_->connect("inmemory://nobody-listening");
+    auto result = factory().connect("inmemory://nobody-listening");
     EXPECT_EQ(result.error, ChannelError::ConnectionRefused);
-    EXPECT_FALSE(static_cast<bool>(result.connection));
+    EXPECT_TRUE(result.connection.is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +71,7 @@ TEST_F(InMemoryChannelTest, ConnectToUnboundAddrReturnsRefused) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, ListenerLifecycle) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     EXPECT_FALSE(listener->is_closed());
     EXPECT_TRUE(listener->local_address().empty());
 
@@ -82,8 +87,8 @@ TEST_F(InMemoryChannelTest, ListenerLifecycle) {
 }
 
 TEST_F(InMemoryChannelTest, ListenerAddressInUse) {
-    auto a = factory_->make_listener();
-    auto b = factory_->make_listener();
+    auto a = factory().make_listener().unwrap();
+    auto b = factory().make_listener().unwrap();
     ASSERT_EQ(a->listen("inmemory://service-X"), ChannelError::None);
     EXPECT_EQ(b->listen("inmemory://service-X"), ChannelError::AddressInUse);
 }
@@ -93,28 +98,28 @@ TEST_F(InMemoryChannelTest, ListenerAddressInUse) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, ConnectAndSendFrameClientToServer) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://service-1"), ChannelError::None);
 
     // Server-side state captured by the on_accept callback.
     std::vector<std::vector<std::uint8_t>> server_received;
-    ChannelConnectionProxy server_side_proxy;
+    rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
     listener->set_on_accept([&](ChannelConnectionProxy peer) {
-        server_side_proxy = std::move(peer);
-        server_side_proxy->set_on_frame([&](const ChannelFrame& f) {
+        server_side_proxy = rusty::Some(std::move(peer));
+        server_side_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
             server_received.emplace_back(f.payload, f.payload + f.size);
         });
     });
 
-    auto result = factory_->connect("inmemory://service-1");
+    auto result = factory().connect("inmemory://service-1");
     ASSERT_EQ(result.error, ChannelError::None);
-    ASSERT_TRUE(static_cast<bool>(result.connection));
-    ASSERT_TRUE(static_cast<bool>(server_side_proxy));
+    ASSERT_TRUE(result.connection.is_some());
+    ASSERT_TRUE(server_side_proxy.is_some());
 
     // Send a frame from client → server.
     std::vector<std::uint8_t> payload = {1, 2, 3, 4, 5};
     ChannelFrame f{payload.data(), payload.size()};
-    EXPECT_EQ(result.connection->send_frame(f), ChannelError::None);
+    EXPECT_EQ(result.connection.as_ref().unwrap()->send_frame(f), ChannelError::None);
 
     ASSERT_EQ(server_received.size(), 1u);
     EXPECT_EQ(server_received.front(), payload);
@@ -125,38 +130,38 @@ TEST_F(InMemoryChannelTest, ConnectAndSendFrameClientToServer) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, BidirectionalSendFrame) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://bidir"), ChannelError::None);
 
     std::vector<std::vector<std::uint8_t>> server_received;
     std::vector<std::vector<std::uint8_t>> client_received;
-    ChannelConnectionProxy server_side_proxy;
+    rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
 
     listener->set_on_accept([&](ChannelConnectionProxy peer) {
-        server_side_proxy = std::move(peer);
-        server_side_proxy->set_on_frame([&](const ChannelFrame& f) {
+        server_side_proxy = rusty::Some(std::move(peer));
+        server_side_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
             server_received.emplace_back(f.payload, f.payload + f.size);
         });
     });
 
-    auto result = factory_->connect("inmemory://bidir");
+    auto result = factory().connect("inmemory://bidir");
     ASSERT_EQ(result.error, ChannelError::None);
     auto& client_proxy = result.connection;
-    client_proxy->set_on_frame([&](const ChannelFrame& f) {
+    client_proxy.as_mut().unwrap()->set_on_frame([&](const ChannelFrame& f) {
         client_received.emplace_back(f.payload, f.payload + f.size);
     });
 
     // Client → server.
     std::vector<std::uint8_t> req = {0xA, 0xB, 0xC};
     ChannelFrame fr{req.data(), req.size()};
-    EXPECT_EQ(client_proxy->send_frame(fr), ChannelError::None);
+    EXPECT_EQ(client_proxy.as_ref().unwrap()->send_frame(fr), ChannelError::None);
     ASSERT_EQ(server_received.size(), 1u);
     EXPECT_EQ(server_received.front(), req);
 
     // Server → client.
     std::vector<std::uint8_t> resp = {0x1, 0x2, 0x3, 0x4};
     ChannelFrame fr2{resp.data(), resp.size()};
-    EXPECT_EQ(server_side_proxy->send_frame(fr2), ChannelError::None);
+    EXPECT_EQ(server_side_proxy.as_ref().unwrap()->send_frame(fr2), ChannelError::None);
     ASSERT_EQ(client_received.size(), 1u);
     EXPECT_EQ(client_received.front(), resp);
 
@@ -164,7 +169,7 @@ TEST_F(InMemoryChannelTest, BidirectionalSendFrame) {
     for (int i = 0; i < 10; ++i) {
         std::vector<std::uint8_t> p = {static_cast<std::uint8_t>(i)};
         ChannelFrame f3{p.data(), p.size()};
-        EXPECT_EQ(client_proxy->send_frame(f3), ChannelError::None);
+        EXPECT_EQ(client_proxy.as_ref().unwrap()->send_frame(f3), ChannelError::None);
     }
     ASSERT_EQ(server_received.size(), 11u);  // 1 prior + 10 new
     for (int i = 0; i < 10; ++i) {
@@ -177,7 +182,7 @@ TEST_F(InMemoryChannelTest, BidirectionalSendFrame) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, MultipleConnections) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://multi"), ChannelError::None);
 
     int accept_count = 0;
@@ -187,9 +192,9 @@ TEST_F(InMemoryChannelTest, MultipleConnections) {
         server_proxies.push_back(std::move(peer));
     });
 
-    auto c1 = factory_->connect("inmemory://multi");
-    auto c2 = factory_->connect("inmemory://multi");
-    auto c3 = factory_->connect("inmemory://multi");
+    auto c1 = factory().connect("inmemory://multi");
+    auto c2 = factory().connect("inmemory://multi");
+    auto c3 = factory().connect("inmemory://multi");
     EXPECT_EQ(c1.error, ChannelError::None);
     EXPECT_EQ(c2.error, ChannelError::None);
     EXPECT_EQ(c3.error, ChannelError::None);
@@ -203,11 +208,11 @@ TEST_F(InMemoryChannelTest, MultipleConnections) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, ConnectAfterListenerCloseRefused) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://going-away"), ChannelError::None);
     listener->close();
 
-    auto result = factory_->connect("inmemory://going-away");
+    auto result = factory().connect("inmemory://going-away");
     EXPECT_EQ(result.error, ChannelError::ConnectionRefused);
 }
 
@@ -216,23 +221,24 @@ TEST_F(InMemoryChannelTest, ConnectAfterListenerCloseRefused) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, PeerAddress) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://peer-addr-test"), ChannelError::None);
 
-    ChannelConnectionProxy server_side_proxy;
+    rusty::Option<ChannelConnectionProxy> server_side_proxy{rusty::None};
     listener->set_on_accept([&](ChannelConnectionProxy peer) {
-        server_side_proxy = std::move(peer);
+        server_side_proxy = rusty::Some(std::move(peer));
     });
 
-    auto result = factory_->connect("inmemory://peer-addr-test");
+    auto result = factory().connect("inmemory://peer-addr-test");
     ASSERT_EQ(result.error, ChannelError::None);
 
     // From the client's perspective, the peer (server) is at the
     // listener's address.
-    EXPECT_EQ(result.connection->peer_address(), "inmemory://peer-addr-test");
+    EXPECT_EQ(result.connection.as_ref().unwrap()->peer_address(),
+              "inmemory://peer-addr-test");
     // From the server's perspective, the peer is the synthesized
     // client address (factory-generated, starts with "inmemory://client-").
-    EXPECT_NE(server_side_proxy->peer_address().find("inmemory://client-"),
+    EXPECT_NE(server_side_proxy.as_ref().unwrap()->peer_address().find("inmemory://client-"),
               std::string::npos);
 }
 
@@ -245,19 +251,22 @@ namespace close_test_helpers {
 // caller can then drive `send_frame` and `close()` directly. The
 // fixture re-uses the same listener & address each call.
 struct ConnectedPair {
-    ChannelConnectionProxy client;
-    ChannelConnectionProxy server;
+    rusty::Option<ChannelConnectionProxy> client{rusty::None};
+    rusty::Option<ChannelConnectionProxy> server{rusty::None};
+
+    ChannelConnectionBase& client_ref() { return *client.as_ref().unwrap().get(); }
+    ChannelConnectionBase& server_ref() { return *server.as_ref().unwrap().get(); }
 };
 
 inline ConnectedPair make_connected_pair(
-        ChannelFactoryProxy& factory,
+        ChannelFactoryBase& factory,
         ChannelListenerProxy& listener,
         std::string_view addr) {
     ConnectedPair pair;
     listener->set_on_accept([&pair](ChannelConnectionProxy peer) {
-        pair.server = std::move(peer);
+        pair.server = rusty::Some(std::move(peer));
     });
-    auto result = factory->connect(addr);
+    auto result = factory.connect(addr);
     if (result.error == ChannelError::None) {
         pair.client = std::move(result.connection);
     }
@@ -270,39 +279,39 @@ inline ConnectedPair make_connected_pair(
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, ClientCloseFiresServerOnClosed) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-1"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-1");
-    ASSERT_TRUE(static_cast<bool>(pair.client));
-    ASSERT_TRUE(static_cast<bool>(pair.server));
+        factory(), listener, "inmemory://close-1");
+    ASSERT_TRUE(pair.client.is_some());
+    ASSERT_TRUE(pair.server.is_some());
 
     int server_on_closed_calls = 0;
     ChannelError observed_reason = ChannelError::Internal;
-    pair.server->set_on_closed([&](ChannelError r) {
+    pair.server_ref().set_on_closed([&](ChannelError r) {
         ++server_on_closed_calls;
         observed_reason = r;
     });
     EXPECT_EQ(server_on_closed_calls, 0);
 
-    pair.client->close();
+    pair.client_ref().close();
 
     EXPECT_EQ(server_on_closed_calls, 1);
     EXPECT_EQ(observed_reason, ChannelError::None);
 }
 
 TEST_F(InMemoryChannelTest, ServerCloseFiresClientOnClosed) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-2"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-2");
+        factory(), listener, "inmemory://close-2");
 
     int client_on_closed_calls = 0;
-    pair.client->set_on_closed([&](ChannelError) {
+    pair.client_ref().set_on_closed([&](ChannelError) {
         ++client_on_closed_calls;
     });
 
-    pair.server->close();
+    pair.server_ref().close();
 
     EXPECT_EQ(client_on_closed_calls, 1);
 }
@@ -313,19 +322,19 @@ TEST_F(InMemoryChannelTest, ServerCloseFiresClientOnClosed) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, CloseIsIdempotent) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-idem"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-idem");
+        factory(), listener, "inmemory://close-idem");
 
     int server_on_closed_calls = 0;
-    pair.server->set_on_closed([&](ChannelError) {
+    pair.server_ref().set_on_closed([&](ChannelError) {
         ++server_on_closed_calls;
     });
 
-    pair.client->close();
-    pair.client->close();
-    pair.client->close();
+    pair.client_ref().close();
+    pair.client_ref().close();
+    pair.client_ref().close();
 
     EXPECT_EQ(server_on_closed_calls, 1);
 }
@@ -336,18 +345,18 @@ TEST_F(InMemoryChannelTest, CloseIsIdempotent) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, IsClosedReflectsEitherSide) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-isclosed"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-isclosed");
+        factory(), listener, "inmemory://close-isclosed");
 
-    EXPECT_FALSE(pair.client->is_closed());
-    EXPECT_FALSE(pair.server->is_closed());
+    EXPECT_FALSE(pair.client_ref().is_closed());
+    EXPECT_FALSE(pair.server_ref().is_closed());
 
-    pair.client->close();
+    pair.client_ref().close();
 
-    EXPECT_TRUE(pair.client->is_closed());
-    EXPECT_TRUE(pair.server->is_closed());
+    EXPECT_TRUE(pair.client_ref().is_closed());
+    EXPECT_TRUE(pair.server_ref().is_closed());
 }
 
 // ---------------------------------------------------------------------------
@@ -355,16 +364,16 @@ TEST_F(InMemoryChannelTest, IsClosedReflectsEitherSide) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, SendFrameAfterSelfCloseReturnsReset) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-send-self"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-send-self");
+        factory(), listener, "inmemory://close-send-self");
 
-    pair.client->close();
+    pair.client_ref().close();
 
     std::vector<std::uint8_t> bytes = {1, 2, 3};
     ChannelFrame f{bytes.data(), bytes.size()};
-    EXPECT_EQ(pair.client->send_frame(f), ChannelError::ConnectionReset);
+    EXPECT_EQ(pair.client_ref().send_frame(f), ChannelError::ConnectionReset);
 }
 
 // ---------------------------------------------------------------------------
@@ -372,18 +381,18 @@ TEST_F(InMemoryChannelTest, SendFrameAfterSelfCloseReturnsReset) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, SendFrameAfterPeerCloseReturnsReset) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-send-peer"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-send-peer");
+        factory(), listener, "inmemory://close-send-peer");
 
-    pair.client->close();
+    pair.client_ref().close();
 
     std::vector<std::uint8_t> bytes = {1, 2, 3};
     ChannelFrame f{bytes.data(), bytes.size()};
     // Server still has its own closed_ flag at false, but the peer
     // (client) is closed → send_frame surfaces ConnectionReset.
-    EXPECT_EQ(pair.server->send_frame(f), ChannelError::ConnectionReset);
+    EXPECT_EQ(pair.server_ref().send_frame(f), ChannelError::ConnectionReset);
 }
 
 // ---------------------------------------------------------------------------
@@ -393,20 +402,20 @@ TEST_F(InMemoryChannelTest, SendFrameAfterPeerCloseReturnsReset) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, CloseWithoutPeerCallbackIsSafe) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-no-cb"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-no-cb");
+        factory(), listener, "inmemory://close-no-cb");
 
     // Deliberately do NOT install on_closed on the server side.
-    pair.client->close();
+    pair.client_ref().close();
 
-    EXPECT_TRUE(pair.client->is_closed());
-    EXPECT_TRUE(pair.server->is_closed());
+    EXPECT_TRUE(pair.client_ref().is_closed());
+    EXPECT_TRUE(pair.server_ref().is_closed());
 
     std::vector<std::uint8_t> bytes = {0xff};
     ChannelFrame f{bytes.data(), bytes.size()};
-    EXPECT_EQ(pair.server->send_frame(f), ChannelError::ConnectionReset);
+    EXPECT_EQ(pair.server_ref().send_frame(f), ChannelError::ConnectionReset);
 }
 
 // ---------------------------------------------------------------------------
@@ -416,21 +425,21 @@ TEST_F(InMemoryChannelTest, CloseWithoutPeerCallbackIsSafe) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, BothSidesCloseFiresOnClosedOnce) {
-    auto listener = factory_->make_listener();
+    auto listener = factory().make_listener().unwrap();
     ASSERT_EQ(listener->listen("inmemory://close-both"), ChannelError::None);
     auto pair = close_test_helpers::make_connected_pair(
-        factory_, listener, "inmemory://close-both");
+        factory(), listener, "inmemory://close-both");
 
     int client_on_closed_calls = 0;
     int server_on_closed_calls = 0;
-    pair.client->set_on_closed([&](ChannelError) { ++client_on_closed_calls; });
-    pair.server->set_on_closed([&](ChannelError) { ++server_on_closed_calls; });
+    pair.client_ref().set_on_closed([&](ChannelError) { ++client_on_closed_calls; });
+    pair.server_ref().set_on_closed([&](ChannelError) { ++server_on_closed_calls; });
 
-    pair.client->close();  // fires server's on_closed
+    pair.client_ref().close();  // fires server's on_closed
     EXPECT_EQ(client_on_closed_calls, 0);
     EXPECT_EQ(server_on_closed_calls, 1);
 
-    pair.server->close();  // does NOT fire client's on_closed (peer
+    pair.server_ref().close();  // does NOT fire client's on_closed (peer
                            // already closed; server merely flips its
                            // own closed flag).
     EXPECT_EQ(client_on_closed_calls, 0);
@@ -445,8 +454,8 @@ namespace fault_test_helpers {
 struct PairAndProxies {
     rusty::Option<rusty::Arc<InMemoryChannel>> a;
     rusty::Option<rusty::Arc<InMemoryChannel>> b;
-    ChannelConnectionProxy a_proxy;
-    ChannelConnectionProxy b_proxy;
+    rusty::Option<ChannelConnectionProxy>      a_proxy{rusty::None};
+    rusty::Option<ChannelConnectionProxy>      b_proxy{rusty::None};
     std::vector<std::vector<std::uint8_t>> a_received;
     std::vector<std::vector<std::uint8_t>> b_received;
 
@@ -456,6 +465,8 @@ struct PairAndProxies {
     InMemoryChannel& mut_b() {
         return const_cast<InMemoryChannel&>(*b.as_ref().unwrap().get());
     }
+    ChannelConnectionBase& a_proxy_ref() { return *a_proxy.as_ref().unwrap().get(); }
+    ChannelConnectionBase& b_proxy_ref() { return *b_proxy.as_ref().unwrap().get(); }
 };
 
 inline rusty::Box<PairAndProxies> make_pair_with_capture(
@@ -465,23 +476,25 @@ inline rusty::Box<PairAndProxies> make_pair_with_capture(
                                               std::move(b_addr));
     out->a = rusty::Some(std::move(pair.first));
     out->b = rusty::Some(std::move(pair.second));
-    out->a_proxy = make_inmemory_channel_proxy(out->a.as_ref().unwrap().clone());
-    out->b_proxy = make_inmemory_channel_proxy(out->b.as_ref().unwrap().clone());
+    out->a_proxy = rusty::Some(
+        make_inmemory_channel_proxy(out->a.as_ref().unwrap().clone()));
+    out->b_proxy = rusty::Some(
+        make_inmemory_channel_proxy(out->b.as_ref().unwrap().clone()));
 
     auto* a_received_ptr = &out->a_received;
     auto* b_received_ptr = &out->b_received;
-    out->a_proxy->set_on_frame([a_received_ptr](const ChannelFrame& f) {
+    out->a_proxy_ref().set_on_frame([a_received_ptr](const ChannelFrame& f) {
         a_received_ptr->emplace_back(f.payload, f.payload + f.size);
     });
-    out->b_proxy->set_on_frame([b_received_ptr](const ChannelFrame& f) {
+    out->b_proxy_ref().set_on_frame([b_received_ptr](const ChannelFrame& f) {
         b_received_ptr->emplace_back(f.payload, f.payload + f.size);
     });
     return out;
 }
 
-inline void send_byte(ChannelConnectionProxy& proxy, std::uint8_t b) {
+inline void send_byte(ChannelConnectionBase& proxy, std::uint8_t b) {
     ChannelFrame f{&b, 1};
-    proxy->send_frame(f);
+    proxy.send_frame(f);
 }
 }  // namespace fault_test_helpers
 
@@ -496,18 +509,18 @@ TEST_F(InMemoryChannelTest, InjectDropNextSendsDropsThenResumes) {
     p->mut_a().inject_drop_next_sends(3);
 
     // First 3 sends from A → silently dropped.
-    fault_test_helpers::send_byte(p->a_proxy, 1);
-    fault_test_helpers::send_byte(p->a_proxy, 2);
-    fault_test_helpers::send_byte(p->a_proxy, 3);
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 1);
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 2);
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 3);
     EXPECT_EQ(p->b_received.size(), 0u);
 
     // 4th send → delivered.
-    fault_test_helpers::send_byte(p->a_proxy, 4);
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 4);
     ASSERT_EQ(p->b_received.size(), 1u);
     EXPECT_EQ(p->b_received.front().front(), static_cast<std::uint8_t>(4));
 
     // 5th send → also delivered (counter is back at zero).
-    fault_test_helpers::send_byte(p->a_proxy, 5);
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 5);
     EXPECT_EQ(p->b_received.size(), 2u);
 }
 
@@ -520,10 +533,10 @@ TEST_F(InMemoryChannelTest, InjectDropNextSendsIsPerSide) {
 
     p->mut_a().inject_drop_next_sends(2);
 
-    fault_test_helpers::send_byte(p->a_proxy, 1);  // dropped
-    fault_test_helpers::send_byte(p->b_proxy, 2);  // delivered (B-side has no drop)
-    fault_test_helpers::send_byte(p->a_proxy, 3);  // dropped
-    fault_test_helpers::send_byte(p->b_proxy, 4);  // delivered
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 1);  // dropped
+    fault_test_helpers::send_byte(p->b_proxy_ref(), 2);  // delivered (B-side has no drop)
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 3);  // dropped
+    fault_test_helpers::send_byte(p->b_proxy_ref(), 4);  // delivered
 
     ASSERT_EQ(p->b_received.size(), 0u);
     ASSERT_EQ(p->a_received.size(), 2u);
@@ -543,10 +556,10 @@ TEST_F(InMemoryChannelTest, InjectSendErrorReturnsErrThenResumes) {
 
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::WouldBlock);
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::WouldBlock);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::WouldBlock);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::WouldBlock);
     // 3rd send → success.
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::None);
 
     // First two were rejected (returned error, not delivered).
     // Only the third one reaches B.
@@ -566,13 +579,13 @@ TEST_F(InMemoryChannelTest, DropTakesPrecedenceOverError) {
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};
     // First two: drop (return None, no delivery).
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::None);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::None);
     // Drop counter exhausted; next two pick up the error.
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::ConnectionReset);
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::ConnectionReset);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::ConnectionReset);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::ConnectionReset);
     // Both counters exhausted; next is normal.
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::None);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::None);
 
     // Only the last one reached B.
     ASSERT_EQ(p->b_received.size(), 1u);
@@ -589,7 +602,7 @@ TEST_F(InMemoryChannelTest, ClearFaultInjectionResets) {
     p->mut_a().inject_send_error(ChannelError::WouldBlock, 5);
     p->mut_a().clear_fault_injection();
 
-    fault_test_helpers::send_byte(p->a_proxy, 7);
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 7);
     ASSERT_EQ(p->b_received.size(), 1u);
     EXPECT_EQ(p->b_received.front().front(), static_cast<std::uint8_t>(7));
 }
@@ -608,7 +621,7 @@ TEST_F(InMemoryChannelTest, FaultInjectionRespectsClose) {
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};
     // Closed state takes precedence: ConnectionReset, not None.
-    EXPECT_EQ(p->a_proxy->send_frame(f), ChannelError::ConnectionReset);
+    EXPECT_EQ(p->a_proxy_ref().send_frame(f), ChannelError::ConnectionReset);
 }
 
 // ---------------------------------------------------------------------------
@@ -622,7 +635,7 @@ TEST_F(InMemoryChannelTest, InjectDropZeroClears) {
     p->mut_a().inject_drop_next_sends(3);
     p->mut_a().inject_drop_next_sends(0);  // clears the counter
 
-    fault_test_helpers::send_byte(p->a_proxy, 9);
+    fault_test_helpers::send_byte(p->a_proxy_ref(), 9);
     ASSERT_EQ(p->b_received.size(), 1u);
     EXPECT_EQ(p->b_received.front().front(), static_cast<std::uint8_t>(9));
 }
