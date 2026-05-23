@@ -2526,19 +2526,20 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll) {
   { poll_.Add(fd, poll_mode); }
 }
 
-// @unsafe - uses STL operations
+// @safe - rusty::HashMap::contains_key + rusty::HashSet::insert are @safe.
 void PollThreadWorker::do_remove_pollable(int fd) {
   if (!fd_to_pollable_.contains_key(fd)) {
     return;
   }
-  // Add to pending_remove (actual removal happens after epoll_wait)
+  // Add to pending_remove (actual removal happens after epoll_wait).
   pending_remove_.insert(fd);
 }
 
-// @unsafe - Closes socket and drops Arc (thread-safe close from poll thread)
-// SAFETY: Called only from poll thread, owns the Pollable via Arc
+// @safe - rusty::HashMap / HashSet ops are @safe; only the
+// Epoll::Remove syscall path and the virtual Pollable::close()
+// dispatch escape into inner @unsafe blocks.
 void PollThreadWorker::do_close_pollable(int fd) {
-  // Remove from pending_remove if present
+  // Remove from pending_remove if present.
   pending_remove_.remove(fd);
 
   auto proxy_opt = fd_to_pollable_.get(fd);
@@ -2546,16 +2547,18 @@ void PollThreadWorker::do_close_pollable(int fd) {
     return;
   }
 
-  // Remove from epoll if still registered
+  // Remove from epoll if still registered.
   if (mode_.contains_key(fd)) {
-    poll_.Remove(fd);
+    // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
+    { poll_.Remove(fd); }
   }
 
   // Close the socket via Pollable's close() method.
   // HashMap::get now returns Option<V&>; unwrap() yields the proxy ref.
-  proxy_opt.unwrap()->close();
+  // @unsafe { virtual Pollable::close() dispatch }
+  { proxy_opt.unwrap()->close(); }
 
-  // Erase from maps, dropping storage references
+  // Erase from maps, dropping storage references.
   fd_to_pollable_.remove(fd);
   mode_.remove(fd);
 }

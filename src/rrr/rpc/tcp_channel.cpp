@@ -1290,7 +1290,7 @@ bool TcpListener::handle_read() {
     return any_progress;
 }
 
-// @unsafe - Pollable interface; never fires for a listener.
+// @safe - Pollable interface stub: never fires for a listener.
 int TcpListener::handle_write() {
     return PollMode::NO_CHANGE;
 }
@@ -1307,7 +1307,7 @@ void TcpListener::handle_error() {
     close();
 }
 
-// @unsafe - Pollable interface; never fires for a listener.
+// @safe - Pollable interface stub: never fires for a listener.
 bool TcpListener::check_pending_write_update() const {
     return false;
 }
