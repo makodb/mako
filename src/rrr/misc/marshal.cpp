@@ -243,12 +243,10 @@ public:
     bookmark bm;
     bm.offset = buf_.size();
     bm.size = n;
-    // @unsafe { Vec::push loop appends n zero bytes; could be replaced
-    //           with a resize_with primitive when added to Vec. }
-    {
-      for (std::size_t i = 0; i < n; ++i) {
-        buf_.push(std::uint8_t{0});
-      }
+    // Append n zero bytes — rusty::Vec::push is @safe. Could be replaced
+    // with a resize_with primitive when added to Vec.
+    for (std::size_t i = 0; i < n; ++i) {
+      buf_.push(std::uint8_t{0});
     }
     write_cnt_ += static_cast<rrr::i32>(n);
     return bm;
