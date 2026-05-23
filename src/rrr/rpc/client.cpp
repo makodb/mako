@@ -970,7 +970,7 @@ public:
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void bind_factory(ChannelFactoryProxy factory) {
         if (!factory) return;
-        // @unsafe { SpinMutex::lock + ChannelFactoryProxy move }
+        // SpinMutex::lock + Box move-assign are both @safe.
         {
             auto guard = factory_.lock().unwrap();
             *guard = rusty::Some(std::move(factory));
@@ -2173,7 +2173,7 @@ public:
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void set_channel_factory(ChannelFactoryProxy factory) const {
         if (!factory) return;
-        // @unsafe { SpinMutex::lock + ChannelFactoryProxy move }
+        // SpinMutex::lock + Box move-assign are both @safe.
         {
             auto guard = pending_factory_.lock().unwrap();
             *guard = rusty::Some(std::move(factory));
@@ -3421,7 +3421,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   // its parking lifetime. `FiberChannel` is move-deleted (its
   // callbacks capture `this`), so we use `make_box` which constructs
   // in-place via perfect-forwarded `new` rather than moving.
-  // @unsafe { make_box + SpinMutex mutation }
+  // rusty::make_box + SpinMutex::lock + Option::operator= are all @safe.
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
@@ -3476,7 +3476,7 @@ void ClientConnection::bind_channel_via_poll_thread(
   // the latch on the calling thread — these are pure data
   // mutations and the recv-loop fiber doesn't observe them until
   // after we submit the OneTimeJob below.
-  // @unsafe { make_box + SpinMutex mutation }
+  // rusty::make_box + SpinMutex::lock + Option::operator= are all @safe.
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
