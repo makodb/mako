@@ -1634,24 +1634,23 @@ bool Server::drain(uint64_t timeout_ms) {
              pending_requests_->load(std::memory_order_relaxed));
     shutdown_phase_.set(ShutdownPhase::DRAINING);
 
-    // Wait for pending requests with timeout
-    // @unsafe - uses std::chrono
-    {
-        auto start = std::chrono::steady_clock::now();
-        auto timeout = std::chrono::milliseconds(timeout_ms);
-
-        while (pending_requests_->load(std::memory_order_relaxed) > 0) {
-            auto elapsed = std::chrono::steady_clock::now() - start;
-            if (elapsed >= timeout) {
-                Log_warn("Server::drain: timeout after %lu ms, pending=%d",
-                         timeout_ms, pending_requests_->load(std::memory_order_relaxed));
-                return false;
-            }
-
-            // Brief sleep to avoid busy-waiting
-            // @unsafe - usleep syscall
-            usleep(1000);  // 1ms
+    // Wait for pending requests with timeout. Clock + sleep flow
+    // through rusty::sys::time::* (each @safe with an inner @unsafe block
+    // around the libc call).
+    const std::uint64_t start_us =
+        rusty::sys::time::clock_monotonic_us();
+    const std::uint64_t timeout_us = timeout_ms * 1000;
+    while (pending_requests_->load(std::memory_order_relaxed) > 0) {
+        const std::uint64_t elapsed_us =
+            rusty::sys::time::clock_monotonic_us() - start_us;
+        if (elapsed_us >= timeout_us) {
+            Log_warn("Server::drain: timeout after %lu ms, pending=%d",
+                     timeout_ms, pending_requests_->load(std::memory_order_relaxed));
+            return false;
         }
+
+        // Brief sleep to avoid busy-waiting.
+        rusty::sys::time::sleep_us(1000);  // 1ms
     }
 
     Log_info("Server::drain: completed, all requests drained");
