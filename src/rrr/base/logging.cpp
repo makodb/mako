@@ -12,6 +12,7 @@ export module rrr.logging;
 import std;
 import rrr.debugging;
 import rrr.misc; // for time_now_str
+import rrr.threading; // for Pthread_mutex_lock/unlock wrappers
 
 // @safe - Log static class is a printf-style logger. Every public
 // method takes a `const char* fmt, ...` variadic + drives
@@ -39,9 +40,11 @@ public:
         FATAL = 0, ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4
     };
 
-    // @unsafe - pthread_mutex_lock/unlock + writes to a raw `FILE*` field.
+    // @unsafe - writes a raw `FILE* fp` parameter into the static
+    // `fp_s` slot under Pthread_mutex_lock/unlock (themselves @safe).
     static void set_file(FILE* fp);
-    // @unsafe - pthread_mutex_lock/unlock.
+    // @safe - writes `level` into the static `level_s` slot under
+    // the @safe `Pthread_mutex_lock/unlock` wrappers.
     static void set_level(int level);
 
     // @unsafe - variadic forwards into log_v's va_list + sprintf chain.
@@ -120,17 +123,24 @@ FILE* Log::fp_s = stdout;
 std::ostream* Log::stm_s = &std::cout;
 pthread_mutex_t Log::m_s = PTHREAD_MUTEX_INITIALIZER;
 
+// @safe - Pthread_mutex_* are @safe wrappers; only the `&m_s`
+// address-of escapes into a tight @unsafe block.
 void Log::set_level(int level) {
-    pthread_mutex_lock(&m_s);
-    level_s = level;
-    pthread_mutex_unlock(&m_s);
+    // @unsafe { address-of static pthread_mutex_t m_s }
+    {
+        Pthread_mutex_lock(&m_s);
+        level_s = level;
+        Pthread_mutex_unlock(&m_s);
+    }
 }
 
+// @unsafe - Accepts a raw `FILE* fp` and writes it into the static
+// `fp_s` slot. The Pthread_mutex_* wrappers are themselves @safe.
 void Log::set_file(FILE* fp) {
     verify(fp != nullptr);
-    pthread_mutex_lock(&m_s);
+    Pthread_mutex_lock(&m_s);
     fp_s = fp;
-    pthread_mutex_unlock(&m_s);
+    Pthread_mutex_unlock(&m_s);
 }
 
 // @unsafe - raw `const char*` arithmetic + strlen + null-terminator
