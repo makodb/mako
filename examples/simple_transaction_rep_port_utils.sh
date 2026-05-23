@@ -154,10 +154,17 @@ import sys
 
 NSHARDS = int(sys.argv[1])
 NTHREADS = int(sys.argv[2])
-# Range that fits 10 shards worth of 1000-port windows below the ephemeral floor
-# (default /proc/sys/net/ipv4/ip_local_port_range starts at 32768).
+# Each site spawns a paxos listener at `port` AND a heartbeat listener at
+# `port + 10000` (PaxosWorker::CtrlPortDelta in deptran/paxos_worker.h).
+# Both must fit in the valid TCP port range; cap BASE_MAX accordingly.
+CTRL_PORT_DELTA = 10000
+PORT_MAX = 65535
+# Lower bound: stay above simpleTransaction's 20000-31699 range and the Linux
+# ephemeral floor (32768 by default).
 BASE_MIN = 40000
-BASE_MAX = 60000 - (NSHARDS * 1000 + 400)
+# Per shard we use a 1000-port window (4 cluster decades * 100 + nthreads spread).
+# Reserve 400 ports per shard for the cluster offsets + per-partition spread.
+BASE_MAX = PORT_MAX - CTRL_PORT_DELTA - (NSHARDS * 1000 + 400)
 
 def port_free(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -171,9 +178,15 @@ def port_free(port):
     return True
 
 def probe(base):
+    # Probe the leader port of each cluster on each shard, plus the matching
+    # heartbeat port (paxos + 10000). Catches both the listen-port collision
+    # AND the heartbeat-port collision in one pass.
     for sh in range(NSHARDS):
         for cl in (0, 100, 200, 300):
-            if not port_free(base + sh * 1000 + cl):
+            p = base + sh * 1000 + cl
+            if not port_free(p):
+                return False
+            if not port_free(p + CTRL_PORT_DELTA):
                 return False
     return True
 
