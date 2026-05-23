@@ -2219,7 +2219,7 @@ void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
   // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
   { *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone()); }
 
-  // @unsafe - Fiber::finished() is not marked @safe
+  // RefCell::borrow + Option::as_ref + Fiber::finished() are all @safe.
   {
     auto guard = sp_running_fiber_th_.borrow();
     verify(!(*guard).as_ref().unwrap()->finished());
@@ -2230,12 +2230,12 @@ void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
   if (fiber->status_.get() == Fiber::INIT) {
     fiber->run();
   } else {
-    // Don't hold borrow during continue_() as fiber may call create_run()
-    // This fixes RefCell double-borrow crash during server restart
+    // Don't hold borrow during continue_() as fiber may call create_run().
+    // This fixes RefCell double-borrow crash during server restart.
     fiber->continue_();
   }
 
-  // @unsafe - Fiber::finished() is not marked @safe
+  // RefCell::borrow + Option::as_ref + Fiber::finished() are all @safe.
   {
     auto guard = sp_running_fiber_th_.borrow();
     if ((*guard).as_ref().unwrap()->finished()) {
