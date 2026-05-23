@@ -529,17 +529,19 @@ up the next time that library work lands.
   `&mut PollThreadWorker` through a different primitive, or split
   worker state by-field so per-method borrows don't collide). Not a
   one-iteration change. Defer.
-- [blocked] rusty::sys::* syscall wrappers
-  — this is a library-design task, not an rrr-only mechanical change.
-  Unblocking netinfo.cpp / cpuinfo.cpp / rpc/utils.cpp (all currently
-  [blocked] for syscall reasons) requires `rusty::sys::fs` and
-  similar wrappers to exist in the rusty-cpp third-party submodule
-  first. That means: (a) design the API surface, (b) add the
-  wrappers to `third-party/rusty-cpp/include/rusty/sys/`, (c)
-  upstream/coordinate the submodule bump (CLAUDE.md guidance keeps
-  the submodule on `main` with the latest commit), (d) import the
-  new module from each consuming rrr file and replace the syscall
-  call sites. Multi-iteration effort spanning two repos. Defer.
+- [partial] rusty::sys::* syscall wrappers — this is the cross-repo
+  library-design task tagged in the Phase 2 plan. Progress: started
+  with `rusty::sys::time` (clock_realtime_us / clock_realtime_coarse_us /
+  clock_monotonic_us / gettimeofday_us / sleep_us). Submodule commit
+  5990539; parent commit b7a4041d. Time::now / Time::sleep / Timer::*
+  callers in basetypes.cpp and FrequentJob::Ready in misc.cpp flip @safe.
+  Ratio 70.7% → 70.9%. Remaining families still queued: epoll/kqueue
+  (epoll_wrapper.cc — already abstracts platform via per-method @unsafe;
+  marginal payoff), pthread_* (threading.cpp already wraps each
+  Pthread_*; would just relocate the abstraction layer), process /
+  fs (sysconf/sysinfo/times/getpid; cpuinfo.cpp would benefit but
+  needs careful parse-path rewrite — flagged as a separate SP-5
+  follow-up).
 - [x] ServiceProxy::__get_service__() → `Service&` (minimum mechanical
   change). Changed signature from `void* __get_service__()` to
   `Service& __get_service__()` on Service and ServiceTypedBoxAdapter;
