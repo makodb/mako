@@ -1231,12 +1231,9 @@ public:
     }
 
     /// Monotonic millisecond clock used by the instrumentation hooks.
-    /// @unsafe { std::chrono is not borrow-checked but is memory-safe }
+    /// @safe - delegates to rusty::sys::time::clock_monotonic_us.
     static uint64_t monotonic_ms_now() {
-        auto now = std::chrono::steady_clock::now();
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count());
+        return rusty::sys::time::clock_monotonic_us() / 1000;
     }
 
     /// Record one outbound frame's body size + bump the activity clock.
