@@ -38,42 +38,33 @@ inline constexpr int kRequestQueueExpiredError = ETIMEDOUT;
 struct QueuedRequest {
     i64 xid;                           // Request transaction ID
     i32 rpc_id;                        // RPC method ID
-    std::chrono::steady_clock::time_point timestamp;  // When queued
+    std::uint64_t timestamp_us;        // When queued, monotonic microseconds
     uint32_t retry_count;              // Number of retries
     rusty::Arc<Marshal> payload;       // Serialized request data
     rusty::Function<void(int)> callback; // Completion callback (error_code)
     uint32_t ttl_ms;                   // TTL in milliseconds
 
-    // @unsafe - Constructor uses std::chrono
+    // @safe - rusty::sys::time::clock_monotonic_us is @safe.
     QueuedRequest()
         : xid(0)
         , rpc_id(0)
-        , timestamp(std::chrono::steady_clock::now())
+        , timestamp_us(rusty::sys::time::clock_monotonic_us())
         , retry_count(0)
         , payload(rusty::Arc<Marshal>::make())
         , ttl_ms(30000)
     {}
 
-    // @safe - std::chrono use is encapsulated in the inner @unsafe block.
+    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
     bool is_expired() const {
-        // @unsafe { std::chrono::steady_clock::now + duration_cast }
-        {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - timestamp).count();
-            return static_cast<uint32_t>(elapsed_ms) > ttl_ms;
-        }
+        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
+        const std::uint64_t elapsed_us = now_us - timestamp_us;
+        return (elapsed_us / 1000) > ttl_ms;
     }
 
-    // @safe - std::chrono use is encapsulated in the inner @unsafe block.
+    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
     uint32_t age_ms() const {
-        // @unsafe { std::chrono::steady_clock::now + duration_cast }
-        {
-            auto now = std::chrono::steady_clock::now();
-            return static_cast<uint32_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - timestamp).count());
-        }
+        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
+        return static_cast<uint32_t>((now_us - timestamp_us) / 1000);
     }
 };
 

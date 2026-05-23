@@ -75,13 +75,14 @@ struct IdempotencyKeyHash {
 };
 
 // Marshal operators for IdempotencyKey
-// @unsafe { Marshal operations use raw pointers }
+// @safe - Marshal::operator<< / operator>> overloads are @safe via the
+// rrr namespace + class annotation.
 inline Marshal& operator<<(Marshal& m, const IdempotencyKey& key) {
     m << key.client_id << key.sequence;
     return m;
 }
 
-// @unsafe { Marshal operations use raw pointers }
+// @safe - see operator<< above.
 inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) {
     m >> key.client_id >> key.sequence;
     return m;

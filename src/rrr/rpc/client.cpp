@@ -2730,15 +2730,9 @@ using namespace std;
 // matching declarations in the export blocks above.
 namespace rrr {
 // Helper function to get current time in milliseconds
-// @safe - std::chrono use is encapsulated in the inner @unsafe block.
+// @safe - delegates to rusty::sys::time::clock_monotonic_us, itself @safe.
 static uint64_t current_time_ms() {
-    // @unsafe { std::chrono::steady_clock::now + duration_cast }
-    {
-        auto now = std::chrono::steady_clock::now();
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count());
-    }
+    return rusty::sys::time::clock_monotonic_us() / 1000;
 }
 
 // 4g4: the migration switch (`srpc_use_channel()` and the test-only
