@@ -1150,13 +1150,14 @@ std::string TcpListener::local_address() const {
     return bound_address_;
 }
 
-// @unsafe - SpinMutex::lock + CallbackWrapper move-assign (not @safe).
+// @safe - SpinMutex::lock and CallbackWrapper move-assign are both
+// @safe via the rusty namespace / class annotations.
 void TcpListener::set_on_accept(OnAcceptCallback cb) {
     auto guard = on_accept_.lock().unwrap();
     *guard = std::move(cb);
 }
 
-// @unsafe - SpinMutex::lock + CallbackWrapper move-assign (not @safe).
+// @safe - same shape as set_on_accept.
 void TcpListener::set_on_error(OnErrorCallback cb) {
     auto guard = on_error_.lock().unwrap();
     *guard = std::move(cb);
