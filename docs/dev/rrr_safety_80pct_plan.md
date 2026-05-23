@@ -529,19 +529,43 @@ up the next time that library work lands.
   `&mut PollThreadWorker` through a different primitive, or split
   worker state by-field so per-method borrows don't collide). Not a
   one-iteration change. Defer.
-- [partial] rusty::sys::* syscall wrappers — this is the cross-repo
-  library-design task tagged in the Phase 2 plan. Progress: started
-  with `rusty::sys::time` (clock_realtime_us / clock_realtime_coarse_us /
-  clock_monotonic_us / gettimeofday_us / sleep_us). Submodule commit
-  5990539; parent commit b7a4041d. Time::now / Time::sleep / Timer::*
-  callers in basetypes.cpp and FrequentJob::Ready in misc.cpp flip @safe.
-  Ratio 70.7% → 70.9%. Remaining families still queued: epoll/kqueue
-  (epoll_wrapper.cc — already abstracts platform via per-method @unsafe;
-  marginal payoff), pthread_* (threading.cpp already wraps each
-  Pthread_*; would just relocate the abstraction layer), process /
-  fs (sysconf/sysinfo/times/getpid; cpuinfo.cpp would benefit but
-  needs careful parse-path rewrite — flagged as a separate SP-5
-  follow-up).
+- [x] rusty::sys::* syscall wrappers — cross-repo library-design task.
+  Four sub-families landed in the rusty-cpp submodule and folded into
+  rrr's call sites:
+   * `rusty::sys::time` — clock_realtime_us / clock_realtime_coarse_us /
+     clock_monotonic_us / gettimeofday_us / sleep_us. Submodule commit
+     5990539; parent commit b7a4041d. Folded Time::now / Time::sleep /
+     Timer::* / FrequentJob::Ready / RequestQueue / Server::drain /
+     client.cpp `current_time_ms` + `monotonic_ms_now`. Sets up
+     `nanosleep` / `clock_gettime` / `select-as-sleep` migration paths
+     that earlier @unsafe wraps depended on.
+   * `rusty::sys::process` — getpid / sysconf / process_times
+     (ProcessTimes aggregate) / sysinfo (Linux-only SysInfo aggregate).
+     Submodule commit 843ba3b; parent commit 7ea33dec. Folded into
+     misc.cpp::get_ncpu, cpuinfo.cpp ctor + get_cpu_stat, netinfo.cpp
+     ctor + get_net_stat, reactor.cpp fiber_task_t::init_context,
+     server.cpp instance-id generation.
+   * `rusty::sys::env` — hostname() returning owned std::string.
+     Submodule commit d720f95; parent commit a619b8a1. Folded into
+     rpc/utils.cpp::get_host_name (now @safe).
+   * `rusty::sys::pthread` — current_id_hash() returning uint64_t
+     (pthread_self + std::hash<pthread_t>; scoped narrowly to thread
+     identity, the mutex / condvar / thread-create surface continues
+     to live in rusty::sync::*). Submodule commit 97c45b4; parent
+     commit 1a1cae2f. Folded into basetypes.cpp Rand::Rand.
+
+  Remaining families not yet wrapped (each is a deliberate skip):
+   * epoll/kqueue — epoll_wrapper.cc already abstracts the platform
+     via per-method @unsafe overrides; relocating that abstraction
+     into rusty::sys would be net-zero on rrr safety.
+   * pthread mutex/condvar — threading.cpp's Pthread_* inline wrappers
+     are already @safe via inner @unsafe blocks; rusty::sync::Mutex /
+     Condvar exist as higher-level alternatives.
+   * full file I/O surface — rusty::sys::fs::read_to_string (SP-1) plus
+     rusty::os::fd::OwnedFd (Phase A) cover the entries rrr actually
+     uses; the remaining ifstream / strtok parsers in cpuinfo.cpp /
+     misc.cpp's time_now_str are inherently @unsafe at the call site
+     due to raw `char*` plumbing and would not benefit.
 - [x] ServiceProxy::__get_service__() → `Service&` (minimum mechanical
   change). Changed signature from `void* __get_service__()` to
   `Service& __get_service__()` on Service and ServiceTypedBoxAdapter;
