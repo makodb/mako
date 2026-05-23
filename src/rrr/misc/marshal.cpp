@@ -181,8 +181,7 @@ public:
       // Fully drained — recycle storage so steady-state write/read
       // loops don't grow buf_ unboundedly. Vec::clear keeps the
       // capacity, only sets len back to 0.
-      // @unsafe { Vec::clear is @safe; wrap defensively. }
-      { buf_.clear(); }
+      buf_.clear();
       read_pos_ = 0;
     }
     return copy;
@@ -227,8 +226,7 @@ public:
     write_cnt_ += static_cast<rrr::i32>(n);
     src.read_pos_ += n;
     if (src.read_pos_ == src.buf_.size()) {
-      // @unsafe { Vec::clear is @safe; wrap defensively. }
-      { src.buf_.clear(); }
+      src.buf_.clear();
       src.read_pos_ = 0;
     }
     return n;
@@ -236,8 +234,7 @@ public:
 
   // @safe - Empty buf_, reset read cursor and write count.
   void reset() {
-    // @unsafe { Vec::clear is @safe; wrap defensively. }
-    { buf_.clear(); }
+    buf_.clear();
     read_pos_ = 0;
     write_cnt_ = 0;
   }

@@ -977,9 +977,8 @@ public:
         }
     }
 
-    // @safe - True if `bind_factory` has been called with a non-null proxy.
+    // @safe - SpinMutex::lock and Option::is_some are both @safe.
     bool is_factory_bound() const {
-        // @unsafe { SpinMutex::lock }
         auto guard = factory_.lock().unwrap();
         return guard->is_some();
     }
@@ -1021,11 +1020,9 @@ public:
     // this through `connect(addr)`. Channel-mode tests that want to
     // verify the close fan-out's reconnect-policy branch check this
     // before the synthesized `on_closed`.
-    // @unsafe - Non-atomic std::string assignment from the test
-    // thread; safe in the test scope (no other thread is racing).
+    // @safe - single std::string move-assign on a non-shared field.
     void set_reconnect_address_for_testing(std::string addr) {
-        // @unsafe { std::string move-assign }
-        { reconnect_address_ = std::move(addr); }
+        reconnect_address_ = std::move(addr);
     }
 
     // Test-only: short-circuit the reconnect spawn body before it
@@ -2186,7 +2183,7 @@ public:
     // @safe - True if `set_channel_factory` has been called and the
     // factory hasn't been consumed by a `connect` yet.
     bool has_pending_channel_factory() const {
-        // @unsafe { SpinMutex::lock }
+        // SpinMutex::lock and Option::is_some are both @safe.
         auto guard = pending_factory_.lock().unwrap();
         return guard->is_some();
     }
@@ -2433,7 +2430,7 @@ public:
     void set_heartbeat(const HeartbeatConfig& config) const {
         pending_heartbeat_config_.set(config);
 
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2444,7 +2441,7 @@ public:
 
     // @safe - RefCell ops wrapped @unsafe
     HeartbeatConfig heartbeat_config() const {
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2463,7 +2460,7 @@ public:
     void set_circuit_breaker(const CircuitBreakerConfig& config) const {
         pending_circuit_breaker_config_.set(config);
 
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2474,7 +2471,7 @@ public:
 
     // @safe - RefCell ops wrapped @unsafe
     CircuitBreakerConfig circuit_breaker_config() const {
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2486,7 +2483,7 @@ public:
 
     // @safe - RefCell ops wrapped @unsafe
     CircuitState circuit_breaker_state() const {
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
