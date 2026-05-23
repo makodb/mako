@@ -2765,10 +2765,13 @@ void Future::wait() const {
   }).unwrap();
 }
 
-// @unsafe - Uses std::chrono which is not borrow-checked
+// @safe - SpinMutex::lock + Condvar::wait_timeout_while are @safe;
+// the only escape is the `std::chrono::duration<double>` ctor.
 void Future::timed_wait(double sec) const {
   auto guard = state_.lock().unwrap();
-  auto duration = std::chrono::duration<double>(sec);
+  std::chrono::duration<double> duration;
+  // @unsafe { std::chrono::duration ctor is not borrow-checked }
+  { duration = std::chrono::duration<double>(sec); }
   // wait_timeout_while: waits WHILE condition is TRUE
   // Returns pair<Guard, bool> where bool = true if condition became false
   auto result = ready_cond_.wait_timeout_while(
@@ -4006,11 +4009,9 @@ void ClientConnection::handle_error() const {
   // Trigger policy-driven reconnect automatically after transport failures.
   if (reconnect_policy_.auto_reconnect &&
       !reconnect_abort_.load(std::memory_order_acquire)) {
-    // @unsafe - std::string::empty is STL (not borrow-checked).
-    {
-      if (reconnect_address_.empty()) {
-        return;
-      }
+    // std::string::empty() is a pure const accessor; safe in @safe code.
+    if (reconnect_address_.empty()) {
+      return;
     }
     auto weak_conn = weak_self_;
     rusty::thread::spawn([weak_conn]() {
@@ -4199,11 +4200,9 @@ int Client::connect(const char* addr, bool client) const {
   verify(opt.is_some());  // Must succeed for freshly-created Arc
   ClientConnection& mut_conn = opt.unwrap();
 
-  // Initialize fields through mutable reference (no const_cast needed)
-  // @unsafe - Weak pointer assignment
-  {
-    mut_conn.weak_self_ = conn;
-  }
+  // Initialize fields through mutable reference (no const_cast needed).
+  // Weak pointer move-assign is @safe since the Tier-1.3 sweep.
+  mut_conn.weak_self_ = conn;
   mut_conn.set_callback_manager(callback_manager_);
   mut_conn.is_client_mode_ = client;
   is_client_mode_.set(client);
