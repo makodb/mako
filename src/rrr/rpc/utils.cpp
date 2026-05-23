@@ -1,6 +1,7 @@
 module;
 
 #include <rusty/result.hpp>
+#include <rusty/sys/env.hpp>
 
 #include <fcntl.h>
 #include <netdb.h>
@@ -168,14 +169,15 @@ int find_open_port() {
     return -1;
 }
 
-// @unsafe - gethostname syscall into a raw `char[1024]`.
+// @safe - rusty::sys::env::hostname returns an owned std::string and
+// wraps gethostname in an inner @unsafe block. Returns "" on syscall
+// failure (parity with the prior body).
 std::string get_host_name() {
-    char buffer[1024];
-    if (gethostname(buffer, 1024) != 0) {
+    std::string name = rusty::sys::env::hostname();
+    if (name.empty()) {
         Log_error("Failed to get hostname.");
-        return "";
     }
-    return std::string(buffer);
+    return name;
 }
 
 } // namespace rrr
