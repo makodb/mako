@@ -473,16 +473,19 @@ double Timer::elapsed() const {
     return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
-// @unsafe - pthread_self + reinterpret_cast<uintptr_t>(this). The
-// gettimeofday call is itself @safe (rusty::sys::time::gettimeofday_us),
-// but the seed mix-in still needs pthread_self + address-of-this which
-// aren't analyzable.
+// @safe - all three seed contributors flow through @safe wrappers:
+// gettimeofday_us, pthread::current_id_hash, and the reinterpret_cast
+// of `this` (mod address-of-this — wrapped inline below since
+// uintptr_t-from-pointer is @unsafe by the rusty-cpp pointer-safety rules).
 Rand::Rand() : rand_() {
     const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
     const auto thread_hash =
-        static_cast<long long>(std::hash<pthread_t>{}(pthread_self()));
-    const auto this_hash =
-        static_cast<long long>(reinterpret_cast<uintptr_t>(this));
+        static_cast<long long>(rusty::sys::pthread::current_id_hash());
+    long long this_hash;
+    // @unsafe { reinterpret_cast<uintptr_t>(this) — pointer-to-int cast }
+    {
+        this_hash = static_cast<long long>(reinterpret_cast<uintptr_t>(this));
+    }
     rand_.seed(static_cast<long long>(now_us) + thread_hash + this_hash);
 }
 
