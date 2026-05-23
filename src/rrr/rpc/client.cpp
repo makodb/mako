@@ -3363,9 +3363,9 @@ int ClientConnection::connect_via_factory(const char* addr) {
   }
 
   // Record address for the close fan-out's reconnect spawn — it
-  // re-runs the factory connect with the same target.
-  // @unsafe { std::string assignment }
-  { reconnect_address_ = addr; }
+  // re-runs the factory connect with the same target. std::string
+  // assignment from a const char* is benign in @safe code.
+  reconnect_address_ = addr;
 
   // Mirror the fd path's terminal transition: the channel layer's
   // own state (proxy.is_closed()) becomes the source of truth, but
@@ -3553,7 +3553,7 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
   channel->set_on_error([](ChannelError, std::string_view) {});
 
   // Move the proxy into the slot and flip the channel-mode latch.
-  // @unsafe { SpinMutex mutation }
+  // SpinMutex::lock + Option::operator= are both @safe.
   {
     auto guard = direct_channel_.lock().unwrap();
     *guard = rusty::Some(std::move(channel));

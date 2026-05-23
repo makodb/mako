@@ -1515,8 +1515,7 @@ int Server::start(const char* bind_addr) {
       mut_sconn.bind_channel(std::move(conn_proxy));
       // Park the Arc on the server so the on_frame / on_closed
       // callbacks (which only hold a Weak) keep observing a live
-      // connection.
-      // @unsafe { SpinMutex::lock + Vec::push }
+      // connection. SpinMutex::lock + Vec::push are both @safe.
       {
         auto guard = server_ptr->channel_sconns_.lock().unwrap();
         guard->push(std::move(sconn));
