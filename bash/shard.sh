@@ -44,12 +44,16 @@ if [ "$is_replicated" == "1" ]; then
     replication_type_normalized="$(echo "$replication_type" | tr '[:upper:]' '[:lower:]')"
 
     # Pick replication-specific config files.
+    # MAKO_PAXOS_CONFIG_DIR is set by the replication test wrappers when they
+    # materialize a randomized-port copy of the config into a tmp dir; fall back
+    # to the hardcoded path otherwise.
+    REPLICATION_CONFIG_DIR="${MAKO_PAXOS_CONFIG_DIR:-config/1leader_2followers}"
     if [ "$replication_type_normalized" == "raft" ]; then
         OCC_CONFIG="config/occ_raft.yml"
-        REPLICATION_CONFIG="config/1leader_2followers/raft${trd}_shardidx${shard}.yml"
+        REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/raft${trd}_shardidx${shard}.yml"
     else
         OCC_CONFIG="config/occ_paxos.yml"
-        REPLICATION_CONFIG="config/1leader_2followers/paxos${trd}_shardidx${shard}.yml"
+        REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/paxos${trd}_shardidx${shard}.yml"
     fi
 
     if [ ! -f "$REPLICATION_CONFIG" ]; then

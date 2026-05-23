@@ -136,3 +136,139 @@ make_simple_txn_rep_config() {
     write_simple_transaction_config "$base_port" "$src_config" "$tmp_config"
     echo "$tmp_config"
 }
+
+# Pick a port base for paxos/raft replication configs.
+# The replication config uses a contiguous range per shard:
+#   shard i ports = base + i*1000 + cluster*100 + partition
+# where cluster ∈ {0=localhost, 1=p1, 2=p2, 3=learner} and partition ∈ [0, nthreads).
+# Probe leader port of each cluster on each shard (so 4 * nshards bind attempts).
+# Keeps the range out of the simpleTransaction band (20000-31699) and clear of
+# the Linux default ephemeral range (32768+).
+pick_paxos_replication_port_base() {
+    local nshards="${1:-2}"
+    local nthreads="${2:-3}"
+    python3 - <<'PY' "$nshards" "$nthreads"
+import random
+import socket
+import sys
+
+NSHARDS = int(sys.argv[1])
+NTHREADS = int(sys.argv[2])
+# Range that fits 10 shards worth of 1000-port windows below the ephemeral floor
+# (default /proc/sys/net/ipv4/ip_local_port_range starts at 32768).
+BASE_MIN = 40000
+BASE_MAX = 60000 - (NSHARDS * 1000 + 400)
+
+def port_free(port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("0.0.0.0", port))
+    except OSError:
+        return False
+    finally:
+        s.close()
+    return True
+
+def probe(base):
+    for sh in range(NSHARDS):
+        for cl in (0, 100, 200, 300):
+            if not port_free(base + sh * 1000 + cl):
+                return False
+    return True
+
+for _ in range(2000):
+    base = random.randint(BASE_MIN, BASE_MAX)
+    if probe(base):
+        print(base)
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# Rewrite a paxos/raft config's `site.server` port assignments by applying a
+# uniform delta = new_base - existing_base, where existing_base is the
+# minimum port in the source file. The site name → port map structure stays
+# intact; only the port numbers shift.
+write_paxos_replication_config() {
+    local new_base=$1
+    local src_config=$2
+    local dest_config=$3
+    python3 - <<'PY' "$new_base" "$src_config" "$dest_config"
+import sys
+import yaml
+
+new_base = int(sys.argv[1])
+src = sys.argv[2]
+dest = sys.argv[3]
+
+data = yaml.safe_load(open(src, "r"))
+servers = data["site"]["server"]
+
+# Find the minimum port — this is the per-shard base (e.g. 45001 for paxos
+# shard 0, 46001 for shard 1, 27001 for raft shard 0).
+min_port = min(int(t.rsplit(":", 1)[1]) for row in servers for t in row)
+delta = new_base - min_port
+
+for row in servers:
+    for i, t in enumerate(row):
+        name, p = t.rsplit(":", 1)
+        row[i] = "%s:%d" % (name, int(p) + delta)
+
+# Preserve the original yaml-cpp-friendly flow style for nested server lists
+# (`- [s101:..., s201:...]`) instead of PyYAML's default block style
+# (`- - s101:...`). yaml-cpp parses both equivalently, but we want the diff
+# vs the source file to be minimal in CI logs.
+class FlowList(list):
+    pass
+
+def _flow_repr(dumper, value):
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", value, flow_style=True)
+
+yaml.add_representer(FlowList, _flow_repr)
+
+data["site"]["server"] = [FlowList(row) for row in servers]
+
+with open(dest, "w") as f:
+    yaml.dump(data, f, sort_keys=False, default_flow_style=False)
+PY
+}
+
+# Materialize randomized paxos/raft configs into a tmp dir.
+# Returns the tmp dir path; caller exports MAKO_PAXOS_CONFIG_DIR so shard.sh
+# picks the rebased configs instead of the hardcoded ones in
+# config/1leader_2followers/.
+#
+# Each shard's source config has its own base ($base+0, $base+1000, ...),
+# so we pick one global $base and pass $base + shard_idx*1000 as the target
+# for each shard's file.
+make_paxos_replication_configs() {
+    local nshards=$1
+    local nthreads=$2
+    local replication_type="${3:-paxos}"
+    local base_port
+    base_port=$(pick_paxos_replication_port_base "$nshards" "$nthreads")
+    if [ -z "$base_port" ]; then
+        echo "ERROR: Failed to pick a paxos/raft port base after 2000 attempts" >&2
+        return 1
+    fi
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/mako_paxos_cfg_XXXX)
+    local cfg_dir="${BASE_DIR}/config/1leader_2followers"
+    for ((sh = 0; sh < nshards; sh++)); do
+        local src="${cfg_dir}/${replication_type}${nthreads}_shardidx${sh}.yml"
+        local dest="${tmp_dir}/${replication_type}${nthreads}_shardidx${sh}.yml"
+        if [ ! -f "$src" ]; then
+            echo "ERROR: source replication config not found: $src" >&2
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+        local shard_base=$((base_port + sh * 1000))
+        if ! write_paxos_replication_config "$shard_base" "$src" "$dest"; then
+            echo "ERROR: Failed to rebase $src to base $shard_base" >&2
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+    done
+    echo "$tmp_dir"
+}

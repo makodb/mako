@@ -1174,8 +1174,16 @@ int main(int argc, char **argv) {
         : "../config/occ_paxos.yml";
     std::string replication_config_prefix = use_raft_replication ? "raft" : "paxos";
 
+    // Test wrappers set MAKO_PAXOS_CONFIG_DIR to redirect the replication
+    // config to a tmp dir with randomized ports (avoids 45xxx/46xxx range
+    // collisions between consecutive CI runs). Fall back to the in-tree path.
+    const char* env_paxos_dir = std::getenv("MAKO_PAXOS_CONFIG_DIR");
+    std::string replication_config_path = (env_paxos_dir != nullptr)
+        ? (std::string(env_paxos_dir) + "/" + replication_config_prefix + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml")
+        : (get_current_absolute_path() + "../config/1leader_2followers/" + replication_config_prefix + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml");
+
     std::vector<std::string> paxos_config_files{
-        get_current_absolute_path() + "../config/1leader_2followers/" + replication_config_prefix + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml",
+        replication_config_path,
         get_current_absolute_path() + occ_config
     };
 
