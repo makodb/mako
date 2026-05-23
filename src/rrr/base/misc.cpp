@@ -102,7 +102,7 @@ public:
   uint64_t period_ = 0;
 
   virtual ~FrequentJob() {}
-  // @unsafe - calls rrr::Time::now() which uses clock_gettime.
+  // @safe - rrr::Time::now() flows through rusty::sys::time::clock_*_us.
   virtual bool Ready() override {
     uint64_t tm_now = rrr::Time::now();
     uint64_t s = tm_now - tm_last_;

@@ -12,10 +12,11 @@ import std;
 
 // @safe - POD/value-type helpers + small classes (SparseInt, v32/v64,
 // NoCopy, Counter, Time, Timer, Rand, Enumerator, MergedEnumerator).
-// Methods that hit syscalls (clock_gettime, select, gettimeofday,
-// pthread_self) or do raw `char*` byte slicing via
-// `reinterpret_cast<char*>` carry per-method `// @unsafe` overrides
-// below; everything else is pure arithmetic / bit math.
+// Time / Timer time syscalls (clock_gettime, gettimeofday, nanosleep)
+// now flow through `rusty::sys::time::*` helpers (each itself @safe
+// with an inner @unsafe block). The remaining per-method `// @unsafe`
+// overrides cover raw `char*` byte slicing via `reinterpret_cast<char*>`
+// and `pthread_self`-based hashing in `Rand`.
 export namespace rrr {
 
 template<typename T>
@@ -101,27 +102,22 @@ class Time {
 public:
     static const uint64_t RRR_USEC_PER_SEC = 1000000;
 
-    // @unsafe - clock_gettime syscall.
+    // @safe - delegates to rusty::sys::time::clock_*_us(), each of
+    // which wraps its clock_gettime call in an inner @unsafe block.
     static uint64_t now(bool accurate = false) {
-      struct timespec spec;
 #ifdef __APPLE__
-      clock_gettime(CLOCK_REALTIME, &spec );
+        return rusty::sys::time::clock_realtime_us();
 #else
-      if (accurate) {
-        clock_gettime(CLOCK_MONOTONIC, &spec);
-      } else {
-        clock_gettime(CLOCK_REALTIME_COARSE, &spec);
-      }
+        return accurate ? rusty::sys::time::clock_monotonic_us()
+                        : rusty::sys::time::clock_realtime_coarse_us();
 #endif
-      return spec.tv_sec * RRR_USEC_PER_SEC + spec.tv_nsec/1000;
     }
 
-    // @unsafe - select() syscall used as a sleep primitive.
+    // @safe - delegates to rusty::sys::time::sleep_us, which wraps
+    // nanosleep in an inner @unsafe block. (Replaces the historical
+    // select(0,NULL,NULL,NULL,&tv) sleep idiom.)
     static void sleep(uint64_t t) {
-        struct timeval tv;
-        tv.tv_usec = t % RRR_USEC_PER_SEC;
-        tv.tv_sec = t / RRR_USEC_PER_SEC;
-        select(0, NULL, NULL, NULL, &tv);
+        rusty::sys::time::sleep_us(t);
     }
 };
 
@@ -442,15 +438,20 @@ Timer::Timer() : begin_(), end_() {
     reset();
 }
 
-// @unsafe - gettimeofday syscall.
+// @safe - delegates to rusty::sys::time::gettimeofday_us, which wraps
+// gettimeofday(2) in an inner @unsafe block.
 void Timer::start() {
     reset();
-    gettimeofday(&begin_, nullptr);
+    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
+    begin_.tv_sec  = static_cast<time_t>(now / 1000000);
+    begin_.tv_usec = static_cast<suseconds_t>(now % 1000000);
 }
 
-// @unsafe - gettimeofday syscall.
+// @safe - delegates to rusty::sys::time::gettimeofday_us.
 void Timer::stop() {
-    gettimeofday(&end_, nullptr);
+    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
+    end_.tv_sec  = static_cast<time_t>(now / 1000000);
+    end_.tv_usec = static_cast<suseconds_t>(now % 1000000);
 }
 
 void Timer::reset() {
@@ -460,27 +461,29 @@ void Timer::reset() {
     end_.tv_usec = 0;
 }
 
-// @unsafe - gettimeofday syscall on the live-elapsed branch.
+// @safe - live-elapsed branch delegates to rusty::sys::time::gettimeofday_us.
 double Timer::elapsed() const {
     if (begin_.tv_sec == 0 && begin_.tv_usec == 0) std::abort();
     if (end_.tv_sec == 0 && end_.tv_usec == 0) {
-        struct timeval now;
-        gettimeofday(&now, nullptr);
-        return now.tv_sec - begin_.tv_sec + (now.tv_usec - begin_.tv_usec) / 1000000.0;
+        const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
+        const std::uint64_t begin_us =
+            static_cast<std::uint64_t>(begin_.tv_sec) * 1000000 + begin_.tv_usec;
+        return static_cast<double>(now_us - begin_us) / 1000000.0;
     }
     return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
-// @unsafe - gettimeofday + pthread_self + reinterpret_cast<uintptr_t>(this).
+// @unsafe - pthread_self + reinterpret_cast<uintptr_t>(this). The
+// gettimeofday call is itself @safe (rusty::sys::time::gettimeofday_us),
+// but the seed mix-in still needs pthread_self + address-of-this which
+// aren't analyzable.
 Rand::Rand() : rand_() {
-    struct timeval now;
-    gettimeofday(&now, nullptr);
+    const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
     const auto thread_hash =
         static_cast<long long>(std::hash<pthread_t>{}(pthread_self()));
     const auto this_hash =
         static_cast<long long>(reinterpret_cast<uintptr_t>(this));
-    rand_.seed(static_cast<long long>(now.tv_sec) +
-               static_cast<long long>(now.tv_usec) + thread_hash + this_hash);
+    rand_.seed(static_cast<long long>(now_us) + thread_hash + this_hash);
 }
 
 } // namespace rrr
