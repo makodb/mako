@@ -245,9 +245,9 @@ class TcpConnectionChannelAdapter : public ChannelConnectionBase {
     void         flush() override                            { mut_conn().flush(); }
     // @unsafe - forwards through mut_conn() const_cast.
     void         close() override                            { mut_conn().close(); }
-    // @unsafe - forwards into TcpConnection::is_closed (touches closed_ Cell).
+    // @safe - forwards to TcpConnection::is_closed (Cell::get is @safe).
     bool         is_closed() const override                  { return conn_->is_closed(); }
-    // @unsafe - forwards into TcpConnection::peer_address (touches peer_address_ string).
+    // @safe - forwards to TcpConnection::peer_address (const std::string accessor).
     std::string  peer_address() const override               { return conn_->peer_address(); }
 
     // @unsafe - forwards through mut_conn() const_cast.
@@ -287,9 +287,9 @@ class TcpConnectionPollableAdapter : public PollableBase {
     void handle_error() override                      { mut_conn().handle_error(); }
     // @unsafe - forwards through mut_conn() const_cast.
     void close() override                             { mut_conn().close(); }
-    // @unsafe - forwards into TcpConnection::is_closed.
+    // @safe - forwards to TcpConnection::is_closed (Cell::get is @safe).
     bool is_closed() const override                   { return conn_->is_closed(); }
-    // @unsafe - forwards into TcpConnection::check_pending_write_update.
+    // @safe - forwards to TcpConnection::check_pending_write_update (Cell::get/set).
     bool check_pending_write_update() const override  { return conn_->check_pending_write_update(); }
 
  private:
@@ -1145,7 +1145,7 @@ bool TcpListener::is_closed() const {
     return closed_.get();
 }
 
-// @unsafe - std::string copy constructor isn't borrow-checked.
+// @safe - returns a copy of the const std::string member.
 std::string TcpListener::local_address() const {
     return bound_address_;
 }
