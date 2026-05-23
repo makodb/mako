@@ -147,10 +147,9 @@ public:
     SpinLock& operator=(SpinLock&&) = delete;
 
     // @safe - parity with Rust's `Mutex::lock`. The atomic compare/exchange
-    // and load operations are memory-safe; the only genuinely unsafe call
-    // (`nanosleep(&t, nullptr)` — passes the address of a stack-local
-    // `timespec` to a libc syscall) is encapsulated in the @unsafe block
-    // below.
+    // and load operations are memory-safe; the sleeping fallback path
+    // delegates to `rusty::sys::time::sleep_us` (itself @safe with an
+    // inner @unsafe block around nanosleep).
     void lock() override {
         // Fast path: try to acquire lock immediately
         bool expected = false;
@@ -169,21 +168,12 @@ public:
 #endif
         }
 
-        // Fall back to sleeping if still contended
-        struct timespec t;
-        t.tv_sec = 0;
-        t.tv_nsec = 50000;  // 50 microseconds
-
+        // Fall back to sleeping if still contended.
         expected = false;
         while (!locked_.compare_exchange_weak(expected, true,
                                               std::memory_order_acquire,
                                               std::memory_order_relaxed)) {
-            // @unsafe - nanosleep(&t, ...) takes the address of a stack-local
-            // timespec and passes it to a libc syscall. The address is valid
-            // for the duration of the call (timespec is on this stack frame).
-            {
-                nanosleep(&t, nullptr);
-            }
+            rusty::sys::time::sleep_us(50);  // 50 microseconds
             expected = false;
         }
     }
@@ -697,11 +687,12 @@ int ThreadPool::run_async(rusty::Function<void()> f) {
 }
 
 void ThreadPool::run_thread(int id_in_pool) {
-    struct timespec sleep_req;
-    const int min_sleep_nsec = 1000;  // 1us
-    const int max_sleep_nsec = 50 * 1000;  // 50us
-    sleep_req.tv_nsec = 1000;  // 1us
-    sleep_req.tv_sec = 0;
+    // Adaptive backoff range: 1us .. 50us. The value ramps up by 1us
+    // each idle round and down by 1us each productive round, so a
+    // saturated pool stays near the floor while an idle pool dampens.
+    constexpr std::uint64_t kMinSleepUs = 1;
+    constexpr std::uint64_t kMaxSleepUs = 50;
+    std::uint64_t sleep_us = kMinSleepUs;
     int stage = 0;
 
     // randomized stealing order
@@ -733,7 +724,7 @@ void ThreadPool::run_thread(int id_in_pool) {
             }
             break;
         case 1:
-            nanosleep(&sleep_req, nullptr);
+            rusty::sys::time::sleep_us(sleep_us);
             stage++;
             break;
         case 3:
@@ -761,10 +752,11 @@ void ThreadPool::run_thread(int id_in_pool) {
                 break;
             }
             (*job)();
-            // job is automatically cleaned up when it goes out of scope
-            sleep_req.tv_nsec = clamp(sleep_req.tv_nsec - 1000, min_sleep_nsec, max_sleep_nsec);
+            // job is automatically cleaned up when it goes out of scope.
+            sleep_us = clamp(sleep_us > kMinSleepUs ? sleep_us - 1 : kMinSleepUs,
+                             kMinSleepUs, kMaxSleepUs);
         } else {
-            sleep_req.tv_nsec = clamp(sleep_req.tv_nsec + 1000, min_sleep_nsec, max_sleep_nsec);
+            sleep_us = clamp(sleep_us + 1, kMinSleepUs, kMaxSleepUs);
         }
     }
     // steal_order is automatically cleaned up (std::vector)

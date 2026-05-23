@@ -4636,11 +4636,7 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
         }
       }
       if (!all_done) {
-        // @unsafe { nanosleep }
-        struct timespec ts;
-        ts.tv_sec = 0;
-        ts.tv_nsec = 1000000;  // 1ms
-        nanosleep(&ts, nullptr);
+        rusty::sys::time::sleep_us(1000);  // 1ms
       }
     }
 
@@ -4657,11 +4653,8 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
 
     // Delay between batches
     if (config.delay_between_ms > 0 && i < clients_to_reconnect.size()) {
-      // @unsafe { nanosleep }
-      struct timespec ts;
-      ts.tv_sec = config.delay_between_ms / 1000;
-      ts.tv_nsec = (config.delay_between_ms % 1000) * 1000000;
-      nanosleep(&ts, nullptr);
+      rusty::sys::time::sleep_us(
+          static_cast<std::uint64_t>(config.delay_between_ms) * 1000);
     }
   }
 
