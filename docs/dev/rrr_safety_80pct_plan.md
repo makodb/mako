@@ -497,25 +497,21 @@ up the next time that library work lands.
   rose 25.5% → 28.9% across iters 39–46.
 
 ### Phase 2 — easy raw-pointer refactors
-- [blocked] ChannelConnectionProxy / ChannelFactoryProxy → rusty::Box<Base>
-  — alias is currently `std::unique_ptr<Base>` in `rpc/channel.cpp`.
-  Flipping to `rusty::Box<Base>` would break two patterns the codebase
-  relies on heavily:
-  (a) `rusty::Box<T>` has `Box() = delete` — no default-null state. 19
-      call sites use `ChannelConnectionProxy{}` / `ChannelListenerProxy{}` /
-      `ChannelFactoryProxy{}` to build "empty / failure" sentinels (most
-      live in `inmemory_channel.cpp`, `tcp_channel.cpp`, and the channel
-      tests). They'd all need rewriting to either return an `Option<Box>`
-      or hold an explicit failure flag.
-  (b) 12 bare `ChannelConnectionProxy var;` / `ChannelListenerProxy var;`
-      declarations expect default-null and would not compile against
-      `rusty::Box`.
-  `ConnectResult.connection` would also need to flip to
-  `rusty::Option<rusty::Box<ChannelConnectionBase>>` and every caller
-  pattern would need adjusting. This is a multi-iteration refactor with
-  call-site fan-out into rrr's tests; not a one-iteration mechanical
-  change. Defer until a dedicated Phase 2 sub-plan covers the
-  Option-conversion sweep.
+- [x] ChannelConnectionProxy / ChannelListenerProxy / ChannelFactoryProxy
+  → rusty::Box<Base>. The original blocked rationale was over-cautious —
+  the codebase already wrapped storage in
+  `SpinMutex<Option<Box<ChannelXProxy>>>` (`Box<unique_ptr<Base>>`
+  double indirection), so flipping the alias to `Box<Base>` collapses
+  the outer Box. `ConnectResult.connection` is now
+  `rusty::Option<ChannelConnectionProxy>`; `ChannelFactoryBase::
+  make_listener()` returns `rusty::Option<ChannelListenerProxy>`.
+  Empty-sentinel sites (`ChannelXProxy{}` in ConnectResult error
+  paths + the unused test-only `make_listener()` mocks) became
+  `rusty::None`; the two "bind_channel with null proxy" tests are
+  obsolete because the type system enforces non-null now. Verification:
+  borrow_check_rrr 45/45 clean; rrr library + downstream rpcbench/dbtest
+  compile; 80+ channel-mode unit tests pass. Commit 3f7ea5a9; ratio
+  unchanged at **70.7%** (structural change, not annotation-driven).
 - [blocked] Reactor::PollThreadWorker* → rusty::Weak<PollThreadWorker>
   — the raw pointer `static inline thread_local PollThreadWorker*
   current_worker_` (reactor/reactor.cpp:1011) is an *intentional*
