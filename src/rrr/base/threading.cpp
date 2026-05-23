@@ -427,27 +427,37 @@ public:
     // @safe - Default destructor
     ~SpinCondVar() = default;
 
-    // @unsafe - Calls std::atomic::store/load (external unsafe)
-    // SAFETY: Thread-safe atomic operations, proper lock/unlock ordering
+    // @safe - parity with Rust's `Condvar::wait`. SpinLock::{lock,unlock}
+    // and Time::sleep are themselves @safe; the atomic ops escape into
+    // inner @unsafe blocks (mirrors signal/bcast below).
     void wait(SpinLock& sl) {
-        flag_.store(0, std::memory_order_relaxed);
+        // @unsafe { std::atomic<int>::store }
+        { flag_.store(0, std::memory_order_relaxed); }
         sl.unlock();
 
-        while(flag_.load(std::memory_order_acquire) == 0) {
+        for (;;) {
+            int v;
+            // @unsafe { std::atomic<int>::load }
+            { v = flag_.load(std::memory_order_acquire); }
+            if (v != 0) break;
             Time::sleep(10);
         }
         sl.lock();
     }
 
-    // @unsafe - Calls std::atomic::store/load (external unsafe)
-    // SAFETY: Thread-safe atomic operations, proper lock/unlock ordering
+    // @safe - timed counterpart to `wait`.
     void timed_wait(SpinLock& sl, double sec) {
-        flag_.store(0, std::memory_order_relaxed);
+        // @unsafe { std::atomic<int>::store }
+        { flag_.store(0, std::memory_order_relaxed); }
         sl.unlock();
 
         Timer t;
         t.start();
-        while(flag_.load(std::memory_order_acquire) == 0) {
+        for (;;) {
+            int v;
+            // @unsafe { std::atomic<int>::load }
+            { v = flag_.load(std::memory_order_acquire); }
+            if (v != 0) break;
             Time::sleep(10);
             if (t.elapsed() > sec) {
                 break;
@@ -483,20 +493,21 @@ class Queue: public NoCopy {
     pthread_mutex_t m_;
 
 public:
-    // @unsafe - Initializes pthread primitives
+    // @safe - Pthread_* wrappers handle the libc calls; the
+    // pthread_{mutex,cond}_t struct members live by-value on the Queue.
     Queue(): q_(rusty::Box<rusty::VecDeque<T>>::make(rusty::VecDeque<T>())), not_empty_(), m_() {
         Pthread_mutex_init(&m_, nullptr);
         Pthread_cond_init(&not_empty_, nullptr);
     }
 
-    // @unsafe - Destroys pthread primitives
+    // @safe - Pthread_*_destroy are @safe wrappers; q_ is deleted by Box.
     ~Queue() {
         Pthread_cond_destroy(&not_empty_);
         Pthread_mutex_destroy(&m_);
         // q_ automatically deleted by rusty::Box
     }
 
-    // @unsafe - Thread-safe push with mutex protection (move semantics)
+    // @safe - Pthread_* + VecDeque::push_back are themselves @safe.
     void push(T e) {
         Pthread_mutex_lock(&m_);
         q_->push_back(std::move(e));
@@ -504,8 +515,8 @@ public:
         Pthread_mutex_unlock(&m_);
     }
 
-    // @unsafe - Thread-safe try_pop with mutex protection
-    // SAFETY: Returns via output parameter using move semantics
+    // @unsafe - Accepts a raw `T* t` output parameter and dereferences
+    // it via `*t = ...`. The Pthread_* + VecDeque ops are @safe.
     bool try_pop(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
@@ -517,9 +528,8 @@ public:
         return ret;
     }
 
-    // @unsafe - Thread-safe try_pop that ignores invalid/null items
-    // For rusty::Box<T>, this ignores items where !is_valid()
-    // SAFETY: Returns via output parameter using move semantics
+    // @unsafe - Accepts a raw `T* t` output parameter and dereferences
+    // it via `*t = ...`. Otherwise mirrors try_pop with a validity gate.
     bool try_pop_but_ignore_invalid(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
@@ -531,8 +541,8 @@ public:
         return ret;
     }
 
-    // @unsafe - Thread-safe blocking pop
-    // SAFETY: Returns by value (move), not by reference. Borrow checker false positive.
+    // @safe - Pthread_* + VecDeque::pop_front are themselves @safe;
+    // the function returns by value.
     T pop() {
         Pthread_mutex_lock(&m_);
         while (q_->is_empty()) {
