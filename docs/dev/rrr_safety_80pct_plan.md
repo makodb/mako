@@ -722,3 +722,62 @@ up the next time that library work lands.
   no longer touches `std::shared_ptr<Marshallable>`. ratio unchanged
   at 65.4% (no LOC change in this commit — already credited in the
   earlier landing).
+
+### Phase 2 follow-on — stale annotation sweep (2026-05-23)
+
+After Phase 2 item 1 (channel proxy → rusty::Box) and the first
+sys::* family (sys::time) landed, an audit found ~30 stale per-method
+`// @unsafe` overrides and inline `// @unsafe { ... }` blocks across
+rrr whose rationales were tied to operations that have since become
+@safe (Pthread_*, rusty::sys::time::*, Time::now/sleep,
+SpinMutex::lock, rusty::Vec / VecDeque / HashSet / HashMap / BTreeSet /
+RefCell / Option / Weak methods, Cell::get/set, Marshal operator<<>>
+via the Phase 4 Cursor rewrite, Fiber::finished, IntEvent::set,
+CallbackWrapper move-assign, rusty::Arc::make, std::string accessors
+and assignments, std::chrono).
+
+Sweep commits (newest first; ratio is cumulative through commit):
+  - `afcd6f81` marshal Vec::push loop wrap                — 73.3%
+  - `5e0e3382` marshal Vec::reserve wraps                 — 73.2%
+  - `521812a0` client monotonic_ms_now → sys::time        — 73.2%
+  - `05625b41` client reconnect_address_.empty wrap       — 73.2%
+  - `4ab2623e` fiber sleep_until_us Time::now wrap        — 72.7%
+  - `cb150ee3` request_queue update_config flip           — 72.7%
+  - `c8c03959` client/server std::string + SpinMutex+Vec  — 72.7%
+  - `ad271d30` idempotency Marshal ops + chrono → sys::time— 72.6%
+  - `feb26bb3` client make_box + SpinMutex wraps          — 72.5%
+  - `6d3950ab` more RefCell + Option + SpinMutex wraps    — 72.4%
+  - `12cc3717` Vec::clear + SpinMutex + RefCell wraps     — 72.1%
+  - `b457f3c3` Event::test flip                           — 71.9%
+  - `8d6e5db5` Reactor Fiber::finished wraps              — 71.9%
+  - `97ef4896` 4 stub / container methods                 — 71.8%
+  - `23fc1e5e` ThreadPool/RunLater::make                  — 71.6%
+  - `68bce017` TcpListener set_on_accept/set_on_error     — 71.5%
+  - `e7335375` TcpConnection/Listener adapter accessors   — 71.5%
+  - `22ef2668` Server::drain → sys::time                  — 71.5%
+  - `fbeb3cef` PollThreadWorker BTreeSet methods          — 71.4%
+  - `1c50a219` client Future::timed_wait + Weak + empty   — 71.4%
+  - `963f5caa` IntEvent::set + QuorumEvent::vote_*        — 71.2%
+  - `cc34e1a8` Log::set_level via Pthread_* wrappers      — 71.2%
+  - `5018d210` Queue + SpinCondVar @unsafe overrides      — 71.2%
+  - `9bf498eb` nanosleep call-sites → sys::time::sleep_us — 70.9%
+  - `b7a4041d` Time::now/sleep/Timer/Rand via sys::time   — 70.9%
+  - `3f7ea5a9` Channel proxy → rusty::Box                 — 70.7%
+
+Net effect: **+2.7pp** of @safe ratio (70.6% baseline →
+**73.3%**), borrow_check_rrr 45/45 clean throughout. The
+remaining `// @unsafe` markers in rrr are mostly legitimate
+(syscall paths, raw `T*`/`FILE*`/`char*` parameters, asm-only
+fiber-context primitives, const_cast-through-Arc adapters,
+Marshal byte ops).
+
+Phase 2 deferred items not yet attempted in this push:
+  - PollThreadWorker raw thread_local → rusty::Weak — still
+    [blocked]. The raw pointer co-exists with a borrow_mut() guard
+    held for the poll_loop lifetime; switching to
+    Weak<RefCell<...>> would force callers to `upgrade().borrow_mut()`
+    on the already-borrowed RefCell. Needs per-field Cell splitting
+    or a different ownership primitive.
+  - Other rusty::sys::* families (epoll, pthread, process/fs beyond
+    sys::fs/time) — incremental wins, see notes on the
+    rusty::sys::* partial entry above.
