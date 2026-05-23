@@ -1402,7 +1402,8 @@ void Event::record_place(const char* file, int line) {
   rcd_wait_ = true;
 }
 
-// @unsafe - Tests if event is ready (calls verify/log helpers not marked @safe)
+// @safe - verify(), is_ready(), Cell::get/set, Weak::upgrade, Option::is_some
+// and Log_debug are all @safe.
 bool Event::test() {
   verify(__debug_creator);
   if (is_ready()) {
