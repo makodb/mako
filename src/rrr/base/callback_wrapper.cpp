@@ -7,7 +7,12 @@ export module rrr.callback_wrapper;
 
 import std;
 
+// @safe - thin wrapper around `rusty::Arc<rusty::Function<Sig>>`.
+// Every method just forwards into rusty types whose `// @safe`
+// annotations are already in the rusty-cpp library. No raw pointers,
+// syscalls, or Marshal chains.
 export namespace rrr {
+// @safe - see file header.
 namespace detail {
 
 template<typename Sig>

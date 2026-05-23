@@ -17,8 +17,14 @@ import rrr.misc;
 // owns PollThread is the supported pattern.
 import rrr.reactor;
 
+// @safe - Alarm: BTreeMap-backed timed-callback queue. Bodies use
+// rusty::BTreeMap + rusty::Function + rrr::Time::now() — no raw
+// pointer arithmetic, no syscalls, no Marshal chains. The raw
+// `rrr::PollThread *holder` field is never dereferenced here and
+// `set_holder` is a no-op stub.
 export namespace rrr {
 
+// @safe - see file header.
 class Alarm: public FrequentJob {
  public:
   bool run_ = true;

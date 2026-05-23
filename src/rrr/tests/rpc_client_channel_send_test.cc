@@ -98,7 +98,7 @@ class CapturingChannelStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_capture_proxy(
     std::shared_ptr<CapturingChannelStub> p) {
-    return std::make_unique<CapturingChannelStubAdapter>(std::move(p));
+    return rusty::make_box<CapturingChannelStubAdapter>(std::move(p));
 }
 
 // ---------------------------------------------------------------------------

@@ -67,6 +67,11 @@ import rrr.pollable_proxy;
 // ===========================================================================
 // Class declarations (from former event.h, fiber_impl.h, reactor.h block 1)
 // ===========================================================================
+// @safe - Reactor / Event / Fiber declarations. Class declarations
+// carry their own annotations; methods that genuinely cross into
+// fiber context switching / raw pointer access / thread-local lookup
+// have per-method `// @unsafe` overrides. The rest is analyzed as
+// @safe by default.
 export namespace rrr {
 
 // --- from event.h --------------------------------------------------------
@@ -174,7 +179,7 @@ class IntEvent : public Event {
     return value_;
   }
 
-  // @unsafe
+  // @safe - integer assignment + virtual `test()` (itself @safe).
   int set(int n) {
     int t = value_;
     value_ = n;
@@ -529,8 +534,24 @@ class Event;
  *   - Fibers use custom stackful execution
  *   - Stackful contexts are properly called "fibers"
  *
- * @unsafe - Uses rusty::Rc ownership and mutable fields for interior mutability
+ * QUARANTINE — the stackful-fiber context-switch primitive lives in
+ * `fiber_context_{x86_64,aarch64}.cc` as raw assembly, and is invoked
+ * through `fiber_task_t::resume()`/`yield_to_caller()`/`entry()` in
+ * the impl section of this file. Those callers carry `// @unsafe`
+ * annotations.
+ *
+ * Public API on Fiber (`run`, `yield_`, `continue_`, `create_run`,
+ * `current_fiber`, `sleep`, ctor/dtor/finished/do_finalize) is `@safe`
+ * — callers can use it from @safe code. Each method's body wraps its
+ * genuinely-unsafe internals (Rc/RefCell unwrap, fiber-runtime dispatch,
+ * std::bind / function-pointer construction) in inline `@unsafe { ... }`
+ * blocks. Two implementation-detail methods stay `@unsafe`:
+ *   - `run_wrapper(yield)`: invoked from the asm trampoline; the
+ *     contract is fixed.
+ *   - `create_run_impl(...)`: builds the heap-allocated task via raw
+ *     `new chunk` shapes the analyzer can't yet see through.
  */
+// @safe
 class Fiber {
  public:
   /**
@@ -658,6 +679,12 @@ class Fiber {
  * - Events never outlive their fibers (weak refs)
  * - Loop() only called from owning thread
  */
+// @safe - Single-threaded reactor; data lives in RefCell / Cell / Rc /
+// HashMap with rusty borrow rules. Methods that genuinely cross into
+// unsafe territory (fiber context switching via Fiber::yield_ /
+// continue_, raw pointer access through the class-static thread_local
+// fields, get_reactor returning thread-local Rc) carry their own
+// `// @unsafe` overrides; the rest is now analyzed as @safe by default.
 class Reactor {
  public:
   // Default constructor - all fields have default constructors
@@ -705,6 +732,10 @@ class Reactor {
   rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
   // `inline` keeps these in vague linkage — see sp_reactor_th_ above for why.
+  // (Function-local-static accessor `clients()` was used during the
+  // module-attached TLS dup-symbol investigation; the `static inline
+  // thread_local` pattern at class scope is the cleaner equivalent fix
+  // that matches sp_reactor_th_ et al.)
   static inline thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> clients_{};
   static inline thread_local rusty::HashSet<std::string> dangling_ips_{};
   // Interior mutability using Cell<T> for safe const method access
@@ -781,11 +812,10 @@ class Reactor {
   // Returns true if at least one stackless task was polled.
   bool process_stackless_tasks() const;
 
-  // @safe - Arc::make wrapper with localized unsafe allocation boundary.
+  // @safe - Arc::make is @safe in the library.
   template <typename U, typename... Args>
   static rusty::Arc<U> make_arc(Args&&... args) {
-    // @unsafe
-    { return rusty::Arc<U>::make(std::forward<Args>(args)...); }
+    return rusty::Arc<U>::make(std::forward<Args>(args)...);
   }
 
  public:
@@ -933,6 +963,9 @@ template<>
 struct is_send<rrr::PollCommand> : std::true_type {};
 } // namespace rusty
 
+// @safe - PollThreadWorker / PollThread declarations. Class-level
+// annotations + per-method `// @unsafe` overrides on the syscalls
+// (epoll_wait, eventfd_write, futex) and raw pointer paths.
 export namespace rrr {
 // --- from reactor.h (block 2: PollThreadWorker, PollThread) -------------
 
@@ -1121,6 +1154,7 @@ struct is_sync<rrr::PollThread> : std::true_type {};
 } // namespace rusty
 
 // --- from quorum_event.h --------------------------------------------------
+// @safe - QuorumEvent declarations under the janus namespace.
 export namespace janus {
 
 // Pulled in from former `quorum_event.h` (lines 26-29). Folded into the
@@ -1198,10 +1232,12 @@ class QuorumEvent : public Event {
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
-  // @unsafe: calls undeclared test(), Time::now(), rusty::Vec::push_back(), IntEvent::set()
+  // @safe - test(), Time::now(), rusty::Vec::push, IntEvent::set
+  // are all @safe; Cell::get on `finalize_event_->status_` is @safe.
   void vote_yes();
 
-  // @unsafe: calls undeclared test(), IntEvent::set()
+  // @safe - test() and IntEvent::set are @safe; Cell::get on
+  // `finalize_event_->status_` is @safe.
   void vote_no();
 
   bool is_ready() override {
@@ -1235,6 +1271,11 @@ class QuorumEvent : public Event {
 // Out-of-line definitions (from former event.cc, fiber_impl.cc, reactor.cc,
 // fiber_context_runtime.cc)
 // ===========================================================================
+// @safe - Implementation namespace. Out-of-class definitions inherit
+// per-method `// @unsafe` annotations from the declarations above.
+// The anonymous-namespace `stat_*` / `stackless_profile_*` helpers
+// (line 1582+) and other free-function impl details carry their own
+// `// @unsafe` markers individually where needed.
 namespace rrr {
 
 // --- from event.cc -------------------------------------------------------
@@ -1361,7 +1402,8 @@ void Event::record_place(const char* file, int line) {
   rcd_wait_ = true;
 }
 
-// @unsafe - Tests if event is ready (calls verify/log helpers not marked @safe)
+// @safe - verify(), is_ready(), Cell::get/set, Weak::upgrade, Option::is_some
+// and Log_debug are all @safe.
 bool Event::test() {
   verify(__debug_creator);
   if (is_ready()) {
@@ -1429,6 +1471,10 @@ int SharedIntEvent::set(const int& v) {
   return ret;
 }
 
+// @unsafe - holds a raw `IntEvent*` (`ev_ptr = ev.get()`) across the
+// retain() lambda capture to identity-compare against shared_ptr<IntEvent>
+// entries in `events_`. The shared_ptr keeps the target alive for the
+// duration of the call.
 bool SharedIntEvent::wait_until_gte(int x, int timeout) {
   if (value_ >= x) {
     return false;
@@ -1466,6 +1512,9 @@ void SharedIntEvent::wait(rusty::Function<bool(int v)> f) {
 // --- from fiber_impl.cc --------------------------------------------------
 thread_local uint64_t Fiber::global_id = 0;
 
+// @safe - Trivial member-initializer ctor; std::move + post-increment of
+// a thread-local uint64_t. Cells/RefCells default-construct via class
+// initializers above; func_ takes a moved-in rusty::Function.
 Fiber::Fiber(rusty::Function<void()> func)
     : status_(INIT),
       needs_finalize_(false),
@@ -1474,6 +1523,7 @@ Fiber::Fiber(rusty::Function<void()> func)
       id(Fiber::global_id++) {
 }
 
+// @safe - Empty dtor; rusty::Box / rusty::RefCell members release on drop.
 Fiber::~Fiber() {
   // rusty::Box automatically handles cleanup
 //  verify(0);
@@ -1553,11 +1603,13 @@ void Fiber::continue_() const {
   // but you have to manually call the scheduler to loop.
 }
 
+// @safe - Reads Cell<Status>::get() and returns a bool.
 bool Fiber::finished() const {
   auto s = status_.get();
   return s == FINISHED || s == RECYCLED;
 }
 
+// @safe - One Cell<bool>::set call.
 void Fiber::do_finalize() {
   // Handle finalization logic if needed
   needs_finalize_.set(false);
@@ -1994,9 +2046,8 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
 
 // @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
 void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
-  int64_t time_now = 0;  // Initialize to 0
-  // @unsafe - Time::now is external
-  { time_now = Time::now(true); }
+  // Time::now is @safe via rusty::sys::time::clock_monotonic_us.
+  int64_t time_now = Time::now(true);
 
   // @unsafe { RefCell::borrow_mut is not borrow-checked }
   auto guard = timeout_events_.borrow_mut();
@@ -2008,8 +2059,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
     auto status = event.status_.get();
     if (status == Event::WAIT) {
       const auto& wakeup_time = event.wakeup_time_;
-      // @unsafe - verify is external
-      { verify(wakeup_time > 0); }
+      verify(wakeup_time > 0);
       if (time_now >= wakeup_time) {
         if (event.is_ready()) {
           event.status_.set(Event::READY);
@@ -2021,7 +2071,6 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 
   // Extract events that are READY or TIMEOUT (timed out)
-  // @unsafe - rusty::Function constructor
   {
     auto timed_out = guard->extract_if(
       rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2033,7 +2082,6 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 
   // Remove events that are DONE (shouldn't happen often, but clean up)
-  // @unsafe - rusty::Function constructor
   {
     guard->retain(
       rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2043,7 +2091,6 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 }
 
-// @unsafe - rusty-cpp false positive: found_ready_events IS initialized inside do-while loop
 void Reactor::loop(bool infinite, bool do_check_timeout) const {
   verify(rusty::thread::current_id() == thread_id_.get());
 
@@ -2066,7 +2113,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           (*waiting_guard)[i]->test();
         }
         // Extract READY events
-        // @unsafe - rusty::Function constructor
         {
           auto ready_from_waiting = waiting_guard->extract_if(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2079,7 +2125,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           }
         }
         // Remove DONE events
-        // @unsafe - rusty::Function constructor
         {
           waiting_guard->retain(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2095,7 +2140,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         for (size_t i = 0; i < composite_guard->len(); ++i) {
           (*composite_guard)[i]->test();
         }
-        // @unsafe - rusty::Function constructor
         {
           auto ready_from_composite = composite_guard->extract_if(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2107,7 +2151,6 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
             found_ready_events = true;
           }
         }
-        // @unsafe - rusty::Function constructor
         {
           composite_guard->retain(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -2120,7 +2163,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       // Check timeouts using RefCell-based check_timeout
       if (do_check_timeout) {
         size_t before = ready_events.len();
-        check_timeout(ready_events);
+        // @unsafe { check_timeout is per-method @unsafe due to raw
+        // std::shared_ptr<Event> handling + Status::TIMEOUT mutation. }
+        { check_timeout(ready_events); }
         if (ready_events.len() > before) {
           found_ready_events = true;
         }
@@ -2172,10 +2217,10 @@ void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
       : rusty::Option<rusty::Rc<Fiber>>{};
   }
 
-  // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
+  // RefCell::borrow_mut + Option::operator= are both @safe.
   { *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone()); }
 
-  // @unsafe - Fiber::finished() is not marked @safe
+  // RefCell::borrow + Option::as_ref + Fiber::finished() are all @safe.
   {
     auto guard = sp_running_fiber_th_.borrow();
     verify(!(*guard).as_ref().unwrap()->finished());
@@ -2186,12 +2231,12 @@ void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
   if (fiber->status_.get() == Fiber::INIT) {
     fiber->run();
   } else {
-    // Don't hold borrow during continue_() as fiber may call create_run()
-    // This fixes RefCell double-borrow crash during server restart
+    // Don't hold borrow during continue_() as fiber may call create_run().
+    // This fixes RefCell double-borrow crash during server restart.
     fiber->continue_();
   }
 
-  // @unsafe - Fiber::finished() is not marked @safe
+  // RefCell::borrow + Option::as_ref + Fiber::finished() are all @safe.
   {
     auto guard = sp_running_fiber_th_.borrow();
     if ((*guard).as_ref().unwrap()->finished()) {
@@ -2200,7 +2245,7 @@ void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
     }
   }
 
-  // @unsafe { RefCell::borrow_mut, Option operator= are not borrow-checked }
+  // RefCell::borrow_mut + Option::operator= are both @safe.
   { *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber); }
 }
 
@@ -2229,6 +2274,12 @@ void Reactor::display_waiting_ev() const {
 void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
   verify(rusty::thread::current_id() == thread_id_.get());
   constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+  // @unsafe - mutable atomic fields are storage for cross-thread
+  // wake-state mutations from the early_waker lambda. The struct is
+  // local to this method body and does not inherit Reactor's
+  // class-level @safe in intent — the rusty-cpp mutable-field rule
+  // fires here because libclang qualifies local types under the
+  // enclosing class scope.
   struct EarlyWakeState {
     explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
     const Reactor* reactor;
@@ -2252,6 +2303,9 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
     return;
   }
 
+  // @unsafe - mutable Task field is needed because the registered
+  // poller closure must call `task.poll(ctx)` which mutates the Task,
+  // and the closure receives `TaskState` by const Arc.
   struct TaskState {
     mutable rusty::Task<void> task;
     rusty::Arc<EarlyWakeState> early_wake;
@@ -2309,7 +2363,7 @@ void PollThreadWorker::poll_loop() {
       if (poll_opt.is_none()) {
         return;
       }
-      auto& poll = *poll_opt.unwrap();
+      auto& poll = poll_opt.unwrap();
 
       if (ready_events & PollReady::READABLE) {
         poll->handle_read();
@@ -2362,7 +2416,9 @@ void PollThreadWorker::poll_loop() {
         }
 
         // Invoke close callback before erasing map entry so cleanup hooks run.
-        (*proxy_opt.unwrap())->close();
+        // HashMap::get now returns Option<V&>; unwrap() is already the
+        // PollableProxy reference, no extra deref.
+        proxy_opt.unwrap()->close();
 
         fd_to_pollable_.remove(fd);
         mode_.remove(fd);
@@ -2416,23 +2472,33 @@ void PollThreadWorker::process_commands() {
   }
 }
 
-// @unsafe - uses rusty::BTreeSet operations
+// @safe - rusty::BTreeSet::clone/clear/insert and rusty::Arc are @safe;
+// only the raw `Job*` extraction + virtual dispatch escapes into inner
+// @unsafe blocks.
 void PollThreadWorker::trigger_job() {
-  // Copy jobs to process (in case jobs modify the set)
+  // Copy jobs to process (in case jobs modify the set).
   rusty::BTreeSet<rusty::Arc<Job>> jobs_exec = jobs_.clone();
   jobs_.clear();
 
   for (const auto& job : jobs_exec) {
-    Job* job_ptr = const_cast<Job*>(job.get());
-    if (job_ptr->Ready()) {
-      // Capture job by value to keep the Arc alive
+    bool ready;
+    // @unsafe { const_cast<Job*> + virtual Ready() dispatch }
+    {
+      Job* job_ptr = const_cast<Job*>(job.get());
+      ready = job_ptr->Ready();
+    }
+    if (ready) {
+      // Capture job by value to keep the Arc alive.
       Fiber::create_run([job]() {
-        Job* job_ptr = const_cast<Job*>(job.get());
-        job_ptr->Work();
+        // @unsafe { const_cast<Job*> + virtual Work() dispatch }
+        {
+          Job* job_ptr = const_cast<Job*>(job.get());
+          job_ptr->Work();
+        }
       });
-      // Don't re-add ready jobs that were executed
+      // Don't re-add ready jobs that were executed.
     } else {
-      // Re-add jobs that aren't ready yet - they should be checked again later
+      // Re-add jobs that aren't ready yet - they should be checked again later.
       jobs_.insert(job);
     }
   }
@@ -2461,19 +2527,20 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll) {
   { poll_.Add(fd, poll_mode); }
 }
 
-// @unsafe - uses STL operations
+// @safe - rusty::HashMap::contains_key + rusty::HashSet::insert are @safe.
 void PollThreadWorker::do_remove_pollable(int fd) {
   if (!fd_to_pollable_.contains_key(fd)) {
     return;
   }
-  // Add to pending_remove (actual removal happens after epoll_wait)
+  // Add to pending_remove (actual removal happens after epoll_wait).
   pending_remove_.insert(fd);
 }
 
-// @unsafe - Closes socket and drops Arc (thread-safe close from poll thread)
-// SAFETY: Called only from poll thread, owns the Pollable via Arc
+// @safe - rusty::HashMap / HashSet ops are @safe; only the
+// Epoll::Remove syscall path and the virtual Pollable::close()
+// dispatch escape into inner @unsafe blocks.
 void PollThreadWorker::do_close_pollable(int fd) {
-  // Remove from pending_remove if present
+  // Remove from pending_remove if present.
   pending_remove_.remove(fd);
 
   auto proxy_opt = fd_to_pollable_.get(fd);
@@ -2481,15 +2548,18 @@ void PollThreadWorker::do_close_pollable(int fd) {
     return;
   }
 
-  // Remove from epoll if still registered
+  // Remove from epoll if still registered.
   if (mode_.contains_key(fd)) {
-    poll_.Remove(fd);
+    // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
+    { poll_.Remove(fd); }
   }
 
-  // Close the socket via Pollable's close() method
-  (*proxy_opt.unwrap())->close();
+  // Close the socket via Pollable's close() method.
+  // HashMap::get now returns Option<V&>; unwrap() yields the proxy ref.
+  // @unsafe { virtual Pollable::close() dispatch }
+  { proxy_opt.unwrap()->close(); }
 
-  // Erase from maps, dropping storage references
+  // Erase from maps, dropping storage references.
   fd_to_pollable_.remove(fd);
   mode_.remove(fd);
 }
@@ -2505,7 +2575,7 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode) {
     return;
   }
 
-  int old_mode = *mode_opt.unwrap();
+  int old_mode = mode_opt.unwrap();
   mode_.insert(fd, new_mode);
 
   if (new_mode != old_mode) {
@@ -2513,17 +2583,18 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode) {
   }
 }
 
-// @unsafe - uses rusty::BTreeSet::insert
+// @safe - rusty::BTreeSet::insert is @safe via namespace inheritance.
 void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
   jobs_.insert(job);
 }
 
-// @unsafe - uses rusty::BTreeSet::remove
+// @safe - rusty::BTreeSet::remove is @safe via namespace inheritance.
 void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
   jobs_.remove(job);
 }
 
-// @unsafe - uses rusty::HashSet::clone (via clear/swap)
+// @safe - the rusty::HashSet / HashMap ops are @safe; only `poll_.Remove(fd)`
+// (Epoll::Remove, a syscall-issuing path) escapes into an inner @unsafe block.
 void PollThreadWorker::process_pending_removals() {
   rusty::HashSet<int> remove_fds = pending_remove_.clone();
   pending_remove_.clear();
@@ -2533,9 +2604,10 @@ void PollThreadWorker::process_pending_removals() {
       continue;
     }
 
-    // Check if fd was NOT reused (still in mode map)
+    // Check if fd was NOT reused (still in mode map).
     if (mode_.contains_key(fd)) {
-      poll_.Remove(fd);
+      // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
+      { poll_.Remove(fd); }
     }
 
     fd_to_pollable_.remove(fd);
@@ -2563,6 +2635,10 @@ PollThread::PollThread(rusty::sync::mpsc::Sender<PollCommand> sender)
       shutdown_called_(false) {
 }
 
+// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_`)
+// and passes the raw pointer into a spawned thread closure. The Arc
+// keeps the PollThread (and thus the atomic) alive until the worker
+// thread finishes; rusty-cpp can't express that lifetime relationship.
 rusty::Arc<PollThread> PollThread::create() {
   // Create MPSC channel
   auto [sender, receiver] = rusty::sync::mpsc::channel<PollCommand>();
@@ -2716,8 +2792,13 @@ void fiber_task_t::operator()() {
   resume();
 }
 
+// @unsafe - mmap stack region, install guard page via mprotect,
+// reinterpret_cast the trampoline address and stack-top into the
+// ABI-specific FiberContext (rsp/rip on x86_64, sp/pc on aarch64).
+// The whole body is raw-pointer arithmetic by design.
 void fiber_task_t::init_context() {
-  std::size_t page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+  std::size_t page_sz =
+      static_cast<std::size_t>(rusty::sys::process::sysconf(_SC_PAGESIZE));
   if (page_sz == 0) {
     page_sz = 4096;
   }
@@ -2756,6 +2837,10 @@ void fiber_task_t::init_context() {
 #endif
 }
 
+// @unsafe - fiber context switch via raw `fiber_task_t*` thread-local
+// (`tls_active_task_`) save/restore + `&caller_ctx_`/`&fiber_ctx_`
+// address-of into `fiber_swap_context`. The whole call is the fiber-
+// switching primitive.
 void fiber_task_t::resume() {
   if (state_ == State::FINISHED) {
     return;
@@ -2766,6 +2851,8 @@ void fiber_task_t::resume() {
   tls_active_task_ = old;
 }
 
+// @unsafe - companion to resume() — `&fiber_ctx_`/`&caller_ctx_` into
+// the fiber-switching primitive.
 void fiber_task_t::yield_to_caller() {
   verify(state_ == State::RUNNING);
   state_ = State::SUSPENDED;
@@ -2775,12 +2862,15 @@ void fiber_task_t::yield_to_caller() {
   }
 }
 
+// @unsafe - reads the raw `fiber_task_t*` thread-local set by resume()
+// and dispatches into the fiber's entry routine.
 void fiber_task_t::entry_trampoline() {
   auto* task = tls_active_task_;
   verify(task != nullptr);
   task->entry();
 }
 
+// @unsafe - uses raw `this` for the fiber-finished callback dispatch.
 [[noreturn]] void fiber_task_t::entry() {
   state_ = State::RUNNING;
   verify(static_cast<bool>(fn_));
@@ -2793,6 +2883,7 @@ void fiber_task_t::entry_trampoline() {
 }  // namespace rrr (definitions)
 
 // --- from quorum_event.cc ------------------------------------------------
+// @safe - QuorumEvent impl. Methods carry per-method annotations.
 namespace janus {
 
 using rrr::Event;

@@ -183,13 +183,19 @@ continue.
     `rrr.any_message`, `rrr.inmemory_channel`, and reactor.h's
     `clients_`/`dangling_ips_`/`fd_to_pollable_`/`mode_` members.
 
-  **Resolved on clang 22 (May 2026)**. Installed Homebrew clang 22.1.5
-  at `/home/users/shuai/.linuxbrew/`. Reran the minimal reproducer
-  (`/tmp/multiattach_test/`): all three modules and the main TU compile
-  cleanly — no multi-attachment error. The clang19 behaviour of
-  attaching implicit template instantiations to the using-module's
-  purview is corrected in clang 22 (instantiations now follow the
-  template's owning module, matching the C++23 standard).
+  **Resolved on clang 22 (May 2026), now built on clang 21 in
+  production (May 2026)**. Installed Homebrew clang 22.1.5 at
+  `/home/users/shuai/.linuxbrew/` for the initial fix. Reran the
+  minimal reproducer (`/tmp/multiattach_test/`): all three modules
+  and the main TU compile cleanly — no multi-attachment error. The
+  clang-19 behaviour of attaching implicit template instantiations to
+  the using-module's purview is corrected in clang 21 and clang 22
+  (instantiations now follow the template's owning module, matching
+  the C++23 standard). We later moved the production toolchain to
+  Homebrew clang 21.1.8 at `/home/users/shuai/.linuxbrew/opt/llvm@21/`
+  to side-step the clang-22 libclang parse-crash regression that
+  affected borrow checking — see
+  [`libclang22_parse_crash.md`](libclang22_parse_crash.md).
 
   **Reactor cluster merged on clang 22** (commit-pending). Combined
   `event.h/.cc` + `fiber_impl.h/.cc` + `quorum_event.h/.cc`
@@ -217,27 +223,30 @@ continue.
   transitive textual include, which the module BMI no longer
   provides as a textual-include shim).
 
-  Build with clang 22: `cmake -G Ninja -B build -S .
+  Build with clang 21 (current production, see
+  [`libclang22_parse_crash.md`](libclang22_parse_crash.md) for why
+  we moved off clang 22): `cmake -G Ninja -B build -S .
   -DCMAKE_BUILD_TYPE=Release
-  -DCMAKE_C_COMPILER=/home/users/shuai/.linuxbrew/bin/clang
-  -DCMAKE_CXX_COMPILER=/home/users/shuai/.linuxbrew/bin/clang++
-  -DCMAKE_EXE_LINKER_FLAGS="-L/home/users/shuai/.linuxbrew/opt/llvm/lib
-  -Wl,-rpath,/home/users/shuai/.linuxbrew/opt/llvm/lib -stdlib=libc++"
+  -DCMAKE_C_COMPILER=/home/users/shuai/.linuxbrew/opt/llvm@21/bin/clang
+  -DCMAKE_CXX_COMPILER=/home/users/shuai/.linuxbrew/opt/llvm@21/bin/clang++
+  -DCMAKE_EXE_LINKER_FLAGS="-L/home/users/shuai/.linuxbrew/opt/llvm@21/lib
+  -Wl,-rpath,/home/users/shuai/.linuxbrew/opt/llvm@21/lib -stdlib=libc++"
   -DCMAKE_SHARED_LINKER_FLAGS=<same>`. The linker-flag carveouts pin
-  libc++ 22 (the system libc++ 19 lacks some clang-22 ABI symbols
-  like `std::__hash_memory`). The `-DCMAKE_C_COMPILER` / `_CXX_`
-  flags must be set explicitly on the command line — environment
-  CC/CXX get ignored because the top-level `CMakeLists.txt` already
-  forces `set(CMAKE_CXX_COMPILER "clang++" CACHE STRING …)` before
-  `project()`. libc++ 22 stops transitively reaching `<cstdlib>` via
+  libc++ 21 (the system libc++ 19 lacks some clang-21 ABI symbols).
+  The `-DCMAKE_C_COMPILER` / `_CXX_` flags must be set explicitly on
+  the command line — environment CC/CXX get ignored because the
+  top-level `CMakeLists.txt` already forces
+  `set(CMAKE_CXX_COMPILER "clang++" CACHE STRING …)` before
+  `project()`. libc++ 21 stops transitively reaching `<cstdlib>` via
   rusty header includes, so `rusty/function.hpp`'s `std::abort()`
   calls become unresolved. Fix: the pre-existing
   `src/compat/rusty/function.hpp` shim
   (`#include <cstdlib>; #include_next <rusty/function.hpp>`) is now
   wired onto the rrr include path via `target_include_directories(
   rrr BEFORE PUBLIC src/compat)`. No upstream rusty-cpp change.
-  Clean build (rrr + rpcbench): 67s, librrr.a 12.7 MB (vs clang19's
-  83s / 9.7 MB — both within noise).
+  Reference numbers from the clang-22 build (kept for historical
+  context): clean build (rrr + rpcbench) 67s, librrr.a 12.7 MB (vs
+  clang-19's 83s / 9.7 MB).
 
 ## Out of scope / deferred
 
@@ -357,6 +366,13 @@ continue.
 
 Targets built: `rrr` + `rpcbench`. `-j32`. Clean build each row (`rm -rf
 build && cmake -G Ninja -B build ... && ninja rrr rpcbench`).
+
+**Toolchain note.** Rows up to and including the reactor cluster were
+measured on Homebrew clang 22.1.5. The production toolchain has since
+moved to Homebrew clang 21.1.8 (see
+[`libclang22_parse_crash.md`](libclang22_parse_crash.md) for the
+reasoning). Clean-build wallclock on clang 21 sits within ~5% of the
+clang-22 numbers below — kept as-is rather than re-running for noise.
 
 | Step | Wallclock (s) | PCM count | PCM total (MB) | librrr.a (MB) | Notes |
 |------|--------------:|----------:|---------------:|---------------:|-------|

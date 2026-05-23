@@ -27,10 +27,9 @@ class Table;
 /**
  * Row - database table row with column data storage.
  *
- * DEPRECATED: Row inherits from RefCounted for legacy compatibility.
- * New code should use rusty::Arc<Row> for shared ownership.
- * The ref_copy()/release() pattern is being replaced by Arc::clone() and implicit drop.
- * Migration status: in progress.
+ * Shared ownership uses `rusty::Arc<Row>`.  `Row` itself only carries
+ * `NoCopy` semantics; the legacy `RefCounted` base + `ref_copy()` /
+ * `release()` pattern is gone.
  */
 class Row: public NoCopy {
   // fixed size part
@@ -354,7 +353,6 @@ class FineLockedRow: public Row {
 
 protected:
 
-    // protected dtor as required by RefCounted
     ~FineLockedRow() {
         delete[] lock_;
     }
@@ -456,9 +454,6 @@ class FineLockedRow: public Row {
     }
   }
 
- protected:
-
-  // protected dtor as required by RefCounted (now public for Arc compatibility)
  public:
   ~FineLockedRow() {
     switch (type_2pl_) {
@@ -603,9 +598,6 @@ class VersionedRow: public CoarseLockedRow {
     prepared_rver_[column_id].remove(ver);
   }
 
- protected:
-
-  // protected dtor as required by RefCounted (now public for Arc compatibility)
  public:
   ~VersionedRow() {
 //    delete[] ver_;

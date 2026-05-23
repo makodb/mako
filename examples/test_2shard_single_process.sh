@@ -12,6 +12,7 @@
 # Source common utilities (includes GDB_PREFIX for debugging)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../bash/util.sh"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
 
 echo "========================================="
 echo "Testing 2-shard single process mode (no replication)"
@@ -50,6 +51,11 @@ cleanup_process() {
         kill -9 "$PROCESS_PID" 2>/dev/null || true
         wait "$PROCESS_PID" 2>/dev/null || true
     fi
+
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        rm -f "$TEMP_CONFIG"
+    fi
+    unset MAKO_CONFIG
 }
 
 handle_interrupt() {
@@ -72,9 +78,19 @@ sleep 1
 
 path=$(pwd)/src/mako
 
+# Randomize the shard config so the hardcoded 31000/31100 ports don't collide
+# with leftover TIME_WAIT sockets from earlier CI tests.
+TEMP_CONFIG=$(make_simple_txn_rep_config 2 "$trd")
+if [ -z "$TEMP_CONFIG" ]; then
+    echo "Error: Failed to materialize randomized shard config" >&2
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "shard config: $MAKO_CONFIG"
+
 # Build the command for 2-shard single process mode (no replication)
 # Key: -L 0,1 specifies running shards 0 and 1 in the same process
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -P localhost -L 0,1"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $TEMP_CONFIG -P localhost -L 0,1"
 THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
 if [ -n "$THROTTLE_ARGS" ]; then
     CMD="$CMD$THROTTLE_ARGS"
@@ -86,7 +102,7 @@ echo "-----------------"
 echo "  Number of threads: $trd"
 echo "  Local shards:      0,1 (single process mode)"
 echo "  Replication:       disabled"
-echo "  Config file:       $path/config/local-shards2-warehouses$trd.yml"
+echo "  Config file:       $TEMP_CONFIG (randomized from $path/config/local-shards2-warehouses$trd.yml)"
 if [ -n "${MAKO_CPU_LIMIT:-}" ]; then
     echo "  CPU throttle:      ${MAKO_CPU_LIMIT}% (cycle=${MAKO_THROTTLE_CYCLE_MS:-default}ms)"
 else

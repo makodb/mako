@@ -76,6 +76,14 @@ fi
 export MAKO_CONFIG="$TEMP_CONFIG"
 echo "simpleTransactionRep config: $MAKO_CONFIG"
 
+# Randomize paxos replication ports — see test_2shard_replication.sh.
+TEMP_PAXOS_DIR=$(make_paxos_replication_configs 2 "$trd" paxos)
+if [ -z "$TEMP_PAXOS_DIR" ]; then
+    exit 1
+fi
+export MAKO_PAXOS_CONFIG_DIR="$TEMP_PAXOS_DIR"
+echo "paxos replication config dir: $MAKO_PAXOS_CONFIG_DIR"
+
 cleanup_processes() {
     if [ "$CLEANUP_DONE" -eq 1 ]; then
         return
@@ -113,6 +121,10 @@ cleanup_processes() {
 
     rm -f "$TEMP_CONFIG"
     unset MAKO_CONFIG
+    if [ -n "${TEMP_PAXOS_DIR:-}" ]; then
+        rm -rf "$TEMP_PAXOS_DIR"
+    fi
+    unset MAKO_PAXOS_CONFIG_DIR
 }
 
 handle_interrupt() {

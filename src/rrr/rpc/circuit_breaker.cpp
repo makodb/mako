@@ -69,6 +69,9 @@ struct CircuitBreakerConfig {
     }
 };
 
+// @safe - Single-threaded circuit breaker state machine. All fields are
+// rusty::Cell<T> for trivially-copyable interior mutability; no raw
+// pointers, syscalls, or operator-overload chains.
 class CircuitBreaker {
 private:
     CircuitBreakerConfig config_;

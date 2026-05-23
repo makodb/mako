@@ -64,7 +64,7 @@ class ConnStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_conn_proxy(
         std::shared_ptr<ConnStub> stub) {
-    return std::make_unique<ConnStubAdapter>(std::move(stub));
+    return rusty::make_box<ConnStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ class ListenerStubAdapter : public ChannelListenerBase {
 
 inline ChannelListenerProxy make_listener_proxy(
         std::shared_ptr<ListenerStub> stub) {
-    return std::make_unique<ListenerStubAdapter>(std::move(stub));
+    return rusty::make_box<ListenerStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------
@@ -127,15 +127,14 @@ class FactoryStub {
     bool next_listen_should_fail_ = false;
 
     ConnectResult connect(std::string_view) {
-        return ConnectResult{ChannelConnectionProxy{},
-                             ChannelError::Internal};
+        return ConnectResult{rusty::None, ChannelError::Internal};
     }
-    ChannelListenerProxy make_listener() {
+    rusty::Option<ChannelListenerProxy> make_listener() {
         ++make_listener_calls_;
-        if (!make_listener_ok_) return ChannelListenerProxy{};
+        if (!make_listener_ok_) return rusty::None;
         last_listener_ = std::make_shared<ListenerStub>();
         last_listener_->listened_ok_ = !next_listen_should_fail_;
-        return make_listener_proxy(last_listener_);
+        return rusty::Some(make_listener_proxy(last_listener_));
     }
     const char* backend_name() const { return "factory-stub"; }
 };
@@ -144,16 +143,16 @@ class FactoryStubAdapter : public ChannelFactoryBase {
  public:
     explicit FactoryStubAdapter(std::shared_ptr<FactoryStub> p)
         : stub_(std::move(p)) {}
-    ConnectResult connect(std::string_view a) override { return stub_->connect(a); }
-    ChannelListenerProxy make_listener() override { return stub_->make_listener(); }
-    const char* backend_name() const override { return stub_->backend_name(); }
+    ConnectResult                       connect(std::string_view a) override { return stub_->connect(a); }
+    rusty::Option<ChannelListenerProxy> make_listener() override             { return stub_->make_listener(); }
+    const char*                         backend_name() const override        { return stub_->backend_name(); }
  private:
     std::shared_ptr<FactoryStub> stub_;
 };
 
 inline ChannelFactoryProxy make_factory_proxy(
         std::shared_ptr<FactoryStub> stub) {
-    return std::make_unique<FactoryStubAdapter>(std::move(stub));
+    return rusty::make_box<FactoryStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------

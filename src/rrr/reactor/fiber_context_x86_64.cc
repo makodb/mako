@@ -2,6 +2,19 @@
  * @file fiber_context_x86_64.cc
  * @brief x86_64 SysV context switch primitive for Fibers.
  *
+ * QUARANTINE — this file is the deepest @unsafe component of the
+ * fiber runtime. It implements `fiber_swap_context` as a raw inline
+ * assembly routine that saves the SysV-callee-saved register set into
+ * a `FiberContext` struct pointed to by `%rdi` and restores from
+ * another struct pointed to by `%rsi`. It cannot be borrow-checked
+ * (the analyzer doesn't look at asm) and cannot be made safe (the
+ * register save/restore IS the unsafe operation). Callers — in
+ * particular `fiber_task_t::resume()`, `fiber_task_t::yield_to_caller()`,
+ * and `fiber_task_t::entry()` in `reactor.cpp` — wrap the
+ * `fiber_swap_context(...)` call site in `// @unsafe` annotations and
+ * document the unsafety at that boundary. New callers should follow
+ * the same pattern.
+ *
  * Plain C++ translation unit (NOT a module impl partition). Top-level asm()
  * inside a module impl partition is treated as non-reachable by clang and
  * the symbol never makes it into the .o file.

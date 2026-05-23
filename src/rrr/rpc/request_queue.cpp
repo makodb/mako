@@ -38,38 +38,33 @@ inline constexpr int kRequestQueueExpiredError = ETIMEDOUT;
 struct QueuedRequest {
     i64 xid;                           // Request transaction ID
     i32 rpc_id;                        // RPC method ID
-    std::chrono::steady_clock::time_point timestamp;  // When queued
+    std::uint64_t timestamp_us;        // When queued, monotonic microseconds
     uint32_t retry_count;              // Number of retries
     rusty::Arc<Marshal> payload;       // Serialized request data
     rusty::Function<void(int)> callback; // Completion callback (error_code)
     uint32_t ttl_ms;                   // TTL in milliseconds
 
-    // @unsafe - Constructor uses std::chrono
+    // @safe - rusty::sys::time::clock_monotonic_us is @safe.
     QueuedRequest()
         : xid(0)
         , rpc_id(0)
-        , timestamp(std::chrono::steady_clock::now())
+        , timestamp_us(rusty::sys::time::clock_monotonic_us())
         , retry_count(0)
         , payload(rusty::Arc<Marshal>::make())
         , ttl_ms(30000)
     {}
 
-    // @unsafe - Uses std::chrono
+    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
     bool is_expired() const {
-        // @unsafe { std::chrono operations }
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - timestamp).count();
-        return static_cast<uint32_t>(elapsed_ms) > ttl_ms;
+        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
+        const std::uint64_t elapsed_us = now_us - timestamp_us;
+        return (elapsed_us / 1000) > ttl_ms;
     }
 
-    // @unsafe - Uses std::chrono
+    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
     uint32_t age_ms() const {
-        // @unsafe { std::chrono operations }
-        auto now = std::chrono::steady_clock::now();
-        return static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - timestamp).count());
+        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
+        return static_cast<uint32_t>((now_us - timestamp_us) / 1000);
     }
 };
 
@@ -82,33 +77,29 @@ struct RequestQueueConfig {
     OverflowStrategy overflow_strategy = OverflowStrategy::DROP_OLDEST;
     bool enabled = true;
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig defaults() {
-        // @unsafe { struct construction }
         return RequestQueueConfig{};
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig small() {
-        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.max_size = 10;
         config.default_ttl_ms = 5000;
         return config;
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig large() {
-        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.max_size = 10000;
         config.default_ttl_ms = 60000;
         return config;
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static RequestQueueConfig disabled() {
-        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.enabled = false;
         config.max_size = 0;
@@ -139,6 +130,10 @@ struct RequestQueueConfig {
  *       // Process request
  *   }
  */
+// @safe - SpinMutex<VecDeque<QueuedRequest>>-backed pending-request queue.
+// All public methods are already explicitly @safe from Tier 2; class-level
+// annotation lets the constructor and any future unannotated helpers
+// inherit @safe by default.
 class RequestQueue {
 private:
     RequestQueueConfig config_;
@@ -151,19 +146,20 @@ private:
     mutable SpinMutex<rusty::VecDeque<QueuedRequest>> queue_;
 
 public:
-    // @unsafe - Constructor uses defaults() which returns struct
+    // @safe - Default ctor argument is the @safe defaults() factory; the
+    // RequestQueueConfig POD copy is trivially safe.
     explicit RequestQueue(RequestQueueConfig config = RequestQueueConfig::defaults())
         : config_(config)
     {}
 
     // === Enqueue/Dequeue Operations ===
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock, VecDeque ops, and rusty::Function::operator()
+    // are all @safe in the library; the body's try/catch is not analyzed.
     // Returns true if queued, false if rejected
     bool enqueue(QueuedRequest request) {
         if (!config_.enabled) {
             if (request.callback) {
-                // @unsafe { callback invocation }
                 try {
                     request.callback(kRequestQueueRejectedError);
                 } catch (...) {}
@@ -171,7 +167,6 @@ public:
             return false;
         }
 
-        // @unsafe { SpinMutex lock, VecDeque operations }
         auto guard = queue_.lock().unwrap();
 
         if (guard->size() >= config_.max_size) {
@@ -183,7 +178,6 @@ public:
                         // Invoke callback outside lock would be better,
                         // but for simplicity we do it here with error code
                         if (oldest.callback) {
-                            // @unsafe { callback invocation }
                             try {
                                 oldest.callback(kRequestQueueRejectedError);
                             } catch (...) {}
@@ -193,7 +187,6 @@ public:
 
                 case OverflowStrategy::DROP_NEWEST:
                     if (request.callback) {
-                        // @unsafe { callback invocation }
                         try {
                             request.callback(kRequestQueueRejectedError);
                         } catch (...) {}
@@ -202,7 +195,6 @@ public:
 
                 case OverflowStrategy::FAIL_FAST:
                     if (request.callback) {
-                        // @unsafe { callback invocation }
                         try {
                             request.callback(kRequestQueueRejectedError);
                         } catch (...) {}
@@ -216,14 +208,12 @@ public:
             request.ttl_ms = config_.default_ttl_ms;
         }
 
-        // @unsafe { VecDeque push_back }
         guard->push_back(std::move(request));
         return true;
     }
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock + VecDeque ops are all @safe in the library.
     rusty::Option<QueuedRequest> dequeue() {
-        // @unsafe { SpinMutex lock, VecDeque operations }
         auto guard = queue_.lock().unwrap();
 
         if (guard->is_empty()) {
@@ -242,13 +232,13 @@ public:
 
     // === Expiration ===
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock + VecDeque::extract_if/size/is_empty/pop_front
+    // and rusty::Function ops are all @safe in the library.
     size_t expire_stale() {
         rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
         size_t removed = 0;
 
         {
-            // @unsafe { SpinMutex lock }
             auto guard = queue_.lock().unwrap();
 
             // Extract expired elements via extract_if. The predicate is
@@ -269,7 +259,6 @@ public:
         // Invoke callbacks outside lock.  rusty::Function::operator()
         // is non-const, so iterate by mutable reference.
         for (auto& cb : callbacks_to_invoke) {
-            // @unsafe { callback invocation }
             try {
                 cb(kRequestQueueExpiredError);
             } catch (...) {}
@@ -280,30 +269,26 @@ public:
 
     // === Size and State ===
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock + VecDeque::size are @safe in the library.
     size_t size() const {
-        // @unsafe { SpinMutex lock, VecDeque::size }
         auto guard = queue_.lock().unwrap();
         return guard->size();
     }
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock + VecDeque::is_empty are @safe in the library.
     bool empty() const {
-        // @unsafe { SpinMutex lock, VecDeque::is_empty }
         auto guard = queue_.lock().unwrap();
         return guard->is_empty();
     }
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock + VecDeque::size are @safe in the library.
     bool full() const {
-        // @unsafe { SpinMutex lock, VecDeque::size }
         auto guard = queue_.lock().unwrap();
         return guard->size() >= config_.max_size;
     }
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock + VecDeque::size are @safe in the library.
     size_t remaining_capacity() const {
-        // @unsafe { SpinMutex lock, VecDeque::size }
         auto guard = queue_.lock().unwrap();
         return config_.max_size > guard->size() ?
                config_.max_size - guard->size() : 0;
@@ -311,12 +296,11 @@ public:
 
     // === Clear and Reset ===
 
-    // @unsafe - Uses rusty::VecDeque and SpinMutex
+    // @safe - SpinMutex::lock + VecDeque ops + rusty::Function are @safe.
     void clear_all(int error_code = -3) {
         rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
 
         {
-            // @unsafe { SpinMutex lock, VecDeque operations }
             auto guard = queue_.lock().unwrap();
 
             for (auto& req : *guard) {
@@ -330,7 +314,6 @@ public:
         // Invoke callbacks outside lock.  rusty::Function::operator()
         // is non-const, so iterate by mutable reference.
         for (auto& cb : callbacks_to_invoke) {
-            // @unsafe { callback invocation }
             try {
                 cb(error_code);
             } catch (...) {}
@@ -355,16 +338,16 @@ public:
         return config_.max_size;
     }
 
-    // @unsafe - Update configuration (clears queue if not empty)
+    // @safe - SpinMutex::lock is @safe; the body only assigns a
+    // RequestQueueConfig POD into the member field under the lock.
     void update_config(const RequestQueueConfig& config) {
         // Take the queue's lock to serialize against in-flight enqueue/dequeue
         // operations so config_ updates are observed atomically with respect
         // to those operations.
-        // @unsafe { SpinMutex lock, config assignment }
         auto guard = queue_.lock().unwrap();
         (void)guard;
         config_ = config;
-        // Note: Caller should clear queue before calling if needed
+        // Note: Caller should clear queue before calling if needed.
     }
 };
 

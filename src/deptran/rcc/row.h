@@ -12,7 +12,6 @@ private:
 
 protected:
 
-    // protected dtor as required by RefCounted
     ~RccRow() override;
 
 

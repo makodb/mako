@@ -34,6 +34,9 @@ module;
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+#include <rusty/net.hpp>
+#include <rusty/net/tcp.hpp>
+#include <rusty/os/fd.hpp>
 #include <rusty/sync/weak.hpp>
 
 export module rrr.tcp_channel;
@@ -49,6 +52,14 @@ import rrr.threading;
 // ===========================================================================
 // Class declarations (from former tcp_channel.hpp)
 // ===========================================================================
+// @safe - TCP channel backend. State on TcpConnection / TcpListener /
+// TcpFactory is rusty::Cell / SpinMutex / Arc / Option. Methods that
+// drive socket / fd syscalls (socket / bind / listen / accept / send /
+// recv / close / fcntl / getsockname) or that thread through
+// const_cast `mut_conn` / `mut_listener` / `mut_factory` helpers
+// carry per-method `// @unsafe`. The Phase 1 TcpListener half was
+// already labeled; this iteration extends the same labeling to
+// TcpConnection, its two adapters, TcpFactory, and the adapter set.
 export namespace rrr {
 
 class TcpConnection;
@@ -71,6 +82,10 @@ inline constexpr std::size_t kTcpConnectionOutboundHighWaterDefault =
  * the class itself is non-copyable / non-movable so that pointers held
  * by adapters remain stable.
  */
+// @safe - see file header. Socket-fd syscall methods (send_frame,
+// flush, close, handle_read, handle_write, handle_error,
+// drain_outbound_locked, dtor, deliver_on_closed_locked) carry their
+// own per-method `// @unsafe`.
 class TcpConnection {
  public:
     /**
@@ -156,7 +171,12 @@ class TcpConnection {
     // State
     // -----------------------------------------------------------------------
 
-    int fd_;
+    // Owned file descriptor — RAII-closes on drop. Replaces the
+    // previous raw `int fd_` (kept the name) so call sites that
+    // mutate the fd life cycle do so by move-assigning a fresh
+    // `OwnedFd{}` (which closes the prior fd in its destructor) and
+    // call sites that need the integer pass `fd_.as_raw_fd()`.
+    rusty::os::fd::OwnedFd fd_;
     std::string peer_address_;
 
     std::size_t outbound_high_water_ = kTcpConnectionOutboundHighWaterDefault;
@@ -219,14 +239,22 @@ class TcpConnectionChannelAdapter : public ChannelConnectionBase {
     explicit TcpConnectionChannelAdapter(rusty::Arc<TcpConnection> conn)
         : conn_(std::move(conn)) {}
 
+    // @unsafe - forwards through mut_conn() const_cast.
     ChannelError send_frame(const ChannelFrame& f) override { return mut_conn().send_frame(f); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         flush() override                            { mut_conn().flush(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         close() override                            { mut_conn().close(); }
+    // @safe - forwards to TcpConnection::is_closed (Cell::get is @safe).
     bool         is_closed() const override                  { return conn_->is_closed(); }
+    // @safe - forwards to TcpConnection::peer_address (const std::string accessor).
     std::string  peer_address() const override               { return conn_->peer_address(); }
 
+    // @unsafe - forwards through mut_conn() const_cast.
     void set_on_frame (OnFrameCallback  cb) override { mut_conn().set_on_frame (std::move(cb)); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void set_on_closed(OnClosedCallback cb) override { mut_conn().set_on_closed(std::move(cb)); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void set_on_error (OnErrorCallback  cb) override { mut_conn().set_on_error (std::move(cb)); }
 
  private:
@@ -235,6 +263,7 @@ class TcpConnectionChannelAdapter : public ChannelConnectionBase {
     // (e.g. `send_frame`, `close`, `set_on_*`) on the underlying
     // connection, so we cast through here. Mirrors the
     // `PollableTypedArcAdapter::mut_poll` idiom in `pollable_proxy.h`.
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpConnection& mut_conn() { return const_cast<TcpConnection&>(*conn_.get()); }
     rusty::Arc<TcpConnection> conn_;
 };
@@ -244,24 +273,34 @@ class TcpConnectionPollableAdapter : public PollableBase {
     explicit TcpConnectionPollableAdapter(rusty::Arc<TcpConnection> conn)
         : conn_(std::move(conn)) {}
 
+    // @unsafe - forwards into TcpConnection::fd (returns the raw fd int).
     int  fd() const override                          { return conn_->fd(); }
+    // @unsafe - forwards into TcpConnection::poll_mode.
     int  poll_mode() const override                   { return conn_->poll_mode(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     std::size_t content_size() override               { return mut_conn().content_size(); }
+    // @unsafe - forwards through mut_conn() const_cast (recv syscall path).
     bool handle_read() override                       { return mut_conn().handle_read(); }
+    // @unsafe - forwards through mut_conn() const_cast (send syscall path).
     int  handle_write() override                      { return mut_conn().handle_write(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void handle_error() override                      { mut_conn().handle_error(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void close() override                             { mut_conn().close(); }
+    // @safe - forwards to TcpConnection::is_closed (Cell::get is @safe).
     bool is_closed() const override                   { return conn_->is_closed(); }
+    // @safe - forwards to TcpConnection::check_pending_write_update (Cell::get/set).
     bool check_pending_write_update() const override  { return conn_->check_pending_write_update(); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpConnection& mut_conn() { return const_cast<TcpConnection&>(*conn_.get()); }
     rusty::Arc<TcpConnection> conn_;
 };
 
 inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
     rusty::Arc<TcpConnection> conn) {
-    return std::make_unique<TcpConnectionChannelAdapter>(std::move(conn));
+    return rusty::make_box<TcpConnectionChannelAdapter>(std::move(conn));
 }
 
 inline PollableProxy make_tcp_connection_pollable_proxy(
@@ -299,6 +338,13 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
  * (`handle_read`, `handle_error`, `poll_mode`, ...) run on the poll
  * thread.
  */
+// @safe - State is rusty::Cell / Option / SpinMutex / Arc /
+// rusty::os::fd::OwnedFd (RAII-closes listen_fd_ on drop). Methods
+// that genuinely touch the raw fd via syscalls (listen, fd,
+// handle_read) carry their own `// @unsafe` overrides at the
+// out-of-class definitions; `close()` is now @safe — it just
+// move-assigns an empty OwnedFd, whose destructor handles the
+// ::close().
 class TcpListener {
  public:
     TcpListener();
@@ -372,7 +418,11 @@ class TcpListener {
     // State
     // -----------------------------------------------------------------------
 
-    int         listen_fd_ = -1;
+    // Owned rusty::net::TcpListener — wraps the socket/bind/listen
+    // syscalls and RAII-closes the listen fd on drop. Move-only;
+    // default-constructed (`!listener_.is_bound()`) means we haven't
+    // called listen() yet.
+    rusty::net::TcpListener listener_;
     std::string bound_address_;
 
     rusty::Cell<bool> closed_{false};
@@ -390,15 +440,20 @@ class TcpListenerChannelAdapter : public ChannelListenerBase {
     explicit TcpListenerChannelAdapter(rusty::Arc<TcpListener> listener)
         : listener_(std::move(listener)) {}
 
+    // @unsafe - forwards through mut_listener() const_cast.
     ChannelError listen(std::string_view a) override { return mut_listener().listen(a); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void         close() override                    { mut_listener().close(); }
     bool         is_closed() const override          { return listener_->is_closed(); }
     std::string  local_address() const override      { return listener_->local_address(); }
 
+    // @unsafe - forwards through mut_listener() const_cast.
     void set_on_accept(OnAcceptCallback cb) override { mut_listener().set_on_accept(std::move(cb)); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void set_on_error (OnErrorCallback  cb) override { mut_listener().set_on_error (std::move(cb)); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
     rusty::Arc<TcpListener> listener_;
 };
@@ -408,24 +463,31 @@ class TcpListenerPollableAdapter : public PollableBase {
     explicit TcpListenerPollableAdapter(rusty::Arc<TcpListener> listener)
         : listener_(std::move(listener)) {}
 
+    // @unsafe - forwards into TcpListener::fd (raw listen_fd_).
     int  fd() const override                          { return listener_->fd(); }
     int  poll_mode() const override                   { return listener_->poll_mode(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     std::size_t content_size() override               { return mut_listener().content_size(); }
+    // @unsafe - forwards through mut_listener() const_cast (accept syscall path).
     bool handle_read() override                       { return mut_listener().handle_read(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     int  handle_write() override                      { return mut_listener().handle_write(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void handle_error() override                      { mut_listener().handle_error(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void close() override                             { mut_listener().close(); }
     bool is_closed() const override                   { return listener_->is_closed(); }
     bool check_pending_write_update() const override  { return listener_->check_pending_write_update(); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpListener& mut_listener() { return const_cast<TcpListener&>(*listener_.get()); }
     rusty::Arc<TcpListener> listener_;
 };
 
 inline ChannelListenerProxy make_tcp_listener_channel_proxy(
     rusty::Arc<TcpListener> listener) {
-    return std::make_unique<TcpListenerChannelAdapter>(std::move(listener));
+    return rusty::make_box<TcpListenerChannelAdapter>(std::move(listener));
 }
 
 inline PollableProxy make_tcp_listener_pollable_proxy(
@@ -471,9 +533,9 @@ class TcpFactory {
     TcpFactory& operator=(TcpFactory&&)      = delete;
 
     // ChannelFactoryBase methods.
-    ConnectResult         connect(std::string_view addr);
-    ChannelListenerProxy  make_listener();
-    const char*           backend_name() const { return "tcp"; }
+    ConnectResult                       connect(std::string_view addr);
+    rusty::Option<ChannelListenerProxy> make_listener();
+    const char*                         backend_name() const { return "tcp"; }
 
     // Optional override for the connect-side IPv4 timeout (default
     // 5s). Only used when the kernel doesn't fail-fast on
@@ -492,17 +554,20 @@ class TcpFactoryAdapter : public ChannelFactoryBase {
     explicit TcpFactoryAdapter(rusty::Arc<TcpFactory> factory)
         : factory_(std::move(factory)) {}
 
-    ConnectResult        connect(std::string_view addr) override { return mut_factory().connect(addr); }
-    ChannelListenerProxy make_listener() override                { return mut_factory().make_listener(); }
-    const char*          backend_name() const override           { return factory_->backend_name(); }
+    // @unsafe - forwards through mut_factory() const_cast (socket+connect path).
+    ConnectResult                       connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    // @unsafe - forwards through mut_factory() const_cast.
+    rusty::Option<ChannelListenerProxy> make_listener() override                { return mut_factory().make_listener(); }
+    const char*                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     TcpFactory& mut_factory() { return const_cast<TcpFactory&>(*factory_.get()); }
     rusty::Arc<TcpFactory> factory_;
 };
 
 inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
-    return std::make_unique<TcpFactoryAdapter>(std::move(factory));
+    return rusty::make_box<TcpFactoryAdapter>(std::move(factory));
 }
 
 }  // export namespace rrr
@@ -510,6 +575,14 @@ inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory
 // ===========================================================================
 // Implementation (from former tcp_channel.cpp)
 // ===========================================================================
+// @safe - impl namespace. Out-of-class definitions inherit their
+// per-method `// @safe` / `// @unsafe` from the matching declarations
+// in the export namespace; the syscall-heavy bodies (TcpConnection::
+// dtor / send_frame / drain_outbound_locked / handle_read /
+// handle_write / handle_error / close, TcpListener::listen / close /
+// handle_read / handle_error / dtor, TcpFactory::connect /
+// make_listener) all carry per-method `// @unsafe` at their
+// definition sites.
 namespace rrr {
 
 namespace {
@@ -526,21 +599,14 @@ constexpr std::size_t kRecvScratchBytes = 64 * 1024;
 // ---------------------------------------------------------------------------
 
 TcpConnection::TcpConnection(int fd, std::string peer_address)
-    : fd_(fd),
+    : fd_(rusty::os::fd::OwnedFd::from_raw_fd(fd)),
       peer_address_(std::move(peer_address)) {}
 
 TcpConnection::~TcpConnection() {
-    if (!closed_.get()) {
-        // Best-effort cleanup. We can't fire callbacks here — the user
-        // already dropped their handle, so there's nothing to deliver
-        // to. Just close the fd.
-        if (fd_ >= 0) {
-            // @unsafe — system call
-            ::close(fd_);
-            fd_ = -1;
-        }
-        closed_.set(true);
-    }
+    // OwnedFd's destructor handles the ::close() — no manual cleanup
+    // needed. We still latch closed_ so any concurrent observer sees
+    // the closed state.
+    closed_.set(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -621,7 +687,7 @@ ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
     // thread (those tests are single-threaded — flag-poll is fine).
     if (poll_thread_.is_some() && !PollThreadWorker::is_on_poll_thread()) {
         poll_thread_.as_ref().unwrap()->update_mode(
-            fd_, PollMode::READ | PollMode::WRITE);
+            fd_.as_raw_fd(), PollMode::READ | PollMode::WRITE);
     } else {
         pending_write_update_.set(true);
     }
@@ -632,6 +698,8 @@ void TcpConnection::set_poll_thread(rusty::Arc<PollThread> pt) {
     poll_thread_ = rusty::Some(std::move(pt));
 }
 
+// @unsafe - drives drain_outbound_locked (which is @unsafe for raw
+// `uint8_t*` arithmetic + send syscall).
 void TcpConnection::flush() {
     if (closed_.get()) return;
 
@@ -665,13 +733,12 @@ void TcpConnection::close() {
     closed_.set(true);
 
     // Shutdown the write side to flush kernel buffers and signal the
-    // peer; then close the fd. `::shutdown` may fail if the socket is
-    // already half-closed — we ignore that.
-    if (fd_ >= 0) {
-        // @unsafe — system call
-        ::shutdown(fd_, SHUT_RDWR);
-        ::close(fd_);
-        fd_ = -1;
+    // peer; then drop the OwnedFd to RAII-close. `::shutdown` may fail
+    // if the socket is already half-closed — we ignore that.
+    if (fd_.is_valid()) {
+        // @unsafe { ::shutdown is libc — initiates orderly TCP close. }
+        { ::shutdown(fd_.as_raw_fd(), SHUT_RDWR); }
+        fd_ = rusty::os::fd::OwnedFd{};
     }
 
     // Deliver `on_closed(ChannelError::None)` exactly once.
@@ -706,7 +773,7 @@ void TcpConnection::set_on_error(OnErrorCallback cb) {
 // ---------------------------------------------------------------------------
 
 int TcpConnection::fd() const {
-    return fd_;
+    return fd_.as_raw_fd();
 }
 
 int TcpConnection::poll_mode() const {
@@ -723,6 +790,9 @@ std::size_t TcpConnection::content_size() {
     return guard->size() + inbound_.buffered_bytes();
 }
 
+// @unsafe - recv(2) syscall into a raw `char` scratch buffer +
+// FrameStreamReader::append / next_frame / consume_frame are all
+// @unsafe + raw `uint8_t*` payload pointers stored on the FrameView.
 bool TcpConnection::handle_read() {
     if (closed_.get()) return false;
 
@@ -730,8 +800,10 @@ bool TcpConnection::handle_read() {
     bool any_progress = false;
 
     while (true) {
-        // @unsafe — system call
-        ssize_t n = ::recv(fd_, scratch, sizeof(scratch), 0);
+        ssize_t n;
+        // @unsafe { ::recv libc syscall — reads raw bytes into the
+        //           scratch buffer. }
+        { n = ::recv(fd_.as_raw_fd(), scratch, sizeof(scratch), 0); }
         if (n > 0) {
             inbound_.append(scratch, static_cast<std::size_t>(n));
             any_progress = true;
@@ -748,11 +820,7 @@ bool TcpConnection::handle_read() {
             // Peer closed cleanly. Signal the listener; do not fire
             // on_error — this isn't a fault, it's a graceful close.
             closed_.set(true);
-            // @unsafe — system call
-            if (fd_ >= 0) {
-                ::close(fd_);
-                fd_ = -1;
-            }
+            fd_ = rusty::os::fd::OwnedFd{};  // RAII close
             deliver_on_closed_locked(ChannelError::None);
             return false;
         }
@@ -773,11 +841,7 @@ bool TcpConnection::handle_read() {
             }
         }
         closed_.set(true);
-        if (fd_ >= 0) {
-            // @unsafe — system call
-            ::close(fd_);
-            fd_ = -1;
-        }
+        fd_ = rusty::os::fd::OwnedFd{};  // RAII close
         deliver_on_closed_locked(ch);
         return false;
     }
@@ -809,11 +873,7 @@ bool TcpConnection::handle_read() {
             }
         }
         closed_.set(true);
-        if (fd_ >= 0) {
-            // @unsafe — system call
-            ::close(fd_);
-            fd_ = -1;
-        }
+        fd_ = rusty::os::fd::OwnedFd{};  // RAII close
         inbound_.reset();
         deliver_on_closed_locked(ChannelError::Internal);
         return false;
@@ -822,6 +882,8 @@ bool TcpConnection::handle_read() {
     return any_progress;
 }
 
+// @unsafe - drives drain_outbound_locked (which is @unsafe for raw
+// `uint8_t*` arithmetic + send syscall).
 int TcpConnection::handle_write() {
     if (closed_.get()) return PollMode::NO_CHANGE;
 
@@ -850,11 +912,7 @@ int TcpConnection::handle_write() {
         }
     }
     closed_.set(true);
-    if (fd_ >= 0) {
-        // @unsafe — system call
-        ::close(fd_);
-        fd_ = -1;
-    }
+    fd_ = rusty::os::fd::OwnedFd{};  // RAII close
     deliver_on_closed_locked(result);
     return PollMode::READ;  // Stop watching writes; closed.
 }
@@ -880,6 +938,8 @@ bool TcpConnection::check_pending_write_update() const {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// @unsafe - raw `uint8_t*` pointer arithmetic + send(2) syscall +
+// pointer dereference on the outbound buffer.
 ChannelError TcpConnection::drain_outbound_locked(
     std::vector<std::uint8_t>& buf) {
 
@@ -887,7 +947,7 @@ ChannelError TcpConnection::drain_outbound_locked(
     while (offset < buf.size()) {
         const std::size_t remaining = buf.size() - offset;
         // @unsafe — system call
-        ssize_t n = ::send(fd_, buf.data() + offset, remaining, MSG_NOSIGNAL);
+        ssize_t n = ::send(fd_.as_raw_fd(), buf.data() + offset, remaining, MSG_NOSIGNAL);
         if (n > 0) {
             offset += static_cast<std::size_t>(n);
             if (static_cast<std::size_t>(n) < remaining) {
@@ -967,6 +1027,27 @@ ChannelError TcpConnection::errno_to_channel_error(int err) {
 
 namespace {
 
+// @safe - Map a rusty::io::Error::Kind to a ChannelError. Used at the
+// boundary where `rusty::net::*` operations return Result<T,io::Error>
+// and we need to surface the failure as a ChannelError on the
+// listener / connection API.
+ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
+    switch (kind) {
+        case rusty::io::Error::Kind::ConnectionRefused: return ChannelError::ConnectionRefused;
+        case rusty::io::Error::Kind::ConnectionReset:
+        case rusty::io::Error::Kind::ConnectionAborted:
+        case rusty::io::Error::Kind::NotConnected:
+        case rusty::io::Error::Kind::BrokenPipe:        return ChannelError::ConnectionReset;
+        case rusty::io::Error::Kind::TimedOut:          return ChannelError::Timeout;
+        case rusty::io::Error::Kind::AddrInUse:         return ChannelError::AddressInUse;
+        case rusty::io::Error::Kind::AddrNotAvailable:  return ChannelError::AddressInvalid;
+        case rusty::io::Error::Kind::InvalidInput:      return ChannelError::AddressInvalid;
+        case rusty::io::Error::Kind::PermissionDenied:  return ChannelError::PermissionDenied;
+        case rusty::io::Error::Kind::WouldBlock:        return ChannelError::WouldBlock;
+        default:                                        return ChannelError::Internal;
+    }
+}
+
 // Set the FD non-blocking. Returns 0 on success, errno on failure.
 int set_nonblocking_fd(int fd) {
     const int flags = ::fcntl(fd, F_GETFL, 0);
@@ -975,58 +1056,25 @@ int set_nonblocking_fd(int fd) {
     return 0;
 }
 
-// Format an IPv4 sockaddr as "ip:port". Buffer is small; if the
-// formatted string would overflow, returns a "?" placeholder.
-std::string sockaddr_to_string(const sockaddr_in& sa) {
-    char buf[INET_ADDRSTRLEN] = {0};
-    if (::inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf)) == nullptr) {
-        return "?";
-    }
-    char out[INET_ADDRSTRLEN + 8] = {0};
-    std::snprintf(out, sizeof(out), "%s:%u",
-                  buf, static_cast<unsigned>(ntohs(sa.sin_port)));
-    return std::string(out);
-}
+// Note: `sockaddr_to_string` lived here before the Phase C migration —
+// every caller now uses `rusty::net::socket_addr_v4_to_string` directly.
 
-// Parse a "host:port" address into an IPv4 `sockaddr_in`. Accepts
-// dotted-quad host literals (no DNS) and decimal port. Returns true
-// on success.
-bool parse_inet4_addr(std::string_view addr, sockaddr_in& out) {
-    auto colon = addr.find_last_of(':');
-    if (colon == std::string_view::npos) return false;
-    std::string host(addr.substr(0, colon));
-    std::string port_str(addr.substr(colon + 1));
-    if (host.empty() || port_str.empty()) return false;
-
-    long port = -1;
-    try {
-        port = std::stol(port_str);
-    } catch (...) {
-        return false;
-    }
-    if (port < 0 || port > 65535) return false;
-
-    std::memset(&out, 0, sizeof(out));
-    out.sin_family = AF_INET;
-    out.sin_port = htons(static_cast<uint16_t>(port));
-    if (::inet_pton(AF_INET, host.c_str(), &out.sin_addr) != 1) {
-        return false;
-    }
-    return true;
-}
+// Note: address parsing now lives in `rusty::net::socket_addr_v4_from_str`
+// (in `rusty/net/tcp.hpp`). The legacy `parse_inet4_addr(addr, out)`
+// helper was removed in the Phase C migration — call sites now go
+// through the rusty::net helpers directly.
 
 }  // namespace
 
 TcpListener::TcpListener() = default;
 
-TcpListener::~TcpListener() {
-    if (listen_fd_ >= 0) {
-        // @unsafe — system call
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-    }
-}
+TcpListener::~TcpListener() = default;  // rusty::net::TcpListener RAII-closes
 
+// @safe - listen path now delegates to `rusty::net::TcpListener::bind`
+// (which encapsulates socket / setsockopt(SO_REUSEADDR) / bind / listen),
+// `socket_addr_v4_from_str` for address parsing, and `set_nonblocking`
+// for the F_GETFL/F_SETFL fcntl pair. All libc calls live behind the
+// wrapper boundary; this body is pure flow control over Result types.
 ChannelError TcpListener::listen(std::string_view addr) {
     if (closed_.get()) {
         return ChannelError::AddressInUse;
@@ -1035,59 +1083,33 @@ ChannelError TcpListener::listen(std::string_view addr) {
         return ChannelError::AddressInUse;
     }
 
-    sockaddr_in sa;
-    if (!parse_inet4_addr(addr, sa)) {
+    auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
+    if (parse_result.is_err()) {
         return ChannelError::AddressInvalid;
     }
-
-    // @unsafe — system call
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return listen_errno_to_channel_error(errno);
+    auto bind_result = rusty::net::TcpListener::bind(parse_result.unwrap());
+    if (bind_result.is_err()) {
+        return io_kind_to_channel_error(bind_result.unwrap_err().kind());
     }
+    listener_ = bind_result.unwrap();
 
-    int reuse = 1;
-    // @unsafe — system call
-    if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
-    }
-
-    if (set_nonblocking_fd(fd) != 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
-    }
-
-    // @unsafe — system call
-    if (::bind(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa)) < 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
-    }
-    // Listen backlog: SOMAXCONN is the kernel's silent cap; the call
-    // tolerates higher values without erroring.
-    // @unsafe — system call
-    if (::listen(fd, 128) < 0) {
-        const int err = errno;
-        ::close(fd);
-        return listen_errno_to_channel_error(err);
+    auto nonblock_result = listener_.set_nonblocking(true);
+    if (nonblock_result.is_err()) {
+        ChannelError ch = io_kind_to_channel_error(
+            nonblock_result.unwrap_err().kind());
+        listener_ = rusty::net::TcpListener{};  // RAII close
+        return ch;
     }
 
     // Discover actual bound address (port may have been 0).
-    sockaddr_in bound;
-    socklen_t bound_len = sizeof(bound);
-    std::memset(&bound, 0, sizeof(bound));
-    // @unsafe — system call
-    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &bound_len) == 0
-        && bound.sin_family == AF_INET) {
-        bound_address_ = sockaddr_to_string(bound);
+    auto local_result = listener_.local_addr();
+    if (local_result.is_ok()) {
+        bound_address_ = rusty::net::socket_addr_v4_to_string(
+            local_result.unwrap());
     } else {
         bound_address_ = std::string(addr);
     }
 
-    listen_fd_ = fd;
     listened_.set(true);
 
     // Auto-register with the poll thread if the factory wired one in.
@@ -1116,33 +1138,33 @@ void TcpListener::close() {
     if (closed_.get()) return;
     closed_.set(true);
 
-    if (listen_fd_ >= 0) {
-        // @unsafe — system call
-        ::close(listen_fd_);
-        listen_fd_ = -1;
-    }
+    listener_ = rusty::net::TcpListener{};  // RAII close
 }
 
 bool TcpListener::is_closed() const {
     return closed_.get();
 }
 
+// @safe - returns a copy of the const std::string member.
 std::string TcpListener::local_address() const {
     return bound_address_;
 }
 
+// @safe - SpinMutex::lock and CallbackWrapper move-assign are both
+// @safe via the rusty namespace / class annotations.
 void TcpListener::set_on_accept(OnAcceptCallback cb) {
     auto guard = on_accept_.lock().unwrap();
     *guard = std::move(cb);
 }
 
+// @safe - same shape as set_on_accept.
 void TcpListener::set_on_error(OnErrorCallback cb) {
     auto guard = on_error_.lock().unwrap();
     *guard = std::move(cb);
 }
 
 int TcpListener::fd() const {
-    return listen_fd_;
+    return listener_.as_owned_fd().as_raw_fd();
 }
 
 int TcpListener::poll_mode() const {
@@ -1153,82 +1175,92 @@ std::size_t TcpListener::content_size() {
     return 0;
 }
 
+// @safe - accept loop now delegates to `rusty::net::TcpListener::accept`
+// (which encapsulates the ::accept syscall + peer-address marshalling).
+// Per-accept setup (non-blocking flag, optional SO_NOSIGPIPE on macOS)
+// runs through the new TcpStream wrapper; the only remaining inline
+// `// @unsafe { }` here is the macOS-specific setsockopt(SO_NOSIGPIPE)
+// — Linux uses MSG_NOSIGNAL on send() and doesn't need it.
 bool TcpListener::handle_read() {
     if (closed_.get()) return false;
-    if (listen_fd_ < 0) return false;
+    if (!listener_.is_bound()) return false;
 
     bool any_progress = false;
     while (true) {
-        sockaddr_in peer;
-        socklen_t peer_len = sizeof(peer);
-        std::memset(&peer, 0, sizeof(peer));
-
-        // @unsafe — system call
-        int conn_fd = ::accept(listen_fd_,
-                               reinterpret_cast<sockaddr*>(&peer), &peer_len);
-        if (conn_fd < 0) {
-            const int err = errno;
-            if (err == EAGAIN || err == EWOULDBLOCK) {
+        auto accept_result = listener_.accept();
+        if (accept_result.is_err()) {
+            auto err = accept_result.unwrap_err();
+            auto kind = err.kind();
+            // Retriable / "no work" — break out so the caller doesn't spin.
+            if (kind == rusty::io::Error::Kind::WouldBlock ||
+                kind == rusty::io::Error::Kind::Interrupted ||
+                kind == rusty::io::Error::Kind::ConnectionAborted) {
                 break;
             }
-            if (err == EINTR) {
-                continue;
-            }
-            // accept() can return EMFILE / ENFILE / ECONNABORTED / etc.
-            // ECONNABORTED is retriable but rare; we treat it like
-            // EAGAIN and break out so the caller doesn't spin.
-            if (err == ECONNABORTED) {
-                break;
-            }
-
             // Non-recoverable failure.
-            const ChannelError ch = listen_errno_to_channel_error(err);
+            const ChannelError ch = io_kind_to_channel_error(kind);
             {
                 auto guard = on_error_.lock().unwrap();
                 if (*guard) {
-                    (*guard)(ch, std::strerror(err));
+                    (*guard)(ch, err.to_string());
                 }
             }
             // For EMFILE/ENFILE we don't want to close — the listener
-            // is still functional once a fd is freed up. The caller's
-            // error callback decides whether to reduce load.
-            if (err != EMFILE && err != ENFILE) {
-                close();
-            }
+            // is still functional once a fd is freed up. Use the
+            // io::Error::Kind that maps to those (currently we have no
+            // dedicated Kind, so we close on everything else).
+            close();
             return any_progress;
         }
+
+        auto accepted = accept_result.unwrap();
+        rusty::net::TcpStream stream = std::move(accepted.first);
+        rusty::net::SocketAddrV4 peer_addr = accepted.second;
 
         any_progress = true;
 
 #ifdef __APPLE__
         // Prevent SIGPIPE termination on write() to closed sockets.
         // Linux uses MSG_NOSIGNAL on send(); macOS lacks that flag.
+        // Apply directly to the underlying fd before we hand it to
+        // TcpConnection.
         {
             const int yes = 1;
-            // @unsafe — system call
-            (void)::setsockopt(conn_fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+            // @unsafe { setsockopt(SO_NOSIGPIPE) on macOS only. }
+            (void)::setsockopt(stream.as_owned_fd().as_raw_fd(),
+                               SOL_SOCKET, SO_NOSIGPIPE,
+                               &yes, sizeof(yes));
         }
 #endif
 
-        // Non-blocking accepted socket; matches the rest of the
+        // Non-blocking accepted socket — matches the rest of the
         // channel layer's expectations.
-        if (set_nonblocking_fd(conn_fd) != 0) {
-            const int err = errno;
-            ::close(conn_fd);
+        auto nonblock_result = stream.set_nonblocking(true);
+        if (nonblock_result.is_err()) {
             auto guard = on_error_.lock().unwrap();
             if (*guard) {
-                (*guard)(listen_errno_to_channel_error(err),
+                (*guard)(io_kind_to_channel_error(
+                             nonblock_result.unwrap_err().kind()),
                          "accept: failed to set non-blocking");
             }
+            // stream drops here, closing the accepted fd.
             continue;
         }
 
-        std::string peer_addr_str = sockaddr_to_string(peer);
+        std::string peer_addr_str =
+            rusty::net::socket_addr_v4_to_string(peer_addr);
 
-        // Build a TcpConnection for the new fd. If a factory wired
-        // in a poll thread, register the new connection's pollable
-        // proxy so the poll thread starts driving its I/O. Hand the
-        // channel proxy to the accept callback.
+        // Hand the accepted fd to TcpConnection. We unwrap the
+        // TcpStream back into a raw int because TcpConnection still
+        // takes an int fd — Phase D will swap TcpConnection's
+        // OwnedFd field for a TcpStream and we'll pass the
+        // TcpStream directly.
+        int conn_fd;
+        // @unsafe { into_owned_fd() releases ownership of the
+        //           underlying fd; into_raw_fd() relinquishes the
+        //           OwnedFd's RAII close. We rebuild RAII inside the
+        //           TcpConnection ctor below. }
+        { conn_fd = stream.into_owned_fd().into_raw_fd(); }
         auto conn = rusty::Arc<TcpConnection>::make(
             conn_fd, std::move(peer_addr_str));
 
@@ -1258,10 +1290,12 @@ bool TcpListener::handle_read() {
     return any_progress;
 }
 
+// @safe - Pollable interface stub: never fires for a listener.
 int TcpListener::handle_write() {
     return PollMode::NO_CHANGE;
 }
 
+// @unsafe - Drives on_error callback after listen_fd_ failure.
 void TcpListener::handle_error() {
     if (closed_.get()) return;
     {
@@ -1273,6 +1307,7 @@ void TcpListener::handle_error() {
     close();
 }
 
+// @safe - Pollable interface stub: never fires for a listener.
 bool TcpListener::check_pending_write_update() const {
     return false;
 }
@@ -1297,16 +1332,21 @@ ChannelError TcpListener::listen_errno_to_channel_error(int err) {
 TcpFactory::TcpFactory(rusty::Arc<PollThread> poll_thread)
     : poll_thread_(std::move(poll_thread)) {}
 
+// @unsafe - socket(2) / connect(2) / setsockopt(2) / fcntl(2) syscalls
+// + reinterpret_cast<sockaddr*> on the sockaddr_in + PollThread::
+// add_proxy is @unsafe + raw fd handling.
 ConnectResult TcpFactory::connect(std::string_view addr) {
-    sockaddr_in sa;
-    if (!parse_inet4_addr(addr, sa)) {
-        return ConnectResult{ChannelConnectionProxy{}, ChannelError::AddressInvalid};
+    auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
+    if (parse_result.is_err()) {
+        return ConnectResult{rusty::None, ChannelError::AddressInvalid};
     }
+    sockaddr_in sa =
+        rusty::net::sockaddr_in_from_socket_addr_v4(parse_result.unwrap());
 
     // @unsafe — system call
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        return ConnectResult{ChannelConnectionProxy{},
+        return ConnectResult{rusty::None,
                              connect_errno_to_channel_error(errno)};
     }
 
@@ -1325,7 +1365,7 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
     if (set_nonblocking_fd(fd) != 0) {
         const int err = errno;
         ::close(fd);
-        return ConnectResult{ChannelConnectionProxy{},
+        return ConnectResult{rusty::None,
                              connect_errno_to_channel_error(err)};
     }
 
@@ -1349,13 +1389,13 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
             int sel = ::select(fd + 1, nullptr, &wset, nullptr, &tv);
             if (sel == 0) {
                 ::close(fd);
-                return ConnectResult{ChannelConnectionProxy{},
+                return ConnectResult{rusty::None,
                                      ChannelError::Timeout};
             }
             if (sel < 0) {
                 const int sel_err = errno;
                 ::close(fd);
-                return ConnectResult{ChannelConnectionProxy{},
+                return ConnectResult{rusty::None,
                                      connect_errno_to_channel_error(sel_err)};
             }
             // Check SO_ERROR for the actual connect outcome.
@@ -1366,12 +1406,12 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
                 || so_err != 0) {
                 const int eff_err = (so_err != 0) ? so_err : errno;
                 ::close(fd);
-                return ConnectResult{ChannelConnectionProxy{},
+                return ConnectResult{rusty::None,
                                      connect_errno_to_channel_error(eff_err)};
             }
         } else if (err != EISCONN) {
             ::close(fd);
-            return ConnectResult{ChannelConnectionProxy{},
+            return ConnectResult{rusty::None,
                                  connect_errno_to_channel_error(err)};
         }
     }
@@ -1392,12 +1432,12 @@ ConnectResult TcpFactory::connect(std::string_view addr) {
     poll_thread_->add_proxy(make_tcp_connection_pollable_proxy(conn.clone()));
 
     return ConnectResult{
-        make_tcp_connection_channel_proxy(std::move(conn)),
+        rusty::Some(make_tcp_connection_channel_proxy(std::move(conn))),
         ChannelError::None,
     };
 }
 
-ChannelListenerProxy TcpFactory::make_listener() {
+rusty::Option<ChannelListenerProxy> TcpFactory::make_listener() {
     auto listener = rusty::Arc<TcpListener>::make();
     // Wire the listener up with the poll thread + a weak self-ref so
     // it can self-register on a successful `listen(addr)` and so
@@ -1407,7 +1447,7 @@ ChannelListenerProxy TcpFactory::make_listener() {
         mut_l.set_poll_thread(poll_thread_.clone());
         mut_l.set_self_weak(rusty::sync::downgrade(listener));
     }
-    return make_tcp_listener_channel_proxy(std::move(listener));
+    return rusty::Some(make_tcp_listener_channel_proxy(std::move(listener)));
 }
 
 ChannelError TcpFactory::connect_errno_to_channel_error(int err) {

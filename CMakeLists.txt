@@ -82,9 +82,31 @@ endif()
 # clang headers (e.g., clang 19 with __builtin_nondeterministic_value in AVX
 # intrinsics), the checker must be linked against the matching libclang version
 # to avoid "Fatal parsing errors" from unknown builtins.
+#
+# Production toolchain is Homebrew/Linuxbrew clang 21 (llvm@21). clang 22's
+# libclang has a parse-time crash on first-time user-type template
+# instantiations in module purview — see docs/dev/libclang22_parse_crash.md.
+# Pick clang 21 first when present, then fall back to system clang.
 if(NOT DEFINED ENV{LIBCLANG_PATH})
-    # Search for the newest libclang, preferring higher versions
-    foreach(_CLANG_VER 19 18 17 16 15 14)
+    set(_LIBCLANG_CANDIDATES
+        # Linuxbrew clang 21 (current production)
+        "/home/users/shuai/.linuxbrew/opt/llvm@21/lib"
+        # macOS Homebrew clang 21
+        "/opt/homebrew/opt/llvm@21/lib"
+        "/usr/local/opt/llvm@21/lib"
+    )
+    foreach(_CAND ${_LIBCLANG_CANDIDATES})
+        if(EXISTS "${_CAND}/libclang.so" OR EXISTS "${_CAND}/libclang.dylib")
+            set(ENV{LIBCLANG_PATH} "${_CAND}")
+            message(STATUS "Auto-detected LIBCLANG_PATH=${_CAND} (Homebrew clang 21)")
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT DEFINED ENV{LIBCLANG_PATH})
+    # Fall back to the newest system-installed libclang, preferring higher versions.
+    # We deliberately stop at 21 — see comment above re: clang 22 libclang crash.
+    foreach(_CLANG_VER 21 19 18 17 16 15 14)
         set(_CLANG_LIB_DIR "/usr/lib/llvm-${_CLANG_VER}/lib")
         if(EXISTS "${_CLANG_LIB_DIR}/libclang-${_CLANG_VER}.so" OR
            EXISTS "${_CLANG_LIB_DIR}/libclang.so")
@@ -1557,6 +1579,15 @@ if(BUILD_TESTS)
     target_compile_options(test_marshal PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_marshal ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_marshal COMMAND test_marshal)
+
+    # Marshal Microbenchmark (no gtest — standalone main; prints ns/op).
+    # Measures the Vec<uint8_t>+read_pos Marshal — same harness used
+    # during the chunk-list → Vec rewrite (see
+    # docs/dev/marshal_perf_baseline.md).
+    add_executable(bench_marshal src/rrr/tests/bench_marshal.cc)
+    target_include_directories(bench_marshal PRIVATE ${TEST_INCLUDE_DIRS})
+    target_compile_options(bench_marshal PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(bench_marshal ${RPC_TEST_LINK_LIBS} pthread)
 
     # MakoClientService Unit Tests
     add_executable(test_client_service tests/test_client_service.cc)

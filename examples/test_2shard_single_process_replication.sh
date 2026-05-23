@@ -53,6 +53,14 @@ export MAKO_CONFIG="$TEMP_CONFIG"
 config_path="$MAKO_CONFIG"
 echo "dbtest config: $config_path"
 
+# Randomize paxos replication ports — see test_2shard_replication.sh.
+TEMP_PAXOS_DIR=$(make_paxos_replication_configs 2 "$trd" paxos)
+if [ -z "$TEMP_PAXOS_DIR" ]; then
+    exit 1
+fi
+export MAKO_PAXOS_CONFIG_DIR="$TEMP_PAXOS_DIR"
+echo "paxos replication config dir: $MAKO_PAXOS_CONFIG_DIR"
+
 LEADER_PID=""
 SHARD0_LEARNER_PID=""
 SHARD0_P2_PID=""
@@ -160,6 +168,10 @@ cleanup_processes() {
         rm -f "$TEMP_CONFIG"
     fi
     unset MAKO_CONFIG
+    if [ -n "${TEMP_PAXOS_DIR:-}" ]; then
+        rm -rf "$TEMP_PAXOS_DIR"
+    fi
+    unset MAKO_PAXOS_CONFIG_DIR
 }
 
 handle_interrupt() {
@@ -241,7 +253,7 @@ fi
 echo "Starting combined leader process for shards 0 and 1..."
 log_file="${log_prefix}_leader.log"
 
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $config_path -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated --startup-timeout-sec $leader_startup_timeout"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $config_path -F ${MAKO_PAXOS_CONFIG_DIR}/paxos${trd}_shardidx0.yml -F ${MAKO_PAXOS_CONFIG_DIR}/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated --startup-timeout-sec $leader_startup_timeout"
 THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
 if [ -n "$THROTTLE_ARGS" ]; then
     CMD="$CMD$THROTTLE_ARGS"

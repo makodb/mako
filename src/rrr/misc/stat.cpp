@@ -6,6 +6,8 @@ export module rrr.stat;
 
 import std;
 
+// @safe - POD AvgStat: int64 counters + simple arithmetic. No raw
+// pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
 class AvgStat {

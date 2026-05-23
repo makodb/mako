@@ -24,15 +24,12 @@ class Frame;
 class ServerWorker {
  public:
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
-  rusty::Arc<base::ThreadPool> svr_thread_pool_{nullptr};
   // Services are now owned by rpc_server_ via reg_service()
   rrr::Server *rpc_server_ = nullptr;
-  rusty::Arc<base::ThreadPool> thread_pool_g{nullptr};
 
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   rrr::Server *hb_rpc_server_ = nullptr;
-  rusty::Arc<base::ThreadPool> hb_thread_pool_g{nullptr};
 
   Frame* tx_frame_ = nullptr;
   Frame* rep_frame_ = nullptr;

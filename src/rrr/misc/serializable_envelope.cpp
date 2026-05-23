@@ -10,9 +10,17 @@ import rrr.debugging;
 import rrr.marshal;
 import rrr.serializable;
 
+// @safe - SerializableEnvelope: shared_ptr-backed sum type carried
+// over the Marshal wire. The kind/has_value/operator bool/operator==
+// accessors and `refresh_kind` are pure pointer-equality and integer
+// reads. The dynamic_cast-heavy unpack family, `marshallable_cast`'s
+// `const_cast` overload, and the four `operator<<` / `operator>>`
+// archive entry points carry per-method `// @unsafe` (Marshal
+// operator chains + raw `T*` returns).
 export namespace rrr {
 
 
+// @safe - see file header.
 template<typename TypeList>
 class SerializableEnvelope {
  public:
@@ -85,6 +93,7 @@ class SerializableEnvelope {
   // Recover the carried payload as a `T*`, or nullptr if the carried
   // type is not T (or the envelope is empty). Aliases the envelope-
   // owned T.
+  // @unsafe - dynamic_cast through `inner_.get()` returning raw `T*`.
   template<typename T>
   T* unpack() {
     static_assert(TypeList::template contains<T>(),
@@ -99,6 +108,7 @@ class SerializableEnvelope {
     return nullptr;
   }
 
+  // @unsafe - dynamic_cast through `inner_.get()` returning raw `const T*`.
   template<typename T>
   const T* unpack() const {
     static_assert(TypeList::template contains<T>(),
@@ -119,6 +129,7 @@ class SerializableEnvelope {
   //   * For `pack`-constructed envelopes: returns a `shared_ptr<T>`
   //     with a no-op deleter — the pointer aliases the envelope-owned
   //     T and the caller is responsible for keeping the envelope alive.
+  // @unsafe - dynamic_cast + raw `T*` lambda-deleter shared_ptr build.
   template<typename T>
   std::shared_ptr<T> unpack_shared() {
     static_assert(TypeList::template contains<T>(),
@@ -136,6 +147,7 @@ class SerializableEnvelope {
     return nullptr;
   }
 
+  // @unsafe - dynamic_cast + raw `const T*` lambda-deleter shared_ptr build.
   template<typename T>
   std::shared_ptr<const T> unpack_shared() const {
     static_assert(TypeList::template contains<T>(),
@@ -152,6 +164,7 @@ class SerializableEnvelope {
     return nullptr;
   }
 
+  // @unsafe - dispatches to const-unpack which dynamic_casts to raw `const T*`.
   // True iff the carried payload is a T.
   template<typename T>
   bool is_a() const {
@@ -186,6 +199,7 @@ class SerializableEnvelope {
   // -- Wire ops ----------------------------------------------------------
   // Wire format: [v32 kind] [payload bytes].  Same as MarshallDeputy
   // post-L9.
+  // @unsafe - Marshal `operator<<` chain on the binary archive.
   void save(BinaryWriteArchive& ar) const {
     verify(has_value() &&
            "SerializableEnvelope::save: empty envelope cannot be encoded.");
@@ -193,6 +207,7 @@ class SerializableEnvelope {
     inner_->save(ar);
   }
 
+  // @unsafe - Marshal `operator>>` chain on the binary archive.
   void load(BinaryReadArchive& ar) {
     v32 kind_v;
     ar >> kind_v;
@@ -222,6 +237,8 @@ inline std::shared_ptr<T> marshallable_cast(
   return env.template unpack_shared<T>();
 }
 
+// @unsafe - `const_cast<SerializableEnvelope&>(env)` to call the
+// non-const `unpack_shared`.
 template<typename T, typename TypeList>
 inline std::shared_ptr<T> marshallable_cast(
     const SerializableEnvelope<TypeList>& env) {
@@ -239,6 +256,8 @@ inline std::shared_ptr<T> marshallable_cast(
 // Free archive operators — let SerializableEnvelope ride directly in
 // rpcgen-emitted RPC struct fields the same way any other Serializable
 // type does.
+// @unsafe - forwards to `env.save(ar)` which drives a Marshal
+// operator<< chain.
 template<typename TypeList>
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
                                       const SerializableEnvelope<TypeList>& env) {
@@ -246,6 +265,8 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
   return ar;
 }
 
+// @unsafe - forwards to `env.load(ar)` which drives a Marshal
+// operator>> chain.
 template<typename TypeList>
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
                                      SerializableEnvelope<TypeList>& env) {
@@ -257,6 +278,8 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
 // archive path: `[v32 kind] [payload bytes]`.  Used by procedure.cc
 // TxReply / classic/tpc_command.cc TpcCommitCommand archive operators
 // in the legacy RPC reply path that still drives `Marshal&`.
+// @unsafe - constructs MarshalSink + BinaryWriteArchive and drives a
+// Marshal operator<< chain via `env.save(ar)`.
 template<typename TypeList>
 inline Marshal& operator<<(Marshal& m,
                            const SerializableEnvelope<TypeList>& env) {
@@ -267,6 +290,8 @@ inline Marshal& operator<<(Marshal& m,
   return m;
 }
 
+// @unsafe - constructs MarshalSource + BinaryReadArchive and drives a
+// Marshal operator>> chain via `env.load(ar)`.
 template<typename TypeList>
 inline Marshal& operator>>(Marshal& m,
                            SerializableEnvelope<TypeList>& env) {

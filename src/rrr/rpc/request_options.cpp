@@ -6,6 +6,9 @@ export module rrr.request_options;
 
 import std;
 
+// @safe - POD options struct + TimeoutType enum + factory helpers
+// + simple jitter computation. No raw pointers, syscalls, or
+// operator-overload chains.
 export namespace rrr {
 
 enum class TimeoutType : uint8_t {

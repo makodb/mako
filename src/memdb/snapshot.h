@@ -97,10 +97,6 @@ public:
 // A group of snapshots. Each snapshot in the group points to it, so they can share data.
 // There could be at most one writer in the group. Members are ordered in a doubly linked list:
 // S1 <= S2 <= S3 <= ... <= Sw (increasing version, writer at tail if exists)
-//
-// DEPRECATED: snapshot_group inherits from RefCounted for legacy compatibility.
-// New code should use rusty::Arc<snapshot_group> for shared ownership.
-// Migration status: in progress.
 template <class Key, class Value, class Container, class Snapshot>
 struct snapshot_group: public NoCopy {
     Container data;

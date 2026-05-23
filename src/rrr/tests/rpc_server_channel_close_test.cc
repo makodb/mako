@@ -75,7 +75,7 @@ class StubChannelAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_stub_proxy(
         std::shared_ptr<StubChannel> stub) {
-    return std::make_unique<StubChannelAdapter>(std::move(stub));
+    return rusty::make_box<StubChannelAdapter>(std::move(stub));
 }
 
 constexpr uint64_t kFakeServerInstanceId = 0xfeedface00abcdefULL;

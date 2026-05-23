@@ -6,6 +6,9 @@
 # 2. Have NewOrder_remote_abort_ratio < 20%
 # 3. Followers replay at least 1000 batches
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
+
 echo "========================================="
 echo "Testing 1-shard setup with RAFT replication"
 echo "========================================="
@@ -20,6 +23,15 @@ ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 rm -f nfs_sync_*
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
+
+# Randomize raft replication ports — see test_2shard_replication.sh.
+TEMP_PAXOS_DIR=$(make_paxos_replication_configs 1 "$trd" raft)
+if [ -z "$TEMP_PAXOS_DIR" ]; then
+    exit 1
+fi
+export MAKO_PAXOS_CONFIG_DIR="$TEMP_PAXOS_DIR"
+echo "raft replication config dir: $MAKO_PAXOS_CONFIG_DIR"
+trap '[ -n "${TEMP_PAXOS_DIR:-}" ] && rm -rf "$TEMP_PAXOS_DIR"; unset MAKO_PAXOS_CONFIG_DIR' EXIT
 
 # Start shard 0 in background with RAFT replication (3 replicas, no learner)
 echo "Starting shard 0 with Raft..."

@@ -92,7 +92,7 @@ class FakeChannelStubAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_fake_channel_proxy(
     std::shared_ptr<FakeChannelStub> stub) {
-    return std::make_unique<FakeChannelStubAdapter>(std::move(stub));
+    return rusty::make_box<FakeChannelStubAdapter>(std::move(stub));
 }
 
 // ---------------------------------------------------------------------------
@@ -112,16 +112,16 @@ class FakeChannelFactory {
         if (next_error_ != ChannelError::None) {
             ChannelError e = next_error_;
             next_error_ = ChannelError::None;
-            return ConnectResult{ChannelConnectionProxy{}, e};
+            return ConnectResult{rusty::None, e};
         }
         auto stub = std::make_shared<FakeChannelStub>();
         produced_stubs_.push_back(stub);
-        return ConnectResult{make_fake_channel_proxy(stub),
+        return ConnectResult{rusty::Some(make_fake_channel_proxy(stub)),
                              ChannelError::None};
     }
-    ChannelListenerProxy make_listener() {
+    rusty::Option<ChannelListenerProxy> make_listener() {
         // Not exercised by these tests.
-        return ChannelListenerProxy{};
+        return rusty::None;
     }
     const char* backend_name() const { return "fake"; }
 
@@ -158,16 +158,16 @@ class FakeChannelFactoryAdapter : public ChannelFactoryBase {
  public:
     explicit FakeChannelFactoryAdapter(std::shared_ptr<FakeChannelFactory> p)
         : f_(std::move(p)) {}
-    ConnectResult connect(std::string_view a) override { return f_->connect(a); }
-    ChannelListenerProxy make_listener() override      { return f_->make_listener(); }
-    const char* backend_name() const override          { return f_->backend_name(); }
+    ConnectResult                       connect(std::string_view a) override { return f_->connect(a); }
+    rusty::Option<ChannelListenerProxy> make_listener() override             { return f_->make_listener(); }
+    const char*                         backend_name() const override        { return f_->backend_name(); }
  private:
     std::shared_ptr<FakeChannelFactory> f_;
 };
 
 inline ChannelFactoryProxy make_fake_factory_proxy(
     std::shared_ptr<FakeChannelFactory> f) {
-    return std::make_unique<FakeChannelFactoryAdapter>(std::move(f));
+    return rusty::make_box<FakeChannelFactoryAdapter>(std::move(f));
 }
 
 // ---------------------------------------------------------------------------

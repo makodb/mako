@@ -4,12 +4,20 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/function.hpp>
+#include <rusty/option.hpp>
 
 export module rrr.channel;
 
 import std;
 import rrr.callback_wrapper;
 
+// @safe - virtual interfaces only (ChannelConnectionBase /
+// ChannelListenerBase / ChannelFactoryBase have no method bodies),
+// a constexpr error-name lookup, and the POD `ChannelFrame` /
+// `ConnectResult` structs. The raw `const uint8_t* payload` field
+// on `ChannelFrame` is a transport-level non-owning view (the
+// SinkProxy contract pins the bytes for the call duration); no
+// method here dereferences it.
 export namespace rrr {
 
 enum class ChannelError : int {
@@ -64,7 +72,10 @@ class ChannelConnectionBase {
   virtual void         set_on_error(OnErrorCallback)            = 0;
 };
 
-using ChannelConnectionProxy = std::unique_ptr<ChannelConnectionBase>;
+// Owned, non-nullable handle to a channel connection. Use
+// `rusty::Option<ChannelConnectionProxy>` at call sites that need a
+// nullable / sentinel form (e.g. `ConnectResult.connection`).
+using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
 
 using OnAcceptCallback = detail::CallbackWrapper<void(ChannelConnectionProxy) const>;
 
@@ -79,21 +90,21 @@ class ChannelListenerBase {
   virtual void         set_on_error(OnErrorCallback)    = 0;
 };
 
-using ChannelListenerProxy = std::unique_ptr<ChannelListenerBase>;
+using ChannelListenerProxy = rusty::Box<ChannelListenerBase>;
 
 struct ConnectResult {
-    ChannelConnectionProxy connection;
-    ChannelError           error = ChannelError::None;
+    rusty::Option<ChannelConnectionProxy> connection{rusty::None};
+    ChannelError                          error = ChannelError::None;
 };
 
 class ChannelFactoryBase {
  public:
   virtual ~ChannelFactoryBase() = default;
-  virtual ConnectResult         connect(std::string_view)    = 0;
-  virtual ChannelListenerProxy  make_listener()              = 0;
-  virtual const char*           backend_name()    const      = 0;
+  virtual ConnectResult                       connect(std::string_view)    = 0;
+  virtual rusty::Option<ChannelListenerProxy> make_listener()              = 0;
+  virtual const char*                         backend_name()    const      = 0;
 };
 
-using ChannelFactoryProxy = std::unique_ptr<ChannelFactoryBase>;
+using ChannelFactoryProxy = rusty::Box<ChannelFactoryBase>;
 
 }  // export namespace rrr

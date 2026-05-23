@@ -7,8 +7,13 @@ export module rrr.strop;
 
 import std;
 
+// @safe - string ops. format_decimal and strsplit are pure std::string
+// + ostringstream + rusty::Vec; startswith/endswith carry per-method
+// `// @unsafe` because they take raw `const char*` and call strlen /
+// strncmp with pointer arithmetic.
 namespace rrr {
 
+// @unsafe - raw `const char*` plus strlen/strncmp libc calls.
 export bool startswith(const char* str, const char* head) {
     size_t len_str = strlen(str);
     size_t len_head = strlen(head);
@@ -18,6 +23,8 @@ export bool startswith(const char* str, const char* head) {
     return strncmp(str, head, len_head) == 0;
 }
 
+// @unsafe - raw `const char*` plus strlen/strncmp + pointer arithmetic
+// (`str + (len_str - len_tail)`).
 export bool endswith(const char* str, const char* tail) {
     size_t len_str = strlen(str);
     size_t len_tail = strlen(tail);

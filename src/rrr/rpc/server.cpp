@@ -41,6 +41,14 @@ import rrr.utils;
 // ===========================================================================
 // Class declarations (from former server.hpp)
 // ===========================================================================
+// @safe - Class declarations live in this export namespace. The
+// classes and helpers are individually annotated below: PendingRequestGuard
+// / Request / Service / ServiceTypedBoxAdapter / RpcServiceContext are
+// `// @safe` shells; ServerConnection is `// @safe` with per-method
+// `// @unsafe` overrides on the socket/marshal/raw-pointer paths. The
+// `shutdown_phase_to_string` free function is `// @safe`. The
+// `make_service_proxy_from_box` / `make_service_proxy_from_typed_box`
+// helpers are pure Box adapters.
 export namespace rrr {
 
 class Server;
@@ -131,6 +139,7 @@ class ServerConnection;
 using WeakServerConnection = rusty::sync::Weak<ServerConnection>;
 
 // @interface
+// @safe - Pure virtual interface. All declarations carry per-method `// @safe`.
 class Service {
 public:
     virtual ~Service() = default;
@@ -144,16 +153,19 @@ public:
     // Uses virtual dispatch to avoid raw pointer capture and static_cast
     virtual void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
 
-    // Return a typed pointer to the underlying service instance. Default
-    // returns `this`; the typed-box adapter overrides this to return its
-    // wrapped concrete T*. Used by `Server::for_each_service` for
-    // cleanup hooks that need to inspect the concrete service.
-    virtual void* __get_service__() { return static_cast<void*>(this); }
+    // Return a reference to the underlying Service instance. Default
+    // returns `*this`; the typed-box adapter overrides this to return
+    // its Service-shaped adapter self (the wrapped concrete T is not
+    // a Service). Used by `Server::for_each_service` for cleanup hooks
+    // that need to inspect the concrete service.
+    // @safe - returns a reference to `*this`; no cast through void*.
+    virtual Service& __get_service__() { return *this; }
 };
 
 using ServiceProxy = rusty::Box<Service>;
 
 // Pass-through factory for services that already inherit Service.
+// @safe - Box move.
 inline ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc) {
   return svc;
 }
@@ -176,6 +188,8 @@ concept ServiceLike = requires(
 
 // Adapter that wraps a Box<T> for a duck-typed T and exposes it as a
 // concrete subclass of Service.
+// @safe - Pure adapter; forwards `__reg_to__` / `__dispatch__` into the
+// wrapped Box<T>. No raw pointer math, no syscalls.
 template <ServiceLike T>
 class ServiceTypedBoxAdapter : public Service {
  public:
@@ -189,16 +203,18 @@ class ServiceTypedBoxAdapter : public Service {
     svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
   }
 
-  // Returns `this` (the adapter itself, which IS a Service). The wrapped
+  // Returns `*this` (the adapter itself, which IS a Service). The wrapped
   // T does not inherit `Service`, so we can't expose it through a
-  // Service*-shaped callback; callers needing the concrete T should
+  // Service&-shaped callback; callers needing the concrete T should
   // hold the typed handle separately.
-  void* __get_service__() override { return static_cast<void*>(static_cast<Service*>(this)); }
+  // @safe - returns a reference to `*this`; no cast through void*.
+  Service& __get_service__() override { return *this; }
 
  private:
   rusty::Box<T> svc_;
 };
 
+// @safe - Wraps a typed Box<T> in the ServiceTypedBoxAdapter; Box move only.
 template <ServiceLike T>
 inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
   return rusty::make_box<ServiceTypedBoxAdapter<T>>(std::move(svc));
@@ -216,6 +232,8 @@ inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
  *
  * NOTE: RefCell is single-threaded. All RPC dispatches must occur on the same thread.
  */
+// @safe - All fields are const after construction; the ctor just moves
+// owned containers into place. No syscalls, no raw pointers.
 struct RpcServiceContext {
     // Maps RPC ID to service index for dispatch (immutable after setup)
     const rusty::HashMap<i32, size_t> rpc_to_service;
@@ -258,8 +276,12 @@ struct RpcServiceContext {
 // auto-installs a default TCP factory (5f) when no explicit factory
 // is bound.
 
-// @unsafe - Socket-backed connection handler exposed to poll loop via Pollable proxy facade.
-// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
+// @safe - Methods that genuinely cross into unsafe ops (channel proxy
+// pointer extraction, raw byte arithmetic in `decode_request_and_dispatch`,
+// const_cast-through-Arc in callbacks, SpinMutex::lock + ChannelConnectionProxy
+// method dispatch) carry their own `// @unsafe` overrides; the rest of the
+// class is analyzed as @safe by default. Mirrors the Tier-4 flip on `Server`.
+// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership.
 class ServerConnection {
     // Handles individual client connections
     // SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
@@ -299,8 +321,8 @@ class ServerConnection {
     // Mutable + SpinMutex so the const `reply<F>` template path can
     // lock it briefly to dispatch a frame from any thread (mirrors
     // the client-side `direct_channel_` discipline).
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>>
-        channel_proxy_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelConnectionProxy>>
+        channel_proxy_{rusty::Option<ChannelConnectionProxy>(rusty::None)};
     rusty::Cell<bool> channel_mode_{false};
 
 public:
@@ -310,8 +332,11 @@ public:
      * 1: PollThreadWorker::do_close_pollable() for thread-safe close
      * 2: handle_error() for error handling
      */
-    // @safe - Closes connection and cleans up
-    // SAFETY: Thread-safe with server connection lock
+    // @unsafe - Calls Log_debug then tears down the channel proxy via a
+    // raw-pointer deref. The inner deref is inside a `// @unsafe { }` block
+    // in the definition, but the @unsafe-block scope doesn't reach into
+    // rusty-cpp's null-safety pass for nested if-bodies. Treat the whole
+    // method as unsafe to match the definition.
     void close();
 
 private:
@@ -340,11 +365,10 @@ public:
     // accept path. Tests that construct `ServerConnection` directly
     // via `Arc::make` must call this before any channel-mode code
     // path that captures the weak.
-    // @unsafe - Direct field assignment; callers must guarantee the
-    // weak refers to the same Arc that owns this object.
+    // @safe - Direct field assignment; rusty::sync::Weak move-assign is now @safe.
+    // Callers must guarantee the weak refers to the same Arc that owns this object.
     void install_self_weak_for_testing(WeakServerConnection weak) {
-        // @unsafe { Weak copy-assign }
-        { weak_self_ = std::move(weak); }
+        weak_self_ = std::move(weak);
     }
 
     /**
@@ -425,53 +449,17 @@ public:
         reply(req, error_code, [](BinaryWriteArchive&) {});
     }
 
-    // @safe - Delegates to thread pool (currently a no-op stub)
+    // @unsafe - Invokes the caller-supplied `rusty::Function<void()>` callback
+    // inline. The callback's body is opaque to the borrow checker; treating
+    // the wrapper as @unsafe matches the out-of-line definition.
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
     int run_async(rusty::Function<void()> f);
-
-    // @safe - 5g2: ServerConnection no longer owns an fd. Always
-    // returns -1; retained only for ABI compatibility with the
-    // PollableProxy facade.
-    int fd() const {
-        return -1;
-    }
-
-    // @safe - Returns poll mode based on output buffer
-    // Uses const_cast for interior mutability (SpinLock marked as external)
-    int poll_mode() const;
-
-    // @safe - Returns buffered input/output bytes for diagnostics.
-    size_t content_size();
-
-    // @safe - Writes buffered data to socket
-    // SAFETY: Protected by output spinlock (SpinLock marked as external)
-    // Returns new poll mode, or MODE_NO_CHANGE if no update needed
-    int handle_write();
-
-    // @safe - Reads and processes RPC requests
-    // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers,
-    // Arc for shared context, RefCell for interior mutability, Fiber::create_run for async.
-    bool handle_read();  // Batching mode: reads ALL available requests
-
-    // @safe - Error handler
-    void handle_error();
-
-    // @safe - 5g2: `pending_write_update_` field deleted; the
-    // channel layer's `TcpConnection` manages its own
-    // pending-write tracking. Always returns false; retained for
-    // ABI compatibility with the PollableProxy facade.
-    bool check_pending_write_update() const {
-        return false;
-    }
 
     // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
     bool is_closed() const {
         return status_ == CLOSED;
     }
-
-    // @safe - Explicit server-side no-op (kept for API compatibility).
-    void handle_free();
 
 private:
     // 5b: extracted reply dispatch path, kept out of the templated
@@ -499,6 +487,11 @@ private:
 
 }  // export namespace rrr
 
+// @safe - DeferredReply (RAII wrapper for deferred RPC replies) and
+// Server (which owns the channel listener + accepted ServerConnection
+// Arcs). Both classes carry their own descriptive `// @safe` blocks
+// with per-method `// @unsafe` overrides on the socket / std::atomic
+// / SpinMutex-extraction paths.
 export namespace rrr {
 
 // @safe - RAII wrapper for deferred RPC replies with move semantics
@@ -540,7 +533,9 @@ public:
         // req_ automatically cleaned up by rusty::Box destructor
     }
 
-    // @safe - Executes callback inline; returns error on empty callback.
+    // @unsafe - Invokes the caller-supplied `rusty::Function<void()>` callback
+    // inline; returns EINVAL on empty callback. Treated as @unsafe for the
+    // same reason as the ServerConnection overload above.
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
     int run_async(rusty::Function<void()> f);
 
@@ -554,17 +549,14 @@ public:
         }
         replied_ = true;
 
-        // @unsafe - weak pointer upgrade (safe operation, but rusty-cpp needs annotation)
-        {
-            auto sconn_opt = weak_sconn_.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                // No const_cast needed: reply() is now a const method with interior mutability
-                sconn->reply(*req_, 0, archive_reply_);
-            } else {
-                // Connection closed, silently drop reply
-                Log_debug("Connection closed before reply sent, dropping reply");
-            }
+        auto sconn_opt = weak_sconn_.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            // No const_cast needed: reply() is now a const method with interior mutability
+            sconn->reply(*req_, 0, archive_reply_);
+        } else {
+            // Connection closed, silently drop reply
+            Log_debug("Connection closed before reply sent, dropping reply");
         }
         // Object will be destroyed when it goes out of scope, destructor calls cleanup_()
     }
@@ -578,21 +570,22 @@ public:
         }
         replied_ = true;
 
-        // @unsafe - weak pointer upgrade (safe operation, but rusty-cpp needs annotation)
-        {
-            auto sconn_opt = weak_sconn_.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                sconn->reply(*req_, error_code);
-            } else {
-                Log_debug("Connection closed before error reply sent, dropping reply");
-            }
+        auto sconn_opt = weak_sconn_.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            sconn->reply(*req_, error_code);
+        } else {
+            Log_debug("Connection closed before error reply sent, dropping reply");
         }
     }
 };
 
-// @unsafe - Main RPC server managing connections
-// SAFETY: Thread-safe connection management with spinlocks
+// @safe - Methods that genuinely cross into unsafe ops (socket I/O via the
+// channel-layer's TcpListener, Pthread / std::atomic primitives, raw
+// pointer extraction from ChannelListenerProxy, etc.) carry their own
+// `// @unsafe` overrides; the rest of the class is now analyzed as @safe
+// by default. Mirrors the Tier-4 flip on `Client`.
+// Thread-safe connection management uses rusty::SpinMutex.
 class Server: public NoCopy {
     friend class ServerConnection;
  public:
@@ -640,7 +633,7 @@ class Server: public NoCopy {
     // of the legacy `ServerListener`'s `socket(2)+bind(2)+listen(2)+
     // accept(2)+epoll` path.
     //
-    rusty::Option<rusty::Box<ChannelFactoryProxy>> channel_factory_{rusty::None};
+    rusty::Option<ChannelFactoryProxy> channel_factory_{rusty::None};
 
     // channel-mode listener +
     // accepted-connection tracking.
@@ -659,7 +652,7 @@ class Server: public NoCopy {
     // `~Server`'s drop. SpinMutex so concurrent on_accept invocations
     // (the channel layer can fire on_accept on the poll thread while
     // a user thread iterates) stay safe.
-    rusty::Option<rusty::Box<ChannelListenerProxy>> channel_listener_{rusty::None};
+    rusty::Option<ChannelListenerProxy> channel_listener_{rusty::None};
     mutable SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>
         channel_sconns_{rusty::Vec<rusty::Arc<ServerConnection>>()};
 
@@ -687,12 +680,11 @@ public:
      * Calling with a default-constructed (null) proxy is a no-op.
      * Calling more than once replaces the previously-bound factory.
      */
-    // @unsafe - Records the factory under Box+Option interior storage.
+    // @unsafe - Records the factory under Option interior storage.
     void set_channel_factory(ChannelFactoryProxy factory) {
         if (!factory) return;
-        // @unsafe { make_box + ChannelFactoryProxy move }
-        channel_factory_ = rusty::Some(
-            rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+        // @unsafe { ChannelFactoryProxy move }
+        channel_factory_ = rusty::Some(std::move(factory));
     }
 
     // @safe - True if `set_channel_factory` has been called with a non-null proxy.
@@ -700,17 +692,15 @@ public:
         return channel_factory_.is_some();
     }
 
-    // @safe - Registers legacy virtual service and transfers ownership to Server.
+    // @safe - rusty::Vec::push/size/operator[] + Box move + Service proxy
+    // dispatch are all @safe at the boundary.
     // Must be called before start().
     void reg_service(rusty::Box<Service> svc) {
-        // @unsafe
-        {
         pending_services_.push(make_service_proxy_from_box(std::move(svc)));
         // Get index AFTER push - this is the position of the service we just added
         size_t svc_index = pending_services_.size() - 1;
         // Register handlers using the index (service is safely stored in pending_services_)
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
-        }
     }
 
     void reg_service_proxy(ServiceProxy proxy) {
@@ -719,17 +709,13 @@ public:
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
     }
 
-    // @safe - Registers typed service implementation without inheriting Service.
-    // Must be called before start().
+    // @safe - Same composition as the legacy overload.
     template <ServiceLike T>
       requires (!std::derived_from<T, Service>)
     void reg_service(rusty::Box<T> svc) {
-        // @unsafe
-        {
         pending_services_.push(make_service_proxy_from_typed_box<T>(std::move(svc)));
         size_t svc_index = pending_services_.size() - 1;
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
-        }
     }
 
     /**
@@ -754,14 +740,11 @@ public:
     // Must be called before start().
     int reg_rpc(i32 rpc_id, size_t svc_index) {
         // disallow duplicate rpc_id
-        // @unsafe
-        {
-            if (pending_rpc_to_service_.contains_key(rpc_id)) {
-                return EEXIST;
-            }
-            pending_rpc_to_service_.insert(rpc_id, svc_index);
-            return 0;
+        if (pending_rpc_to_service_.contains_key(rpc_id)) {
+            return EEXIST;
         }
+        pending_rpc_to_service_.insert(rpc_id, svc_index);
+        return 0;
     }
 
     // @safe - Registers an RPC ID for fast inline dispatch on server side.
@@ -781,7 +764,9 @@ public:
     // @safe - Signals shutdown to waiting threads
     void do_shutdown();
 
-    // @safe - Blocks until shutdown is signaled
+    // @unsafe - Blocks the caller on `shutdown_cond_.wait_while(...)`. The
+    // wait predicate runs arbitrary code under the mutex; treating the
+    // wrapper as @unsafe matches the out-of-line definition.
     void wait_for_shutdown();
 
     // === Graceful Shutdown API ===
@@ -791,7 +776,9 @@ public:
      * Hooks are called in order of registration during the CLOSING phase.
      * @param hook Callback function to execute during shutdown
      */
-    // @safe - Thread-safe hook registration
+    // @unsafe - Stores the caller-supplied hook for later invocation. The
+    // hook is opaque and will be called during shutdown; treating the
+    // registration site as @unsafe matches the out-of-line definition.
     void add_shutdown_hook(ShutdownHook hook);
 
     /**
@@ -832,27 +819,34 @@ public:
     /**
      * Get count of pending (in-flight) requests.
      */
-    // @unsafe - Uses std::atomic::load
+    // @safe - Atomic load is encapsulated in the inner @unsafe block.
     int pending_request_count() const {
-        return pending_requests_->load(std::memory_order_relaxed);  // @unsafe
+        // @unsafe { std::atomic::load is not borrow-checked }
+        { return pending_requests_->load(std::memory_order_relaxed); }
     }
 
     /**
      * Increment pending request count. Called when starting to process a request.
      */
-    // @unsafe - Uses std::atomic::fetch_add
+    // @safe - Atomic fetch_add is encapsulated in the inner @unsafe block.
     void increment_pending() {
-        auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
-        pending_ptr->fetch_add(1, std::memory_order_relaxed);  // @unsafe
+        // @unsafe { const_cast on Box ptr + std::atomic::fetch_add }
+        {
+            auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
+            pending_ptr->fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     /**
      * Decrement pending request count. Called when request completes.
      */
-    // @unsafe - Uses std::atomic::fetch_sub
+    // @safe - Atomic fetch_sub is encapsulated in the inner @unsafe block.
     void decrement_pending() {
-        auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
-        pending_ptr->fetch_sub(1, std::memory_order_relaxed);  // @unsafe
+        // @unsafe { const_cast on Box ptr + std::atomic::fetch_sub }
+        {
+            auto* pending_ptr = const_cast<std::atomic<int>*>(pending_requests_.get());
+            pending_ptr->fetch_sub(1, std::memory_order_relaxed);
+        }
     }
 
     // @safe - Toggle dropping of internal heartbeat probe replies.
@@ -891,21 +885,18 @@ public:
         auto& ctx = ctx_.as_ref().unwrap();
         for (size_t i = 0; i < ctx->services.size(); ++i) {
             auto guard = ctx->services[i].borrow_mut();
-            callback(*static_cast<Service*>((*guard)->__get_service__()));
+            callback((*guard)->__get_service__());
         }
         }
     }
 
-    // @safe - Returns the number of registered services
+    // @safe - Option ops + Vec::size are @safe in the library.
     // Can be called before or after start().
     size_t service_count() const {
-        // @unsafe
-        {
         if (ctx_.is_some()) {
             return ctx_.as_ref().unwrap()->services.size();
         }
         return pending_services_.size();
-        }
     }
 
     // Returns the server address (copy to avoid reference through Arc)
@@ -926,6 +917,11 @@ public:
 
 }  // export namespace rrr
 
+// @safe - Implementation namespace. Out-of-class definitions inherit
+// their per-method `// @unsafe` annotations from the matching
+// declarations above. The anonymous-namespace `stat_*` helpers and
+// other free-function impl details carry their own `// @unsafe`
+// markers individually.
 namespace rrr {
 
 #ifdef RPC_STATISTICS
@@ -1034,9 +1030,7 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
     // Install callbacks BEFORE moving the proxy into the slot, so
     // the callbacks can capture a Weak<ServerConnection> without
     // holding the SpinMutex.
-    WeakServerConnection weak_self;
-    // @unsafe { Weak copy is currently treated as non-safe }
-    { weak_self = weak_self_; }
+    WeakServerConnection weak_self = weak_self_;
 
     // @unsafe - lambda capture, channel proxy mutator
     proxy->set_on_frame([weak_self](const ChannelFrame& f) {
@@ -1065,7 +1059,6 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
         auto sconn_opt = weak_self.upgrade();
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
-        // @unsafe - Log_warn formatting + std::string_view bridge
         Log_warn("rrr::ServerConnection: channel error %s: %.*s",
                  channel_error_to_string(err),
                  static_cast<int>(message.size()), message.data());
@@ -1073,11 +1066,10 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
         mut_sconn->close();
     });
 
-    // @unsafe { SpinMutex::lock + make_box + ChannelConnectionProxy move }
+    // @unsafe { SpinMutex::lock + ChannelConnectionProxy move }
     {
         auto guard = channel_proxy_.lock().unwrap();
-        *guard = rusty::Some(
-            rusty::make_box<ChannelConnectionProxy>(std::move(proxy)));
+        *guard = rusty::Some(std::move(proxy));
     }
     channel_mode_.set(true);
 }
@@ -1155,7 +1147,7 @@ void ServerConnection::decode_request_and_dispatch(
         return;
     }
 
-    size_t svc_index = *svc_index_opt.unwrap();
+    size_t svc_index = svc_index_opt.unwrap();
     auto weak_this = weak_self_;
     if (ctx_->fast_rpc_ids.contains(rpc_id)) {
         // Fast inline dispatch — no fiber spawn.
@@ -1188,8 +1180,8 @@ void ServerConnection::decode_request_and_dispatch(
 // `reply()`.
 void ServerConnection::dispatch_response_frame_via_channel(
         const std::uint8_t* bytes, std::size_t size) const {
-    ChannelConnectionProxy* proxy = nullptr;
-    // @unsafe { SpinMutex::lock + raw pointer extraction }
+    ChannelConnectionBase* conn = nullptr;
+    // @unsafe { SpinMutex::lock + Box::get + raw pointer extraction }
     {
         auto guard = channel_proxy_.lock().unwrap();
         if (guard->is_none()) {
@@ -1198,12 +1190,11 @@ void ServerConnection::dispatch_response_frame_via_channel(
                      "Dropping reply.");
             return;
         }
-        proxy = const_cast<ChannelConnectionProxy*>(
-            guard->as_ref().unwrap().get());
+        conn = guard->as_ref().unwrap().get();
     }
     ChannelFrame frame{bytes, size};
-    // @unsafe - virtual method dispatch through Box<ChannelConnectionBase>
-    (void)(*proxy)->send_frame(frame);
+    // @unsafe - virtual method dispatch through ChannelConnectionBase*
+    (void)conn->send_frame(frame);
 }
 
 // @unsafe - Executes callback inline for API compatibility.
@@ -1214,43 +1205,6 @@ int ServerConnection::run_async(rusty::Function<void()> f) {
   }
   f();
   return 0;
-}
-
-// @safe - 5g2: stubbed. The legacy `in_`/`out_` Marshal buffers are
-// gone; channel mode buffers frames inside `TcpConnection`. Returns
-// 0 for ABI compatibility with PollableProxy facade conformance.
-size_t ServerConnection::content_size() {
-    return 0;
-}
-
-// @unsafe - Explicit no-op for server connection API compatibility.
-void ServerConnection::handle_free() {
-    Log_warn("rrr::ServerConnection::handle_free() is a no-op on server connections");
-}
-
-// @safe - 5g2: stubbed. ServerConnection no longer implements the
-// Pollable role — the channel layer's `TcpConnection` owns the fd
-// and drives `handle_read`/`handle_write`/`handle_error` on its own
-// pollable proxy. Inbound dispatch happens via the on_frame
-// callback installed in `bind_channel(...)` (5c). This stub remains
-// only for ABI compatibility (PollableProxy facade conformance);
-// the body is unreachable from production paths.
-bool ServerConnection::handle_read() {
-    return false;
-}
-
-// @safe - 5g2: stubbed (Pollable facade ABI only). Channel mode's
-// outbound writes go through `proxy->send_frame(...)` directly; no
-// `out_` Marshal buffer to drain.
-int ServerConnection::handle_write() {
-    return PollMode::NO_CHANGE;
-}
-
-// @safe - Error handler. In channel mode, the bound channel proxy's
-// `on_error` callback (wired in 5d) calls `close()` directly; this
-// remains for legacy callers and as a defensive entry point.
-void ServerConnection::handle_error() {
-    this->close();
 }
 
 // @safe - Closes connection.
@@ -1267,26 +1221,16 @@ void ServerConnection::close() {
         status_ = CLOSED;
         Log_debug("server@%s close ServerConnection",
                   ctx_->addr.c_str());
-        // Tear down the channel proxy. Idempotent per channel-
-        // layer contract.
-        // @unsafe { SpinMutex::lock + ChannelConnectionProxy method dispatch }
+        // Tear down the channel proxy. Idempotent per channel-layer contract.
+        // @unsafe { SpinMutex::lock + Box::get + virtual dispatch }
         {
             auto guard = channel_proxy_.lock().unwrap();
             if (guard->is_some()) {
-                auto* proxy = const_cast<ChannelConnectionProxy*>(
-                    guard->as_ref().unwrap().get());
-                (*proxy)->close();
+                auto* conn = guard->as_ref().unwrap().get();
+                conn->close();
             }
         }
     }
-}
-
-// @safe - 5g2: stubbed. The channel layer's `TcpConnection` manages
-// its own poll-mode state via `pending_write_update_` on the
-// TcpConnection itself; this `ServerConnection` Pollable accessor
-// is unreachable from production but kept for ABI compatibility.
-int ServerConnection::poll_mode() const {
-    return PollMode::READ;
 }
 
 // @unsafe - Executes callback inline for API compatibility.
@@ -1320,7 +1264,8 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
         uint64_t random_component = static_cast<uint64_t>(rd()) << 32 |
                                     static_cast<uint64_t>(rd());
 
-        uint64_t pid_component = static_cast<uint64_t>(getpid()) << 48;
+        uint64_t pid_component =
+            static_cast<uint64_t>(rusty::sys::process::getpid()) << 48;
 
         // Mix components with XOR for final ID
         instance_id_ = (time_component ^ random_component ^ pid_component)
@@ -1363,7 +1308,7 @@ Server::~Server() noexcept {
         // std::function's copyable requirement is no longer needed.
         auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
             [listener_box = std::move(channel_listener_).unwrap()]() mutable {
-                (*listener_box)->close();
+                listener_box->close();
             }));
         auto close_job_base = rusty::Arc<Job>(close_job);
         poll_thread_.as_ref().unwrap()->add(std::move(close_job_base));
@@ -1452,20 +1397,20 @@ int Server::start(const char* bind_addr) {
   // it in `channel_sconns_` so its lifetime is tied to the
   // `Server` (not the on_accept stack frame).
   if (is_channel_factory_bound()) {
-    ChannelListenerProxy listener;
-    // @unsafe { Box<ChannelFactoryProxy>::get + proxy method dispatch }
+    rusty::Option<ChannelListenerProxy> listener_opt;
+    // @unsafe { Box::get + proxy method dispatch }
     {
-      auto* factory = const_cast<ChannelFactoryProxy*>(
-          channel_factory_.as_ref().unwrap().get());
-      listener = (*factory)->make_listener();
+      auto* factory = channel_factory_.as_ref().unwrap().get();
+      listener_opt = factory->make_listener();
     }
-    if (!listener) {
+    if (listener_opt.is_none()) {
       Log_error("rrr::Server::start: factory->make_listener() returned a "
                 "null proxy (factory backend=%s)",
                 /*best-effort name*/ "unknown");
       ctx_ = rusty::None;
       return -1;
     }
+    ChannelListenerProxy listener = std::move(listener_opt).unwrap();
 
     // Capture for the on_accept lambda. `this` outlives the listener
     // because Server owns `channel_listener_` (and `channel_sconns_`)
@@ -1488,15 +1433,13 @@ int Server::start(const char* bind_addr) {
       mut_sconn.bind_channel(std::move(conn_proxy));
       // Park the Arc on the server so the on_frame / on_closed
       // callbacks (which only hold a Weak) keep observing a live
-      // connection.
-      // @unsafe { SpinMutex::lock + Vec::push }
+      // connection. SpinMutex::lock + Vec::push are both @safe.
       {
         auto guard = server_ptr->channel_sconns_.lock().unwrap();
         guard->push(std::move(sconn));
       }
     });
     listener->set_on_error([](ChannelError err, std::string_view msg) {
-      // @unsafe - Log_warn formatting + std::string_view bridge
       Log_warn("rrr::Server: channel listener error %s: %.*s",
                channel_error_to_string(err),
                static_cast<int>(msg.size()), msg.data());
@@ -1511,9 +1454,8 @@ int Server::start(const char* bind_addr) {
     }
 
     // Park the listener on the server so its lifetime matches Server's.
-    // @unsafe { make_box + Option assignment }
-    channel_listener_ = rusty::Some(
-        rusty::make_box<ChannelListenerProxy>(std::move(listener)));
+    // @unsafe { Option assignment }
+    channel_listener_ = rusty::Some(std::move(listener));
     return 0;
   }
 
@@ -1578,11 +1520,10 @@ void Server::stop_accepting() {
     // accepted connections in `channel_sconns_` are unaffected (they
     // continue to serve in-flight requests until drained / shut down).
     if (channel_listener_.is_some()) {
-        // @unsafe { Box::get + ChannelListenerProxy method dispatch }
+        // @unsafe { Box::get + virtual dispatch }
         {
-            auto* listener = const_cast<ChannelListenerProxy*>(
-                channel_listener_.as_ref().unwrap().get());
-            (*listener)->close();
+            auto* listener = channel_listener_.as_ref().unwrap().get();
+            listener->close();
         }
         Log_info("Server::stop_accepting: channel listener closed, "
                  "no longer accepting connections");
@@ -1610,24 +1551,23 @@ bool Server::drain(uint64_t timeout_ms) {
              pending_requests_->load(std::memory_order_relaxed));
     shutdown_phase_.set(ShutdownPhase::DRAINING);
 
-    // Wait for pending requests with timeout
-    // @unsafe - uses std::chrono
-    {
-        auto start = std::chrono::steady_clock::now();
-        auto timeout = std::chrono::milliseconds(timeout_ms);
-
-        while (pending_requests_->load(std::memory_order_relaxed) > 0) {
-            auto elapsed = std::chrono::steady_clock::now() - start;
-            if (elapsed >= timeout) {
-                Log_warn("Server::drain: timeout after %lu ms, pending=%d",
-                         timeout_ms, pending_requests_->load(std::memory_order_relaxed));
-                return false;
-            }
-
-            // Brief sleep to avoid busy-waiting
-            // @unsafe - usleep syscall
-            usleep(1000);  // 1ms
+    // Wait for pending requests with timeout. Clock + sleep flow
+    // through rusty::sys::time::* (each @safe with an inner @unsafe block
+    // around the libc call).
+    const std::uint64_t start_us =
+        rusty::sys::time::clock_monotonic_us();
+    const std::uint64_t timeout_us = timeout_ms * 1000;
+    while (pending_requests_->load(std::memory_order_relaxed) > 0) {
+        const std::uint64_t elapsed_us =
+            rusty::sys::time::clock_monotonic_us() - start_us;
+        if (elapsed_us >= timeout_us) {
+            Log_warn("Server::drain: timeout after %lu ms, pending=%d",
+                     timeout_ms, pending_requests_->load(std::memory_order_relaxed));
+            return false;
         }
+
+        // Brief sleep to avoid busy-waiting.
+        rusty::sys::time::sleep_us(1000);  // 1ms
     }
 
     Log_info("Server::drain: completed, all requests drained");
@@ -1684,11 +1624,10 @@ int Server::get_bound_port() const {
         return -1;
     }
     std::string local;
-    // @unsafe { Box<ChannelListenerProxy>::get + proxy method dispatch }
+    // @unsafe { Box::get + virtual dispatch }
     {
-        auto* listener = const_cast<ChannelListenerProxy*>(
-            channel_listener_.as_ref().unwrap().get());
-        local = (*listener)->local_address();
+        auto* listener = channel_listener_.as_ref().unwrap().get();
+        local = listener->local_address();
     }
     auto colon = local.rfind(':');
     if (colon == std::string::npos) {

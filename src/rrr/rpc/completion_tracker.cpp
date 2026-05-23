@@ -104,6 +104,10 @@ struct CompletedEntry {
  *
  * Can be used standalone or integrated with IdempotencyCache.
  */
+// @safe - LRU completion-XID tracker backed by rusty::Mutex<std::list> and
+// rusty::Mutex<HashSet>. All public methods are pure rusty operations
+// (Cell get/set, Mutex lock, HashSet/list mutations). No raw pointers,
+// syscalls, or operator-overload chains.
 class CompletionTracker {
     // Configuration
     rusty::Cell<CompletionTrackerConfig> config_;

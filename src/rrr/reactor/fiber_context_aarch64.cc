@@ -2,6 +2,11 @@
  * @file fiber_context_aarch64.cc
  * @brief AArch64 (ARM64) context switch primitive for Fibers.
  *
+ * QUARANTINE — same role as fiber_context_x86_64.cc: implements
+ * `fiber_swap_context` in raw asm. Cannot be borrow-checked and
+ * cannot be made safe; callers in `reactor.cpp` (`fiber_task_t::resume`,
+ * `yield_to_caller`, `entry`) wrap the call site in `// @unsafe`.
+ *
  * Mirrors fiber_context_x86_64.cc for ARM64.
  *
  * AAPCS64 callee-saved registers: x19-x28, x29 (fp), x30 (lr), sp.

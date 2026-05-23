@@ -48,6 +48,12 @@ import rrr.threading;
 // ===========================================================================
 // Block 1: forward decls (from former client.hpp:50-78)
 // ===========================================================================
+// @safe - first-half namespace block: Future / FutureGroup / TypedFuture
+// awaiters + the BufferingConfig / KeepaliveConfig / PoolConfig POD
+// structs. ClientConnection (declared in the second block below)
+// retains its class-level `// @unsafe`. Methods that genuinely cross
+// into network I/O / socket fd / Marshal byte ops keep their
+// existing per-method `// @unsafe` annotations.
 export namespace rrr {
 
 // Stream operator for RefMut<Marshal> — supports the
@@ -81,6 +87,10 @@ rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 // ===========================================================================
 // Block 2: Future, FutureGroup, ClientConnection (from former client.hpp:130-1963)
 // ===========================================================================
+// @safe - second-half namespace block. Same rules as block 1; the
+// ClientConnection class declared inside retains its class-level
+// `// @unsafe` and every method that crosses into network I/O or
+// Marshal ops carries an existing per-method override.
 export namespace rrr {
 
 // 4g4: the migration switch (`srpc_use_channel()`,
@@ -109,24 +119,21 @@ struct BufferingConfig {
     OverflowStrategy overflow = OverflowStrategy::DROP_OLDEST;
     bool enabled = true;
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static BufferingConfig defaults() {
-        // @unsafe { struct construction }
         return BufferingConfig{};
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     static BufferingConfig disabled() {
-        // @unsafe { struct construction }
         BufferingConfig config;
         config.enabled = false;
         config.behavior = DisconnectBehavior::FAIL_FAST;
         return config;
     }
 
-    // @unsafe - Returns struct by value
+    // @safe - Aggregate-initialized POD factory.
     RequestQueueConfig to_queue_config() const {
-        // @unsafe { struct construction }
         RequestQueueConfig qc;
         qc.max_size = max_pending;
         qc.default_ttl_ms = default_ttl_ms;
@@ -288,9 +295,10 @@ struct FutureAttr {
     FutureCallback callback;
 };
 
-// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
+// @safe - Methods that genuinely cross into unsafe ops (network I/O,
+// std::chrono use, etc.) carry their own `// @unsafe` overrides; the
+// rest of the class is now analyzed as @safe by default.
 // Uses rusty::Arc for memory safety, RefCell/Cell for interior mutability
-// MIGRATED: Now uses rusty::Arc<Future> instead of RefCounted for memory safety
 class Future {
     friend class rusty::Arc<Future>;  // Allow Arc to construct/destroy
     friend class Client;              // Client needs to call private constructor and set error
@@ -335,20 +343,16 @@ class Future {
 public:
 
     // Factory method for Arc creation
-    // @safe - Creates Future wrapped in Arc for memory safety
+    // @safe - Arc::make is @safe in the library.
     static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
-        // SAFETY: Arc::make is the only construction path; constructor is private.
-        // @unsafe
-        {
-            return rusty::Arc<Future>::make(xid, attr);
-        }
+        return rusty::Arc<Future>::make(xid, attr);
     }
 
-    // @safe - Uses rusty::Mutex
+    // @safe - rusty::Mutex::lock / Result::unwrap / MutexGuard::operator* are
+    // all @safe in the library.
     bool ready() const {
-        // @unsafe
-        { auto guard = state_.lock().unwrap();
-        return (*guard).ready; }
+        auto guard = state_.lock().unwrap();
+        return (*guard).ready;
     }
 
     // @safe - Uses rusty::Mutex and rusty::Condvar together
@@ -371,34 +375,29 @@ public:
         return ready() && !timed_out();
     }
 
-    // @safe - Uses rusty::Mutex
+    // @safe - rusty::Mutex::lock + MutexGuard ops are @safe.
     bool timed_out() const {
-        // @unsafe
-        { auto guard = state_.lock().unwrap();
-        return (*guard).timed_out; }
+        auto guard = state_.lock().unwrap();
+        return (*guard).timed_out;
     }
 
-    // @safe - Registers a completion callback and returns true if caller should suspend.
-    // Returns false when the future is already completed (ready or timed out).
+    // @safe - rusty::Mutex::lock + rusty::Vec::push + rusty::Function move
+    // are @safe. unwrap() on poisoned mutex intentionally panics, matching
+    // existing policy.
     bool add_completion_callback(rusty::Function<void()> callback) const {
-        // SAFETY: unwrap() on poisoned mutex intentionally panics, matching existing policy.
-        // @unsafe
-        {
-            auto guard = state_.lock().unwrap();
-            if (guard->ready || guard->timed_out) {
-                return false;
-            }
-            guard->completion_callbacks.push(std::move(callback));
-            return true;
+        auto guard = state_.lock().unwrap();
+        if (guard->ready || guard->timed_out) {
+            return false;
         }
+        guard->completion_callbacks.push(std::move(callback));
+        return true;
     }
 
-    // @safe - Returns guard for reply (Rust-idiomatic lifetime safety)
-    // Caller holds the guard, ensuring the reference can't outlive it
+    // @safe - rusty::RefCell::borrow_mut is @safe (RefCell namespace).
+    // Caller holds the guard, ensuring the reference can't outlive it.
     rusty::RefMut<Marshal> get_reply() const {
         wait();
-        // @unsafe
-        { return reply_.borrow_mut(); }
+        return reply_.borrow_mut();
     }
 
     // @safe - Calls wait methods, uses @unsafe for timed_wait which uses std::chrono
@@ -619,10 +618,12 @@ public:
 // Type alias for Arc weak reference to ClientConnection
 using WeakClientConnection = rusty::sync::Weak<ClientConnection>;
 
-// @unsafe - Client-side socket handler exposed to poll loop via Pollable proxy facade.
-// Similar to ServerConnection but for client-side connections
-// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
-// Note: connect() and handle_read() contain @unsafe blocks for socket I/O
+// @safe - Client-side socket handler exposed to poll loop via Pollable
+// proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
+// chains, fiber dispatch, cross-thread queues, or raw pointer ops carry
+// per-method `// @unsafe` overrides; the rest inherit `@safe` from this
+// class umbrella.
+// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership.
 class ClientConnection {
     friend class Client;
     friend class ClientPool;
@@ -695,7 +696,7 @@ class ClientConnection {
     // `fiber_channel_` and `factory_` (the alias is already a
     // `rusty::Box<ChannelConnectionBase>`; the outer Box keeps the
     // Option's value-type uniform across slots).
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelConnectionProxy>>> direct_channel_{rusty::Option<rusty::Box<ChannelConnectionProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelConnectionProxy>> direct_channel_{rusty::Option<ChannelConnectionProxy>(rusty::None)};
 
     rusty::Cell<bool> channel_mode_{false};
 
@@ -721,7 +722,7 @@ class ClientConnection {
     // the close fan-out's reconnect spawn calls `connect_via_factory`
     // from a separate thread, which can race against user-thread
     // accessors like `is_factory_bound()` (sub-leaf 4g1).
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelFactoryProxy>>> factory_{rusty::Option<rusty::Box<ChannelFactoryProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelFactoryProxy>> factory_{rusty::Option<ChannelFactoryProxy>(rusty::None)};
 
     // Transaction ID counter for RPC requests
     // mutable because Counter uses atomics internally for thread-safe interior mutability
@@ -749,8 +750,12 @@ private:
 
     // Reconnection policy and state
     ReconnectPolicy reconnect_policy_;
-    std::atomic<bool> reconnecting_{false};
-    std::atomic<bool> reconnect_abort_{false};
+    // mutable: std::atomic::store / .load are interior-mutable in
+    // semantics but std::atomic::store is not declared `const` (it has
+    // `volatile` overloads only). Mark mutable so const methods can
+    // legally call store() — atomic semantics make this race-free.
+    mutable std::atomic<bool> reconnecting_{false};
+    mutable std::atomic<bool> reconnect_abort_{false};
     std::string reconnect_address_;  // Address to reconnect to
 
     // Request buffering during disconnection
@@ -795,7 +800,7 @@ private:
 
     // @safe - Cancels all pending futures (has internal @unsafe blocks)
     // SAFETY: Protected by spinlock
-    void invalidate_pending_futures();
+    void invalidate_pending_futures() const;
 
     // @safe - Fail one pending future by xid if it still exists.
     // Safe to call repeatedly; only first call for a given xid has effect.
@@ -859,7 +864,7 @@ public:
      */
     // @safe - Closes connection and cleans up
     // SAFETY: Thread-safe cleanup sequence
-    void close();
+    void close() const;
 
     /**
      * Mark connection as closing without closing the socket.
@@ -867,7 +872,7 @@ public:
      * This avoids race conditions with pending CmdAddPollable commands.
      */
     // @safe - Just updates state machine
-    void mark_closing();
+    void mark_closing() const;
 
     // Public destructor for Arc compatibility
     // @safe - Simple destructor
@@ -965,17 +970,15 @@ public:
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void bind_factory(ChannelFactoryProxy factory) {
         if (!factory) return;
-        // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
+        // SpinMutex::lock + Box move-assign are both @safe.
         {
             auto guard = factory_.lock().unwrap();
-            *guard = rusty::Some(
-                rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+            *guard = rusty::Some(std::move(factory));
         }
     }
 
-    // @safe - True if `bind_factory` has been called with a non-null proxy.
+    // @safe - SpinMutex::lock and Option::is_some are both @safe.
     bool is_factory_bound() const {
-        // @unsafe { SpinMutex::lock }
         auto guard = factory_.lock().unwrap();
         return guard->is_some();
     }
@@ -987,11 +990,10 @@ public:
     // freshly-constructed-Arc init dance. Tests that construct
     // `ClientConnection` directly via `Arc::make` must call this
     // before any channel-mode code path that captures the weak.
-    // @unsafe - Direct field assignment; callers must guarantee the
-    // weak refers to the same Arc that owns this object.
+    // @safe - Direct field assignment; rusty::sync::Weak move-assign is now @safe.
+    // Callers must guarantee the weak refers to the same Arc that owns this object.
     void install_self_weak_for_testing(WeakClientConnection weak) {
-        // @unsafe { Weak copy-assign }
-        { weak_self_ = std::move(weak); }
+        weak_self_ = std::move(weak);
     }
 
     // Test-only: drive the state machine to `CONNECTED`. Production
@@ -1018,11 +1020,9 @@ public:
     // this through `connect(addr)`. Channel-mode tests that want to
     // verify the close fan-out's reconnect-policy branch check this
     // before the synthesized `on_closed`.
-    // @unsafe - Non-atomic std::string assignment from the test
-    // thread; safe in the test scope (no other thread is racing).
+    // @safe - single std::string move-assign on a non-shared field.
     void set_reconnect_address_for_testing(std::string addr) {
-        // @unsafe { std::string move-assign }
-        { reconnect_address_ = std::move(addr); }
+        reconnect_address_ = std::move(addr);
     }
 
     // Test-only: short-circuit the reconnect spawn body before it
@@ -1097,9 +1097,8 @@ public:
         return buffering_config_;
     }
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - RequestQueue::size is @safe (lock + VecDeque::size).
     size_t pending_request_count() const {
-        // @unsafe { RequestQueue::size }
         return pending_queue_.size();
     }
 
@@ -1121,10 +1120,9 @@ public:
     }
 #endif
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - RequestQueue::clear_all is @safe.
     // Note: const because pending_queue_ is mutable
     void clear_pending_requests(int error_code = ECONNABORTED) const {
-        // @unsafe { RequestQueue::clear_all }
         pending_queue_.clear_all(error_code);
     }
 
@@ -1145,7 +1143,9 @@ public:
      *
      * @param callback Function to call on restart detection
      */
-    // @unsafe - rusty::Function assignment through const (interior mutability via mutable)
+    // @safe - rusty::Function move-assign is @safe; interior mutability via
+    // mutable on_server_restart_ is sound because the assignment happens
+    // through a const method that owns the only thread-visible reference.
     void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
         on_server_restart_ = std::move(callback);
     }
@@ -1158,7 +1158,8 @@ public:
      * @param new_id The new server instance ID
      * @return true if server restart was detected, false otherwise
      */
-    // @unsafe - Updates Cell and may call callback (rusty::Function operations)
+    // @safe - rusty::Cell get/set + rusty::Function operator bool / call are
+    // @safe in the library; Log_info template shim is @safe.
     bool check_server_instance(uint64_t new_id) const {
         uint64_t old_id = server_instance_id_.get();
 
@@ -1168,7 +1169,6 @@ public:
         // Detect restart: old ID was set (non-zero) and differs from new ID
         if (old_id != 0 && old_id != new_id) {
             Log_info("Server restart detected: old_id=%lu new_id=%lu", old_id, new_id);
-            // @unsafe { rusty::Function::operator bool and callback execution }
             if (on_server_restart_) {
                 on_server_restart_(old_id, new_id);
             }
@@ -1231,12 +1231,9 @@ public:
     }
 
     /// Monotonic millisecond clock used by the instrumentation hooks.
-    /// @unsafe { std::chrono is not borrow-checked but is memory-safe }
+    /// @safe - delegates to rusty::sys::time::clock_monotonic_us.
     static uint64_t monotonic_ms_now() {
-        auto now = std::chrono::steady_clock::now();
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count());
+        return rusty::sys::time::clock_monotonic_us() / 1000;
     }
 
     /// Record one outbound frame's body size + bump the activity clock.
@@ -1310,7 +1307,10 @@ private:
     // @unsafe - Apply keepalive options to socket
     // Called after socket creation in connect()
     void apply_keepalive_options();
-    // @safe - Enqueue one internal heartbeat probe packet.
+    // @unsafe - Builds a Marshal body via operator<< (rusty-cpp treats
+    // operator overloads as @unsafe by default) and dispatches it through
+    // the channel proxy. The function is internally safe but its body uses
+    // patterns the analyzer flags; mark the wrapper @unsafe to match.
     void enqueue_heartbeat_probe() const;
     // @safe - Evaluate circuit breaker gate and update metrics.
     bool allow_request_with_circuit_metrics() const;
@@ -1393,7 +1393,7 @@ private:
             auto guard = direct_channel_.lock().unwrap();
             if (guard->is_some()) {
                 auto& mut_proxy = *guard->as_mut().unwrap();
-                return mut_proxy->send_frame(
+                return mut_proxy.send_frame(
                     ChannelFrame{body_bytes, body_size});
             }
         }
@@ -1495,7 +1495,7 @@ private:
             auto direct_guard = direct_channel_.lock().unwrap();
             if (direct_guard->is_some()) {
                 auto& proxy = *direct_guard->as_ref().unwrap();
-                if (proxy->is_closed()) {
+                if (proxy.is_closed()) {
                     record_circuit_result(ENOTCONN);
                     return FutureResult::Err(ENOTCONN);
                 }
@@ -1586,7 +1586,7 @@ public:
             auto direct_guard = direct_channel_.lock().unwrap();
             if (direct_guard->is_some()) {
                 auto& proxy = *direct_guard->as_ref().unwrap();
-                if (proxy->is_closed()) {
+                if (proxy.is_closed()) {
                     record_circuit_result(ENOTCONN);
                     return rusty::Result<void, i32>::Err(ENOTCONN);
                 }
@@ -1650,15 +1650,21 @@ private:
 
 public:
 
-    // @unsafe - Convenience overload without callback (calls @unsafe request)
+    // @safe - Convenience overload; delegates to the @unsafe full request.
     template<typename F>
     FutureResult request(i32 rpc_id, F&& write_fn) const {
-        return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
+        // @unsafe { delegate to @unsafe request(rpc_id, attr, write_fn) }
+        {
+            return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
+        }
     }
 
-    // @unsafe - Convenience overload for requests with no arguments (calls @unsafe request)
+    // @safe - Convenience overload (no args); delegates to the @unsafe full request.
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        return request(rpc_id, attr, [](BinaryWriteArchive&) {});
+        // @unsafe { delegate to @unsafe request(rpc_id, attr, write_fn) }
+        {
+            return request(rpc_id, attr, [](BinaryWriteArchive&) {});
+        }
     }
 
     // =========================================================================
@@ -1842,11 +1848,15 @@ public:
         return FutureResult::Ok(final_fu);
     }
 
-    // @unsafe - Convenience overload without FutureAttr
+    // @safe - Convenience overload without FutureAttr; delegates to
+    // the @unsafe full request_with_options.
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       F&& write_fn) const {
-        return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
+        // @unsafe { delegate to @unsafe request_with_options(rpc_id, options, attr, write_fn) }
+        {
+            return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
+        }
     }
 
     // @safe - 4g3c3/4g3d: `ClientConnection` no longer owns an fd; the
@@ -1861,10 +1871,9 @@ public:
         return -1;
     }
 
-    // @safe - Simple getter (string copy is safe)
+    // @safe - Returning std::string by value is a safe copy.
     std::string host() const {
-        // @unsafe
-        { return host_; }
+        return host_;
     }
 
     // @safe - Jetpack: pause/resume for flow control (Cell for interior mutability)
@@ -1891,7 +1900,7 @@ public:
     bool handle_read();
 
     // @safe - Error handler
-    void handle_error();
+    void handle_error() const;
 
     // @safe - Check heartbeat tick and pending write update flag.
     bool check_pending_write_update() const;
@@ -1932,13 +1941,18 @@ struct hash<rusty::Arc<rrr::ClientConnection>> {
 // ===========================================================================
 // Block 3: Client facade + bulk-reconnect (from former client.hpp:1976-end)
 // ===========================================================================
+// @safe - third-half namespace block: Client + ClientPool facades.
+// Same rules as blocks 1 and 2 — existing class-level and per-method
+// annotations stand; network-touching methods retain their
+// `// @unsafe`.
 export namespace rrr {
 
-// @unsafe - RPC client facade that owns a ClientConnection
-// (Marked unsafe due to mutable field for interior mutability)
-// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
-// Client provides the user-facing API, ClientConnection handles socket I/O
-// Similar to Server/ServerConnection pattern
+// @safe - The interior-mutable `mutable RefCell<...>` field is sound
+// because RefCell enforces runtime borrow rules. Methods that drive
+// socket I/O through ClientConnection carry their own `// @unsafe`
+// overrides; the rest of the class is analyzed as @safe by default.
+// Client provides the user-facing API, ClientConnection handles socket I/O.
+// Similar to Server/ServerConnection pattern.
 class Client {
     // The underlying connection that handles socket I/O
     // RefCell for interior mutability (const methods need to delegate to connection)
@@ -1980,7 +1994,7 @@ class Client {
     // SpinMutex (not RefCell) because Client::connect can be called
     // from any thread and reads/consumes pending_factory_ on each
     // call — sub-leaf 4g1.
-    mutable SpinMutex<rusty::Option<rusty::Box<ChannelFactoryProxy>>> pending_factory_{rusty::Option<rusty::Box<ChannelFactoryProxy>>(rusty::None)};
+    mutable SpinMutex<rusty::Option<ChannelFactoryProxy>> pending_factory_{rusty::Option<ChannelFactoryProxy>(rusty::None)};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -2011,13 +2025,9 @@ public:
         poll_thread_worker_(poll_thread_worker) { }
 
     // Factory method to create Client with Arc
-    // @safe - Returns Arc<Client>
+    // @safe - Arc::make is @safe in the library.
     static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
-        // SAFETY: Arc::make is the only construction path; constructor is private.
-        // @unsafe
-        {
-            return rusty::Arc<Client>::make(poll_thread_worker);
-        }
+        return rusty::Arc<Client>::make(poll_thread_worker);
     }
 
     /**
@@ -2030,31 +2040,28 @@ public:
      *   - Ok(Arc<Future>) on success
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
-    // @safe - Thread-safe RPC request with lambda for marshaling
+    // @safe - Thread-safe RPC request with lambda for marshaling.
+    // RefCell::borrow / Option / Cell::set / ClientConnection::request are
+    // all @safe at their boundaries; the marshaling write_fn is also @safe.
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
         return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn));
-        }
     }
 
     // @safe - Convenience overload without callback
     template<typename F>
     FutureResult request(i32 rpc_id, F&& write_fn) const {
-        // @unsafe
-        { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
+        return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
     }
 
     // @safe - Convenience overload for requests with no arguments
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        // @unsafe
-        { return request(rpc_id, attr, [](BinaryWriteArchive&) {}); }
+        return request(rpc_id, attr, [](BinaryWriteArchive&) {});
     }
 
     // Slim async-callback request — no Arc<Future> allocation.  See
@@ -2080,12 +2087,10 @@ public:
      * Send an RPC request with explicit options for timeout and retry.
      * Sets the options on the returned Future for use with wait_with_options().
      */
-    // @safe - Thread-safe RPC request with options
+    // @safe - Thread-safe RPC request with options.
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
@@ -2093,15 +2098,13 @@ public:
         rpc_id_.set(rpc_id);
         return guard->as_ref().unwrap()->request_with_options(
             rpc_id, options, attr, std::forward<F>(write_fn));
-        }
     }
 
     // @safe - Convenience overload without FutureAttr
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       F&& write_fn) const {
-        // @unsafe
-        { return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn)); }
+        return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
     }
 
     // @safe - Sets connection validity
@@ -2113,18 +2116,15 @@ public:
      * Set the reconnection policy for this client.
      * The policy controls automatic reconnection behavior after failures.
      */
-    // @safe - Sets reconnection policy
+    // @safe - Cell::set + RefCell::borrow + Option + ClientConnection delegate.
     void set_reconnect_policy(const ReconnectPolicy& policy) const {
         pending_reconnect_policy_.set(policy);
 
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             // const_cast needed since ClientConnection::set_reconnect_policy is not const
             auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
             conn.set_reconnect_policy(policy);
-        }
         }
     }
 
@@ -2132,11 +2132,14 @@ public:
      * Set the buffering configuration for this client.
      * Controls whether requests are queued during disconnection.
      */
-    // @unsafe - Calls ClientConnection::set_buffering_config (interior mutability)
+    // @safe - RefCell ops + inner @unsafe set_buffering_config wrapped @unsafe.
     void set_buffering_config(const BufferingConfig& config) const {
-        auto guard = connection_.borrow();
-        if (guard->is_some()) {
-            guard->as_ref().unwrap()->set_buffering_config(config);  // @unsafe
+        // @unsafe { RefCell::borrow, Option::unwrap, @unsafe ClientConnection::set_buffering_config }
+        {
+            auto guard = connection_.borrow();
+            if (guard->is_some()) {
+                guard->as_ref().unwrap()->set_buffering_config(config);
+            }
         }
     }
 
@@ -2167,48 +2170,42 @@ public:
     // @unsafe - Records the factory under SpinMutex interior mutability.
     void set_channel_factory(ChannelFactoryProxy factory) const {
         if (!factory) return;
-        // @unsafe { SpinMutex::lock + make_box + ChannelFactoryProxy move }
+        // SpinMutex::lock + Box move-assign are both @safe.
         {
             auto guard = pending_factory_.lock().unwrap();
-            *guard = rusty::Some(
-                rusty::make_box<ChannelFactoryProxy>(std::move(factory)));
+            *guard = rusty::Some(std::move(factory));
         }
     }
 
     // @safe - True if `set_channel_factory` has been called and the
     // factory hasn't been consumed by a `connect` yet.
     bool has_pending_channel_factory() const {
-        // @unsafe { SpinMutex::lock }
+        // SpinMutex::lock and Option::is_some are both @safe.
         auto guard = pending_factory_.lock().unwrap();
         return guard->is_some();
     }
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - ClientConnection::pending_request_count is @safe.
     size_t pending_request_count() const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            // @unsafe { ClientConnection::pending_request_count }
             return guard->as_ref().unwrap()->pending_request_count();
         }
         return 0;
     }
 
-    // @unsafe - Uses RequestQueue (backed by rusty::VecDeque)
+    // @safe - ClientConnection::clear_pending_requests is @safe.
     void clear_pending_requests(int error_code = ECONNABORTED) const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            // @unsafe { ClientConnection::clear_pending_requests }
             guard->as_ref().unwrap()->clear_pending_requests(error_code);
         }
     }
 
-    // @safe - Check if reconnection is in progress
+    // @safe - RefCell::borrow + Option ops are @safe.
     bool is_reconnecting() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->is_reconnecting();
-        }
     }
 
     /**
@@ -2272,37 +2269,28 @@ public:
     // a peer identifier should use `host()` (or `peer_address()` on
     // the underlying channel proxy in the future).
 
-    // @safe - Returns host string
+    // @safe - RefCell::borrow + Option + ClientConnection::host (safe getter).
     std::string host() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->host();
         }
         return "";
-        }
     }
 
-    // @safe - Returns connection status
+    // @safe - RefCell::borrow + Option + ClientConnection::connected.
     bool connected() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->connected();
-        }
     }
 
-    // @safe - Returns current connection state
+    // @safe - RefCell::borrow + Option + ClientConnection::connection_state.
     ConnectionState connection_state() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->connection_state();
         }
         return ConnectionState::NEW;
-        }
     }
 
     /**
@@ -2328,17 +2316,14 @@ public:
         return false;
     }
 
-    // @safe - Returns a clone of the connection Option
-    // Returns None if not connected, Some(Arc<ClientConnection>) if connected
+    // @safe - RefCell::borrow + Option + Arc::clone are @safe.
+    // Returns None if not connected, Some(Arc<ClientConnection>) if connected.
     rusty::Option<rusty::Arc<ClientConnection>> connection() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return rusty::Some(guard->as_ref().unwrap().clone());
         }
         return rusty::None;
-        }
     }
 
     // === Server Restart Detection API ===
@@ -2347,16 +2332,13 @@ public:
      * Get the last known server instance ID.
      * Returns 0 if no ID has been set yet or no connection exists.
      */
-    // @safe - Delegates to ClientConnection
+    // @safe - RefCell::borrow + Option + ClientConnection::server_instance_id.
     uint64_t server_instance_id() const {
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->server_instance_id();
         }
         return 0;
-        }
     }
 
     /**
@@ -2365,11 +2347,15 @@ public:
      *
      * @param callback Function to call on restart detection
      */
-    // @unsafe - Delegates to @unsafe ClientConnection::set_on_server_restart
+    // @safe - Inner ClientConnection::set_on_server_restart is @safe;
+    // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
     void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
-        auto guard = connection_.borrow();
-        if (guard->is_some()) {
-            guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
+        // RefCell::borrow + Option::unwrap are both @safe.
+        {
+            auto guard = connection_.borrow();
+            if (guard->is_some()) {
+                guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
+            }
         }
     }
 
@@ -2381,11 +2367,15 @@ public:
      * @param new_id The new server instance ID
      * @return true if server restart was detected, false otherwise
      */
-    // @unsafe - Delegates to @unsafe ClientConnection::check_server_instance
+    // @safe - Inner ClientConnection::check_server_instance is @safe;
+    // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
     bool check_server_instance(uint64_t new_id) const {
-        auto guard = connection_.borrow();
-        if (guard->is_some()) {
-            return guard->as_ref().unwrap()->check_server_instance(new_id);
+        // RefCell::borrow + Option::unwrap are both @safe.
+        {
+            auto guard = connection_.borrow();
+            if (guard->is_some()) {
+                return guard->as_ref().unwrap()->check_server_instance(new_id);
+            }
         }
         return false;
     }
@@ -2399,18 +2389,15 @@ public:
      *
      * @param config The keepalive configuration to apply
      */
-    // @safe - Uses Cell for interior mutability
+    // @safe - Cell::set + RefCell::borrow + Option + ClientConnection::set_keepalive.
     void set_keepalive(const KeepaliveConfig& config) const {
         // Always store locally (for use in connect() if called before connection exists)
         pending_keepalive_config_.set(config);
 
         // If connection exists, also apply immediately
-        // @unsafe
-        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_keepalive(config);
-        }
         }
     }
 
@@ -2440,7 +2427,7 @@ public:
     void set_heartbeat(const HeartbeatConfig& config) const {
         pending_heartbeat_config_.set(config);
 
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2451,7 +2438,7 @@ public:
 
     // @safe - RefCell ops wrapped @unsafe
     HeartbeatConfig heartbeat_config() const {
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2470,7 +2457,7 @@ public:
     void set_circuit_breaker(const CircuitBreakerConfig& config) const {
         pending_circuit_breaker_config_.set(config);
 
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2481,7 +2468,7 @@ public:
 
     // @safe - RefCell ops wrapped @unsafe
     CircuitBreakerConfig circuit_breaker_config() const {
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2493,7 +2480,7 @@ public:
 
     // @safe - RefCell ops wrapped @unsafe
     CircuitState circuit_breaker_state() const {
-        // @unsafe { RefCell::borrow, Option::unwrap are not borrow-checked }
+        // RefCell::borrow + Option::unwrap are both @safe via namespace inheritance.
         {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
@@ -2582,17 +2569,20 @@ class ClientPool {
     // owns a shared reference to PollThread
     rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker_;
 
-    // guard cache_
-    SpinLock l_;
-    // @safe - Uses rusty::Arc<Client> for thread-safe reference counting
-    // SAFETY: Arc provides thread-safe reference counting with polymorphism support
-    rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache_;
+    // Mutex-protected state. Bundling cache + load-balancer state in a
+    // single SpinMutex matches the access pattern (get_client touches
+    // both under one lock) and replaces the prior `SpinLock l_ +
+    // unprotected fields` pattern with rusty's RAII guard.
+    struct PoolState {
+        // @safe - rusty::Arc<Client> for thread-safe reference counting.
+        rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache;
+        // Load balancer state per address (for round-robin tracking).
+        rusty::BTreeMap<std::string, LoadBalancerState> lb_state;
+    };
+    mutable SpinMutex<PoolState> state_;
 
     // Pool configuration (Cell for interior mutability)
     rusty::Cell<PoolConfig> config_;
-
-    // Load balancer state per address (for round-robin tracking)
-    rusty::BTreeMap<std::string, LoadBalancerState> lb_state_;
 
     // Helper: Check if a client is considered healthy
     // @safe - Uses metrics to determine health
@@ -2732,14 +2722,14 @@ public:
 // the impl block compiles without rewriting hundreds of call sites.
 using namespace std;
 
+// @safe - impl namespace. Out-of-class definitions inherit their
+// existing per-method `// @safe` / `// @unsafe` annotations from the
+// matching declarations in the export blocks above.
 namespace rrr {
 // Helper function to get current time in milliseconds
-// @unsafe - Uses std::chrono which is not borrow-checked (but is memory-safe)
+// @safe - delegates to rusty::sys::time::clock_monotonic_us, itself @safe.
 static uint64_t current_time_ms() {
-    auto now = std::chrono::steady_clock::now();
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count());
+    return rusty::sys::time::clock_monotonic_us() / 1000;
 }
 
 // 4g4: the migration switch (`srpc_use_channel()` and the test-only
@@ -2763,10 +2753,13 @@ void Future::wait() const {
   }).unwrap();
 }
 
-// @unsafe - Uses std::chrono which is not borrow-checked
+// @safe - SpinMutex::lock + Condvar::wait_timeout_while are @safe;
+// the only escape is the `std::chrono::duration<double>` ctor.
 void Future::timed_wait(double sec) const {
   auto guard = state_.lock().unwrap();
-  auto duration = std::chrono::duration<double>(sec);
+  std::chrono::duration<double> duration;
+  // @unsafe { std::chrono::duration ctor is not borrow-checked }
+  { duration = std::chrono::duration<double>(sec); }
   // wait_timeout_while: waits WHILE condition is TRUE
   // Returns pair<Guard, bool> where bool = true if condition became false
   auto result = ready_cond_.wait_timeout_while(
@@ -2847,8 +2840,10 @@ ClientConnection::~ClientConnection() {
   invalidate_pending_futures();
 }
 
-// @unsafe - Cancels all pending futures with error, protected by SpinMutex
-void ClientConnection::invalidate_pending_futures() {
+// @unsafe - Cancels all pending futures with error, protected by SpinMutex.
+// const: every mutation goes through SpinMutex / Counter / Future's
+// own const-callable methods.
+void ClientConnection::invalidate_pending_futures() const {
   // Drain the slim async-callback slots first.  Move callbacks out
   // under the lock, then fire them outside the lock with ENOTCONN +
   // null reply view.
@@ -2883,14 +2878,15 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
-// @unsafe - Fails one pending future if it still exists in the pending map
+// @safe - HashMap::get returns Option<V&> now; SpinMutex::lock returns
+// LockResult; Arc::clone is @safe. Only notify_ready stays @unsafe.
 void ClientConnection::fail_pending_future(i64 xid, int err) const {
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
     auto pending_guard = pending_fu_.lock().unwrap();
     auto fu_ptr = pending_guard->get(xid);
     if (fu_ptr.is_some()) {
-      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());  // Copy Arc before remove
+      fu_opt = rusty::Some(fu_ptr.unwrap().clone());
       pending_guard->remove(xid);
     }
   }  // Drop lock before notifying callback/future waiters
@@ -2912,7 +2908,9 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
 // bound channel proxy(ies). Close is idempotent (channel-layer
 // contract), so it's fine if `on_channel_closed_fan_out` then fires
 // `on_closed` after this method returns.
-void ClientConnection::close() {
+// const: every mutation routes through SpinMutex / Cell / Function /
+// heartbeat_manager_ — all interior-mutable.
+void ClientConnection::close() const {
   ConnectionState prev_state = state_machine_.state();
   const bool was_connected = state_machine_.is_connected();
   if (was_connected) {
@@ -2922,13 +2920,12 @@ void ClientConnection::close() {
 
   // Tear down the channel proxy(ies). The channel layer's `close()`
   // is idempotent and thread-safe per the facade contract.
-  // @unsafe { SpinMutex::lock + proxy method dispatch }
+  // @unsafe { SpinMutex::lock + Box::get + proxy method dispatch }
   {
     auto guard = direct_channel_.lock().unwrap();
     if (guard->is_some()) {
-      auto* proxy = const_cast<ChannelConnectionProxy*>(
-          guard->as_ref().unwrap().get());
-      (*proxy)->close();
+      auto* conn = guard->as_ref().unwrap().get();
+      conn->close();
     }
   }
   // @unsafe { SpinMutex::lock + FiberChannel::close }
@@ -2957,19 +2954,24 @@ void ClientConnection::close() {
   }
 }
 
-// @unsafe - Mark connection as closing without closing socket
-// Used by Client::close() to update state before poll thread closes socket
-void ClientConnection::mark_closing() {
-  reconnect_abort_.store(true, std::memory_order_release);
-  if (state_machine_.is_connected()) {
-    // Mark as in-progress close, but do not enter terminal state yet.
-    // The poll-thread close callback performs the actual fd close and final state transition.
-    state_machine_.transition_to(ConnectionState::DISCONNECTING);
+// @safe - StateMachine is @safe; only std::atomic::store and the call
+// into still-@unsafe invalidate_pending_futures need an @unsafe wrap.
+// const: state_machine_, reconnect_abort_, and invalidate_pending_futures
+// are all const-callable.
+void ClientConnection::mark_closing() const {
+  // @unsafe { std::atomic::store + invalidate_pending_futures (still @unsafe) }
+  {
+    reconnect_abort_.store(true, std::memory_order_release);
+    if (state_machine_.is_connected()) {
+      // Mark as in-progress close, but do not enter terminal state yet.
+      // The poll-thread close callback performs the actual fd close and final state transition.
+      state_machine_.transition_to(ConnectionState::DISCONNECTING);
+    }
+    invalidate_pending_futures();
   }
-  invalidate_pending_futures();
 }
 
-// @unsafe - Jetpack: handle_free for explicit future cleanup
+// @safe - SpinMutex::lock + HashMap::remove + Counter::record are all @safe.
 void ClientConnection::handle_free(i64 xid) const {
   auto guard = pending_fu_.lock().unwrap();
   if (guard->remove(xid).is_some()) {
@@ -3189,12 +3191,12 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
   }
 }
 
-// @unsafe - Configure heartbeat manager and timeout callback.
+// @safe - HeartbeatManager is @safe; Weak copy-assign is now @safe; the
+// lambda body only calls @safe methods + Log_warn (a @safe template shim).
+// One inner @unsafe block remains for the const_cast.
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
   heartbeat_manager_.set_config(config);
-  WeakClientConnection weak_conn;
-  // @unsafe - Weak copy construction is currently modeled as non-safe.
-  { weak_conn = weak_self_; }
+  WeakClientConnection weak_conn = weak_self_;
   heartbeat_manager_.set_on_timeout([weak_conn]() {
     auto conn_opt = weak_conn.upgrade();
     if (conn_opt.is_none()) {
@@ -3205,29 +3207,29 @@ void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const
       return;
     }
     Log_warn("rrr::ClientConnection: heartbeat timeout for %s", conn->host().c_str());
-    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-    if (mut_conn != nullptr) {
-      mut_conn->handle_error();
-    }
+    // handle_error is const-callable; conn.get() returns const T* but
+    // that's fine now.
+    conn->handle_error();
   });
 }
 
-// @unsafe - Returns heartbeat config snapshot.
+// @safe - HeartbeatManager class is @safe; config() returns by value.
 HeartbeatConfig ClientConnection::heartbeat_config() const {
   return heartbeat_manager_.config();
 }
 
-// @unsafe - Configure circuit breaker and reset state.
+// @safe - CircuitBreaker class is @safe; set_config is @safe.
 void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
   circuit_breaker_.set_config(config);
 }
 
-// @unsafe - Returns circuit breaker config snapshot.
+// @safe - CircuitBreaker class is @safe; config() returns by value.
 CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
   return circuit_breaker_.config();
 }
 
-// @unsafe - Uses RequestQueue methods (not borrow-checked)
+// @safe - No-op stub returning a constant. (The RequestQueue methods
+// it nominally documents are themselves @safe in Tier 2 anyway.)
 // 4g3c2: replay_pending_requests() reduced to a no-op stub. The
 // underlying queue (`pending_queue_`) is always empty in channel mode
 // because `queue_request<F>(...)` was deleted in 4g3b. The function
@@ -3275,14 +3277,14 @@ void ClientConnection::enqueue_heartbeat_probe() const {
 // Caller: the spawn body inside `on_channel_closed_fan_out` when a
 // factory is bound.
 void ClientConnection::reset_channel_mode_for_reconnect() {
-  // @unsafe { SpinMutex::lock + Option::take }
+  // SpinMutex::lock + Option::take are both @safe.
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::None;
   }
   // 4g1c: also drop the direct-channel slot so reconnect can rebind
   // a fresh proxy with fresh callbacks.
-  // @unsafe { SpinMutex::lock + Option::take }
+  // SpinMutex::lock + Option::take are both @safe.
   {
     auto guard = direct_channel_.lock().unwrap();
     *guard = rusty::None;
@@ -3302,7 +3304,6 @@ void ClientConnection::reset_channel_mode_for_reconnect() {
 // which already transitioned the state to CONNECTING and verified
 // the factory binding.
 int ClientConnection::connect_via_factory(const char* addr) {
-  ChannelFactoryProxy factory;
   // Take a *clone* of the bound factory so we can call `connect` on
   // it without holding the RefCell guard across what may be a
   // blocking syscall (TCP handshake, address resolution). The
@@ -3332,10 +3333,9 @@ int ClientConnection::connect_via_factory(const char* addr) {
     // while we issue the syscall doesn't introduce contention with
     // the dispatch path (which locks `fiber_channel_`, not
     // `factory_`).
-    auto* bound = const_cast<ChannelFactoryProxy*>(
-        guard->as_ref().unwrap().get());
-    ConnectResult result = (*bound)->connect(std::string_view(addr));
-    if (result.error != ChannelError::None || !result.connection) {
+    auto* bound = guard->as_ref().unwrap().get();
+    ConnectResult result = bound->connect(std::string_view(addr));
+    if (result.error != ChannelError::None || result.connection.is_none()) {
       const auto err_str = std::string("factory connect failed: ")
           + channel_error_to_string(result.error);
       Log_error("rrr::ClientConnection: %s (addr=%s)", err_str.c_str(), addr);
@@ -3356,13 +3356,13 @@ int ClientConnection::connect_via_factory(const char* addr) {
     // layer fires it) and calls decode_response_and_notify inline —
     // no IntEvent, no fiber yield, no waiting_events_ churn. This
     // works around the deeper reactor/fiber wedge documented in 4g1b.
-    bind_channel_direct(std::move(result.connection));
+    bind_channel_direct(result.connection.unwrap());
   }
 
   // Record address for the close fan-out's reconnect spawn — it
-  // re-runs the factory connect with the same target.
-  // @unsafe { std::string assignment }
-  { reconnect_address_ = addr; }
+  // re-runs the factory connect with the same target. std::string
+  // assignment from a const char* is benign in @safe code.
+  reconnect_address_ = addr;
 
   // Mirror the fd path's terminal transition: the channel layer's
   // own state (proxy.is_closed()) becomes the source of truth, but
@@ -3412,7 +3412,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   // its parking lifetime. `FiberChannel` is move-deleted (its
   // callbacks capture `this`), so we use `make_box` which constructs
   // in-place via perfect-forwarded `new` rather than moving.
-  // @unsafe { make_box + SpinMutex mutation }
+  // rusty::make_box + SpinMutex::lock + Option::operator= are all @safe.
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
@@ -3422,9 +3422,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   // Capture a Weak<> so the parked fiber doesn't extend the
   // connection's lifetime (which would create a cycle via
   // `fiber_channel_` ownership).
-  WeakClientConnection weak_self;
-  // @unsafe { Weak copy is currently treated as non-safe. }
-  { weak_self = weak_self_; }
+  WeakClientConnection weak_self = weak_self_;
 
   // Spawn the recv-loop fiber on the *current* thread's reactor.
   // Per the channel-layer threading contract, the recv-loop fiber
@@ -3469,16 +3467,14 @@ void ClientConnection::bind_channel_via_poll_thread(
   // the latch on the calling thread — these are pure data
   // mutations and the recv-loop fiber doesn't observe them until
   // after we submit the OneTimeJob below.
-  // @unsafe { make_box + SpinMutex mutation }
+  // rusty::make_box + SpinMutex::lock + Option::operator= are all @safe.
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
   }
   channel_mode_.set(true);
 
-  WeakClientConnection weak_self;
-  // @unsafe { Weak copy }
-  { weak_self = weak_self_; }
+  WeakClientConnection weak_self = weak_self_;
 
   // Schedule the recv-loop fiber spawn onto the poll thread. The
   // poll thread's `trigger_job` calls `Fiber::create_run` from
@@ -3528,9 +3524,7 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
   // Capture a weak ref so the proxy's installed callbacks don't
   // extend the ClientConnection's lifetime (avoids a refcount cycle
   // through `direct_channel_` + the callbacks).
-  WeakClientConnection weak_self;
-  // @unsafe { Weak copy is currently treated as non-safe }
-  { weak_self = weak_self_; }
+  WeakClientConnection weak_self = weak_self_;
 
   // Install callbacks BEFORE moving the proxy into the slot. After
   // the move, the proxy lives in `direct_channel_`; the lambdas
@@ -3556,10 +3550,10 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
   channel->set_on_error([](ChannelError, std::string_view) {});
 
   // Move the proxy into the slot and flip the channel-mode latch.
-  // @unsafe { make_box + SpinMutex mutation }
+  // SpinMutex::lock + Option::operator= are both @safe.
   {
     auto guard = direct_channel_.lock().unwrap();
-    *guard = rusty::Some(rusty::make_box<ChannelConnectionProxy>(std::move(channel)));
+    *guard = rusty::Some(std::move(channel));
   }
   channel_mode_.set(true);
 }
@@ -3684,7 +3678,7 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
     auto guard = pending_fu_.lock().unwrap();
     auto fu_ptr = guard->get(v_reply_xid.get());
     if (fu_ptr.is_some()) {
-      fu_opt = rusty::Some((*fu_ptr.unwrap()).clone());
+      fu_opt = rusty::Some(fu_ptr.unwrap().clone());
       guard->remove(v_reply_xid.get());
     }
   }
@@ -3772,7 +3766,7 @@ void ClientConnection::on_channel_closed_fan_out() {
   // a real reconnect leave the abort flag false and rely on the
   // spawn.
   if (reconnect_policy_.auto_reconnect &&
-      // @unsafe { std::string::empty }
+      // std::string::empty() is a pure const accessor, safe in @safe code.
       !reconnect_address_.empty()) {
     channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
 
@@ -3834,7 +3828,8 @@ void ClientConnection::on_channel_closed_fan_out() {
   }
 }
 
-// @unsafe - Route allow_request through metrics (rejections + state transitions).
+// @safe - CircuitBreaker and ConnectionMetrics are both @safe classes;
+// record_circuit_state_transition is @safe.
 bool ClientConnection::allow_request_with_circuit_metrics() const {
   CircuitState before = circuit_breaker_.state();
   bool allowed = circuit_breaker_.allow_request();
@@ -3888,7 +3883,8 @@ void ClientConnection::record_circuit_state_transition(
   }
 }
 
-// @unsafe - Records success/failure in circuit breaker.
+// @safe - CircuitBreaker is @safe; should_trip_circuit_for_error is @safe;
+// record_circuit_state_transition is @safe.
 void ClientConnection::record_circuit_result(i32 err) const {
   CircuitState before = circuit_breaker_.state();
   if (err == 0) {
@@ -3934,7 +3930,8 @@ RpcError ClientConnection::map_system_error(i32 err) {
   }
 }
 
-// @unsafe - Invoke callback manager error hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe;
+// map_system_error is @safe.
 void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const {
   if (!callback_manager_) {
     return;
@@ -3942,7 +3939,7 @@ void ClientConnection::invoke_error_callback(i32 err, const std::string& message
   callback_manager_->invoke_on_error(map_system_error(err), message);
 }
 
-// @unsafe - Invoke callback manager disconnected hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_disconnected_callback() const {
   if (!callback_manager_) {
     return;
@@ -3950,7 +3947,7 @@ void ClientConnection::invoke_disconnected_callback() const {
   callback_manager_->invoke_on_disconnected();
 }
 
-// @unsafe - Invoke callback manager reconnecting hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_reconnecting_callback() const {
   if (!callback_manager_) {
     return;
@@ -3958,7 +3955,7 @@ void ClientConnection::invoke_reconnecting_callback() const {
   callback_manager_->invoke_on_reconnecting();
 }
 
-// @unsafe - Invoke callback manager reconnected hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_reconnected_callback(bool success) const {
   if (!callback_manager_) {
     return;
@@ -3966,7 +3963,7 @@ void ClientConnection::invoke_reconnected_callback(bool success) const {
   callback_manager_->invoke_on_reconnected(success);
 }
 
-// @unsafe - Invoke callback manager connected hooks.
+// @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void ClientConnection::invoke_connected_callback() const {
   if (!callback_manager_) {
     return;
@@ -3974,8 +3971,10 @@ void ClientConnection::invoke_connected_callback() const {
   callback_manager_->invoke_on_connected();
 }
 
-// @unsafe - Error handler - transitions to FAILED state
-void ClientConnection::handle_error() {
+// @unsafe - Error handler - transitions to FAILED state.
+// const: state_machine_, atomics (mutable), close/invoke_*_callback,
+// and the reconnect spawn are all callable through a const ref.
+void ClientConnection::handle_error() const {
   ConnectionState prev_state = state_machine_.state();
   const bool user_initiated_closing =
       prev_state == ConnectionState::DISCONNECTING ||
@@ -3998,13 +3997,12 @@ void ClientConnection::handle_error() {
   // Trigger policy-driven reconnect automatically after transport failures.
   if (reconnect_policy_.auto_reconnect &&
       !reconnect_abort_.load(std::memory_order_acquire)) {
-    // @unsafe - std::string::empty and Weak copy are currently treated as non-safe.
-    {
-      if (reconnect_address_.empty()) {
-        return;
-      }
-      auto weak_conn = weak_self_;
-      rusty::thread::spawn([weak_conn]() {
+    // std::string::empty() is a pure const accessor; safe in @safe code.
+    if (reconnect_address_.empty()) {
+      return;
+    }
+    auto weak_conn = weak_self_;
+    rusty::thread::spawn([weak_conn]() {
         auto conn_opt = weak_conn.upgrade();
         if (conn_opt.is_none()) {
           return;
@@ -4026,7 +4024,6 @@ void ClientConnection::handle_error() {
           }
         }
       }).detach();
-    }
   }
 }
 
@@ -4051,7 +4048,10 @@ bool ClientConnection::check_pending_write_update() const {
       return false;
     }
     if (heartbeat_manager_.should_send_heartbeat()) {
-      enqueue_heartbeat_probe();
+      // @unsafe
+      {
+        enqueue_heartbeat_probe();
+      }
       heartbeat_manager_.on_heartbeat_sent();
       return true;
     }
@@ -4123,40 +4123,56 @@ void Client::close() const {
     const bool was_connected = conn.connected();
     conn.mark_closing();
     if (was_connected) {
-      // @unsafe - schedules channel proxy close on poll thread
-      auto conn_arc = guard->as_ref().unwrap().clone();
-      auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
-        auto* mut_conn = const_cast<ClientConnection*>(conn_arc.get());
-        mut_conn->close();
-      }));
-      auto close_job_base = rusty::Arc<Job>(close_job);
-      poll_thread_worker_->add(std::move(close_job_base));
+      // @unsafe - schedules channel proxy close on poll thread; uses
+      // const_cast inside the lambda and calls non-borrow-checked
+      // PollThread::add (an unannotated reactor primitive).
+      {
+        auto conn_arc = guard->as_ref().unwrap().clone();
+        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
+          // close() is const-callable; conn_arc.get() returns const T*.
+          conn_arc->close();
+        }));
+        auto close_job_base = rusty::Arc<Job>(close_job);
+        poll_thread_worker_->add(std::move(close_job_base));
+      }
     }
     // Don't clear connection to None - we need it for reconnect()
   }
 }
 
-// @unsafe - Jetpack: handle_free for explicit future cleanup
+// @safe - Inner ClientConnection::handle_free is now @safe; only the
+// RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::handle_free(i64 xid) const {
-  auto guard = connection_.borrow();
-  if (guard->is_some()) {
-    guard->as_ref().unwrap()->handle_free(xid);
+  // RefCell::borrow + Option::unwrap are both @safe.
+  {
+    auto guard = connection_.borrow();
+    if (guard->is_some()) {
+      guard->as_ref().unwrap()->handle_free(xid);
+    }
   }
 }
 
-// @unsafe - Pauses the connection
+// @safe - Inner ClientConnection::pause is @safe (Cell::set);
+// only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::pause() const {
-  auto guard = connection_.borrow();
-  if (guard->is_some()) {
-    guard->as_ref().unwrap()->pause();
+  // RefCell::borrow + Option::unwrap are both @safe.
+  {
+    auto guard = connection_.borrow();
+    if (guard->is_some()) {
+      guard->as_ref().unwrap()->pause();
+    }
   }
 }
 
-// @unsafe - Resumes the connection
+// @safe - Inner ClientConnection::resume is @safe (Cell::set);
+// only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
 void Client::resume() const {
-  auto guard = connection_.borrow();
-  if (guard->is_some()) {
-    guard->as_ref().unwrap()->resume();
+  // RefCell::borrow + Option::unwrap are both @safe.
+  {
+    auto guard = connection_.borrow();
+    if (guard->is_some()) {
+      guard->as_ref().unwrap()->resume();
+    }
   }
 }
 
@@ -4172,11 +4188,9 @@ int Client::connect(const char* addr, bool client) const {
   verify(opt.is_some());  // Must succeed for freshly-created Arc
   ClientConnection& mut_conn = opt.unwrap();
 
-  // Initialize fields through mutable reference (no const_cast needed)
-  // @unsafe - Weak pointer assignment
-  {
-    mut_conn.weak_self_ = conn;
-  }
+  // Initialize fields through mutable reference (no const_cast needed).
+  // Weak pointer move-assign is @safe since the Tier-1.3 sweep.
+  mut_conn.weak_self_ = conn;
   mut_conn.set_callback_manager(callback_manager_);
   mut_conn.is_client_mode_ = client;
   is_client_mode_.set(client);
@@ -4210,16 +4224,14 @@ int Client::connect(const char* addr, bool client) const {
   // move-only; the factory is a one-shot push per Client lifecycle
   // (re-bind via `set_channel_factory` to install a different one —
   // affects subsequent Client::connect calls).
-  // @unsafe { SpinMutex::lock + Box deref + ChannelFactoryProxy move }
+  // @unsafe { SpinMutex::lock + ChannelFactoryProxy move }
   {
     auto guard = pending_factory_.lock().unwrap();
     if (guard->is_some()) {
-      // Move the proxy out of the boxed Option. The Box stays
-      // alive on the stack until the end of this scope; we move
-      // the inner proxy into the new ClientConnection's bind_factory
-      // (which re-boxes it on the connection side).
-      auto box = std::move(*guard).unwrap();
-      ChannelFactoryProxy moved = std::move(*box);
+      // Move the proxy out of the Option directly — the alias
+      // is `rusty::Box<ChannelFactoryBase>`, so unwrap() yields
+      // the move-only Box, no inner deref needed.
+      ChannelFactoryProxy moved = std::move(*guard).unwrap();
       mut_conn.bind_factory(std::move(moved));
       *guard = rusty::None;  // single-use; tests can re-bind
     }
@@ -4322,7 +4334,8 @@ bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
 ClientPool::~ClientPool() {
   // rusty::BTreeMap iter `operator*()` returns
   // `std::tuple<const K&, V&>` (post-2026-04 API).
-  for (auto&& [_addr, clients] : cache_) {
+  auto guard = state_.lock().unwrap();
+  for (auto&& [_addr, clients] : guard->cache) {
     for (auto& client : clients) {
       client->close();
     }
@@ -4334,11 +4347,11 @@ ClientPool::~ClientPool() {
   }
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap ops + is_client_healthy are all @safe.
 size_t ClientPool::get_healthy_client_count(const std::string& addr) {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t count = 0;
-  auto clients_opt = cache_.get(addr);
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     // rusty::BTreeMap::get returns `Option<V&>` (post-2026-04
     // API), so unwrap() yields a reference, not a pointer.
@@ -4349,15 +4362,14 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
       }
     }
   }
-  l_.unlock();
   return count;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops + is_client_healthy are @safe.
 size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t removed = 0;
-  auto clients_opt = cache_.get(addr);
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`; unwrap() yields a
     // reference. Use `.` instead of `->`, drop the `*` deref.
@@ -4383,26 +4395,24 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
 
     // Remove empty entries from cache
     if (clients.is_empty()) {
-      cache_.remove(addr);
+      guard->cache.remove(addr);
     }
   }
-  l_.unlock();
   return removed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops + is_idle/close are @safe.
 size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_time_ms) {
-  l_.lock();
-  size_t closed = 0;
   auto cfg = config_.get();
 
   // If idle timeout is 0, no timeout
   if (cfg.idle_timeout_ms == 0) {
-    l_.unlock();
     return 0;
   }
 
-  auto clients_opt = cache_.get(addr);
+  auto guard = state_.lock().unwrap();
+  size_t closed = 0;
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`.
     auto& clients = clients_opt.unwrap();
@@ -4424,26 +4434,25 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
     clients = std::move(kept);
 
     if (clients.is_empty()) {
-      cache_.remove(addr);
+      guard->cache.remove(addr);
     }
   }
-  l_.unlock();
   return closed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
 size_t ClientPool::remove_all_unhealthy() {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t total_removed = 0;
   auto cfg = config_.get();
 
   // BTreeMap::keys() now returns `keys_range` (a transient
   // iterator-shaped object), not `Vec<K>`. Drain into a Vec so the
-  // subsequent loop body — which mutates `cache_` via `remove(...)`
+  // subsequent loop body — which mutates `cache` via `remove(...)`
   // — doesn't iterate while modifying.
   rusty::Vec<std::string> keys;
   {
-    auto it = cache_.keys();
+    auto it = guard->cache.keys();
     keys.reserve(it.len());
     for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
       keys.push(std::string(opt.unwrap()));
@@ -4451,7 +4460,7 @@ size_t ClientPool::remove_all_unhealthy() {
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = cache_.get(addr);
+    auto clients_opt = guard->cache.get(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -4479,28 +4488,26 @@ size_t ClientPool::remove_all_unhealthy() {
     }
   }
   for (const auto& addr : empty_keys) {
-    cache_.remove(addr);
+    guard->cache.remove(addr);
   }
-  l_.unlock();
   return total_removed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
 size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
-  l_.lock();
-  size_t total_closed = 0;
   auto cfg = config_.get();
-
   if (cfg.idle_timeout_ms == 0) {
-    l_.unlock();
     return 0;
   }
+
+  auto guard = state_.lock().unwrap();
+  size_t total_closed = 0;
 
   // same drain pattern as remove_all_unhealthy above —
   // BTreeMap::keys() returns a transient `keys_range`.
   rusty::Vec<std::string> keys;
   {
-    auto it = cache_.keys();
+    auto it = guard->cache.keys();
     keys.reserve(it.len());
     for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
       keys.push(std::string(opt.unwrap()));
@@ -4508,7 +4515,7 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = cache_.get(addr);
+    auto clients_opt = guard->cache.get(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -4535,33 +4542,31 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
     }
   }
   for (const auto& addr : empty_keys) {
-    cache_.remove(addr);
+    guard->cache.remove(addr);
   }
-  l_.unlock();
   return total_closed;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
 size_t ClientPool::total_client_count() {
-  l_.lock();
+  auto guard = state_.lock().unwrap();
   size_t count = 0;
   // BTreeMap iter returns `tuple<const K&, V&>`.
-  for (auto&& [_addr, clients] : cache_) {
+  for (auto&& [_addr, clients] : guard->cache) {
     count += clients.size();
   }
-  l_.unlock();
   return count;
 }
 
-// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
+// @safe - SpinMutex::lock + BTreeMap::len are @safe.
 size_t ClientPool::address_count() {
-  l_.lock();
-  size_t count = cache_.len();
-  l_.unlock();
-  return count;
+  auto guard = state_.lock().unwrap();
+  return guard->cache.len();
 }
 
-// @unsafe - Reconnects all clients for a specific address
+// @unsafe - Async reconnect loop uses nanosleep + std::atomic for batching.
+// The state_ access at the top is @safe; the reconnection driver below is
+// what makes this function unsafe overall.
 ClientPool::BulkReconnectResult ClientPool::reconnect_all(
     const std::string& addr, const BulkReconnectConfig& config) {
 
@@ -4570,8 +4575,8 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
   // Collect clients to reconnect
   rusty::Vec<rusty::Arc<Client>> clients_to_reconnect;
   {
-    l_.lock();
-    auto clients_opt = cache_.get(addr);
+    auto guard = state_.lock().unwrap();
+    auto clients_opt = guard->cache.get(addr);
     if (clients_opt.is_some()) {
       // BTreeMap::get returns `Option<V&>`.
       auto& clients = clients_opt.unwrap();
@@ -4584,7 +4589,6 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
         }
       }
     }
-    l_.unlock();
   }
 
   result.total = clients_to_reconnect.size() + result.skipped;
@@ -4619,11 +4623,7 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
         }
       }
       if (!all_done) {
-        // @unsafe { nanosleep }
-        struct timespec ts;
-        ts.tv_sec = 0;
-        ts.tv_nsec = 1000000;  // 1ms
-        nanosleep(&ts, nullptr);
+        rusty::sys::time::sleep_us(1000);  // 1ms
       }
     }
 
@@ -4640,30 +4640,27 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(
 
     // Delay between batches
     if (config.delay_between_ms > 0 && i < clients_to_reconnect.size()) {
-      // @unsafe { nanosleep }
-      struct timespec ts;
-      ts.tv_sec = config.delay_between_ms / 1000;
-      ts.tv_nsec = (config.delay_between_ms % 1000) * 1000000;
-      nanosleep(&ts, nullptr);
+      rusty::sys::time::sleep_us(
+          static_cast<std::uint64_t>(config.delay_between_ms) * 1000);
     }
   }
 
   return result;
 }
 
-// @unsafe - Reconnects all clients across all addresses
+// @unsafe - Delegates to per-address reconnect_all which has the async
+// driver. The state_ snapshot taken at the top is @safe.
 ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectConfig& config) {
   BulkReconnectResult total_result{0, 0, 0, 0};
 
   // Get list of addresses
   rusty::Vec<std::string> addresses;
   {
-    l_.lock();
+    auto guard = state_.lock().unwrap();
     // BTreeMap iter returns `tuple<const K&, V&>`.
-    for (auto&& [addr, _clients] : cache_) {
+    for (auto&& [addr, _clients] : guard->cache) {
       addresses.push(addr);
     }
-    l_.unlock();
   }
 
   // Reconnect each address
@@ -4678,25 +4675,25 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
   return total_result;
 }
 
-// @unsafe - Gets cached or creates new client connections
-// Now includes health checking, automatic reconnection, and load balancing
+// @unsafe - Drives Client::connect / reconnect synchronously; the state_
+// lock + BTreeMap ops are @safe but the network I/O underneath is not.
 rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
   auto cfg = config_.get();
   int num_connections = cfg.min_connections;
 
-  l_.lock();
+  auto guard = state_.lock().unwrap();
 
   // Get or create load balancer state for this address
-  auto lb_state_opt = lb_state_.get(addr);
+  auto lb_state_opt = guard->lb_state.get(addr);
   if (lb_state_opt.is_none()) {
-    lb_state_.insert(addr, LoadBalancerState{});
-    lb_state_opt = lb_state_.get(addr);
+    guard->lb_state.insert(addr, LoadBalancerState{});
+    lb_state_opt = guard->lb_state.get(addr);
   }
   // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
   auto& lb_state = lb_state_opt.unwrap();
 
-  auto clients_opt = cache_.get(addr);
+  auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
     auto& clients = clients_opt.unwrap();
     int client_count = static_cast<int>(clients.size());
@@ -4760,7 +4757,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
         sp_cl = rusty::Some(clients[rand_() % clients.size()].clone());
       } else {
         // Remove from cache if we can't connect
-        cache_.remove(addr);
+        guard->cache.remove(addr);
       }
     }
   } else {
@@ -4778,11 +4775,10 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     }
     if (ok) {
       sp_cl = rusty::Some(parallel_clients[rand_() % parallel_clients.size()].clone());
-      cache_.insert(addr, std::move(parallel_clients));
+      guard->cache.insert(addr, std::move(parallel_clients));
     }
     // If not ok, parallel_clients automatically cleaned up by Arc
   }
-  l_.unlock();
   return sp_cl;
 }
 

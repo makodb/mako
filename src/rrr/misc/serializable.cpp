@@ -25,6 +25,12 @@ import rrr.basetypes;
 import rrr.debugging;
 import rrr.threading;
 
+// @safe - Sink/Source/Archive layers + Serializable proxy machinery.
+// Most classes are interfaces or pure dispatch through `SinkProxy` /
+// `SourceProxy`. Genuinely-unsafe shells (raw fd + libc syscalls,
+// raw `const uint8_t*` source storage, std::shared_ptr<T> holder, void*
+// memcpy in archive primitives) carry per-class `// @unsafe` overrides
+// or inline `// @unsafe { }` blocks below.
 export namespace rrr {
 
 // `MarshalSink` / `MarshalSource` (formerly here) now live in
@@ -1026,6 +1032,11 @@ struct TypeList {
 // ============================================================================
 // SerializableRegistry implementation (formerly in serializable.cpp).
 // ============================================================================
+// @safe - Implementation namespace. The anon-namespace `registry()`
+// helper has its own per-function `// @unsafe` (returns a reference
+// to a process-wide singleton; rusty-cpp can't express `'static`
+// lifetimes). All other functions are lock+map dispatch through the
+// SpinMutex<SerializableRegistryMap> guard.
 namespace rrr {
 
 namespace {
@@ -1034,6 +1045,11 @@ struct SerializableRegistryMap {
   rusty::HashMap<int32_t, SerializableRegistry::Factory> map;
 };
 
+// @unsafe - Returns a reference into a process-wide static singleton; the
+// caller treats the returned reference as `'static`-lifetime, which rusty-cpp
+// doesn't express. Marked @unsafe rather than @safe so the analyzer doesn't
+// demand a `@lifetime: () -> &'a where 'a: 'static` annotation it can't yet
+// model.
 SpinMutex<SerializableRegistryMap>& registry() {
   static SpinMutex<SerializableRegistryMap> r;
   return r;
@@ -1050,7 +1066,7 @@ SerializableProxy SerializableRegistry::create(int32_t kind) {
   auto guard = registry().lock().unwrap();
   auto entry = guard->map.get(kind);
   verify(entry.is_some());
-  return (*entry.unwrap())();
+  return entry.unwrap()();
 }
 
 bool SerializableRegistry::is_registered(int32_t kind) {

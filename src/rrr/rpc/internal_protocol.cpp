@@ -6,6 +6,8 @@ export module rrr.internal_protocol;
 
 import std;
 
+// @safe - Wire-protocol constants + pure constexpr bit-twiddling helpers.
+// No raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
 constexpr int32_t kInternalHeartbeatRpcId = std::numeric_limits<int32_t>::min();

@@ -4,6 +4,9 @@ export module rrr.errors;
 
 import std;
 
+// @safe - RPC error enums + classification helpers. Pure switch tables
+// + std::string formatting; no raw pointers, syscalls, or operator
+// overload chains.
 export namespace rrr {
 
 enum class RpcErrorCategory : int {

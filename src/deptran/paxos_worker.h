@@ -360,7 +360,6 @@ public:
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
   // Services are now owned by rpc_server_ via reg_service()
   rrr::Server* rpc_server_ = nullptr;
-  rusty::Arc<base::ThreadPool> thread_pool_g{nullptr};
   // removed `std::atomic<int> submit_num{0};`
   // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
   // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
@@ -378,7 +377,6 @@ public:
   rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   rrr::Server* hb_rpc_server_ = nullptr;
-  rusty::Arc<base::ThreadPool> hb_thread_pool_g{nullptr};
 
   Config::SiteInfo* site_info_ = nullptr;
   std::queue<std::tuple<int, int, int, int, const char *>> un_replay_logs_ ;  // timestamp, slot_id, status, len, log

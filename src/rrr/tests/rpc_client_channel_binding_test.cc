@@ -59,7 +59,7 @@ class NullChannelStubAdapter : public ChannelConnectionBase {
 };
 
 inline ChannelConnectionProxy make_stub_channel_proxy() {
-    return std::make_unique<NullChannelStubAdapter>(
+    return rusty::make_box<NullChannelStubAdapter>(
         std::make_shared<NullChannelStub>());
 }
 
@@ -98,18 +98,11 @@ TEST_F(ClientChannelBindingTest, ChannelModeStartsFalse) {
 }
 
 // ---------------------------------------------------------------------------
-// bind_channel with a null proxy is a no-op.
-// ---------------------------------------------------------------------------
-
-TEST_F(ClientChannelBindingTest, BindChannelWithNullProxyIsNoop) {
-    EXPECT_FALSE(conn().is_channel_mode());
-    mut_conn().bind_channel(ChannelConnectionProxy{});
-    EXPECT_FALSE(conn().is_channel_mode());
-}
-
-// ---------------------------------------------------------------------------
 // bind_channel with a non-null proxy flips the latch.
 // ---------------------------------------------------------------------------
+// (The legacy "null proxy is a no-op" test is gone — ChannelConnectionProxy
+// is now `rusty::Box<ChannelConnectionBase>` and cannot be default-
+// constructed, so the type system enforces non-null at the call site.)
 
 TEST_F(ClientChannelBindingTest, BindChannelWithStubFlipsLatch) {
     EXPECT_FALSE(conn().is_channel_mode());

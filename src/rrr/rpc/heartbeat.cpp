@@ -56,6 +56,9 @@ struct HeartbeatConfig {
     }
 };
 
+// @safe - Heartbeat tracker. Fields are rusty::Cell<T> for trivially-
+// copyable interior mutability + rusty::Function<void()> for the timeout
+// callback. No raw pointers, syscalls, or operator-overload chains.
 class HeartbeatManager {
 private:
     HeartbeatConfig config_;

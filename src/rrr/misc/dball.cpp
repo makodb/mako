@@ -9,8 +9,13 @@ export module rrr.dball;
 import std;
 import rrr.debugging;
 
+// @safe - DragonBall: counter-trigger that calls a stored
+// `rusty::Function` once `n_ready_` reaches `n_wait_`. The only
+// genuinely unsafe op is the `delete this` self-destruct at the end
+// of `trigger()`, which carries an inline `// @unsafe { }` block.
 export namespace rrr {
 
+// @safe - see file header.
 class DragonBall {
 
  public:
@@ -49,7 +54,11 @@ class DragonBall {
       verify(!called_);
       called_ = true;
       wish_();
-      delete this;
+      // @unsafe { self-destructing trigger; DragonBall::trigger is the
+      //           single owner so the delete is final by construction. }
+      {
+        delete this;
+      }
     }
     return ready;
   }

@@ -75,13 +75,14 @@ struct IdempotencyKeyHash {
 };
 
 // Marshal operators for IdempotencyKey
-// @unsafe { Marshal operations use raw pointers }
+// @safe - Marshal::operator<< / operator>> overloads are @safe via the
+// rrr namespace + class annotation.
 inline Marshal& operator<<(Marshal& m, const IdempotencyKey& key) {
     m << key.client_id << key.sequence;
     return m;
 }
 
-// @unsafe { Marshal operations use raw pointers }
+// @safe - see operator<< above.
 inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) {
     m >> key.client_id >> key.sequence;
     return m;
@@ -194,10 +195,12 @@ struct CachedResponse {
 // ===========================================================================
 
 /**
- * @safe - Thread-safe generator for unique idempotency keys
+ * Thread-safe generator for unique idempotency keys.
  *
  * Each client should have its own generator with a unique client_id.
  */
+// @safe - Uses rusty::Cell for thread-safe interior mutability;
+// no raw pointers, syscalls, or operator-overload chains.
 class IdempotencyKeyGenerator {
     rusty::Cell<uint64_t> client_id_{0};
     rusty::Cell<uint64_t> sequence_{0};
@@ -246,6 +249,9 @@ public:
  *   4. Store response in cache
  *   5. Return response
  */
+// @safe - LRU cache backed by rusty::Mutex<State> with rusty::Cell for
+// config. The Marshal-bearing cached response is moved through @unsafe
+// blocks at the boundary; the rest of the class is @safe.
 class IdempotencyCache {
     // Configuration (Cell for interior mutability)
     rusty::Cell<IdempotencyConfig> config_;
@@ -311,7 +317,7 @@ public:
             misses_.set(misses_.get() + 1);
             return false;
         }
-        auto list_it = *map_it.unwrap();
+        auto list_it = map_it.unwrap();
 
         // Check TTL
         auto& entry = *list_it;
@@ -365,7 +371,7 @@ public:
         // Check if key already exists
         auto existing = map_guard->get(key);
         if (existing.is_some()) {
-            auto list_it = *existing.unwrap();
+            auto list_it = existing.unwrap();
             // Update existing entry
             auto& entry = *list_it;
             entry.error_code = error_code;
@@ -408,7 +414,7 @@ public:
         if (map_it.is_none()) {
             return false;
         }
-        auto list_it = *map_it.unwrap();
+        auto list_it = map_it.unwrap();
 
         auto list_guard = lru_list_.lock().unwrap();
         list_guard->erase(list_it);

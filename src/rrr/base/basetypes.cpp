@@ -10,6 +10,13 @@ export module rrr.basetypes;
 
 import std;
 
+// @safe - POD/value-type helpers + small classes (SparseInt, v32/v64,
+// NoCopy, Counter, Time, Timer, Rand, Enumerator, MergedEnumerator).
+// Time / Timer time syscalls (clock_gettime, gettimeofday, nanosleep)
+// now flow through `rusty::sys::time::*` helpers (each itself @safe
+// with an inner @unsafe block). The remaining per-method `// @unsafe`
+// overrides cover raw `char*` byte slicing via `reinterpret_cast<char*>`
+// and `pthread_self`-based hashing in `Rand`.
 export namespace rrr {
 
 template<typename T>
@@ -76,30 +83,6 @@ public:
     NoCopy& operator=(NoCopy&&) = default;
 };
 
-class RefCounted {
-    std::atomic<int> refcnt_;
-protected:
-    virtual ~RefCounted() = 0;
-public:
-    RefCounted(): refcnt_(1) {}
-    int ref_count() const {
-        return atomic_load_relaxed(refcnt_);
-    }
-    RefCounted* ref_copy() {
-        atomic_fetch_add_acq_rel(refcnt_, 1);
-        return this;
-    }
-    int release() {
-        int r = atomic_fetch_sub_acq_rel(refcnt_, 1) - 1;
-        if (r < 0) std::abort();
-        if (r == 0) {
-            delete this;
-        }
-        return r;
-    }
-};
-inline RefCounted::~RefCounted() {}
-
 class Counter: public NoCopy {
     std::atomic<i64> next_;
 public:
@@ -119,25 +102,22 @@ class Time {
 public:
     static const uint64_t RRR_USEC_PER_SEC = 1000000;
 
+    // @safe - delegates to rusty::sys::time::clock_*_us(), each of
+    // which wraps its clock_gettime call in an inner @unsafe block.
     static uint64_t now(bool accurate = false) {
-      struct timespec spec;
 #ifdef __APPLE__
-      clock_gettime(CLOCK_REALTIME, &spec );
+        return rusty::sys::time::clock_realtime_us();
 #else
-      if (accurate) {
-        clock_gettime(CLOCK_MONOTONIC, &spec);
-      } else {
-        clock_gettime(CLOCK_REALTIME_COARSE, &spec);
-      }
+        return accurate ? rusty::sys::time::clock_monotonic_us()
+                        : rusty::sys::time::clock_realtime_coarse_us();
 #endif
-      return spec.tv_sec * RRR_USEC_PER_SEC + spec.tv_nsec/1000;
     }
 
+    // @safe - delegates to rusty::sys::time::sleep_us, which wraps
+    // nanosleep in an inner @unsafe block. (Replaces the historical
+    // select(0,NULL,NULL,NULL,&tv) sleep idiom.)
     static void sleep(uint64_t t) {
-        struct timeval tv;
-        tv.tv_usec = t % RRR_USEC_PER_SEC;
-        tv.tv_sec = t / RRR_USEC_PER_SEC;
-        select(0, NULL, NULL, NULL, &tv);
+        rusty::sys::time::sleep_us(t);
     }
 };
 
@@ -199,6 +179,8 @@ class MergedEnumerator: public Enumerator<T> {
     rusty::Vec<merge_helper> q_;
 
 public:
+    // @unsafe - takes raw `Enumerator<T>*`; calls std::push_heap on raw
+    // iterator pair.
     void add_source(Enumerator<T>* src) {
         if (src && src->has_next()) {
             q_.push(merge_helper(src->next(), src));
@@ -210,6 +192,8 @@ public:
     bool has_next() override {
         return !q_.is_empty();
     }
+    // @unsafe - raw `Enumerator<T>*` dereference + std::pop/push_heap on
+    // raw iterator pairs.
     T next() override {
         if (q_.is_empty()) std::abort();
         std::pop_heap(q_.begin(), q_.end());
@@ -226,6 +210,11 @@ public:
 
 } // export namespace rrr
 
+// @safe - impl block: buf_size/val_size are pure switch math; the
+// dump/load_* methods do `reinterpret_cast<char*>` + raw `char*`
+// byte slicing so they carry per-method `// @unsafe`; Timer::* and
+// Rand::* hit `gettimeofday` / `pthread_self` and carry per-method
+// `// @unsafe`.
 namespace rrr {
 
 size_t SparseInt::buf_size(char byte0) {
@@ -272,6 +261,7 @@ size_t SparseInt::val_size(i64 val) {
     }
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 size_t SparseInt::dump(i32 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -313,6 +303,7 @@ size_t SparseInt::dump(i32 val, char* buf) {
     }
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 size_t SparseInt::dump(i64 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -395,6 +386,7 @@ size_t SparseInt::dump(i64 val, char* buf) {
     }
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 i32 SparseInt::load_i32(const char* buf) {
     i32 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -418,6 +410,7 @@ i32 SparseInt::load_i32(const char* buf) {
     return val;
 }
 
+// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
 i64 SparseInt::load_i64(const char* buf) {
     i64 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -445,13 +438,20 @@ Timer::Timer() : begin_(), end_() {
     reset();
 }
 
+// @safe - delegates to rusty::sys::time::gettimeofday_us, which wraps
+// gettimeofday(2) in an inner @unsafe block.
 void Timer::start() {
     reset();
-    gettimeofday(&begin_, nullptr);
+    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
+    begin_.tv_sec  = static_cast<time_t>(now / 1000000);
+    begin_.tv_usec = static_cast<suseconds_t>(now % 1000000);
 }
 
+// @safe - delegates to rusty::sys::time::gettimeofday_us.
 void Timer::stop() {
-    gettimeofday(&end_, nullptr);
+    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
+    end_.tv_sec  = static_cast<time_t>(now / 1000000);
+    end_.tv_usec = static_cast<suseconds_t>(now % 1000000);
 }
 
 void Timer::reset() {
@@ -461,25 +461,32 @@ void Timer::reset() {
     end_.tv_usec = 0;
 }
 
+// @safe - live-elapsed branch delegates to rusty::sys::time::gettimeofday_us.
 double Timer::elapsed() const {
     if (begin_.tv_sec == 0 && begin_.tv_usec == 0) std::abort();
     if (end_.tv_sec == 0 && end_.tv_usec == 0) {
-        struct timeval now;
-        gettimeofday(&now, nullptr);
-        return now.tv_sec - begin_.tv_sec + (now.tv_usec - begin_.tv_usec) / 1000000.0;
+        const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
+        const std::uint64_t begin_us =
+            static_cast<std::uint64_t>(begin_.tv_sec) * 1000000 + begin_.tv_usec;
+        return static_cast<double>(now_us - begin_us) / 1000000.0;
     }
     return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
+// @safe - all three seed contributors flow through @safe wrappers:
+// gettimeofday_us, pthread::current_id_hash, and the reinterpret_cast
+// of `this` (mod address-of-this — wrapped inline below since
+// uintptr_t-from-pointer is @unsafe by the rusty-cpp pointer-safety rules).
 Rand::Rand() : rand_() {
-    struct timeval now;
-    gettimeofday(&now, nullptr);
+    const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
     const auto thread_hash =
-        static_cast<long long>(std::hash<pthread_t>{}(pthread_self()));
-    const auto this_hash =
-        static_cast<long long>(reinterpret_cast<uintptr_t>(this));
-    rand_.seed(static_cast<long long>(now.tv_sec) +
-               static_cast<long long>(now.tv_usec) + thread_hash + this_hash);
+        static_cast<long long>(rusty::sys::pthread::current_id_hash());
+    long long this_hash;
+    // @unsafe { reinterpret_cast<uintptr_t>(this) — pointer-to-int cast }
+    {
+        this_hash = static_cast<long long>(reinterpret_cast<uintptr_t>(this));
+    }
+    rand_.seed(static_cast<long long>(now_us) + thread_hash + this_hash);
 }
 
 } // namespace rrr

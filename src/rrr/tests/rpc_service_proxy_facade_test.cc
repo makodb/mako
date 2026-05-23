@@ -168,7 +168,7 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationUsesProxyBackedPendingStorage)
 
   auto rpc_it = server.pending_rpc_to_service_.get(CountingService::RPC_ID);
   ASSERT_TRUE(rpc_it.is_some());
-  EXPECT_EQ(*rpc_it.unwrap(), 0u);
+  EXPECT_EQ(rpc_it.unwrap(), 0u);
 
   auto req = rusty::make_box<Request>();
   req->xid = 88;
@@ -197,7 +197,7 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationAcceptsTypedServiceWithoutInhe
 
   auto rpc_it = server.pending_rpc_to_service_.get(TypedCountingService::RPC_ID);
   ASSERT_TRUE(rpc_it.is_some());
-  EXPECT_EQ(*rpc_it.unwrap(), 0u);
+  EXPECT_EQ(rpc_it.unwrap(), 0u);
 
   auto req = rusty::make_box<Request>();
   req->xid = 99;

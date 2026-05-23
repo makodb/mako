@@ -31,7 +31,6 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/dball.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/netinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
@@ -95,31 +94,72 @@ if(NOT TARGET rrr)
     target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
     target_link_libraries(rrr pthread)
 
-    # RRR files for borrow checking (explicit list to control what gets checked)
+    # RRR files for borrow checking — every non-test C++ module unit in rrr
+    # except for the two genuine exclusions called out at the bottom.
     set(RRR_BORROW_SRC
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber_impl.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/event.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/quorum_event.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cc
-        # base/logging.cpp omitted — module unit.
-        # base/misc.cpp omitted — module unit.
-        # base/basetypes.cpp omitted — module unit (see RRR_MODULE_SRC).
-        # base/debugging.cpp omitted — module unit.
+        # base/
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/basetypes.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/callback_wrapper.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/debugging.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/logging.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/misc.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
+        # misc/
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/alarm.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
-        # misc/any_message.cpp omitted — module unit.
-        # misc/marshal.cpp omitted — module unit.
-        # base/strop.cpp omitted — converted to a C++23 module interface
-        # unit (see RRR_MODULE_SRC). rusty-cpp cannot resolve module
-        # imports yet; revisit when the checker handles BMI paths.
-        # base/unittest.cpp omitted — module unit.
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/dball.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
-        # removed misc/recorder.cpp — class
-        # deleted; was unused after Phase 4e-35.
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable_envelope.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/stat.cpp
+        # reactor/ — (fiber_impl.cc, event.cc, quorum_event.cc, reactor.cc were
+        # merged into rrr.reactor / reactor.cpp during modularization.)
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_wrapper.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/fiber.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/future.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/reactor/reactor.cpp
+        # rpc/
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/callbacks.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/circuit_breaker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/client.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/completion_tracker.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_metrics.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/connection_state.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/errors.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/fiber_channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/frame_codec.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/heartbeat.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/idempotency.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/inmemory_channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/internal_protocol.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/load_balancer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/pollable_proxy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/reconnect_policy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_options.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/request_queue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/server.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/tcp_channel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
+        # Notes on parse-recovery:
+        # - rpc/server.cpp and rpc/fiber_channel.cpp trip a libclang-22 crash
+        #   on the first parse attempt (clang++ CLI compiles them fine — it's
+        #   a libclang-specific bug). rusty-cpp's parser detects the crash
+        #   and retries with module args dropped (keeps `import std;` only),
+        #   producing a partial AST. Findings against these two files are
+        #   missing cross-module callee-name resolution, so they show up as
+        #   `Calling non-safe function 'unknown'` and may include false
+        #   positives. Once upstream libclang is fixed the recovery will
+        #   become a no-op and findings will gain full precision.
+        # Exclusions (each with a reason):
+        # - reactor/fiber_context_{aarch64,x86_64}.cc: arch-specific inline
+        #   `__asm__ volatile(...)` context-switch trampolines (~30 lines
+        #   each). C++ semantics don't reach them.
     )
 
     if(ENABLE_BORROW_CHECKING AND RRR_BORROW_SRC)
@@ -133,6 +173,26 @@ if(NOT TARGET rrr)
         target_compile_options(rrr_borrow PUBLIC ${RRR_CXXFLAGS})
 
         add_borrow_check_target(rrr_borrow)
+
+        # The rrr target owns the FILE_SET CXX_MODULES and is what emits the
+        # per-source `.o.modmap` response files (which list `-fmodule-file=`
+        # for every dependent BMI) plus the BMIs themselves. If we run the
+        # borrow checks before `rrr` has compiled, libclang sees neither —
+        # parses proceed with "module 'std' not found" warnings and degraded
+        # analysis. Force each individual check target to depend on the
+        # `rrr` library target so ninja serializes them after BMI emission.
+        # (Adding the dep only to `borrow_check_all_rrr_borrow` is not enough
+        # — that's an aggregate, but ninja can still parallelize each per-file
+        # check target without seeing the group-level dep.)
+        foreach(_BORROW_SRC ${RRR_BORROW_SRC})
+            if(_BORROW_SRC MATCHES "\\.(cpp|cc|cxx)$")
+                get_filename_component(_BORROW_FILE_NAME ${_BORROW_SRC} NAME_WE)
+                set(_BORROW_CHECK_NAME "borrow_check_rrr_borrow_${_BORROW_FILE_NAME}")
+                if(TARGET ${_BORROW_CHECK_NAME})
+                    add_dependencies(${_BORROW_CHECK_NAME} rrr)
+                endif()
+            endif()
+        endforeach()
 
         add_custom_target(borrow_check_rrr
             DEPENDS borrow_check_all_rrr_borrow

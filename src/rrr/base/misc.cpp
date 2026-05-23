@@ -2,6 +2,8 @@ module;
 
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
+#include <rusty/sys/process.hpp>
+#include <rusty/sys/time.hpp>
 
 #include <limits.h>
 #include <stdio.h>
@@ -15,8 +17,15 @@ export module rrr.misc;
 import std;
 import rrr.basetypes;
 
+// @safe - mostly templated helpers (clamp, insert_into_map, erase) +
+// Job/OneTimeJob/FrequentJob value classes. The syscall-touching
+// functions (`rdtsc`, `time_now_str`, `get_ncpu`, `get_exec_path`,
+// `getline`, the static `make_int` byte-writer) and
+// `FrequentJob::Ready` (calls rrr::Time::now()) carry per-method
+// `// @unsafe` overrides.
 export namespace rrr {
 
+// @unsafe - inline `rdtsc` / aarch64 `mrs` asm.
 inline uint64_t rdtsc() {
 #if defined(__i386__) || defined(__x86_64__)
   uint32_t hi, lo;
@@ -95,6 +104,7 @@ public:
   uint64_t period_ = 0;
 
   virtual ~FrequentJob() {}
+  // @safe - rrr::Time::now() flows through rusty::sys::time::clock_*_us.
   virtual bool Ready() override {
     uint64_t tm_now = rrr::Time::now();
     uint64_t s = tm_now - tm_last_;
@@ -116,8 +126,12 @@ public:
 
 } // export namespace rrr
 
+// @safe - impl namespace. Every function below carries its own
+// per-method `// @unsafe` because they all touch syscalls or raw
+// `char*` buffers; the namespace label is here for future helpers.
 namespace rrr {
 
+// @unsafe - writes digits into a caller-supplied raw `char*` buffer.
 static void make_int(char* str, int val, int digits) {
     char* p = str + digits;
     for (int i = 0; i < digits; i++) {
@@ -128,6 +142,8 @@ static void make_int(char* str, int val, int digits) {
     }
 }
 
+// @unsafe - time() + localtime_r syscalls, gettimeofday, and raw
+// `char* now` byte-buffer indexing through make_int.
 void time_now_str(char* now) {
     time_t seconds_since_epoch = time(nullptr);
     struct tm local_calendar;
@@ -150,16 +166,23 @@ void time_now_str(char* now) {
     now[23] = '\0';
 }
 
+// @safe - rusty::sys::process::sysconf is @safe.
 int get_ncpu() {
-    return sysconf(_SC_NPROCESSORS_ONLN);
+    return static_cast<int>(
+        rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN));
 }
 
+// @unsafe - static `char[PATH_MAX]` buffer, snprintf, readlink syscall,
+// returns raw `const char*` into static storage. (getpid is now @safe
+// via rusty::sys::process::getpid, but the buffer/readlink plumbing
+// keeps the function as a whole @unsafe.)
 const char* get_exec_path() {
     static char path[PATH_MAX];
     static bool ready = false;
     if (!ready) {
         char link[PATH_MAX];
-        snprintf(link, sizeof(link), "/proc/%d/exe", getpid());
+        snprintf(link, sizeof(link), "/proc/%d/exe",
+                 rusty::sys::process::getpid());
         int ret = readlink(link, path, sizeof(path));
         if (ret != -1) {
             path[ret] = '\0';
@@ -171,6 +194,8 @@ const char* get_exec_path() {
     return path;
 }
 
+// @unsafe - getdelim allocates the `char* buf` via malloc, hand-managed
+// by `free(buf)` at the end. Raw `char*` plumbing throughout.
 std::string getline(FILE* fp, char delim) {
     char* buf = nullptr;
     size_t n = 0;

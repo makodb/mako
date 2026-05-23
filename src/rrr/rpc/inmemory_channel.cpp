@@ -18,6 +18,15 @@ import rrr.debugging;
 import rrr.logging;
 import rrr.threading;
 
+// @safe - in-memory channel backend. Switchboard + Listener bodies use
+// SpinMutex + rusty::HashMap + rusty::Weak (all safe). InMemoryChannel
+// and the four `*Adapter` shims thread through const_cast helpers
+// (`mut_state` / `mut_conn` / `mut_listener` / `mut_factory`) and
+// `send_frame` does raw `uint8_t*` byte slicing — those methods carry
+// per-method `// @unsafe` below. InMemoryListener::accept_for_connect,
+// InMemoryFactory::connect/make_listener, and the test helper
+// make_channel_pair_for_testing also const_cast inline and are
+// `// @unsafe`.
 export namespace rrr {
 
 
@@ -216,6 +225,7 @@ class InMemoryChannel {
     // The state is held by Arc; both halves of the pair share it.
     // Arc::operator-> returns a const-pointer, so all mutation goes
     // through `mut_state()` which const_casts to a mutable reference.
+    // @unsafe - const_cast through Arc::get<T*>().
     InMemoryConnectionState& mut_state() const {
         return const_cast<InMemoryConnectionState&>(*state_.get());
     }
@@ -231,16 +241,25 @@ class InMemoryChannelAdapter : public ChannelConnectionBase {
     explicit InMemoryChannelAdapter(rusty::Arc<InMemoryChannel> conn)
         : conn_(std::move(conn)) {}
 
+    // @unsafe - forwards through mut_conn() const_cast.
     ChannelError send_frame(const ChannelFrame& f) override { return mut_conn().send_frame(f); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         flush() override              { mut_conn().flush(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         close() override              { mut_conn().close(); }
+    // @unsafe - forwards through conn_-> to InMemoryChannel::is_closed which calls mut_state.
     bool         is_closed() const override    { return conn_->is_closed(); }
+    // @unsafe - forwards through conn_-> to InMemoryChannel::peer_address which calls mut_state.
     std::string  peer_address() const override { return conn_->peer_address(); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         set_on_frame (OnFrameCallback  cb) override { mut_conn().set_on_frame (std::move(cb)); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         set_on_closed(OnClosedCallback cb) override { mut_conn().set_on_closed(std::move(cb)); }
+    // @unsafe - forwards through mut_conn() const_cast.
     void         set_on_error (OnErrorCallback  cb) override { mut_conn().set_on_error (std::move(cb)); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     InMemoryChannel& mut_conn() {
         return const_cast<InMemoryChannel&>(*conn_.get());
     }
@@ -249,7 +268,7 @@ class InMemoryChannelAdapter : public ChannelConnectionBase {
 
 inline ChannelConnectionProxy make_inmemory_channel_proxy(
         rusty::Arc<InMemoryChannel> conn) {
-    return std::make_unique<InMemoryChannelAdapter>(std::move(conn));
+    return rusty::make_box<InMemoryChannelAdapter>(std::move(conn));
 }
 
 // ---------------------------------------------------------------------------
@@ -321,14 +340,19 @@ class InMemoryListenerAdapter : public ChannelListenerBase {
     explicit InMemoryListenerAdapter(rusty::Arc<InMemoryListener> listener)
         : listener_(std::move(listener)) {}
 
+    // @unsafe - forwards through mut_listener() const_cast.
     ChannelError listen(std::string_view addr) override { return mut_listener().listen(addr); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void         close() override              { mut_listener().close(); }
     bool         is_closed() const override    { return listener_->is_closed(); }
     std::string  local_address() const override { return listener_->local_address(); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void set_on_accept(OnAcceptCallback cb) override { mut_listener().set_on_accept(std::move(cb)); }
+    // @unsafe - forwards through mut_listener() const_cast.
     void set_on_error (OnErrorCallback  cb) override { mut_listener().set_on_error (std::move(cb)); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     InMemoryListener& mut_listener() {
         return const_cast<InMemoryListener&>(*listener_.get());
     }
@@ -337,7 +361,7 @@ class InMemoryListenerAdapter : public ChannelListenerBase {
 
 inline ChannelListenerProxy make_inmemory_listener_proxy(
         rusty::Arc<InMemoryListener> listener) {
-    return std::make_unique<InMemoryListenerAdapter>(std::move(listener));
+    return rusty::make_box<InMemoryListenerAdapter>(std::move(listener));
 }
 
 // ---------------------------------------------------------------------------
@@ -371,9 +395,9 @@ class InMemoryFactory {
     InMemoryFactory& operator=(InMemoryFactory&&)      = delete;
 
     // ChannelFactoryBase methods.
-    ConnectResult        connect(std::string_view addr);
-    ChannelListenerProxy make_listener();
-    const char*          backend_name() const { return "inmemory"; }
+    ConnectResult                       connect(std::string_view addr);
+    rusty::Option<ChannelListenerProxy> make_listener();
+    const char*                         backend_name() const { return "inmemory"; }
 
     // Switchboard accessor (test introspection).
     const rusty::Arc<InMemorySwitchboard>& switchboard() const {
@@ -389,11 +413,14 @@ class InMemoryFactoryAdapter : public ChannelFactoryBase {
     explicit InMemoryFactoryAdapter(rusty::Arc<InMemoryFactory> factory)
         : factory_(std::move(factory)) {}
 
-    ConnectResult        connect(std::string_view addr) override { return mut_factory().connect(addr); }
-    ChannelListenerProxy make_listener() override                { return mut_factory().make_listener(); }
-    const char*          backend_name() const override           { return factory_->backend_name(); }
+    // @unsafe - forwards through mut_factory() const_cast.
+    ConnectResult                       connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    // @unsafe - forwards through mut_factory() const_cast.
+    rusty::Option<ChannelListenerProxy> make_listener() override                { return mut_factory().make_listener(); }
+    const char*                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
+    // @unsafe - const_cast through Arc::get<T*>().
     InMemoryFactory& mut_factory() {
         return const_cast<InMemoryFactory&>(*factory_.get());
     }
@@ -402,7 +429,7 @@ class InMemoryFactoryAdapter : public ChannelFactoryBase {
 
 inline ChannelFactoryProxy make_inmemory_factory_proxy(
         rusty::Arc<InMemoryFactory> factory) {
-    return std::make_unique<InMemoryFactoryAdapter>(std::move(factory));
+    return rusty::make_box<InMemoryFactoryAdapter>(std::move(factory));
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +458,12 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr);
 
 }  // export namespace rrr
 
+// @safe - impl namespace. InMemorySwitchboard methods are pure
+// SpinMutex + HashMap + Weak::upgrade and inherit @safe. InMemoryChannel
+// out-of-class defs route through mut_state() (@unsafe) so each carries
+// a per-method `// @unsafe`. InMemoryListener::accept_for_connect,
+// InMemoryFactory::connect/make_listener, and the test helper
+// make_channel_pair_for_testing const_cast inline and are `// @unsafe`.
 namespace rrr {
 
 // ---------------------------------------------------------------------------
@@ -462,8 +495,11 @@ InMemorySwitchboard::find_listener(const std::string& addr) const {
     if (val_opt.is_none()) {
         return rusty::None;
     }
-    // Upgrade through the pointer before any mutation invalidates it.
-    auto upgraded = val_opt.unwrap()->upgrade();
+    // Upgrade through the reference before any mutation invalidates it.
+    // HashMap::get now returns Option<V&> (V = Weak<InMemoryListener>),
+    // so unwrap() yields a reference — no raw pointer at the call site.
+    rusty::Option<rusty::Arc<InMemoryListener>> upgraded =
+        val_opt.unwrap().upgrade();
     if (upgraded.is_none()) {
         // The listener was destroyed without unregistering. Clean up.
         guard->remove(addr);
@@ -476,6 +512,8 @@ InMemorySwitchboard::find_listener(const std::string& addr) const {
 // InMemoryChannel
 // ---------------------------------------------------------------------------
 
+// @unsafe - mut_state() const_cast + raw `uint8_t*` byte slicing
+// (`bytes.assign(f.payload, f.payload + f.size)` then `bytes.data()`).
 ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
     // Default-constructed wrapper: Arc holds an empty Function; we'll
     // either reassign (wrapper copy = Arc clone, atomic refcount bump)
@@ -558,6 +596,7 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
 // 6c: fault injection methods (test-only).
 // ---------------------------------------------------------------------------
 
+// @unsafe - mut_state() const_cast.
 void InMemoryChannel::inject_drop_next_sends(int count) {
     auto guard = mut_state().inner.lock().unwrap();
     if (is_a_side_) {
@@ -567,6 +606,7 @@ void InMemoryChannel::inject_drop_next_sends(int count) {
     }
 }
 
+// @unsafe - mut_state() const_cast.
 void InMemoryChannel::inject_send_error(ChannelError err, int count) {
     auto guard = mut_state().inner.lock().unwrap();
     if (is_a_side_) {
@@ -578,6 +618,7 @@ void InMemoryChannel::inject_send_error(ChannelError err, int count) {
     }
 }
 
+// @unsafe - mut_state() const_cast.
 void InMemoryChannel::clear_fault_injection() {
     auto guard = mut_state().inner.lock().unwrap();
     if (is_a_side_) {
@@ -612,6 +653,7 @@ void InMemoryChannel::clear_fault_injection() {
 // either side is closed, so once close() returns the connection is
 // observably dead in both directions (verified by the
 // `SendFrameAfterPeerCloseReturnsReset` test).
+// @unsafe - mut_state() const_cast.
 void InMemoryChannel::close() {
     OnClosedCallback peer_on_closed;
     bool fire_peer_closed = false;
@@ -639,6 +681,7 @@ void InMemoryChannel::close() {
     }
 }
 
+// @unsafe - mut_state() const_cast.
 bool InMemoryChannel::is_closed() const {
     // 6b: report closed if EITHER side has been closed. This matches
     // the TCP backend's behavior — once the peer disconnects, the
@@ -653,23 +696,27 @@ bool InMemoryChannel::is_closed() const {
     return guard->a_closed || guard->b_closed;
 }
 
+// @unsafe - mut_state() const_cast.
 std::string InMemoryChannel::peer_address() const {
     auto guard = mut_state().inner.lock().unwrap();
     return is_a_side_ ? guard->b_peer_address : guard->a_peer_address;
 }
 
+// @unsafe - mut_state() const_cast.
 void InMemoryChannel::set_on_frame(OnFrameCallback cb) {
     auto guard = mut_state().inner.lock().unwrap();
     if (is_a_side_) guard->a_on_frame  = std::move(cb);
     else            guard->b_on_frame  = std::move(cb);
 }
 
+// @unsafe - mut_state() const_cast.
 void InMemoryChannel::set_on_closed(OnClosedCallback cb) {
     auto guard = mut_state().inner.lock().unwrap();
     if (is_a_side_) guard->a_on_closed = std::move(cb);
     else            guard->b_on_closed = std::move(cb);
 }
 
+// @unsafe - mut_state() const_cast.
 void InMemoryChannel::set_on_error(OnErrorCallback cb) {
     auto guard = mut_state().inner.lock().unwrap();
     if (is_a_side_) guard->a_on_error  = std::move(cb);
@@ -744,6 +791,9 @@ void InMemoryListener::set_on_error(OnErrorCallback cb) {
     guard->on_error = std::move(cb);
 }
 
+// @unsafe - inline `const_cast<InMemoryConnectionState*>(state.get())`
+// to bootstrap the shared connection state before the per-side Arcs
+// are constructed.
 rusty::Option<rusty::Arc<InMemoryChannel>>
 InMemoryListener::accept_for_connect(const std::string& client_address) {
     OnAcceptCallback cb_to_fire;
@@ -805,12 +855,14 @@ InMemoryListener::accept_for_connect(const std::string& client_address) {
 // InMemoryFactory
 // ---------------------------------------------------------------------------
 
+// @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
+// invoke accept_for_connect on the listener pulled out of the
+// switchboard.
 ConnectResult InMemoryFactory::connect(std::string_view addr) {
     std::string addr_str(addr);
     auto listener_opt = switchboard_->find_listener(addr_str);
     if (listener_opt.is_none()) {
-        return ConnectResult{ChannelConnectionProxy{},
-                             ChannelError::ConnectionRefused};
+        return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
     }
     auto listener = listener_opt.unwrap();
     // Use a synthesized client address. Future work could let the
@@ -824,12 +876,11 @@ ConnectResult InMemoryFactory::connect(std::string_view addr) {
     auto& mut_listener = const_cast<InMemoryListener&>(*listener.get());
     auto client_opt = mut_listener.accept_for_connect(client_address);
     if (client_opt.is_none()) {
-        return ConnectResult{ChannelConnectionProxy{},
-                             ChannelError::ConnectionRefused};
+        return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
     }
     auto client_side = client_opt.unwrap();
     return ConnectResult{
-        make_inmemory_channel_proxy(std::move(client_side)),
+        rusty::Some(make_inmemory_channel_proxy(std::move(client_side))),
         ChannelError::None,
     };
 }
@@ -838,6 +889,8 @@ ConnectResult InMemoryFactory::connect(std::string_view addr) {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+// @unsafe - inline `const_cast<InMemoryConnectionState*>(state.get())`
+// to bootstrap the shared connection state.
 std::pair<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>>
 make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
     auto state = rusty::Arc<InMemoryConnectionState>::make();
@@ -852,7 +905,9 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
     return {std::move(a_side), std::move(b_side)};
 }
 
-ChannelListenerProxy InMemoryFactory::make_listener() {
+// @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
+// wire `self_weak_` before publishing the listener.
+rusty::Option<ChannelListenerProxy> InMemoryFactory::make_listener() {
     auto listener = rusty::Arc<InMemoryListener>::make(switchboard_);
     // Wire the self-weak so the listener can register itself in the
     // switchboard. Mirrors TcpFactory::make_listener.
@@ -860,7 +915,7 @@ ChannelListenerProxy InMemoryFactory::make_listener() {
         auto& mut_l = const_cast<InMemoryListener&>(*listener.get());
         mut_l.set_self_weak(rusty::sync::downgrade(listener));
     }
-    return make_inmemory_listener_proxy(std::move(listener));
+    return rusty::Some(make_inmemory_listener_proxy(std::move(listener)));
 }
 
 
