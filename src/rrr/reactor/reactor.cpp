@@ -179,7 +179,7 @@ class IntEvent : public Event {
     return value_;
   }
 
-  // @unsafe
+  // @safe - integer assignment + virtual `test()` (itself @safe).
   int set(int n) {
     int t = value_;
     value_ = n;
@@ -1232,10 +1232,12 @@ class QuorumEvent : public Event {
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
-  // @unsafe: calls undeclared test(), Time::now(), rusty::Vec::push_back(), IntEvent::set()
+  // @safe - test(), Time::now(), rusty::Vec::push, IntEvent::set
+  // are all @safe; Cell::get on `finalize_event_->status_` is @safe.
   void vote_yes();
 
-  // @unsafe: calls undeclared test(), IntEvent::set()
+  // @safe - test() and IntEvent::set are @safe; Cell::get on
+  // `finalize_event_->status_` is @safe.
   void vote_no();
 
   bool is_ready() override {
