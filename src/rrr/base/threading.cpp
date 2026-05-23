@@ -580,10 +580,9 @@ public:
     // (which converts implicitly) or std::move an existing Function.
     int run_async(rusty::Function<void()> f);
 
-    // @unsafe - Factory uses rusty::Arc::make (non-borrow-checked)
+    // @safe - rusty::Arc::make is @safe (inner @unsafe { new } block).
     template<typename... Args>
     static rusty::Arc<ThreadPool> make(Args&&... args) {
-        // @unsafe { rusty::Arc::make is not borrow-checked }
         return rusty::Arc<ThreadPool>::make(std::forward<Args>(args)...);
     }
 };
@@ -619,10 +618,9 @@ public:
 
     double max_wait() const;
 
-    // @unsafe - Factory uses rusty::Arc::make (non-borrow-checked)
+    // @safe - rusty::Arc::make is @safe (inner @unsafe { new } block).
     template<typename... Args>
     static rusty::Arc<RunLater> make(Args&&... args) {
-        // @unsafe { rusty::Arc::make is not borrow-checked }
         return rusty::Arc<RunLater>::make(std::forward<Args>(args)...);
     }
 };
