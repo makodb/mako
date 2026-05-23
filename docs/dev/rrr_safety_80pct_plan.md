@@ -805,3 +805,24 @@ Phase 2 deferred items not yet attempted in this push:
   - Other rusty::sys::* families (epoll, pthread, process/fs beyond
     sys::fs/time) — incremental wins, see notes on the
     rusty::sys::* partial entry above.
+
+### Phase 2 follow-on — dead-code removal (2026-05-23)
+
+Survey-driven prune of code in rrr that has zero production callers:
+
+- [x] `ThreadPool` / `RunLater` / `SpinCondVar` / `Queue` from
+  `src/rrr/base/threading.cpp` — never constructed in production
+  (the deptran workers wired `ThreadPool` into fields but never
+  enqueued work). Commit `f6be7df9`. ~520 LOC.
+- [x] `NetInfo` class (`src/rrr/misc/netinfo.cpp`) — public API is
+  `NetInfo::net_stat()`, never invoked anywhere. Removed file plus
+  `import rrr.netinfo;` from rrr.hpp and the matching entries in
+  the CMake module/borrow lists. ~75 LOC.
+- [x] `ServerConnection` PollableProxy-facade stubs — `fd()`,
+  `poll_mode()`, `content_size()`, `handle_read()`, `handle_write()`,
+  `handle_error()`, `handle_free()`, `check_pending_write_update()`.
+  Comments claimed "PollableProxy facade ABI compatibility" but
+  `ServerConnection` has no base class and `make_pollable_proxy_from_typed_arc<T>`
+  is never instantiated with `T = ServerConnection`. Only callers
+  lived inside one test that exercised the no-op behavior of dead
+  code; deleted the test alongside the stubs. ~95 LOC.

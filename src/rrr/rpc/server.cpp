@@ -455,49 +455,11 @@ public:
     // Takes callback by value to avoid const-propagation issues in rusty-cpp.
     int run_async(rusty::Function<void()> f);
 
-    // @safe - 5g2: ServerConnection no longer owns an fd. Always
-    // returns -1; retained only for ABI compatibility with the
-    // PollableProxy facade.
-    int fd() const {
-        return -1;
-    }
-
-    // @safe - Returns poll mode based on output buffer
-    // Uses const_cast for interior mutability (SpinLock marked as external)
-    int poll_mode() const;
-
-    // @safe - Returns buffered input/output bytes for diagnostics.
-    size_t content_size();
-
-    // @safe - Writes buffered data to socket
-    // SAFETY: Protected by output spinlock (SpinLock marked as external)
-    // Returns new poll mode, or MODE_NO_CHANGE if no update needed
-    int handle_write();
-
-    // @safe - Reads and processes RPC requests
-    // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers,
-    // Arc for shared context, RefCell for interior mutability, Fiber::create_run for async.
-    bool handle_read();  // Batching mode: reads ALL available requests
-
-    // @safe - Error handler
-    void handle_error();
-
-    // @safe - 5g2: `pending_write_update_` field deleted; the
-    // channel layer's `TcpConnection` manages its own
-    // pending-write tracking. Always returns false; retained for
-    // ABI compatibility with the PollableProxy facade.
-    bool check_pending_write_update() const {
-        return false;
-    }
-
     // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
     bool is_closed() const {
         return status_ == CLOSED;
     }
-
-    // @safe - Explicit server-side no-op (kept for API compatibility).
-    void handle_free();
 
 private:
     // 5b: extracted reply dispatch path, kept out of the templated
@@ -1245,43 +1207,6 @@ int ServerConnection::run_async(rusty::Function<void()> f) {
   return 0;
 }
 
-// @safe - 5g2: stubbed. The legacy `in_`/`out_` Marshal buffers are
-// gone; channel mode buffers frames inside `TcpConnection`. Returns
-// 0 for ABI compatibility with PollableProxy facade conformance.
-size_t ServerConnection::content_size() {
-    return 0;
-}
-
-// @unsafe - Explicit no-op for server connection API compatibility.
-void ServerConnection::handle_free() {
-    Log_warn("rrr::ServerConnection::handle_free() is a no-op on server connections");
-}
-
-// @safe - 5g2: stubbed. ServerConnection no longer implements the
-// Pollable role — the channel layer's `TcpConnection` owns the fd
-// and drives `handle_read`/`handle_write`/`handle_error` on its own
-// pollable proxy. Inbound dispatch happens via the on_frame
-// callback installed in `bind_channel(...)` (5c). This stub remains
-// only for ABI compatibility (PollableProxy facade conformance);
-// the body is unreachable from production paths.
-bool ServerConnection::handle_read() {
-    return false;
-}
-
-// @safe - 5g2: stubbed (Pollable facade ABI only). Channel mode's
-// outbound writes go through `proxy->send_frame(...)` directly; no
-// `out_` Marshal buffer to drain.
-int ServerConnection::handle_write() {
-    return PollMode::NO_CHANGE;
-}
-
-// @safe - Error handler. In channel mode, the bound channel proxy's
-// `on_error` callback (wired in 5d) calls `close()` directly; this
-// remains for legacy callers and as a defensive entry point.
-void ServerConnection::handle_error() {
-    this->close();
-}
-
 // @safe - Closes connection.
 //
 // 5g2: legacy `::close(socket_)` block deleted (the field is gone).
@@ -1306,14 +1231,6 @@ void ServerConnection::close() {
             }
         }
     }
-}
-
-// @safe - 5g2: stubbed. The channel layer's `TcpConnection` manages
-// its own poll-mode state via `pending_write_update_` on the
-// TcpConnection itself; this `ServerConnection` Pollable accessor
-// is unreachable from production but kept for ABI compatibility.
-int ServerConnection::poll_mode() const {
-    return PollMode::READ;
 }
 
 // @unsafe - Executes callback inline for API compatibility.

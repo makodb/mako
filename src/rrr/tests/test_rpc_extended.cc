@@ -170,14 +170,6 @@ TEST(ServerApiSafetyTest, ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyC
     EXPECT_EQ(callback_count.load(), 1);
 }
 
-TEST(ServerApiSafetyTest, ServerConnectionContentSizeAndHandleFreeAreSafe) {
-    ServerConnection sconn(make_test_rpc_context(), -1);
-
-    EXPECT_EQ(sconn.content_size(), 0u);
-    sconn.handle_free();  // Explicit no-op for server side.
-    EXPECT_EQ(sconn.content_size(), 0u);
-}
-
 TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback) {
     auto req = rusty::make_box<Request>();
     req->xid = 1;

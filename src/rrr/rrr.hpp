@@ -48,7 +48,6 @@ import rrr.internal_protocol;
 import rrr.load_balancer;
 import rrr.logging;
 import rrr.misc;
-import rrr.netinfo;
 import rrr.pollable_proxy;
 import rrr.rand;
 import rrr.reactor;
