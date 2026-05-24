@@ -3,7 +3,7 @@
 using namespace janus;
 
 // @unsafe - Stores non-owning raw pointer
-ConfigManager::ConfigManager(ReplicatedDB* db) : db_(db) {}
+ConfigManager::ConfigManager(ReplicatedKV* db) : db_(db) {}
 
 // ===========================================================================
 // Key formatting helpers

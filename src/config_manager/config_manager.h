@@ -1,16 +1,17 @@
 #pragma once
-#include "deptran/raft/replicated_db.h"
+#include "config_manager/replicated_kv.h"
 #include <string>
 #include <vector>
 
 namespace janus {
 
 /**
- * ConfigManager - Typed configuration management over ReplicatedDB.
+ * ConfigManager - Typed configuration management over a ReplicatedKV.
  *
- * Wraps a ReplicatedDB on shard 0 to provide typed methods for cluster
- * configuration. Every write atomically increments the __version__ key
- * via a BATCH operation.
+ * Wraps a ReplicatedKV (production: a Raft+RocksDB-backed ReplicatedDB
+ * on shard 0; tests: an in-memory fake) to provide typed methods for
+ * cluster configuration. Every write atomically increments the
+ * __version__ key via a BATCH operation.
  *
  * Key schema:
  *   __version__             — monotonically increasing config version (uint64)
@@ -22,11 +23,12 @@ namespace janus {
  *   node/<site>/addr        — node network address
  *   node/<site>/status      — alive, dead, decommissioning
  */
-// @unsafe - Wraps ReplicatedDB (raw pointer, RocksDB/Raft interaction)
+// @unsafe - Wraps a ReplicatedKV (raw pointer; concrete impl may touch
+// RocksDB/Raft).
 class ConfigManager {
 public:
-    // @unsafe - Stores non-owning raw pointer to ReplicatedDB
-    explicit ConfigManager(ReplicatedDB* db);
+    // @unsafe - Stores non-owning raw pointer to ReplicatedKV
+    explicit ConfigManager(ReplicatedKV* db);
 
     // Non-copyable, non-movable
     ConfigManager(const ConfigManager&) = delete;
@@ -104,7 +106,7 @@ public:
     bool SetNodeStatus(const std::string& site, const std::string& status);
 
 private:
-    ReplicatedDB* db_;  // Non-owning pointer, lifetime managed externally
+    ReplicatedKV* db_;  // Non-owning pointer, lifetime managed externally
 
     // Helper: atomically write key+value together with __version__ increment
     // @unsafe - RocksDB read-modify-write via Raft BATCH
