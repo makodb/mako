@@ -275,6 +275,37 @@ The Configuration Manager is the authority on how the key space is divided among
 
 Every node caches the shard map via `ClusterConfig::GetShardForKey()` for routing.
 
+#### Key Extractors
+
+For range-based sharding, the policy doesn't operate on the raw row key directly — it operates on an *extracted* sharding key. `KeyExtractor` (`src/deptran/sharding_policy.h:46`) supports three strategies:
+
+- **`FIELD_INDEX`** — extract the *n*th field from a composite key. TPC-C uses this: `w_id` is field 0 of every table that's keyed off a warehouse.
+- **`PREFIX_BYTES`** — read the first N bytes as a big-endian int64.
+- **`HASH_MOD`** — hash the whole key, mod `num_shards`. Used as the default fallback.
+
+A `TableShardingPolicy` holds a sorted `vector<RangeMapping>` (each `[start_key, end_key) → shard_id`) and looks up shards via binary search (`src/deptran/sharding_policy.h:152`). Policies are built at startup with a fluent builder:
+
+```cpp
+// From src/deptran/sharding_policy_builder.h
+ShardingPolicyBuilder(num_shards)
+    .table("WAREHOUSE").shardByField(0)
+        .addRange(0, 5, 0).addRange(5, 10, 1);
+```
+
+The full schema (KeyExtractor types, RangeMapping serialization, TableShardingPolicy lookup) was designed in `docs/plans/range-sharding/task{1..4}.md`.
+
+#### Routing Implementation
+
+The router itself lives in two layers — a fast path that tries the loaded policy, and a legacy fallback by table ID:
+
+- `src/mako/lib/shard_router.h` — public API: `compute_shard_for_key(table_id, key)` and `compute_shard_for_key_value(table_id, table_name, key_value)`.
+- `src/deptran/shard_router.cc:19` — implementation. Looks up the table name in `TableRegistry`, asks `ShardingPolicyCache` for the table's policy, extracts the key value, returns the matching shard. If no policy is loaded, falls back to `(table_id - 1) / NUM_TABLES_PER_SHARD`.
+- `src/deptran/sharding_policy_cache.h` — thread-safe cache (rusty::Mutex) populated from shard 0 on bootstrap and refreshed by `ConfigWatcher`.
+
+The byte-key path (`compute_shard_for_key`) hard-codes the "first 8 bytes, big-endian" decoding for `FIELD_INDEX` (`src/deptran/shard_router.cc:39`); callers whose sharding field isn't at offset 0 should use `compute_shard_for_key_value` with the value pre-extracted.
+
+For expected cross-shard ratios under TPC-C (the canonical benchmark), see `docs/reference/tpcc-sharding.md` — warehouse-based sharding yields ~5% remote NewOrder and ~8% remote Payment with 2 shards.
+
 ### Resharding (2PC-Style)
 
 Adding, removing, or splitting shards uses a **two-phase commit** protocol where shard 0 acts as coordinator:
