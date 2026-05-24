@@ -935,6 +935,7 @@ file(GLOB MEMDB_SRC
 file(GLOB_RECURSE DEPTRAN_CORE_SRC
     "src/deptran/*.cc"
     "src/deptran/*/*.cc"
+    "src/config_manager/*.cc"
 )
 # Exclude specific deptran files (standalone binaries / optional backends)
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
@@ -1082,15 +1083,8 @@ file(GLOB RAFT_BORROW_SRC
 #     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
-#   - config_manager.cc: includes replicated_db.h which includes <rocksdb/c.h>
-#     third-party header that generates false positive violations from header code.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*config_manager\\.cc$")
-#   - cluster_config.cc: includes config_manager.h which transitively includes
-#     replicated_db.h / <rocksdb/c.h> third-party header.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*cluster_config\\.cc$")
-#   - config_watcher.cc: includes config_manager.h which transitively includes
-#     replicated_db.h / <rocksdb/c.h> third-party header.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*config_watcher\\.cc$")
+# Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
+# src/config_manager/ and are no longer part of RAFT_BORROW_SRC.
 
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})

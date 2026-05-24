@@ -1,5 +1,5 @@
 #include "config_watcher.h"
-#include "../__dep__.h"
+#include "__dep__.h"
 
 using namespace janus;
 
