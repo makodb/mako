@@ -1,5 +1,6 @@
 #include "config_watcher.h"
-#include "__dep__.h"
+
+#include <stdio.h>
 
 using namespace janus;
 
@@ -19,13 +20,13 @@ bool ConfigWatcher::Poll() {
     poll_count_++;
 
     // Read current version from ConfigManager
-    // @unsafe { ConfigManager::GetVersion reads from RocksDB }
+    // @unsafe { ConfigManager::GetVersion may read from RocksDB }
     uint64_t current_version = 0;
     try {
         current_version = cm_->GetVersion();
     } catch (...) {
-        // @unsafe { Log_warn is not borrow-checked }
-        Log_warn("[CONFIG-WATCHER] Failed to read version from ConfigManager");
+        // @unsafe { fprintf — not borrow-checked }
+        fprintf(stderr, "[CONFIG-WATCHER] Failed to read version from ConfigManager\n");
         return false;
     }
 
@@ -34,33 +35,31 @@ bool ConfigWatcher::Poll() {
     }
 
     // Version changed - reload full config from ConfigManager
-    // @unsafe { LoadFromConfigManager reads from RocksDB via ConfigManager }
+    // @unsafe { LoadFromConfigManager may read from RocksDB via ConfigManager }
     bool ok = false;
     try {
         ok = local_config_->LoadFromConfigManager(cm_);
     } catch (...) {
-        // @unsafe { Log_warn is not borrow-checked }
-        Log_warn("[CONFIG-WATCHER] Failed to load config from ConfigManager");
+        // @unsafe { fprintf — not borrow-checked }
+        fprintf(stderr, "[CONFIG-WATCHER] Failed to load config from ConfigManager\n");
         return false;
     }
 
     if (!ok) {
-        // @unsafe { Log_warn is not borrow-checked }
-        Log_warn("[CONFIG-WATCHER] LoadFromConfigManager returned false");
+        // @unsafe { fprintf — not borrow-checked }
+        fprintf(stderr, "[CONFIG-WATCHER] LoadFromConfigManager returned false\n");
         return false;
     }
 
     last_version_ = current_version;
-    // @unsafe { Log_info is not borrow-checked }
-    Log_info("[CONFIG-WATCHER] Config updated to version %lu", current_version);
 
     // Invoke callback if set
     if (update_callback_) {
         try {
             update_callback_(*local_config_);
         } catch (...) {
-            // @unsafe { Log_warn is not borrow-checked }
-            Log_warn("[CONFIG-WATCHER] Update callback threw exception");
+            // @unsafe { fprintf — not borrow-checked }
+            fprintf(stderr, "[CONFIG-WATCHER] Update callback threw exception\n");
         }
     }
 
@@ -80,8 +79,9 @@ void ConfigWatcher::Start() {
             try {
                 Poll();
             } catch (...) {
-                // @unsafe { Log_warn is not borrow-checked }
-                Log_warn("[CONFIG-WATCHER] Poll threw unexpected exception, retrying...");
+                // @unsafe { fprintf — not borrow-checked }
+                fprintf(stderr,
+                        "[CONFIG-WATCHER] Poll threw unexpected exception, retrying...\n");
             }
             // @unsafe { std::this_thread::sleep_for is not borrow-checked }
             std::this_thread::sleep_for(

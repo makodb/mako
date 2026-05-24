@@ -1662,6 +1662,38 @@ if(BUILD_TESTS)
     target_link_libraries(test_config_failure ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_failure COMMAND test_config_failure)
 
+    # ConfigManager standalone unit tests
+    #
+    # Deliberately does NOT link txlog_core / rrr / memdb / RocksDB. The
+    # three .cc sources compiled in (config_manager / cluster_config /
+    # config_watcher) depend only on stdlib + the ReplicatedKV interface,
+    # so the test drives the configuration-manager component against an
+    # in-memory fake without spinning up Raft or RocksDB.
+    add_executable(test_config_manager
+        tests/config_manager_test.cc
+        src/config_manager/config_manager.cc
+        src/config_manager/cluster_config.cc
+        src/config_manager/config_watcher.cc
+    )
+    target_include_directories(test_config_manager PRIVATE
+        src
+        ${GTEST_INCLUDE_DIRS}
+    )
+    # The brew clang ships its own libc++ but does not add its lib dir
+    # to the linker search path automatically; do it explicitly so the
+    # gtest archive's `std::__hash_memory` reference resolves against
+    # the matching libc++ (system libc++ is older and lacks it).
+    get_filename_component(_CXX_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_CXX_COMPILER_ROOT "${_CXX_COMPILER_DIR}" DIRECTORY)
+    target_link_options(test_config_manager PRIVATE
+        "-L${_CXX_COMPILER_ROOT}/lib"
+        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
+    )
+    target_link_libraries(test_config_manager
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+    )
+    add_test(NAME test_config_manager COMMAND test_config_manager)
+
     # Sharding Policy Startup Tests
     add_executable(test_sharding_startup src/rrr/tests/sharding_startup_test.cc)
     target_include_directories(test_sharding_startup PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako/benchmarks)
