@@ -18,6 +18,48 @@ storage until eventual compaction. There is no migration window for
 data because nothing moves; the cost is paid later, asynchronously,
 when the children diverge.
 
+### Then when *does* the data actually move?
+
+The split is only step one. The actual data movement is a separate
+**rebalance** step that happens later, scheduled by a balancer
+process (CockroachDB allocator, TiKV's Placement Driver, YugabyteDB
+master, FoundationDB data distributor) when it notices one node has
+too much data or too much load. The rebalance is what physically
+ships bytes between nodes.
+
+The trick is that even rebalance doesn't block requests. It works in
+three steps, all of them online:
+
+1. **Add a learner replica on the target node.** This is a Raft
+   membership-change log entry; the source range is still fully
+   functional. Reads and writes continue against the existing
+   replicas.
+2. **Catch the learner up via Raft snapshot transfer.** The source
+   leader streams a consistent snapshot (in CockroachDB this is a
+   Pebble SST checkpoint; in TiKV/YugabyteDB, a RocksDB snapshot;
+   in FoundationDB, a `fetchKeys` range-read transaction) plus any
+   log entries committed during the transfer. Source keeps serving
+   the entire time.
+3. **Atomic membership change.** Once the learner is caught up,
+   another Raft entry promotes the learner to voter and removes the
+   old replica. This is the cutover — a single Raft commit that
+   shifts ownership. Modern Raft (with joint consensus) makes this
+   atomic; older versions did add-then-remove with a brief
+   vulnerability window (the issue CockroachDB called out in #12768).
+
+So the "data movement" that's missing from a metadata-only split is
+not skipped — it's deferred and amortized across many independent
+rebalance operations, each of which is itself non-blocking thanks to
+Raft snapshot transfer + atomic membership change. The split-first /
+rebalance-later separation is what lets these systems claim "splits
+are instant."
+
+A useful mental model: **splits create logical work units**;
+**rebalances move them.** Yugabyte's hard-link-the-SSTs split is the
+purest expression — at split time the two children share storage
+verbatim; only later, when one child gets rebalanced to a different
+node, do its bytes actually travel a wire.
+
 ### CockroachDB — range split
 
 A range split is a single Raft entry on the source range; the new
