@@ -60,6 +60,45 @@ purest expression — at split time the two children share storage
 verbatim; only later, when one child gets rebalanced to a different
 node, do its bytes actually travel a wire.
 
+### How does the split itself not interfere with ongoing requests?
+
+The split is itself **a Raft log entry on the parent group**. The
+leader proposes a special `AdminSplit` command containing the split
+key. Once that entry is committed and applied via normal Raft
+consensus, each replica's state machine atomically:
+
+1. Carves out a new range descriptor for the right-hand side (RHS).
+2. Initializes a new Raft group for the RHS with **the same set of
+   replica nodes** as the parent (no data motion at this point).
+3. Both children begin serving from that point forward.
+
+Because the split is a Raft entry, it's strictly serialized with
+every other write to the parent. Writes that committed before the
+split are part of the parent's state; writes that arrive after the
+split are routed to L or R based on key.
+
+**Ongoing multi-key transactions:** A transaction whose intents
+straddle the split key just becomes a multi-range transaction at
+commit time. Cockroach/TiKV/Yugabyte already handle multi-range
+commits via 2PC, so the transaction machinery doesn't need a
+special "I-was-split-mid-flight" code path — its write intents
+remain as MVCC writes in the underlying storage, and the txn
+coordinator discovers at commit time that they now live in two
+different Raft groups.
+
+**The one small blip is on the client side:** a client whose
+routing cache still says "range [0,100) lives at L" sends a request
+for key 75 to L *after* the split commits. L returns an "outdated
+range descriptor" error (CockroachDB calls this `NotLeaseholder` or
+range-key-mismatch; TiKV calls it "stale epoch") that includes the
+new RHS descriptor. The client refreshes its routing cache and
+retries against R. Typical handoff is sub-millisecond.
+
+There's **no critical section, no write pause, no snapshot transfer
+at split time**. The data is still in the shared underlying
+storage; both new Raft groups read and write through it; the
+metadata flip is the only thing that happened.
+
 ### CockroachDB — range split
 
 A range split is a single Raft entry on the source range; the new
@@ -238,32 +277,140 @@ The "moved, retry" pattern requires client-side cooperation but
 keeps the server-side state machine simpler — there's no
 "transaction-was-mid-flight-when-migration-started" case to handle.
 
-## Implications for Mako
+## Architectural prerequisite: multi-Raft
 
-The dual-write approach floated in earlier design discussion isn't
-where the industry has converged. For Mako's speculative-2PC model,
-the closest fit is **Pattern 1 with a metadata flip via shard 0**:
+Before reading "Implications for Mako," it's worth being explicit
+about a prerequisite Pattern 1 quietly assumes:
+**each node hosts many Raft groups, not one.**
 
-- Source stays authoritative until the flip.
-- Destination catches up via Raft snapshot transfer (we already have
-  this primitive — `ReplicatedDB::CreateSnapshot` / `OnInstallSnapshot`).
-- An atomic version bump on shard 0's `__mako_config__` flips
-  routing for every node, because every node's `ConfigWatcher`
-  polls the same `__version__` key.
-- In-flight speculative transactions either drain before the flip
-  (Vitess-style stop-and-wait, bounded by the watermark) or get a
-  YugabyteDB-style "moved, retry" error if they straddle the
-  cutover.
+In Cockroach/TiKV/Yugabyte, a typical storage node manages hundreds
+or thousands of Raft groups simultaneously — one per range / region
+/ tablet. This is called **multi-Raft**. Pattern 1's split mechanic
+(metadata-only, atomic, no data motion) only works because the new
+RHS Raft group can spin up on the same nodes that hosted the parent
+— those nodes already host many groups; one more isn't structurally
+different.
 
-The watermark math stays single-source-of-truth per range at any
-moment — which preserves the speculative-2PC correctness argument
-in mako-book §4. Compare this to dual-write, which would force the
-watermark logic to consider both source and destination clocks for
-the migrating range, breaking the single-shard-clock invariant.
+Multi-Raft requires nontrivial engineering: heartbeat coalescing
+(one TCP message between two nodes carries heartbeats for all
+groups they share), log batching, and a shared underlying storage
+(one RocksDB / Pebble instance per node, holding all groups' data
+distinguished by key prefix). TiKV's heartbeat coalescing was a
+named feature when they introduced it — without it, thousands of
+groups per node would drown in heartbeat traffic.
 
-The YugabyteDB "moved, retry" pattern is the closest analog to our
-existing speculative-2PC retry path — worth a deeper look before
-finalizing §3.6.
+Mako today is **one shard = one Raft group, with replicas pinned
+to specific hosts via `shard/<id>/replicas` in `__mako_config__`**.
+A given host runs one Raft group (per shard role). Pattern 1's
+"split is metadata-only" trick doesn't transfer directly, because
+there's no infrastructure to host the newly created child group on
+the same nodes as the parent without rearchitecting the storage
+layer.
+
+This means the closest architectural analog for Mako isn't
+CockroachDB or TiKV — it's MongoDB.
+
+## Why MongoDB is the closest architectural analog for Mako
+
+MongoDB occupies the middle ground: **a small number of consensus
+groups, each owning many key ranges.** That's exactly Mako's shape.
+
+| MongoDB | Mako analog |
+|---|---|
+| Config server replica set | Shard 0 + `ConfigManager` |
+| Chunk → shard map (in config server) | `shard/<id>/range_start` / `range_end` in `__mako_config__` |
+| Replica set (one Raft group, owns many chunks) | Existing Mako shard (one Raft group, currently owns one static key range) |
+| `moveChunk` clone phase | New cross-group "ship key range" RPC (does not exist in Mako today) |
+| `moveChunk` critical section | Brief read-only window on source shard during final catch-up |
+| Config server commits new ownership | `ConfigManager` writes new `range_start` / `range_end` and bumps `__version__` |
+| `mongos` routing layer reads config | `ConfigWatcher`s on every node refresh from `__version__` |
+
+The clean reading: **Mako already has most of MongoDB's resharding
+architecture.** Shard 0 is the config server. `ConfigManager` is
+the chunk-to-shard map. `ConfigWatcher` is the routing-refresh path.
+What's missing is the bytes-mover — a `moveChunk`-style protocol
+that:
+
+1. Ships a key-range payload from a source shard's Raft group to a
+   destination shard's Raft group via plain RPC, while source
+   continues serving.
+2. Coordinates a brief critical section on the source shard for
+   the final catch-up (the source shard's Raft group transitions
+   to read-only-for-that-range; reads against the migrating range
+   either pause briefly or get a "moved, retry" error).
+3. Commits the new range ownership via a `ConfigManager` write,
+   bumping `__version__` so every `ConfigWatcher` updates routing.
+
+There is no Raft membership change anywhere in this protocol —
+both groups stay intact. What moves is **payload bytes**, shipped
+between groups by an application-level RPC.
+
+## The fork in the road: multi-Raft or cross-group transfer?
+
+These are the two viable paths for true online resharding in Mako;
+they correspond to two different system shapes. Both are
+implementable; they have different costs.
+
+**Path A — adopt multi-Raft (the Cockroach/TiKV/Yugabyte path).**
+Each Mako host runs many Raft groups; shards become small and
+numerous; a balancer process moves Raft groups between hosts when
+load shifts. Resharding decomposes into the two operations
+described above: split (metadata only, atomic Raft entry on the
+parent group) and rebalance (add learner replica on destination,
+catch up via Raft snapshot, atomic membership change to commit).
+
+  - **Pros:** Automatic load balancing falls out for free. The
+    well-understood, battle-tested approach. Pattern 1's
+    sub-millisecond split-handoff property is unlocked. Speculative
+    2PC machinery generally composes — every shard is still its
+    own Raft group, just smaller.
+  - **Cons:** Significant rewrite of the storage / consensus layer.
+    Heartbeat coalescing, log batching, shared underlying storage
+    across groups. The speculative-watermark math has to scale to
+    thousands of groups per node (watermarks per group are fine,
+    but the global watermark = `min(all groups)` needs to be
+    efficient at this scale).
+
+**Path B — keep one-shard-per-host and add cross-group transfer
+(the MongoDB path).** Each Mako shard stays a single Raft group on
+fixed hosts. A new `moveRange` RPC ships a key range between two
+existing shards' Raft groups using a clone-then-critical-section
+protocol; the cutover is a `ConfigManager` write on shard 0.
+
+  - **Pros:** Smaller addition. Existing one-shard-one-group model
+    is preserved. The pieces Mako needs to add are mostly
+    self-contained: the `moveRange` RPC + critical-section
+    coordination + `ConfigManager.UpdateShardRange()`. The
+    speculative-watermark math doesn't change shape because the
+    number of Raft groups doesn't change.
+  - **Cons:** No automatic load balancing falls out — that has to
+    be designed and implemented separately. The critical section
+    on the source shard during catch-up is real (sub-second in
+    MongoDB's experience, but it's there). Resharding remains a
+    coarse-grained operator-driven operation rather than the
+    fine-grained continuous self-tuning of multi-Raft systems.
+
+The two paths are not mutually exclusive — many production
+systems started with Path B (MongoDB itself, also Vitess) and
+later added more sophisticated load-balancing machinery on top.
+But Path A's "automatic continuous rebalance" is a very different
+operational story from Path B's "operator triggers a `moveRange`
+when they see a hot shard."
+
+**The watermark trade-off is the deepest concern for Mako
+specifically.** Speculative 2PC depends on a global watermark
+`W = min(shard_i.local_timestamp)`. In Path A, the number of
+shards grows by orders of magnitude, so the global-min computation
+has to scale; the existing `ConfigWatcher`-driven aggregation
+would not survive without rework. In Path B, the number of shards
+stays constant, so the watermark math doesn't change shape —
+which is a substantial implementation advantage even before
+considering the rest.
+
+A reasonable plan would be: pursue Path B first to unlock online
+resharding without restructuring consensus, leave Path A as a
+later option if/when load-balancing automation becomes the
+critical need.
 
 ## References
 
