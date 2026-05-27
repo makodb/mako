@@ -239,26 +239,61 @@ size_t SparseInt::buf_size(char byte0) {
     }
 }
 
-size_t SparseInt::val_size(i64 val) {
-    if (-64 <= val && val <= 63) {
+// Free helper backing `SparseInt::val_size`. Authored as inline Rust
+// DSL: the `#if RUSTYCPP_RUST` block is the source of truth; the
+// transpiler regenerates the matching `/*RUSTYCPP:GEN-BEGIN ... END*/`
+// block immediately below. See docs/dev/rrr_rust_dsl_migration_plan.md.
+#if RUSTYCPP_RUST
+fn sparse_int_val_size_impl(val: i64) -> u64 {
+    if val >= -64 && val <= 63 {
         return 1;
-    } else if (-8192 <= val && val <= 8191) {
+    } else if val >= -8192 && val <= 8191 {
         return 2;
-    } else if (-1048576 <= val && val <= 1048575) {
+    } else if val >= -1048576 && val <= 1048575 {
         return 3;
-    } else if (-134217728 <= val && val <= 134217727) {
+    } else if val >= -134217728 && val <= 134217727 {
         return 4;
-    } else if (-17179869184LL <= val && val <= 17179869183LL) {
+    } else if val >= -17179869184 && val <= 17179869183 {
         return 5;
-    } else if (-2199023255552LL <= val && val <= 2199023255551LL) {
+    } else if val >= -2199023255552 && val <= 2199023255551 {
         return 6;
-    } else if (-281474976710656LL <= val && val <= 281474976710655LL) {
+    } else if val >= -281474976710656 && val <= 281474976710655 {
         return 7;
-    } else if (-36028797018963968LL <= val && val <= 36028797018963967LL) {
+    } else if val >= -36028797018963968 && val <= 36028797018963967 {
         return 8;
     } else {
-        return 9;
+        9
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.1 version=1 rust_sha256=5e0232658d8bb791e952ff50617cc358eff1c2e8847a09b73d303ca99bb153d3*/
+uint64_t sparse_int_val_size_impl(int64_t val);
+
+uint64_t sparse_int_val_size_impl(int64_t val) {
+    if ((rusty::detail::deref_if_pointer_like(val) >= -64) && (rusty::detail::deref_if_pointer_like(val) <= 63)) {
+        return static_cast<uint64_t>(1);
+    } else if ((rusty::detail::deref_if_pointer_like(val) >= -8192) && (rusty::detail::deref_if_pointer_like(val) <= 8191)) {
+        return static_cast<uint64_t>(2);
+    } else if ((rusty::detail::deref_if_pointer_like(val) >= -1048576) && (rusty::detail::deref_if_pointer_like(val) <= 1048575)) {
+        return static_cast<uint64_t>(3);
+    } else if ((rusty::detail::deref_if_pointer_like(val) >= -134217728) && (rusty::detail::deref_if_pointer_like(val) <= 134217727)) {
+        return static_cast<uint64_t>(4);
+    } else if ((rusty::detail::deref_if_pointer_like(val) >= -17179869184) && (rusty::detail::deref_if_pointer_like(val) <= 17179869183)) {
+        return static_cast<uint64_t>(5);
+    } else if ((rusty::detail::deref_if_pointer_like(val) >= -2199023255552) && (rusty::detail::deref_if_pointer_like(val) <= 2199023255551)) {
+        return static_cast<uint64_t>(6);
+    } else if ((rusty::detail::deref_if_pointer_like(val) >= -281474976710656) && (rusty::detail::deref_if_pointer_like(val) <= 281474976710655)) {
+        return static_cast<uint64_t>(7);
+    } else if ((rusty::detail::deref_if_pointer_like(val) >= -36028797018963968) && (rusty::detail::deref_if_pointer_like(val) <= 36028797018963967)) {
+        return static_cast<uint64_t>(8);
+    } else {
+        return static_cast<uint64_t>(9);
+    }
+}
+/*RUSTYCPP:GEN-END id=basetypes.1*/
+
+size_t SparseInt::val_size(i64 val) {
+    return static_cast<size_t>(sparse_int_val_size_impl(val));
 }
 
 // @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.

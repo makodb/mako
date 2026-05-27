@@ -2,10 +2,13 @@
 
 ## Goal
 
-Rewrite C++ source files in `src/rrr/` as Rust DSL; use the rusty-cpp
-transpiler at `third-party/rusty-cpp/transpiler/` to generate the C++
-that compiles into `librrr.a`. The `.rs` file becomes the source of
-truth; the generated `.gen.cppm` is the build artifact.
+Gradually migrate C++ logic in `src/rrr/` to **inline Rust DSL** blocks
+inside the existing `.cpp` files. Each rewritten function (or set of
+functions) sits inside a `#if RUSTYCPP_RUST ... #endif` block; the
+rusty-cpp transpiler regenerates a matching `/*RUSTYCPP:GEN-BEGIN ...
+END*/` block immediately after with the C++ equivalent. The C++
+compiler only ever sees the GEN block (RUSTYCPP_RUST is undefined at
+build time); the Rust source is the developer-facing source of truth.
 
 Each migration must preserve:
 - **Build**: rrr static lib + every dependent test/binary link clean.
@@ -13,43 +16,55 @@ Each migration must preserve:
   Docker-CI shard tests still pass at phase boundaries.
 - **Safety**: `borrow_check_rrr` stays clean.
 
+Earlier `.rs → .gen.cppm` full-file translation approach (Phase 1
+v0) was abandoned because the transpiler exports Rust-shaped APIs
+(PascalCase variants, `std::string_view` returns, `const auto&`
+params, factory-style enum exports) which diverge from rrr's
+established `SCREAMING_SNAKE` / `const char*` conventions and would
+have forced consumer-wide edits. Inline mode bypasses that by
+keeping the C++ surface unchanged.
+
 ## Tools
 
 - Transpiler binary:
   `third-party/rusty-cpp/target/release/rusty-cpp-transpiler`
 - Build: `cd third-party/rusty-cpp/transpiler && cargo build --release`
-- Invocation (single file):
+- Inline-mode invocation (regenerate GEN blocks):
   ```
   ./third-party/rusty-cpp/target/release/rusty-cpp-transpiler \
-      src/rrr/<path>.rs -o src/rrr/<path>.gen.cppm -m rrr.<name>
+      inline-rust --rewrite --files src/rrr/<path>.cpp
   ```
-- Both `.rs` AND `.gen.cppm` get checked in. Consumers don't need the
-  transpiler to build; the `.rs` documents the source of truth.
+- Inline-mode invocation (CI check that GEN block matches Rust):
+  ```
+  ./third-party/rusty-cpp/target/release/rusty-cpp-transpiler \
+      inline-rust --check --files src/rrr/<path>.cpp
+  ```
 
 ## Per-iteration protocol
 
 1. **Pick** the next unchecked item from the Progress log.
-2. **Read** the original `.cpp`. Inventory exported symbols and
-   external imports.
-3. **Author** `.rs` next to the original. Keep symbol names, module
-   name, and exported surface identical.
-4. **Transpile** to `.gen.cppm`.
-5. **Hand-diff** `.gen.cppm` against the original `.cpp`. Note any
-   semantically suspicious divergence in the iteration commit message.
-6. **Wire into build**: swap the `.cpp` for `.gen.cppm` in
-   `src/rrr/CMakeLists.txt` (`RRR_MODULE_SRC` and `RRR_BORROW_SRC`).
-   Delete the original `.cpp`. Stage the `.rs` and `.gen.cppm`.
+2. **Pick a function** inside the target `.cpp` that's safe to
+   rewrite — pure primitive in/out first; std types later as the
+   transpiler proves itself.
+3. **Author** an `#if RUSTYCPP_RUST ... #endif` block immediately
+   above the function, with the Rust DSL inside.
+4. **Rewrite the C++ side** to delegate to the inline-Rust helper
+   (one-line forwarder, or full body replacement if signatures match).
+5. **Run** `inline-rust --rewrite --files <file.cpp>`. The tool
+   adds/updates a `/*RUSTYCPP:GEN-BEGIN id=... rust_sha256=.../*` ...
+   `/*RUSTYCPP:GEN-END id=...*/` block right after the `#endif`,
+   containing the generated C++.
+6. **Hand-diff** the GEN block against the original C++ body. Look
+   for: missing branches, off-by-ones, type narrowing, unexpected
+   `rusty::detail::*` wrapping. Note divergence in the commit msg.
 7. **Verify**:
-   - `cmake --build build_clang21 --target rrr -j32` clean
-   - `cmake --build build_clang21 --target borrow_check_rrr -j32`
-     clean
-   - Run the GTest binaries covering this file (e.g. test_marshal
-     for `misc/marshal.cpp`). Note which tests cover what in the
-     iteration commit message.
-8. **Commit**: one file per commit. Message records: file migrated,
-   LOC delta on `.cpp` → `.rs`, transpiler quirks observed, tests
-   that passed.
-9. **Tick** the Progress log: `- [x] <file> — commit <SHA>, <notes>`.
+   - `cmake --build build_clang21 --target rrr -j32` clean.
+   - `cmake --build build_clang21 --target
+     borrow_check_rrr_borrow_<basename> -j32` clean.
+   - Run the GTest binaries covering this function.
+8. **Commit**: one functional unit per commit. Message records which
+   function, LOC delta, transpiler quirks observed, tests passed.
+9. **Tick** the Progress log: `- [x] <file>::<fn> — commit <SHA>`.
 
 ## Stop rules
 
@@ -59,13 +74,19 @@ Each migration must preserve:
   bug → revert the migration commit and add a `[blocked]` row instead
   of `[x]`.
 
-## Open questions / transpiler quirks observed during smoke-test
+## Open questions / transpiler quirks observed
 
-- Transpiler emits `<cstdlib>` (etc.) in the generated `.gen.cppm`
-  prelude. Per user preference, we use `<stdlib.h>` style. This is
-  a transpiler-side fix to upstream — defer until it actually
-  blocks something.
-- Generated module name is from the `-m` flag, not inferred from path.
+- Inline-mode auto-assigns GEN block ids as `<basename>.N`; the
+  developer should NOT supply an `id=...` in the placeholder.
+  Just open with `/*RUSTYCPP:GEN-BEGIN*/ /*RUSTYCPP:GEN-END*/` or
+  let the tool insert one fresh.
+- Numeric comparisons get wrapped in
+  `rusty::detail::deref_if_pointer_like(...)`. Harmless for
+  primitive args (boils away at compile time) but adds visual
+  noise; worth raising upstream eventually.
+- `i64` literals lower as bare `123` without the `LL` suffix —
+  fine on 64-bit platforms but watch for 32-bit gotchas if/when
+  rrr ever targets 32-bit.
 
 ## Progress log
 
@@ -74,8 +95,12 @@ Each migration must preserve:
 - [x] Smoke-test transpiler on a toy file
 - [x] Author this plan doc
 
-### Phase 1 — Pilot
-- [ ] `src/rrr/rpc/errors.cpp` (~142 LOC, enums + pure switch tables)
+### Phase 1 — Pilot (inline mode)
+- [x] `base/basetypes.cpp::SparseInt::val_size` — split into
+      free helper `sparse_int_val_size_impl(i64) -> u64`
+      authored as inline Rust DSL; member method delegates. rrr
+      builds, borrow_check_rrr_borrow_basetypes clean, all 23
+      `test_marshal` tests pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
