@@ -213,6 +213,15 @@ keeping the C++ surface unchanged.
       borrow_check_rrr_borrow_connection_state clean,
       `test_rpc_connection_state` 30/30 + `test_rpc_state_integration`
       16/16 pass.
+- [x] `rpc/heartbeat.cpp::should_send_heartbeat`,
+      `check_timeout`, `time_until_next_heartbeat_ms` — three
+      timing-arithmetic helpers (`heartbeat_interval_elapsed`,
+      `heartbeat_timeout_elapsed`, `heartbeat_time_until_next_ms`)
+      in one multi-fn block. Each converts `_ms → _us` and compares
+      against a `now - last` elapsed window. C++ wrappers still own
+      the Cell reads + enabled/timed_out guards. rrr builds,
+      borrow_check_rrr_borrow_heartbeat clean,
+      `test_rpc_heartbeat` 20/20 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

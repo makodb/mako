@@ -1,9 +1,10 @@
 module;
 
-#include <cstdint>
-#include <cstdlib>  // std::abort referenced by rusty/function.hpp
+#include <stdint.h>
+#include <stdlib.h>  // abort() referenced by rusty/function.hpp
 #include <rusty/cell.hpp>
 #include <rusty/function.hpp>
+#include <rusty/rusty.hpp>
 #include <time.h>
 
 export module rrr.heartbeat;
@@ -56,6 +57,56 @@ struct HeartbeatConfig {
     }
 };
 
+// Free helpers backing the timing-arithmetic portions of
+// `HeartbeatManager::should_send_heartbeat`, `check_timeout`, and
+// `time_until_next_heartbeat_ms`. All three convert `_ms` to `_us`
+// and compare against a "now - last" elapsed window. Authored as
+// inline Rust DSL.
+#if RUSTYCPP_RUST
+fn heartbeat_interval_elapsed(now_us: u64, last_send_us: u64, interval_ms: u32) -> bool {
+    let interval_us: u64 = (interval_ms as u64) * 1000;
+    now_us - last_send_us >= interval_us
+}
+
+fn heartbeat_timeout_elapsed(now_us: u64, last_send_us: u64, timeout_ms: u32) -> bool {
+    let timeout_us: u64 = (timeout_ms as u64) * 1000;
+    now_us - last_send_us >= timeout_us
+}
+
+fn heartbeat_time_until_next_ms(now_us: u64, last_send_us: u64, interval_ms: u32) -> u32 {
+    let interval_us: u64 = (interval_ms as u64) * 1000;
+    let elapsed_us: u64 = now_us - last_send_us;
+    if elapsed_us >= interval_us {
+        return 0;
+    }
+    ((interval_us - elapsed_us) / 1000) as u32
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=ad0dc63f92a1763ba1d8538d2f3dcce52c56109bf1c6a96eec09b5ea43d3e67d*/
+bool heartbeat_interval_elapsed(uint64_t now_us, uint64_t last_send_us, uint32_t interval_ms);
+bool heartbeat_timeout_elapsed(uint64_t now_us, uint64_t last_send_us, uint32_t timeout_ms);
+uint32_t heartbeat_time_until_next_ms(uint64_t now_us, uint64_t last_send_us, uint32_t interval_ms);
+
+bool heartbeat_interval_elapsed(uint64_t now_us, uint64_t last_send_us, uint32_t interval_ms) {
+    const uint64_t interval_us = ((static_cast<uint64_t>(interval_ms))) * static_cast<uint64_t>(1000);
+    return (rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(last_send_us)) >= rusty::detail::deref_if_pointer_like(interval_us);
+}
+
+bool heartbeat_timeout_elapsed(uint64_t now_us, uint64_t last_send_us, uint32_t timeout_ms) {
+    const uint64_t timeout_us = ((static_cast<uint64_t>(timeout_ms))) * static_cast<uint64_t>(1000);
+    return (rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(last_send_us)) >= rusty::detail::deref_if_pointer_like(timeout_us);
+}
+
+uint32_t heartbeat_time_until_next_ms(uint64_t now_us, uint64_t last_send_us, uint32_t interval_ms) {
+    const uint64_t interval_us = ((static_cast<uint64_t>(interval_ms))) * static_cast<uint64_t>(1000);
+    const uint64_t elapsed_us = rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(last_send_us);
+    if (rusty::detail::deref_if_pointer_like(elapsed_us) >= rusty::detail::deref_if_pointer_like(interval_us)) {
+        return static_cast<uint32_t>(0);
+    }
+    return static_cast<uint32_t>((((rusty::detail::deref_if_pointer_like(interval_us) - rusty::detail::deref_if_pointer_like(elapsed_us))) / 1000));
+}
+/*RUSTYCPP:GEN-END id=heartbeat.1*/
+
 // @safe - Heartbeat tracker. Fields are rusty::Cell<T> for trivially-
 // copyable interior mutability + rusty::Function<void()> for the timeout
 // callback. No raw pointers, syscalls, or operator-overload chains.
@@ -95,11 +146,10 @@ public:
             return false;
         }
 
-        uint64_t now = heartbeat_time_us();
-        uint64_t last = last_send_time_.get();
-        uint64_t interval_us = static_cast<uint64_t>(config_.interval_ms) * 1000;
-
-        return (now - last >= interval_us);
+        return heartbeat_interval_elapsed(
+            heartbeat_time_us(),
+            last_send_time_.get(),
+            config_.interval_ms);
     }
 
     void on_heartbeat_sent() {
@@ -127,11 +177,10 @@ public:
             return false;
         }
 
-        uint64_t now = heartbeat_time_us();
-        uint64_t sent = last_send_time_.get();
-        uint64_t timeout_us = static_cast<uint64_t>(config_.timeout_ms) * 1000;
-
-        if (now - sent >= timeout_us) {
+        if (heartbeat_timeout_elapsed(
+                heartbeat_time_us(),
+                last_send_time_.get(),
+                config_.timeout_ms)) {
             pending_pong_.set(false);
             uint32_t count = missed_count_.get() + 1;
             missed_count_.set(count);
@@ -154,15 +203,10 @@ public:
             return config_.interval_ms;
         }
 
-        uint64_t now = heartbeat_time_us();
-        uint64_t last = last_send_time_.get();
-        uint64_t interval_us = static_cast<uint64_t>(config_.interval_ms) * 1000;
-
-        if (now - last >= interval_us) {
-            return 0;
-        }
-
-        return static_cast<uint32_t>((interval_us - (now - last)) / 1000);
+        return heartbeat_time_until_next_ms(
+            heartbeat_time_us(),
+            last_send_time_.get(),
+            config_.interval_ms);
     }
 
     bool is_timed_out() const {
