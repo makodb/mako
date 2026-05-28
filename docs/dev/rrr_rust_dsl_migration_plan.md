@@ -361,6 +361,14 @@ keeping the C++ surface unchanged.
       `basetypes.1`/`.2`/`.3` → `.2`/`.3`/`.4` (per the auto-id-
       collision workaround). rrr builds,
       borrow_check_rrr_borrow_basetypes clean, rpcbench links.
+- [x] `rpc/idempotency.cpp::IdempotencyKeyHash::operator()` hash
+      combiner — added `idempotency_key_combine_hash` to the existing
+      `idempotency.1` block (now 4 helpers). Pure u64 FNV-1a-style
+      mixing: `h1 ^ (h2 * 0x9e3779b97f4a7c15)` (golden ratio
+      constant). C++ wrapper still calls `std::hash<uint64_t>{}` then
+      passes the two hashes into the helper. rrr builds,
+      borrow_check_rrr_borrow_idempotency clean, `test_idempotency`
+      32/32 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

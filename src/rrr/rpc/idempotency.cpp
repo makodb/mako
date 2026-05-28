@@ -20,11 +20,13 @@ import rrr.threading;
 
 export namespace rrr {
 
-// Free helpers backing three pure predicates / statistics on the
+// Free helpers backing pure predicates / statistics on the
 // idempotency types: `IdempotencyKey::is_valid`,
-// `CachedResponse::is_expired`, and `IdempotencyCache::hit_rate`. All
-// three take primitive `u64` arguments; C++ wrappers read struct
-// fields / Cells and forward. Authored as inline Rust DSL.
+// `CachedResponse::is_expired`, `IdempotencyCache::hit_rate`, plus
+// the FNV-1a-style hash combiner for `IdempotencyKeyHash`. All take
+// primitive `u64` arguments; C++ wrappers read struct fields / Cells
+// (or call `std::hash<uint64_t>` then pass the results in) and
+// forward. Authored as inline Rust DSL.
 #if RUSTYCPP_RUST
 fn idempotency_key_is_valid(client_id: u64, sequence: u64) -> bool {
     client_id != 0 || sequence != 0
@@ -44,11 +46,17 @@ fn idempotency_cache_hit_rate(hits: u64, misses: u64) -> f64 {
     }
     (hits as f64) / (total as f64)
 }
+
+fn idempotency_key_combine_hash(h1: u64, h2: u64) -> u64 {
+    // Golden ratio constant for FNV-1a-style mixing.
+    h1 ^ (h2 * 0x9e3779b97f4a7c15)
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=7c17b88f14f40486c4624285c442236be8075da9098d7fcc2f918aae7e303e97*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=cc0f10273181d740a3bfc8e269b33c72fe23cd0e3e1c0688d963f6d2a5a53e1b*/
 bool idempotency_key_is_valid(uint64_t client_id, uint64_t sequence);
 bool idempotency_response_is_expired(uint64_t current_time_ms, uint64_t timestamp_ms, uint64_t ttl_ms);
 double idempotency_cache_hit_rate(uint64_t hits, uint64_t misses);
+uint64_t idempotency_key_combine_hash(uint64_t h1, uint64_t h2);
 
 bool idempotency_key_is_valid(uint64_t client_id, uint64_t sequence) {
     return (rusty::detail::deref_if_pointer_like(client_id) != static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(sequence) != static_cast<uint64_t>(0));
@@ -67,6 +75,10 @@ double idempotency_cache_hit_rate(uint64_t hits, uint64_t misses) {
         return 0.0;
     }
     return ((static_cast<double>(hits))) / ((static_cast<double>(total)));
+}
+
+uint64_t idempotency_key_combine_hash(uint64_t h1, uint64_t h2) {
+    return rusty::detail::deref_if_pointer_like(h1) ^ ((rusty::detail::deref_if_pointer_like(h2) * static_cast<uint64_t>(11400714819323198485)));
 }
 /*RUSTYCPP:GEN-END id=idempotency.1*/
 
@@ -117,10 +129,11 @@ struct IdempotencyKey {
 struct IdempotencyKeyHash {
     // @unsafe { hash computation }
     std::size_t operator()(const IdempotencyKey& key) const noexcept {
-        // Combine client_id and sequence using FNV-1a style mixing
         std::size_t h1 = std::hash<uint64_t>{}(key.client_id);
         std::size_t h2 = std::hash<uint64_t>{}(key.sequence);
-        return h1 ^ (h2 * 0x9e3779b97f4a7c15ULL);  // Golden ratio constant
+        return static_cast<std::size_t>(
+            idempotency_key_combine_hash(
+                static_cast<uint64_t>(h1), static_cast<uint64_t>(h2)));
     }
 };
 
