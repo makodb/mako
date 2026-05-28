@@ -523,6 +523,32 @@ i64 SparseInt::load_i64(const char* buf) {
     return val;
 }
 
+// Free helpers backing the µs→(sec, usec) split used by
+// `Timer::start` and `Timer::stop`. Pure u64 arithmetic; the C++
+// wrapper owns the `gettimeofday_us()` call and casts each result to
+// the platform `time_t`/`suseconds_t`. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn timer_us_to_sec(now_us: u64) -> i64 {
+    (now_us / 1000000) as i64
+}
+
+fn timer_us_to_usec_remainder(now_us: u64) -> i64 {
+    (now_us % 1000000) as i64
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.4 version=1 rust_sha256=98381e86d68026eefd3e00fd7861f8872ef1a52504193ff4c7cda8181159b66e*/
+int64_t timer_us_to_sec(uint64_t now_us);
+int64_t timer_us_to_usec_remainder(uint64_t now_us);
+
+int64_t timer_us_to_sec(uint64_t now_us) {
+    return static_cast<int64_t>((rusty::detail::deref_if_pointer_like(now_us) / 1000000));
+}
+
+int64_t timer_us_to_usec_remainder(uint64_t now_us) {
+    return static_cast<int64_t>((rusty::detail::deref_if_pointer_like(now_us) % 1000000));
+}
+/*RUSTYCPP:GEN-END id=basetypes.4*/
+
 Timer::Timer() : begin_(), end_() {
     reset();
 }
@@ -532,15 +558,15 @@ Timer::Timer() : begin_(), end_() {
 void Timer::start() {
     reset();
     const std::uint64_t now = rusty::sys::time::gettimeofday_us();
-    begin_.tv_sec  = static_cast<time_t>(now / 1000000);
-    begin_.tv_usec = static_cast<suseconds_t>(now % 1000000);
+    begin_.tv_sec  = static_cast<time_t>(timer_us_to_sec(now));
+    begin_.tv_usec = static_cast<suseconds_t>(timer_us_to_usec_remainder(now));
 }
 
 // @safe - delegates to rusty::sys::time::gettimeofday_us.
 void Timer::stop() {
     const std::uint64_t now = rusty::sys::time::gettimeofday_us();
-    end_.tv_sec  = static_cast<time_t>(now / 1000000);
-    end_.tv_usec = static_cast<suseconds_t>(now % 1000000);
+    end_.tv_sec  = static_cast<time_t>(timer_us_to_sec(now));
+    end_.tv_usec = static_cast<suseconds_t>(timer_us_to_usec_remainder(now));
 }
 
 void Timer::reset() {
@@ -563,7 +589,7 @@ fn timer_elapsed_stopped_seconds(begin_sec: i64, begin_usec: i64, end_sec: i64, 
     ((end_sec - begin_sec) as f64) + ((end_usec - begin_usec) as f64) / 1000000.0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=basetypes.4 version=1 rust_sha256=1e6f6fe57720959ad168d9fa8de32b0aa0ad784365f26b89d2151ff53f69f0c9*/
+/*RUSTYCPP:GEN-BEGIN id=basetypes.5 version=1 rust_sha256=1e6f6fe57720959ad168d9fa8de32b0aa0ad784365f26b89d2151ff53f69f0c9*/
 double timer_elapsed_live_seconds(uint64_t now_us, uint64_t begin_us);
 double timer_elapsed_stopped_seconds(int64_t begin_sec, int64_t begin_usec, int64_t end_sec, int64_t end_usec);
 
@@ -574,7 +600,7 @@ double timer_elapsed_live_seconds(uint64_t now_us, uint64_t begin_us) {
 double timer_elapsed_stopped_seconds(int64_t begin_sec, int64_t begin_usec, int64_t end_sec, int64_t end_usec) {
     return ((static_cast<double>((rusty::detail::deref_if_pointer_like(end_sec) - rusty::detail::deref_if_pointer_like(begin_sec))))) + (((static_cast<double>((rusty::detail::deref_if_pointer_like(end_usec) - rusty::detail::deref_if_pointer_like(begin_usec))))) / 1000000.0);
 }
-/*RUSTYCPP:GEN-END id=basetypes.4*/
+/*RUSTYCPP:GEN-END id=basetypes.5*/
 
 // @safe - live-elapsed branch delegates to rusty::sys::time::gettimeofday_us.
 double Timer::elapsed() const {

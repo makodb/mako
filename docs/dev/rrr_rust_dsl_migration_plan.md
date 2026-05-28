@@ -388,6 +388,14 @@ keeping the C++ surface unchanged.
       separate at link time. rrr builds,
       borrow_check_rrr_borrow_heartbeat clean,
       `test_rpc_heartbeat` 20/20 pass.
+- [x] `base/basetypes.cpp::Timer::start`/`stop` us→(sec, usec) split
+      — two pure-arithmetic helpers in one multi-fn block
+      (`timer_us_to_sec`, `timer_us_to_usec_remainder`). Added as new
+      `basetypes.4` between SparseInt and Timer::elapsed; required
+      renumbering the existing Timer::elapsed block `.4` → `.5`.
+      Each helper returns `i64` and the C++ wrapper casts to platform
+      `time_t`/`suseconds_t`. rrr builds,
+      borrow_check_rrr_borrow_basetypes clean, rpcbench links.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
