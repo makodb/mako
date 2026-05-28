@@ -162,12 +162,44 @@ inline RpcErrorCategory get_error_category(RpcError err) {
         rpc_error_category_code(static_cast<int32_t>(err)));
 }
 
+// Free helper backing `is_connection_error`. Mirrors the CONNECTION
+// range from rpc_error_category_code (codes 100..200) — equivalent to
+// `get_error_category(err) == CONNECTION` since CONNECTION is exactly
+// that range. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn rpc_error_is_connection_code(code: i32) -> bool {
+    code >= 100 && code < 200
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=errors.2 version=1 rust_sha256=8b212483fae198e97688da56144b9d049ca0b858031c111a6ca98d470af16969*/
+bool rpc_error_is_connection_code(int32_t code);
+
+bool rpc_error_is_connection_code(int32_t code) {
+    return (rusty::detail::deref_if_pointer_like(code) >= 100) && (rusty::detail::deref_if_pointer_like(code) < 200);
+}
+/*RUSTYCPP:GEN-END id=errors.2*/
+
 inline bool is_connection_error(RpcError err) {
-    return get_error_category(err) == RpcErrorCategory::CONNECTION;
+    return rpc_error_is_connection_code(static_cast<int32_t>(err));
 }
 
+// Free helper backing `is_timeout_error`. Mirrors the TIMEOUT range
+// (codes 400..500). Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn rpc_error_is_timeout_code(code: i32) -> bool {
+    code >= 400 && code < 500
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=errors.3 version=1 rust_sha256=cea5df0d68347a7eaf1e10af39549a12418b49f0126b95862e81610734b2a1c2*/
+bool rpc_error_is_timeout_code(int32_t code);
+
+bool rpc_error_is_timeout_code(int32_t code) {
+    return (rusty::detail::deref_if_pointer_like(code) >= 400) && (rusty::detail::deref_if_pointer_like(code) < 500);
+}
+/*RUSTYCPP:GEN-END id=errors.3*/
+
 inline bool is_timeout_error(RpcError err) {
-    return get_error_category(err) == RpcErrorCategory::TIMEOUT;
+    return rpc_error_is_timeout_code(static_cast<int32_t>(err));
 }
 
 // Free helper backing `is_retryable_error`. Returns true if `code` is
@@ -201,7 +233,7 @@ fn rpc_error_is_retryable(code: i32) -> bool {
     false
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.2 version=1 rust_sha256=446346dfa298d97bb982ac863ab4b19c481d2c7a45cb33a3654778fd036461f2*/
+/*RUSTYCPP:GEN-BEGIN id=errors.4 version=1 rust_sha256=446346dfa298d97bb982ac863ab4b19c481d2c7a45cb33a3654778fd036461f2*/
 bool rpc_error_is_retryable(int32_t code);
 
 bool rpc_error_is_retryable(int32_t code) {
@@ -228,7 +260,7 @@ bool rpc_error_is_retryable(int32_t code) {
     }
     return false;
 }
-/*RUSTYCPP:GEN-END id=errors.2*/
+/*RUSTYCPP:GEN-END id=errors.4*/
 
 inline bool is_retryable_error(RpcError err) {
     return rpc_error_is_retryable(static_cast<int32_t>(err));
