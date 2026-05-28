@@ -280,6 +280,16 @@ keeping the C++ surface unchanged.
       block and pass the scaled `r` into the helper. rrr builds,
       borrow_check_rrr_borrow_rand clean, rpcbench links (no
       dedicated test suite for rand).
+- [x] `rpc/request_queue.cpp::QueuedRequest::is_expired`,
+      `QueuedRequest::age_ms`, `RequestQueue::remaining_capacity` —
+      three pure-arithmetic helpers in one multi-fn block
+      (`request_queue_is_expired`, `request_queue_age_ms`,
+      `request_queue_remaining_capacity`). The first two take `now_us`
+      (fetched by the C++ caller via `clock_monotonic_us()`) plus the
+      struct's `timestamp_us`/`ttl_ms`; the last takes the two
+      `size_t`s the SpinMutex guard returned. rrr builds,
+      borrow_check_rrr_borrow_request_queue clean,
+      `test_rpc_request_queue` 30/30 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

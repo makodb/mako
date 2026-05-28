@@ -1,7 +1,7 @@
 module;
 
-#include <cstdint>
-#include <cstdlib>
+#include <stdint.h>
+#include <stdlib.h>
 
 #include <rusty/arc.hpp>
 #include <rusty/function.hpp>
@@ -17,6 +17,51 @@ import rrr.marshal;
 import rrr.threading;
 
 export namespace rrr {
+
+// Free helpers backing the pure-arithmetic parts of
+// `QueuedRequest::is_expired`, `QueuedRequest::age_ms`, and
+// `RequestQueue::remaining_capacity`. All three are pure integer
+// math; the first two take `now_us` (already fetched via the @unsafe
+// monotonic-clock call), the last takes the two `size_t`s the
+// SpinMutex guard returned. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn request_queue_is_expired(now_us: u64, timestamp_us: u64, ttl_ms: u32) -> bool {
+    ((now_us - timestamp_us) / 1000) > (ttl_ms as u64)
+}
+
+fn request_queue_age_ms(now_us: u64, timestamp_us: u64) -> u32 {
+    ((now_us - timestamp_us) / 1000) as u32
+}
+
+fn request_queue_remaining_capacity(max_size: u64, current_size: u64) -> u64 {
+    if max_size > current_size {
+        max_size - current_size
+    } else {
+        0
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=7893ef44ddca51df9fd007b58350900b6a3815cc639e2aa2b2cf261a187fd153*/
+bool request_queue_is_expired(uint64_t now_us, uint64_t timestamp_us, uint32_t ttl_ms);
+uint32_t request_queue_age_ms(uint64_t now_us, uint64_t timestamp_us);
+uint64_t request_queue_remaining_capacity(uint64_t max_size, uint64_t current_size);
+
+bool request_queue_is_expired(uint64_t now_us, uint64_t timestamp_us, uint32_t ttl_ms) {
+    return ((((rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(timestamp_us))) / 1000)) > ((static_cast<uint64_t>(ttl_ms)));
+}
+
+uint32_t request_queue_age_ms(uint64_t now_us, uint64_t timestamp_us) {
+    return static_cast<uint32_t>((((rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(timestamp_us))) / 1000));
+}
+
+uint64_t request_queue_remaining_capacity(uint64_t max_size, uint64_t current_size) {
+    if (rusty::detail::deref_if_pointer_like(max_size) > rusty::detail::deref_if_pointer_like(current_size)) {
+        return rusty::detail::deref_if_pointer_like(max_size) - rusty::detail::deref_if_pointer_like(current_size);
+    } else {
+        return static_cast<uint64_t>(0);
+    }
+}
+/*RUSTYCPP:GEN-END id=request_queue.1*/
 
 
 /**
@@ -57,14 +102,13 @@ struct QueuedRequest {
     // @safe - delegates to rusty::sys::time::clock_monotonic_us.
     bool is_expired() const {
         const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
-        const std::uint64_t elapsed_us = now_us - timestamp_us;
-        return (elapsed_us / 1000) > ttl_ms;
+        return request_queue_is_expired(now_us, timestamp_us, ttl_ms);
     }
 
     // @safe - delegates to rusty::sys::time::clock_monotonic_us.
     uint32_t age_ms() const {
         const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
-        return static_cast<uint32_t>((now_us - timestamp_us) / 1000);
+        return request_queue_age_ms(now_us, timestamp_us);
     }
 };
 
@@ -290,8 +334,8 @@ public:
     // @safe - SpinMutex::lock + VecDeque::size are @safe in the library.
     size_t remaining_capacity() const {
         auto guard = queue_.lock().unwrap();
-        return config_.max_size > guard->size() ?
-               config_.max_size - guard->size() : 0;
+        return static_cast<size_t>(
+            request_queue_remaining_capacity(config_.max_size, guard->size()));
     }
 
     // === Clear and Reset ===
