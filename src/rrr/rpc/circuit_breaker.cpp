@@ -1,7 +1,8 @@
 module;
 
-#include <cstdint>
+#include <stdint.h>
 #include <rusty/cell.hpp>
+#include <rusty/rusty.hpp>
 #include <time.h>
 
 export module rrr.circuit_breaker;
@@ -69,6 +70,24 @@ struct CircuitBreakerConfig {
     }
 };
 
+// Free helper backing the OPEN→HALF_OPEN probe-readiness check in
+// `CircuitBreaker::allow_request`. Returns true once the OPEN timeout
+// has elapsed since the last failure. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn circuit_should_probe(now_us: u64, last_failure_us: u64, timeout_ms: u32) -> bool {
+    let timeout_us: u64 = (timeout_ms as u64) * 1000;
+    now_us - last_failure_us >= timeout_us
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=513b8ecf0d225fe0a92a55f713dc3bc14cd0c9025d89f408c9b1c22a5c02a5a7*/
+bool circuit_should_probe(uint64_t now_us, uint64_t last_failure_us, uint32_t timeout_ms);
+
+bool circuit_should_probe(uint64_t now_us, uint64_t last_failure_us, uint32_t timeout_ms) {
+    const uint64_t timeout_us = ((static_cast<uint64_t>(timeout_ms))) * static_cast<uint64_t>(1000);
+    return (rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(last_failure_us)) >= rusty::detail::deref_if_pointer_like(timeout_us);
+}
+/*RUSTYCPP:GEN-END id=circuit_breaker.1*/
+
 // @safe - Single-threaded circuit breaker state machine. All fields are
 // rusty::Cell<T> for trivially-copyable interior mutability; no raw
 // pointers, syscalls, or operator-overload chains.
@@ -108,11 +127,9 @@ public:
                 return true;
 
             case CircuitState::OPEN: {
-                uint64_t now = current_time_us();
-                uint64_t last = last_failure_time_.get();
-                uint64_t timeout_us = static_cast<uint64_t>(config_.timeout_ms) * 1000;
-
-                if (now - last >= timeout_us) {
+                if (circuit_should_probe(current_time_us(),
+                                          last_failure_time_.get(),
+                                          config_.timeout_ms)) {
                     state_.set(CircuitState::HALF_OPEN);
                     probe_in_progress_.set(true);
                     return true;

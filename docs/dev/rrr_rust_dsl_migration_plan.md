@@ -185,6 +185,15 @@ keeping the C++ surface unchanged.
       of duplicated backoff math in C++. rrr builds,
       borrow_check_rrr_borrow_reconnect_policy clean,
       `test_rpc_reconnect_policy` 19/19 pass.
+- [x] `rpc/circuit_breaker.cpp::allow_request`'s OPEN-timeout check —
+      extracted as free helper
+      `circuit_should_probe(u64, u64, u32) -> bool`. First migration
+      to use `u64`. Transpiler handled cleanly. Most of the file's
+      methods touch `rusty::Cell` interior-mutable state which the
+      Rust DSL can't reach into, so this single arithmetic check is
+      the only candidate. rrr builds,
+      borrow_check_rrr_borrow_circuit_breaker clean,
+      `test_rpc_circuit_breaker` 21/21 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
