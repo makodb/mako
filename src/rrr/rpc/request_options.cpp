@@ -1,6 +1,7 @@
 module;
 
-#include <cstdint>
+#include <stdint.h>
+#include <rusty/rusty.hpp>
 
 export module rrr.request_options;
 
@@ -18,6 +19,53 @@ enum class TimeoutType : uint8_t {
     RESPONSE_TIMEOUT,
     TOTAL_TIMEOUT
 };
+
+// Free helpers backing `RequestOptions::can_retry`,
+// `is_total_timeout_exceeded`, and `remaining_time_ms`. Pure predicates
+// / sentinel-arithmetic over struct fields; member methods are thin
+// forwarders. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn request_can_retry(idempotent: bool, current_retry_count: u16, max_retries: u16) -> bool {
+    idempotent && current_retry_count < max_retries
+}
+
+fn request_total_timeout_exceeded(total_timeout_ms: u64, elapsed_ms: u64) -> bool {
+    total_timeout_ms > 0 && elapsed_ms >= total_timeout_ms
+}
+
+fn request_remaining_time_ms(total_timeout_ms: u64, elapsed_ms: u64) -> u64 {
+    if total_timeout_ms == 0 {
+        return u64::MAX;
+    }
+    if elapsed_ms >= total_timeout_ms {
+        return 0;
+    }
+    total_timeout_ms - elapsed_ms
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_options.1 version=1 rust_sha256=a81c8f018bca3693c1162d3274454d5e840a8bc58ac674f32830ae7eca785871*/
+bool request_can_retry(bool idempotent, uint16_t current_retry_count, uint16_t max_retries);
+bool request_total_timeout_exceeded(uint64_t total_timeout_ms, uint64_t elapsed_ms);
+uint64_t request_remaining_time_ms(uint64_t total_timeout_ms, uint64_t elapsed_ms);
+
+bool request_can_retry(bool idempotent, uint16_t current_retry_count, uint16_t max_retries) {
+    return rusty::detail::deref_if_pointer_like(idempotent) && (rusty::detail::deref_if_pointer_like(current_retry_count) < rusty::detail::deref_if_pointer_like(max_retries));
+}
+
+bool request_total_timeout_exceeded(uint64_t total_timeout_ms, uint64_t elapsed_ms) {
+    return (rusty::detail::deref_if_pointer_like(total_timeout_ms) > 0) && (rusty::detail::deref_if_pointer_like(elapsed_ms) >= rusty::detail::deref_if_pointer_like(total_timeout_ms));
+}
+
+uint64_t request_remaining_time_ms(uint64_t total_timeout_ms, uint64_t elapsed_ms) {
+    if (rusty::detail::deref_if_pointer_like(total_timeout_ms) == static_cast<uint64_t>(0)) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    if (rusty::detail::deref_if_pointer_like(elapsed_ms) >= rusty::detail::deref_if_pointer_like(total_timeout_ms)) {
+        return static_cast<uint64_t>(0);
+    }
+    return rusty::detail::deref_if_pointer_like(total_timeout_ms) - rusty::detail::deref_if_pointer_like(elapsed_ms);
+}
+/*RUSTYCPP:GEN-END id=request_options.1*/
 
 struct RequestOptions {
     uint64_t timeout_ms = 1000;
@@ -78,7 +126,7 @@ struct RequestOptions {
     }
 
     bool can_retry(uint16_t current_retry_count) const {
-        return idempotent && current_retry_count < max_retries;
+        return request_can_retry(idempotent, current_retry_count, max_retries);
     }
 
     uint64_t calculate_delay_ms(uint16_t attempt) const {
@@ -104,17 +152,11 @@ struct RequestOptions {
     }
 
     bool is_total_timeout_exceeded(uint64_t elapsed_ms) const {
-        return total_timeout_ms > 0 && elapsed_ms >= total_timeout_ms;
+        return request_total_timeout_exceeded(total_timeout_ms, elapsed_ms);
     }
 
     uint64_t remaining_time_ms(uint64_t elapsed_ms) const {
-        if (total_timeout_ms == 0) {
-            return UINT64_MAX;
-        }
-        if (elapsed_ms >= total_timeout_ms) {
-            return 0;
-        }
-        return total_timeout_ms - elapsed_ms;
+        return request_remaining_time_ms(total_timeout_ms, elapsed_ms);
     }
 };
 

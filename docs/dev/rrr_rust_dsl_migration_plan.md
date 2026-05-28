@@ -194,6 +194,14 @@ keeping the C++ surface unchanged.
       the only candidate. rrr builds,
       borrow_check_rrr_borrow_circuit_breaker clean,
       `test_rpc_circuit_breaker` 21/21 pass.
+- [x] `rpc/request_options.cpp::can_retry`,
+      `is_total_timeout_exceeded`, `remaining_time_ms` — three pure
+      predicates / sentinel-arithmetic methods migrated as one multi-fn
+      `#if RUSTYCPP_RUST` block. First migration with `u16` parameters
+      and `u64::MAX` (lowered to `std::numeric_limits<uint64_t>::max()`).
+      Member methods are now one-line forwarders. rrr builds,
+      borrow_check_rrr_borrow_request_options clean,
+      `test_rpc_timeout_retry` 36/36 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
