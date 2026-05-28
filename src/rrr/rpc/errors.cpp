@@ -1,5 +1,8 @@
 module;
 
+#include <stdint.h>
+#include <rusty/rusty.hpp>
+
 export module rrr.errors;
 
 import std;
@@ -106,14 +109,57 @@ inline const char* rpc_error_to_string(RpcError err) {
     }
 }
 
+// Free helper backing `get_error_category`. Authored as inline Rust
+// DSL: takes the raw integer code and returns the matching
+// RpcErrorCategory's integer discriminant. The C++ wrapper casts at
+// the boundary so the public RpcError / RpcErrorCategory surface
+// is unchanged. See docs/dev/rrr_rust_dsl_migration_plan.md.
+#if RUSTYCPP_RUST
+fn rpc_error_category_code(code: i32) -> i32 {
+    if code == 0 {
+        return 0; // NONE
+    }
+    if code >= 100 && code < 200 {
+        return 1; // CONNECTION
+    }
+    if code >= 200 && code < 300 {
+        return 2; // PROTOCOL
+    }
+    if code >= 300 && code < 400 {
+        return 3; // APPLICATION
+    }
+    if code >= 400 && code < 500 {
+        return 4; // TIMEOUT
+    }
+    5 // INTERNAL
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=errors.1 version=1 rust_sha256=e8bd412072b41c9da1042a00663b430c2ce1f79c2cea4e10532efe09fbf1c5ed*/
+int32_t rpc_error_category_code(int32_t code);
+
+int32_t rpc_error_category_code(int32_t code) {
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(0)) {
+        return static_cast<int32_t>(0);
+    }
+    if ((rusty::detail::deref_if_pointer_like(code) >= 100) && (rusty::detail::deref_if_pointer_like(code) < 200)) {
+        return static_cast<int32_t>(1);
+    }
+    if ((rusty::detail::deref_if_pointer_like(code) >= 200) && (rusty::detail::deref_if_pointer_like(code) < 300)) {
+        return static_cast<int32_t>(2);
+    }
+    if ((rusty::detail::deref_if_pointer_like(code) >= 300) && (rusty::detail::deref_if_pointer_like(code) < 400)) {
+        return static_cast<int32_t>(3);
+    }
+    if ((rusty::detail::deref_if_pointer_like(code) >= 400) && (rusty::detail::deref_if_pointer_like(code) < 500)) {
+        return static_cast<int32_t>(4);
+    }
+    return static_cast<int32_t>(5);
+}
+/*RUSTYCPP:GEN-END id=errors.1*/
+
 inline RpcErrorCategory get_error_category(RpcError err) {
-    int code = static_cast<int>(err);
-    if (code == 0) return RpcErrorCategory::NONE;
-    if (code >= 100 && code < 200) return RpcErrorCategory::CONNECTION;
-    if (code >= 200 && code < 300) return RpcErrorCategory::PROTOCOL;
-    if (code >= 300 && code < 400) return RpcErrorCategory::APPLICATION;
-    if (code >= 400 && code < 500) return RpcErrorCategory::TIMEOUT;
-    return RpcErrorCategory::INTERNAL;
+    return static_cast<RpcErrorCategory>(
+        rpc_error_category_code(static_cast<int32_t>(err)));
 }
 
 inline bool is_connection_error(RpcError err) {

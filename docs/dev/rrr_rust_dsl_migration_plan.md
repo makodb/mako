@@ -96,6 +96,13 @@ keeping the C++ surface unchanged.
   `rusty::detail::deref_if_pointer_like(...)`. Harmless for
   primitive args (boils away at compile time) but adds visual
   noise. Worth raising upstream eventually.
+- **Module-fragment includes.** The generated C++ uses bare
+  `int32_t` / `uint64_t` and `rusty::detail::*`. If the target
+  `.cpp` doesn't already include `<stdint.h>` and `<rusty/rusty.hpp>`
+  in its global module fragment (`module;` ... `export module ...;`),
+  the first inline-rust block in that file will fail to compile
+  with errors like `'int32_t' must be declared before it is used`.
+  One-time fix per file.
 
 ## Progress log
 
@@ -116,6 +123,16 @@ keeping the C++ surface unchanged.
       signedness; caller masks to 8 bits). rrr builds,
       borrow_check_rrr_borrow_basetypes clean, all 23
       `test_marshal` tests pass.
+- [x] `rpc/errors.cpp::get_error_category` — proves the workflow
+      across files. Free helper `rpc_error_category_code(i32) -> i32`
+      authored as inline Rust DSL; the C++ wrapper casts the enum
+      to int at the boundary so the `RpcError → RpcErrorCategory`
+      surface is preserved. Required adding `#include <stdint.h>` +
+      `#include <rusty/rusty.hpp>` to the module fragment so the
+      generated `int32_t` and `rusty::detail::deref_if_pointer_like`
+      names resolve. rrr builds, borrow_check_rrr_borrow_errors clean,
+      `test_rpc_errors` 19/19 + `test_rpc_error_integration` 10/10
+      pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
