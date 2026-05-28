@@ -112,6 +112,13 @@ keeping the C++ surface unchanged.
   rewrite small enum-classifier matches as if-chains; the if-chain
   lowering is the clean ~25-line path. Worth raising upstream as
   "lightweight lowering for primitive match-on-int".
+- **Over-eager `std::move` on primitive locals.** In the
+  `peek_delay_ms` migration the transpiler emitted
+  `delay = std::move(max_delay)` where `max_delay` is a const
+  `double`. Harmless (compiles, runs identically — primitives
+  have no move semantics), but conceptually noisy. Same shape:
+  any `let x = y;` where `y` is a local seems to lower to
+  `std::move(y)`.
 
 ## Progress log
 
@@ -166,6 +173,18 @@ keeping the C++ surface unchanged.
       borrow_check_rrr_borrow_reconnect_policy clean,
       `test_rpc_reconnect_policy` 19/19 pass,
       `test_rpc_reconnect_integration` 12/12 enabled pass.
+- [x] `rpc/reconnect_policy.cpp::peek_delay_ms` + the
+      deterministic-backoff portion of `next_delay_ms` — added a third
+      helper `reconnect_peek_delay_ms_impl(u32, u32, f64, u32) -> u32`
+      to the existing multi-fn block. First f64 + `while`-loop + `break`
+      in the migration; transpiler lowered cleanly to ~17 lines of
+      C++ (no runtime-support spam). `next_delay_ms` now delegates the
+      deterministic backoff to the same helper, then applies its
+      random_device jitter on the C++ side (no inline Rust there
+      because random_device pulls system entropy). Removed ~15 lines
+      of duplicated backoff math in C++. rrr builds,
+      borrow_check_rrr_borrow_reconnect_policy clean,
+      `test_rpc_reconnect_policy` 19/19 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

@@ -82,10 +82,38 @@ fn reconnect_retries_exhausted(auto_reconnect: bool, max_retries: u32, retry_cou
     }
     retry_count >= max_retries
 }
+
+// Deterministic exponential backoff used by both `peek_delay_ms` and the
+// pure part of `next_delay_ms` (the jitter step is C++-side because it
+// pulls a random sample). Multiplies `initial_delay_ms` by
+// `backoff_multiplier` once per retry, clamping at `max_delay_ms`.
+fn reconnect_peek_delay_ms_impl(
+    initial_delay_ms: u32,
+    max_delay_ms: u32,
+    backoff_multiplier: f64,
+    retry_count: u32,
+) -> u32 {
+    let mut delay: f64 = initial_delay_ms as f64;
+    let max_delay: f64 = max_delay_ms as f64;
+    let mut i: u32 = 0;
+    while i < retry_count {
+        delay *= backoff_multiplier;
+        if delay >= max_delay {
+            delay = max_delay;
+            break;
+        }
+        i += 1;
+    }
+    if delay > max_delay {
+        delay = max_delay;
+    }
+    delay as u32
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reconnect_policy.1 version=1 rust_sha256=650e4aca5bc6f4b32d2e9c3d6866cc9f1a0b77648f4283190c041999427c859c*/
+/*RUSTYCPP:GEN-BEGIN id=reconnect_policy.1 version=1 rust_sha256=0e4abdd3e05b5d86e56260ce54c1c801ba8e023d2f6b957f22b797873c483b6b*/
 bool reconnect_should_retry(bool auto_reconnect, uint32_t max_retries, uint32_t retry_count);
 bool reconnect_retries_exhausted(bool auto_reconnect, uint32_t max_retries, uint32_t retry_count);
+uint32_t reconnect_peek_delay_ms_impl(uint32_t initial_delay_ms, uint32_t max_delay_ms, double backoff_multiplier, uint32_t retry_count);
 
 bool reconnect_should_retry(bool auto_reconnect, uint32_t max_retries, uint32_t retry_count) {
     if (!auto_reconnect) {
@@ -105,6 +133,24 @@ bool reconnect_retries_exhausted(bool auto_reconnect, uint32_t max_retries, uint
         return false;
     }
     return rusty::detail::deref_if_pointer_like(retry_count) >= rusty::detail::deref_if_pointer_like(max_retries);
+}
+
+uint32_t reconnect_peek_delay_ms_impl(uint32_t initial_delay_ms, uint32_t max_delay_ms, double backoff_multiplier, uint32_t retry_count) {
+    double delay = static_cast<double>(initial_delay_ms);
+    const double max_delay = static_cast<double>(max_delay_ms);
+    uint32_t i = static_cast<uint32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(retry_count)) {
+        delay *= backoff_multiplier;
+        if (rusty::detail::deref_if_pointer_like(delay) >= rusty::detail::deref_if_pointer_like(max_delay)) {
+            delay = std::move(max_delay);
+            break;
+        }
+        i += 1;
+    }
+    if (rusty::detail::deref_if_pointer_like(delay) > rusty::detail::deref_if_pointer_like(max_delay)) {
+        delay = std::move(max_delay);
+    }
+    return static_cast<uint32_t>(delay);
 }
 /*RUSTYCPP:GEN-END id=reconnect_policy.1*/
 
@@ -133,17 +179,15 @@ public:
         uint32_t count = retry_count_.get();
         retry_count_.set(count + 1);
 
-        double delay = static_cast<double>(policy_.initial_delay_ms);
-        for (uint32_t i = 0; i < count; ++i) {
-            delay *= policy_.backoff_multiplier;
-            if (delay >= static_cast<double>(policy_.max_delay_ms)) {
-                delay = static_cast<double>(policy_.max_delay_ms);
-                break;
-            }
-        }
+        // Deterministic exponential backoff shared with peek_delay_ms.
+        double delay = static_cast<double>(
+            reconnect_peek_delay_ms_impl(
+                policy_.initial_delay_ms,
+                policy_.max_delay_ms,
+                policy_.backoff_multiplier,
+                count));
 
-        delay = std::min(delay, static_cast<double>(policy_.max_delay_ms));
-
+        // Jitter step stays C++-side (uses std::random_device).
         if (policy_.jitter_enabled && delay > 0) {
             std::random_device rd;
             std::uniform_real_distribution<double> dist(0.5, 1.5);
@@ -154,20 +198,11 @@ public:
     }
 
     uint32_t peek_delay_ms() const {
-        uint32_t count = retry_count_.get();
-
-        double delay = static_cast<double>(policy_.initial_delay_ms);
-        for (uint32_t i = 0; i < count; ++i) {
-            delay *= policy_.backoff_multiplier;
-            if (delay >= static_cast<double>(policy_.max_delay_ms)) {
-                delay = static_cast<double>(policy_.max_delay_ms);
-                break;
-            }
-        }
-
-        delay = std::min(delay, static_cast<double>(policy_.max_delay_ms));
-
-        return static_cast<uint32_t>(delay);
+        return reconnect_peek_delay_ms_impl(
+            policy_.initial_delay_ms,
+            policy_.max_delay_ms,
+            policy_.backoff_multiplier,
+            retry_count_.get());
     }
 
     void reset() {
