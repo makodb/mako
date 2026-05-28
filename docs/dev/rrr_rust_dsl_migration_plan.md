@@ -309,6 +309,16 @@ keeping the C++ surface unchanged.
       thread_local mt19937 sample. rrr builds,
       borrow_check_rrr_borrow_request_options clean,
       `test_rpc_timeout_retry` 36/36 pass.
+- [x] `rpc/frame_codec.cpp::FrameHeader::total_frame_size`,
+      `frame_codec_write_header`/`encode_into` payload-size
+      validation, and `FrameStreamReader::compact_if_needed`
+      threshold check — three trivial helpers in one multi-fn block
+      (`frame_header_total_size`, `frame_codec_payload_size_valid`,
+      `frame_codec_should_compact`). `total_frame_size` loses
+      `constexpr` (now a regular inline forwarder) — verified no
+      callers use it in constexpr contexts. rrr builds,
+      borrow_check_rrr_borrow_frame_codec clean,
+      `test_rpc_frame_codec` 25/25 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

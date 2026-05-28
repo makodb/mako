@@ -1,7 +1,9 @@
 module;
 
-#include <cstdint>
-#include <cstring>
+#include <stdint.h>
+#include <string.h>
+
+#include <rusty/rusty.hpp>
 
 export module rrr.frame_codec;
 
@@ -53,6 +55,42 @@ inline constexpr const char* frame_decode_status_to_string(FrameDecodeStatus s) 
     return "Unknown";
 }
 
+// Free helpers backing three pure-arithmetic / range-check pieces of
+// the frame codec: `FrameHeader::total_frame_size` (payload + 4-byte
+// header), `frame_codec_encode_into`'s payload-size validation, and
+// `FrameStreamReader::compact_if_needed`'s threshold check. Authored
+// as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn frame_header_total_size(payload_size: i32) -> i32 {
+    payload_size + 4
+}
+
+fn frame_codec_payload_size_valid(payload_size: i32, max_size: i32) -> bool {
+    payload_size >= 0 && payload_size <= max_size
+}
+
+fn frame_codec_should_compact(read_pos: u64, threshold: u64) -> bool {
+    read_pos != 0 && read_pos >= threshold
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.1 version=1 rust_sha256=00c5af3d52b9278063ac134032b89ded2ded7b016b6bc523085fee261088c5c2*/
+int32_t frame_header_total_size(int32_t payload_size);
+bool frame_codec_payload_size_valid(int32_t payload_size, int32_t max_size);
+bool frame_codec_should_compact(uint64_t read_pos, uint64_t threshold);
+
+int32_t frame_header_total_size(int32_t payload_size) {
+    return rusty::detail::deref_if_pointer_like(payload_size) + static_cast<int32_t>(4);
+}
+
+bool frame_codec_payload_size_valid(int32_t payload_size, int32_t max_size) {
+    return (rusty::detail::deref_if_pointer_like(payload_size) >= 0) && (rusty::detail::deref_if_pointer_like(payload_size) <= rusty::detail::deref_if_pointer_like(max_size));
+}
+
+bool frame_codec_should_compact(uint64_t read_pos, uint64_t threshold) {
+    return (rusty::detail::deref_if_pointer_like(read_pos) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(read_pos) >= rusty::detail::deref_if_pointer_like(threshold));
+}
+/*RUSTYCPP:GEN-END id=frame_codec.1*/
+
 // ---------------------------------------------------------------------------
 // Frame header
 // ---------------------------------------------------------------------------
@@ -70,8 +108,8 @@ struct FrameHeader {
     std::int32_t payload_size = 0;
     bool         extended_header_flag = false;
 
-    constexpr std::int32_t total_frame_size() const {
-        return payload_size + static_cast<std::int32_t>(kFrameHeaderSize);
+    std::int32_t total_frame_size() const {
+        return frame_header_total_size(payload_size);
     }
 };
 
@@ -93,8 +131,9 @@ inline bool frame_codec_write_header(std::uint8_t* out_buf,
                                      std::int32_t payload_size,
                                      bool extended_header_flag) {
     if (out_buf == nullptr) return false;
-    if (payload_size < 0)   return false;
-    if (payload_size > kMaxFramePayloadSize) return false;
+    if (!frame_codec_payload_size_valid(payload_size, kMaxFramePayloadSize)) {
+        return false;
+    }
 
     const std::int32_t encoded =
         encode_response_size(payload_size, extended_header_flag);
@@ -273,8 +312,9 @@ bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
                              const std::uint8_t* payload,
                              std::int32_t payload_size,
                              bool extended_header_flag) {
-    if (payload_size < 0)                          return false;
-    if (payload_size > kMaxFramePayloadSize)       return false;
+    if (!frame_codec_payload_size_valid(payload_size, kMaxFramePayloadSize)) {
+        return false;
+    }
     if (payload == nullptr && payload_size > 0)    return false;
 
     const std::size_t prev_size = out.size();
@@ -361,8 +401,9 @@ std::size_t FrameStreamReader::buffered_bytes() const {
 
 // @unsafe - `std::memmove` from `buf_.data() + read_pos_` to `buf_.data()`.
 void FrameStreamReader::compact_if_needed() {
-    if (read_pos_ == 0) return;
-    if (read_pos_ < kCompactThresholdBytes) return;
+    if (!frame_codec_should_compact(read_pos_, kCompactThresholdBytes)) {
+        return;
+    }
 
     const std::size_t remaining = buf_.size() - read_pos_;
     if (remaining > 0) {
