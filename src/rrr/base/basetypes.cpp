@@ -133,6 +133,25 @@ private:
     struct timeval end_;
 };
 
+// Free helper backing the scaling step of `Rand::next(int, int)`.
+// Mirrors the C++ semantics: `lower + r % (upper - lower)` with all
+// arithmetic in `u32` (`lower` cast at the boundary; for the typical
+// non-negative `lower` this is a noop). `rand_()` returns `u32`
+// (mt19937::result_type); we hand that in as `r`. Authored as inline
+// Rust DSL.
+#if RUSTYCPP_RUST
+fn rand_next_in_range(r: u32, lower: i32, upper: i32) -> u32 {
+    (lower as u32) + r % ((upper - lower) as u32)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.1 version=1 rust_sha256=a26f2e98a47135212cbd04b373e24ea7f2ad4d057122d829166df62049f17180*/
+uint32_t rand_next_in_range(uint32_t r, int32_t lower, int32_t upper);
+
+uint32_t rand_next_in_range(uint32_t r, int32_t lower, int32_t upper) {
+    return ((static_cast<uint32_t>(lower))) + (rusty::detail::deref_if_pointer_like(r) % ((static_cast<uint32_t>((rusty::detail::deref_if_pointer_like(upper) - rusty::detail::deref_if_pointer_like(lower))))));
+}
+/*RUSTYCPP:GEN-END id=basetypes.1*/
+
 class Rand: public NoCopy {
     std::mt19937 rand_;
 public:
@@ -141,7 +160,7 @@ public:
         return rand_();
     }
     std::mt19937::result_type next(int lower, int upper) {
-        return lower + rand_() % (upper - lower);
+        return rand_next_in_range(rand_(), lower, upper);
     }
     std::mt19937::result_type operator() () {
         return rand_();
@@ -243,7 +262,7 @@ fn sparse_int_buf_size_impl(byte0: i32) -> u64 {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=basetypes.1 version=1 rust_sha256=31569640ef4bafbff3f49ae55731162cc8754c42d9107ed3c43edc8fbc3594b8*/
+/*RUSTYCPP:GEN-BEGIN id=basetypes.2 version=1 rust_sha256=31569640ef4bafbff3f49ae55731162cc8754c42d9107ed3c43edc8fbc3594b8*/
 uint64_t sparse_int_buf_size_impl(int32_t byte0);
 
 uint64_t sparse_int_buf_size_impl(int32_t byte0) {
@@ -267,7 +286,7 @@ uint64_t sparse_int_buf_size_impl(int32_t byte0) {
         return static_cast<uint64_t>(9);
     }
 }
-/*RUSTYCPP:GEN-END id=basetypes.1*/
+/*RUSTYCPP:GEN-END id=basetypes.2*/
 
 size_t SparseInt::buf_size(char byte0) {
     return static_cast<size_t>(
@@ -301,7 +320,7 @@ fn sparse_int_val_size_impl(val: i64) -> u64 {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=basetypes.2 version=1 rust_sha256=5e0232658d8bb791e952ff50617cc358eff1c2e8847a09b73d303ca99bb153d3*/
+/*RUSTYCPP:GEN-BEGIN id=basetypes.3 version=1 rust_sha256=5e0232658d8bb791e952ff50617cc358eff1c2e8847a09b73d303ca99bb153d3*/
 uint64_t sparse_int_val_size_impl(int64_t val);
 
 uint64_t sparse_int_val_size_impl(int64_t val) {
@@ -325,7 +344,7 @@ uint64_t sparse_int_val_size_impl(int64_t val) {
         return static_cast<uint64_t>(9);
     }
 }
-/*RUSTYCPP:GEN-END id=basetypes.2*/
+/*RUSTYCPP:GEN-END id=basetypes.3*/
 
 size_t SparseInt::val_size(i64 val) {
     return static_cast<size_t>(sparse_int_val_size_impl(val));
@@ -544,7 +563,7 @@ fn timer_elapsed_stopped_seconds(begin_sec: i64, begin_usec: i64, end_sec: i64, 
     ((end_sec - begin_sec) as f64) + ((end_usec - begin_usec) as f64) / 1000000.0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=basetypes.3 version=1 rust_sha256=1e6f6fe57720959ad168d9fa8de32b0aa0ad784365f26b89d2151ff53f69f0c9*/
+/*RUSTYCPP:GEN-BEGIN id=basetypes.4 version=1 rust_sha256=1e6f6fe57720959ad168d9fa8de32b0aa0ad784365f26b89d2151ff53f69f0c9*/
 double timer_elapsed_live_seconds(uint64_t now_us, uint64_t begin_us);
 double timer_elapsed_stopped_seconds(int64_t begin_sec, int64_t begin_usec, int64_t end_sec, int64_t end_usec);
 
@@ -555,7 +574,7 @@ double timer_elapsed_live_seconds(uint64_t now_us, uint64_t begin_us) {
 double timer_elapsed_stopped_seconds(int64_t begin_sec, int64_t begin_usec, int64_t end_sec, int64_t end_usec) {
     return ((static_cast<double>((rusty::detail::deref_if_pointer_like(end_sec) - rusty::detail::deref_if_pointer_like(begin_sec))))) + (((static_cast<double>((rusty::detail::deref_if_pointer_like(end_usec) - rusty::detail::deref_if_pointer_like(begin_usec))))) / 1000000.0);
 }
-/*RUSTYCPP:GEN-END id=basetypes.3*/
+/*RUSTYCPP:GEN-END id=basetypes.4*/
 
 // @safe - live-elapsed branch delegates to rusty::sys::time::gettimeofday_us.
 double Timer::elapsed() const {

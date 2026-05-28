@@ -351,6 +351,16 @@ keeping the C++ surface unchanged.
       the connection_metrics latency helpers, on `i64` instead of
       `u64`. rrr builds, borrow_check_rrr_borrow_stat clean, rpcbench
       links (no dedicated test suite for AvgStat).
+- [x] `base/basetypes.cpp::Rand::next(int, int)` —
+      `rand_next_in_range` (single-fn block). Pure u32 scaling:
+      `(lower as u32) + r % ((upper - lower) as u32)`, mirroring the
+      C++ implicit-conversion semantics. New block needed to be
+      inserted BEFORE the existing SparseInt/Timer helpers (so the
+      forward declaration is visible to the in-class `Rand::next`
+      inline body) — required renumbering existing blocks
+      `basetypes.1`/`.2`/`.3` → `.2`/`.3`/`.4` (per the auto-id-
+      collision workaround). rrr builds,
+      borrow_check_rrr_borrow_basetypes clean, rpcbench links.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
