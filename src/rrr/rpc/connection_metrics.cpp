@@ -13,7 +13,7 @@ import std;
 export namespace rrr {
 
 // Free helpers backing the derived-statistic methods on
-// `ConnectionMetrics`. All four are pure `u64` math with sentinel
+// `ConnectionMetrics`. All are pure `u64` math with sentinel
 // edge cases. C++ member methods read the Cells and forward.
 // Authored as inline Rust DSL.
 #if RUSTYCPP_RUST
@@ -47,12 +47,28 @@ fn metrics_uptime_ms(connect_time_ms: u64, current_time_ms: u64) -> u64 {
     }
     current_time_ms - connect_time_ms
 }
+
+fn metrics_new_min_latency_us(current: u64, sample: u64) -> u64 {
+    if sample < current {
+        return sample;
+    }
+    current
+}
+
+fn metrics_new_max_latency_us(current: u64, sample: u64) -> u64 {
+    if sample > current {
+        return sample;
+    }
+    current
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=5914ef78b48145b14484486dfca96692f4814f202a02c689277974e6dd11c07e*/
+/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=a6fa54d9d64ef7b4ab73a9389e71369554575dbb9f410e74dfcb9bbc2b4a1b46*/
 uint64_t metrics_min_latency_us(uint64_t stored);
 uint64_t metrics_success_rate_percent(uint64_t completed, uint64_t total);
 uint64_t metrics_avg_latency_us(uint64_t total_latency_us, uint64_t completed);
 uint64_t metrics_uptime_ms(uint64_t connect_time_ms, uint64_t current_time_ms);
+uint64_t metrics_new_min_latency_us(uint64_t current, uint64_t sample);
+uint64_t metrics_new_max_latency_us(uint64_t current, uint64_t sample);
 
 uint64_t metrics_min_latency_us(uint64_t stored) {
     if (rusty::detail::deref_if_pointer_like(stored) == rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max())) {
@@ -83,6 +99,20 @@ uint64_t metrics_uptime_ms(uint64_t connect_time_ms, uint64_t current_time_ms) {
         return static_cast<uint64_t>(0);
     }
     return rusty::detail::deref_if_pointer_like(current_time_ms) - rusty::detail::deref_if_pointer_like(connect_time_ms);
+}
+
+uint64_t metrics_new_min_latency_us(uint64_t current, uint64_t sample) {
+    if (rusty::detail::deref_if_pointer_like(sample) < rusty::detail::deref_if_pointer_like(current)) {
+        return std::move(sample);
+    }
+    return std::move(current);
+}
+
+uint64_t metrics_new_max_latency_us(uint64_t current, uint64_t sample) {
+    if (rusty::detail::deref_if_pointer_like(sample) > rusty::detail::deref_if_pointer_like(current)) {
+        return std::move(sample);
+    }
+    return std::move(current);
 }
 /*RUSTYCPP:GEN-END id=connection_metrics.1*/
 
@@ -137,15 +167,10 @@ public:
         decrement_in_flight();
         total_latency_us_.set(total_latency_us_.get() + latency_us);
 
-        auto current_min = min_latency_us_.get();
-        if (latency_us < current_min) {
-            min_latency_us_.set(latency_us);
-        }
-
-        auto current_max = max_latency_us_.get();
-        if (latency_us > current_max) {
-            max_latency_us_.set(latency_us);
-        }
+        min_latency_us_.set(
+            metrics_new_min_latency_us(min_latency_us_.get(), latency_us));
+        max_latency_us_.set(
+            metrics_new_max_latency_us(max_latency_us_.get(), latency_us));
     }
 
     void record_request_completed() const {

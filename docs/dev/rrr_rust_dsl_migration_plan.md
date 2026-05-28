@@ -334,6 +334,15 @@ keeping the C++ surface unchanged.
       First migration that lowers `i64::MAX as u64`. rrr builds,
       borrow_check_rrr_borrow_server clean,
       `test_rpc_server_channel_binding` 3/3 pass.
+- [x] `rpc/connection_metrics.cpp::record_request_completed` min/max
+      updates — added `metrics_new_min_latency_us` and
+      `metrics_new_max_latency_us` to the existing
+      `connection_metrics.1` block (now 6 helpers). Each is a pure
+      `if sample {<,>} current { sample } else { current }`. C++ code
+      collapses to one `min_latency_us_.set(metrics_new_min_..(...))`
+      per axis. rrr builds,
+      borrow_check_rrr_borrow_connection_metrics clean,
+      `test_rpc_metrics` 25/25 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
