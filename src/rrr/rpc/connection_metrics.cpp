@@ -1,7 +1,8 @@
 module;
 
-#include <cstdint>
+#include <stdint.h>
 #include <rusty/cell.hpp>
+#include <rusty/rusty.hpp>
 
 export module rrr.connection_metrics;
 
@@ -10,6 +11,80 @@ import std;
 // @safe - Pure rusty::Cell<uint64_t>-backed counter metrics with simple
 // getters/setters. No raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
+
+// Free helpers backing the derived-statistic methods on
+// `ConnectionMetrics`. All four are pure `u64` math with sentinel
+// edge cases. C++ member methods read the Cells and forward.
+// Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn metrics_min_latency_us(stored: u64) -> u64 {
+    if stored == u64::MAX {
+        return 0;
+    }
+    stored
+}
+
+fn metrics_success_rate_percent(completed: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 100;
+    }
+    (completed * 100) / total
+}
+
+fn metrics_avg_latency_us(total_latency_us: u64, completed: u64) -> u64 {
+    if completed == 0 {
+        return 0;
+    }
+    total_latency_us / completed
+}
+
+fn metrics_uptime_ms(connect_time_ms: u64, current_time_ms: u64) -> u64 {
+    if connect_time_ms == 0 {
+        return 0;
+    }
+    if current_time_ms < connect_time_ms {
+        return 0;
+    }
+    current_time_ms - connect_time_ms
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=5914ef78b48145b14484486dfca96692f4814f202a02c689277974e6dd11c07e*/
+uint64_t metrics_min_latency_us(uint64_t stored);
+uint64_t metrics_success_rate_percent(uint64_t completed, uint64_t total);
+uint64_t metrics_avg_latency_us(uint64_t total_latency_us, uint64_t completed);
+uint64_t metrics_uptime_ms(uint64_t connect_time_ms, uint64_t current_time_ms);
+
+uint64_t metrics_min_latency_us(uint64_t stored) {
+    if (rusty::detail::deref_if_pointer_like(stored) == rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max())) {
+        return static_cast<uint64_t>(0);
+    }
+    return std::move(stored);
+}
+
+uint64_t metrics_success_rate_percent(uint64_t completed, uint64_t total) {
+    if (rusty::detail::deref_if_pointer_like(total) == static_cast<uint64_t>(0)) {
+        return static_cast<uint64_t>(100);
+    }
+    return ((rusty::detail::deref_if_pointer_like(completed) * static_cast<uint64_t>(100))) / rusty::detail::deref_if_pointer_like(total);
+}
+
+uint64_t metrics_avg_latency_us(uint64_t total_latency_us, uint64_t completed) {
+    if (rusty::detail::deref_if_pointer_like(completed) == static_cast<uint64_t>(0)) {
+        return static_cast<uint64_t>(0);
+    }
+    return rusty::detail::deref_if_pointer_like(total_latency_us) / rusty::detail::deref_if_pointer_like(completed);
+}
+
+uint64_t metrics_uptime_ms(uint64_t connect_time_ms, uint64_t current_time_ms) {
+    if (rusty::detail::deref_if_pointer_like(connect_time_ms) == static_cast<uint64_t>(0)) {
+        return static_cast<uint64_t>(0);
+    }
+    if (rusty::detail::deref_if_pointer_like(current_time_ms) < rusty::detail::deref_if_pointer_like(connect_time_ms)) {
+        return static_cast<uint64_t>(0);
+    }
+    return rusty::detail::deref_if_pointer_like(current_time_ms) - rusty::detail::deref_if_pointer_like(connect_time_ms);
+}
+/*RUSTYCPP:GEN-END id=connection_metrics.1*/
 
 class ConnectionMetrics {
 public:
@@ -34,29 +109,22 @@ public:
     uint64_t connect_time_ms() const { return connect_time_ms_.get(); }
 
     uint64_t min_latency_us() const {
-        auto min = min_latency_us_.get();
-        return (min == std::numeric_limits<uint64_t>::max()) ? 0 : min;
+        return metrics_min_latency_us(min_latency_us_.get());
     }
     uint64_t max_latency_us() const { return max_latency_us_.get(); }
 
     uint64_t success_rate_percent() const {
-        auto completed = requests_completed_.get();
-        auto total = requests_sent_.get();
-        if (total == 0) return 100;
-        return (completed * 100) / total;
+        return metrics_success_rate_percent(
+            requests_completed_.get(), requests_sent_.get());
     }
 
     uint64_t avg_latency_us() const {
-        auto completed = requests_completed_.get();
-        if (completed == 0) return 0;
-        return total_latency_us_.get() / completed;
+        return metrics_avg_latency_us(
+            total_latency_us_.get(), requests_completed_.get());
     }
 
     uint64_t uptime_ms(uint64_t current_time_ms) const {
-        auto connect_time = connect_time_ms_.get();
-        if (connect_time == 0) return 0;
-        if (current_time_ms < connect_time) return 0;
-        return current_time_ms - connect_time;
+        return metrics_uptime_ms(connect_time_ms_.get(), current_time_ms);
     }
 
     void record_request_sent() const {

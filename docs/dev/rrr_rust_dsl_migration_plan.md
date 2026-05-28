@@ -222,6 +222,14 @@ keeping the C++ surface unchanged.
       the Cell reads + enabled/timed_out guards. rrr builds,
       borrow_check_rrr_borrow_heartbeat clean,
       `test_rpc_heartbeat` 20/20 pass.
+- [x] `rpc/connection_metrics.cpp::min_latency_us`,
+      `success_rate_percent`, `avg_latency_us`, `uptime_ms` — four
+      pure `u64` sentinel/division helpers in one multi-fn block
+      (`metrics_min_latency_us`, `metrics_success_rate_percent`,
+      `metrics_avg_latency_us`, `metrics_uptime_ms`). C++ member
+      methods read Cells and forward. rrr builds,
+      borrow_check_rrr_borrow_connection_metrics clean,
+      `test_rpc_metrics` 25/25 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
