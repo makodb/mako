@@ -290,6 +290,15 @@ keeping the C++ surface unchanged.
       `size_t`s the SpinMutex guard returned. rrr builds,
       borrow_check_rrr_borrow_request_queue clean,
       `test_rpc_request_queue` 30/30 pass.
+- [x] `base/basetypes.cpp::Timer::elapsed` (both branches) — two pure
+      seconds-conversion helpers in one multi-fn block
+      (`timer_elapsed_live_seconds`,
+      `timer_elapsed_stopped_seconds`). The live branch divides
+      `now_us - begin_us` by `1e6`; the stopped branch combines `(sec,
+      usec)` pairs into seconds. Added as `basetypes.3` (after the
+      existing `basetypes.1`/`basetypes.2` SparseInt helpers). rrr
+      builds, borrow_check_rrr_borrow_basetypes clean, rpcbench links
+      (no dedicated test suite for Timer).
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

@@ -531,6 +531,32 @@ void Timer::reset() {
     end_.tv_usec = 0;
 }
 
+// Free helpers backing the two arithmetic branches of `Timer::elapsed`.
+// The "live" branch (no stop() yet) divides the `now_us - begin_us`
+// delta by 1e6; the "stopped" branch combines `(sec, usec)` pairs into
+// seconds. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn timer_elapsed_live_seconds(now_us: u64, begin_us: u64) -> f64 {
+    ((now_us - begin_us) as f64) / 1000000.0
+}
+
+fn timer_elapsed_stopped_seconds(begin_sec: i64, begin_usec: i64, end_sec: i64, end_usec: i64) -> f64 {
+    ((end_sec - begin_sec) as f64) + ((end_usec - begin_usec) as f64) / 1000000.0
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.3 version=1 rust_sha256=1e6f6fe57720959ad168d9fa8de32b0aa0ad784365f26b89d2151ff53f69f0c9*/
+double timer_elapsed_live_seconds(uint64_t now_us, uint64_t begin_us);
+double timer_elapsed_stopped_seconds(int64_t begin_sec, int64_t begin_usec, int64_t end_sec, int64_t end_usec);
+
+double timer_elapsed_live_seconds(uint64_t now_us, uint64_t begin_us) {
+    return ((static_cast<double>((rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(begin_us))))) / 1000000.0;
+}
+
+double timer_elapsed_stopped_seconds(int64_t begin_sec, int64_t begin_usec, int64_t end_sec, int64_t end_usec) {
+    return ((static_cast<double>((rusty::detail::deref_if_pointer_like(end_sec) - rusty::detail::deref_if_pointer_like(begin_sec))))) + (((static_cast<double>((rusty::detail::deref_if_pointer_like(end_usec) - rusty::detail::deref_if_pointer_like(begin_usec))))) / 1000000.0);
+}
+/*RUSTYCPP:GEN-END id=basetypes.3*/
+
 // @safe - live-elapsed branch delegates to rusty::sys::time::gettimeofday_us.
 double Timer::elapsed() const {
     if (begin_.tv_sec == 0 && begin_.tv_usec == 0) std::abort();
@@ -538,9 +564,13 @@ double Timer::elapsed() const {
         const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
         const std::uint64_t begin_us =
             static_cast<std::uint64_t>(begin_.tv_sec) * 1000000 + begin_.tv_usec;
-        return static_cast<double>(now_us - begin_us) / 1000000.0;
+        return timer_elapsed_live_seconds(now_us, begin_us);
     }
-    return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
+    return timer_elapsed_stopped_seconds(
+        static_cast<int64_t>(begin_.tv_sec),
+        static_cast<int64_t>(begin_.tv_usec),
+        static_cast<int64_t>(end_.tv_sec),
+        static_cast<int64_t>(end_.tv_usec));
 }
 
 // @safe - all three seed contributors flow through @safe wrappers:
