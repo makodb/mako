@@ -343,6 +343,14 @@ keeping the C++ surface unchanged.
       per axis. rrr builds,
       borrow_check_rrr_borrow_connection_metrics clean,
       `test_rpc_metrics` 25/25 pass.
+- [x] `misc/stat.cpp::AvgStat::sample` — three pure-arithmetic
+      helpers in one multi-fn block (`avg_stat_compute_avg`,
+      `avg_stat_new_max`, `avg_stat_new_min`). `n_stat` is
+      post-increment (always >= 1), so the average division is safe.
+      Min/max follow the same `if sample {<,>} current` pattern as
+      the connection_metrics latency helpers, on `i64` instead of
+      `u64`. rrr builds, borrow_check_rrr_borrow_stat clean, rpcbench
+      links (no dedicated test suite for AvgStat).
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
