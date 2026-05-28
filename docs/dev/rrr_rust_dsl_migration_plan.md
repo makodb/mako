@@ -242,6 +242,15 @@ keeping the C++ surface unchanged.
       constexpr contexts. rrr builds,
       borrow_check_rrr_borrow_internal_protocol clean,
       `test_rpc_frame_codec` 25/25 pass.
+- [x] `rpc/idempotency.cpp::IdempotencyKey::is_valid`,
+      `CachedResponse::is_expired`, `IdempotencyCache::hit_rate` —
+      three pure predicates / statistics in one multi-fn block
+      (`idempotency_key_is_valid`, `idempotency_response_is_expired`,
+      `idempotency_cache_hit_rate`). First migration with `f64`
+      return: `(hits as f64) / (total as f64)`. C++ member methods
+      read struct fields / Cells and forward. rrr builds,
+      borrow_check_rrr_borrow_idempotency clean,
+      `test_idempotency` 32/32 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

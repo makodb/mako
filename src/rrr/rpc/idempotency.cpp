@@ -1,7 +1,7 @@
 module;
 
-#include <cstdint>
-#include <cstdlib>
+#include <stdint.h>
+#include <stdlib.h>
 
 #include <rusty/cell.hpp>
 #include <rusty/function.hpp>
@@ -19,6 +19,56 @@ import rrr.serializable;
 import rrr.threading;
 
 export namespace rrr {
+
+// Free helpers backing three pure predicates / statistics on the
+// idempotency types: `IdempotencyKey::is_valid`,
+// `CachedResponse::is_expired`, and `IdempotencyCache::hit_rate`. All
+// three take primitive `u64` arguments; C++ wrappers read struct
+// fields / Cells and forward. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn idempotency_key_is_valid(client_id: u64, sequence: u64) -> bool {
+    client_id != 0 || sequence != 0
+}
+
+fn idempotency_response_is_expired(current_time_ms: u64, timestamp_ms: u64, ttl_ms: u64) -> bool {
+    if ttl_ms == 0 {
+        return false;
+    }
+    current_time_ms > timestamp_ms + ttl_ms
+}
+
+fn idempotency_cache_hit_rate(hits: u64, misses: u64) -> f64 {
+    let total: u64 = hits + misses;
+    if total == 0 {
+        return 0.0;
+    }
+    (hits as f64) / (total as f64)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=7c17b88f14f40486c4624285c442236be8075da9098d7fcc2f918aae7e303e97*/
+bool idempotency_key_is_valid(uint64_t client_id, uint64_t sequence);
+bool idempotency_response_is_expired(uint64_t current_time_ms, uint64_t timestamp_ms, uint64_t ttl_ms);
+double idempotency_cache_hit_rate(uint64_t hits, uint64_t misses);
+
+bool idempotency_key_is_valid(uint64_t client_id, uint64_t sequence) {
+    return (rusty::detail::deref_if_pointer_like(client_id) != static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(sequence) != static_cast<uint64_t>(0));
+}
+
+bool idempotency_response_is_expired(uint64_t current_time_ms, uint64_t timestamp_ms, uint64_t ttl_ms) {
+    if (rusty::detail::deref_if_pointer_like(ttl_ms) == static_cast<uint64_t>(0)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(current_time_ms) > (rusty::detail::deref_if_pointer_like(timestamp_ms) + rusty::detail::deref_if_pointer_like(ttl_ms));
+}
+
+double idempotency_cache_hit_rate(uint64_t hits, uint64_t misses) {
+    const uint64_t total = rusty::detail::deref_if_pointer_like(hits) + rusty::detail::deref_if_pointer_like(misses);
+    if (rusty::detail::deref_if_pointer_like(total) == static_cast<uint64_t>(0)) {
+        return 0.0;
+    }
+    return ((static_cast<double>(hits))) / ((static_cast<double>(total)));
+}
+/*RUSTYCPP:GEN-END id=idempotency.1*/
 
 
 // ===========================================================================
@@ -54,7 +104,7 @@ struct IdempotencyKey {
 
     // @safe - Check if key is valid (non-zero)
     bool is_valid() const {
-        return client_id != 0 || sequence != 0;
+        return idempotency_key_is_valid(client_id, sequence);
     }
 
     // @safe - Create an empty/invalid key
@@ -164,8 +214,7 @@ struct CachedResponse {
 
     // @safe - Check if entry has expired
     bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
-        if (ttl_ms == 0) return false;  // No expiration
-        return current_time_ms > timestamp_ms + ttl_ms;
+        return idempotency_response_is_expired(current_time_ms, timestamp_ms, ttl_ms);
     }
 
     // @unsafe - Copy response data from Marshal
@@ -458,11 +507,7 @@ public:
 
     // @safe - Get hit rate (0.0 to 1.0)
     double hit_rate() const {
-        uint64_t h = hits_.get();
-        uint64_t m = misses_.get();
-        uint64_t total = h + m;
-        if (total == 0) return 0.0;
-        return static_cast<double>(h) / static_cast<double>(total);
+        return idempotency_cache_hit_rate(hits_.get(), misses_.get());
     }
 
     // @safe - Reset statistics
