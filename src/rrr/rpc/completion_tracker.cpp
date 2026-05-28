@@ -1,7 +1,7 @@
 module;
 
-#include <cstdint>
-#include <cstdlib>
+#include <stdint.h>
+#include <stdlib.h>
 
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
@@ -13,6 +13,56 @@ import std;
 import rrr.idempotency;
 
 export namespace rrr {
+
+// Free helpers backing three pure predicates / statistics on the
+// completion-tracker types: `CompletedEntry::is_expired`,
+// `CompletionTracker::hit_rate`, `CompletionQueryResult::is_completed`.
+// The last takes the `u8` discriminant of `CompletionStatus`
+// (NOT_FOUND=0..EXPIRED=3); C++ casts at the boundary. Authored as
+// inline Rust DSL.
+#if RUSTYCPP_RUST
+fn completion_entry_is_expired(current_time_ms: u64, timestamp_ms: u64, ttl_ms: u64) -> bool {
+    if ttl_ms == 0 {
+        return false;
+    }
+    current_time_ms > timestamp_ms + ttl_ms
+}
+
+fn completion_tracker_hit_rate(query_hits: u64, queries: u64) -> f64 {
+    if queries == 0 {
+        return 0.0;
+    }
+    (query_hits as f64) / (queries as f64)
+}
+
+fn completion_query_result_is_completed(status: u8) -> bool {
+    // COMPLETED == 1, COMPLETED_WITH_ERROR == 2
+    status == 1 || status == 2
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=144fdb9f1da11e09aae10f4177ac33278f0d8a9868a87f5148d43ea596e0dfc1*/
+bool completion_entry_is_expired(uint64_t current_time_ms, uint64_t timestamp_ms, uint64_t ttl_ms);
+double completion_tracker_hit_rate(uint64_t query_hits, uint64_t queries);
+bool completion_query_result_is_completed(uint8_t status);
+
+bool completion_entry_is_expired(uint64_t current_time_ms, uint64_t timestamp_ms, uint64_t ttl_ms) {
+    if (rusty::detail::deref_if_pointer_like(ttl_ms) == static_cast<uint64_t>(0)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(current_time_ms) > (rusty::detail::deref_if_pointer_like(timestamp_ms) + rusty::detail::deref_if_pointer_like(ttl_ms));
+}
+
+double completion_tracker_hit_rate(uint64_t query_hits, uint64_t queries) {
+    if (rusty::detail::deref_if_pointer_like(queries) == static_cast<uint64_t>(0)) {
+        return 0.0;
+    }
+    return ((static_cast<double>(query_hits))) / ((static_cast<double>(queries)));
+}
+
+bool completion_query_result_is_completed(uint8_t status) {
+    return (rusty::detail::deref_if_pointer_like(status) == static_cast<uint8_t>(1)) || (rusty::detail::deref_if_pointer_like(status) == static_cast<uint8_t>(2));
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.1*/
 
 
 // ===========================================================================
@@ -84,8 +134,7 @@ struct CompletedEntry {
 
     // @safe - Check if entry has expired
     bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
-        if (ttl_ms == 0) return false;  // No expiration
-        return current_time_ms > timestamp_ms + ttl_ms;
+        return completion_entry_is_expired(current_time_ms, timestamp_ms, ttl_ms);
     }
 };
 
@@ -281,9 +330,7 @@ public:
 
     // @safe - Get hit rate (0.0 to 1.0)
     double hit_rate() const {
-        uint64_t q = queries_.get();
-        if (q == 0) return 0.0;
-        return static_cast<double>(query_hits_.get()) / static_cast<double>(q);
+        return completion_tracker_hit_rate(query_hits_.get(), queries_.get());
     }
 
     // @safe - Get eviction count
@@ -379,8 +426,7 @@ struct CompletionQueryResult {
 
     // @safe - Check if completed (with or without error)
     bool is_completed() const {
-        return status == CompletionStatus::COMPLETED ||
-               status == CompletionStatus::COMPLETED_WITH_ERROR;
+        return completion_query_result_is_completed(static_cast<uint8_t>(status));
     }
 };
 

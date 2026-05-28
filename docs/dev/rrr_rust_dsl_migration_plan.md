@@ -251,6 +251,17 @@ keeping the C++ surface unchanged.
       read struct fields / Cells and forward. rrr builds,
       borrow_check_rrr_borrow_idempotency clean,
       `test_idempotency` 32/32 pass.
+- [x] `rpc/completion_tracker.cpp::CompletedEntry::is_expired`,
+      `CompletionTracker::hit_rate`,
+      `CompletionQueryResult::is_completed` — three pure predicates /
+      statistics in one multi-fn block (`completion_entry_is_expired`,
+      `completion_tracker_hit_rate`,
+      `completion_query_result_is_completed`). First migration with
+      `u8` parameter: the last helper takes the `u8` discriminant of
+      `CompletionStatus` (NOT_FOUND=0..EXPIRED=3); C++ casts at the
+      boundary. rrr builds,
+      borrow_check_rrr_borrow_completion_tracker clean,
+      `test_completion_tracker` 27/27 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
