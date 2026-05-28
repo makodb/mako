@@ -11,10 +11,29 @@ import std;
 
 export namespace rrr {
 
+// Free helper backing the timespec→microseconds conversion used by
+// `current_time_us`. Pure u64 arithmetic; the C++ wrapper owns the
+// `clock_gettime` syscall and hands the resulting (sec, nsec) pair
+// in. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn circuit_timespec_to_us(tv_sec: u64, tv_nsec: u64) -> u64 {
+    tv_sec * 1000000 + tv_nsec / 1000
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=10383920c8512d3d9dcbe98b102b2d847e7bcb003ee67319933bd3b1354c887d*/
+uint64_t circuit_timespec_to_us(uint64_t tv_sec, uint64_t tv_nsec);
+
+uint64_t circuit_timespec_to_us(uint64_t tv_sec, uint64_t tv_nsec) {
+    return (rusty::detail::deref_if_pointer_like(tv_sec) * static_cast<uint64_t>(1000000)) + (rusty::detail::deref_if_pointer_like(tv_nsec) / static_cast<uint64_t>(1000));
+}
+/*RUSTYCPP:GEN-END id=circuit_breaker.1*/
+
 inline uint64_t current_time_us() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
+    return circuit_timespec_to_us(
+        static_cast<uint64_t>(ts.tv_sec),
+        static_cast<uint64_t>(ts.tv_nsec));
 }
 
 enum class CircuitState : int {
@@ -79,14 +98,14 @@ fn circuit_should_probe(now_us: u64, last_failure_us: u64, timeout_ms: u32) -> b
     now_us - last_failure_us >= timeout_us
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=513b8ecf0d225fe0a92a55f713dc3bc14cd0c9025d89f408c9b1c22a5c02a5a7*/
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.2 version=1 rust_sha256=513b8ecf0d225fe0a92a55f713dc3bc14cd0c9025d89f408c9b1c22a5c02a5a7*/
 bool circuit_should_probe(uint64_t now_us, uint64_t last_failure_us, uint32_t timeout_ms);
 
 bool circuit_should_probe(uint64_t now_us, uint64_t last_failure_us, uint32_t timeout_ms) {
     const uint64_t timeout_us = ((static_cast<uint64_t>(timeout_ms))) * static_cast<uint64_t>(1000);
     return (rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(last_failure_us)) >= rusty::detail::deref_if_pointer_like(timeout_us);
 }
-/*RUSTYCPP:GEN-END id=circuit_breaker.1*/
+/*RUSTYCPP:GEN-END id=circuit_breaker.2*/
 
 // @safe - Single-threaded circuit breaker state machine. All fields are
 // rusty::Cell<T> for trivially-copyable interior mutability; no raw

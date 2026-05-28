@@ -369,6 +369,17 @@ keeping the C++ surface unchanged.
       passes the two hashes into the helper. rrr builds,
       borrow_check_rrr_borrow_idempotency clean, `test_idempotency`
       32/32 pass.
+- [x] `rpc/circuit_breaker.cpp::current_time_us` timespec→us
+      conversion — `circuit_timespec_to_us` (single-fn block, added
+      as new `circuit_breaker.1` ahead of the existing
+      `circuit_should_probe` — required renumbering existing `.1` →
+      `.2`). Pure u64: `tv_sec * 1_000_000 + tv_nsec / 1000`. C++
+      wrapper retains the `clock_gettime` syscall and feeds the
+      resulting `(sec, nsec)` pair into the helper. File-prefixed
+      name (vs. plain `timespec_to_us`) avoids future link-time
+      collision if heartbeat.cpp grows the same helper. rrr builds,
+      borrow_check_rrr_borrow_circuit_breaker clean,
+      `test_rpc_circuit_breaker` 21/21 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
