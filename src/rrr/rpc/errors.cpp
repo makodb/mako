@@ -170,19 +170,68 @@ inline bool is_timeout_error(RpcError err) {
     return get_error_category(err) == RpcErrorCategory::TIMEOUT;
 }
 
-inline bool is_retryable_error(RpcError err) {
-    switch (err) {
-        case RpcError::CONNECTION_RESET:
-        case RpcError::NETWORK_UNREACHABLE:
-        case RpcError::HOST_UNREACHABLE:
-        case RpcError::CONNECT_TIMEOUT:
-        case RpcError::REQUEST_TIMEOUT:
-        case RpcError::RESPONSE_TIMEOUT:
-        case RpcError::SERVICE_UNAVAILABLE:
-            return true;
-        default:
-            return false;
+// Free helper backing `is_retryable_error`. Returns true if `code` is
+// in the retryable subset (codes drawn from the original
+// CONNECTION_RESET / NETWORK_UNREACHABLE / HOST_UNREACHABLE /
+// CONNECT_TIMEOUT / REQUEST_TIMEOUT / RESPONSE_TIMEOUT /
+// SERVICE_UNAVAILABLE enum values). Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn rpc_error_is_retryable(code: i32) -> bool {
+    if code == 102 {
+        return true; // CONNECTION_RESET
     }
+    if code == 103 {
+        return true; // NETWORK_UNREACHABLE
+    }
+    if code == 104 {
+        return true; // HOST_UNREACHABLE
+    }
+    if code == 301 {
+        return true; // SERVICE_UNAVAILABLE
+    }
+    if code == 400 {
+        return true; // CONNECT_TIMEOUT
+    }
+    if code == 401 {
+        return true; // REQUEST_TIMEOUT
+    }
+    if code == 402 {
+        return true; // RESPONSE_TIMEOUT
+    }
+    false
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=errors.2 version=1 rust_sha256=446346dfa298d97bb982ac863ab4b19c481d2c7a45cb33a3654778fd036461f2*/
+bool rpc_error_is_retryable(int32_t code);
+
+bool rpc_error_is_retryable(int32_t code) {
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(102)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(103)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(104)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(301)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(400)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(401)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(402)) {
+        return true;
+    }
+    return false;
+}
+/*RUSTYCPP:GEN-END id=errors.2*/
+
+inline bool is_retryable_error(RpcError err) {
+    return rpc_error_is_retryable(static_cast<int32_t>(err));
 }
 
 } // export namespace rrr

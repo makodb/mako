@@ -103,6 +103,15 @@ keeping the C++ surface unchanged.
   the first inline-rust block in that file will fail to compile
   with errors like `'int32_t' must be declared before it is used`.
   One-time fix per file.
+- **`match` lowering is heavyweight.** Even for simple
+  match-on-integer patterns, the transpiler emits ~3800 lines of
+  runtime support (`rusty::cmp::*`, `Option<TokenTree>`,
+  `proc_macro_runtime`, etc.) into the GEN block, which then fails
+  to compile against rrr's namespace setup (`error: no template
+  named 'Option' in namespace 'rrr::rusty'`). Workaround for now:
+  rewrite small enum-classifier matches as if-chains; the if-chain
+  lowering is the clean ~25-line path. Worth raising upstream as
+  "lightweight lowering for primitive match-on-int".
 
 ## Progress log
 
@@ -133,6 +142,11 @@ keeping the C++ surface unchanged.
       names resolve. rrr builds, borrow_check_rrr_borrow_errors clean,
       `test_rpc_errors` 19/19 + `test_rpc_error_integration` 10/10
       pass.
+- [x] `rpc/errors.cpp::is_retryable_error` — free helper
+      `rpc_error_is_retryable(i32) -> bool` authored as a Rust
+      if-chain (not `match`! see quirks). C++ wrapper casts. rrr
+      builds, borrow_check_rrr_borrow_errors clean,
+      `test_rpc_errors` 19/19 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
