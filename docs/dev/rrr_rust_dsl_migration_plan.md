@@ -155,6 +155,17 @@ keeping the C++ surface unchanged.
       cleanly: single GEN block emits both forward decls then
       both definitions. rrr builds, borrow_check_rrr_borrow_errors
       clean, `test_rpc_errors` 19/19 pass.
+- [x] `rpc/reconnect_policy.cpp::ReconnectCalculator::should_retry` +
+      `retries_exhausted` — both classify the same
+      `(auto_reconnect, max_retries, retry_count)` tuple; co-located
+      into one multi-fn `#if RUSTYCPP_RUST` block as
+      `reconnect_should_retry` / `reconnect_retries_exhausted`. C++
+      member methods are now one-line forwarders. First migration in
+      a third file; first migration that uses `bool` + `u32`
+      parameters (vs only `i32`/`i64` before). rrr builds,
+      borrow_check_rrr_borrow_reconnect_policy clean,
+      `test_rpc_reconnect_policy` 19/19 pass,
+      `test_rpc_reconnect_integration` 12/12 enabled pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

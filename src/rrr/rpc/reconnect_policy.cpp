@@ -1,7 +1,8 @@
 module;
 
 #include <rusty/cell.hpp>
-#include <cstdint>
+#include <rusty/rusty.hpp>
+#include <stdint.h>
 
 export module rrr.reconnect_policy;
 
@@ -57,6 +58,56 @@ struct ReconnectPolicy {
     }
 };
 
+// Free helpers backing `ReconnectCalculator::should_retry` and
+// `ReconnectCalculator::retries_exhausted`. Both classify the same
+// (auto_reconnect, max_retries, retry_count) tuple; co-located in
+// a single inline Rust DSL block.
+#if RUSTYCPP_RUST
+fn reconnect_should_retry(auto_reconnect: bool, max_retries: u32, retry_count: u32) -> bool {
+    if !auto_reconnect {
+        return false;
+    }
+    if max_retries == 0 {
+        return true;
+    }
+    retry_count < max_retries
+}
+
+fn reconnect_retries_exhausted(auto_reconnect: bool, max_retries: u32, retry_count: u32) -> bool {
+    if !auto_reconnect {
+        return true;
+    }
+    if max_retries == 0 {
+        return false;
+    }
+    retry_count >= max_retries
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reconnect_policy.1 version=1 rust_sha256=650e4aca5bc6f4b32d2e9c3d6866cc9f1a0b77648f4283190c041999427c859c*/
+bool reconnect_should_retry(bool auto_reconnect, uint32_t max_retries, uint32_t retry_count);
+bool reconnect_retries_exhausted(bool auto_reconnect, uint32_t max_retries, uint32_t retry_count);
+
+bool reconnect_should_retry(bool auto_reconnect, uint32_t max_retries, uint32_t retry_count) {
+    if (!auto_reconnect) {
+        return false;
+    }
+    if (rusty::detail::deref_if_pointer_like(max_retries) == static_cast<uint32_t>(0)) {
+        return true;
+    }
+    return rusty::detail::deref_if_pointer_like(retry_count) < rusty::detail::deref_if_pointer_like(max_retries);
+}
+
+bool reconnect_retries_exhausted(bool auto_reconnect, uint32_t max_retries, uint32_t retry_count) {
+    if (!auto_reconnect) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(max_retries) == static_cast<uint32_t>(0)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(retry_count) >= rusty::detail::deref_if_pointer_like(max_retries);
+}
+/*RUSTYCPP:GEN-END id=reconnect_policy.1*/
+
 class ReconnectCalculator {
 private:
     const ReconnectPolicy& policy_;
@@ -74,13 +125,8 @@ public:
     ReconnectCalculator& operator=(ReconnectCalculator&&) = default;
 
     bool should_retry() const {
-        if (!policy_.auto_reconnect) {
-            return false;
-        }
-        if (policy_.max_retries == 0) {
-            return true;
-        }
-        return retry_count_.get() < policy_.max_retries;
+        return reconnect_should_retry(
+            policy_.auto_reconnect, policy_.max_retries, retry_count_.get());
     }
 
     uint32_t next_delay_ms() {
@@ -133,13 +179,8 @@ public:
     }
 
     bool retries_exhausted() const {
-        if (!policy_.auto_reconnect) {
-            return true;
-        }
-        if (policy_.max_retries == 0) {
-            return false;
-        }
-        return retry_count_.get() >= policy_.max_retries;
+        return reconnect_retries_exhausted(
+            policy_.auto_reconnect, policy_.max_retries, retry_count_.get());
     }
 };
 
