@@ -380,6 +380,14 @@ keeping the C++ surface unchanged.
       collision if heartbeat.cpp grows the same helper. rrr builds,
       borrow_check_rrr_borrow_circuit_breaker clean,
       `test_rpc_circuit_breaker` 21/21 pass.
+- [x] `rpc/heartbeat.cpp::heartbeat_time_us` timespec→us conversion
+      — `heartbeat_timespec_to_us` (single-fn block, added as new
+      `heartbeat.1` ahead of the existing 3 timing helpers — required
+      renumbering existing `.1` → `.2`). Identical body to
+      `circuit_timespec_to_us`; file-prefixed name keeps the two
+      separate at link time. rrr builds,
+      borrow_check_rrr_borrow_heartbeat clean,
+      `test_rpc_heartbeat` 20/20 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

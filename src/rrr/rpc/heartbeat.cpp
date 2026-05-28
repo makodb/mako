@@ -13,10 +13,31 @@ import std;
 
 export namespace rrr {
 
+// Free helper backing the timespec→microseconds conversion used by
+// `heartbeat_time_us`. Pure u64 arithmetic; the C++ wrapper owns the
+// `clock_gettime` syscall and hands the resulting (sec, nsec) pair
+// in. File-prefixed name avoids link-time collision with the
+// equivalent helper in circuit_breaker.cpp. Authored as inline Rust
+// DSL.
+#if RUSTYCPP_RUST
+fn heartbeat_timespec_to_us(tv_sec: u64, tv_nsec: u64) -> u64 {
+    tv_sec * 1000000 + tv_nsec / 1000
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=017382a17e9a7e3c5b8333c349a1793c7ab03dbd3d61e49fb09278fec3c88038*/
+uint64_t heartbeat_timespec_to_us(uint64_t tv_sec, uint64_t tv_nsec);
+
+uint64_t heartbeat_timespec_to_us(uint64_t tv_sec, uint64_t tv_nsec) {
+    return (rusty::detail::deref_if_pointer_like(tv_sec) * static_cast<uint64_t>(1000000)) + (rusty::detail::deref_if_pointer_like(tv_nsec) / static_cast<uint64_t>(1000));
+}
+/*RUSTYCPP:GEN-END id=heartbeat.1*/
+
 inline uint64_t heartbeat_time_us() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
+    return heartbeat_timespec_to_us(
+        static_cast<uint64_t>(ts.tv_sec),
+        static_cast<uint64_t>(ts.tv_nsec));
 }
 
 struct HeartbeatConfig {
@@ -82,7 +103,7 @@ fn heartbeat_time_until_next_ms(now_us: u64, last_send_us: u64, interval_ms: u32
     ((interval_us - elapsed_us) / 1000) as u32
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=ad0dc63f92a1763ba1d8538d2f3dcce52c56109bf1c6a96eec09b5ea43d3e67d*/
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.2 version=1 rust_sha256=ad0dc63f92a1763ba1d8538d2f3dcce52c56109bf1c6a96eec09b5ea43d3e67d*/
 bool heartbeat_interval_elapsed(uint64_t now_us, uint64_t last_send_us, uint32_t interval_ms);
 bool heartbeat_timeout_elapsed(uint64_t now_us, uint64_t last_send_us, uint32_t timeout_ms);
 uint32_t heartbeat_time_until_next_ms(uint64_t now_us, uint64_t last_send_us, uint32_t interval_ms);
@@ -105,7 +126,7 @@ uint32_t heartbeat_time_until_next_ms(uint64_t now_us, uint64_t last_send_us, ui
     }
     return static_cast<uint32_t>((((rusty::detail::deref_if_pointer_like(interval_us) - rusty::detail::deref_if_pointer_like(elapsed_us))) / 1000));
 }
-/*RUSTYCPP:GEN-END id=heartbeat.1*/
+/*RUSTYCPP:GEN-END id=heartbeat.2*/
 
 // @safe - Heartbeat tracker. Fields are rusty::Cell<T> for trivially-
 // copyable interior mutability + rusty::Function<void()> for the timeout
