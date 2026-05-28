@@ -1,8 +1,10 @@
 module;
 
+#include <stdint.h>
 #include <rusty/cell.hpp>
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
+#include <rusty/rusty.hpp>
 
 export module rrr.connection_state;
 
@@ -30,6 +32,93 @@ inline const char* connection_state_to_string(ConnectionState state) {
         default: return "UNKNOWN";
     }
 }
+
+// Free helpers backing the pure state-classifier predicates on
+// `ConnectionStateMachine` (and the central transition table). Each
+// helper takes the raw integer discriminant of `ConnectionState`
+// (NEW=0..FAILED=5); the C++ member methods cast at the boundary.
+// Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn connection_is_valid_transition(from: i32, to: i32) -> bool {
+    if from == 0 {
+        // NEW → CONNECTING
+        return to == 1;
+    }
+    if from == 1 {
+        // CONNECTING → CONNECTED | FAILED | DISCONNECTED
+        return to == 2 || to == 5 || to == 4;
+    }
+    if from == 2 {
+        // CONNECTED → DISCONNECTING | FAILED
+        return to == 3 || to == 5;
+    }
+    if from == 3 {
+        // DISCONNECTING → DISCONNECTED | FAILED
+        return to == 4 || to == 5;
+    }
+    if from == 4 {
+        // DISCONNECTED → CONNECTING
+        return to == 1;
+    }
+    if from == 5 {
+        // FAILED → CONNECTING
+        return to == 1;
+    }
+    false
+}
+
+fn connection_is_terminal(s: i32) -> bool {
+    s == 4 || s == 5
+}
+
+fn connection_can_connect(s: i32) -> bool {
+    s == 0 || s == 4 || s == 5
+}
+
+fn connection_is_usable(s: i32) -> bool {
+    s == 1 || s == 2
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=connection_state.1 version=1 rust_sha256=efa3b250b9497ffd63a43664a7493db5719f3bf70c23bf0531de70907c04fe51*/
+bool connection_is_valid_transition(int32_t from, int32_t to);
+bool connection_is_terminal(int32_t s);
+bool connection_can_connect(int32_t s);
+bool connection_is_usable(int32_t s);
+
+bool connection_is_valid_transition(int32_t from, int32_t to) {
+    if (rusty::detail::deref_if_pointer_like(from) == static_cast<int32_t>(0)) {
+        return rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(1);
+    }
+    if (rusty::detail::deref_if_pointer_like(from) == static_cast<int32_t>(1)) {
+        return ((rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(2)) || (rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(5))) || (rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(4));
+    }
+    if (rusty::detail::deref_if_pointer_like(from) == static_cast<int32_t>(2)) {
+        return (rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(3)) || (rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(5));
+    }
+    if (rusty::detail::deref_if_pointer_like(from) == static_cast<int32_t>(3)) {
+        return (rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(4)) || (rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(5));
+    }
+    if (rusty::detail::deref_if_pointer_like(from) == static_cast<int32_t>(4)) {
+        return rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(1);
+    }
+    if (rusty::detail::deref_if_pointer_like(from) == static_cast<int32_t>(5)) {
+        return rusty::detail::deref_if_pointer_like(to) == static_cast<int32_t>(1);
+    }
+    return false;
+}
+
+bool connection_is_terminal(int32_t s) {
+    return (rusty::detail::deref_if_pointer_like(s) == static_cast<int32_t>(4)) || (rusty::detail::deref_if_pointer_like(s) == static_cast<int32_t>(5));
+}
+
+bool connection_can_connect(int32_t s) {
+    return ((rusty::detail::deref_if_pointer_like(s) == static_cast<int32_t>(0)) || (rusty::detail::deref_if_pointer_like(s) == static_cast<int32_t>(4))) || (rusty::detail::deref_if_pointer_like(s) == static_cast<int32_t>(5));
+}
+
+bool connection_is_usable(int32_t s) {
+    return (rusty::detail::deref_if_pointer_like(s) == static_cast<int32_t>(1)) || (rusty::detail::deref_if_pointer_like(s) == static_cast<int32_t>(2));
+}
+/*RUSTYCPP:GEN-END id=connection_state.1*/
 
 // @safe - Pure state machine: rusty::Cell<ConnectionState> + rusty::Function
 // callback. No raw pointers, syscalls, or operator-overload chains.
@@ -107,50 +196,21 @@ public:
     }
 
     bool is_terminal() const {
-        ConnectionState s = state_.get();
-        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+        return connection_is_terminal(static_cast<int32_t>(state_.get()));
     }
 
     bool can_connect() const {
-        ConnectionState s = state_.get();
-        return s == ConnectionState::NEW ||
-               s == ConnectionState::DISCONNECTED ||
-               s == ConnectionState::FAILED;
+        return connection_can_connect(static_cast<int32_t>(state_.get()));
     }
 
     bool is_usable() const {
-        ConnectionState s = state_.get();
-        return s == ConnectionState::CONNECTING || s == ConnectionState::CONNECTED;
+        return connection_is_usable(static_cast<int32_t>(state_.get()));
     }
 
 private:
     static bool is_valid_transition(ConnectionState from, ConnectionState to) {
-        switch (from) {
-            case ConnectionState::NEW:
-                return to == ConnectionState::CONNECTING;
-
-            case ConnectionState::CONNECTING:
-                return to == ConnectionState::CONNECTED ||
-                       to == ConnectionState::FAILED ||
-                       to == ConnectionState::DISCONNECTED;
-
-            case ConnectionState::CONNECTED:
-                return to == ConnectionState::DISCONNECTING ||
-                       to == ConnectionState::FAILED;
-
-            case ConnectionState::DISCONNECTING:
-                return to == ConnectionState::DISCONNECTED ||
-                       to == ConnectionState::FAILED;
-
-            case ConnectionState::DISCONNECTED:
-                return to == ConnectionState::CONNECTING;
-
-            case ConnectionState::FAILED:
-                return to == ConnectionState::CONNECTING;
-
-            default:
-                return false;
-        }
+        return connection_is_valid_transition(
+            static_cast<int32_t>(from), static_cast<int32_t>(to));
     }
 };
 

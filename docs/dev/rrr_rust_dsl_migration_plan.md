@@ -202,6 +202,17 @@ keeping the C++ surface unchanged.
       Member methods are now one-line forwarders. rrr builds,
       borrow_check_rrr_borrow_request_options clean,
       `test_rpc_timeout_retry` 36/36 pass.
+- [x] `rpc/connection_state.cpp::is_valid_transition` +
+      `is_terminal` + `can_connect` + `is_usable` — four pure state
+      classifiers + the central transition table migrated as one
+      multi-fn `#if RUSTYCPP_RUST` block. The Rust helpers take the
+      raw `i32` discriminant of `ConnectionState` (NEW=0..FAILED=5);
+      C++ member methods cast at the boundary. First migration that
+      lowers a multi-arm `switch` — done as an if-chain (per the match
+      quirk in the Quirks section). rrr builds,
+      borrow_check_rrr_borrow_connection_state clean,
+      `test_rpc_connection_state` 30/30 + `test_rpc_state_integration`
+      16/16 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
