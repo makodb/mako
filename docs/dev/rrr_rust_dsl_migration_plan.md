@@ -270,6 +270,16 @@ keeping the C++ surface unchanged.
       Cell read-modify-write logic. rrr builds,
       borrow_check_rrr_borrow_load_balancer clean,
       `test_load_balancer` 21/21 pass.
+- [x] `misc/rand.cpp::RandomGenerator::rand`, `rand_double`, `nu_rand`
+      — three pure-arithmetic scaling helpers in one multi-fn block
+      (`rand_scale_to_range`, `rand_double_scale_to_range`,
+      `nu_rand_combine`). Each takes the raw `rand_r` output as `i32`
+      plus the user-supplied bounds. The `rand_double` helper takes
+      `RAND_MAX` as a parameter to avoid the platform-dependent
+      constant in Rust. C++ methods retain the `@unsafe` seed-fetch
+      block and pass the scaled `r` into the helper. rrr builds,
+      borrow_check_rrr_borrow_rand clean, rpcbench links (no
+      dedicated test suite for rand).
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

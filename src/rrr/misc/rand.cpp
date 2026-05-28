@@ -1,5 +1,6 @@
 module;
 
+#include <stdint.h>
 #include <rusty/rusty.hpp>
 #include <pthread.h>
 #include <time.h>
@@ -19,6 +20,41 @@ import rrr.debugging;
 // because they touch raw `unsigned int*` from pthread_getspecific,
 // inline asm, malloc, and pthread C-API calls.
 export namespace rrr {
+
+// Free helpers backing the pure-arithmetic scaling portions of
+// `RandomGenerator::rand`, `rand_double`, and `nu_rand`. Each takes
+// the raw `rand_r` output (i32) plus the user-supplied bounds and
+// returns the scaled value. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn rand_scale_to_range(r: i32, min: i32, max: i32) -> i32 {
+    (r % (max - min + 1)) + min
+}
+
+fn rand_double_scale_to_range(r: i32, rand_max: i32, min: f64, max: f64) -> f64 {
+    (r as f64) / ((rand_max as f64) / (max - min)) + min
+}
+
+fn nu_rand_combine(r1: i32, r2: i32, nu_constant: i32, x: i32, y: i32) -> i32 {
+    ((r1 | r2) + nu_constant) % (y - x + 1) + x
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=rand.1 version=1 rust_sha256=ceb6d63902c32008701f441b7ce7aceff0fa03473b7b6d6f7d77bb7aaea80035*/
+int32_t rand_scale_to_range(int32_t r, int32_t min, int32_t max);
+double rand_double_scale_to_range(int32_t r, int32_t rand_max, double min, double max);
+int32_t nu_rand_combine(int32_t r1, int32_t r2, int32_t nu_constant, int32_t x, int32_t y);
+
+int32_t rand_scale_to_range(int32_t r, int32_t min, int32_t max) {
+    return ((rusty::detail::deref_if_pointer_like(r) % (((rusty::detail::deref_if_pointer_like(max) - rusty::detail::deref_if_pointer_like(min)) + static_cast<int32_t>(1))))) + rusty::detail::deref_if_pointer_like(min);
+}
+
+double rand_double_scale_to_range(int32_t r, int32_t rand_max, double min, double max) {
+    return (((static_cast<double>(r))) / ((((static_cast<double>(rand_max))) / ((rusty::detail::deref_if_pointer_like(max) - rusty::detail::deref_if_pointer_like(min)))))) + rusty::detail::deref_if_pointer_like(min);
+}
+
+int32_t nu_rand_combine(int32_t r1, int32_t r2, int32_t nu_constant, int32_t x, int32_t y) {
+    return (((((rusty::detail::deref_if_pointer_like(r1) | rusty::detail::deref_if_pointer_like(r2))) + rusty::detail::deref_if_pointer_like(nu_constant))) % (((rusty::detail::deref_if_pointer_like(y) - rusty::detail::deref_if_pointer_like(x)) + static_cast<int32_t>(1)))) + rusty::detail::deref_if_pointer_like(x);
+}
+/*RUSTYCPP:GEN-END id=rand.1*/
 
 // @safe - see file header.
 class RandomGenerator {
@@ -110,7 +146,7 @@ int RandomGenerator::rand(int min, int max) {
         r = rand_r(&seed_);
 #endif
     }
-    return (r % (max - min + 1)) + min;
+    return rand_scale_to_range(r, min, max);
 }
 
 double RandomGenerator::rand_double(double min, double max) {
@@ -127,7 +163,7 @@ double RandomGenerator::rand_double(double min, double max) {
         r = rand_r(&seed_);
 #endif
     }
-    return (static_cast<double>(r)) / (static_cast<double>(RAND_MAX) / (max - min)) + min;
+    return rand_double_scale_to_range(r, RAND_MAX, min, max);
 }
 
 std::string RandomGenerator::rand_str(int length) {
@@ -178,7 +214,7 @@ bool RandomGenerator::percentage_true(int p) {
 int RandomGenerator::nu_rand(int a, int x, int y) {
     int r1 = rand(0, a);
     int r2 = rand(x, y);
-    return ((r1 | r2) + nu_constant) % (y - x + 1) + x;
+    return nu_rand_combine(r1, r2, nu_constant, x, y);
 }
 
 // @unsafe - inline `rdtsc` asm + clock_gettime syscall.
