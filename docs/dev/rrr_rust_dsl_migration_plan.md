@@ -230,6 +230,18 @@ keeping the C++ surface unchanged.
       methods read Cells and forward. rrr builds,
       borrow_check_rrr_borrow_connection_metrics clean,
       `test_rpc_metrics` 25/25 pass.
+- [x] `rpc/internal_protocol.cpp::response_has_extended_header`,
+      `response_payload_size`, `encode_response_size` — three pure
+      bit-twiddling helpers in one multi-fn block
+      (`internal_protocol_response_has_extended_header`,
+      `internal_protocol_response_payload_size`,
+      `internal_protocol_encode_response_size`). High bit of the
+      i32-encoded size marks "extended header"; low 31 bits hold
+      payload size. Lost the `constexpr` qualifier on the public
+      wrappers (now `inline`) — verified no callers use these in
+      constexpr contexts. rrr builds,
+      borrow_check_rrr_borrow_internal_protocol clean,
+      `test_rpc_frame_codec` 25/25 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
