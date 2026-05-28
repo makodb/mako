@@ -217,26 +217,61 @@ public:
 // `// @unsafe`.
 namespace rrr {
 
-size_t SparseInt::buf_size(char byte0) {
-    if ((byte0 & 0x80) == 0) {
+// Free helper backing `SparseInt::buf_size`. Authored as inline Rust
+// DSL (see plan doc). `byte0` is taken as i32 here so the comparison
+// literals are signed-positive; the caller masks to 8 bits.
+#if RUSTYCPP_RUST
+fn sparse_int_buf_size_impl(byte0: i32) -> u64 {
+    if (byte0 & 0x80) == 0 {
         return 1;
-    } else if ((byte0 & 0xC0) == 0x80) {
+    } else if (byte0 & 0xC0) == 0x80 {
         return 2;
-    } else if ((byte0 & 0xE0) == 0xC0) {
+    } else if (byte0 & 0xE0) == 0xC0 {
         return 3;
-    } else if ((byte0 & 0xF0) == 0xE0) {
+    } else if (byte0 & 0xF0) == 0xE0 {
         return 4;
-    } else if ((byte0 & 0xF8) == 0xF0) {
+    } else if (byte0 & 0xF8) == 0xF0 {
         return 5;
-    } else if ((byte0 & 0xFC) == 0xF8) {
+    } else if (byte0 & 0xFC) == 0xF8 {
         return 6;
-    } else if ((byte0 & 0xFE) == 0xFC) {
+    } else if (byte0 & 0xFE) == 0xFC {
         return 7;
-    } else if ((byte0 & 0xFF) == 0xFE) {
+    } else if (byte0 & 0xFF) == 0xFE {
         return 8;
     } else {
-        return 9;
+        9
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.1 version=1 rust_sha256=31569640ef4bafbff3f49ae55731162cc8754c42d9107ed3c43edc8fbc3594b8*/
+uint64_t sparse_int_buf_size_impl(int32_t byte0);
+
+uint64_t sparse_int_buf_size_impl(int32_t byte0) {
+    if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(128))) == static_cast<int32_t>(0)) {
+        return static_cast<uint64_t>(1);
+    } else if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(192))) == static_cast<int32_t>(128)) {
+        return static_cast<uint64_t>(2);
+    } else if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(224))) == static_cast<int32_t>(192)) {
+        return static_cast<uint64_t>(3);
+    } else if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(240))) == static_cast<int32_t>(224)) {
+        return static_cast<uint64_t>(4);
+    } else if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(248))) == static_cast<int32_t>(240)) {
+        return static_cast<uint64_t>(5);
+    } else if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(252))) == static_cast<int32_t>(248)) {
+        return static_cast<uint64_t>(6);
+    } else if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(254))) == static_cast<int32_t>(252)) {
+        return static_cast<uint64_t>(7);
+    } else if (((rusty::detail::deref_if_pointer_like(byte0) & static_cast<int32_t>(255))) == static_cast<int32_t>(254)) {
+        return static_cast<uint64_t>(8);
+    } else {
+        return static_cast<uint64_t>(9);
+    }
+}
+/*RUSTYCPP:GEN-END id=basetypes.1*/
+
+size_t SparseInt::buf_size(char byte0) {
+    return static_cast<size_t>(
+        sparse_int_buf_size_impl(static_cast<int32_t>(byte0) & 0xFF));
 }
 
 // Free helper backing `SparseInt::val_size`. Authored as inline Rust
@@ -266,7 +301,7 @@ fn sparse_int_val_size_impl(val: i64) -> u64 {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=basetypes.1 version=1 rust_sha256=5e0232658d8bb791e952ff50617cc358eff1c2e8847a09b73d303ca99bb153d3*/
+/*RUSTYCPP:GEN-BEGIN id=basetypes.2 version=1 rust_sha256=5e0232658d8bb791e952ff50617cc358eff1c2e8847a09b73d303ca99bb153d3*/
 uint64_t sparse_int_val_size_impl(int64_t val);
 
 uint64_t sparse_int_val_size_impl(int64_t val) {
@@ -290,7 +325,7 @@ uint64_t sparse_int_val_size_impl(int64_t val) {
         return static_cast<uint64_t>(9);
     }
 }
-/*RUSTYCPP:GEN-END id=basetypes.1*/
+/*RUSTYCPP:GEN-END id=basetypes.2*/
 
 size_t SparseInt::val_size(i64 val) {
     return static_cast<size_t>(sparse_int_val_size_impl(val));

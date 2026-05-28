@@ -76,17 +76,26 @@ keeping the C++ surface unchanged.
 
 ## Open questions / transpiler quirks observed
 
-- Inline-mode auto-assigns GEN block ids as `<basename>.N`; the
-  developer should NOT supply an `id=...` in the placeholder.
-  Just open with `/*RUSTYCPP:GEN-BEGIN*/ /*RUSTYCPP:GEN-END*/` or
-  let the tool insert one fresh.
-- Numeric comparisons get wrapped in
+- **Auto-id collisions** when adding a SECOND `#if RUSTYCPP_RUST`
+  block above an existing one. The tool's auto-id allocator
+  (`make_auto_id` in `inline_rust.rs:292`) assigns ids as
+  `<basename>.<block-index>` and does not check whether the resulting
+  id already exists later in the file. Existing GEN blocks keep their
+  ids. Result: new block at the top wants `basetypes.1`, collides with
+  the existing `basetypes.1` later. Workaround when adding a new block
+  ahead of an existing one: rename the existing GEN id to the next
+  free slot (e.g. `basetypes.2`) in both GEN-BEGIN and GEN-END markers
+  BEFORE running `--rewrite`. The rust_sha256 inside GEN-BEGIN does
+  not need to change.
+- **Pre-created GEN placeholders need full marker fields.**
+  `parse_gen_begin_marker` (`inline_rust.rs:184`) requires
+  `id`, `version`, and `rust_sha256` to all be present, otherwise
+  the marker is silently ignored and auto-id kicks in. Easiest:
+  don't pre-create a placeholder, let the tool insert one.
+- Numeric comparisons in generated C++ are wrapped in
   `rusty::detail::deref_if_pointer_like(...)`. Harmless for
   primitive args (boils away at compile time) but adds visual
-  noise; worth raising upstream eventually.
-- `i64` literals lower as bare `123` without the `LL` suffix —
-  fine on 64-bit platforms but watch for 32-bit gotchas if/when
-  rrr ever targets 32-bit.
+  noise. Worth raising upstream eventually.
 
 ## Progress log
 
@@ -100,6 +109,12 @@ keeping the C++ surface unchanged.
       free helper `sparse_int_val_size_impl(i64) -> u64`
       authored as inline Rust DSL; member method delegates. rrr
       builds, borrow_check_rrr_borrow_basetypes clean, all 23
+      `test_marshal` tests pass.
+- [x] `base/basetypes.cpp::SparseInt::buf_size` — same shape:
+      free helper `sparse_int_buf_size_impl(i32) -> u64` (takes
+      i32 instead of `char` to dodge implementation-defined
+      signedness; caller masks to 8 bits). rrr builds,
+      borrow_check_rrr_borrow_basetypes clean, all 23
       `test_marshal` tests pass.
 
 ### Phase 2 — Leaf files
