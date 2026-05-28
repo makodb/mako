@@ -1243,6 +1243,33 @@ int DeferredReply::run_async(rusty::Function<void()> f) {
     return 0;
 }
 
+// Free helper backing the XOR-mix-and-mask + force-nonzero step of
+// `Server::Server`'s instance-id generation. Pure u64 bit-twiddling;
+// the three input components (timestamp, random, pid-shifted) are
+// built C++-side because their sources (std::chrono, std::random_device,
+// rusty::sys::process::getpid) sit outside the inline-Rust world.
+// Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn server_mix_instance_id(time_component: u64, random_component: u64, pid_component: u64) -> u64 {
+    let mixed: u64 = (time_component ^ random_component ^ pid_component) & (i64::MAX as u64);
+    if mixed == 0 {
+        return 1;
+    }
+    mixed
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=c7d06cc5ea452e76273fb8cae1ada5608ac626e5b3cfe27ed52524436c539fa7*/
+uint64_t server_mix_instance_id(uint64_t time_component, uint64_t random_component, uint64_t pid_component);
+
+uint64_t server_mix_instance_id(uint64_t time_component, uint64_t random_component, uint64_t pid_component) {
+    uint64_t mixed = (((rusty::detail::deref_if_pointer_like(time_component) ^ rusty::detail::deref_if_pointer_like(random_component)) ^ rusty::detail::deref_if_pointer_like(pid_component))) & ((static_cast<uint64_t>(std::numeric_limits<int64_t>::max())));
+    if (rusty::detail::deref_if_pointer_like(mixed) == static_cast<uint64_t>(0)) {
+        return static_cast<uint64_t>(1);
+    }
+    return std::move(mixed);
+}
+/*RUSTYCPP:GEN-END id=server.1*/
+
 // @safe - Constructs server with PollThread
 // ctx_ starts as None; created in start() after all registrations
 Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... */) {
@@ -1267,12 +1294,8 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
         uint64_t pid_component =
             static_cast<uint64_t>(rusty::sys::process::getpid()) << 48;
 
-        // Mix components with XOR for final ID
-        instance_id_ = (time_component ^ random_component ^ pid_component)
-            & static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
-        if (instance_id_ == 0) {
-            instance_id_ = 1;
-        }
+        instance_id_ = server_mix_instance_id(
+            time_component, random_component, pid_component);
 
         Log_debug("Server: generated instance_id=%lu", instance_id_);
     }

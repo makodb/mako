@@ -325,6 +325,15 @@ keeping the C++ surface unchanged.
       the `tm_last_` state mutation. rrr builds,
       borrow_check_rrr_borrow_misc clean, rpcbench links (no
       dedicated test suite for FrequentJob).
+- [x] `rpc/server.cpp::Server::Server` instance-id mixing —
+      `server_mix_instance_id` (single-fn block). Pure u64
+      bit-twiddling: `(t ^ r ^ p) & i64::MAX`, force nonzero. The
+      three input components (timestamp, random, pid-shifted) stay
+      C++-side because their sources (std::chrono, std::random_device,
+      rusty::sys::process::getpid) sit outside the inline-Rust world.
+      First migration that lowers `i64::MAX as u64`. rrr builds,
+      borrow_check_rrr_borrow_server clean,
+      `test_rpc_server_channel_binding` 3/3 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
