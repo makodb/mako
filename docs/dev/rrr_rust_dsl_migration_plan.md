@@ -319,6 +319,12 @@ keeping the C++ surface unchanged.
       callers use it in constexpr contexts. rrr builds,
       borrow_check_rrr_borrow_frame_codec clean,
       `test_rpc_frame_codec` 25/25 pass.
+- [x] `base/misc.cpp::FrequentJob::Ready` — period-elapsed predicate
+      `frequent_job_period_elapsed` (single-fn block). Pure u64
+      arithmetic; C++ wrapper retains the `rrr::Time::now()` call and
+      the `tm_last_` state mutation. rrr builds,
+      borrow_check_rrr_borrow_misc clean, rpcbench links (no
+      dedicated test suite for FrequentJob).
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

@@ -1,7 +1,9 @@
 module;
 
+#include <stdint.h>
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
+#include <rusty/rusty.hpp>
 #include <rusty/sys/process.hpp>
 #include <rusty/sys/time.hpp>
 
@@ -98,6 +100,23 @@ class OneTimeJob : public Job {
   }
 };
 
+// Free helper backing the period-elapsed predicate in
+// `FrequentJob::Ready`. Pure u64 arithmetic; the C++ wrapper owns the
+// `rrr::Time::now()` call and the `tm_last_` mutation. Authored as
+// inline Rust DSL.
+#if RUSTYCPP_RUST
+fn frequent_job_period_elapsed(now_us: u64, last_us: u64, period_us: u64) -> bool {
+    (now_us - last_us) > period_us
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=misc.1 version=1 rust_sha256=43bf2a5a69df6acff4e54d8c0c0b8d43bc5d55cee8f5979271d3017dc5dd3280*/
+bool frequent_job_period_elapsed(uint64_t now_us, uint64_t last_us, uint64_t period_us);
+
+bool frequent_job_period_elapsed(uint64_t now_us, uint64_t last_us, uint64_t period_us) {
+    return ((rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(last_us))) > rusty::detail::deref_if_pointer_like(period_us);
+}
+/*RUSTYCPP:GEN-END id=misc.1*/
+
 class FrequentJob : public Job {
 public:
   uint64_t tm_last_ = 0;
@@ -107,8 +126,7 @@ public:
   // @safe - rrr::Time::now() flows through rusty::sys::time::clock_*_us.
   virtual bool Ready() override {
     uint64_t tm_now = rrr::Time::now();
-    uint64_t s = tm_now - tm_last_;
-    if (s > period_) {
+    if (frequent_job_period_elapsed(tm_now, tm_last_, period_)) {
       tm_last_ = tm_now;
       return true;
     }
