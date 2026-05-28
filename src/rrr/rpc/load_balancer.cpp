@@ -1,14 +1,42 @@
 module;
 
+#include <stdint.h>
 #include <rusty/cell.hpp>
 #include <rusty/arc.hpp>
-#include <cstdint>
+#include <rusty/rusty.hpp>
 
 export module rrr.load_balancer;
 
 import std;
 
 export namespace rrr {
+
+// Free helpers backing the two pure-arithmetic load-balancer
+// strategies: round-robin advance (modular increment of the index) and
+// random selection (`rand_value % pool_size`). Both helpers assume
+// `pool_size > 0` — callers guard before invoking. Authored as inline
+// Rust DSL.
+#if RUSTYCPP_RUST
+fn lb_round_robin_next(current: u64, pool_size: u64) -> u64 {
+    (current + 1) % pool_size
+}
+
+fn lb_select_random(pool_size: u64, rand_value: u64) -> u64 {
+    rand_value % pool_size
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.1 version=1 rust_sha256=d031ecf07e239ed954fe492101beb924b0f06b67679c0796f93a6bf3a829c576*/
+uint64_t lb_round_robin_next(uint64_t current, uint64_t pool_size);
+uint64_t lb_select_random(uint64_t pool_size, uint64_t rand_value);
+
+uint64_t lb_round_robin_next(uint64_t current, uint64_t pool_size) {
+    return ((rusty::detail::deref_if_pointer_like(current) + static_cast<uint64_t>(1))) % rusty::detail::deref_if_pointer_like(pool_size);
+}
+
+uint64_t lb_select_random(uint64_t pool_size, uint64_t rand_value) {
+    return rusty::detail::deref_if_pointer_like(rand_value) % rusty::detail::deref_if_pointer_like(pool_size);
+}
+/*RUSTYCPP:GEN-END id=load_balancer.1*/
 
 enum class LoadBalancingStrategy : uint8_t {
     RANDOM = 0,
@@ -36,7 +64,7 @@ public:
     size_t next_round_robin_index(size_t pool_size) {
         if (pool_size == 0) return 0;
         size_t current = round_robin_index_.get();
-        size_t next = (current + 1) % pool_size;
+        size_t next = static_cast<size_t>(lb_round_robin_next(current, pool_size));
         round_robin_index_.set(next);
         return current;
     }
@@ -80,7 +108,7 @@ public:
 
 private:
     static size_t select_random(size_t pool_size, size_t rand_value) {
-        return rand_value % pool_size;
+        return static_cast<size_t>(lb_select_random(pool_size, rand_value));
     }
 
     static size_t select_round_robin(size_t pool_size, LoadBalancerState& state) {

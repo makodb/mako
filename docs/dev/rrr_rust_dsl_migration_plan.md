@@ -262,6 +262,14 @@ keeping the C++ surface unchanged.
       boundary. rrr builds,
       borrow_check_rrr_borrow_completion_tracker clean,
       `test_completion_tracker` 27/27 pass.
+- [x] `rpc/load_balancer.cpp::LoadBalancerState::next_round_robin_index`,
+      `LoadBalancer::select_random` — two pure-arithmetic helpers in
+      one multi-fn block (`lb_round_robin_next`, `lb_select_random`).
+      Both take `u64`-modeled `size_t`s; C++ wrappers cast at the
+      boundary (`size_t ↔ uint64_t`) and own the `pool_size == 0` /
+      Cell read-modify-write logic. rrr builds,
+      borrow_check_rrr_borrow_load_balancer clean,
+      `test_load_balancer` 21/21 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`
