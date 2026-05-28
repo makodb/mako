@@ -147,6 +147,14 @@ keeping the C++ surface unchanged.
       if-chain (not `match`! see quirks). C++ wrapper casts. rrr
       builds, borrow_check_rrr_borrow_errors clean,
       `test_rpc_errors` 19/19 pass.
+- [x] `rpc/errors.cpp::is_connection_error` +
+      `is_timeout_error` — initially landed as two separate
+      `#if RUSTYCPP_RUST` blocks (commit c0b2d6f7), then
+      consolidated into ONE block containing both Rust helpers
+      to test multi-fn block lowering. Transpiler handles it
+      cleanly: single GEN block emits both forward decls then
+      both definitions. rrr builds, borrow_check_rrr_borrow_errors
+      clean, `test_rpc_errors` 19/19 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

@@ -162,41 +162,35 @@ inline RpcErrorCategory get_error_category(RpcError err) {
         rpc_error_category_code(static_cast<int32_t>(err)));
 }
 
-// Free helper backing `is_connection_error`. Mirrors the CONNECTION
-// range from rpc_error_category_code (codes 100..200) — equivalent to
-// `get_error_category(err) == CONNECTION` since CONNECTION is exactly
-// that range. Authored as inline Rust DSL.
+// Free helpers backing `is_connection_error` and `is_timeout_error`.
+// Mirror the CONNECTION (codes 100..200) and TIMEOUT (codes 400..500)
+// ranges from rpc_error_category_code. Co-located in a single Rust
+// DSL block to test the transpiler's multi-function block lowering.
 #if RUSTYCPP_RUST
 fn rpc_error_is_connection_code(code: i32) -> bool {
     code >= 100 && code < 200
 }
+
+fn rpc_error_is_timeout_code(code: i32) -> bool {
+    code >= 400 && code < 500
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=errors.2 version=1 rust_sha256=8b212483fae198e97688da56144b9d049ca0b858031c111a6ca98d470af16969*/
+/*RUSTYCPP:GEN-BEGIN id=errors.2 version=1 rust_sha256=f27511053273d08c250d2b0678d3d57d430ceb1c55398f1ccd5eb96cf9955b6f*/
 bool rpc_error_is_connection_code(int32_t code);
+bool rpc_error_is_timeout_code(int32_t code);
 
 bool rpc_error_is_connection_code(int32_t code) {
     return (rusty::detail::deref_if_pointer_like(code) >= 100) && (rusty::detail::deref_if_pointer_like(code) < 200);
+}
+
+bool rpc_error_is_timeout_code(int32_t code) {
+    return (rusty::detail::deref_if_pointer_like(code) >= 400) && (rusty::detail::deref_if_pointer_like(code) < 500);
 }
 /*RUSTYCPP:GEN-END id=errors.2*/
 
 inline bool is_connection_error(RpcError err) {
     return rpc_error_is_connection_code(static_cast<int32_t>(err));
 }
-
-// Free helper backing `is_timeout_error`. Mirrors the TIMEOUT range
-// (codes 400..500). Authored as inline Rust DSL.
-#if RUSTYCPP_RUST
-fn rpc_error_is_timeout_code(code: i32) -> bool {
-    code >= 400 && code < 500
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=errors.3 version=1 rust_sha256=cea5df0d68347a7eaf1e10af39549a12418b49f0126b95862e81610734b2a1c2*/
-bool rpc_error_is_timeout_code(int32_t code);
-
-bool rpc_error_is_timeout_code(int32_t code) {
-    return (rusty::detail::deref_if_pointer_like(code) >= 400) && (rusty::detail::deref_if_pointer_like(code) < 500);
-}
-/*RUSTYCPP:GEN-END id=errors.3*/
 
 inline bool is_timeout_error(RpcError err) {
     return rpc_error_is_timeout_code(static_cast<int32_t>(err));
