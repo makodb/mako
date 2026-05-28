@@ -299,6 +299,16 @@ keeping the C++ surface unchanged.
       existing `basetypes.1`/`basetypes.2` SparseInt helpers). rrr
       builds, borrow_check_rrr_borrow_basetypes clean, rpcbench links
       (no dedicated test suite for Timer).
+- [x] `rpc/request_options.cpp::RequestOptions::calculate_delay_ms`
+      (deterministic part) — exponential-backoff helper
+      `request_calculate_delay_ms_base` added as `request_options.2`
+      block (next to the existing `.1` predicate block). Replaces
+      `base_delay_ms * std::pow(2.0, attempt)` with an iterative
+      double-and-cap loop (saturates instead of overflowing for large
+      attempts). The jitter step stays C++-side because it pulls a
+      thread_local mt19937 sample. rrr builds,
+      borrow_check_rrr_borrow_request_options clean,
+      `test_rpc_timeout_retry` 36/36 pass.
 
 ### Phase 2 — Leaf files
 - [ ] `src/rrr/base/debugging.cpp`

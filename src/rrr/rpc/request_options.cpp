@@ -67,6 +67,54 @@ uint64_t request_remaining_time_ms(uint64_t total_timeout_ms, uint64_t elapsed_m
 }
 /*RUSTYCPP:GEN-END id=request_options.1*/
 
+// Free helper backing the deterministic part of
+// `RequestOptions::calculate_delay_ms`: exponential backoff capped at
+// `max_delay_ms`. Equivalent to `base_delay_ms * 2^attempt`, computed
+// iteratively so we can break early once the cap is hit (the
+// `std::pow(2.0, attempt)` version overflows for large attempts, while
+// the loop saturates). The jitter step stays C++-side because it
+// pulls a thread_local mt19937 sample. Authored as inline Rust DSL.
+#if RUSTYCPP_RUST
+fn request_calculate_delay_ms_base(base_delay_ms: u16, max_delay_ms: u16, attempt: u16) -> f64 {
+    let mut delay: f64 = base_delay_ms as f64;
+    let max_delay: f64 = max_delay_ms as f64;
+    let mut i: u16 = 0;
+    while i < attempt {
+        delay *= 2.0;
+        if delay > max_delay {
+            delay = max_delay;
+            break;
+        }
+        i += 1;
+    }
+    if delay > max_delay {
+        delay = max_delay;
+    }
+    delay
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_options.2 version=1 rust_sha256=745ac5616cdfc66f01d4d42b26ba9b993965a91dcbac8a402eebf8ef7497c12a*/
+double request_calculate_delay_ms_base(uint16_t base_delay_ms, uint16_t max_delay_ms, uint16_t attempt);
+
+double request_calculate_delay_ms_base(uint16_t base_delay_ms, uint16_t max_delay_ms, uint16_t attempt) {
+    double delay = static_cast<double>(base_delay_ms);
+    const double max_delay = static_cast<double>(max_delay_ms);
+    uint16_t i = static_cast<uint16_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(attempt)) {
+        delay *= 2.0;
+        if (rusty::detail::deref_if_pointer_like(delay) > rusty::detail::deref_if_pointer_like(max_delay)) {
+            delay = std::move(max_delay);
+            break;
+        }
+        i += 1;
+    }
+    if (rusty::detail::deref_if_pointer_like(delay) > rusty::detail::deref_if_pointer_like(max_delay)) {
+        delay = std::move(max_delay);
+    }
+    return std::move(delay);
+}
+/*RUSTYCPP:GEN-END id=request_options.2*/
+
 struct RequestOptions {
     uint64_t timeout_ms = 1000;
     uint64_t total_timeout_ms = 0;
@@ -130,11 +178,8 @@ struct RequestOptions {
     }
 
     uint64_t calculate_delay_ms(uint16_t attempt) const {
-        double delay = static_cast<double>(base_delay_ms) * std::pow(2.0, attempt);
-
-        if (delay > static_cast<double>(max_delay_ms)) {
-            delay = static_cast<double>(max_delay_ms);
-        }
+        double delay = request_calculate_delay_ms_base(
+            base_delay_ms, max_delay_ms, attempt);
 
         if (jitter_factor > 0.0f) {
             thread_local std::mt19937 gen(std::random_device{}());
