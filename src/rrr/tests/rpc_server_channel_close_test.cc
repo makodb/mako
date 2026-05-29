@@ -78,7 +78,15 @@ inline ChannelConnectionProxy make_stub_proxy(
     return rusty::make_box<StubChannelAdapter>(std::move(stub));
 }
 
-constexpr uint64_t kFakeServerInstanceId = 0xfeedface00abcdefULL;
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ definition.
+#if RUSTYCPP_RUST
+const kFakeServerInstanceId: u64 = 0xfeedface00abcdef;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=rpc_server_channel_close_test.1 version=1 rust_sha256=4149f6423bcdaa0a6318589d370183f1eccbee366113fcf349ed9c1d0d22c1f8*/
+constexpr uint64_t kFakeServerInstanceId = static_cast<uint64_t>(18369614217795587567);
+/*RUSTYCPP:GEN-END id=rpc_server_channel_close_test.1*/
 
 inline rusty::Arc<RpcServiceContext> make_test_ctx() {
     rusty::HashMap<i32, std::size_t> rpc_to_service;

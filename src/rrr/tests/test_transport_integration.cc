@@ -30,9 +30,19 @@ using namespace std::chrono;
 
 // ============= Test Configuration =============
 
-static constexpr int TEST_PORT_BASE = 19000;
-static constexpr int TEST_REQ_TYPE_START = 1;
-static constexpr int TEST_REQ_TYPE_END = 10;
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ definitions.
+#if RUSTYCPP_RUST
+const TEST_PORT_BASE: i32 = 19000;
+const TEST_REQ_TYPE_START: i32 = 1;
+const TEST_REQ_TYPE_END: i32 = 10;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=test_transport_integration.1 version=1 rust_sha256=99a9518b218ca78d28deae0e9c2ecd587cf97d7261926b6d8172b4f79524a805*/
+constexpr int32_t TEST_PORT_BASE = static_cast<int32_t>(19000);
+constexpr int32_t TEST_REQ_TYPE_START = static_cast<int32_t>(1);
+constexpr int32_t TEST_REQ_TYPE_END = static_cast<int32_t>(10);
+/*RUSTYCPP:GEN-END id=test_transport_integration.1*/
 
 // ============= Inline Transport Type Definitions =============
 // (Matching mako/lib/transport_backend.h to avoid header dependencies)

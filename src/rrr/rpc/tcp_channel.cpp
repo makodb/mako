@@ -67,8 +67,18 @@ class TcpConnection;
 // Default high-water mark for the outbound byte queue. When the queue
 // would grow past this size, `send_frame` returns
 // `ChannelError::WouldBlock` instead of buffering further.
-inline constexpr std::size_t kTcpConnectionOutboundHighWaterDefault =
-    4u * 1024u * 1024u;  // 4 MiB
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ definition.
+#if RUSTYCPP_RUST
+const kTcpConnectionOutboundHighWaterDefault: usize = 4 * 1024 * 1024; // 4 MiB
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.1 version=1 rust_sha256=323dabc4f4884188a6f63b05c2efda063a7e612d34f04ccb15eb8aa2319f68ec*/
+extern const size_t kTcpConnectionOutboundHighWaterDefault;
+
+constexpr size_t kTcpConnectionOutboundHighWaterDefault = (static_cast<size_t>(4) * static_cast<size_t>(1024)) * static_cast<size_t>(1024);
+/*RUSTYCPP:GEN-END id=tcp_channel.1*/
 
 // ---------------------------------------------------------------------------
 // TcpConnection
@@ -590,7 +600,18 @@ namespace {
 // One-shot recv buffer used by `handle_read` to copy bytes off the
 // socket before handing them to `FrameStreamReader`. The reader uses
 // its own contiguous buffer; this is just a syscall-side scratchpad.
-constexpr std::size_t kRecvScratchBytes = 64 * 1024;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ definition.
+#if RUSTYCPP_RUST
+const kRecvScratchBytes: usize = 64 * 1024;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.2 version=1 rust_sha256=12624ec7f5bdb75ff8067366f78e1c00d9db805dce24c904a461f1f8ff8d4676*/
+extern const size_t kRecvScratchBytes;
+
+constexpr size_t kRecvScratchBytes = static_cast<size_t>(64) * static_cast<size_t>(1024);
+/*RUSTYCPP:GEN-END id=tcp_channel.2*/
 
 }  // namespace
 
