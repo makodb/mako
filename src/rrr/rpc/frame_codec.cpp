@@ -185,12 +185,30 @@ inline FrameDecodeStatus frame_codec_peek_header(const std::uint8_t* buf,
  *
  * Note that `payload_size == header.payload_size` always; the field is
  * duplicated for ergonomic parity with `ChannelFrame`.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block with the C++ struct. The
+ * generated struct is still an aggregate, so every call site's
+ * `FrameView v{}` continues to value-init `header` (both fields 0),
+ * `payload` (nullptr) and `payload_size` (0).
  */
+#if RUSTYCPP_RUST
 struct FrameView {
-    FrameHeader          header;
-    const std::uint8_t*  payload = nullptr;
-    std::size_t          payload_size = 0;
+    header: FrameHeader,
+    payload: *const u8,
+    payload_size: usize,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.4 version=1 rust_sha256=b360ce69953a7f80a792566fe786167aaee1d16a0a48b9b9c4a51811f22da1bf*/
+struct FrameView;
+
+struct FrameView {
+    FrameHeader header;
+    const uint8_t* payload;
+    size_t payload_size;
 };
+/*RUSTYCPP:GEN-END id=frame_codec.4*/
 
 // ---------------------------------------------------------------------------
 // Coalesced encoding helper
