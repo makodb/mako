@@ -1,5 +1,6 @@
 module;
 
+#include <rusty/mutex.hpp>
 #include <rusty/once.hpp>
 #include <rusty/rusty.hpp>
 #include <cstdint>
@@ -28,63 +29,77 @@ export namespace rrr {
 // @safe - see file header.
 class CPUInfo {
 private:
-    unsigned long last_bytes_rxed[10], last_bytes_txed[10], last_mem_usage[10];
-    clock_t last_ticks_[10], last_user_ticks_[10], last_kernel_ticks_[10];
-    double last_cpu, last_txed, last_rxed, last_mem;
-    long long total_mem;
-    long page_size;
+    unsigned long last_bytes_rxed[10] = {}, last_bytes_txed[10] = {}, last_mem_usage[10] = {};
+    clock_t last_ticks_[10] = {}, last_user_ticks_[10] = {}, last_kernel_ticks_[10] = {};
+    double last_cpu = 0, last_txed = 0, last_rxed = 0, last_mem = 0;
+    long long total_mem = 0;
+    long page_size = 0;
     int index = 0;
-    pid_t pid_;
-    std::recursive_mutex mtx_;
-    // @unsafe - std::recursive_mutex lock + dispatch into @unsafe
-    // get_network / get_memory parsers. sysinfo / sysconf / times /
-    // getpid all flow through @safe rusty::sys::process::* helpers.
+    pid_t pid_ = 0;
+
+    // Mutex protecting the sample-history fields above. The original
+    // code used `std::recursive_mutex`, but no callsite actually
+    // recurses (the ctor and `get_cpu_stat()` are the only lock sites
+    // and neither calls the other), so a plain non-recursive mutex is
+    // enough. We use `rusty::Mutex<bool>` here as a movable lock
+    // primitive — the payload `bool` is an unused placeholder; the
+    // lock provides mutual exclusion for the surrounding fields the
+    // Rust-idiomatic way would put those fields *inside* the
+    // Mutex<T>, but restructuring CPUInfo to that shape is its own
+    // refactor; the placeholder form gives us movability now.
+    mutable rusty::Mutex<bool> mtx_{false};
+
+    // @unsafe - mutex lock + dispatch into @unsafe get_network /
+    // get_memory parsers. sysinfo / sysconf / times / getpid all flow
+    // through @safe rusty::sys::process::* helpers.
     //
-    // Kept as a private user-declared constructor (not a `static new_()`
-    // factory) because `std::recursive_mutex` is neither copyable nor
-    // movable, which makes `CPUInfo` non-movable as a whole. A
-    // value-returning `new_()` would need NRVO-or-move-ctor access for
-    // its `return info;`, but the implicit move is deleted; the C++
-    // language requires an accessible move/copy ctor for the return
-    // even when NRVO would elide it. The `OnceCell<CPUInfo>` access
-    // path constructs `CPUInfo{}` as a prvalue (mandatory copy
-    // elision), which bypasses that requirement, so the ctor stays.
-    CPUInfo() {
-        const std::lock_guard<std::recursive_mutex> lock (mtx_);
+    // Replaces the previous user-declared private default ctor. The
+    // class is now movable (`rusty::Mutex<bool>` has an explicit move
+    // ctor that reinitializes the underlying std::mutex), so
+    // `return info;` from a value-returning factory compiles cleanly.
+    // No lock is taken here because `info` is local until returned —
+    // no other thread can observe it during construction.
+    static CPUInfo new_() {
+        CPUInfo info;
 #ifdef __linux__
         rusty::Vec<double> result;
 
         const auto mem_info = rusty::sys::process::sysinfo();
         // `mem_info.total_ram_bytes` is already scaled by mem_unit.
-        total_mem = static_cast<long long>(mem_info.total_ram_bytes / 1024);
-        Log_debug("total amount of ram is: %lld", total_mem);
+        info.total_mem = static_cast<long long>(mem_info.total_ram_bytes / 1024);
+        Log_debug("total amount of ram is: %lld", info.total_mem);
 
-        page_size = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
+        info.page_size = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
 
         const auto ticks = rusty::sys::process::process_times();
-        last_ticks_[index]        = static_cast<clock_t>(ticks.wall_ticks);
-        last_kernel_ticks_[index] = static_cast<clock_t>(ticks.system_ticks);
-        last_user_ticks_[index]   = static_cast<clock_t>(ticks.user_ticks);
+        info.last_ticks_[info.index]        = static_cast<clock_t>(ticks.wall_ticks);
+        info.last_kernel_ticks_[info.index] = static_cast<clock_t>(ticks.system_ticks);
+        info.last_user_ticks_[info.index]   = static_cast<clock_t>(ticks.user_ticks);
 
-        pid_ = rusty::sys::process::getpid();
-        get_network(std::to_string(pid_), result, last_ticks_[index]);
-        get_memory(std::to_string(pid_), result, last_ticks_[index]);
+        info.pid_ = rusty::sys::process::getpid();
+        info.get_network(std::to_string(info.pid_), result, info.last_ticks_[info.index]);
+        info.get_memory(std::to_string(info.pid_), result, info.last_ticks_[info.index]);
 
-        index++;
+        info.index++;
 #else
-        last_cpu = last_txed = last_rxed = last_mem = 0.0;
-        total_mem = 0;
-        page_size = 0;
-        index = 0;
-        pid_ = rusty::sys::process::getpid();
+        info.last_cpu = info.last_txed = info.last_rxed = info.last_mem = 0.0;
+        info.total_mem = 0;
+        info.page_size = 0;
+        info.index = 0;
+        info.pid_ = rusty::sys::process::getpid();
 #endif
+        return info;
     }
 
-    // @unsafe - std::recursive_mutex lock + dispatch into the @unsafe
-    // get_network / get_memory parsers. times() flows through
+    // @unsafe - mutex lock + dispatch into the @unsafe get_network /
+    // get_memory parsers. times() flows through
     // @safe rusty::sys::process::process_times.
     rusty::Vec<double> get_cpu_stat() {
-        const std::lock_guard<std::recursive_mutex> lock (mtx_);
+        // Lock the placeholder mutex for mutual exclusion across
+        // the field reads / writes below. Guard discarded immediately
+        // — we hold the lock only for the scope of this function.
+        auto _guard = mtx_.lock().unwrap();
+        (void)_guard;
 
         rusty::Vec<double> result;
         double cpu_total;
@@ -251,22 +266,17 @@ public:
     // Equivalent in Rust:
     //   static CPU_INFO: OnceLock<CpuInfo> = OnceLock::new();
     //   pub fn cpu_stat() -> Vec<f64> {
-    //       CPU_INFO.get_or_init(|| CpuInfo::new()).get_cpu_stat()
+    //       CPU_INFO.get_or_init(CpuInfo::new).get_cpu_stat()
     //   }
     //
-    // The previous form used a C++11 function-local static (Meyers
-    // singleton), which is semantically the same but doesn't have a
-    // direct Rust-DSL counterpart. With `rusty::OnceCell<T>` we get a
-    // one-to-one mapping to `std::sync::OnceLock<T>`. `get_or_init`
-    // direct-initializes the cell from the lambda's prvalue (C++17
-    // mandatory copy elision), so CPUInfo's `std::recursive_mutex`
-    // field — which is non-movable — does not block this.
-    //
-    // `get_cpu_stat()` mutates internal sample history, so we reach
-    // it via `inst.get_mut()` (guaranteed non-null after init).
+    // Lock-side note: `CPUInfo` is now movable (its `mtx_` field is a
+    // `rusty::Mutex<bool>`, whose move ctor reinitializes the
+    // underlying `std::mutex`), so `CPUInfo::new_()` can return by
+    // value and the lambda below can pass it to `get_or_init` without
+    // relying on mandatory-copy-elision tricks.
     static rusty::Vec<double> cpu_stat() {
         static rusty::OnceCell<CPUInfo> inst;
-        inst.get_or_init([]() -> CPUInfo { return CPUInfo{}; });
+        inst.get_or_init([]() -> CPUInfo { return CPUInfo::new_(); });
         return inst.get_mut()->get_cpu_stat();
     }
 };
