@@ -14,6 +14,7 @@ module;
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <rusty/once.hpp>
 #include <rusty/rusty.hpp>
 
 export module rrr.alock;
@@ -596,9 +597,20 @@ class TimeoutALock: public ALock {
 
  public:
 
+  // @safe - Rust-idiomatic singleton accessor (mirrors
+  // `std::sync::OnceLock<Alarm>` + `get_or_init`).
+  //
+  // Replaces the C++11 function-local static (Meyers singleton).
+  // Same laziness, same thread-safe first-call init, but with a
+  // direct mapping to Rust's `OnceLock<T>` for future DSL migration.
+  //
+  // `Alarm::Alarm()` sets `period_ = 50000` on the FrequentJob base,
+  // so the lambda has to construct fresh rather than relying on a
+  // default field initializer alone.
   static Alarm &get_alarm_s() {
-    static Alarm alarm;
-    return alarm;
+    static rusty::OnceCell<Alarm> inst;
+    inst.get_or_init([]() -> Alarm { return Alarm{}; });
+    return *inst.get_mut();
   }
 
   uint64_t id_locked_ = 0;
