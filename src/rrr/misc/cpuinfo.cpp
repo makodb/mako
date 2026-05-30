@@ -39,6 +39,16 @@ private:
     // @unsafe - std::recursive_mutex lock + dispatch into @unsafe
     // get_network / get_memory parsers. sysinfo / sysconf / times /
     // getpid all flow through @safe rusty::sys::process::* helpers.
+    //
+    // Kept as a private user-declared constructor (not a `static new_()`
+    // factory) because `std::recursive_mutex` is neither copyable nor
+    // movable, which makes `CPUInfo` non-movable as a whole. A
+    // value-returning `new_()` would need NRVO-or-move-ctor access for
+    // its `return info;`, but the implicit move is deleted; the C++
+    // language requires an accessible move/copy ctor for the return
+    // even when NRVO would elide it. The `OnceCell<CPUInfo>` access
+    // path constructs `CPUInfo{}` as a prvalue (mandatory copy
+    // elision), which bypasses that requirement, so the ctor stays.
     CPUInfo() {
         const std::lock_guard<std::recursive_mutex> lock (mtx_);
 #ifdef __linux__

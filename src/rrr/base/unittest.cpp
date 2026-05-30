@@ -39,8 +39,18 @@ public:
 };
 
 class TestMgr {
-    TestMgr() :tests_() { }
+    // No user-declared default constructor; the implicit default
+    // calls `tests_`'s default ctor (an empty `rusty::Vec`) — same
+    // effect as the previous `TestMgr() :tests_() { }`. The private
+    // `static TestMgr new_()` factory below is the only construction
+    // path; called exclusively from `instance()`.
     rusty::Vec<TestCase*> tests_;
+
+    // @safe - Rust-style factory matching `fn new() -> Self`.
+    // Returns a fresh `TestMgr` as a prvalue, so C++17 mandatory copy
+    // elision installs it directly into the OnceCell storage.
+    static TestMgr new_() { return TestMgr{}; }
+
 public:
     static TestMgr* instance();
     TestCase* reg(TestCase*);
@@ -79,7 +89,7 @@ void TestCase::fail() {
 // `get_or_init` just initialized the cell.
 TestMgr* TestMgr::instance() {
     static rusty::OnceCell<TestMgr> inst;
-    inst.get_or_init([]() -> TestMgr { return TestMgr{}; });
+    inst.get_or_init([]() -> TestMgr { return TestMgr::new_(); });
     return inst.get_mut();
 }
 
