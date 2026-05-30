@@ -1,5 +1,6 @@
 module;
 
+#include <rusty/once.hpp>
 #include <rusty/rusty.hpp>
 #include <string.h>
 #include <stdio.h>
@@ -39,7 +40,6 @@ public:
 
 class TestMgr {
     TestMgr() :tests_() { }
-    static TestMgr* instance_s;
     rusty::Vec<TestCase*> tests_;
 public:
     static TestMgr* instance();
@@ -60,15 +60,27 @@ void TestCase::fail() {
     failures_++;
 }
 
-TestMgr* TestMgr::instance_s = nullptr;
-
-// @unsafe - returns raw `TestMgr*`; `new TestMgr` raw allocation +
-// static raw-pointer cache.
+// @safe - Rust-idiomatic singleton accessor.
+//
+// Equivalent in Rust:
+//   static TEST_MGR: OnceLock<TestMgr> = OnceLock::new();
+//   pub fn instance() -> &'static mut TestMgr { TEST_MGR.get_or_init(TestMgr::new_) }
+//
+// The previous form used a raw `TestMgr* instance_s` static + lazy
+// `new TestMgr` on first call — not thread-safe, but in practice
+// safe because test registration runs at static-init time (before
+// `main`, single-threaded). `rusty::OnceCell<T>` gives us the same
+// laziness with proper thread-safety, no leak, and a direct mapping
+// to `std::sync::OnceLock<T>` in Rust.
+//
+// `instance()` still returns a raw `TestMgr*` to keep all the
+// existing call sites (`TestMgr::instance()->...`) compiling
+// unchanged. `OnceCell::get_mut()` is guaranteed non-null because
+// `get_or_init` just initialized the cell.
 TestMgr* TestMgr::instance() {
-    if (instance_s == nullptr) {
-        instance_s = new TestMgr;
-    }
-    return instance_s;
+    static rusty::OnceCell<TestMgr> inst;
+    inst.get_or_init([]() -> TestMgr { return TestMgr{}; });
+    return inst.get_mut();
 }
 
 // @unsafe - takes and returns raw `TestCase*` (lifetime not modeled).

@@ -1,5 +1,6 @@
 module;
 
+#include <rusty/once.hpp>
 #include <rusty/rusty.hpp>
 #include <cstdint>
 #include <cstdlib>
@@ -235,9 +236,28 @@ private:
     }
 
 public:
+    // @safe - Rust-idiomatic singleton accessor.
+    //
+    // Equivalent in Rust:
+    //   static CPU_INFO: OnceLock<CpuInfo> = OnceLock::new();
+    //   pub fn cpu_stat() -> Vec<f64> {
+    //       CPU_INFO.get_or_init(|| CpuInfo::new()).get_cpu_stat()
+    //   }
+    //
+    // The previous form used a C++11 function-local static (Meyers
+    // singleton), which is semantically the same but doesn't have a
+    // direct Rust-DSL counterpart. With `rusty::OnceCell<T>` we get a
+    // one-to-one mapping to `std::sync::OnceLock<T>`. `get_or_init`
+    // direct-initializes the cell from the lambda's prvalue (C++17
+    // mandatory copy elision), so CPUInfo's `std::recursive_mutex`
+    // field — which is non-movable — does not block this.
+    //
+    // `get_cpu_stat()` mutates internal sample history, so we reach
+    // it via `inst.get_mut()` (guaranteed non-null after init).
     static rusty::Vec<double> cpu_stat() {
-        static CPUInfo cpu_info;
-        return cpu_info.get_cpu_stat();
+        static rusty::OnceCell<CPUInfo> inst;
+        inst.get_or_init([]() -> CPUInfo { return CPUInfo{}; });
+        return inst.get_mut()->get_cpu_stat();
     }
 };
 
