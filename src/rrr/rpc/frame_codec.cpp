@@ -76,15 +76,41 @@ inline constexpr const char* frame_decode_status_to_string(FrameDecodeStatus s) 
  *     is set. The RPC layer interprets this as "the response payload
  *     starts with `<server_instance_id>` after `<error_code>`".
  *     Request frames must always have this flag clear.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block with the C++ struct + method.
+ * The generated struct is still an aggregate, so `FrameHeader{}`
+ * continues to value-initialize both fields to 0/false at every call
+ * site (peek_header, FrameView::header, next_frame, consume_frame).
  */
+#if RUSTYCPP_RUST
 struct FrameHeader {
-    std::int32_t payload_size = 0;
-    bool         extended_header_flag = false;
+    payload_size: i32,
+    extended_header_flag: bool,
+}
 
-    constexpr std::int32_t total_frame_size() const {
-        return payload_size + static_cast<std::int32_t>(kFrameHeaderSize);
+impl FrameHeader {
+    fn total_frame_size(&self) -> i32 {
+        self.payload_size + (kFrameHeaderSize as i32)
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.3 version=1 rust_sha256=54b8840038c07349c37dba3672294103f924f418bbde9e2625bb295fcf5d3888*/
+struct FrameHeader;
+
+struct FrameHeader {
+    int32_t payload_size;
+    bool extended_header_flag;
+
+    int32_t total_frame_size() const;
 };
+
+
+int32_t FrameHeader::total_frame_size() const {
+    return rusty::detail::deref_if_pointer_like(this->payload_size) + ((static_cast<int32_t>(kFrameHeaderSize)));
+}
+/*RUSTYCPP:GEN-END id=frame_codec.3*/
 
 // ---------------------------------------------------------------------------
 // Stateless encode / decode
@@ -159,12 +185,30 @@ inline FrameDecodeStatus frame_codec_peek_header(const std::uint8_t* buf,
  *
  * Note that `payload_size == header.payload_size` always; the field is
  * duplicated for ergonomic parity with `ChannelFrame`.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block with the C++ struct. The
+ * generated struct is still an aggregate, so every call site's
+ * `FrameView v{}` continues to value-init `header` (both fields 0),
+ * `payload` (nullptr) and `payload_size` (0).
  */
+#if RUSTYCPP_RUST
 struct FrameView {
-    FrameHeader          header;
-    const std::uint8_t*  payload = nullptr;
-    std::size_t          payload_size = 0;
+    header: FrameHeader,
+    payload: *const u8,
+    payload_size: usize,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.4 version=1 rust_sha256=b360ce69953a7f80a792566fe786167aaee1d16a0a48b9b9c4a51811f22da1bf*/
+struct FrameView;
+
+struct FrameView {
+    FrameHeader header;
+    const uint8_t* payload;
+    size_t payload_size;
 };
+/*RUSTYCPP:GEN-END id=frame_codec.4*/
 
 // ---------------------------------------------------------------------------
 // Coalesced encoding helper

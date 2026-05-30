@@ -134,7 +134,7 @@ public:
     void set_latency(uint64_t latency_us) {
         // Record a request with this latency
         metrics_.record_request_sent();
-        metrics_.record_request_completed(latency_us);  // Records latency along with completion
+        metrics_.record_request_completed_with_latency(latency_us);  // Records latency along with completion
     }
 
     const ConnectionMetrics& metrics() const {
