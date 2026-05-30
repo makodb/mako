@@ -70,14 +70,14 @@ TEST_F(CompletedEntryTest, DefaultConstruction) {
 }
 
 TEST_F(CompletedEntryTest, ExplicitConstruction) {
-    CompletedEntry entry(12345, 1000);
+    auto entry = CompletedEntry::new_(12345, 1000);
 
     EXPECT_EQ(entry.xid, 12345);
     EXPECT_EQ(entry.timestamp_ms, 1000);
 }
 
 TEST_F(CompletedEntryTest, IsExpired) {
-    CompletedEntry entry(1, 1000);
+    auto entry = CompletedEntry::new_(1, 1000);
 
     // Not expired
     EXPECT_FALSE(entry.is_expired(1050, 100));  // 1050 <= 1000 + 100 = 1100

@@ -70,17 +70,25 @@ struct CompletionTrackerConfig {
 // ===========================================================================
 
 /**
- * @safe - Entry for tracking completed XIDs
+ * @safe - Entry for tracking completed XIDs.
+ *
+ * Aggregate POD: no user-declared constructors. The previous default
+ * ctor and 2-arg value ctor were dropped in favour of the Rust-style
+ * `static new_(...)` factory, which mirrors what the inline-Rust DSL
+ * emits for `fn new(...) -> Self` (without `#[cpp_ctor]`). Future DSL
+ * migration is now a body-level translation; no `#[cpp_ctor]` needed.
+ *
+ * Aggregate-init (`CompletedEntry{}`, `CompletedEntry{xid, ts}`) and
+ * designated-init still work because the struct remains an aggregate.
  */
 struct CompletedEntry {
     int64_t xid = 0;
     uint64_t timestamp_ms = 0;
 
-    // @safe - Default constructor
-    CompletedEntry() = default;
-
-    // @safe - Constructor with values
-    CompletedEntry(int64_t x, uint64_t ts) : xid(x), timestamp_ms(ts) {}
+    // @safe - Rust-style factory matching the DSL `fn new(x, ts) -> Self` form.
+    static CompletedEntry new_(int64_t x, uint64_t ts) {
+        return CompletedEntry{.xid = x, .timestamp_ms = ts};
+    }
 
     // @safe - Check if entry has expired
     bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
@@ -175,7 +183,7 @@ public:
         }
 
         // Add new entry
-        list_guard->push_front(CompletedEntry{xid, current_time_ms});
+        list_guard->push_front(CompletedEntry::new_(xid, current_time_ms));
         set_guard->insert(xid);
         total_tracked_.set(total_tracked_.get() + 1);
     }
