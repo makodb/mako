@@ -3,6 +3,7 @@ module;
 #include <rusty/rusty.hpp>
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/unsafe_cell.hpp>
 
 #include <pthread.h>
@@ -126,35 +127,49 @@ public:
 //    virtual Lockable::type whatami() = 0;
 };
 
-// @unsafe - Used with mutable for interior mutability
+// @unsafe - Used with mutable for interior mutability.
+//
+// The underlying flag is `rusty::sync::atomic::Atomic<bool>` (a thin
+// movable wrapper around `std::atomic<bool>`), which lets SpinLock be
+// move-constructible / move-assignable. The implicit move ctor reads
+// the source's `locked_` value at the time of move and writes it into
+// the destination — semantically the same as default-constructing a
+// new lock with whatever state the source happened to hold. Callers
+// must not move a SpinLock that is currently held; that contract is
+// the same as it would be for any other lock primitive.
 class SpinLock: public Lockable {
 public:
     // @safe - Initializes to unlocked state
     SpinLock(): locked_(false) { }
     ~SpinLock() override = default;
 
-    // Delete copy and move constructors (atomic is not copyable)
+    // Still not copyable (an atomic flag has identity); rely on
+    // the implicit move (which Atomic<bool> supports) to allow
+    // value-returning factories like `SpinLock::new_()`.
     SpinLock(const SpinLock&) = delete;
     SpinLock& operator=(const SpinLock&) = delete;
-    SpinLock(SpinLock&&) = delete;
-    SpinLock& operator=(SpinLock&&) = delete;
+
+    // @safe - Rust-style factory matching `fn new() -> Self`.
+    static SpinLock new_() {
+        return SpinLock{};
+    }
 
     // @safe - parity with Rust's `Mutex::lock`. The atomic compare/exchange
     // and load operations are memory-safe; the sleeping fallback path
     // delegates to `rusty::sys::time::sleep_us` (itself @safe with an
     // inner @unsafe block around nanosleep).
     void lock() override {
+        namespace ra = rusty::sync::atomic;
         // Fast path: try to acquire lock immediately
-        bool expected = false;
-        if (locked_.compare_exchange_strong(expected, true,
-                                            std::memory_order_acquire,
-                                            std::memory_order_relaxed)) {
+        if (locked_.compare_exchange(false, true,
+                                     ra::Ordering::Acquire,
+                                     ra::Ordering::Relaxed).is_ok()) {
             return;
         }
 
         // Spin for a short while before sleeping
         int wait = 1000;
-        while ((wait-- > 0) && locked_.load(std::memory_order_relaxed)) {
+        while ((wait-- > 0) && locked_.load(ra::Ordering::Relaxed)) {
             // CPU-specific pause instruction to reduce contention
 #if defined(__i386__) || defined(__x86_64__)
             asm volatile("pause");
@@ -162,23 +177,21 @@ public:
         }
 
         // Fall back to sleeping if still contended.
-        expected = false;
-        while (!locked_.compare_exchange_weak(expected, true,
-                                              std::memory_order_acquire,
-                                              std::memory_order_relaxed)) {
+        while (locked_.compare_exchange_weak(false, true,
+                                             ra::Ordering::Acquire,
+                                             ra::Ordering::Relaxed).is_err()) {
             rusty::sys::time::sleep_us(50);  // 50 microseconds
-            expected = false;
         }
     }
 
-    // @safe - parity with Rust's `Mutex` drop / `unlock`. `std::atomic::store`
+    // @safe - parity with Rust's `Mutex` drop / `unlock`. Atomic store
     // is memory-safe; the prior `@unsafe` annotation was over-conservative.
     void unlock() {
-        locked_.store(false, std::memory_order_release);
+        locked_.store(false, rusty::sync::atomic::Ordering::Release);
     }
 
 private:
-    std::atomic<bool> locked_ alignas(64);  // Cache-line aligned to prevent false sharing
+    rusty::sync::atomic::Atomic<bool> locked_ alignas(64);  // Cache-line aligned to prevent false sharing
 };
 
 // =============================================================================
