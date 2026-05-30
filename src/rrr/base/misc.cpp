@@ -84,11 +84,23 @@ public:
 
 class OneTimeJob : public Job {
  public:
+  // Legacy value ctor — kept for compatibility with deptran call sites
+  // (`OneTimeJob(lambda)` syntax). New rrr code should prefer
+  // `OneTimeJob::new_(lambda)` below, which matches the inline-Rust DSL
+  // form. The ctor delegates to the factory so they stay in lockstep.
   OneTimeJob(rusty::Function<void()> func) : func_(std::move(func)) {
   }
   bool done_{false};
   bool ready_{true};
   rusty::Function<void()> func_{};
+
+  // @safe - factory matching the DSL `fn new(func) -> Self` form.
+  // Existing call sites switch from `OneTimeJob(lambda)` to
+  // `OneTimeJob::new_(lambda)`.
+  static OneTimeJob new_(rusty::Function<void()> func) {
+    return OneTimeJob(std::move(func));
+  }
+
   bool Ready() override { return ready_; }
   bool Done() override { return done_; }
   void Work() override {

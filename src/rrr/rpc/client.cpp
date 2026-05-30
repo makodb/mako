@@ -286,13 +286,23 @@ using FutureResult = rusty::Result<rusty::Arc<Future>, i32>;
 // rcc_rpc.h proxy stubs cheaply.
 using FutureCallback = detail::CallbackWrapper<void(rusty::Arc<Future>) const>;
 
-// @safe - Simple attribute struct for Future callbacks
+// @safe - Simple attribute struct for Future callbacks.
+// Aggregate-style POD: no user-declared constructor. `FutureAttr()`
+// continues to work via the implicit aggregate default (which calls
+// `FutureCallback`'s own default ctor — same as the dropped
+// `FutureAttr() = FutureCallback{}`). To attach a callback, use the
+// Rust-style `new_(cb)` factory.
 struct FutureAttr {
-    FutureAttr(FutureCallback cb = FutureCallback{}) : callback(std::move(cb)) { }
-
     // callback should be fast, otherwise it hurts rpc performance
     // Receives Arc<Future> for lifetime safety (callback keeps Future alive)
     FutureCallback callback;
+
+    // @safe - factory matching the DSL `fn new(cb) -> Self` form.
+    static FutureAttr new_(FutureCallback cb) {
+        FutureAttr attr;
+        attr.callback = std::move(cb);
+        return attr;
+    }
 };
 
 // @safe - Methods that genuinely cross into unsafe ops (network I/O,
@@ -3482,7 +3492,7 @@ void ClientConnection::bind_channel_via_poll_thread(
   // the `on_frame` callback's signal both land on the same
   // thread.
   // @unsafe { Arc::new_ + rusty::Function + cross-thread queue }
-  auto recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([weak_self]() {
+  auto recv_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([weak_self]() {
     auto conn_opt = weak_self.upgrade();
     if (conn_opt.is_none()) return;
     auto conn = conn_opt.unwrap();
@@ -4128,7 +4138,7 @@ void Client::close() const {
       // PollThread::add (an unannotated reactor primitive).
       {
         auto conn_arc = guard->as_ref().unwrap().clone();
-        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([conn_arc]() {
+        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([conn_arc]() {
           // close() is const-callable; conn_arc.get() returns const T*.
           conn_arc->close();
         }));

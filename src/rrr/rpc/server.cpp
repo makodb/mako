@@ -1306,7 +1306,7 @@ Server::~Server() noexcept {
         // L5g), so move-only captures are fine and the prior
         // std::shared_ptr wrap that existed only to satisfy
         // std::function's copyable requirement is no longer needed.
-        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
+        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(
             [listener_box = std::move(channel_listener_).unwrap()]() mutable {
                 listener_box->close();
             }));

@@ -167,10 +167,19 @@ class BoxEvent : public Event {
 class IntEvent : public Event {
 
  public:
+  // Legacy ctors kept for deptran call sites (`IntEvent()` as base init
+  // in derived classes, `Reactor::create_sp_event<IntEvent>(n)` which
+  // forwards to `IntEvent(int)`). New rrr code should prefer
+  // `IntEvent::new_(tar)` which matches the inline-Rust DSL form.
   IntEvent() {}
   IntEvent(int tar) :target_(tar) {}
   int value_{0};
   int target_{1};
+
+  // @safe - factory matching the DSL `fn new(tar) -> Self` form.
+  static IntEvent new_(int tar) {
+    return IntEvent(tar);
+  }
 
 
   bool test_trigger();
