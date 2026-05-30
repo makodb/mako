@@ -2029,13 +2029,38 @@ public:
     // SAFETY: Connection cleanup handled by ClientConnection
     virtual ~Client();
 
+    // @safe - Restore implicit move that the user-declared virtual
+    // destructor suppressed. Every Client field (RefCell, Arc, Cell,
+    // SpinMutex over an Option) is movable, so the defaulted moves
+    // are well-formed. Copy stays implicitly disabled by the same
+    // user-declared dtor rule (we never copied Clients in the first
+    // place; they live behind Arc).
+    Client(Client&&) noexcept = default;
+    Client& operator=(Client&&) noexcept = default;
+
     // @safe - Simple initialization
     Client(rusty::Arc<PollThread> poll_thread_worker):
         connection_(rusty::None),
         poll_thread_worker_(poll_thread_worker) { }
 
+    // @safe - Rust-style factory matching `fn new(worker) -> Self`.
+    // Delegates to the value ctor above; the value-returning shape
+    // mirrors what the inline-Rust DSL emits for `fn new(...) -> Self`
+    // without `#[cpp_ctor]`.
+    static Client new_(rusty::Arc<PollThread> poll_thread_worker) {
+        return Client{std::move(poll_thread_worker)};
+    }
+
     // Factory method to create Client with Arc
     // @safe - Arc::make is @safe in the library.
+    //
+    // Kept under the original name `create()` because every existing
+    // call site (~10 sites in client.cpp + tests) uses
+    // `Client::create(arc)` and the convenience of returning
+    // `Arc<Client>` directly is worth keeping. Uses `Arc::make` (which
+    // forwards args to Client's value ctor in-place inside the Arc
+    // control block) — same as before. New rrr code that wants a
+    // bare-value Client can call `Client::new_(arc)` instead.
     static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
         return rusty::Arc<Client>::make(poll_thread_worker);
     }
