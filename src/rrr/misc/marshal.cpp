@@ -132,6 +132,21 @@ public:
   // match NoCopy::~NoCopy()'s exception spec.
   ~Marshal() noexcept = default;
 
+  // @safe - Explicit move declarations restore implicit-move
+  // suppression caused by the user-declared destructor above. With
+  // these, `Marshal` becomes move-constructible / move-assignable
+  // (delegated through NoCopy's defaulted move members + rusty::Vec's
+  // move). Copy stays deleted via NoCopy.
+  Marshal(Marshal&&) noexcept = default;
+  Marshal& operator=(Marshal&&) noexcept = default;
+
+  // @safe - Rust-style factory matching `fn new() -> Self`. Equivalent
+  // to default construction; provided for symmetry with the rest of
+  // the rrr `new_()` rollout.
+  static Marshal new_() {
+    return Marshal{};
+  }
+
   // @safe - Pre-reserve `block_size` bytes of capacity. The chunk-list
   // version allocated a single chunk of this size up front; here we
   // just hint the Vec to reserve. Legal to call when buf_ is empty.
