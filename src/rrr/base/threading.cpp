@@ -363,11 +363,26 @@ public:
     // Type alias for the guard type
     using Guard = SpinMutexGuard<T>;
 
-    // @safe - Default constructor for default-constructible types
+    // @safe - Default constructor for default-constructible types.
+    // SpinMutex now has an implicit move ctor (both SpinLock and
+    // UnsafeCell<T> are movable as of the SpinLock atomic flip), so
+    // value-returning `static new_(...)` factories below compile.
     SpinMutex() : data_() {}
 
     // @safe - Constructor initializes data
     explicit SpinMutex(T value) : data_(std::move(value)) {}
+
+    // @safe - Rust-style factory matching `fn new() -> Self`. Equivalent
+    // to default construction; provided for symmetry with the rest of
+    // the rrr `new_()` rollout.
+    static SpinMutex new_() {
+        return SpinMutex{};
+    }
+
+    // @safe - Rust-style factory matching `fn new(value) -> Self`.
+    static SpinMutex new_(T value) {
+        return SpinMutex{std::move(value)};
+    }
 
     // @safe - Acquires lock and returns LockResult
     [[nodiscard]] SpinLockResult<T> lock() {
