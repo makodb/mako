@@ -1,6 +1,7 @@
 module;
 
 #include <rusty/rusty.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <inttypes.h>
 #include <pthread.h>
 #include <sys/time.h>
@@ -83,18 +84,38 @@ public:
     NoCopy& operator=(NoCopy&&) = default;
 };
 
+// `Counter` — atomic-backed monotonically-increasing counter. The
+// underlying field is `rusty::sync::atomic::Atomic<i64>` (a movable
+// wrapper around `std::atomic<i64>`), so the class as a whole is
+// move-constructible / move-assignable — which is what makes the
+// value-returning `static new_(...)` factory below compile. The
+// implicit move ctor reads the source's value (Relaxed) and stores
+// it into the destination, same as for SpinLock.
 class Counter: public NoCopy {
-    std::atomic<i64> next_;
 public:
-    Counter(i64 start = 0) : next_(start) { }
+    // Default-init to 0; the implicit default ctor reproduces the
+    // prior `Counter()` / `Counter(0)` behaviour.
+    rusty::sync::atomic::Atomic<i64> next_{0};
+
+    // @safe - Rust-style factory matching `fn new(start) -> Self`.
+    // Callers that want a non-zero start switch from `Counter(N)` to
+    // `Counter::new_(N)`. Existing default-construct callers
+    // (`Counter xid_counter_;`, `static Counter g_nop_counter;`)
+    // continue to work via the implicit default.
+    static Counter new_(i64 start) {
+        Counter c;
+        c.next_.store(start, rusty::sync::atomic::Ordering::Relaxed);
+        return c;
+    }
+
     i64 peek_next() const {
-        return atomic_load_relaxed(next_);
+        return next_.load(rusty::sync::atomic::Ordering::Relaxed);
     }
     i64 next(i64 step = 1) {
-        return atomic_fetch_add_acq_rel(next_, step);
+        return next_.fetch_add(step, rusty::sync::atomic::Ordering::AcqRel);
     }
     void reset(i64 start = 0) {
-        atomic_store_relaxed(next_, start);
+        next_.store(start, rusty::sync::atomic::Ordering::Relaxed);
     }
 };
 
