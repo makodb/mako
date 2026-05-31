@@ -617,9 +617,16 @@ class Server: public NoCopy {
     // accept-loop path).
 
     // Shutdown coordination - allows workers to wait for shutdown signal
+    //
+    // `shutdown_cond_` is held behind a `rusty::Box` because the
+    // underlying `std::condition_variable` (and thus `rusty::Condvar`)
+    // is non-movable. Box gives Server a movable storage cell — needed
+    // both for the `static new_()` factory below and for the upcoming
+    // inline-Rust DSL form (the DSL emits an explicit move ctor; a
+    // raw `Condvar` field would make it ill-formed).
     struct ShutdownState { bool shutdown = false; };
     rusty::Mutex<ShutdownState> shutdown_state_{ShutdownState{}};
-    rusty::Condvar shutdown_cond_;
+    rusty::Box<rusty::Condvar> shutdown_cond_{rusty::make_box<rusty::Condvar>()};
 
     // Graceful shutdown support
     rusty::Cell<ShutdownPhase> shutdown_phase_{ShutdownPhase::RUNNING};
@@ -675,6 +682,30 @@ public:
     // @safe - Destroys server and requests close for all connections
     // SAFETY: Arc<RpcServiceContext> ensures services live until all connections are done
     virtual ~Server() noexcept override;
+
+    // @safe - Restore implicit move that the user-declared virtual
+    // destructor + NoCopy-base destructor suppressed. Every Server
+    // field is movable: rusty::Vec, HashMap, HashSet, Option,
+    // Mutex<T>, Box<Condvar> (Condvar itself isn't movable; the Box
+    // wrapper above gives it movable storage), Cell, SpinMutex over
+    // Vec, Arc<atomic<>>, uint64_t, Option<ChannelFactoryProxy>,
+    // Option<ChannelListenerProxy>. Copy stays implicitly disabled
+    // by the `NoCopy` base (and we never copied Servers in the first
+    // place — they live behind a raw `new Server(...)`).
+    Server(Server&&) noexcept = default;
+    Server& operator=(Server&&) noexcept = default;
+
+    // @safe - Rust-style factory matching the inline-Rust DSL
+    // `fn new(poll_thread_worker) -> Self` form. Returns a Server by
+    // value; C++17 mandatory copy-elision installs it directly at
+    // the caller's storage slot.
+    //
+    // Existing callers continue to use `new Server(arg)` for raw-
+    // pointer allocation; new code that wants a value-style Server
+    // should prefer `Server::new_(arg)`.
+    static Server new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
+        return Server{std::move(poll_thread_worker)};
+    }
 
     // @unsafe - Starts server on specified address (raw pointer dereference)
     int start(const char* bind_addr);
@@ -784,7 +815,7 @@ public:
     // @safe - Signals shutdown to waiting threads
     void do_shutdown();
 
-    // @unsafe - Blocks the caller on `shutdown_cond_.wait_while(...)`. The
+    // @unsafe - Blocks the caller on `shutdown_cond_->wait_while(...)`. The
     // wait predicate runs arbitrary code under the mutex; treating the
     // wrapper as @unsafe matches the out-of-line definition.
     void wait_for_shutdown();
@@ -1509,14 +1540,14 @@ void Server::do_shutdown() {
         auto guard = shutdown_state_.lock().unwrap();
         guard->shutdown = true;
     }
-    shutdown_cond_.notify_all();
+    shutdown_cond_->notify_all();
 }
 
 // @unsafe - Blocks until shutdown is signaled
 void Server::wait_for_shutdown() {
     Log_debug("Server::wait_for_shutdown");
     auto guard = shutdown_state_.lock().unwrap();
-    guard = shutdown_cond_.wait_while(std::move(guard),
+    guard = shutdown_cond_->wait_while(std::move(guard),
         [](ShutdownState& s) { return !s.shutdown; }).unwrap();
     Log_debug("Server::wait_for_shutdown - done");
 }
