@@ -7218,7 +7218,7 @@ public:
         }
     };
     rusty::Result<ReElectTypedFuture, rrr::i32> async_ReElect(const RpcReElectRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::REELECT, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClassicService::REELECT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<ReElectTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -7858,7 +7858,7 @@ public:
         }
     };
     rusty::Result<FailoverPauseSocketOutTypedFuture, rrr::i32> async_FailoverPauseSocketOut(const RpcFailoverPauseSocketOutRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::FAILOVERPAUSESOCKETOUT, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClassicService::FAILOVERPAUSESOCKETOUT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<FailoverPauseSocketOutTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -7909,7 +7909,7 @@ public:
         }
     };
     rusty::Result<FailoverResumeSocketOutTypedFuture, rrr::i32> async_FailoverResumeSocketOut(const RpcFailoverResumeSocketOutRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::FAILOVERRESUMESOCKETOUT, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClassicService::FAILOVERRESUMESOCKETOUT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<FailoverResumeSocketOutTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -7956,7 +7956,7 @@ public:
         }
     };
     rusty::Result<rpc_nullTypedFuture, rrr::i32> async_rpc_null(const RpcRpcNullRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClassicService::RPC_NULL, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClassicService::RPC_NULL, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<rpc_nullTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -9734,7 +9734,7 @@ public:
         }
     };
     rusty::Result<server_shutdownTypedFuture, rrr::i32> async_server_shutdown(const RpcServerShutdownRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_SHUTDOWN, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_SHUTDOWN, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<server_shutdownTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -9785,7 +9785,7 @@ public:
         }
     };
     rusty::Result<server_readyTypedFuture, rrr::i32> async_server_ready(const RpcServerReadyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_READY, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_READY, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<server_readyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -9836,7 +9836,7 @@ public:
         }
     };
     rusty::Result<server_heart_beat_with_dataTypedFuture, rrr::i32> async_server_heart_beat_with_data(const RpcServerHeartBeatWithDataRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_HEART_BEAT_WITH_DATA, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_HEART_BEAT_WITH_DATA, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<server_heart_beat_with_dataTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -9883,7 +9883,7 @@ public:
         }
     };
     rusty::Result<server_heart_beatTypedFuture, rrr::i32> async_server_heart_beat(const RpcServerHeartBeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_HEART_BEAT, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ServerControlService::SERVER_HEART_BEAT, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<server_heart_beatTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -10343,7 +10343,7 @@ public:
         }
     };
     rusty::Result<client_get_txn_namesTypedFuture, rrr::i32> async_client_get_txn_names(const RpcClientGetTxnNamesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_GET_TXN_NAMES, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_GET_TXN_NAMES, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<client_get_txn_namesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -10390,7 +10390,7 @@ public:
         }
     };
     rusty::Result<client_shutdownTypedFuture, rrr::i32> async_client_shutdown(const RpcClientShutdownRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_SHUTDOWN, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_SHUTDOWN, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<client_shutdownTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -10437,7 +10437,7 @@ public:
         }
     };
     rusty::Result<client_force_stopTypedFuture, rrr::i32> async_client_force_stop(const RpcClientForceStopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_FORCE_STOP, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_FORCE_STOP, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<client_force_stopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -10540,7 +10540,7 @@ public:
         }
     };
     rusty::Result<client_readyTypedFuture, rrr::i32> async_client_ready(const RpcClientReadyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_READY, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_READY, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<client_readyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -10591,7 +10591,7 @@ public:
         }
     };
     rusty::Result<client_ready_blockTypedFuture, rrr::i32> async_client_ready_block(const RpcClientReadyBlockRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_READY_BLOCK, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_READY_BLOCK, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<client_ready_blockTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -10638,7 +10638,7 @@ public:
         }
     };
     rusty::Result<client_startTypedFuture, rrr::i32> async_client_start(const RpcClientStartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_START, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_START, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<client_startTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -11191,7 +11191,7 @@ public:
         }
     };
     rusty::Result<GetConfigVersionTypedFuture, rrr::i32> async_GetConfigVersion(const RpcGetConfigVersionRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETCONFIGVERSION, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ConfigServiceService::GETCONFIGVERSION, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<GetConfigVersionTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -11242,7 +11242,7 @@ public:
         }
     };
     rusty::Result<HasConfigTypedFuture, rrr::i32> async_HasConfig(const RpcHasConfigRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::HASCONFIG, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ConfigServiceService::HASCONFIG, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<HasConfigTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -11399,7 +11399,7 @@ public:
         }
     };
     rusty::Result<GetShardingPolicyVersionTypedFuture, rrr::i32> async_GetShardingPolicyVersion(const RpcGetShardingPolicyVersionRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETSHARDINGPOLICYVERSION, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ConfigServiceService::GETSHARDINGPOLICYVERSION, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<GetShardingPolicyVersionTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
@@ -11450,7 +11450,7 @@ public:
         }
     };
     rusty::Result<HasShardingPolicyTypedFuture, rrr::i32> async_HasShardingPolicy(const RpcHasShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::HASSHARDINGPOLICY, __fu_attr__);
+        auto __fu_result__ = __cl__->request(ConfigServiceService::HASSHARDINGPOLICY, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
         if (__fu_result__.is_err()) {
             return rusty::Result<HasShardingPolicyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }

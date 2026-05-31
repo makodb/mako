@@ -2113,10 +2113,13 @@ public:
         return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
     }
 
-    // @safe - Convenience overload for requests with no arguments
-    FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        return request(rpc_id, attr, [](BinaryWriteArchive&) {});
-    }
+    // (Previously: a third overload `request(i32 rpc_id, const FutureAttr&
+    // attr = FutureAttr())` for empty-input RPCs. Dropped — the only
+    // consumer was deptran's generated `rcc_rpc.h`, where the rpcgen
+    // emitter now produces the 3-arg form `request(rpc_id, attr,
+    // [](BinaryWriteArchive&){})` for empty-input methods. One fewer
+    // overload toward the single-canonical-`request` shape that the
+    // inline-Rust DSL needs.)
 
     // Slim async-callback request — no Arc<Future> allocation.  See
     // ClientConnection::request_async for the full contract.

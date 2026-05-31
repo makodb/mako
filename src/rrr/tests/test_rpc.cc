@@ -350,7 +350,7 @@ TEST_F(RPCTest, CallbackMechanism) {
 }
 
 TEST_F(RPCTest, InvalidRequest) {
-    auto fu_result = client.as_ref().unwrap()->request(99999);
+    auto fu_result = client.as_ref().unwrap()->request(99999, FutureAttr(), [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     fu->wait();

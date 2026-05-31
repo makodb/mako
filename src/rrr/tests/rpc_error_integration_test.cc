@@ -261,7 +261,7 @@ TEST_F(ErrorIntegrationTest, InvalidRpcIdError) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Request with invalid RPC ID
-    auto fu_result = client->request(99999);
+    auto fu_result = client->request(99999, FutureAttr(), [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     fu->wait();
