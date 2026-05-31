@@ -90,7 +90,7 @@ bool init_config_node() {
     g_config_rpc_server = new rrr::Server(rusty::Some(g_config_poll_thread.as_ref().unwrap().clone()));
 
     // @unsafe { RPC service registration - ConfigServiceImpl ownership transferred to server }
-    g_config_rpc_server->reg_service(rusty::make_box<ConfigServiceImpl>(*g_config_store));
+    g_config_rpc_server->reg_service_typed(rusty::make_box<ConfigServiceImpl>(*g_config_store));
 
     // @unsafe { RPC server start }
     if (g_config_rpc_server->start(bind_addr.c_str()) != 0) {

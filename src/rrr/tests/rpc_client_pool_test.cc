@@ -126,7 +126,7 @@ static Server* start_server_with_retry(const rusty::Arc<PollThread>& poll_thread
         int port = (port_out != nullptr && *port_out > 0) ? *port_out : test_ports::get_port();
         auto server = new Server(rusty::Some(poll_thread.clone()));
         auto service_box = rusty::make_box<PoolTestService>();
-        server->reg_service(std::move(service_box));
+        server->reg_service_typed(std::move(service_box));
         if (server->start(("0.0.0.0:" + std::to_string(port)).c_str()) == 0) {
             if (port_out != nullptr) {
                 *port_out = port;

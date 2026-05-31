@@ -64,7 +64,7 @@ protected:
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
 
         // Register service - server takes ownership via Box
-        server->reg_service(rusty::make_box<BenchService>());
+        server->reg_service_typed(rusty::make_box<BenchService>());
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(base_port)).c_str()), 0);
 
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));

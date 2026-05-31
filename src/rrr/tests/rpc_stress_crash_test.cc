@@ -145,7 +145,7 @@ protected:
     Server* create_server(int port) {
         auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
         auto service_box = rusty::make_box<StressTestService>();
-        server->reg_service(std::move(service_box));
+        server->reg_service_typed(std::move(service_box));
         std::string addr = "0.0.0.0:" + std::to_string(port);
         if (server->start(addr.c_str()) != 0) {
             delete server;

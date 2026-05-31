@@ -59,7 +59,7 @@ protected:
             server_ = new Server(rusty::Some(std::move(poll_clone)));
             auto svc = rusty::make_box<DeferTestService>();
             service_ = svc.get();
-            server_->reg_service(std::move(svc));
+            server_->reg_service_typed(std::move(svc));
             if (server_->start(("0.0.0.0:" + std::to_string(port_)).c_str()) == 0) {
                 started = true;
                 break;

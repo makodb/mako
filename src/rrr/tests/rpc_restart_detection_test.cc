@@ -6,6 +6,8 @@
  */
 #include <stdint.h>
 
+#include <rusty/option.hpp>
+
 #include "gtest/gtest.h"
 #include "../rrr.hpp"
 
@@ -22,20 +24,20 @@ protected:
 // ========== Server Instance ID Tests ==========
 
 TEST_F(RestartDetectionTest, InstanceIdGenerated) {
-    Server server;
+    Server server{rusty::None};
     // Server should generate a non-zero instance ID
     EXPECT_NE(0u, server.instance_id());
 }
 
 TEST_F(RestartDetectionTest, InstanceIdUnique) {
-    Server server1;
-    Server server2;
+    Server server1{rusty::None};
+    Server server2{rusty::None};
     // Different servers should get different IDs
     EXPECT_NE(server1.instance_id(), server2.instance_id());
 }
 
 TEST_F(RestartDetectionTest, InstanceIdStableAcrossRequests) {
-    Server server;
+    Server server{rusty::None};
     uint64_t id1 = server.instance_id();
     uint64_t id2 = server.instance_id();
     uint64_t id3 = server.instance_id();
@@ -52,7 +54,7 @@ TEST_F(RestartDetectionTest, InstanceIdUniqueAcrossThreads) {
     // Create servers in parallel
     for (int i = 0; i < num_threads; ++i) {
         threads.emplace_back([&ids, i]() {
-            Server server;
+            Server server{rusty::None};
             ids[i] = server.instance_id();
         });
     }

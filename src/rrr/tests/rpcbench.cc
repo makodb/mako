@@ -407,7 +407,7 @@ int main(int argc, char **argv) {
     if (is_server) {
         auto server_poll_thread = rusty::Some(PollThread::create());
         Server svr(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
-        svr.reg_service(rusty::make_box<BenchmarkService>());
+        svr.reg_service_typed(rusty::make_box<BenchmarkService>());
         verify(svr.start(svr_addr) == 0);
 
         Pthread_mutex_init(&g_stop_mutex, nullptr);

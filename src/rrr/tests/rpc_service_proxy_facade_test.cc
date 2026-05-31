@@ -188,7 +188,7 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationAcceptsTypedServiceWithoutInhe
   i64 last_xid = -1;
 
   Server server(rusty::None);
-  server.reg_service(rusty::make_box<TypedCountingService>(
+  server.reg_service_typed(rusty::make_box<TypedCountingService>(
       &reg_calls, &dispatch_calls, &last_svc_index, &last_rpc_id, &last_xid));
 
   EXPECT_EQ(server.pending_services_.size(), 1u);

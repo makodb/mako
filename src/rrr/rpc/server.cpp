@@ -580,6 +580,13 @@ public:
     }
 };
 
+// Default drain / graceful-shutdown timeout. Was the inline `= 30000`
+// default arg on `Server::drain()` and `Server::graceful_shutdown()`
+// before the DSL prep dropped those defaults; preserved here so call
+// sites that previously relied on the implicit value can keep the same
+// behaviour by passing it explicitly.
+inline constexpr uint64_t kDefaultDrainTimeoutMs = 30000;
+
 // @safe - Methods that genuinely cross into unsafe ops (socket I/O via the
 // channel-layer's TcpListener, Pthread / std::atomic primitives, raw
 // pointer extraction from ChannelListenerProxy, etc.) carry their own
@@ -659,7 +666,12 @@ class Server: public NoCopy {
 public:
     // @safe - Creates server with optional PollThread
     // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
-    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
+    //
+    // No default arg — all callers already pass an explicit
+    // `rusty::Option<rusty::Arc<PollThread>>` (Some or None).
+    // Removing the default lines the ctor up with the DSL form,
+    // which can't express default arguments.
+    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker);
     // @safe - Destroys server and requests close for all connections
     // SAFETY: Arc<RpcServiceContext> ensures services live until all connections are done
     virtual ~Server() noexcept override;
@@ -710,9 +722,17 @@ public:
     }
 
     // @safe - Same composition as the legacy overload.
+    //
+    // Renamed from `reg_service` to `reg_service_typed` so there's no
+    // overload set on `reg_service` (Rust DSL forbids overloaded
+    // method names). Callers that registered a service-like type that
+    // does NOT derive from `Service` (e.g. test-only `EchoService` in
+    // `rpc_inmemory_channel_e2e_test.cc`) switch to
+    // `reg_service_typed<T>(...)`. Service-derived callers keep using
+    // the `reg_service(rusty::Box<Service>)` overload above.
     template <ServiceLike T>
       requires (!std::derived_from<T, Service>)
-    void reg_service(rusty::Box<T> svc) {
+    void reg_service_typed(rusty::Box<T> svc) {
         pending_services_.push(make_service_proxy_from_typed_box<T>(std::move(svc)));
         size_t svc_index = pending_services_.size() - 1;
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
@@ -791,11 +811,16 @@ public:
     /**
      * Wait for all in-flight requests to complete.
      * Transitions to DRAINING phase and waits until pending_requests_ reaches 0.
-     * @param timeout_ms Maximum time to wait in milliseconds (default: 30 seconds)
+     * @param timeout_ms Maximum time to wait in milliseconds
      * @return true if all requests completed, false if timeout
      */
     // @unsafe - Uses std::atomic::load
-    bool drain(uint64_t timeout_ms = 30000);
+    //
+    // No default arg — the previous default of 30000ms is preserved
+    // by `kDefaultDrainTimeoutMs` below, which callers can pass
+    // explicitly. Removing the default lines the signature up with
+    // the DSL form, which can't express default arguments.
+    bool drain(uint64_t timeout_ms);
 
     /**
      * Perform graceful shutdown:
@@ -803,10 +828,13 @@ public:
      * 2. Drain existing requests (with timeout)
      * 3. Execute shutdown hooks
      * 4. Close all connections
-     * @param drain_timeout_ms Timeout for drain phase (default: 30 seconds)
+     * @param drain_timeout_ms Timeout for drain phase
      */
     // @unsafe - Calls stop_accepting() and drain() which are unsafe
-    void graceful_shutdown(uint64_t drain_timeout_ms = 30000);
+    //
+    // No default arg — see `drain()` above. Callers should pass
+    // `kDefaultDrainTimeoutMs` for the historical 30s default.
+    void graceful_shutdown(uint64_t drain_timeout_ms);
 
     /**
      * Get current shutdown phase.

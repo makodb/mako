@@ -65,7 +65,7 @@ void client_setup_heartbeat(int num_clients) {
     cli_hb_server_g = new rrr::Server(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone()));
 
     // Create service with Arc<ClientStatus>, register as owned Box<Service>
-    cli_hb_server_g->reg_service(rusty::make_box<ClientControlServiceImpl>(
+    cli_hb_server_g->reg_service_typed(rusty::make_box<ClientControlServiceImpl>(
         client_status_g.as_ref().unwrap().clone()));
 
     auto ctrl_port = std::to_string(Config::GetConfig()->get_ctrl_port());

@@ -128,7 +128,7 @@ protected:
     std::pair<Server*, int> create_server_ephemeral() {
         auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
         auto service_box = rusty::make_box<PartitionTestService>();
-        server->reg_service(std::move(service_box));
+        server->reg_service_typed(std::move(service_box));
         // Use port 0 to let the OS assign an available ephemeral port
         std::string addr = "0.0.0.0:0";
         if (server->start(addr.c_str()) == 0) {
@@ -161,7 +161,7 @@ protected:
             }
             auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
             auto service_box = rusty::make_box<PartitionTestService>();
-            server->reg_service(std::move(service_box));
+            server->reg_service_typed(std::move(service_box));
             std::string addr = "0.0.0.0:" + std::to_string(try_port);
             if (server->start(addr.c_str()) == 0) {
                 // Advance port_offset_ to account for any skipped ports
@@ -185,7 +185,7 @@ protected:
             }
             auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
             auto service_box = rusty::make_box<PartitionTestService>();
-            server->reg_service(std::move(service_box));
+            server->reg_service_typed(std::move(service_box));
             std::string addr = "0.0.0.0:" + std::to_string(port);
             if (server->start(addr.c_str()) == 0) {
                 return server;
