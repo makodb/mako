@@ -2107,19 +2107,15 @@ public:
         return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn));
     }
 
-    // @safe - Convenience overload without callback
-    template<typename F>
-    FutureResult request(i32 rpc_id, F&& write_fn) const {
-        return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
-    }
-
-    // (Previously: a third overload `request(i32 rpc_id, const FutureAttr&
-    // attr = FutureAttr())` for empty-input RPCs. Dropped — the only
-    // consumer was deptran's generated `rcc_rpc.h`, where the rpcgen
-    // emitter now produces the 3-arg form `request(rpc_id, attr,
-    // [](BinaryWriteArchive&){})` for empty-input methods. One fewer
-    // overload toward the single-canonical-`request` shape that the
-    // inline-Rust DSL needs.)
+    // (Previously: two convenience overloads —
+    //   `request(rpc_id, F&& write_fn)` (no attr) and
+    //   `request(rpc_id, const FutureAttr& attr = FutureAttr())` (no fn) —
+    // each delegated into the 3-arg canonical form above. Both dropped:
+    // the rpcgen emitter now generates the 3-arg shape for empty-input
+    // RPCs (deptran's only no-fn consumer), and all rrr-internal
+    // callers of the 2-arg form have been patched to pass `FutureAttr()`
+    // explicitly. Result: a single canonical `request` method, which is
+    // what the inline-Rust DSL needs (Rust forbids overloading).)
 
     // Slim async-callback request — no Arc<Future> allocation.  See
     // ClientConnection::request_async for the full contract.

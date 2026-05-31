@@ -280,7 +280,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     // Try a request - should fail
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     if (fu_result.is_ok()) {
@@ -314,7 +314,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     if (reconnect_complete && reconnect_success) {
         // Make a request on the new connection
         auto fu2_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu2_result.is_ok()) {
@@ -345,7 +345,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
 
     std::string input = "auto_reconnect";
     auto warmup = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(warmup.is_ok());
@@ -368,7 +368,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
     bool observed_failure = false;
     for (int attempt = 0; attempt < 6 && !observed_failure; ++attempt) {
         auto failing = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         if (!failing.is_ok()) {
@@ -393,7 +393,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
                                    milliseconds(1500)));
 
     auto after = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(after.is_ok());
@@ -700,7 +700,7 @@ TEST_F(ReconnectIntegrationTest, MultipleReconnectAttempts) {
         // Make a request to verify connection works
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());

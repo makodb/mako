@@ -144,7 +144,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
     // Make a successful request
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -300,7 +300,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerProtectsRpcCalls) {
 
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());

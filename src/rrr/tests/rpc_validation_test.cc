@@ -261,7 +261,7 @@ TEST_F(ConnectionValidationTest, ActivityUpdatesOnRequest) {
     // Make a request (which will update activity time)
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());

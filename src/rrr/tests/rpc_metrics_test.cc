@@ -462,7 +462,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
     for (int i = 0; i < 5; i++) {
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -498,7 +498,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     for (int i = 0; i < 3; i++) {
         std::string input = "before_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_ok()) {
@@ -530,7 +530,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
         for (int i = 0; i < 2; i++) {
             std::string input = "after_" + std::to_string(i);
             auto fu_result = client->request(
-                benchmark::BenchmarkService::FAST_NOP,
+                benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
                 [&](BinaryWriteArchive& m) { m << input; }
             );
             if (fu_result.is_ok()) {
@@ -561,7 +561,7 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
     // Make a request
     std::string input = "test_data";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -687,14 +687,14 @@ TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpire
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
 
     auto queued_ok = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [](BinaryWriteArchive& m) { m << std::string("queued_ok"); }
     );
     ASSERT_TRUE(queued_ok.is_ok());
     auto queued_future = queued_ok.unwrap();
 
     auto queued_rejected = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [](BinaryWriteArchive& m) { m << std::string("queued_reject"); }
     );
     ASSERT_TRUE(queued_rejected.is_err());
@@ -733,7 +733,7 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
 
     auto first = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [](BinaryWriteArchive& m) { m << std::string("first"); }
     );
     ASSERT_TRUE(first.is_err());
@@ -741,7 +741,7 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     EXPECT_EQ(metrics.circuit_open_transitions(), 1u);
 
     auto second = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [](BinaryWriteArchive& m) { m << std::string("second"); }
     );
     ASSERT_TRUE(second.is_err());
@@ -751,7 +751,7 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     std::this_thread::sleep_for(milliseconds(20));
 
     auto third = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [](BinaryWriteArchive& m) { m << std::string("third"); }
     );
     ASSERT_TRUE(third.is_err());

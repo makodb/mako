@@ -341,7 +341,7 @@ TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
     // Make request
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -374,7 +374,7 @@ TEST_F(StateIntegrationTest, PendingRequestCountTracksInFlightSleepRequest) {
 
     constexpr double kSleepSeconds = 0.3;
     auto fu_result = client->request(
-        benchmark::BenchmarkService::SLEEP,
+        benchmark::BenchmarkService::SLEEP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << kSleepSeconds; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -407,7 +407,7 @@ TEST_F(StateIntegrationTest, DrainTimeoutReflectsRealInFlightRequest) {
 
     constexpr double kSleepSeconds = 0.4;
     auto fu_result = client->request(
-        benchmark::BenchmarkService::SLEEP,
+        benchmark::BenchmarkService::SLEEP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << kSleepSeconds; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -448,7 +448,7 @@ TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
 
     constexpr double kSleepSeconds = 0.5;
     auto fu_result = client->request(
-        benchmark::BenchmarkService::SLEEP,
+        benchmark::BenchmarkService::SLEEP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << kSleepSeconds; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -511,7 +511,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     std::string input = "cb-warmup";
     auto warmup = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(warmup.is_ok());
@@ -529,7 +529,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     // First disconnected request records a transport failure in the circuit.
     auto first_failure = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(first_failure.is_err());
@@ -537,7 +537,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     // Circuit should now fail fast.
     auto fail_fast = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fail_fast.is_err());
@@ -561,7 +561,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     // Still open before timeout expires.
     auto still_open = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(still_open.is_err());
@@ -571,7 +571,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
     std::this_thread::sleep_for(milliseconds(500));
 
     auto probe = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(probe.is_ok());
@@ -581,7 +581,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     // success_threshold=1 should close the circuit for subsequent traffic.
     auto after = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(after.is_ok());
@@ -742,7 +742,7 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
 
     std::string input = "restart-detect";
     auto first = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(first.is_ok());
@@ -789,7 +789,7 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     ASSERT_TRUE(reconnect_success.load(std::memory_order_acquire));
 
     auto second = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(second.is_ok());
@@ -830,7 +830,7 @@ TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Try to make a request - should fail
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
 

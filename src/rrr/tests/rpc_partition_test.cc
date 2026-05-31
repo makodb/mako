@@ -207,7 +207,7 @@ protected:
     bool send_request(rusty::Arc<Client>& client) {
         std::string input = "partition_test";
         auto fu_result = client->request(
-            BenchmarkService::FAST_NOP,
+            BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_err()) return false;
@@ -750,7 +750,7 @@ TEST_F(PartitionTest, PartitionWithPendingRequests) {
     for (int i = 0; i < 10; i++) {
         std::string input = "req_" + std::to_string(i);
         auto fu_result = client->request(
-            BenchmarkService::FAST_NOP,
+            BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         if (fu_result.is_ok()) {

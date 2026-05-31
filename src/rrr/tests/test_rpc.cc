@@ -153,7 +153,7 @@ protected:
 TEST_F(RPCTest, BasicNop) {
     std::string input = "Hello, RPC!";
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -172,7 +172,7 @@ TEST_F(RPCTest, MultipleRequests) {
     for (int i = 0; i < num_requests; i++) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -212,7 +212,7 @@ TEST_F(RPCTest, ConcurrentRequests) {
             for (int i = 0; i < requests_per_thread; i++) {
                 std::string input = "Thread_" + std::to_string(t) + "_Request_" + std::to_string(i);
                 auto fu_result = thread_client->request(
-                    benchmark::BenchmarkService::FAST_NOP,
+                    benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
                     [&](BinaryWriteArchive& m) { m << input; }
                 );
                 if (fu_result.is_err()) continue;
@@ -241,7 +241,7 @@ TEST_F(RPCTest, LargePayload) {
     std::string large_input(1000000, 'X');
 
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << large_input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -257,7 +257,7 @@ TEST_F(RPCTest, DifferentMethods) {
     {
         std::string dummy = "";
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::NOP,
+            benchmark::BenchmarkService::NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << dummy; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -271,7 +271,7 @@ TEST_F(RPCTest, DifferentMethods) {
     {
         i32 prime_input = 17;
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::PRIME,
+            benchmark::BenchmarkService::PRIME, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << prime_input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -289,7 +289,7 @@ TEST_F(RPCTest, DifferentMethods) {
     {
         i32 composite_input = 24;
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::PRIME,
+            benchmark::BenchmarkService::PRIME, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << composite_input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -307,7 +307,7 @@ TEST_F(RPCTest, TimeoutHandling) {
     // Test timed_wait functionality with a fast request
     std::string input = "timeout_test";
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -362,7 +362,7 @@ TEST_F(RPCTest, InvalidRequest) {
 TEST_F(RPCTest, EmptyPayload) {
     std::string dummy = "";
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << dummy; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -376,7 +376,7 @@ TEST_F(RPCTest, EmptyPayload) {
 TEST_F(RPCTest, ConnectionResilience) {
     std::string input1 = "before_reconnect";
     auto fu1_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input1; }
     );
     ASSERT_TRUE(fu1_result.is_ok());
@@ -399,7 +399,7 @@ TEST_F(RPCTest, ConnectionResilience) {
 
     std::string input2 = "after_reconnect";
     auto fu2_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input2; }
     );
     ASSERT_TRUE(fu2_result.is_ok());
@@ -417,7 +417,7 @@ TEST_F(RPCTest, PipelinedRequests) {
     for (int i = 0; i < num_requests; i++) {
         std::string dummy = "";
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << dummy; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -441,7 +441,7 @@ TEST_F(RPCTest, SlowClientFastServer) {
     for (int i = 0; i < 100; i++) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -469,7 +469,7 @@ TEST_F(RPCTest, FastClientSlowServer) {
     for (int i = 0; i < num_requests; i++) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::NOP,
+            benchmark::BenchmarkService::NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -582,7 +582,7 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
                                       "_Request_" + std::to_string(i);
 
                     auto fu_result = thread_client->request(
-                        benchmark::BenchmarkService::FAST_NOP,
+                        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
                         [&](BinaryWriteArchive& m) { m << input; }
                     );
 

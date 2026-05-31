@@ -379,7 +379,7 @@ TEST_F(ClientPoolTest, GetClientWithRealRequests) {
     for (int i = 0; i < 5; i++) {
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());

@@ -131,7 +131,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
     EXPECT_TRUE(client->connected());
 
     const std::string input = "hello-inmemory";
-    auto fu_result = client->request(EchoService::kEchoRpcId,
+    auto fu_result = client->request(EchoService::kEchoRpcId, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -171,7 +171,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
     EXPECT_TRUE(client->connected());
 
     const std::string input = "hello-archive";
-    auto fu_result = client->request(EchoService::kEchoRpcId,
+    auto fu_result = client->request(EchoService::kEchoRpcId, FutureAttr(),
         [&](BinaryWriteArchive& ar) { ar << input; });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -210,7 +210,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
     // Marshal-flavoured request.
     {
         const std::string input = "via-marshal";
-        auto fu = client->request(EchoService::kEchoRpcId,
+        auto fu = client->request(EchoService::kEchoRpcId, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }).unwrap();
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
@@ -221,7 +221,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
     // Archive-flavoured request, same client.
     {
         const std::string input = "via-archive";
-        auto fu = client->request(EchoService::kEchoRpcId,
+        auto fu = client->request(EchoService::kEchoRpcId, FutureAttr(),
             [&](BinaryWriteArchive& ar) { ar << input; }).unwrap();
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
@@ -252,7 +252,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
     constexpr int kIterations = 25;
     for (int i = 0; i < kIterations; ++i) {
         std::string input = "req-" + std::to_string(i);
-        auto fu_result = client->request(EchoService::kEchoRpcId,
+        auto fu_result = client->request(EchoService::kEchoRpcId, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; });
         ASSERT_TRUE(fu_result.is_ok()) << "iter=" << i;
         auto fu = fu_result.unwrap();
