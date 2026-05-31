@@ -2142,23 +2142,25 @@ public:
      * Sets the options on the returned Future for use with wait_with_options().
      */
     // @safe - Thread-safe RPC request with options.
+    //
+    // Single-overload form (previously had a 4-arg variant with
+    // explicit `const FutureAttr&` that delegated here — removed; no
+    // callers anywhere in rrr or deptran used it). The remaining
+    // signature is now what the inline-Rust DSL needs: one
+    // canonical method, no overloads. Body inlines what was the
+    // former 4-arg delegate, passing `FutureAttr()` to the underlying
+    // `ClientConnection::request_with_options` (which still accepts
+    // an attr at its 4-arg position).
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
-                                      const FutureAttr& attr, F&& write_fn) const {
+                                      F&& write_fn) const {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
         return guard->as_ref().unwrap()->request_with_options(
-            rpc_id, options, attr, std::forward<F>(write_fn));
-    }
-
-    // @safe - Convenience overload without FutureAttr
-    template<typename F>
-    FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
-                                      F&& write_fn) const {
-        return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
+            rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
     }
 
     // @safe - Sets connection validity
