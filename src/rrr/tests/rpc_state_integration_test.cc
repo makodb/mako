@@ -275,7 +275,7 @@ TEST_F(StateIntegrationTest, StateAfterSuccessfulConnect) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     EXPECT_FALSE(client->connected());
 
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -294,7 +294,7 @@ TEST_F(StateIntegrationTest, StateAfterDisconnect) {
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -313,7 +313,7 @@ TEST_F(StateIntegrationTest, StateAfterConnectionRefused) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Try to connect to non-existent server
-    int result = client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str());
+    int result = client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true);
     EXPECT_NE(result, 0);
 
     // Client should not be connected
@@ -332,7 +332,7 @@ TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Should be connected during request
@@ -367,7 +367,7 @@ TEST_F(StateIntegrationTest, PendingRequestCountTracksInFlightSleepRequest) {
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     ASSERT_TRUE(client->connected());
     ASSERT_EQ(server->pending_request_count(), 0);
@@ -401,7 +401,7 @@ TEST_F(StateIntegrationTest, DrainTimeoutReflectsRealInFlightRequest) {
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     ASSERT_TRUE(client->connected());
 
@@ -442,7 +442,7 @@ TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     ASSERT_TRUE(client->connected());
 
@@ -504,7 +504,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
     heartbeat.max_missed = 1;
     client->set_heartbeat(heartbeat);
 
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
     client->set_reconnect_policy(reconnect_policy);
     client->set_buffering_config(BufferingConfig::disabled());
@@ -646,7 +646,7 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
         record_event(success ? kReconnectedSuccess : kReconnectedFailure);
     });
 
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     ASSERT_TRUE(wait_for_condition([&]() { return has_event(kConnected); }, milliseconds(1000)));
 
     ReconnectPolicy reconnect_policy;
@@ -819,7 +819,7 @@ TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -905,7 +905,7 @@ TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     EXPECT_FALSE(client2->connected());
 
     // Connect client1
-    ASSERT_EQ(client1->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client1->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // client1 connected, client2 still not connected
@@ -913,7 +913,7 @@ TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     EXPECT_FALSE(client2->connected());
 
     // Connect client2
-    ASSERT_EQ(client2->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client2->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Both connected
@@ -947,7 +947,7 @@ TEST_F(StateIntegrationTest, RapidConnectDisconnectCycles) {
         auto client = Client::create(poll_thread_.as_ref().unwrap());
         EXPECT_FALSE(client->connected());
 
-        ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+        ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
         std::this_thread::sleep_for(milliseconds(20));
         EXPECT_TRUE(client->connected());
 
@@ -973,7 +973,7 @@ TEST_F(StateIntegrationTest, ConnectionObjectAccessible) {
     EXPECT_TRUE(conn_before.is_none());
 
     // Connect
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // After connect, connection() should return Some

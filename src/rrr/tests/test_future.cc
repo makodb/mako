@@ -141,7 +141,7 @@ protected:
 
         // Client must be created with factory method to initialize weak_self_
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
+        ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port)).c_str()), true), 0);
 
         std::this_thread::sleep_for(milliseconds(50));
     }

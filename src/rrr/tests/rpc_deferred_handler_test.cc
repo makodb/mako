@@ -72,7 +72,7 @@ protected:
 
         client_ = rusty::Some(Client::create(poll_.as_ref().unwrap()));
         ASSERT_EQ(client_.as_ref().unwrap()->connect(
-            ("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
+            reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true), 0);
         std::this_thread::sleep_for(50ms);
     }
 
@@ -153,7 +153,7 @@ TEST_F(DeferredHandlerTest, ConcurrentDeferredCallsNoLeak) {
         threads.emplace_back([&, poll_clone = std::move(poll_clone)]() {
             auto thread_client = Client::create(poll_clone);
             if (thread_client->connect(
-                    ("127.0.0.1:" + std::to_string(port_)).c_str()) != 0) {
+                    reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true) != 0) {
                 return;
             }
             std::this_thread::sleep_for(20ms);

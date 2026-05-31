@@ -545,7 +545,7 @@ TEST_F(StressCrashTest, StaggeredClientReconnection) {
         threads.emplace_back([i, &clients, &addr, &success_count]() {
             std::this_thread::sleep_for(milliseconds(i * 20));  // Stagger by 20ms each
             clients[i]->close();
-            if (clients[i]->connect(addr.c_str()) == 0) {
+            if (clients[i]->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
                 success_count++;
             }
         });

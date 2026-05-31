@@ -171,7 +171,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
     client->set_reconnect_policy(policy);
 
     auto start = steady_clock::now();
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
     auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
 
     EXPECT_NE(result, 0);
@@ -213,7 +213,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
     client->set_reconnect_policy(policy);
 
     auto start = steady_clock::now();
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
     auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
 
     EXPECT_NE(result, 0);
@@ -656,7 +656,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectWithoutPreviousConnection) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Try to reconnect without ever connecting - should fail
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
 
     // Reconnect should fail because there's no address to reconnect to
     // (depends on implementation - might return error code or succeed with no-op)
@@ -673,7 +673,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectWhileConnected) {
     EXPECT_TRUE(client->connected());
 
     // Try to reconnect while already connected - should be no-op or fail
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
     // Either succeeds silently or returns an error
 
     EXPECT_TRUE(client->connected());  // Still connected

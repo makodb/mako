@@ -403,7 +403,7 @@ TEST_F(RequestBufferingTest, ClientBufferingConfig) {
 
     // Set config should be safe even without connection
     client->set_buffering_config(BufferingConfig::disabled());
-    client->clear_pending_requests();
+    client->clear_pending_requests(ECONNABORTED);
 }
 
 // ============================================================================
