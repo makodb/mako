@@ -245,7 +245,7 @@ TEST_F(PartitionTest, TemporaryPartition) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Verify connection works
@@ -262,7 +262,7 @@ TEST_F(PartitionTest, TemporaryPartition) {
 
     // Heal partition by reconnecting
     std::this_thread::sleep_for(milliseconds(50));
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     stats.partition_heal_count++;
     std::this_thread::sleep_for(milliseconds(50));
 
@@ -284,7 +284,7 @@ TEST_F(PartitionTest, ShortPartitionRecovery) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Short burst of activity
@@ -297,7 +297,7 @@ TEST_F(PartitionTest, ShortPartitionRecovery) {
     // Very short partition (10ms)
     client->close();
     std::this_thread::sleep_for(milliseconds(10));
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Activity after recovery
@@ -321,7 +321,7 @@ TEST_F(PartitionTest, LongPartition) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Verify initial connection
@@ -332,7 +332,7 @@ TEST_F(PartitionTest, LongPartition) {
     std::this_thread::sleep_for(milliseconds(500));
 
     // Reconnect after long partition
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Should still work after long partition
@@ -353,7 +353,7 @@ TEST_F(PartitionTest, LongPartitionWithCircuitBreaker) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     cb.record_success();
 
@@ -382,7 +382,7 @@ TEST_F(PartitionTest, LongPartitionWithCircuitBreaker) {
 
     // Reconnect and verify
     client->close();
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     if (send_request(client)) {
@@ -405,8 +405,8 @@ TEST_F(PartitionTest, PartialPartition) {
     // Create two clients
     auto client1 = create_client();
     auto client2 = create_client();
-    ASSERT_EQ(client1->connect(addr.c_str()), 0);
-    ASSERT_EQ(client2->connect(addr.c_str()), 0);
+    ASSERT_EQ(client1->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
+    ASSERT_EQ(client2->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Both work initially
@@ -421,7 +421,7 @@ TEST_F(PartitionTest, PartialPartition) {
     EXPECT_TRUE(send_request(client2));
 
     // Heal client1's partition
-    EXPECT_EQ(client1->connect(addr.c_str()), 0);
+    EXPECT_EQ(client1->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Both should work again once reconnect settles.
@@ -443,7 +443,7 @@ TEST_F(PartitionTest, PartialPartitionMultipleClients) {
 
     for (int i = 0; i < NUM_CLIENTS; i++) {
         auto client = create_client();
-        EXPECT_EQ(client->connect(addr.c_str()), 0);
+        EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
         clients.push_back(std::move(client));
     }
     std::this_thread::sleep_for(milliseconds(100));
@@ -486,7 +486,7 @@ TEST_F(PartitionTest, AsymmetricPartitionSimulation) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Normal operation
@@ -506,7 +506,7 @@ TEST_F(PartitionTest, AsymmetricPartitionSimulation) {
 
     // Reconnect
     client->close();
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(send_request(client));
@@ -525,7 +525,7 @@ TEST_F(PartitionTest, FlakyNetworkSimulation) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     const int ITERATIONS = 20;
@@ -542,7 +542,7 @@ TEST_F(PartitionTest, FlakyNetworkSimulation) {
         if (dis(gen) <= 20) {
             client->close();
             std::this_thread::sleep_for(milliseconds(10));
-            if (client->connect(addr.c_str()) == 0) {
+            if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
                 reconnect_count++;
             }
             std::this_thread::sleep_for(milliseconds(30));
@@ -573,7 +573,7 @@ TEST_F(PartitionTest, IntermittentConnectivity) {
 
     for (int i = 0; i < CYCLES; i++) {
         // Connect
-        if (client->connect(addr.c_str()) == 0) {
+        if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
             connect_success++;
             std::this_thread::sleep_for(milliseconds(30));
 
@@ -614,14 +614,14 @@ TEST_F(PartitionTest, SplitBrainSimulation) {
     // Group 1 clients connect to server1
     auto client1a = create_client();
     auto client1b = create_client();
-    ASSERT_EQ(client1a->connect(addr1.c_str()), 0);
-    ASSERT_EQ(client1b->connect(addr1.c_str()), 0);
+    ASSERT_EQ(client1a->connect(reinterpret_cast<const int8_t*>(addr1.c_str()), true), 0);
+    ASSERT_EQ(client1b->connect(reinterpret_cast<const int8_t*>(addr1.c_str()), true), 0);
 
     // Group 2 clients connect to server2
     auto client2a = create_client();
     auto client2b = create_client();
-    ASSERT_EQ(client2a->connect(addr2.c_str()), 0);
-    ASSERT_EQ(client2b->connect(addr2.c_str()), 0);
+    ASSERT_EQ(client2a->connect(reinterpret_cast<const int8_t*>(addr2.c_str()), true), 0);
+    ASSERT_EQ(client2b->connect(reinterpret_cast<const int8_t*>(addr2.c_str()), true), 0);
 
     std::this_thread::sleep_for(milliseconds(100));
 
@@ -653,8 +653,8 @@ TEST_F(PartitionTest, SplitBrainSimulation) {
     client1b->close();
     client1a = create_client();
     client1b = create_client();
-    EXPECT_EQ(client1a->connect(addr1.c_str()), 0);
-    EXPECT_EQ(client1b->connect(addr1.c_str()), 0);
+    EXPECT_EQ(client1a->connect(reinterpret_cast<const int8_t*>(addr1.c_str()), true), 0);
+    EXPECT_EQ(client1b->connect(reinterpret_cast<const int8_t*>(addr1.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // All groups should work again once reconnect/replay settles.
@@ -683,7 +683,7 @@ TEST_F(PartitionTest, ReconnectionDuringPartition) {
     std::string temp_addr = "127.0.0.1:" + std::to_string(temp_port);
 
     // Try to connect - should fail (no server)
-    EXPECT_NE(client->connect(temp_addr.c_str()), 0);
+    EXPECT_NE(client->connect(reinterpret_cast<const int8_t*>(temp_addr.c_str()), true), 0);
 
     // Start server (heal partition) - use retry to find available port
     auto [server, port] = create_server_retry(next_port());
@@ -691,7 +691,7 @@ TEST_F(PartitionTest, ReconnectionDuringPartition) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     // Should be able to connect now
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(send_request(client));
@@ -710,7 +710,7 @@ TEST_F(PartitionTest, MultipleReconnectAttempts) {
     // Multiple failed connection attempts (partition)
     int fail_count = 0;
     for (int i = 0; i < 3; i++) {
-        if (client->connect(temp_addr.c_str()) != 0) {
+        if (client->connect(reinterpret_cast<const int8_t*>(temp_addr.c_str()), true) != 0) {
             fail_count++;
         }
         std::this_thread::sleep_for(milliseconds(20));
@@ -723,7 +723,7 @@ TEST_F(PartitionTest, MultipleReconnectAttempts) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     // Should succeed now on the server's actual port
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(send_request(client));
@@ -742,7 +742,7 @@ TEST_F(PartitionTest, PartitionWithPendingRequests) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Send multiple async requests
@@ -790,7 +790,7 @@ TEST_F(PartitionTest, MetricsDuringPartition) {
     std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Track metrics for first connection
@@ -822,7 +822,7 @@ TEST_F(PartitionTest, MetricsDuringPartition) {
     EXPECT_GT(failed_during_partition, 0);
 
     // Reconnect creates a NEW connection with fresh metrics
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 

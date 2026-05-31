@@ -135,7 +135,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Simulate checking circuit before each request
@@ -167,7 +167,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
     // Try connecting to non-existent server to simulate failures
     for (int i = 0; i < 3 && cb.allow_request(); i++) {
         auto fail_client = Client::create(poll_thread_.as_ref().unwrap());
-        int result = fail_client->connect(server_addr().c_str());
+        int result = fail_client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (result != 0) {
             cb.record_failure();
         }
@@ -289,7 +289,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerProtectsRpcCalls) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Make some successful requests

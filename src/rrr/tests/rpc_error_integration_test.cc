@@ -195,7 +195,7 @@ TEST_F(ErrorIntegrationTest, ConnectionRefusedScenario) {
     // Don't start server - connection should fail
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
-    int result = client->connect(server_addr().c_str());
+    int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
     EXPECT_NE(result, 0);
 
     // We can categorize this error
@@ -211,7 +211,7 @@ TEST_F(ErrorIntegrationTest, ConnectionRefusedScenario) {
 TEST_F(ErrorIntegrationTest, InvalidAddressScenario) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
-    int result = client->connect("invalid_address:1234");
+    int result = client->connect(reinterpret_cast<const int8_t*>("invalid_address:1234"), true);
     EXPECT_NE(result, 0);
 
     // Describe error with our types
@@ -227,7 +227,7 @@ TEST_F(ErrorIntegrationTest, SuccessfulRequestHasNoError) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     std::string input = "test";
@@ -257,7 +257,7 @@ TEST_F(ErrorIntegrationTest, InvalidRpcIdError) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Request with invalid RPC ID

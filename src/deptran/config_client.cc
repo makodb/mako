@@ -35,7 +35,7 @@ bool ConfigClient::try_connect() {
     // Try to connect
     auto& client = rpc_client_.as_ref().unwrap();
     // @unsafe { network connect syscall }
-    int result = client->connect(c_node_addr_.c_str());
+    int result = client->connect(reinterpret_cast<const int8_t*>(c_node_addr_.c_str()), true);
 
     if (result == 0) {
         // Create proxy

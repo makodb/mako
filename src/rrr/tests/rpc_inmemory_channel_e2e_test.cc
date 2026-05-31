@@ -127,7 +127,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
     client->set_channel_factory(make_factory());
-    ASSERT_EQ(client->connect("inmemory://e2e-server-1"), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>("inmemory://e2e-server-1"), true), 0);
     EXPECT_TRUE(client->connected());
 
     const std::string input = "hello-inmemory";
@@ -167,7 +167,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
     client->set_channel_factory(make_factory());
-    ASSERT_EQ(client->connect("inmemory://e2e-server-archive"), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>("inmemory://e2e-server-archive"), true), 0);
     EXPECT_TRUE(client->connected());
 
     const std::string input = "hello-archive";
@@ -205,7 +205,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
     client->set_channel_factory(make_factory());
-    ASSERT_EQ(client->connect("inmemory://e2e-server-mixed"), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>("inmemory://e2e-server-mixed"), true), 0);
 
     // Marshal-flavoured request.
     {
@@ -247,7 +247,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
     client->set_channel_factory(make_factory());
-    ASSERT_EQ(client->connect("inmemory://e2e-server-2"), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>("inmemory://e2e-server-2"), true), 0);
 
     constexpr int kIterations = 25;
     for (int i = 0; i < kIterations; ++i) {
@@ -294,7 +294,7 @@ TEST_F(InMemoryE2ETest, ServerDestroyTriggersClientDisconnect) {
     // (`ConnectToUnboundAddrFailsFast`) creates a fresh PollThread.
     client->set_reconnect_policy(ReconnectPolicy::no_retry());
     client->set_channel_factory(make_factory());
-    ASSERT_EQ(client->connect("inmemory://e2e-server-3"), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>("inmemory://e2e-server-3"), true), 0);
     EXPECT_TRUE(client->connected());
 
     std::atomic<int> disconnected_count{0};
@@ -323,7 +323,7 @@ TEST_F(InMemoryE2ETest, ConnectToUnboundAddrFailsFast) {
     client_ = rusty::Some(client.clone());
     client->set_channel_factory(make_factory());
     // No server registered for this address.
-    EXPECT_NE(client->connect("inmemory://nonexistent"), 0);
+    EXPECT_NE(client->connect(reinterpret_cast<const int8_t*>("inmemory://nonexistent"), true), 0);
     EXPECT_FALSE(client->connected());
 }
 

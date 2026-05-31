@@ -153,7 +153,7 @@ TEST_F(ConnectionValidationTest, SetKeepaliveConfig) {
     client->set_keepalive(config);
 
     // Connect
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -173,7 +173,7 @@ TEST_F(ConnectionValidationTest, ValidateConnectedConnection) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -188,7 +188,7 @@ TEST_F(ConnectionValidationTest, ValidateDisconnectedConnection) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->validate_connection());
@@ -215,7 +215,7 @@ TEST_F(ConnectionValidationTest, IdleDetectionNotIdleInitially) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Just connected, should not be idle
@@ -230,7 +230,7 @@ TEST_F(ConnectionValidationTest, IdleDetectionBecomesIdle) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Wait for connection to become idle (use longer delay for robustness)
@@ -251,7 +251,7 @@ TEST_F(ConnectionValidationTest, ActivityUpdatesOnRequest) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Wait a bit
@@ -283,7 +283,7 @@ TEST_F(ConnectionValidationTest, ValidateAfterServerRestart) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -317,7 +317,7 @@ TEST_F(ConnectionValidationTest, KeepaliveAppliedOnConnect) {
     config.count = 4;
     client->set_keepalive(config);
 
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -341,7 +341,7 @@ TEST_F(ConnectionValidationTest, DisabledKeepalive) {
     // Disable keepalive
     client->set_keepalive(KeepaliveConfig::disabled());
 
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -366,7 +366,7 @@ TEST_F(ConnectionValidationTest, ValidationWithReconnect) {
     client->set_reconnect_policy(ReconnectPolicy::aggressive());
     client->set_keepalive(KeepaliveConfig::aggressive());
 
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->validate_connection());

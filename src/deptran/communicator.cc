@@ -320,7 +320,7 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
   int attempt = 0;
   do {
     Log_debug("connect to client site: %s (attempt %d)", addr, attempt++);
-    auto connect_result = rpc_cli->connect(addr, false);
+    auto connect_result = rpc_cli->connect(reinterpret_cast<const int8_t*>(addr), false);
     if (connect_result == SUCCESS) {
       // Arc::get() returns const T*, but proxy doesn't mutate client
       ClientControlProxy* rpc_proxy = new ClientControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
@@ -350,7 +350,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
   int attempt = 0;
   do {
     Log_debug("connect to site: %s (attempt %d)", addr.c_str(), attempt++);
-    auto connect_result = rpc_cli->connect(addr.c_str(), false);
+    auto connect_result = rpc_cli->connect(reinterpret_cast<const int8_t*>(addr.c_str()), false);
     if (connect_result == SUCCESS) {
       // Arc::get() returns const T*, but proxy doesn't mutate client
       ClassicProxy* rpc_proxy = new ClassicProxy(const_cast<rrr::Client*>(rpc_cli.get()));
@@ -360,11 +360,14 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       // Keep a host-scoped reference to the connection through PollableProxy.
       auto conn_opt = rpc_cli->connection();
       if (conn_opt.is_some()) {
-        if (!Reactor::clients_.contains_key(rpc_cli->host())) {
-          Reactor::clients_.insert(rpc_cli->host(), rusty::Vec<rrr::PollableProxy>{});
+        // Client::host() now returns rusty::String (post-DSL migration);
+        // Reactor::clients_ is keyed by std::string — convert once.
+        std::string host_key = rpc_cli->host().to_string();
+        if (!Reactor::clients_.contains_key(host_key)) {
+          Reactor::clients_.insert(host_key, rusty::Vec<rrr::PollableProxy>{});
         }
         auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
-        Reactor::clients_.get(rpc_cli->host()).unwrap().push(std::move(conn_proxy));
+        Reactor::clients_.get(host_key).unwrap().push(std::move(conn_proxy));
       }
       Log_info("connect to site: %s success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);

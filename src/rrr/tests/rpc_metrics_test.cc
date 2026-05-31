@@ -447,7 +447,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -489,7 +489,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     const auto& metrics = client->metrics();
@@ -550,7 +550,7 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     const auto& metrics = client->metrics();
@@ -594,7 +594,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     const auto& metrics = client->metrics();
 
@@ -636,7 +636,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdate
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     const auto& metrics = client->metrics();
 
@@ -670,7 +670,7 @@ TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpire
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     BufferingConfig buffering;
@@ -721,7 +721,7 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     client->set_buffering_config(BufferingConfig::disabled());

@@ -432,7 +432,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     RequestOptions opts;
     opts.timeout_ms = 40;
@@ -480,7 +480,7 @@ TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     RequestOptions opts;
     opts.timeout_ms = 40;
@@ -516,7 +516,7 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     RequestOptions opts;
     opts.timeout_ms = 30;
@@ -555,7 +555,7 @@ TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) 
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     BufferingConfig buffering = BufferingConfig::defaults();
     buffering.behavior = DisconnectBehavior::FAIL_FAST;
@@ -592,7 +592,7 @@ TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     BufferingConfig buffering = BufferingConfig::defaults();
     buffering.behavior = DisconnectBehavior::QUEUE;
@@ -633,7 +633,7 @@ TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAt
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     RequestOptions opts;
     opts.timeout_ms = 80;

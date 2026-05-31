@@ -114,7 +114,7 @@ TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
     EXPECT_TRUE(cb.is_closed());
 
     // Connect
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -151,7 +151,7 @@ TEST_F(CombinedReliabilityTest, CircuitBreakerWithConnectionState) {
 
     for (int i = 0; i < 2; i++) {
         if (cb.allow_request()) {
-            int result = client->connect(server_addr().c_str());
+            int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
             if (result != 0) {
                 cb.record_failure();
             }
@@ -174,7 +174,7 @@ TEST_F(CombinedReliabilityTest, CircuitBreakerWithConnectionState) {
 
     // Create new client and connect
     auto new_client = Client::create(poll_thread_.as_ref().unwrap());
-    int result = new_client->connect(server_addr().c_str());
+    int result = new_client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
     if (result == 0) {
         cb.record_success();
     } else {
@@ -213,7 +213,7 @@ TEST_F(CombinedReliabilityTest, ReconnectPolicyWithStateTracking) {
     client->set_reconnect_policy(policy);
 
     // Connect
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -290,7 +290,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
 
     // Connect
     EXPECT_TRUE(cb.allow_request());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     cb.record_success();
 
@@ -338,7 +338,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 
     // Try to connect - should fail
     if (cb.allow_request()) {
-        int result = client->connect(server_addr().c_str());
+        int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (result != 0) {
             cb.record_failure();
         }
@@ -346,7 +346,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 
     // Second attempt
     if (cb.allow_request()) {
-        int result = client->connect(server_addr().c_str());
+        int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (result != 0) {
             cb.record_failure();
         }
@@ -368,7 +368,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 
     // Create new client and try again
     auto new_client = Client::create(poll_thread_.as_ref().unwrap());
-    if (new_client->connect(server_addr().c_str()) == 0) {
+    if (new_client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true) == 0) {
         cb.record_success();
         std::this_thread::sleep_for(milliseconds(50));
 
@@ -437,7 +437,7 @@ TEST_F(CombinedReliabilityTest, HeartbeatWithStateTransitions) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -476,7 +476,7 @@ TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
 
         // Connect
         if (cb.allow_request()) {
-            if (client->connect(server_addr().c_str()) == 0) {
+            if (client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true) == 0) {
                 cb.record_success();
             } else {
                 cb.record_failure();

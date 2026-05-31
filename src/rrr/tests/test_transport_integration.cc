@@ -511,7 +511,7 @@ protected:
 
 TEST_F(ConnectionResilienceTest, ConnectToNonExistentServer) {
     auto client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-    int result = client->connect("127.0.0.1:19999");
+    int result = client->connect(reinterpret_cast<const int8_t*>("127.0.0.1:19999"), true);
     EXPECT_NE(result, 0);
     client->close();
 }

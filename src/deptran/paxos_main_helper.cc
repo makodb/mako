@@ -563,7 +563,7 @@ void* heartbeatBackground(void* arg) {
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
   std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
   Log_info("start a heartbeatBackground, addr:%s",addr_port.c_str());
-  while (rpc_cli->connect(addr_port.c_str())!=0) {
+  while (rpc_cli->connect(reinterpret_cast<const int8_t*>(addr_port.c_str()), true)!=0) {
      usleep(100 * 1000); // retry to connect
   }
 

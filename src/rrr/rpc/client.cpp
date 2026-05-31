@@ -759,7 +759,7 @@ private:
     ConnectionStateMachine state_machine_;
 
     // Reconnection policy and state
-    ReconnectPolicy reconnect_policy_;
+    mutable ReconnectPolicy reconnect_policy_;  // mutable for const set_reconnect_policy()
     // mutable: std::atomic::store / .load are interior-mutable in
     // semantics but std::atomic::store is not declared `const` (it has
     // `volatile` overloads only). Mark mutable so const methods can
@@ -1066,8 +1066,10 @@ public:
      * Set the reconnection policy for this connection.
      * The policy controls automatic reconnection behavior after failures.
      */
-    // @safe - Sets reconnection policy (wraps operator= in @unsafe block)
-    void set_reconnect_policy(const ReconnectPolicy& policy) {
+    // @safe - Sets reconnection policy. Const because the field is `mutable`
+    // (interior-mutability sleeve so Client::set_reconnect_policy — which
+    // is itself const-callable through Arc<Client> — can delegate here).
+    void set_reconnect_policy(const ReconnectPolicy& policy) const {
         // @unsafe - struct assignment operator not annotated
         { reconnect_policy_ = policy; }
     }
@@ -1092,6 +1094,19 @@ public:
      */
     // @unsafe - Attempts reconnection (calls connect which has socket operations)
     int reconnect(rusty::Function<void(bool)> on_complete = nullptr);
+
+    // @unsafe - Const facade over the non-const `reconnect`. Lets
+    // Client::reconnect — itself const through Arc<Client> — delegate
+    // without surfacing the const_cast in the DSL. Also resets the
+    // mutable `reconnect_abort_` atomic before delegating — matches
+    // the legacy `Client::reconnect` body ordering. Without this reset
+    // tests like rpc_metrics_test::QueueDropCounter... see a stale
+    // abort=true left over from a prior close() and reconnect bails.
+    int reconnect(rusty::Function<void(bool)> on_complete) const {
+        reconnect_abort_.store(false, std::memory_order_release);
+        // @unsafe { const_cast<ClientConnection*>(this) — see decl }
+        { return const_cast<ClientConnection*>(this)->reconnect(std::move(on_complete)); }
+    }
 
     /**
      * Set the buffering configuration for this connection.
@@ -1976,6 +1991,909 @@ using OnErrorCallbackFn               = rusty::Function<void(RpcError,
 using OnReconnectedCallbackFn         = rusty::Function<void(bool) const>;
 using OnServerRestartCallbackFn       = rusty::Function<void(uint64_t, uint64_t)>;
 
+// @unsafe - reinterpret_cast<const char*> on the addr param. Lives
+// outside the DSL block so the inline-Rust grammar doesn't have to
+// reason about `std::ffi::c_char` (which triggers a transpiler-side
+// `proc_macro_runtime` import explosion). Used by the DSL `connect()`
+// body to bridge `*const i8` (Rust DSL) to `const char*` (legacy
+// ClientConnection signature).
+inline const char* client_dsl_addr_to_cstr(const int8_t* addr) {
+    return reinterpret_cast<const char*>(addr);
+}
+
+// `Client` — user-facing RPC client facade. Authored as inline Rust
+// DSL: the `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `/*RUSTYCPP:GEN-BEGIN ... END*/`
+// block. Drop trait emits a real destructor that calls `close()`.
+//
+// Behavioral diffs from the previous C++ class:
+//   * Fields are no longer marked `private`; the DSL emits all as
+//     public. The trailing `_` on each field is replaced with `_field`
+//     because the transpiler considers `connection_` to collide with
+//     the `connection()` accessor; same convention as other migrated
+//     classes (CircuitBreaker, ConnectionMetrics, etc.).
+//   * The user-declared move ctor/move-assign are dropped; the DSL
+//     emits its own that respects the Drop-protocol `_rusty_forgotten`
+//     flag. Copy ctor/assign emit `= delete` because the struct
+//     contains a non-copyable `SpinMutex` field.
+//   * `host()` now returns `rusty::String` instead of `std::string`.
+//   * `metrics()` now returns `ConnectionMetrics` by value (works
+//     because ConnectionMetrics is now Atomic-backed and copyable).
+//     The previous static-local empty metrics shim is gone.
+//   * `connect()`, `close()`, `reconnect()`, `set_valid()`,
+//     `handle_free()`, `pause()`, `resume()` were previously out-of-
+//     line; their bodies are now translated into the DSL block.
+//   * `request_async<F>` stays as a non-DSL out-of-class template;
+//     `Result<void, _>` ↔ `Result<std::tuple<>, _>` interop in the
+//     rusty lib is a follow-up. Callers route via
+//     `client->connection().unwrap()->request_async(...)`.
+#if RUSTYCPP_RUST
+struct Client {
+    connection_field: rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>,
+    poll_thread_worker_field: rusty::Arc<PollThread>,
+    is_client_mode_field: rusty::Cell<bool>,
+    time_field: rusty::Cell<i64>,
+    timeout_field: rusty::Cell<u64>,
+    rpc_id_field: rusty::Cell<i32>,
+    pending_keepalive_config_field: rusty::Cell<KeepaliveConfig>,
+    pending_heartbeat_config_field: rusty::Cell<HeartbeatConfig>,
+    pending_circuit_breaker_config_field: rusty::Cell<CircuitBreakerConfig>,
+    pending_reconnect_policy_field: rusty::Cell<ReconnectPolicy>,
+    callback_manager_field: rusty::Arc<CallbackManager>,
+    pending_factory_field: SpinMutex<rusty::Option<ChannelFactoryProxy>>,
+    // Per-Client empty metrics used as the no-connection fallback by
+    // `metrics()` (returns a live ref). Per-instance rather than
+    // program-global so a `static const ConnectionMetrics` isn't
+    // needed in the DSL. Cheap because ConnectionMetrics is just 18
+    // Atomic<u64> fields.
+    empty_metrics_field: ConnectionMetrics,
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+impl Client {
+    #[cpp_ctor]
+    fn new(poll_thread_worker: rusty::Arc<PollThread>) -> Client {
+        Client {
+            connection_field: rusty::RefCell::<rusty::Option<rusty::Arc<ClientConnection>>>::new(rusty::None),
+            poll_thread_worker_field: poll_thread_worker,
+            is_client_mode_field: rusty::Cell::<bool>::new(false),
+            time_field: rusty::Cell::<i64>::new(0i64),
+            timeout_field: rusty::Cell::<u64>::new(0u64),
+            rpc_id_field: rusty::Cell::<i32>::new(0i32),
+            pending_keepalive_config_field: rusty::Cell::<KeepaliveConfig>::new(KeepaliveConfig {}),
+            pending_heartbeat_config_field: rusty::Cell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
+            pending_circuit_breaker_config_field: rusty::Cell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
+            pending_reconnect_policy_field: rusty::Cell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
+            callback_manager_field: rusty::Arc::<CallbackManager>::make(),
+            pending_factory_field: SpinMutex::<rusty::Option<ChannelFactoryProxy>>::new(rusty::Option::<ChannelFactoryProxy>(rusty::None)),
+            empty_metrics_field: ConnectionMetrics {},
+        }
+    }
+
+    fn create(poll_thread_worker: rusty::Arc<PollThread>) -> rusty::Arc<Client> {
+        rusty::Arc::<Client>::make(poll_thread_worker)
+    }
+
+    fn set_client_mode(&self, v: bool) { self.is_client_mode_field.set(v); }
+    fn client_mode(&self) -> bool { self.is_client_mode_field.get() }
+    fn set_time(&self, v: i64) { self.time_field.set(v); }
+    fn time(&self) -> i64 { self.time_field.get() }
+    fn set_timeout(&self, v: u64) { self.timeout_field.set(v); }
+    fn timeout(&self) -> u64 { self.timeout_field.get() }
+    fn set_rpc_id(&self, v: i32) { self.rpc_id_field.set(v); }
+    fn rpc_id(&self) -> i32 { self.rpc_id_field.get() }
+
+    fn request<F>(&self, rpc_id: i32, attr: &FutureAttr, write_fn: F) -> FutureResult {
+        let guard = self.connection_field.borrow();
+        if guard.is_none() {
+            return FutureResult::Err(ENOTCONN);
+        }
+        self.rpc_id_field.set(rpc_id);
+        guard.as_ref().unwrap().request(rpc_id, attr, write_fn)
+    }
+
+    fn request_with_options<F>(&self, rpc_id: i32, options: &RequestOptions, write_fn: F) -> FutureResult {
+        let guard = self.connection_field.borrow();
+        if guard.is_none() {
+            return FutureResult::Err(ENOTCONN);
+        }
+        self.rpc_id_field.set(rpc_id);
+        guard.as_ref().unwrap().request_with_options(rpc_id, options, FutureAttr {}, write_fn)
+    }
+
+    fn set_valid(&self, _valid: bool) {}
+
+    fn connect(&self, addr: *const i8, client: bool) -> i32 {
+        let conn: rusty::Arc<ClientConnection> =
+            rusty::Arc::<ClientConnection>::make(self.poll_thread_worker_field.clone());
+        let opt = conn.get_mut();
+        verify(opt.is_some());
+        let mut_conn: &mut ClientConnection = opt.unwrap();
+
+        mut_conn.weak_self_ = conn.clone();
+        mut_conn.set_callback_manager(self.callback_manager_field.clone());
+        mut_conn.is_client_mode_ = client;
+        self.is_client_mode_field.set(client);
+
+        mut_conn.set_keepalive(self.pending_keepalive_config_field.get());
+        mut_conn.set_heartbeat_config(self.pending_heartbeat_config_field.get());
+        mut_conn.set_circuit_breaker_config(self.pending_circuit_breaker_config_field.get());
+        mut_conn.set_reconnect_policy(self.pending_reconnect_policy_field.get());
+
+        if !self.has_pending_channel_factory() {
+            let tcp_factory = rusty::Arc::<TcpFactory>::make(self.poll_thread_worker_field.clone());
+            self.set_channel_factory(make_tcp_factory_proxy(tcp_factory));
+        }
+
+        {
+            let guard = self.pending_factory_field.lock().unwrap();
+            if guard.is_some() {
+                let mut moved: ChannelFactoryProxy = guard.take().unwrap();
+                mut_conn.bind_factory(moved);
+            }
+        }
+
+        let result: i32 = mut_conn.connect(client_dsl_addr_to_cstr(addr));
+
+        if result == 0i32 {
+            let store_guard = self.connection_field.borrow_mut();
+            *store_guard = rusty::Some(conn);
+        }
+
+        result
+    }
+
+    fn close(&self) {
+        let guard = self.connection_field.borrow_mut();
+        if guard.is_some() {
+            let conn_ref = guard.as_ref().unwrap();
+            let was_connected: bool = conn_ref.connected();
+            conn_ref.mark_closing();
+            if was_connected {
+                let conn_arc: rusty::Arc<ClientConnection> = conn_ref.clone();
+                let close_job: rusty::Arc<OneTimeJob> =
+                    rusty::Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || {
+                        conn_arc.close();
+                    }));
+                // Implicit Arc<OneTimeJob> -> Arc<Job> upcast via rusty::Arc's
+                // template ctor (U* convertible to T*).
+                self.poll_thread_worker_field.add(close_job);
+            }
+        }
+    }
+
+    fn handle_free(&self, xid: i64) {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().handle_free(xid);
+        }
+    }
+
+    fn pause(&self) {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().pause();
+        }
+    }
+
+    fn resume(&self) {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().resume();
+        }
+    }
+
+    fn reconnect(&self, on_complete: OnReconnectCompleteCallbackFn) -> i32 {
+        let guard = self.connection_field.borrow();
+        if guard.is_none() {
+            if on_complete {
+                on_complete(false);
+            }
+            return ENOTCONN;
+        }
+        guard.as_ref().unwrap().reconnect(on_complete)
+    }
+
+    fn set_channel_factory(&self, factory: ChannelFactoryProxy) {
+        if !factory {
+            return;
+        }
+        let guard = self.pending_factory_field.lock().unwrap();
+        *guard = rusty::Some(factory);
+    }
+
+    fn has_pending_channel_factory(&self) -> bool {
+        let guard = self.pending_factory_field.lock().unwrap();
+        guard.is_some()
+    }
+
+    fn pending_request_count(&self) -> usize {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().pending_request_count();
+        }
+        0usize
+    }
+
+    fn clear_pending_requests(&self, error_code: i32) {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().clear_pending_requests(error_code);
+        }
+    }
+
+    fn is_reconnecting(&self) -> bool {
+        let guard = self.connection_field.borrow();
+        guard.is_some() && guard.as_ref().unwrap().is_reconnecting()
+    }
+
+    fn host(&self) -> rusty::String {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().host();
+        }
+        rusty::String::new_()
+    }
+
+    fn connected(&self) -> bool {
+        let guard = self.connection_field.borrow();
+        guard.is_some() && guard.as_ref().unwrap().connected()
+    }
+
+    fn connection_state(&self) -> ConnectionState {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().connection_state();
+        }
+        ConnectionState::NEW
+    }
+
+    fn try_reconnect_if_needed(&self) -> bool {
+        let state: ConnectionState = self.connection_state();
+        if (state as i32) == (ConnectionState::CONNECTED as i32) {
+            return true;
+        }
+        if (state as i32) == (ConnectionState::FAILED as i32)
+            || (state as i32) == (ConnectionState::DISCONNECTED as i32) {
+            let result: i32 = self.reconnect(OnReconnectCompleteCallbackFn {});
+            return result == 0i32;
+        }
+        false
+    }
+
+    fn connection(&self) -> rusty::Option<rusty::Arc<ClientConnection>> {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return rusty::Some(guard.as_ref().unwrap().clone());
+        }
+        rusty::None
+    }
+
+    fn server_instance_id(&self) -> u64 {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().server_instance_id();
+        }
+        0u64
+    }
+
+    fn set_on_server_restart(&self, callback: OnServerRestartCallbackFn) {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().set_on_server_restart(callback);
+        }
+    }
+
+    fn check_server_instance(&self, new_id: u64) -> bool {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().check_server_instance(new_id);
+        }
+        false
+    }
+
+    fn set_reconnect_policy(&self, policy: &ReconnectPolicy) {
+        self.pending_reconnect_policy_field.set(*policy);
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().set_reconnect_policy(policy);
+        }
+    }
+
+    fn set_buffering_config(&self, config: &BufferingConfig) {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().set_buffering_config(config);
+        }
+    }
+
+    fn set_keepalive(&self, config: &KeepaliveConfig) {
+        self.pending_keepalive_config_field.set(*config);
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().set_keepalive(config);
+        }
+    }
+
+    fn keepalive_config(&self) -> KeepaliveConfig {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().keepalive_config();
+        }
+        self.pending_keepalive_config_field.get()
+    }
+
+    fn set_heartbeat(&self, config: &HeartbeatConfig) {
+        self.pending_heartbeat_config_field.set(*config);
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().set_heartbeat_config(config);
+        }
+    }
+
+    fn heartbeat_config(&self) -> HeartbeatConfig {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().heartbeat_config();
+        }
+        self.pending_heartbeat_config_field.get()
+    }
+
+    fn set_circuit_breaker(&self, config: &CircuitBreakerConfig) {
+        self.pending_circuit_breaker_config_field.set(*config);
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            guard.as_ref().unwrap().set_circuit_breaker_config(config);
+        }
+    }
+
+    fn circuit_breaker_config(&self) -> CircuitBreakerConfig {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().circuit_breaker_config();
+        }
+        self.pending_circuit_breaker_config_field.get()
+    }
+
+    fn circuit_breaker_state(&self) -> CircuitState {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().circuit_breaker_state();
+        }
+        CircuitState::CLOSED
+    }
+
+    fn is_idle(&self, idle_ms: u64, current_time_ms: u64) -> bool {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().is_idle(idle_ms, current_time_ms);
+        }
+        false
+    }
+
+    fn validate_connection(&self) -> bool {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return guard.as_ref().unwrap().validate_connection();
+        }
+        false
+    }
+
+    fn metrics(&self) -> &ConnectionMetrics {
+        let guard = self.connection_field.borrow();
+        if guard.is_some() {
+            return &guard.as_ref().unwrap().metrics();
+        }
+        &self.empty_metrics_field
+    }
+
+    fn has_connection(&self) -> bool {
+        let guard = self.connection_field.borrow();
+        guard.is_some()
+    }
+
+    fn add_on_connected(&self, cb: OnConnectedCallbackFn) {
+        self.callback_manager_field.add_on_connected(cb);
+    }
+    fn add_on_disconnected(&self, cb: OnConnectedCallbackFn) {
+        self.callback_manager_field.add_on_disconnected(cb);
+    }
+    fn add_on_error(&self, cb: OnErrorCallbackFn) {
+        self.callback_manager_field.add_on_error(cb);
+    }
+    fn add_on_reconnecting(&self, cb: OnConnectedCallbackFn) {
+        self.callback_manager_field.add_on_reconnecting(cb);
+    }
+    fn add_on_reconnected(&self, cb: OnReconnectedCallbackFn) {
+        self.callback_manager_field.add_on_reconnected(cb);
+    }
+    fn clear_connection_callbacks(&self) {
+        self.callback_manager_field.clear_all();
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=96b62eb68db6e047995df763215d64df3943cba3515e5ae6db1a1896ab2159ea*/
+struct Client;
+
+struct Client {
+    rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>> connection_field;
+    rusty::Arc<PollThread> poll_thread_worker_field;
+    rusty::Cell<bool> is_client_mode_field;
+    rusty::Cell<int64_t> time_field;
+    rusty::Cell<uint64_t> timeout_field;
+    rusty::Cell<int32_t> rpc_id_field;
+    rusty::Cell<KeepaliveConfig> pending_keepalive_config_field;
+    rusty::Cell<HeartbeatConfig> pending_heartbeat_config_field;
+    rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_field;
+    rusty::Cell<ReconnectPolicy> pending_reconnect_policy_field;
+    rusty::Arc<CallbackManager> callback_manager_field;
+    SpinMutex<rusty::Option<ChannelFactoryProxy>> pending_factory_field;
+    ConnectionMetrics empty_metrics_field;
+    mutable bool _rusty_forgotten = false;
+    Client(rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>> connection_field_init, rusty::Arc<PollThread> poll_thread_worker_field_init, rusty::Cell<bool> is_client_mode_field_init, rusty::Cell<int64_t> time_field_init, rusty::Cell<uint64_t> timeout_field_init, rusty::Cell<int32_t> rpc_id_field_init, rusty::Cell<KeepaliveConfig> pending_keepalive_config_field_init, rusty::Cell<HeartbeatConfig> pending_heartbeat_config_field_init, rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_field_init, rusty::Cell<ReconnectPolicy> pending_reconnect_policy_field_init, rusty::Arc<CallbackManager> callback_manager_field_init, SpinMutex<rusty::Option<ChannelFactoryProxy>> pending_factory_field_init, ConnectionMetrics empty_metrics_field_init) : connection_field(std::move(connection_field_init)), poll_thread_worker_field(std::move(poll_thread_worker_field_init)), is_client_mode_field(std::move(is_client_mode_field_init)), time_field(std::move(time_field_init)), timeout_field(std::move(timeout_field_init)), rpc_id_field(std::move(rpc_id_field_init)), pending_keepalive_config_field(std::move(pending_keepalive_config_field_init)), pending_heartbeat_config_field(std::move(pending_heartbeat_config_field_init)), pending_circuit_breaker_config_field(std::move(pending_circuit_breaker_config_field_init)), pending_reconnect_policy_field(std::move(pending_reconnect_policy_field_init)), callback_manager_field(std::move(callback_manager_field_init)), pending_factory_field(std::move(pending_factory_field_init)), empty_metrics_field(std::move(empty_metrics_field_init)) {}
+    Client(const Client&) = delete;
+    Client(Client&& other) noexcept : connection_field(std::move(other.connection_field)), poll_thread_worker_field(std::move(other.poll_thread_worker_field)), is_client_mode_field(std::move(other.is_client_mode_field)), time_field(std::move(other.time_field)), timeout_field(std::move(other.timeout_field)), rpc_id_field(std::move(other.rpc_id_field)), pending_keepalive_config_field(std::move(other.pending_keepalive_config_field)), pending_heartbeat_config_field(std::move(other.pending_heartbeat_config_field)), pending_circuit_breaker_config_field(std::move(other.pending_circuit_breaker_config_field)), pending_reconnect_policy_field(std::move(other.pending_reconnect_policy_field)), callback_manager_field(std::move(other.callback_manager_field)), pending_factory_field(std::move(other.pending_factory_field)), empty_metrics_field(std::move(other.empty_metrics_field)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
+    }
+    Client& operator=(const Client&) = delete;
+    Client& operator=(Client&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~Client();
+        new (this) Client(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+
+
+    ~Client() noexcept(false);
+    Client(rusty::Arc<PollThread> poll_thread_worker);
+    static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker);
+    void set_client_mode(bool v) const;
+    bool client_mode() const;
+    void set_time(int64_t v) const;
+    int64_t time() const;
+    void set_timeout(uint64_t v) const;
+    uint64_t timeout() const;
+    void set_rpc_id(int32_t v) const;
+    int32_t rpc_id() const;
+    template<typename F>
+    FutureResult request(int32_t rpc_id, const FutureAttr& attr, F write_fn) const;
+    template<typename F>
+    FutureResult request_with_options(int32_t rpc_id, const RequestOptions& options, F write_fn) const;
+    void set_valid(bool _valid) const;
+    int32_t connect(const int8_t* addr, bool client) const;
+    void close() const;
+    void handle_free(int64_t xid) const;
+    void pause() const;
+    void resume() const;
+    int32_t reconnect(OnReconnectCompleteCallbackFn on_complete) const;
+    void set_channel_factory(ChannelFactoryProxy factory) const;
+    bool has_pending_channel_factory() const;
+    size_t pending_request_count() const;
+    void clear_pending_requests(int32_t error_code) const;
+    bool is_reconnecting() const;
+    rusty::String host() const;
+    bool connected() const;
+    ConnectionState connection_state() const;
+    bool try_reconnect_if_needed() const;
+    rusty::Option<rusty::Arc<ClientConnection>> connection() const;
+    uint64_t server_instance_id() const;
+    void set_on_server_restart(OnServerRestartCallbackFn callback) const;
+    bool check_server_instance(uint64_t new_id) const;
+    void set_reconnect_policy(const ReconnectPolicy& policy) const;
+    void set_buffering_config(const BufferingConfig& config) const;
+    void set_keepalive(const KeepaliveConfig& config) const;
+    KeepaliveConfig keepalive_config() const;
+    void set_heartbeat(const HeartbeatConfig& config) const;
+    HeartbeatConfig heartbeat_config() const;
+    void set_circuit_breaker(const CircuitBreakerConfig& config) const;
+    CircuitBreakerConfig circuit_breaker_config() const;
+    CircuitState circuit_breaker_state() const;
+    bool is_idle(uint64_t idle_ms, uint64_t current_time_ms) const;
+    bool validate_connection() const;
+    const ConnectionMetrics& metrics() const;
+    bool has_connection() const;
+    void add_on_connected(OnConnectedCallbackFn cb) const;
+    void add_on_disconnected(OnConnectedCallbackFn cb) const;
+    void add_on_error(OnErrorCallbackFn cb) const;
+    void add_on_reconnecting(OnConnectedCallbackFn cb) const;
+    void add_on_reconnected(OnReconnectedCallbackFn cb) const;
+    void clear_connection_callbacks() const;
+};
+
+
+Client::~Client() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    this->close();
+}
+
+Client::Client(rusty::Arc<PollThread> poll_thread_worker)
+    : connection_field(rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>::new_(rusty::None))
+    , poll_thread_worker_field(poll_thread_worker)
+    , is_client_mode_field(rusty::Cell<bool>::new_(false))
+    , time_field(rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)))
+    , timeout_field(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , rpc_id_field(rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)))
+    , pending_keepalive_config_field(rusty::Cell<KeepaliveConfig>::new_(KeepaliveConfig{}))
+    , pending_heartbeat_config_field(rusty::Cell<HeartbeatConfig>::new_(HeartbeatConfig::disabled()))
+    , pending_circuit_breaker_config_field(rusty::Cell<CircuitBreakerConfig>::new_(CircuitBreakerConfig::disabled()))
+    , pending_reconnect_policy_field(rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::conservative()))
+    , callback_manager_field(rusty::Arc<CallbackManager>::make())
+    , pending_factory_field(SpinMutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)))
+    , empty_metrics_field(ConnectionMetrics{})
+{}
+
+rusty::Arc<Client> Client::create(rusty::Arc<PollThread> poll_thread_worker) {
+    return rusty::Arc<Client>::make(std::move(poll_thread_worker));
+}
+
+void Client::set_client_mode(bool v) const {
+    this->is_client_mode_field.set(std::move(v));
+}
+
+bool Client::client_mode() const {
+    return this->is_client_mode_field.get();
+}
+
+void Client::set_time(int64_t v) const {
+    this->time_field.set(std::move(v));
+}
+
+int64_t Client::time() const {
+    return this->time_field.get();
+}
+
+void Client::set_timeout(uint64_t v) const {
+    this->timeout_field.set(std::move(v));
+}
+
+uint64_t Client::timeout() const {
+    return this->timeout_field.get();
+}
+
+void Client::set_rpc_id(int32_t v) const {
+    this->rpc_id_field.set(std::move(v));
+}
+
+int32_t Client::rpc_id() const {
+    return this->rpc_id_field.get();
+}
+
+template<typename F>
+FutureResult Client::request(int32_t rpc_id, const FutureAttr& attr, F write_fn) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_none()) {
+        return FutureResult::Err(ENOTCONN);
+    }
+    this->rpc_id_field.set(std::move(rpc_id));
+    return guard->as_ref().unwrap()->request(std::move(rpc_id), attr, std::move(write_fn));
+}
+
+template<typename F>
+FutureResult Client::request_with_options(int32_t rpc_id, const RequestOptions& options, F write_fn) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_none()) {
+        return FutureResult::Err(ENOTCONN);
+    }
+    this->rpc_id_field.set(std::move(rpc_id));
+    return guard->as_ref().unwrap()->request_with_options(std::move(rpc_id), options, FutureAttr{}, std::move(write_fn));
+}
+
+void Client::set_valid(bool _valid) const {
+}
+
+int32_t Client::connect(const int8_t* addr, bool client) const {
+    rusty::Arc<ClientConnection> conn = rusty::Arc<ClientConnection>::make(rusty::clone(this->poll_thread_worker_field));
+    auto opt = conn.get_mut();
+    verify(opt.is_some());
+    ClientConnection& mut_conn = opt.unwrap();
+    mut_conn.weak_self_ = rusty::clone(conn);
+    mut_conn.set_callback_manager(rusty::clone(this->callback_manager_field));
+    mut_conn.is_client_mode_ = std::move(client);
+    this->is_client_mode_field.set(std::move(client));
+    mut_conn.set_keepalive(rusty::detail::deref_if_pointer_like(this->pending_keepalive_config_field.get()));
+    mut_conn.set_heartbeat_config(this->pending_heartbeat_config_field.get());
+    mut_conn.set_circuit_breaker_config(this->pending_circuit_breaker_config_field.get());
+    mut_conn.set_reconnect_policy(rusty::detail::deref_if_pointer_like(this->pending_reconnect_policy_field.get()));
+    if (!this->has_pending_channel_factory()) {
+        const auto tcp_factory = rusty::Arc<TcpFactory>::make(rusty::clone(this->poll_thread_worker_field));
+        this->set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
+    }
+    {
+        auto guard = this->pending_factory_field.lock().unwrap();
+        if (guard->is_some()) {
+            ChannelFactoryProxy moved = guard->take().unwrap();
+            mut_conn.bind_factory(std::move(moved));
+        }
+    }
+    int32_t result = mut_conn.connect(client_dsl_addr_to_cstr(addr));
+    if (rusty::detail::deref_if_pointer_like(result) == static_cast<int32_t>(0)) {
+        auto store_guard = this->connection_field.borrow_mut();
+        *store_guard = rusty::Option<rusty::Arc<ClientConnection>>(std::move(conn));
+    }
+    return std::move(result);
+}
+
+void Client::close() const {
+    auto guard = this->connection_field.borrow_mut();
+    if (guard->is_some()) {
+        auto& conn_ref = guard->as_ref().unwrap();
+        const bool was_connected = conn_ref->connected();
+        conn_ref->mark_closing();
+        if (was_connected) {
+            const rusty::Arc<ClientConnection> conn_arc = rusty::clone(conn_ref);
+            const rusty::Arc<OneTimeJob> close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([=, conn_arc = std::move(conn_arc)]() mutable {
+conn_arc->close();
+}));
+            this->poll_thread_worker_field->add(std::move(close_job));
+        }
+    }
+}
+
+void Client::handle_free(int64_t xid) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->handle_free(std::move(xid));
+    }
+}
+
+void Client::pause() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->pause();
+    }
+}
+
+void Client::resume() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->resume();
+    }
+}
+
+int32_t Client::reconnect(OnReconnectCompleteCallbackFn on_complete) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_none()) {
+        if (on_complete) {
+            on_complete(false);
+        }
+        return ENOTCONN;
+    }
+    return guard->as_ref().unwrap()->reconnect(std::move(on_complete));
+}
+
+void Client::set_channel_factory(ChannelFactoryProxy factory) const {
+    if (!factory) {
+        return;
+    }
+    auto guard = this->pending_factory_field.lock().unwrap();
+    *guard = rusty::Option<ChannelFactoryProxy>(std::move(factory));
+}
+
+bool Client::has_pending_channel_factory() const {
+    auto guard = this->pending_factory_field.lock().unwrap();
+    return guard->is_some();
+}
+
+size_t Client::pending_request_count() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->pending_request_count();
+    }
+    return static_cast<size_t>(0);
+}
+
+void Client::clear_pending_requests(int32_t error_code) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->clear_pending_requests(std::move(error_code));
+    }
+}
+
+bool Client::is_reconnecting() const {
+    const auto guard = this->connection_field.borrow();
+    return guard->is_some() && guard->as_ref().unwrap()->is_reconnecting();
+}
+
+rusty::String Client::host() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->host();
+    }
+    return rusty::String::new_();
+}
+
+bool Client::connected() const {
+    const auto guard = this->connection_field.borrow();
+    return guard->is_some() && guard->as_ref().unwrap()->connected();
+}
+
+ConnectionState Client::connection_state() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->connection_state();
+    }
+    return rusty::clone(rusty::clone(ConnectionState::NEW));
+}
+
+bool Client::try_reconnect_if_needed() const {
+    const ConnectionState state = this->connection_state();
+    if (((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::CONNECTED)))) {
+        return true;
+    }
+    if ((((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::FAILED)))) || (((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))))) {
+        const int32_t result = this->reconnect(OnReconnectCompleteCallbackFn{});
+        return rusty::detail::deref_if_pointer_like(result) == static_cast<int32_t>(0);
+    }
+    return false;
+}
+
+rusty::Option<rusty::Arc<ClientConnection>> Client::connection() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return rusty::Option<rusty::Arc<ClientConnection>>(rusty::clone(guard->as_ref().unwrap()));
+    }
+    return rusty::None;
+}
+
+uint64_t Client::server_instance_id() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->server_instance_id();
+    }
+    return static_cast<uint64_t>(0);
+}
+
+void Client::set_on_server_restart(OnServerRestartCallbackFn callback) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
+    }
+}
+
+bool Client::check_server_instance(uint64_t new_id) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->check_server_instance(std::move(new_id));
+    }
+    return false;
+}
+
+void Client::set_reconnect_policy(const ReconnectPolicy& policy) const {
+    this->pending_reconnect_policy_field.set(policy);
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->set_reconnect_policy(policy);
+    }
+}
+
+void Client::set_buffering_config(const BufferingConfig& config) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->set_buffering_config(config);
+    }
+}
+
+void Client::set_keepalive(const KeepaliveConfig& config) const {
+    this->pending_keepalive_config_field.set(config);
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->set_keepalive(config);
+    }
+}
+
+KeepaliveConfig Client::keepalive_config() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->keepalive_config();
+    }
+    return this->pending_keepalive_config_field.get();
+}
+
+void Client::set_heartbeat(const HeartbeatConfig& config) const {
+    this->pending_heartbeat_config_field.set(config);
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->set_heartbeat_config(config);
+    }
+}
+
+HeartbeatConfig Client::heartbeat_config() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->heartbeat_config();
+    }
+    return this->pending_heartbeat_config_field.get();
+}
+
+void Client::set_circuit_breaker(const CircuitBreakerConfig& config) const {
+    this->pending_circuit_breaker_config_field.set(config);
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        guard->as_ref().unwrap()->set_circuit_breaker_config(config);
+    }
+}
+
+CircuitBreakerConfig Client::circuit_breaker_config() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->circuit_breaker_config();
+    }
+    return this->pending_circuit_breaker_config_field.get();
+}
+
+CircuitState Client::circuit_breaker_state() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->circuit_breaker_state();
+    }
+    return rusty::clone(rusty::clone(CircuitState::CLOSED));
+}
+
+bool Client::is_idle(uint64_t idle_ms, uint64_t current_time_ms) const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->is_idle(std::move(idle_ms), std::move(current_time_ms));
+    }
+    return false;
+}
+
+bool Client::validate_connection() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->validate_connection();
+    }
+    return false;
+}
+
+const ConnectionMetrics& Client::metrics() const {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_some()) {
+        return guard->as_ref().unwrap()->metrics();
+    }
+    return this->empty_metrics_field;
+}
+
+bool Client::has_connection() const {
+    const auto guard = this->connection_field.borrow();
+    return guard->is_some();
+}
+
+void Client::add_on_connected(OnConnectedCallbackFn cb) const {
+    this->callback_manager_field->add_on_connected(std::move(cb));
+}
+
+void Client::add_on_disconnected(OnConnectedCallbackFn cb) const {
+    this->callback_manager_field->add_on_disconnected(std::move(cb));
+}
+
+void Client::add_on_error(OnErrorCallbackFn cb) const {
+    this->callback_manager_field->add_on_error(std::move(cb));
+}
+
+void Client::add_on_reconnecting(OnConnectedCallbackFn cb) const {
+    this->callback_manager_field->add_on_reconnecting(std::move(cb));
+}
+
+void Client::add_on_reconnected(OnReconnectedCallbackFn cb) const {
+    this->callback_manager_field->add_on_reconnected(std::move(cb));
+}
+
+void Client::clear_connection_callbacks() const {
+    this->callback_manager_field->clear_all();
+}
+/*RUSTYCPP:GEN-END id=client.1*/
+
+#if 0  // Legacy hand-written Client class — kept under #if 0 during DSL migration.
+
 // @safe - The interior-mutable `mutable RefCell<...>` field is sound
 // because RefCell enforces runtime borrow rules. Methods that drive
 // socket I/O through ClientConnection carry their own `// @unsafe`
@@ -2615,6 +3533,7 @@ public:
     void handle_free(i64 xid) const;
 
 };
+#endif  // End of legacy Client class wrap
 
 // @safe - Thread-safe pool of client connections using Arc
 // MIGRATED: Now uses rusty::Arc<Client> for cached connections
@@ -4134,6 +5053,10 @@ int ClientConnection::poll_mode() const {
 // ============================================================================
 // Client implementation (facade that delegates to ClientConnection)
 // ============================================================================
+//
+// These out-of-line defs are kept under #if 0 during DSL migration —
+// the DSL block emits the matching method bodies.
+#if 0
 
 // @unsafe - Cleanup destructor, uses request_close() for thread-safe close
 Client::~Client() {
@@ -4327,6 +5250,8 @@ int Client::reconnect(OnReconnectCompleteCallbackFn on_complete) const {
     return conn.reconnect(std::move(on_complete));
   }
 }
+
+#endif  // End of legacy Client out-of-line method defs wrap
 
 
 // ============================================================================
@@ -4800,7 +5725,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       for (int i = 0; i < num_connections; i++) {
         auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
         client->set_client_mode(true);
-        if (client->connect(addr.c_str()) != 0) {
+        if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
           Log_warn("ClientPool: failed to create new connection to %s", addr.c_str());
           ok = false;
           break;
@@ -4822,7 +5747,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     for (int i = 0; i < num_connections; i++) {
       auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
       client->set_client_mode(true);  // Jetpack: mark as client
-      if (client->connect(addr.c_str()) != 0) {
+      if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
         ok = false;
         break;
       }

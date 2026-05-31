@@ -731,7 +731,7 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     std::atomic<uint64_t> observed_old_id{0};
     std::atomic<uint64_t> observed_new_id{0};
 
-    ASSERT_EQ(client->connect(server_addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr.c_str()), true), 0);
     ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
 
     client->set_on_server_restart([&](uint64_t old_id, uint64_t new_id) {

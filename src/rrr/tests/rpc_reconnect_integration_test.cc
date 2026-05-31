@@ -142,7 +142,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     client->close();
 
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -153,7 +153,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
     delete server;  // Ensure reconnect attempts fail.
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -184,7 +184,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     client->close();
 
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -195,7 +195,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
     delete server;  // Ensure reconnect attempts fail.
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -229,7 +229,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectAfterDisconnect) {
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -269,7 +269,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     client->set_reconnect_policy(ReconnectPolicy::aggressive());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -341,7 +341,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
     policy.backoff_multiplier = 1.0;
     policy.jitter_enabled = false;
     client->set_reconnect_policy(policy);
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     std::string input = "auto_reconnect";
     auto warmup = client->request(
@@ -410,7 +410,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     client->close();
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -422,7 +422,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult
     server = nullptr;
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -491,7 +491,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     client->close();
 
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -504,7 +504,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
 
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -668,7 +668,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectWhileConnected) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -692,7 +692,7 @@ TEST_F(ReconnectIntegrationTest, MultipleReconnectAttempts) {
     // Connect and disconnect multiple times
     for (int i = 0; i < 3; i++) {
         if (!client->connected()) {
-            ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+            ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
         }
         std::this_thread::sleep_for(milliseconds(30));
         EXPECT_TRUE(client->connected());

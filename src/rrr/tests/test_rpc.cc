@@ -204,7 +204,7 @@ TEST_F(RPCTest, ConcurrentRequests) {
             // Each thread creates its own client
             auto thread_client = Client::create(worker_clone);
             std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
-            if (thread_client->connect(server_addr.c_str()) != 0) {
+            if (thread_client->connect(reinterpret_cast<const int8_t*>(server_addr.c_str()), true) != 0) {
                 return;  // Connection failed
             }
             std::this_thread::sleep_for(milliseconds(10));  // Wait for connection
@@ -506,7 +506,7 @@ protected:
 TEST_F(ConnectionErrorTest, ConnectToNonExistentServer) {
     auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
 
-    int result = client->connect("127.0.0.1:9999");
+    int result = client->connect(reinterpret_cast<const int8_t*>("127.0.0.1:9999"), true);
 
     EXPECT_NE(result, 0);
 
@@ -517,7 +517,7 @@ TEST_F(ConnectionErrorTest, ConnectToNonExistentServer) {
 TEST_F(ConnectionErrorTest, InvalidAddress) {
     auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
 
-    int result = client->connect("invalid_address:1234");
+    int result = client->connect(reinterpret_cast<const int8_t*>("invalid_address:1234"), true);
 
     EXPECT_NE(result, 0);
 
@@ -528,7 +528,7 @@ TEST_F(ConnectionErrorTest, InvalidAddress) {
 TEST_F(ConnectionErrorTest, InvalidPort) {
     auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
 
-    int result = client->connect("127.0.0.1:99999");
+    int result = client->connect(reinterpret_cast<const int8_t*>("127.0.0.1:99999"), true);
 
     EXPECT_NE(result, 0);
 
@@ -566,7 +566,7 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
 
                 // Connect to server (construct address from port)
                 std::string server_addr = "127.0.0.1:" + std::to_string(port);
-                int conn_result = thread_client->connect(server_addr.c_str());
+                int conn_result = thread_client->connect(reinterpret_cast<const int8_t*>(server_addr.c_str()), true);
                 if (conn_result != 0) {
                     thread_failures++;
                     per_thread_results[tid] = {thread_successes, thread_failures};
