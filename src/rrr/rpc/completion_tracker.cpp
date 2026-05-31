@@ -19,51 +19,108 @@ export namespace rrr {
 // CompletionTrackerConfig
 // ===========================================================================
 
-/**
- * @safe - Configuration for CompletionTracker
- */
+// Configuration for CompletionTracker.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below
+// is the source of truth; the transpiler regenerates the matching
+// GEN-BEGIN block. `#[cpp_ctor] fn new()` lowers to a real default
+// constructor `CompletionTrackerConfig()` whose initializer-list
+// reproduces the previous `= 60000`, `= 100000`, `= true` in-class
+// defaults — so `CompletionTrackerConfig cfg;` default-init still
+// produces the same values without source changes.
+//
+// `defaults()` / `small()` / `large()` / `disabled()` factories use
+// the empty-literal-then-mutate idiom for the same reason as the
+// other config migrations: a populated DSL literal would map to a
+// C++ designated initializer, which the cpp_ctor disqualifies.
+#if RUSTYCPP_RUST
 struct CompletionTrackerConfig {
-    uint64_t ttl_ms = 60000;        // Time-to-live for completed XIDs (60 seconds)
-    size_t max_entries = 100000;    // Maximum XIDs to track
-    bool enabled = true;            // Enable/disable tracking
+    ttl_ms: u64,
+    max_entries: usize,
+    enabled: bool,
+}
 
-    // @safe - Default constructor
-    CompletionTrackerConfig() = default;
-
-    // @safe - Copy constructor
-    CompletionTrackerConfig(const CompletionTrackerConfig&) = default;
-
-    // @safe - Copy assignment
-    CompletionTrackerConfig& operator=(const CompletionTrackerConfig&) = default;
-
-    // @safe - Default preset
-    static CompletionTrackerConfig defaults() {
-        return CompletionTrackerConfig{};
+impl CompletionTrackerConfig {
+    #[cpp_ctor]
+    fn new() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 60000u64,
+            max_entries: 100000usize,
+            enabled: true,
+        }
     }
 
-    // @safe - Small preset (fewer entries, shorter TTL)
-    static CompletionTrackerConfig small() {
-        CompletionTrackerConfig cfg;
-        cfg.ttl_ms = 30000;      // 30 seconds
-        cfg.max_entries = 10000;
-        return cfg;
+    fn defaults() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {}
     }
 
-    // @safe - Large preset (more entries, longer TTL)
-    static CompletionTrackerConfig large() {
-        CompletionTrackerConfig cfg;
-        cfg.ttl_ms = 300000;     // 5 minutes
-        cfg.max_entries = 1000000;
-        return cfg;
+    fn small() -> CompletionTrackerConfig {
+        let mut cfg: CompletionTrackerConfig = CompletionTrackerConfig {};
+        cfg.ttl_ms = 30000u64;
+        cfg.max_entries = 10000usize;
+        cfg
     }
 
-    // @safe - Disabled preset
-    static CompletionTrackerConfig disabled() {
-        CompletionTrackerConfig cfg;
+    fn large() -> CompletionTrackerConfig {
+        let mut cfg: CompletionTrackerConfig = CompletionTrackerConfig {};
+        cfg.ttl_ms = 300000u64;
+        cfg.max_entries = 1000000usize;
+        cfg
+    }
+
+    fn disabled() -> CompletionTrackerConfig {
+        let mut cfg: CompletionTrackerConfig = CompletionTrackerConfig {};
         cfg.enabled = false;
-        return cfg;
+        cfg
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=5f09e5d23be1daaa2008390e8240bb97a167a34ac4b2bf4a003e21dfbb121a82*/
+struct CompletionTrackerConfig;
+
+struct CompletionTrackerConfig {
+    uint64_t ttl_ms;
+    size_t max_entries;
+    bool enabled;
+
+    CompletionTrackerConfig();
+    static CompletionTrackerConfig defaults();
+    static CompletionTrackerConfig small();
+    static CompletionTrackerConfig large();
+    static CompletionTrackerConfig disabled();
 };
+
+
+CompletionTrackerConfig::CompletionTrackerConfig()
+    : ttl_ms(static_cast<uint64_t>(60000))
+    , max_entries(static_cast<size_t>(100000))
+    , enabled(true)
+{}
+
+CompletionTrackerConfig CompletionTrackerConfig::defaults() {
+    return CompletionTrackerConfig{};
+}
+
+CompletionTrackerConfig CompletionTrackerConfig::small() {
+    CompletionTrackerConfig cfg = CompletionTrackerConfig{};
+    cfg.ttl_ms = static_cast<uint64_t>(30000);
+    cfg.max_entries = static_cast<size_t>(10000);
+    return std::move(cfg);
+}
+
+CompletionTrackerConfig CompletionTrackerConfig::large() {
+    CompletionTrackerConfig cfg = CompletionTrackerConfig{};
+    cfg.ttl_ms = static_cast<uint64_t>(300000);
+    cfg.max_entries = static_cast<size_t>(1000000);
+    return std::move(cfg);
+}
+
+CompletionTrackerConfig CompletionTrackerConfig::disabled() {
+    CompletionTrackerConfig cfg = CompletionTrackerConfig{};
+    cfg.enabled = false;
+    return std::move(cfg);
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.1*/
 
 // ===========================================================================
 // CompletedEntry
