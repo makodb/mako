@@ -1957,6 +1957,25 @@ struct hash<rusty::Arc<rrr::ClientConnection>> {
 // `// @unsafe`.
 export namespace rrr {
 
+// Type aliases for `rusty::Function<…>` parameter types used in Client's
+// public API. Defined outside any future inline-Rust DSL block so the
+// DSL source can refer to them by an opaque type name (the DSL grammar
+// does not accept C++ function-type template arguments like
+// `<void(bool) const>`). Same pattern as `HeartbeatTimeoutCallback`
+// (rrr/heartbeat.cpp) and `StateChangeCallback` (rrr/connection_state.cpp).
+//
+// Naming convention: `…CallbackFn` for the bare (move-only) Function<…>
+// shape that Client's `add_on_*` / `reconnect` / `set_on_server_restart`
+// methods consume. The `…Callback` aliases without `Fn` in
+// rrr/callbacks.cpp wrap the same Function shape in `rusty::Arc<…>`
+// (a shared, clone-friendly handle), so the two namespaces are distinct.
+using OnReconnectCompleteCallbackFn   = rusty::Function<void(bool)>;
+using OnConnectedCallbackFn           = rusty::Function<void() const>;
+using OnErrorCallbackFn               = rusty::Function<void(RpcError,
+                                                             const std::string&) const>;
+using OnReconnectedCallbackFn         = rusty::Function<void(bool) const>;
+using OnServerRestartCallbackFn       = rusty::Function<void(uint64_t, uint64_t)>;
+
 // @safe - The interior-mutable `mutable RefCell<...>` field is sound
 // because RefCell enforces runtime borrow rules. Methods that drive
 // socket I/O through ClientConnection carry their own `// @unsafe`
@@ -2251,32 +2270,32 @@ public:
      * @return 0 on success (reconnection started), error code on failure
      */
     // @unsafe - Attempts reconnection (calls connect which has socket operations)
-    int reconnect(rusty::Function<void(bool)> on_complete = nullptr) const;
+    int reconnect(OnReconnectCompleteCallbackFn on_complete = nullptr) const;
 
     // @safe - Register lifecycle callbacks.
     // Each callback is wrapped in an Arc<Function const> by CallbackManager so
     // it can be cloned-out under lock and invoked without holding it.
-    void add_on_connected(rusty::Function<void() const> cb) const {
+    void add_on_connected(OnConnectedCallbackFn cb) const {
         callback_manager_->add_on_connected(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_disconnected(rusty::Function<void() const> cb) const {
+    void add_on_disconnected(OnConnectedCallbackFn cb) const {
         callback_manager_->add_on_disconnected(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_error(rusty::Function<void(RpcError, const std::string&) const> cb) const {
+    void add_on_error(OnErrorCallbackFn cb) const {
         callback_manager_->add_on_error(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_reconnecting(rusty::Function<void() const> cb) const {
+    void add_on_reconnecting(OnConnectedCallbackFn cb) const {
         callback_manager_->add_on_reconnecting(std::move(cb));
     }
 
     // @safe - Register lifecycle callbacks.
-    void add_on_reconnected(rusty::Function<void(bool) const> cb) const {
+    void add_on_reconnected(OnReconnectedCallbackFn cb) const {
         callback_manager_->add_on_reconnected(std::move(cb));
     }
 
@@ -2384,7 +2403,7 @@ public:
      */
     // @safe - Inner ClientConnection::set_on_server_restart is @safe;
     // only the RefCell::borrow + Option::unwrap need an @unsafe wrap.
-    void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
+    void set_on_server_restart(OnServerRestartCallbackFn callback) const {
         // RefCell::borrow + Option::unwrap are both @safe.
         {
             auto guard = connection_.borrow();
@@ -4289,7 +4308,7 @@ int Client::connect(const char* addr, bool client) const {
 }
 
 // @unsafe - Attempts to reconnect to the last connected address
-int Client::reconnect(rusty::Function<void(bool)> on_complete) const {
+int Client::reconnect(OnReconnectCompleteCallbackFn on_complete) const {
   auto guard = connection_.borrow();
   if (guard->is_none()) {
     Log_error("rrr::Client: no connection to reconnect");
