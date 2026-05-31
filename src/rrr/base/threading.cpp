@@ -124,6 +124,13 @@ public:
     virtual void lock() = 0;
     virtual void unlock() = 0;
     virtual ~Lockable() = default;
+    // The user-declared virtual dtor above suppresses the implicit move
+    // ctor / move-assign. Restore them so SpinLock — which derives from
+    // Lockable — can be implicitly move-constructed (its only state is
+    // the movable `rusty::Atomic<bool>` flag).
+    Lockable() = default;
+    Lockable(Lockable&&) noexcept = default;
+    Lockable& operator=(Lockable&&) noexcept = default;
 //    virtual Lockable::type whatami() = 0;
 };
 
@@ -148,6 +155,14 @@ public:
     // value-returning factories like `SpinLock::new_()`.
     SpinLock(const SpinLock&) = delete;
     SpinLock& operator=(const SpinLock&) = delete;
+
+    // The user-declared (defaulted) destructor above would otherwise
+    // suppress the implicit move ctor / move-assign. `rusty::Atomic<bool>`
+    // is movable, so declaring these `= default` lets value-returning
+    // factories like `SpinLock::new_()` and DSL-emitted aggregate ctors
+    // taking `SpinMutex<T>` by value lower to a move (not a copy).
+    SpinLock(SpinLock&&) noexcept = default;
+    SpinLock& operator=(SpinLock&&) noexcept = default;
 
     // @safe - Rust-style factory matching `fn new() -> Self`.
     static SpinLock new_() {
