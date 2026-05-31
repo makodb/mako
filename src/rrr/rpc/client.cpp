@@ -1594,10 +1594,10 @@ private:
     //   - Err(error_code) on send-time failure (no callback fires).
 public:
     template<typename F>
-    rusty::Result<void, i32> request_async(
+    rusty::Result<rusty::Unit, i32> request_async(
         i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply) const {
         if (!allow_request_with_circuit_metrics()) {
-            return rusty::Result<void, i32>::Err(EBUSY);
+            return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
         }
         // Liveness check (mirrors request_via_channel). The state-
         // machine check runs first to close the
@@ -1605,7 +1605,7 @@ public:
         // explanatory comment in `request_via_channel`.
         if (!state_machine_.is_connected()) {
             record_circuit_result(ENOTCONN);
-            return rusty::Result<void, i32>::Err(ENOTCONN);
+            return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
         }
         {
             auto direct_guard = direct_channel_.lock().unwrap();
@@ -1613,14 +1613,14 @@ public:
                 auto& proxy = *direct_guard->as_ref().unwrap();
                 if (proxy.is_closed()) {
                     record_circuit_result(ENOTCONN);
-                    return rusty::Result<void, i32>::Err(ENOTCONN);
+                    return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
                 }
             } else {
                 auto guard = fiber_channel_.lock().unwrap();
                 if (guard->is_none() ||
                     guard->as_ref().unwrap()->is_closed()) {
                     record_circuit_result(ENOTCONN);
-                    return rusty::Result<void, i32>::Err(ENOTCONN);
+                    return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
                 }
             }
         }
@@ -1637,7 +1637,7 @@ public:
                 // Slot collision — caller must drop request and retry,
                 // or fall back to `request(...)` (HashMap path).
                 record_circuit_result(EBUSY);
-                return rusty::Result<void, i32>::Err(EBUSY);
+                return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
             }
             (*guard)[slot] = rusty::Some(std::move(on_reply));
         }
@@ -1659,11 +1659,11 @@ public:
             auto guard = pending_cb_slots_.lock().unwrap();
             (*guard)[slot] = rusty::None;
             record_circuit_result(EIO);
-            return rusty::Result<void, i32>::Err(EIO);
+            return rusty::Result<rusty::Unit, i32>::Err(EIO);
         }
         metrics_.record_request_sent();
         on_request_dispatched(body_sink.bytes.len());
-        return rusty::Result<void, i32>::Ok();
+        return rusty::Result<rusty::Unit, i32>::Ok(rusty::Unit{});
     }
 
 private:
@@ -2023,10 +2023,14 @@ inline const char* client_dsl_addr_to_cstr(const int8_t* addr) {
 //   * `connect()`, `close()`, `reconnect()`, `set_valid()`,
 //     `handle_free()`, `pause()`, `resume()` were previously out-of-
 //     line; their bodies are now translated into the DSL block.
-//   * `request_async<F>` stays as a non-DSL out-of-class template;
-//     `Result<void, _>` ↔ `Result<std::tuple<>, _>` interop in the
-//     rusty lib is a follow-up. Callers route via
-//     `client->connection().unwrap()->request_async(...)`.
+//   * `request_async<F>` is back in the DSL. Both it and
+//     `ClientConnection::request_async` now return
+//     `rusty::Result<rusty::Unit, i32>` (where `rusty::Unit` is
+//     `std::tuple<>`). The transpiler defaults to emitting
+//     `rusty::Unit` for Rust's `()` since rusty-cpp commit `32b718d`,
+//     so the DSL surface reads `rusty::Result<(), i32>` and the
+//     generated C++ matches `ClientConnection::request_async`'s
+//     return type exactly.
 #if RUSTYCPP_RUST
 struct Client {
     connection_field: rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>,
@@ -2104,6 +2108,15 @@ impl Client {
         }
         self.rpc_id_field.set(rpc_id);
         guard.as_ref().unwrap().request_with_options(rpc_id, options, FutureAttr {}, write_fn)
+    }
+
+    fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: ClientConnection::AsyncReplyCallback) -> rusty::Result<(), i32> {
+        let guard = self.connection_field.borrow();
+        if guard.is_none() {
+            return rusty::Result::<(), i32>::Err(ENOTCONN);
+        }
+        self.rpc_id_field.set(rpc_id);
+        guard.as_ref().unwrap().request_async(rpc_id, write_fn, on_reply)
     }
 
     fn set_valid(&self, _valid: bool) {}
@@ -2417,7 +2430,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=96b62eb68db6e047995df763215d64df3943cba3515e5ae6db1a1896ab2159ea*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=1a80ad2856604138af925fa58a3890df99abc46f7c5a2f4b0bb3fb5ab998a6f6*/
 struct Client;
 
 struct Client {
@@ -2468,6 +2481,8 @@ struct Client {
     FutureResult request(int32_t rpc_id, const FutureAttr& attr, F write_fn) const;
     template<typename F>
     FutureResult request_with_options(int32_t rpc_id, const RequestOptions& options, F write_fn) const;
+    template<typename F>
+    auto request_async(int32_t rpc_id, F write_fn, ClientConnection::AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t>;
     void set_valid(bool _valid) const;
     int32_t connect(const int8_t* addr, bool client) const;
     void close() const;
@@ -2585,6 +2600,16 @@ FutureResult Client::request_with_options(int32_t rpc_id, const RequestOptions& 
     }
     this->rpc_id_field.set(std::move(rpc_id));
     return guard->as_ref().unwrap()->request_with_options(std::move(rpc_id), options, FutureAttr{}, std::move(write_fn));
+}
+
+template<typename F>
+auto Client::request_async(int32_t rpc_id, F write_fn, ClientConnection::AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t> {
+    const auto guard = this->connection_field.borrow();
+    if (guard->is_none()) {
+        return rusty::Result<rusty::Unit, int32_t>::Err(ENOTCONN);
+    }
+    this->rpc_id_field.set(std::move(rpc_id));
+    return guard->as_ref().unwrap()->request_async(std::move(rpc_id), std::move(write_fn), std::move(on_reply));
 }
 
 void Client::set_valid(bool _valid) const {
@@ -3038,12 +3063,12 @@ public:
     // Slim async-callback request — no Arc<Future> allocation.  See
     // ClientConnection::request_async for the full contract.
     template<typename F>
-    rusty::Result<void, i32> request_async(
+    rusty::Result<rusty::Unit, i32> request_async(
         i32 rpc_id, F&& write_fn,
         ClientConnection::AsyncReplyCallback on_reply) const {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
-            return rusty::Result<void, i32>::Err(ENOTCONN);
+            return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
         return guard->as_ref().unwrap()->request_async(

@@ -273,13 +273,8 @@ static void* client_proc(void* arg_ptr) {
                 if (err != 0) return;
                 do_work_holder();
             }};
-        // Client::request_async lives outside the DSL block; reach
-        // through Client::connection() to the underlying ClientConnection
-        // which exposes the template directly.
-        auto conn_opt = cl->connection();
-        if (conn_opt.is_none()) return;
         auto send_result =
-            conn_opt.as_ref().unwrap()->request_async(rpc_id, write_fn, std::move(on_reply));
+            cl->request_async(rpc_id, write_fn, std::move(on_reply));
         if (send_result.is_err()) return;
         g_client_req_counters[thread_idx].fetch_add(
             1, std::memory_order_relaxed);
