@@ -68,44 +68,117 @@ struct QueuedRequest {
     }
 };
 
-/**
- * Configuration for RequestQueue.
- */
+// Configuration for RequestQueue.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The `#[cpp_ctor] fn new()`
+// lowers to a real default constructor `RequestQueueConfig()` whose
+// initializer-list mirrors the previous in-class `= 1000`, `= 30000`,
+// etc. defaults — so all existing `RequestQueueConfig config;`
+// call-sites keep getting the same defaults without source changes.
+//
+// `defaults()` / `small()` / `large()` / `disabled()` factories use
+// `RequestQueueConfig {}` (empty struct literal -> value-init ->
+// calls the cpp_ctor-emitted default ctor) followed by per-field
+// assignment. The transpiler maps a populated literal
+// `RequestQueueConfig { field: value }` to a designated initializer,
+// which requires an aggregate; the cpp_ctor disqualifies the struct
+// from aggregate-init, hence the empty-literal-then-mutate idiom.
+#if RUSTYCPP_RUST
 struct RequestQueueConfig {
-    size_t max_size = 1000;            // Maximum queue entries
-    uint32_t default_ttl_ms = 30000;   // 30 second default TTL
-    OverflowStrategy overflow_strategy = OverflowStrategy::DROP_OLDEST;
-    bool enabled = true;
+    max_size: usize,
+    default_ttl_ms: u32,
+    overflow_strategy: OverflowStrategy,
+    enabled: bool,
+}
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig defaults() {
-        return RequestQueueConfig{};
+impl RequestQueueConfig {
+    #[cpp_ctor]
+    fn new() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 1000usize,
+            default_ttl_ms: 30000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig small() {
-        RequestQueueConfig config;
-        config.max_size = 10;
-        config.default_ttl_ms = 5000;
-        return config;
+    fn defaults() -> RequestQueueConfig {
+        RequestQueueConfig {}
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig large() {
-        RequestQueueConfig config;
-        config.max_size = 10000;
-        config.default_ttl_ms = 60000;
-        return config;
+    fn small() -> RequestQueueConfig {
+        let mut config: RequestQueueConfig = RequestQueueConfig {};
+        config.max_size = 10usize;
+        config.default_ttl_ms = 5000u32;
+        config
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig disabled() {
-        RequestQueueConfig config;
+    fn large() -> RequestQueueConfig {
+        let mut config: RequestQueueConfig = RequestQueueConfig {};
+        config.max_size = 10000usize;
+        config.default_ttl_ms = 60000u32;
+        config
+    }
+
+    fn disabled() -> RequestQueueConfig {
+        let mut config: RequestQueueConfig = RequestQueueConfig {};
         config.enabled = false;
-        config.max_size = 0;
-        return config;
+        config.max_size = 0usize;
+        config
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=e7b73afe0660581ce7ad12fd407833889b0c0790f3f55dad4168e8d03bf50686*/
+struct RequestQueueConfig;
+
+struct RequestQueueConfig {
+    size_t max_size;
+    uint32_t default_ttl_ms;
+    OverflowStrategy overflow_strategy;
+    bool enabled;
+
+    RequestQueueConfig();
+    static RequestQueueConfig defaults();
+    static RequestQueueConfig small();
+    static RequestQueueConfig large();
+    static RequestQueueConfig disabled();
 };
+
+
+RequestQueueConfig::RequestQueueConfig()
+    : max_size(static_cast<size_t>(1000))
+    , default_ttl_ms(static_cast<uint32_t>(30000))
+    , overflow_strategy(OverflowStrategy::DROP_OLDEST)
+    , enabled(true)
+{}
+
+RequestQueueConfig RequestQueueConfig::defaults() {
+    return RequestQueueConfig{};
+}
+
+RequestQueueConfig RequestQueueConfig::small() {
+    RequestQueueConfig config = RequestQueueConfig{};
+    config.max_size = static_cast<size_t>(10);
+    config.default_ttl_ms = static_cast<uint32_t>(5000);
+    return std::move(config);
+}
+
+RequestQueueConfig RequestQueueConfig::large() {
+    RequestQueueConfig config = RequestQueueConfig{};
+    config.max_size = static_cast<size_t>(10000);
+    config.default_ttl_ms = static_cast<uint32_t>(60000);
+    return std::move(config);
+}
+
+RequestQueueConfig RequestQueueConfig::disabled() {
+    RequestQueueConfig config = RequestQueueConfig{};
+    config.enabled = false;
+    config.max_size = static_cast<size_t>(0);
+    return std::move(config);
+}
+/*RUSTYCPP:GEN-END id=request_queue.1*/
 
 /**
  * Thread-safe queue for pending RPC requests.
