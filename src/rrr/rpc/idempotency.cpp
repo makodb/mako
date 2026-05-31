@@ -26,21 +26,21 @@ export namespace rrr {
 // ===========================================================================
 
 /**
- * @safe - POD struct for idempotency keys
+ * @safe - Aggregate POD for idempotency keys.
  *
- * Uniquely identifies a request for duplicate detection.
- * Combines client ID with sequence number for global uniqueness.
+ * Uniquely identifies a request for duplicate detection. Combines
+ * client ID with sequence number for global uniqueness.
+ *
+ * The previous user-declared default + 2-arg ctors were dropped so the
+ * struct is a pure aggregate. Call sites continue to compile via C++20
+ * aggregate paren-init (`IdempotencyKey(cid, seq)`), brace-init
+ * (`IdempotencyKey{cid, seq}`), and designated-init
+ * (`IdempotencyKey{.client_id = cid, .sequence = seq}`); the last form
+ * is what `IdempotencyKeyGenerator::next()` (DSL-emitted) uses.
  */
 struct IdempotencyKey {
     uint64_t client_id = 0;   // Client identifier
     uint64_t sequence = 0;    // Monotonically increasing sequence number
-
-    // @safe - Default constructor
-    IdempotencyKey() = default;
-
-    // @safe - Explicit constructor
-    IdempotencyKey(uint64_t cid, uint64_t seq)
-        : client_id(cid), sequence(seq) {}
 
     // @safe - Equality comparison
     bool operator==(const IdempotencyKey& other) const {
@@ -198,40 +198,100 @@ struct CachedResponse {
  * Thread-safe generator for unique idempotency keys.
  *
  * Each client should have its own generator with a unique client_id.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block. The constructor uses the
+ * `#[cpp_ctor]` attribute so the existing
+ * `IdempotencyKeyGenerator gen(client_id);` call sites in tests keep
+ * compiling.
+ *
+ * Behavioral diffs from the original C++ class:
+ *   * `next()` and `set_client_id()` become `const`. Both only mutate
+ *     `Cell<u64>` fields, which is allowed on a const method. Callers
+ *     holding a non-const ref keep working.
+ *   * Fields are no longer marked `private` — the DSL emits all fields
+ *     as public. No callers reach into them. The trailing `_` on each
+ *     field is replaced with `_field` because the transpiler considers
+ *     `client_id_` to collide with the `client_id()` accessor; the
+ *     rename moves the field out of the way and keeps the public
+ *     method name unchanged. `sequence_` doesn't collide with any
+ *     method, but it's renamed for consistency.
  */
 // @safe - Uses rusty::Cell for thread-safe interior mutability;
 // no raw pointers, syscalls, or operator-overload chains.
-class IdempotencyKeyGenerator {
-    rusty::Cell<uint64_t> client_id_{0};
-    rusty::Cell<uint64_t> sequence_{0};
+#if RUSTYCPP_RUST
+struct IdempotencyKeyGenerator {
+    client_id_field: rusty::Cell<u64>,
+    sequence_field: rusty::Cell<u64>,
+}
 
-public:
-    // @safe - Constructor with client ID
-    explicit IdempotencyKeyGenerator(uint64_t client_id)
-        : client_id_(client_id) {}
-
-    // @safe - Generate the next unique key
-    IdempotencyKey next() {
-        uint64_t seq = sequence_.get();
-        sequence_.set(seq + 1);
-        return IdempotencyKey{client_id_.get(), seq};
+impl IdempotencyKeyGenerator {
+    #[cpp_ctor]
+    fn new(client_id: u64) -> IdempotencyKeyGenerator {
+        IdempotencyKeyGenerator {
+            client_id_field: rusty::Cell::<u64>::new(client_id),
+            sequence_field: rusty::Cell::<u64>::new(0u64),
+        }
     }
 
-    // @safe - Get current client ID
-    uint64_t client_id() const {
-        return client_id_.get();
+    fn next(&self) -> IdempotencyKey {
+        let seq: u64 = self.sequence_field.get();
+        self.sequence_field.set(seq + 1u64);
+        IdempotencyKey { client_id: self.client_id_field.get(), sequence: seq }
     }
 
-    // @safe - Set client ID (usually done once at initialization)
-    void set_client_id(uint64_t id) {
-        client_id_.set(id);
+    fn client_id(&self) -> u64 {
+        self.client_id_field.get()
     }
 
-    // @safe - Get current sequence (for debugging)
-    uint64_t current_sequence() const {
-        return sequence_.get();
+    fn set_client_id(&self, id: u64) {
+        self.client_id_field.set(id);
     }
+
+    fn current_sequence(&self) -> u64 {
+        self.sequence_field.get()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=0d38466bef7db26cf4542c69398da3b3e753d1a433c36076095b710204e04823*/
+struct IdempotencyKeyGenerator;
+
+struct IdempotencyKeyGenerator {
+    rusty::Cell<uint64_t> client_id_field;
+    rusty::Cell<uint64_t> sequence_field;
+
+    IdempotencyKeyGenerator(uint64_t client_id);
+    IdempotencyKey next() const;
+    uint64_t client_id() const;
+    void set_client_id(uint64_t id) const;
+    uint64_t current_sequence() const;
 };
+
+
+IdempotencyKeyGenerator::IdempotencyKeyGenerator(uint64_t client_id)
+    : client_id_field(rusty::Cell<uint64_t>::new_(std::move(client_id)))
+    , sequence_field(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+{}
+
+IdempotencyKey IdempotencyKeyGenerator::next() const {
+    uint64_t seq = this->sequence_field.get();
+    this->sequence_field.set(rusty::detail::deref_if_pointer_like(seq) + static_cast<uint64_t>(1));
+    return IdempotencyKey{.client_id = this->client_id_field.get(), .sequence = std::move(seq)};
+}
+
+uint64_t IdempotencyKeyGenerator::client_id() const {
+    return this->client_id_field.get();
+}
+
+void IdempotencyKeyGenerator::set_client_id(uint64_t id) const {
+    this->client_id_field.set(std::move(id));
+}
+
+uint64_t IdempotencyKeyGenerator::current_sequence() const {
+    return this->sequence_field.get();
+}
+/*RUSTYCPP:GEN-END id=idempotency.1*/
 
 // ===========================================================================
 // IdempotencyCache
