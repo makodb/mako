@@ -107,7 +107,7 @@ TEST_F(LoadBalancerStateTest, ResetResetsIndex) {
 
 // Mock client for testing load balancer selection
 class MockClientForLB {
-    ConnectionMetrics metrics_;
+    ConnectionMetrics metrics_{ConnectionMetrics::new_()};
 
 public:
     MockClientForLB() = default;

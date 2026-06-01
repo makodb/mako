@@ -796,7 +796,7 @@ private:
     rusty::Cell<uint64_t> last_activity_time_{0};
 
     // Connection health metrics
-    ConnectionMetrics metrics_;
+    ConnectionMetrics metrics_{ConnectionMetrics::new_()};
 
     // Weak pointer to self, initialized after creation
     // Used to pass weak reference for poll thread registration
@@ -2073,9 +2073,9 @@ impl Client {
             pending_heartbeat_config_field: rusty::Cell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
             pending_circuit_breaker_config_field: rusty::Cell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
             pending_reconnect_policy_field: rusty::Cell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
-            callback_manager_field: rusty::Arc::<CallbackManager>::make(),
+            callback_manager_field: rusty::Arc::<CallbackManager>::new(CallbackManager::new_()),
             pending_factory_field: SpinMutex::<rusty::Option<ChannelFactoryProxy>>::new(rusty::Option::<ChannelFactoryProxy>(rusty::None)),
-            empty_metrics_field: ConnectionMetrics {},
+            empty_metrics_field: ConnectionMetrics::new_(),
         }
     }
 
@@ -2430,7 +2430,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=1a80ad2856604138af925fa58a3890df99abc46f7c5a2f4b0bb3fb5ab998a6f6*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=a8bd21dbc8bfc30c42418c4fc802313dacd0a1de9f717e64f670225f18800088*/
 struct Client;
 
 struct Client {
@@ -2543,7 +2543,7 @@ Client::Client(rusty::Arc<PollThread> poll_thread_worker)
     , pending_reconnect_policy_field(rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::conservative()))
     , callback_manager_field(rusty::Arc<CallbackManager>::new_(CallbackManager::new_()))
     , pending_factory_field(SpinMutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)))
-    , empty_metrics_field(ConnectionMetrics{})
+    , empty_metrics_field(ConnectionMetrics::new_())
 {}
 
 rusty::Arc<Client> Client::create(rusty::Arc<PollThread> poll_thread_worker) {
@@ -3529,7 +3529,7 @@ public:
     // @safe - Returns const reference (static empty for no-connection case)
     // @lifetime: (&'a) -> &'a
     const ConnectionMetrics& metrics() const {
-        static const ConnectionMetrics empty_metrics;
+        static const ConnectionMetrics empty_metrics{ConnectionMetrics::new_()};
         // @unsafe
         {
         auto guard = connection_.borrow();
