@@ -2541,7 +2541,7 @@ Client::Client(rusty::Arc<PollThread> poll_thread_worker)
     , pending_heartbeat_config_field(rusty::Cell<HeartbeatConfig>::new_(HeartbeatConfig::disabled()))
     , pending_circuit_breaker_config_field(rusty::Cell<CircuitBreakerConfig>::new_(CircuitBreakerConfig::disabled()))
     , pending_reconnect_policy_field(rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::conservative()))
-    , callback_manager_field(rusty::Arc<CallbackManager>::make())
+    , callback_manager_field(rusty::Arc<CallbackManager>::new_(CallbackManager::new_()))
     , pending_factory_field(SpinMutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)))
     , empty_metrics_field(ConnectionMetrics{})
 {}
@@ -2948,7 +2948,7 @@ class Client {
     // Pending reconnect config (applied when connection is created)
     rusty::Cell<ReconnectPolicy> pending_reconnect_policy_{ReconnectPolicy::conservative()};
     // Shared lifecycle callback manager, wired into active ClientConnection.
-    rusty::Arc<CallbackManager> callback_manager_{rusty::Arc<CallbackManager>::make()};
+    rusty::Arc<CallbackManager> callback_manager_{rusty::Arc<CallbackManager>::new_(CallbackManager::new_())};
 
     // pending channel factory.
     //
@@ -3821,7 +3821,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
       state_machine_(),
       heartbeat_manager_(HeartbeatConfig::disabled()),
       circuit_breaker_(CircuitBreakerConfig::disabled()),
-      callback_manager_(rusty::Arc<CallbackManager>::make()),
+      callback_manager_(rusty::Arc<CallbackManager>::new_(CallbackManager::new_())),
       pending_queue_(buffering_config_.to_queue_config()) {
   // Pre-fill the async-callback slot array with `None`s so
   // `pending_cb_slots_[xid % N]` is always a valid in-bounds slot.

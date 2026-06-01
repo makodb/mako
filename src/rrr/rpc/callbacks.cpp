@@ -63,7 +63,6 @@ struct ConnectionCallbacks {
 }
 
 impl ConnectionCallbacks {
-    #[cpp_ctor]
     fn new() -> ConnectionCallbacks {
         ConnectionCallbacks {
             on_connected: Vec::<ConnectionCallback>::new_(),
@@ -94,7 +93,6 @@ struct CallbackManager {
 }
 
 impl CallbackManager {
-    #[cpp_ctor]
     fn new() -> CallbackManager {
         CallbackManager {
             callbacks_field: SpinMutex::<ConnectionCallbacks>::new(ConnectionCallbacks {}),
@@ -244,7 +242,7 @@ impl CallbackManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=422918097a601df67411b6101c8de3f04e76efe342680300c51dd9284f344864*/
+/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=e1aad4fe31e899b44fe28b437f1bff6ad3a0d43151310d45050a8f6683ba42c0*/
 struct ConnectionCallbacks;
 struct CallbackManager;
 
@@ -255,7 +253,7 @@ struct ConnectionCallbacks {
     rusty::Vec<ConnectionCallback> on_reconnecting;
     rusty::Vec<ReconnectCallback> on_reconnected;
 
-    ConnectionCallbacks();
+    static ConnectionCallbacks new_();
     size_t total_count() const;
     void clear();
 };
@@ -263,7 +261,7 @@ struct ConnectionCallbacks {
 struct CallbackManager {
     SpinMutex<ConnectionCallbacks> callbacks_field;
 
-    CallbackManager();
+    static CallbackManager new_();
     void add_on_connected(OnConnectedFn cb) const;
     void add_on_disconnected(OnConnectedFn cb) const;
     void add_on_error(OnErrorFn cb) const;
@@ -285,13 +283,9 @@ struct CallbackManager {
 };
 
 
-ConnectionCallbacks::ConnectionCallbacks()
-    : on_connected(rusty::Vec<ConnectionCallback>::new_())
-    , on_disconnected(rusty::Vec<ConnectionCallback>::new_())
-    , on_error(rusty::Vec<ErrorCallback>::new_())
-    , on_reconnecting(rusty::Vec<ConnectionCallback>::new_())
-    , on_reconnected(rusty::Vec<ReconnectCallback>::new_())
-{}
+ConnectionCallbacks ConnectionCallbacks::new_() {
+    return ConnectionCallbacks{.on_connected = rusty::Vec<ConnectionCallback>::new_(), .on_disconnected = rusty::Vec<ConnectionCallback>::new_(), .on_error = rusty::Vec<ErrorCallback>::new_(), .on_reconnecting = rusty::Vec<ConnectionCallback>::new_(), .on_reconnected = rusty::Vec<ReconnectCallback>::new_()};
+}
 
 size_t ConnectionCallbacks::total_count() const {
     return (((this->on_connected.size() + this->on_disconnected.size()) + this->on_error.size()) + this->on_reconnecting.size()) + this->on_reconnected.size();
@@ -305,9 +299,9 @@ void ConnectionCallbacks::clear() {
     this->on_reconnected.clear();
 }
 
-CallbackManager::CallbackManager()
-    : callbacks_field(SpinMutex<ConnectionCallbacks>::new_(ConnectionCallbacks{}))
-{}
+CallbackManager CallbackManager::new_() {
+    return CallbackManager{.callbacks_field = SpinMutex<ConnectionCallbacks>::new_(ConnectionCallbacks{})};
+}
 
 void CallbackManager::add_on_connected(OnConnectedFn cb) const {
     ConnectionCallback arc_cb = ConnectionCallback::make(std::move(cb));
