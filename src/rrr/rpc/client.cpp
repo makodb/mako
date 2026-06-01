@@ -756,7 +756,7 @@ private:
         pending_cb_slots_;
 
     // Connection state machine for lifecycle management
-    ConnectionStateMachine state_machine_;
+    ConnectionStateMachine state_machine_{ConnectionStateMachine::new_()};
 
     // Reconnection policy and state
     mutable ReconnectPolicy reconnect_policy_;  // mutable for const set_reconnect_policy()
@@ -3818,7 +3818,7 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 // State machine defaults to NEW state
 ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
-      state_machine_(),
+      state_machine_(ConnectionStateMachine::new_()),
       heartbeat_manager_(HeartbeatConfig::disabled()),
       circuit_breaker_(CircuitBreakerConfig::disabled()),
       callback_manager_(rusty::Arc<CallbackManager>::new_(CallbackManager::new_())),
