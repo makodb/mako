@@ -3820,7 +3820,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
       state_machine_(ConnectionStateMachine::new_()),
       heartbeat_manager_(HeartbeatManager::new_(HeartbeatConfig::disabled())),
-      circuit_breaker_(CircuitBreakerConfig::disabled()),
+      circuit_breaker_(CircuitBreaker::new_(CircuitBreakerConfig::disabled())),
       callback_manager_(rusty::Arc<CallbackManager>::new_(CallbackManager::new_())),
       pending_queue_(buffering_config_.to_queue_config()) {
   // Pre-fill the async-callback slot array with `None`s so

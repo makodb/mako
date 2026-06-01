@@ -101,7 +101,7 @@ protected:
 };
 
 TEST_F(CircuitBreakerIntegrationTest, InitialStateClosed) {
-    CircuitBreaker cb(CircuitBreakerConfig{});
+    auto cb = CircuitBreaker::new_(CircuitBreakerConfig{});
     EXPECT_EQ(cb.state(), CircuitState::CLOSED);
     EXPECT_TRUE(cb.is_closed());
     EXPECT_TRUE(cb.allow_request());
@@ -110,7 +110,7 @@ TEST_F(CircuitBreakerIntegrationTest, InitialStateClosed) {
 TEST_F(CircuitBreakerIntegrationTest, CircuitOpensAfterFailures) {
     CircuitBreakerConfig config;
     config.failure_threshold = 3;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Record failures up to threshold
     cb.record_failure();
@@ -128,7 +128,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
     CircuitBreakerConfig config;
     config.failure_threshold = 3;
     config.timeout_ms = 100;  // Short timeout for testing
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Start server first
     auto server = start_server();
@@ -183,7 +183,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitHalfOpenAfterTimeout) {
     CircuitBreakerConfig config;
     config.failure_threshold = 2;
     config.timeout_ms = 50;  // Short timeout
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -203,7 +203,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitClosesOnProbeSuccess) {
     config.failure_threshold = 2;
     config.success_threshold = 2;
     config.timeout_ms = 20;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -227,7 +227,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitReopensOnProbeFailure) {
     CircuitBreakerConfig config;
     config.failure_threshold = 2;
     config.timeout_ms = 20;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -245,7 +245,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitReopensOnProbeFailure) {
 
 TEST_F(CircuitBreakerIntegrationTest, DisabledCircuitAlwaysAllows) {
     auto config = CircuitBreakerConfig::disabled();
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Record many failures
     for (int i = 0; i < 100; i++) {
@@ -260,7 +260,7 @@ TEST_F(CircuitBreakerIntegrationTest, DisabledCircuitAlwaysAllows) {
 TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerReset) {
     CircuitBreakerConfig config;
     config.failure_threshold = 2;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -282,7 +282,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerProtectsRpcCalls) {
     CircuitBreakerConfig config;
     config.failure_threshold = 3;
     config.timeout_ms = 100;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Start server
     auto server = start_server();
@@ -323,7 +323,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerProtectsRpcCalls) {
 TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerFailFast) {
     CircuitBreakerConfig config;
     config.failure_threshold = 2;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit immediately
     cb.record_failure();

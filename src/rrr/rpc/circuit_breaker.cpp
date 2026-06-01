@@ -73,11 +73,10 @@ struct CircuitBreakerConfig {
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The constructor uses the
-// `#[cpp_ctor]` attribute (added in `shuaimu/rusty-cpp@9703c1d`) so
-// every existing call site (`CircuitBreaker cb(config);` in tests,
-// `circuit_breaker_(CircuitBreakerConfig::disabled())` in the
-// ClientConnection ctor init-list) keeps compiling unchanged.
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The plain `fn new(config)`
+// lowers to a `static CircuitBreaker new_(CircuitBreakerConfig)`
+// factory; callers construct via the factory rather than direct ctor
+// syntax.
 //
 // Behavioral diffs from the original C++ class:
 //   * Methods that previously were non-const but only touched Cell
@@ -104,7 +103,6 @@ struct CircuitBreaker {
 }
 
 impl CircuitBreaker {
-    #[cpp_ctor]
     fn new(config: CircuitBreakerConfig) -> CircuitBreaker {
         CircuitBreaker {
             config_field: config,
@@ -254,7 +252,7 @@ impl CircuitBreaker {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=e599750f3851a9ef91945fd07bf8d3252fe65472b79d48b074a51274afbf94f4*/
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=616e4b87af88e62ec51440003d4424fc2a70bbb00287836d75692da8cb7e222a*/
 struct CircuitBreaker;
 
 struct CircuitBreaker {
@@ -265,7 +263,7 @@ struct CircuitBreaker {
     rusty::Cell<uint64_t> last_failure_time;
     rusty::Cell<bool> probe_in_progress;
 
-    CircuitBreaker(CircuitBreakerConfig config);
+    static CircuitBreaker new_(CircuitBreakerConfig config);
     void set_config(CircuitBreakerConfig config);
     bool allow_request() const;
     void record_success() const;
@@ -281,14 +279,9 @@ struct CircuitBreaker {
 };
 
 
-CircuitBreaker::CircuitBreaker(CircuitBreakerConfig config)
-    : config_field(config)
-    , state_field(rusty::Cell<CircuitState>::new_(rusty::clone(rusty::clone(CircuitState::CLOSED))))
-    , failure_count_field(rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)))
-    , success_count_field(rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)))
-    , last_failure_time(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , probe_in_progress(rusty::Cell<bool>::new_(false))
-{}
+CircuitBreaker CircuitBreaker::new_(CircuitBreakerConfig config) {
+    return CircuitBreaker{.config_field = std::move(config), .state_field = rusty::Cell<CircuitState>::new_(rusty::clone(rusty::clone(CircuitState::CLOSED))), .failure_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .success_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .last_failure_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .probe_in_progress = rusty::Cell<bool>::new_(false)};
+}
 
 void CircuitBreaker::set_config(CircuitBreakerConfig config) {
     this->config_field = std::move(config);

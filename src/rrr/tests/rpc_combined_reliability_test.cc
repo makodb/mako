@@ -101,7 +101,7 @@ protected:
 TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 3;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Start server
     auto server = start_server();
@@ -144,7 +144,7 @@ TEST_F(CombinedReliabilityTest, CircuitBreakerWithConnectionState) {
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 2;
     cb_config.timeout_ms = 100;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // First, try connecting to non-existent server
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -272,7 +272,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
     // Configure all reliability components
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 3;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     HeartbeatConfig hb_config;
     hb_config.interval_ms = 100;
@@ -330,7 +330,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 2;
     cb_config.timeout_ms = 100;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Start with no server
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -398,7 +398,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 TEST_F(CombinedReliabilityTest, ErrorCategoriesWithCircuitBreaker) {
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 3;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Simulate different error types and their effect on circuit
     // Note: Only CONNECTION (100-199) and TIMEOUT (400-499) errors trigger record_failure
@@ -466,7 +466,7 @@ TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 5;
     cb_config.timeout_ms = 50;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     auto server = start_server();
     ASSERT_NE(server, nullptr);

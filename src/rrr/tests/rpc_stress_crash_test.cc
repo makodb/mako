@@ -654,7 +654,7 @@ TEST_F(StressCrashTest, CircuitBreakerHighLoadRecovery) {
     cb_config.failure_threshold = 5;
     cb_config.success_threshold = 3;
     cb_config.timeout_ms = 100;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Start with no server - should trip circuit
     auto client = create_stress_client();

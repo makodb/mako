@@ -346,7 +346,7 @@ TEST_F(PartitionTest, LongPartitionWithCircuitBreaker) {
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 3;
     cb_config.timeout_ms = 200;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
