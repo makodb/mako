@@ -279,65 +279,120 @@ KeepaliveConfig KeepaliveConfig::disabled() {
  *
  * Controls connection limits, health checking, and idle timeout behavior.
  */
-// @safe - POD config struct for pool settings
+// @safe - POD config struct for pool settings.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static PoolConfig new_()` factory (returning the balanced
+// preset). Callers use `PoolConfig::defaults()`,
+// `PoolConfig::aggressive()`, `PoolConfig::conservative()`,
+// `PoolConfig::no_health_check()`, or brace-init.
+#if RUSTYCPP_RUST
 struct PoolConfig {
-    int min_connections = 1;             // Minimum connections per address
-    int max_connections = 4;             // Maximum connections per address
-    uint64_t idle_timeout_ms = 300000;   // 5 minutes default (0 = no timeout)
-    bool health_check_enabled = true;    // Enable health-based removal
-    uint64_t unhealthy_threshold_percent = 50;  // Remove if success rate < this %
-    uint64_t min_requests_for_health = 10;      // Min requests before health check
-    LoadBalancingStrategy load_balancing = LoadBalancingStrategy::RANDOM;  // Selection strategy
+    min_connections: i32,
+    max_connections: i32,
+    idle_timeout_ms: u64,
+    health_check_enabled: bool,
+    unhealthy_threshold_percent: u64,
+    min_requests_for_health: u64,
+    load_balancing: LoadBalancingStrategy,
+}
 
-    // @safe - Default constructor
-    PoolConfig() = default;
-
-    // @safe - Copy constructor
-    PoolConfig(const PoolConfig&) = default;
-
-    // @safe - Copy assignment
-    PoolConfig& operator=(const PoolConfig&) = default;
-
-    // Default preset: balanced settings
-    // @safe - POD struct copy is memory-safe
-    static PoolConfig defaults() {
-        return PoolConfig();
+impl PoolConfig {
+    fn new_() -> PoolConfig {
+        PoolConfig {
+            min_connections: 1i32,
+            max_connections: 4i32,
+            idle_timeout_ms: 300000u64,
+            health_check_enabled: true,
+            unhealthy_threshold_percent: 50u64,
+            min_requests_for_health: 10u64,
+            load_balancing: LoadBalancingStrategy::RANDOM,
+        }
     }
 
-    // Aggressive preset: more connections, shorter timeout, stricter health
-    // @safe - POD struct copy is memory-safe
-    static PoolConfig aggressive() {
-        PoolConfig config;
-        config.min_connections = 2;
-        config.max_connections = 8;
-        config.idle_timeout_ms = 60000;  // 1 minute
-        config.health_check_enabled = true;
-        config.unhealthy_threshold_percent = 70;  // Stricter
-        config.min_requests_for_health = 5;
-        return config;
+    fn defaults() -> PoolConfig {
+        PoolConfig::new_()
     }
 
-    // Conservative preset: fewer connections, longer timeout, lenient health
-    // @safe - POD struct copy is memory-safe
-    static PoolConfig conservative() {
-        PoolConfig config;
-        config.min_connections = 1;
-        config.max_connections = 2;
-        config.idle_timeout_ms = 600000;  // 10 minutes
-        config.health_check_enabled = true;
-        config.unhealthy_threshold_percent = 30;  // More lenient
-        config.min_requests_for_health = 20;
-        return config;
+    fn aggressive() -> PoolConfig {
+        PoolConfig {
+            min_connections: 2i32,
+            max_connections: 8i32,
+            idle_timeout_ms: 60000u64,
+            health_check_enabled: true,
+            unhealthy_threshold_percent: 70u64,
+            min_requests_for_health: 5u64,
+            load_balancing: LoadBalancingStrategy::RANDOM,
+        }
     }
 
-    // Disabled health checking preset
-    // @safe - POD struct copy is memory-safe
-    static PoolConfig no_health_check() {
-        PoolConfig config;
-        config.health_check_enabled = false;
-        return config;
+    fn conservative() -> PoolConfig {
+        PoolConfig {
+            min_connections: 1i32,
+            max_connections: 2i32,
+            idle_timeout_ms: 600000u64,
+            health_check_enabled: true,
+            unhealthy_threshold_percent: 30u64,
+            min_requests_for_health: 20u64,
+            load_balancing: LoadBalancingStrategy::RANDOM,
+        }
     }
+
+    fn no_health_check() -> PoolConfig {
+        PoolConfig {
+            min_connections: 1i32,
+            max_connections: 4i32,
+            idle_timeout_ms: 300000u64,
+            health_check_enabled: false,
+            unhealthy_threshold_percent: 50u64,
+            min_requests_for_health: 10u64,
+            load_balancing: LoadBalancingStrategy::RANDOM,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.0b version=1 rust_sha256=2235b463a7ffb472b44832341c24fc6ff07246e4617cd78b85c72cf5245c7c2c*/
+struct PoolConfig;
+
+struct PoolConfig {
+    int32_t min_connections;
+    int32_t max_connections;
+    uint64_t idle_timeout_ms;
+    bool health_check_enabled;
+    uint64_t unhealthy_threshold_percent;
+    uint64_t min_requests_for_health;
+    LoadBalancingStrategy load_balancing;
+
+    static PoolConfig new_();
+    static PoolConfig defaults();
+    static PoolConfig aggressive();
+    static PoolConfig conservative();
+    static PoolConfig no_health_check();
 };
+
+
+PoolConfig PoolConfig::new_() {
+    return PoolConfig{.min_connections = static_cast<int32_t>(1), .max_connections = static_cast<int32_t>(4), .idle_timeout_ms = static_cast<uint64_t>(300000), .health_check_enabled = true, .unhealthy_threshold_percent = static_cast<uint64_t>(50), .min_requests_for_health = static_cast<uint64_t>(10), .load_balancing = rusty::clone(rusty::clone(LoadBalancingStrategy::RANDOM))};
+}
+
+PoolConfig PoolConfig::defaults() {
+    return PoolConfig::new_();
+}
+
+PoolConfig PoolConfig::aggressive() {
+    return PoolConfig{.min_connections = static_cast<int32_t>(2), .max_connections = static_cast<int32_t>(8), .idle_timeout_ms = static_cast<uint64_t>(60000), .health_check_enabled = true, .unhealthy_threshold_percent = static_cast<uint64_t>(70), .min_requests_for_health = static_cast<uint64_t>(5), .load_balancing = rusty::clone(rusty::clone(LoadBalancingStrategy::RANDOM))};
+}
+
+PoolConfig PoolConfig::conservative() {
+    return PoolConfig{.min_connections = static_cast<int32_t>(1), .max_connections = static_cast<int32_t>(2), .idle_timeout_ms = static_cast<uint64_t>(600000), .health_check_enabled = true, .unhealthy_threshold_percent = static_cast<uint64_t>(30), .min_requests_for_health = static_cast<uint64_t>(20), .load_balancing = rusty::clone(rusty::clone(LoadBalancingStrategy::RANDOM))};
+}
+
+PoolConfig PoolConfig::no_health_check() {
+    return PoolConfig{.min_connections = static_cast<int32_t>(1), .max_connections = static_cast<int32_t>(4), .idle_timeout_ms = static_cast<uint64_t>(300000), .health_check_enabled = false, .unhealthy_threshold_percent = static_cast<uint64_t>(50), .min_requests_for_health = static_cast<uint64_t>(10), .load_balancing = rusty::clone(rusty::clone(LoadBalancingStrategy::RANDOM))};
+}
+/*RUSTYCPP:GEN-END id=client.0b*/
 
 class Future;
 // @unsafe - Forward declarations

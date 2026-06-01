@@ -433,7 +433,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigDefaultsToRandom) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToRoundRobin) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::ROUND_ROBIN;
     config.min_connections = 2;
 
@@ -452,7 +452,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToRoundRobin) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::LEAST_CONNECTIONS;
     config.min_connections = 2;
 
@@ -478,7 +478,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFlightLoad) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::LEAST_CONNECTIONS;
     config.min_connections = 2;
     config.max_connections = 2;
@@ -519,7 +519,7 @@ TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFligh
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::LEAST_LATENCY;
     config.min_connections = 2;
 
@@ -545,13 +545,13 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeChanged) {
-    PoolConfig config1;
+    auto config1 = PoolConfig::defaults();
     config1.load_balancing = LoadBalancingStrategy::RANDOM;
 
     ClientPool pool(poll_thread_.clone(), config1);
 
     // Change to round-robin
-    PoolConfig config2;
+    auto config2 = PoolConfig::defaults();
     config2.load_balancing = LoadBalancingStrategy::ROUND_ROBIN;
     pool.set_pool_config(config2);
 
