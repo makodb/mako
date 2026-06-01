@@ -50,13 +50,13 @@ inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strat
 //     DSL-migrated classes in this branch).
 #if RUSTYCPP_RUST
 struct LoadBalancerState {
-    round_robin_index_field: rusty::Cell<usize>,
+    round_robin_index_field: Cell<usize>,
 }
 
 impl LoadBalancerState {
     fn new() -> LoadBalancerState {
         LoadBalancerState {
-            round_robin_index_field: rusty::Cell::<usize>::new(0usize),
+            round_robin_index_field: Cell::<usize>::new(0usize),
         }
     }
 
@@ -75,7 +75,7 @@ impl LoadBalancerState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=load_balancer.1 version=1 rust_sha256=2e406c70882c5dca752ce4fb8f8fd267528af352aceb6f0806faa849a029c749*/
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.1 version=1 rust_sha256=9a65aa8a0df8c08d110e5f08193b07481fb250775b17a92d1a966f06e05fe705*/
 struct LoadBalancerState;
 
 struct LoadBalancerState {
