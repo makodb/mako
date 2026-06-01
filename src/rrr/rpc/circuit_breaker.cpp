@@ -95,22 +95,22 @@ struct CircuitBreakerConfig {
 #if RUSTYCPP_RUST
 struct CircuitBreaker {
     config_field: CircuitBreakerConfig,
-    state_field: rusty::Cell<CircuitState>,
-    failure_count_field: rusty::Cell<u32>,
-    success_count_field: rusty::Cell<u32>,
-    last_failure_time: rusty::Cell<u64>,
-    probe_in_progress: rusty::Cell<bool>,
+    state_field: Cell<CircuitState>,
+    failure_count_field: Cell<u32>,
+    success_count_field: Cell<u32>,
+    last_failure_time: Cell<u64>,
+    probe_in_progress: Cell<bool>,
 }
 
 impl CircuitBreaker {
     fn new(config: CircuitBreakerConfig) -> CircuitBreaker {
         CircuitBreaker {
             config_field: config,
-            state_field: rusty::Cell::<CircuitState>::new(CircuitState::CLOSED),
-            failure_count_field: rusty::Cell::<u32>::new(0u32),
-            success_count_field: rusty::Cell::<u32>::new(0u32),
-            last_failure_time: rusty::Cell::<u64>::new(0u64),
-            probe_in_progress: rusty::Cell::<bool>::new(false),
+            state_field: Cell::<CircuitState>::new(CircuitState::CLOSED),
+            failure_count_field: Cell::<u32>::new(0u32),
+            success_count_field: Cell::<u32>::new(0u32),
+            last_failure_time: Cell::<u64>::new(0u64),
+            probe_in_progress: Cell::<bool>::new(false),
         }
     }
 
@@ -252,7 +252,7 @@ impl CircuitBreaker {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=616e4b87af88e62ec51440003d4424fc2a70bbb00287836d75692da8cb7e222a*/
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=2f76b672f0943f02de9adac50e7c51879a0dafdb52871f6a484f06465fb9daaa*/
 struct CircuitBreaker;
 
 struct CircuitBreaker {
