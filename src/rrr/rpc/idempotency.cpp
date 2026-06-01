@@ -222,15 +222,15 @@ struct CachedResponse {
 // no raw pointers, syscalls, or operator-overload chains.
 #if RUSTYCPP_RUST
 struct IdempotencyKeyGenerator {
-    client_id_field: rusty::Cell<u64>,
-    sequence_field: rusty::Cell<u64>,
+    client_id_field: Cell<u64>,
+    sequence_field: Cell<u64>,
 }
 
 impl IdempotencyKeyGenerator {
     fn new(client_id: u64) -> IdempotencyKeyGenerator {
         IdempotencyKeyGenerator {
-            client_id_field: rusty::Cell::<u64>::new(client_id),
-            sequence_field: rusty::Cell::<u64>::new(0u64),
+            client_id_field: Cell::<u64>::new(client_id),
+            sequence_field: Cell::<u64>::new(0u64),
         }
     }
 
@@ -253,7 +253,7 @@ impl IdempotencyKeyGenerator {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=18d2198bb270c49e8362f7e7b02dbe06fe29df9d467ca7a118647580679e44b5*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=ebc8b3697c9536bec8cbbece4b4020d05d010907b3d0ef3b1b47163b43e00a32*/
 struct IdempotencyKeyGenerator;
 
 struct IdempotencyKeyGenerator {
