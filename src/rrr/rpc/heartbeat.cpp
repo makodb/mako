@@ -99,7 +99,7 @@ struct HeartbeatManager {
 impl HeartbeatManager {
     fn new(config: &HeartbeatConfig) -> HeartbeatManager {
         HeartbeatManager {
-            config_field: rusty::clone(config),
+            config_field: config.clone(),
             last_send_time: Cell::<u64>::new(0u64),
             last_recv_time: Cell::<u64>::new(0u64),
             missed_count_field: Cell::<u32>::new(0u32),
@@ -110,7 +110,7 @@ impl HeartbeatManager {
     }
 
     fn set_config(&mut self, config: &HeartbeatConfig) {
-        self.config_field = rusty::clone(config);
+        self.config_field = config.clone();
         self.reset();
     }
 
@@ -223,7 +223,7 @@ impl HeartbeatManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=95b80ad2023d6e626fd5e98f4dba7a6e2e937a4a67ba0d1380cd1eefb64e180b*/
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=9623c51035abd26d5771427ef7af4a2e7764da6bcf25a3ee8d8ed11c79c166dd*/
 struct HeartbeatManager;
 
 struct HeartbeatManager {
