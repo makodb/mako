@@ -26,8 +26,8 @@ using namespace std::chrono;
 
 class IdempotencyKeyTest : public ::testing::Test {};
 
-TEST_F(IdempotencyKeyTest, DefaultConstructor) {
-    IdempotencyKey key;
+TEST_F(IdempotencyKeyTest, EmptyFactory) {
+    auto key = IdempotencyKey::empty();
     EXPECT_EQ(key.client_id, 0);
     EXPECT_EQ(key.sequence, 0);
     EXPECT_FALSE(key.is_valid());
@@ -94,7 +94,7 @@ TEST_F(IdempotencyKeyTest, MarshalRoundTrip) {
     m << original;
 
     // Deserialize
-    IdempotencyKey restored;
+    auto restored = IdempotencyKey::empty();
     m >> restored;
 
     EXPECT_EQ(restored, original);

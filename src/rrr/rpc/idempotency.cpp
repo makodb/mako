@@ -31,37 +31,80 @@ export namespace rrr {
  * Uniquely identifies a request for duplicate detection. Combines
  * client ID with sequence number for global uniqueness.
  *
- * The previous user-declared default + 2-arg ctors were dropped so the
- * struct is a pure aggregate. Call sites continue to compile via C++20
- * aggregate paren-init (`IdempotencyKey(cid, seq)`), brace-init
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+ * a static `IdempotencyKey::new_(client_id, sequence)` factory; the
+ * `fn empty()` lowers to a static `IdempotencyKey::empty()` factory
+ * (returning a zero-valued key).
+ *
+ * The DSL emits a pure C++20 aggregate (public fields, no user-
+ * declared ctors). Call sites continue to compile via aggregate
+ * paren-init (`IdempotencyKey(cid, seq)`), brace-init
  * (`IdempotencyKey{cid, seq}`), and designated-init
- * (`IdempotencyKey{.client_id = cid, .sequence = seq}`); the last form
- * is what `IdempotencyKeyGenerator::next()` (DSL-emitted) uses.
+ * (`IdempotencyKey{.client_id = cid, .sequence = seq}`); the last
+ * form is what `IdempotencyKeyGenerator::next()` (DSL-emitted) uses.
+ *
+ * `operator==`, `operator!=`, `IdempotencyKeyHash`, and the Marshal
+ * `operator<<` / `operator>>` overloads stay outside the DSL block
+ * (the DSL grammar does not model operator overloading).
  */
+#if RUSTYCPP_RUST
 struct IdempotencyKey {
-    uint64_t client_id = 0;   // Client identifier
-    uint64_t sequence = 0;    // Monotonically increasing sequence number
+    client_id: u64,
+    sequence: u64,
+}
 
-    // @safe - Equality comparison
-    bool operator==(const IdempotencyKey& other) const {
-        return client_id == other.client_id && sequence == other.sequence;
+impl IdempotencyKey {
+    fn new_(client_id: u64, sequence: u64) -> IdempotencyKey {
+        IdempotencyKey { client_id, sequence }
     }
 
-    // @safe - Inequality comparison
-    bool operator!=(const IdempotencyKey& other) const {
-        return !(*this == other);
+    fn empty() -> IdempotencyKey {
+        IdempotencyKey { client_id: 0u64, sequence: 0u64 }
     }
 
-    // @safe - Check if key is valid (non-zero)
-    bool is_valid() const {
-        return client_id != 0 || sequence != 0;
+    fn is_valid(&self) -> bool {
+        self.client_id != 0u64 || self.sequence != 0u64
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.0a version=1 rust_sha256=6297289150ab31d4d19429006dde701a84cc092fddff4377b4b6dfc893a63e8a*/
+struct IdempotencyKey;
 
-    // @safe - Create an empty/invalid key
-    static IdempotencyKey empty() {
-        return IdempotencyKey{0, 0};
-    }
+struct IdempotencyKey {
+    uint64_t client_id;
+    uint64_t sequence;
+
+    static IdempotencyKey new_(uint64_t client_id, uint64_t sequence);
+    static IdempotencyKey empty();
+    bool is_valid() const;
 };
+
+
+IdempotencyKey IdempotencyKey::new_(uint64_t client_id, uint64_t sequence) {
+    return IdempotencyKey{.client_id = std::move(client_id), .sequence = std::move(sequence)};
+}
+
+IdempotencyKey IdempotencyKey::empty() {
+    return IdempotencyKey{.client_id = static_cast<uint64_t>(0), .sequence = static_cast<uint64_t>(0)};
+}
+
+bool IdempotencyKey::is_valid() const {
+    return (rusty::detail::deref_if_pointer_like(this->client_id) != static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(this->sequence) != static_cast<uint64_t>(0));
+}
+/*RUSTYCPP:GEN-END id=idempotency.0a*/
+
+// @safe - Equality comparison (operator overloading lives outside the
+// DSL block; the DSL grammar does not model operator overloading).
+inline bool operator==(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
+    return lhs.client_id == rhs.client_id && lhs.sequence == rhs.sequence;
+}
+
+// @safe - Inequality comparison
+inline bool operator!=(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
+    return !(lhs == rhs);
+}
 
 // Hash function for IdempotencyKey (for use in unordered_map)
 struct IdempotencyKeyHash {
@@ -179,7 +222,10 @@ IdempotencyConfig IdempotencyConfig::disabled() {
  * Uses rusty::Vec<char> for response data since Marshal is non-copyable.
  */
 struct CachedResponse {
-    IdempotencyKey key;
+    // `IdempotencyKey` is DSL-emitted and no longer carries in-class
+    // default initializers; default it to the explicit empty key
+    // (`{0, 0}`) so `CachedResponse{}` stays zero-init like before.
+    IdempotencyKey key = IdempotencyKey::empty();
     int32_t error_code = 0;             // Response error code
     rusty::Vec<char> response_data;    // Serialized response payload
     uint64_t timestamp_ms = 0;          // When the response was cached
