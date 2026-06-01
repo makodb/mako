@@ -67,10 +67,10 @@ struct HeartbeatConfig {
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The constructor uses the
-// `#[cpp_ctor]` attribute so every existing call site
-// (`HeartbeatManager hb(cfg);` in tests, `heartbeat_manager_(...)`
-// in the ClientConnection ctor init-list) keeps compiling unchanged.
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The plain `fn new(config)`
+// lowers to a `static HeartbeatManager new_(const HeartbeatConfig&)`
+// factory; callers construct via the factory rather than direct ctor
+// syntax.
 //
 // Behavioral diffs from the original C++ class:
 //   * Methods that previously were non-const but only touched Cell
@@ -97,7 +97,6 @@ struct HeartbeatManager {
 }
 
 impl HeartbeatManager {
-    #[cpp_ctor]
     fn new(config: &HeartbeatConfig) -> HeartbeatManager {
         HeartbeatManager {
             config_field: rusty::clone(config),
@@ -224,7 +223,7 @@ impl HeartbeatManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=f80d1f6815f199a7f94d5ea9692769a8f1395acd109ae8dcf4e7c68180072d65*/
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=084940dbb8a74c2c2c9014c9c2d74284e5afd33af4426a2af1f0bdf0e8997aac*/
 struct HeartbeatManager;
 
 struct HeartbeatManager {
@@ -236,7 +235,7 @@ struct HeartbeatManager {
     rusty::Cell<bool> timed_out;
     HeartbeatTimeoutCallback on_timeout;
 
-    HeartbeatManager(const HeartbeatConfig& config);
+    static HeartbeatManager new_(const HeartbeatConfig& config);
     void set_config(const HeartbeatConfig& config);
     void set_on_timeout(HeartbeatTimeoutCallback callback);
     bool should_send_heartbeat() const;
@@ -252,15 +251,9 @@ struct HeartbeatManager {
 };
 
 
-HeartbeatManager::HeartbeatManager(const HeartbeatConfig& config)
-    : config_field(rusty::clone(std::move(config)))
-    , last_send_time(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , last_recv_time(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , missed_count_field(rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)))
-    , pending_pong(rusty::Cell<bool>::new_(false))
-    , timed_out(rusty::Cell<bool>::new_(false))
-    , on_timeout(HeartbeatTimeoutCallback{})
-{}
+HeartbeatManager HeartbeatManager::new_(const HeartbeatConfig& config) {
+    return HeartbeatManager{.config_field = rusty::clone(config), .last_send_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .last_recv_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .missed_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .pending_pong = rusty::Cell<bool>::new_(false), .timed_out = rusty::Cell<bool>::new_(false), .on_timeout = HeartbeatTimeoutCallback{}};
+}
 
 void HeartbeatManager::set_config(const HeartbeatConfig& config) {
     this->config_field = rusty::clone(config);

@@ -276,7 +276,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
 
     HeartbeatConfig hb_config;
     hb_config.interval_ms = 100;
-    HeartbeatManager hb(hb_config);
+    auto hb = HeartbeatManager::new_(hb_config);
 
     ReconnectPolicy reconnect_policy = ReconnectPolicy::aggressive();
 
@@ -431,7 +431,7 @@ TEST_F(CombinedReliabilityTest, HeartbeatWithStateTransitions) {
     config.interval_ms = 50;
     config.timeout_ms = 100;
     config.max_missed = 2;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     auto server = start_server();
     ASSERT_NE(server, nullptr);
