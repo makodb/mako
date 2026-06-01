@@ -2154,7 +2154,7 @@ impl Client {
 
         if result == 0i32 {
             let store_guard = self.connection_field.borrow_mut();
-            *store_guard = rusty::Some(conn);
+            *store_guard = Some(conn);
         }
 
         result
@@ -2216,7 +2216,7 @@ impl Client {
             return;
         }
         let guard = self.pending_factory_field.lock().unwrap();
-        *guard = rusty::Some(factory);
+        *guard = Some(factory);
     }
 
     fn has_pending_channel_factory(&self) -> bool {
@@ -2429,7 +2429,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=e7ac788134043a7a78364a12cd7d8077d0f94706b54d714d70ee3658b33b0c42*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=07001ef531b2d67121787135f168a993cb30f1e5fcd1352b57514a45e691cba5*/
 struct Client;
 
 struct Client {
