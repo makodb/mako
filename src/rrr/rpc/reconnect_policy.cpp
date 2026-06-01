@@ -89,14 +89,14 @@ struct ReconnectPolicy {
 #if RUSTYCPP_RUST
 struct ReconnectCalculator<'p> {
     policy: &'p ReconnectPolicy,
-    retries: rusty::Cell<u32>,
+    retries: Cell<u32>,
 }
 
 impl<'p> ReconnectCalculator<'p> {
     fn new(policy: &'p ReconnectPolicy) -> ReconnectCalculator<'p> {
         ReconnectCalculator {
             policy: policy,
-            retries: rusty::Cell::new(0u32),
+            retries: Cell::new(0u32),
         }
     }
 
@@ -176,7 +176,7 @@ impl<'p> ReconnectCalculator<'p> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reconnect_calculator.1 version=1 rust_sha256=6f56d28101c2b7da0547d2e175b592bf942e2eda0aa0343dabcee97c9077b7b9*/
+/*RUSTYCPP:GEN-BEGIN id=reconnect_calculator.1 version=1 rust_sha256=54c0a4cbba7cb91cdd16c0d6c5fe650673562ed05bcd904245a484a850fe649a*/
 struct ReconnectCalculator;
 
 struct ReconnectCalculator {
