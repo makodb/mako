@@ -17,6 +17,7 @@ module;
 #include <std_compat.hpp>
 #include <std_annotation.hpp>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1110,9 +1111,15 @@ private:
     rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>> join_handle_;
 
     // Thread ID of the poll thread - used to detect self-join attempts.
-    // rusty::Atomic wraps std::atomic<ThreadId> — ThreadId is TriviallyCopyable so
-    // this stays lock-free on typical platforms.
-    mutable rusty::sync::atomic::Atomic<rusty::thread::ThreadId> poll_thread_id_{};
+    // Stored as raw u64 (bit_cast of `platform::threading::thread_id`) so we
+    // can use the concrete `AtomicU64` alias — Rust std has no
+    // `AtomicThreadId`, and we don't want to re-introduce the generic
+    // `Atomic<T>`. The underlying native id is either `std::thread::id`
+    // (default backend) or `pthread_t` (POSIX backend); both are 8 bytes on
+    // the platforms we target, and the static_assert below guards the cast.
+    // Conversion helpers live alongside the two access sites
+    // (create() / shutdown()).
+    mutable rusty::sync::atomic::AtomicU64 poll_thread_id_bits_{};
 
     // Track if shutdown was called
     mutable std::atomic<bool> shutdown_called_{false};
@@ -2640,11 +2647,31 @@ void PollThreadWorker::update_mode(Pollable& poll, int new_mode) {
 PollThread::PollThread(rusty::sync::mpsc::Sender<PollCommand> sender)
     : sender_(std::move(sender)),
       join_handle_(rusty::None),
-      poll_thread_id_(),
+      poll_thread_id_bits_(0),
       shutdown_called_(false) {
 }
 
-// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_`)
+// @safe - ThreadId<->u64 bit_cast helpers. `platform::threading::thread_id`
+// is `std::thread::id` (default backend) or `pthread_t` (POSIX backend).
+// Both are 8-byte trivially copyable on the platforms we support; the
+// static_assert below makes the bit_cast safe.
+namespace {
+inline std::uint64_t thread_id_to_u64(rusty::thread::ThreadId tid) noexcept {
+    using NativeId = decltype(tid.as_native());
+    static_assert(sizeof(NativeId) == sizeof(std::uint64_t),
+                  "platform thread_id must be 8 bytes for bit_cast to u64");
+    static_assert(std::is_trivially_copyable_v<NativeId>,
+                  "platform thread_id must be trivially copyable");
+    return std::bit_cast<std::uint64_t>(tid.as_native());
+}
+
+inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
+    using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());
+    return rusty::thread::ThreadId{std::bit_cast<NativeId>(bits)};
+}
+} // namespace
+
+// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_bits_`)
 // and passes the raw pointer into a spawned thread closure. The Arc
 // keeps the PollThread (and thus the atomic) alive until the worker
 // thread finishes; rusty-cpp can't express that lifetime relationship.
@@ -2656,13 +2683,13 @@ rusty::Arc<PollThread> PollThread::create() {
   auto arc = rusty::Arc<PollThread>::make(std::move(sender));
 
   // Pointer to atomic thread ID for safe cross-thread access
-  rusty::sync::atomic::Atomic<rusty::thread::ThreadId>* thread_id_ptr = &arc->poll_thread_id_;
+  rusty::sync::atomic::AtomicU64* thread_id_ptr = &arc->poll_thread_id_bits_;
 
   // Spawn thread - worker owns the receiver
   auto handle = rusty::thread::spawn(
     [thread_id_ptr](rusty::sync::mpsc::Receiver<PollCommand> rx) {
       auto tid = rusty::thread::current_id();
-      thread_id_ptr->store(tid, rusty::sync::atomic::Ordering::Release);
+      thread_id_ptr->store(thread_id_to_u64(tid), rusty::sync::atomic::Ordering::Release);
       // Create worker wrapped in Rc<RefCell<>>
       auto worker = PollThreadWorker::create(std::move(rx));
       // Store raw pointer in TLS for direct access from same thread
@@ -2707,7 +2734,8 @@ void PollThread::shutdown() const {
 
   // Check if we're on the poll thread (atomic load for thread-safe read)
   auto current_tid = rusty::thread::current_id();
-  auto poll_tid = poll_thread_id_.load(rusty::sync::atomic::Ordering::Acquire);
+  auto poll_tid = u64_to_thread_id(
+      poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
   if (current_tid == poll_tid) {
     Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
     return;
