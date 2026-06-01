@@ -428,43 +428,96 @@ enum class CompletionStatus : uint8_t {
 };
 
 /**
- * @safe - Result struct for completion queries
+ * @safe - Result struct for completion queries.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. `fn new() -> Self` lowers to a
+ * `static CompletionQueryResult new_()` factory (the NOT_FOUND
+ * default); `not_found`/`completed`/`expired` are explicit named
+ * factories. Both `completed`'s default args (`err_code = 0`,
+ * `has_response = false`) are dropped — every existing caller already
+ * passes both args explicitly.
  */
+#if RUSTYCPP_RUST
 struct CompletionQueryResult {
-    CompletionStatus status = CompletionStatus::NOT_FOUND;
-    int32_t error_code = 0;         // Only valid if COMPLETED or COMPLETED_WITH_ERROR
-    bool has_cached_response = false;  // True if IdempotencyCache has the response
+    status: CompletionStatus,
+    error_code: i32,
+    has_cached_response: bool,
+}
 
-    // @safe - Default constructor
-    CompletionQueryResult() = default;
-
-    // @safe - Create NOT_FOUND result
-    static CompletionQueryResult not_found() {
-        return CompletionQueryResult{};
+impl CompletionQueryResult {
+    fn new_() -> CompletionQueryResult {
+        CompletionQueryResult {
+            status: CompletionStatus::NOT_FOUND,
+            error_code: 0i32,
+            has_cached_response: false,
+        }
     }
 
-    // @safe - Create COMPLETED result
-    static CompletionQueryResult completed(int32_t err_code = 0, bool has_response = false) {
-        CompletionQueryResult r;
-        r.status = (err_code == 0) ? CompletionStatus::COMPLETED : CompletionStatus::COMPLETED_WITH_ERROR;
-        r.error_code = err_code;
-        r.has_cached_response = has_response;
-        return r;
+    fn not_found() -> CompletionQueryResult {
+        CompletionQueryResult::new_()
     }
 
-    // @safe - Create EXPIRED result
-    static CompletionQueryResult expired() {
-        CompletionQueryResult r;
-        r.status = CompletionStatus::EXPIRED;
-        return r;
+    fn completed(err_code: i32, has_response: bool) -> CompletionQueryResult {
+        let s: CompletionStatus = if err_code == 0i32 {
+            CompletionStatus::COMPLETED
+        } else {
+            CompletionStatus::COMPLETED_WITH_ERROR
+        };
+        CompletionQueryResult { status: s, error_code: err_code, has_cached_response: has_response }
     }
 
-    // @safe - Check if completed (with or without error)
-    bool is_completed() const {
-        return status == CompletionStatus::COMPLETED ||
-               status == CompletionStatus::COMPLETED_WITH_ERROR;
+    fn expired() -> CompletionQueryResult {
+        CompletionQueryResult {
+            status: CompletionStatus::EXPIRED,
+            error_code: 0i32,
+            has_cached_response: false,
+        }
     }
+
+    fn is_completed(&self) -> bool {
+        self.status == CompletionStatus::COMPLETED || self.status == CompletionStatus::COMPLETED_WITH_ERROR
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.3 version=1 rust_sha256=5493b067433910d91f510fdb31e8c71fefc9a73a9167c4528f5d5b8115243916*/
+struct CompletionQueryResult;
+
+struct CompletionQueryResult {
+    CompletionStatus status;
+    int32_t error_code;
+    bool has_cached_response;
+
+    static CompletionQueryResult new_();
+    static CompletionQueryResult not_found();
+    static CompletionQueryResult completed(int32_t err_code, bool has_response);
+    static CompletionQueryResult expired();
+    bool is_completed() const;
 };
+
+
+CompletionQueryResult CompletionQueryResult::new_() {
+    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus::NOT_FOUND)), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
+}
+
+CompletionQueryResult CompletionQueryResult::not_found() {
+    return CompletionQueryResult::new_();
+}
+
+CompletionQueryResult CompletionQueryResult::completed(int32_t err_code, bool has_response) {
+    CompletionStatus s = (rusty::detail::deref_if_pointer_like(err_code) == static_cast<int32_t>(0) ? rusty::clone(CompletionStatus::COMPLETED) : rusty::clone(CompletionStatus::COMPLETED_WITH_ERROR));
+    return CompletionQueryResult{.status = std::move(s), .error_code = std::move(err_code), .has_cached_response = std::move(has_response)};
+}
+
+CompletionQueryResult CompletionQueryResult::expired() {
+    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus::EXPIRED)), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
+}
+
+bool CompletionQueryResult::is_completed() const {
+    return (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus::COMPLETED)) || (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus::COMPLETED_WITH_ERROR));
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.3*/
 
 // @safe - Convert status to string for logging
 inline const char* completion_status_to_string(CompletionStatus status) {

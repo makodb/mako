@@ -349,8 +349,8 @@ TEST_F(CompletionTrackerTest, ThreadSafety) {
 
 class CompletionQueryResultTest : public ::testing::Test {};
 
-TEST_F(CompletionQueryResultTest, DefaultConstruction) {
-    CompletionQueryResult result;
+TEST_F(CompletionQueryResultTest, FactoryNew) {
+    auto result = CompletionQueryResult::new_();
 
     EXPECT_EQ(result.status, CompletionStatus::NOT_FOUND);
     EXPECT_EQ(result.error_code, 0);
