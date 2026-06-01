@@ -54,7 +54,7 @@ bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
 
 class LoadBalancerStateTest : public ::testing::Test {
 protected:
-    LoadBalancerState state_;
+    LoadBalancerState state_{LoadBalancerState::new_()};
 };
 
 TEST_F(LoadBalancerStateTest, RoundRobinIndexStartsAtZero) {
@@ -144,7 +144,7 @@ public:
 
 class LoadBalancerTest : public ::testing::Test {
 protected:
-    LoadBalancerState state_;
+    LoadBalancerState state_{LoadBalancerState::new_()};
     std::vector<std::shared_ptr<MockClientForLB>> clients_;
 
     void SetUp() override {

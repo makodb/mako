@@ -33,10 +33,9 @@ inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strat
 // `LoadBalancerState` — single-counter round-robin index holder.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The constructor uses the
-// `#[cpp_ctor]` attribute so existing call sites
-// (`LoadBalancerState state_;` as a member, `LoadBalancerState{}`
-// inserted into a `BTreeMap`) keep compiling.
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The plain `fn new()` lowers
+// to a `static LoadBalancerState new_()` factory; callers construct
+// via the factory rather than direct ctor syntax.
 //
 // Behavioral diffs from the original C++ class:
 //   * `next_round_robin_index()` becomes `const`. It only mutates the
@@ -55,7 +54,6 @@ struct LoadBalancerState {
 }
 
 impl LoadBalancerState {
-    #[cpp_ctor]
     fn new() -> LoadBalancerState {
         LoadBalancerState {
             round_robin_index_field: rusty::Cell::<usize>::new(0usize),
@@ -77,21 +75,21 @@ impl LoadBalancerState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=load_balancer.1 version=1 rust_sha256=4f03e300b96cfac2cf0f36f06c0d0db5252a1da7b3b9045074e2829cef1acfbf*/
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.1 version=1 rust_sha256=2e406c70882c5dca752ce4fb8f8fd267528af352aceb6f0806faa849a029c749*/
 struct LoadBalancerState;
 
 struct LoadBalancerState {
     rusty::Cell<size_t> round_robin_index_field;
 
-    LoadBalancerState();
+    static LoadBalancerState new_();
     size_t next_round_robin_index(size_t pool_size) const;
     void reset() const;
 };
 
 
-LoadBalancerState::LoadBalancerState()
-    : round_robin_index_field(rusty::Cell<size_t>::new_(static_cast<size_t>(0)))
-{}
+LoadBalancerState LoadBalancerState::new_() {
+    return LoadBalancerState{.round_robin_index_field = rusty::Cell<size_t>::new_(static_cast<size_t>(0))};
+}
 
 size_t LoadBalancerState::next_round_robin_index(size_t pool_size) const {
     if (rusty::detail::deref_if_pointer_like(pool_size) == static_cast<size_t>(0)) {

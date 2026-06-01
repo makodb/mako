@@ -5692,7 +5692,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   // Get or create load balancer state for this address
   auto lb_state_opt = guard->lb_state.get(addr);
   if (lb_state_opt.is_none()) {
-    guard->lb_state.insert(addr, LoadBalancerState{});
+    guard->lb_state.insert(addr, LoadBalancerState::new_());
     lb_state_opt = guard->lb_state.get(addr);
   }
   // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
