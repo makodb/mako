@@ -880,17 +880,7 @@ impl Server {
             ctx_field: None,
             poll_thread_field: server_resolve_poll_thread(poll_thread_worker),
             shutdown_state_field: Mutex::<ShutdownState>(ShutdownState {}),
-            // NOTE: not `Box::new(Condvar {})` (the Rust idiom) because
-            // `rusty::Condvar` wraps `std::condition_variable`, which is
-            // non-movable per ISO C++. The Rust-side `std::sync::Condvar`
-            // IS movable, so the idiomatic `Box::new(Condvar::new())`
-            // works in real Rust; the rusty-cpp port can't follow that
-            // because of the underlying-type constraint. `rusty::make_box`
-            // in-place-constructs the value inside the Box's allocation
-            // without going through a move, so we use that as an
-            // explicitly-rusty escape hatch. The bare DSL stays Rust-ish
-            // everywhere else.
-            shutdown_cond_field: rusty::make_box::<Condvar>(),
+            shutdown_cond_field: Box::new(Condvar {}),
             shutdown_phase_field: Cell::<ShutdownPhase>::new(ShutdownPhase::RUNNING),
             shutdown_hooks_field: SpinMutex::<Vec<ShutdownHook>>::new(Vec::<ShutdownHook>()),
             pending_requests_field: Arc::<ServerPendingRequestsAtomic>::make(0i32),
@@ -1041,7 +1031,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=09cf67ad7ad98545267810d0385a8481174fde53bbb94bd715e4215c7e289b3b*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2acdfd8310aa6d00cb81630e6c17caa34bba54d9b96c004a4ab0483d7fb291e7*/
 struct Server;
 
 struct Server {
@@ -1118,7 +1108,7 @@ Server::~Server() noexcept(false) {
 }
 
 Server Server::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
-    return Server(rusty::Vec<ServiceProxy>(), rusty::HashMap<int32_t, size_t>(), rusty::HashSet<int32_t>(), rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None}, server_resolve_poll_thread(std::move(poll_thread_worker)), rusty::Mutex<ShutdownState>(ShutdownState{}), rusty::make_box<rusty::Condvar>(), rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase::RUNNING))), SpinMutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()), rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)), rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false), server_generate_instance_id(), rusty::Option<ChannelFactoryProxy>{rusty::None}, rusty::Option<ChannelListenerProxy>{rusty::None}, SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>()));
+    return Server(rusty::Vec<ServiceProxy>(), rusty::HashMap<int32_t, size_t>(), rusty::HashSet<int32_t>(), rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None}, server_resolve_poll_thread(std::move(poll_thread_worker)), rusty::Mutex<ShutdownState>(ShutdownState{}), rusty::Box<rusty::Condvar>::new_(rusty::Condvar{}), rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase::RUNNING))), SpinMutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()), rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)), rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false), server_generate_instance_id(), rusty::Option<ChannelFactoryProxy>{rusty::None}, rusty::Option<ChannelListenerProxy>{rusty::None}, SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>()));
 }
 
 void Server::set_channel_factory(ChannelFactoryProxy factory) {
