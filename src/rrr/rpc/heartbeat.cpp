@@ -27,36 +27,101 @@ inline uint64_t heartbeat_time_us() {
 // template arguments like `rusty::Function<void()>` directly).
 using HeartbeatTimeoutCallback = rusty::Function<void()>;
 
-// HeartbeatConfig is a plain aggregate POD: no user-declared
-// constructors, fields carry in-class default initializers that the
-// previous default ctor body matched. Intentionally kept in plain
-// C++ (not migrated to inline-Rust DSL) because the DSL does not
-// emit per-field in-class `= default` initializers, and the few
-// `HeartbeatConfig config; config.X = ...;` default-mutate-customize
-// callers need those documented defaults present after default
-// construction.
-//
-// The previous user-defined default and parameterized ctors were
-// dropped; the parameterized form was used only by the three named
-// factories below, which now use positional aggregate-init.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static HeartbeatConfig new_()` factory (the balanced default).
+// Callers use `::aggressive()`, `::relaxed()`, `::disabled()`,
+// `::defaults()`, or brace-init. Test sites that previously
+// default-constructed `HeartbeatConfig cfg;` move to
+// `auto cfg = HeartbeatConfig::defaults();`.
+#if RUSTYCPP_RUST
 struct HeartbeatConfig {
-    bool enabled = true;
-    uint32_t interval_ms = 10000;
-    uint32_t timeout_ms = 5000;
-    uint32_t max_missed = 3;
+    enabled: bool,
+    interval_ms: u32,
+    timeout_ms: u32,
+    max_missed: u32,
+}
 
-    static HeartbeatConfig aggressive() {
-        return HeartbeatConfig{true, 5000, 2000, 2};
+impl HeartbeatConfig {
+    fn new_() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: true,
+            interval_ms: 10000u32,
+            timeout_ms: 5000u32,
+            max_missed: 3u32,
+        }
     }
 
-    static HeartbeatConfig relaxed() {
-        return HeartbeatConfig{true, 30000, 15000, 5};
+    fn defaults() -> HeartbeatConfig {
+        HeartbeatConfig::new_()
     }
 
-    static HeartbeatConfig disabled() {
-        return HeartbeatConfig{false, 0, 0, 0};
+    fn aggressive() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: true,
+            interval_ms: 5000u32,
+            timeout_ms: 2000u32,
+            max_missed: 2u32,
+        }
     }
+
+    fn relaxed() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: true,
+            interval_ms: 30000u32,
+            timeout_ms: 15000u32,
+            max_missed: 5u32,
+        }
+    }
+
+    fn disabled() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: false,
+            interval_ms: 0u32,
+            timeout_ms: 0u32,
+            max_missed: 0u32,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.2 version=1 rust_sha256=ad212de27ec84c00b28443521803507a85db2d646edefab3588417345df92d78*/
+struct HeartbeatConfig;
+
+struct HeartbeatConfig {
+    bool enabled;
+    uint32_t interval_ms;
+    uint32_t timeout_ms;
+    uint32_t max_missed;
+
+    static HeartbeatConfig new_();
+    static HeartbeatConfig defaults();
+    static HeartbeatConfig aggressive();
+    static HeartbeatConfig relaxed();
+    static HeartbeatConfig disabled();
 };
+
+
+HeartbeatConfig HeartbeatConfig::new_() {
+    return HeartbeatConfig{.enabled = true, .interval_ms = static_cast<uint32_t>(10000), .timeout_ms = static_cast<uint32_t>(5000), .max_missed = static_cast<uint32_t>(3)};
+}
+
+HeartbeatConfig HeartbeatConfig::defaults() {
+    return HeartbeatConfig::new_();
+}
+
+HeartbeatConfig HeartbeatConfig::aggressive() {
+    return HeartbeatConfig{.enabled = true, .interval_ms = static_cast<uint32_t>(5000), .timeout_ms = static_cast<uint32_t>(2000), .max_missed = static_cast<uint32_t>(2)};
+}
+
+HeartbeatConfig HeartbeatConfig::relaxed() {
+    return HeartbeatConfig{.enabled = true, .interval_ms = static_cast<uint32_t>(30000), .timeout_ms = static_cast<uint32_t>(15000), .max_missed = static_cast<uint32_t>(5)};
+}
+
+HeartbeatConfig HeartbeatConfig::disabled() {
+    return HeartbeatConfig{.enabled = false, .interval_ms = static_cast<uint32_t>(0), .timeout_ms = static_cast<uint32_t>(0), .max_missed = static_cast<uint32_t>(0)};
+}
+/*RUSTYCPP:GEN-END id=heartbeat.2*/
 
 // `HeartbeatManager` — single-threaded heartbeat tracker. All
 // time/count/flag state is `rusty::Cell<T>` for trivially-copyable

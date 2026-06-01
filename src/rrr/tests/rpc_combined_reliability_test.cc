@@ -274,7 +274,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
     cb_config.failure_threshold = 3;
     auto cb = CircuitBreaker::new_(cb_config);
 
-    HeartbeatConfig hb_config;
+    auto hb_config = HeartbeatConfig::defaults();
     hb_config.interval_ms = 100;
     auto hb = HeartbeatManager::new_(hb_config);
 
@@ -427,7 +427,7 @@ TEST_F(CombinedReliabilityTest, ErrorCategoriesWithCircuitBreaker) {
 }
 
 TEST_F(CombinedReliabilityTest, HeartbeatWithStateTransitions) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 50;
     config.timeout_ms = 100;
     config.max_missed = 2;
