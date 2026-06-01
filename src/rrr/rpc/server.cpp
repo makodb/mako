@@ -880,6 +880,16 @@ impl Server {
             ctx_field: None,
             poll_thread_field: server_resolve_poll_thread(poll_thread_worker),
             shutdown_state_field: Mutex::<ShutdownState>(ShutdownState {}),
+            // NOTE: not `Box::new(Condvar {})` (the Rust idiom) because
+            // `rusty::Condvar` wraps `std::condition_variable`, which is
+            // non-movable per ISO C++. The Rust-side `std::sync::Condvar`
+            // IS movable, so the idiomatic `Box::new(Condvar::new())`
+            // works in real Rust; the rusty-cpp port can't follow that
+            // because of the underlying-type constraint. `rusty::make_box`
+            // in-place-constructs the value inside the Box's allocation
+            // without going through a move, so we use that as an
+            // explicitly-rusty escape hatch. The bare DSL stays Rust-ish
+            // everywhere else.
             shutdown_cond_field: rusty::make_box::<Condvar>(),
             shutdown_phase_field: Cell::<ShutdownPhase>::new(ShutdownPhase::RUNNING),
             shutdown_hooks_field: SpinMutex::<Vec<ShutdownHook>>::new(Vec::<ShutdownHook>()),
@@ -1031,7 +1041,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=7a30e1b929f2c303df5d5ae12de1541fe1016126c4ec6019208b9e3b0b002b0e*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=09cf67ad7ad98545267810d0385a8481174fde53bbb94bd715e4215c7e289b3b*/
 struct Server;
 
 struct Server {
