@@ -14,6 +14,14 @@ import std;
 // getters/setters. No raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
+// Bring `Ordering` into the `rrr` namespace so DSL bodies can write
+// `Ordering::Relaxed` (Rust idiom) and the emitted C++ resolves via
+// this using-decl. The transpiler maps `Ordering` (the type) to
+// `rusty::sync::atomic::Ordering` in type-position, but does NOT
+// rewrite enum-value paths like `Ordering::Relaxed` in expression
+// position — they're emitted verbatim. This `using` is the bridge.
+using rusty::sync::atomic::Ordering;
+
 // `ConnectionMetrics` — bag of `rusty::Cell<u64>` counters. Every
 // field is interior-mutable, so every method is `const` and `&self`.
 //
@@ -91,33 +99,33 @@ impl ConnectionMetrics {
         }
     }
 
-    fn requests_sent(&self) -> u64 { self.requests_sent_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn requests_completed(&self) -> u64 { self.requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn requests_failed(&self) -> u64 { self.requests_failed_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn requests_timed_out(&self) -> u64 { self.requests_timed_out_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn in_flight_requests(&self) -> u64 { self.in_flight_requests_field.load(rusty::sync::atomic::Ordering::Relaxed) }
+    fn requests_sent(&self) -> u64 { self.requests_sent_field.load(Ordering::Relaxed) }
+    fn requests_completed(&self) -> u64 { self.requests_completed_field.load(Ordering::Relaxed) }
+    fn requests_failed(&self) -> u64 { self.requests_failed_field.load(Ordering::Relaxed) }
+    fn requests_timed_out(&self) -> u64 { self.requests_timed_out_field.load(Ordering::Relaxed) }
+    fn in_flight_requests(&self) -> u64 { self.in_flight_requests_field.load(Ordering::Relaxed) }
 
-    fn bytes_sent(&self) -> u64 { self.bytes_sent_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn bytes_received(&self) -> u64 { self.bytes_received_field.load(rusty::sync::atomic::Ordering::Relaxed) }
+    fn bytes_sent(&self) -> u64 { self.bytes_sent_field.load(Ordering::Relaxed) }
+    fn bytes_received(&self) -> u64 { self.bytes_received_field.load(Ordering::Relaxed) }
 
-    fn reconnect_count(&self) -> u64 { self.reconnect_count_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn retry_attempts(&self) -> u64 { self.retry_attempts_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn queue_dropped_requests(&self) -> u64 { self.queue_dropped_requests_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn circuit_open_rejections(&self) -> u64 { self.circuit_open_rejections_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn circuit_open_transitions(&self) -> u64 { self.circuit_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn circuit_half_open_transitions(&self) -> u64 { self.circuit_half_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn circuit_closed_transitions(&self) -> u64 { self.circuit_closed_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) }
-    fn connect_time_ms(&self) -> u64 { self.connect_time_ms_field.load(rusty::sync::atomic::Ordering::Relaxed) }
+    fn reconnect_count(&self) -> u64 { self.reconnect_count_field.load(Ordering::Relaxed) }
+    fn retry_attempts(&self) -> u64 { self.retry_attempts_field.load(Ordering::Relaxed) }
+    fn queue_dropped_requests(&self) -> u64 { self.queue_dropped_requests_field.load(Ordering::Relaxed) }
+    fn circuit_open_rejections(&self) -> u64 { self.circuit_open_rejections_field.load(Ordering::Relaxed) }
+    fn circuit_open_transitions(&self) -> u64 { self.circuit_open_transitions_field.load(Ordering::Relaxed) }
+    fn circuit_half_open_transitions(&self) -> u64 { self.circuit_half_open_transitions_field.load(Ordering::Relaxed) }
+    fn circuit_closed_transitions(&self) -> u64 { self.circuit_closed_transitions_field.load(Ordering::Relaxed) }
+    fn connect_time_ms(&self) -> u64 { self.connect_time_ms_field.load(Ordering::Relaxed) }
 
     fn min_latency_us(&self) -> u64 {
-        let min: u64 = self.min_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed);
+        let min: u64 = self.min_latency_us_field.load(Ordering::Relaxed);
         if min == u64::MAX { 0u64 } else { min }
     }
-    fn max_latency_us(&self) -> u64 { self.max_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed) }
+    fn max_latency_us(&self) -> u64 { self.max_latency_us_field.load(Ordering::Relaxed) }
 
     fn success_rate_percent(&self) -> u64 {
-        let completed: u64 = self.requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed);
-        let total: u64 = self.requests_sent_field.load(rusty::sync::atomic::Ordering::Relaxed);
+        let completed: u64 = self.requests_completed_field.load(Ordering::Relaxed);
+        let total: u64 = self.requests_sent_field.load(Ordering::Relaxed);
         if total == 0u64 {
             return 100u64;
         }
@@ -125,15 +133,15 @@ impl ConnectionMetrics {
     }
 
     fn avg_latency_us(&self) -> u64 {
-        let completed: u64 = self.requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed);
+        let completed: u64 = self.requests_completed_field.load(Ordering::Relaxed);
         if completed == 0u64 {
             return 0u64;
         }
-        self.total_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed) / completed
+        self.total_latency_us_field.load(Ordering::Relaxed) / completed
     }
 
     fn uptime_ms(&self, current_time_ms: u64) -> u64 {
-        let connect_time: u64 = self.connect_time_ms_field.load(rusty::sync::atomic::Ordering::Relaxed);
+        let connect_time: u64 = self.connect_time_ms_field.load(Ordering::Relaxed);
         if connect_time == 0u64 {
             return 0u64;
         }
@@ -144,38 +152,38 @@ impl ConnectionMetrics {
     }
 
     fn record_request_sent(&self) {
-        self.requests_sent_field.store(self.requests_sent_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.in_flight_requests_field.store(self.in_flight_requests_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.requests_sent_field.store(self.requests_sent_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
+        self.in_flight_requests_field.store(self.in_flight_requests_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_request_completed_with_latency(&self, latency_us: u64) {
-        self.requests_completed_field.store(self.requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.requests_completed_field.store(self.requests_completed_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
         self.decrement_in_flight();
-        self.total_latency_us_field.store(self.total_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed) + latency_us, rusty::sync::atomic::Ordering::Relaxed);
+        self.total_latency_us_field.store(self.total_latency_us_field.load(Ordering::Relaxed) + latency_us, Ordering::Relaxed);
 
-        let current_min: u64 = self.min_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed);
+        let current_min: u64 = self.min_latency_us_field.load(Ordering::Relaxed);
         if latency_us < current_min {
-            self.min_latency_us_field.store(latency_us, rusty::sync::atomic::Ordering::Relaxed);
+            self.min_latency_us_field.store(latency_us, Ordering::Relaxed);
         }
 
-        let current_max: u64 = self.max_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed);
+        let current_max: u64 = self.max_latency_us_field.load(Ordering::Relaxed);
         if latency_us > current_max {
-            self.max_latency_us_field.store(latency_us, rusty::sync::atomic::Ordering::Relaxed);
+            self.max_latency_us_field.store(latency_us, Ordering::Relaxed);
         }
     }
 
     fn record_request_completed(&self) {
-        self.requests_completed_field.store(self.requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.requests_completed_field.store(self.requests_completed_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
         self.decrement_in_flight();
     }
 
     fn record_request_failed(&self) {
-        self.requests_failed_field.store(self.requests_failed_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.requests_failed_field.store(self.requests_failed_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
         self.decrement_in_flight();
     }
 
     fn record_request_timeout(&self) {
-        self.requests_timed_out_field.store(self.requests_timed_out_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.requests_timed_out_field.store(self.requests_timed_out_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
         self.decrement_in_flight();
     }
 
@@ -184,76 +192,76 @@ impl ConnectionMetrics {
     }
 
     fn record_bytes_sent(&self, bytes: u64) {
-        self.bytes_sent_field.store(self.bytes_sent_field.load(rusty::sync::atomic::Ordering::Relaxed) + bytes, rusty::sync::atomic::Ordering::Relaxed);
+        self.bytes_sent_field.store(self.bytes_sent_field.load(Ordering::Relaxed) + bytes, Ordering::Relaxed);
     }
 
     fn record_bytes_received(&self, bytes: u64) {
-        self.bytes_received_field.store(self.bytes_received_field.load(rusty::sync::atomic::Ordering::Relaxed) + bytes, rusty::sync::atomic::Ordering::Relaxed);
+        self.bytes_received_field.store(self.bytes_received_field.load(Ordering::Relaxed) + bytes, Ordering::Relaxed);
     }
 
     fn record_reconnect(&self) {
-        self.reconnect_count_field.store(self.reconnect_count_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.reconnect_count_field.store(self.reconnect_count_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_retry_attempt(&self) {
-        self.retry_attempts_field.store(self.retry_attempts_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.retry_attempts_field.store(self.retry_attempts_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_queue_drop(&self) {
-        self.queue_dropped_requests_field.store(self.queue_dropped_requests_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.queue_dropped_requests_field.store(self.queue_dropped_requests_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_circuit_open_rejection(&self) {
-        self.circuit_open_rejections_field.store(self.circuit_open_rejections_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.circuit_open_rejections_field.store(self.circuit_open_rejections_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_circuit_open_transition(&self) {
-        self.circuit_open_transitions_field.store(self.circuit_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.circuit_open_transitions_field.store(self.circuit_open_transitions_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_circuit_half_open_transition(&self) {
-        self.circuit_half_open_transitions_field.store(self.circuit_half_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.circuit_half_open_transitions_field.store(self.circuit_half_open_transitions_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_circuit_closed_transition(&self) {
-        self.circuit_closed_transitions_field.store(self.circuit_closed_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) + 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.circuit_closed_transitions_field.store(self.circuit_closed_transitions_field.load(Ordering::Relaxed) + 1u64, Ordering::Relaxed);
     }
 
     fn record_connect(&self, current_time_ms: u64) {
-        self.connect_time_ms_field.store(current_time_ms, rusty::sync::atomic::Ordering::Relaxed);
+        self.connect_time_ms_field.store(current_time_ms, Ordering::Relaxed);
     }
 
     fn reset(&self) {
-        self.requests_sent_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.requests_completed_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.requests_failed_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.requests_timed_out_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.in_flight_requests_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.bytes_sent_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.bytes_received_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.reconnect_count_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.retry_attempts_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.queue_dropped_requests_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.circuit_open_rejections_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.circuit_open_transitions_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.circuit_half_open_transitions_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.circuit_closed_transitions_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.connect_time_ms_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.total_latency_us_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
-        self.min_latency_us_field.store(u64::MAX, rusty::sync::atomic::Ordering::Relaxed);
-        self.max_latency_us_field.store(0u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.requests_sent_field.store(0u64, Ordering::Relaxed);
+        self.requests_completed_field.store(0u64, Ordering::Relaxed);
+        self.requests_failed_field.store(0u64, Ordering::Relaxed);
+        self.requests_timed_out_field.store(0u64, Ordering::Relaxed);
+        self.in_flight_requests_field.store(0u64, Ordering::Relaxed);
+        self.bytes_sent_field.store(0u64, Ordering::Relaxed);
+        self.bytes_received_field.store(0u64, Ordering::Relaxed);
+        self.reconnect_count_field.store(0u64, Ordering::Relaxed);
+        self.retry_attempts_field.store(0u64, Ordering::Relaxed);
+        self.queue_dropped_requests_field.store(0u64, Ordering::Relaxed);
+        self.circuit_open_rejections_field.store(0u64, Ordering::Relaxed);
+        self.circuit_open_transitions_field.store(0u64, Ordering::Relaxed);
+        self.circuit_half_open_transitions_field.store(0u64, Ordering::Relaxed);
+        self.circuit_closed_transitions_field.store(0u64, Ordering::Relaxed);
+        self.connect_time_ms_field.store(0u64, Ordering::Relaxed);
+        self.total_latency_us_field.store(0u64, Ordering::Relaxed);
+        self.min_latency_us_field.store(u64::MAX, Ordering::Relaxed);
+        self.max_latency_us_field.store(0u64, Ordering::Relaxed);
     }
 
     fn decrement_in_flight(&self) {
-        let in_flight: u64 = self.in_flight_requests_field.load(rusty::sync::atomic::Ordering::Relaxed);
+        let in_flight: u64 = self.in_flight_requests_field.load(Ordering::Relaxed);
         if in_flight == 0u64 {
             return;
         }
-        self.in_flight_requests_field.store(in_flight - 1u64, rusty::sync::atomic::Ordering::Relaxed);
+        self.in_flight_requests_field.store(in_flight - 1u64, Ordering::Relaxed);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=9ad407fd5e2840c47c4faa34ba826d51ddf8569b2fee15675ccbea7f121abc91*/
+/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=9aebbcf0a1d0281aa982e12ad6dc9688c0d0a690f7dd32eae59859ef96a6e744*/
 struct ConnectionMetrics;
 
 struct ConnectionMetrics {
@@ -323,67 +331,67 @@ ConnectionMetrics ConnectionMetrics::new_() {
 }
 
 uint64_t ConnectionMetrics::requests_sent() const {
-    return this->requests_sent_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->requests_sent_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::requests_completed() const {
-    return this->requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->requests_completed_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::requests_failed() const {
-    return this->requests_failed_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->requests_failed_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::requests_timed_out() const {
-    return this->requests_timed_out_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->requests_timed_out_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::in_flight_requests() const {
-    return this->in_flight_requests_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->in_flight_requests_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::bytes_sent() const {
-    return this->bytes_sent_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->bytes_sent_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::bytes_received() const {
-    return this->bytes_received_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->bytes_received_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::reconnect_count() const {
-    return this->reconnect_count_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->reconnect_count_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::retry_attempts() const {
-    return this->retry_attempts_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->retry_attempts_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::queue_dropped_requests() const {
-    return this->queue_dropped_requests_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->queue_dropped_requests_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::circuit_open_rejections() const {
-    return this->circuit_open_rejections_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->circuit_open_rejections_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::circuit_open_transitions() const {
-    return this->circuit_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->circuit_open_transitions_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::circuit_half_open_transitions() const {
-    return this->circuit_half_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->circuit_half_open_transitions_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::circuit_closed_transitions() const {
-    return this->circuit_closed_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->circuit_closed_transitions_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::connect_time_ms() const {
-    return this->connect_time_ms_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->connect_time_ms_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::min_latency_us() const {
-    uint64_t min = this->min_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    uint64_t min = this->min_latency_us_field.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(min) == rusty::detail::deref_if_pointer_like(std::numeric_limits<uint64_t>::max())) {
         return static_cast<uint64_t>(0);
     } else {
@@ -392,12 +400,12 @@ uint64_t ConnectionMetrics::min_latency_us() const {
 }
 
 uint64_t ConnectionMetrics::max_latency_us() const {
-    return this->max_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    return this->max_latency_us_field.load(Ordering::Relaxed);
 }
 
 uint64_t ConnectionMetrics::success_rate_percent() const {
-    const uint64_t completed = this->requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed);
-    const uint64_t total = this->requests_sent_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t completed = this->requests_completed_field.load(Ordering::Relaxed);
+    const uint64_t total = this->requests_sent_field.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(total) == static_cast<uint64_t>(0)) {
         return static_cast<uint64_t>(100);
     }
@@ -405,15 +413,15 @@ uint64_t ConnectionMetrics::success_rate_percent() const {
 }
 
 uint64_t ConnectionMetrics::avg_latency_us() const {
-    const uint64_t completed = this->requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t completed = this->requests_completed_field.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(completed) == static_cast<uint64_t>(0)) {
         return static_cast<uint64_t>(0);
     }
-    return this->total_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed) / rusty::detail::deref_if_pointer_like(completed);
+    return this->total_latency_us_field.load(Ordering::Relaxed) / rusty::detail::deref_if_pointer_like(completed);
 }
 
 uint64_t ConnectionMetrics::uptime_ms(uint64_t current_time_ms) const {
-    const uint64_t connect_time = this->connect_time_ms_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t connect_time = this->connect_time_ms_field.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(connect_time) == static_cast<uint64_t>(0)) {
         return static_cast<uint64_t>(0);
     }
@@ -424,36 +432,36 @@ uint64_t ConnectionMetrics::uptime_ms(uint64_t current_time_ms) const {
 }
 
 void ConnectionMetrics::record_request_sent() const {
-    this->requests_sent_field.store(this->requests_sent_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
-    this->in_flight_requests_field.store(this->in_flight_requests_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->requests_sent_field.store(this->requests_sent_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
+    this->in_flight_requests_field.store(this->in_flight_requests_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_request_completed_with_latency(uint64_t latency_us) const {
-    this->requests_completed_field.store(this->requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->requests_completed_field.store(this->requests_completed_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
     this->decrement_in_flight();
-    this->total_latency_us_field.store(this->total_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed) + rusty::detail::deref_if_pointer_like(latency_us), rusty::sync::atomic::Ordering::Relaxed);
-    const uint64_t current_min = this->min_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    this->total_latency_us_field.store(this->total_latency_us_field.load(Ordering::Relaxed) + rusty::detail::deref_if_pointer_like(latency_us), Ordering::Relaxed);
+    const uint64_t current_min = this->min_latency_us_field.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(latency_us) < rusty::detail::deref_if_pointer_like(current_min)) {
-        this->min_latency_us_field.store(std::move(latency_us), rusty::sync::atomic::Ordering::Relaxed);
+        this->min_latency_us_field.store(std::move(latency_us), Ordering::Relaxed);
     }
-    const uint64_t current_max = this->max_latency_us_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t current_max = this->max_latency_us_field.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(latency_us) > rusty::detail::deref_if_pointer_like(current_max)) {
-        this->max_latency_us_field.store(std::move(latency_us), rusty::sync::atomic::Ordering::Relaxed);
+        this->max_latency_us_field.store(std::move(latency_us), Ordering::Relaxed);
     }
 }
 
 void ConnectionMetrics::record_request_completed() const {
-    this->requests_completed_field.store(this->requests_completed_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->requests_completed_field.store(this->requests_completed_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
     this->decrement_in_flight();
 }
 
 void ConnectionMetrics::record_request_failed() const {
-    this->requests_failed_field.store(this->requests_failed_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->requests_failed_field.store(this->requests_failed_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
     this->decrement_in_flight();
 }
 
 void ConnectionMetrics::record_request_timeout() const {
-    this->requests_timed_out_field.store(this->requests_timed_out_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->requests_timed_out_field.store(this->requests_timed_out_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
     this->decrement_in_flight();
 }
 
@@ -462,72 +470,72 @@ void ConnectionMetrics::record_request_dropped() const {
 }
 
 void ConnectionMetrics::record_bytes_sent(uint64_t bytes) const {
-    this->bytes_sent_field.store(this->bytes_sent_field.load(rusty::sync::atomic::Ordering::Relaxed) + rusty::detail::deref_if_pointer_like(bytes), rusty::sync::atomic::Ordering::Relaxed);
+    this->bytes_sent_field.store(this->bytes_sent_field.load(Ordering::Relaxed) + rusty::detail::deref_if_pointer_like(bytes), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_bytes_received(uint64_t bytes) const {
-    this->bytes_received_field.store(this->bytes_received_field.load(rusty::sync::atomic::Ordering::Relaxed) + rusty::detail::deref_if_pointer_like(bytes), rusty::sync::atomic::Ordering::Relaxed);
+    this->bytes_received_field.store(this->bytes_received_field.load(Ordering::Relaxed) + rusty::detail::deref_if_pointer_like(bytes), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_reconnect() const {
-    this->reconnect_count_field.store(this->reconnect_count_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->reconnect_count_field.store(this->reconnect_count_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_retry_attempt() const {
-    this->retry_attempts_field.store(this->retry_attempts_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->retry_attempts_field.store(this->retry_attempts_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_queue_drop() const {
-    this->queue_dropped_requests_field.store(this->queue_dropped_requests_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->queue_dropped_requests_field.store(this->queue_dropped_requests_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_circuit_open_rejection() const {
-    this->circuit_open_rejections_field.store(this->circuit_open_rejections_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->circuit_open_rejections_field.store(this->circuit_open_rejections_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_circuit_open_transition() const {
-    this->circuit_open_transitions_field.store(this->circuit_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->circuit_open_transitions_field.store(this->circuit_open_transitions_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_circuit_half_open_transition() const {
-    this->circuit_half_open_transitions_field.store(this->circuit_half_open_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->circuit_half_open_transitions_field.store(this->circuit_half_open_transitions_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_circuit_closed_transition() const {
-    this->circuit_closed_transitions_field.store(this->circuit_closed_transitions_field.load(rusty::sync::atomic::Ordering::Relaxed) + static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->circuit_closed_transitions_field.store(this->circuit_closed_transitions_field.load(Ordering::Relaxed) + static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::record_connect(uint64_t current_time_ms) const {
-    this->connect_time_ms_field.store(std::move(current_time_ms), rusty::sync::atomic::Ordering::Relaxed);
+    this->connect_time_ms_field.store(std::move(current_time_ms), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::reset() const {
-    this->requests_sent_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->requests_completed_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->requests_failed_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->requests_timed_out_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->in_flight_requests_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->bytes_sent_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->bytes_received_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->reconnect_count_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->retry_attempts_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->queue_dropped_requests_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->circuit_open_rejections_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->circuit_open_transitions_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->circuit_half_open_transitions_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->circuit_closed_transitions_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->connect_time_ms_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->total_latency_us_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
-    this->min_latency_us_field.store(std::numeric_limits<uint64_t>::max(), rusty::sync::atomic::Ordering::Relaxed);
-    this->max_latency_us_field.store(static_cast<uint64_t>(0), rusty::sync::atomic::Ordering::Relaxed);
+    this->requests_sent_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->requests_completed_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->requests_failed_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->requests_timed_out_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->in_flight_requests_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->bytes_sent_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->bytes_received_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->reconnect_count_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->retry_attempts_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->queue_dropped_requests_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->circuit_open_rejections_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->circuit_open_transitions_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->circuit_half_open_transitions_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->circuit_closed_transitions_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->connect_time_ms_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->total_latency_us_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
+    this->min_latency_us_field.store(std::numeric_limits<uint64_t>::max(), Ordering::Relaxed);
+    this->max_latency_us_field.store(static_cast<uint64_t>(0), Ordering::Relaxed);
 }
 
 void ConnectionMetrics::decrement_in_flight() const {
-    const uint64_t in_flight = this->in_flight_requests_field.load(rusty::sync::atomic::Ordering::Relaxed);
+    const uint64_t in_flight = this->in_flight_requests_field.load(Ordering::Relaxed);
     if (rusty::detail::deref_if_pointer_like(in_flight) == static_cast<uint64_t>(0)) {
         return;
     }
-    this->in_flight_requests_field.store(rusty::detail::deref_if_pointer_like(in_flight) - static_cast<uint64_t>(1), rusty::sync::atomic::Ordering::Relaxed);
+    this->in_flight_requests_field.store(rusty::detail::deref_if_pointer_like(in_flight) - static_cast<uint64_t>(1), Ordering::Relaxed);
 }
 /*RUSTYCPP:GEN-END id=connection_metrics.1*/
 
