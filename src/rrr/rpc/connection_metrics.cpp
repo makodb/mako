@@ -34,52 +34,60 @@ export namespace rrr {
 //     (`ConnectionMetrics()`) emitted by `#[cpp_ctor]`. Same effect:
 //     all fields are still default-initialized to 0 (except
 //     `min_latency_us_field`, which starts at `u64::MAX`).
+//
+// Transpiler quirk: field-type spellings (`AtomicU64`) get auto-qualified
+// to `rusty::sync::atomic::AtomicU64` in the GEN block, but ctor-call
+// spellings (`AtomicU64::new(...)`) get emitted verbatim and don't pick
+// up the namespace via ADL because the constructed `ConnectionMetrics`
+// is in `rrr`. Until the transpiler is fixed, the impl block below
+// writes the fully-qualified `rusty::sync::atomic::AtomicU64::new(...)`
+// at every ctor site.
 #if RUSTYCPP_RUST
 struct ConnectionMetrics {
-    requests_sent_field: rusty::sync::atomic::Atomic<u64>,
-    requests_completed_field: rusty::sync::atomic::Atomic<u64>,
-    requests_failed_field: rusty::sync::atomic::Atomic<u64>,
-    requests_timed_out_field: rusty::sync::atomic::Atomic<u64>,
-    in_flight_requests_field: rusty::sync::atomic::Atomic<u64>,
+    requests_sent_field: AtomicU64,
+    requests_completed_field: AtomicU64,
+    requests_failed_field: AtomicU64,
+    requests_timed_out_field: AtomicU64,
+    in_flight_requests_field: AtomicU64,
 
-    bytes_sent_field: rusty::sync::atomic::Atomic<u64>,
-    bytes_received_field: rusty::sync::atomic::Atomic<u64>,
+    bytes_sent_field: AtomicU64,
+    bytes_received_field: AtomicU64,
 
-    reconnect_count_field: rusty::sync::atomic::Atomic<u64>,
-    retry_attempts_field: rusty::sync::atomic::Atomic<u64>,
-    queue_dropped_requests_field: rusty::sync::atomic::Atomic<u64>,
-    circuit_open_rejections_field: rusty::sync::atomic::Atomic<u64>,
-    circuit_open_transitions_field: rusty::sync::atomic::Atomic<u64>,
-    circuit_half_open_transitions_field: rusty::sync::atomic::Atomic<u64>,
-    circuit_closed_transitions_field: rusty::sync::atomic::Atomic<u64>,
-    connect_time_ms_field: rusty::sync::atomic::Atomic<u64>,
+    reconnect_count_field: AtomicU64,
+    retry_attempts_field: AtomicU64,
+    queue_dropped_requests_field: AtomicU64,
+    circuit_open_rejections_field: AtomicU64,
+    circuit_open_transitions_field: AtomicU64,
+    circuit_half_open_transitions_field: AtomicU64,
+    circuit_closed_transitions_field: AtomicU64,
+    connect_time_ms_field: AtomicU64,
 
-    total_latency_us_field: rusty::sync::atomic::Atomic<u64>,
-    min_latency_us_field: rusty::sync::atomic::Atomic<u64>,
-    max_latency_us_field: rusty::sync::atomic::Atomic<u64>,
+    total_latency_us_field: AtomicU64,
+    min_latency_us_field: AtomicU64,
+    max_latency_us_field: AtomicU64,
 }
 
 impl ConnectionMetrics {
     fn new() -> ConnectionMetrics {
         ConnectionMetrics {
-            requests_sent_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            requests_completed_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            requests_failed_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            requests_timed_out_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            in_flight_requests_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            bytes_sent_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            bytes_received_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            reconnect_count_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            retry_attempts_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            queue_dropped_requests_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            circuit_open_rejections_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            circuit_open_transitions_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            circuit_half_open_transitions_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            circuit_closed_transitions_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            connect_time_ms_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            total_latency_us_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
-            min_latency_us_field: rusty::sync::atomic::Atomic::<u64>::new(u64::MAX),
-            max_latency_us_field: rusty::sync::atomic::Atomic::<u64>::new(0u64),
+            requests_sent_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            requests_completed_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            requests_failed_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            requests_timed_out_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            in_flight_requests_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            bytes_sent_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            bytes_received_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            reconnect_count_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            retry_attempts_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            queue_dropped_requests_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            circuit_open_rejections_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            circuit_open_transitions_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            circuit_half_open_transitions_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            circuit_closed_transitions_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            connect_time_ms_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            total_latency_us_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            min_latency_us_field: rusty::sync::atomic::AtomicU64::new(u64::MAX),
+            max_latency_us_field: rusty::sync::atomic::AtomicU64::new(0u64),
         }
     }
 
@@ -245,28 +253,28 @@ impl ConnectionMetrics {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=0ca7c60cfc0e327846445eaada857a8408fbf8a62b9ee2ba7da3c6178d8d4caa*/
+/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=9ad407fd5e2840c47c4faa34ba826d51ddf8569b2fee15675ccbea7f121abc91*/
 struct ConnectionMetrics;
 
 struct ConnectionMetrics {
-    rusty::sync::atomic::Atomic<uint64_t> requests_sent_field;
-    rusty::sync::atomic::Atomic<uint64_t> requests_completed_field;
-    rusty::sync::atomic::Atomic<uint64_t> requests_failed_field;
-    rusty::sync::atomic::Atomic<uint64_t> requests_timed_out_field;
-    rusty::sync::atomic::Atomic<uint64_t> in_flight_requests_field;
-    rusty::sync::atomic::Atomic<uint64_t> bytes_sent_field;
-    rusty::sync::atomic::Atomic<uint64_t> bytes_received_field;
-    rusty::sync::atomic::Atomic<uint64_t> reconnect_count_field;
-    rusty::sync::atomic::Atomic<uint64_t> retry_attempts_field;
-    rusty::sync::atomic::Atomic<uint64_t> queue_dropped_requests_field;
-    rusty::sync::atomic::Atomic<uint64_t> circuit_open_rejections_field;
-    rusty::sync::atomic::Atomic<uint64_t> circuit_open_transitions_field;
-    rusty::sync::atomic::Atomic<uint64_t> circuit_half_open_transitions_field;
-    rusty::sync::atomic::Atomic<uint64_t> circuit_closed_transitions_field;
-    rusty::sync::atomic::Atomic<uint64_t> connect_time_ms_field;
-    rusty::sync::atomic::Atomic<uint64_t> total_latency_us_field;
-    rusty::sync::atomic::Atomic<uint64_t> min_latency_us_field;
-    rusty::sync::atomic::Atomic<uint64_t> max_latency_us_field;
+    rusty::sync::atomic::AtomicU64 requests_sent_field;
+    rusty::sync::atomic::AtomicU64 requests_completed_field;
+    rusty::sync::atomic::AtomicU64 requests_failed_field;
+    rusty::sync::atomic::AtomicU64 requests_timed_out_field;
+    rusty::sync::atomic::AtomicU64 in_flight_requests_field;
+    rusty::sync::atomic::AtomicU64 bytes_sent_field;
+    rusty::sync::atomic::AtomicU64 bytes_received_field;
+    rusty::sync::atomic::AtomicU64 reconnect_count_field;
+    rusty::sync::atomic::AtomicU64 retry_attempts_field;
+    rusty::sync::atomic::AtomicU64 queue_dropped_requests_field;
+    rusty::sync::atomic::AtomicU64 circuit_open_rejections_field;
+    rusty::sync::atomic::AtomicU64 circuit_open_transitions_field;
+    rusty::sync::atomic::AtomicU64 circuit_half_open_transitions_field;
+    rusty::sync::atomic::AtomicU64 circuit_closed_transitions_field;
+    rusty::sync::atomic::AtomicU64 connect_time_ms_field;
+    rusty::sync::atomic::AtomicU64 total_latency_us_field;
+    rusty::sync::atomic::AtomicU64 min_latency_us_field;
+    rusty::sync::atomic::AtomicU64 max_latency_us_field;
 
     static ConnectionMetrics new_();
     uint64_t requests_sent() const;
@@ -311,7 +319,7 @@ struct ConnectionMetrics {
 
 
 ConnectionMetrics ConnectionMetrics::new_() {
-    return ConnectionMetrics{.requests_sent_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .requests_completed_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .requests_failed_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .requests_timed_out_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .in_flight_requests_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .bytes_sent_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .bytes_received_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .reconnect_count_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .retry_attempts_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .queue_dropped_requests_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .circuit_open_rejections_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .circuit_open_transitions_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .circuit_half_open_transitions_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .circuit_closed_transitions_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .connect_time_ms_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .total_latency_us_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0)), .min_latency_us_field = rusty::sync::atomic::Atomic<uint64_t>::new_(std::numeric_limits<uint64_t>::max()), .max_latency_us_field = rusty::sync::atomic::Atomic<uint64_t>::new_(static_cast<uint64_t>(0))};
+    return ConnectionMetrics{.requests_sent_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .requests_completed_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .requests_failed_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .requests_timed_out_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .in_flight_requests_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .bytes_sent_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .bytes_received_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .reconnect_count_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .retry_attempts_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .queue_dropped_requests_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_open_rejections_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_open_transitions_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_half_open_transitions_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_closed_transitions_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .connect_time_ms_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .total_latency_us_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .min_latency_us_field = rusty::sync::atomic::AtomicU64::new_(std::numeric_limits<uint64_t>::max()), .max_latency_us_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0))};
 }
 
 uint64_t ConnectionMetrics::requests_sent() const {
