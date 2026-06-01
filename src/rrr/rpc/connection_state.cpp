@@ -77,14 +77,14 @@ using StateChangeCallback =
 //     them.
 #if RUSTYCPP_RUST
 struct ConnectionStateMachine {
-    state_field: rusty::Cell<ConnectionState>,
+    state_field: Cell<ConnectionState>,
     on_state_change: StateChangeCallback,
 }
 
 impl ConnectionStateMachine {
     fn new() -> ConnectionStateMachine {
         ConnectionStateMachine {
-            state_field: rusty::Cell::<ConnectionState>::new(ConnectionState::NEW),
+            state_field: Cell::<ConnectionState>::new(ConnectionState::NEW),
             on_state_change: StateChangeCallback {},
         }
     }
@@ -176,7 +176,7 @@ impl ConnectionStateMachine {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=connection_state.1 version=1 rust_sha256=ba26abd826b92934bb01ec4f0607f7eed8cfa29caf43795ab00614cf67a31901*/
+/*RUSTYCPP:GEN-BEGIN id=connection_state.1 version=1 rust_sha256=ee33d384861d3fbe6045af7da97ee0583e3d2c047bf80fd62cb8379640b1b2ba*/
 struct ConnectionStateMachine;
 
 struct ConnectionStateMachine {
