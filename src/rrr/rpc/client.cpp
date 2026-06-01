@@ -2033,18 +2033,18 @@ inline const char* client_dsl_addr_to_cstr(const int8_t* addr) {
 //     return type exactly.
 #if RUSTYCPP_RUST
 struct Client {
-    connection_field: rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>,
-    poll_thread_worker_field: rusty::Arc<PollThread>,
-    is_client_mode_field: rusty::Cell<bool>,
-    time_field: rusty::Cell<i64>,
-    timeout_field: rusty::Cell<u64>,
-    rpc_id_field: rusty::Cell<i32>,
-    pending_keepalive_config_field: rusty::Cell<KeepaliveConfig>,
-    pending_heartbeat_config_field: rusty::Cell<HeartbeatConfig>,
-    pending_circuit_breaker_config_field: rusty::Cell<CircuitBreakerConfig>,
-    pending_reconnect_policy_field: rusty::Cell<ReconnectPolicy>,
-    callback_manager_field: rusty::Arc<CallbackManager>,
-    pending_factory_field: SpinMutex<rusty::Option<ChannelFactoryProxy>>,
+    connection_field: RefCell<Option<Arc<ClientConnection>>>,
+    poll_thread_worker_field: Arc<PollThread>,
+    is_client_mode_field: Cell<bool>,
+    time_field: Cell<i64>,
+    timeout_field: Cell<u64>,
+    rpc_id_field: Cell<i32>,
+    pending_keepalive_config_field: Cell<KeepaliveConfig>,
+    pending_heartbeat_config_field: Cell<HeartbeatConfig>,
+    pending_circuit_breaker_config_field: Cell<CircuitBreakerConfig>,
+    pending_reconnect_policy_field: Cell<ReconnectPolicy>,
+    callback_manager_field: Arc<CallbackManager>,
+    pending_factory_field: SpinMutex<Option<ChannelFactoryProxy>>,
     // Per-Client empty metrics used as the no-connection fallback by
     // `metrics()` (returns a live ref). Per-instance rather than
     // program-global so a `static const ConnectionMetrics` isn't
@@ -2060,26 +2060,26 @@ impl Drop for Client {
 }
 
 impl Client {
-    fn new(poll_thread_worker: rusty::Arc<PollThread>) -> Client {
+    fn new(poll_thread_worker: Arc<PollThread>) -> Client {
         Client {
-            connection_field: rusty::RefCell::<rusty::Option<rusty::Arc<ClientConnection>>>::new(rusty::None),
+            connection_field: RefCell::<Option<Arc<ClientConnection>>>::new(None),
             poll_thread_worker_field: poll_thread_worker,
-            is_client_mode_field: rusty::Cell::<bool>::new(false),
-            time_field: rusty::Cell::<i64>::new(0i64),
-            timeout_field: rusty::Cell::<u64>::new(0u64),
-            rpc_id_field: rusty::Cell::<i32>::new(0i32),
-            pending_keepalive_config_field: rusty::Cell::<KeepaliveConfig>::new(KeepaliveConfig {}),
-            pending_heartbeat_config_field: rusty::Cell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
-            pending_circuit_breaker_config_field: rusty::Cell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
-            pending_reconnect_policy_field: rusty::Cell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
-            callback_manager_field: rusty::Arc::<CallbackManager>::new(CallbackManager::new_()),
-            pending_factory_field: SpinMutex::<rusty::Option<ChannelFactoryProxy>>::new(rusty::Option::<ChannelFactoryProxy>(rusty::None)),
+            is_client_mode_field: Cell::<bool>::new(false),
+            time_field: Cell::<i64>::new(0i64),
+            timeout_field: Cell::<u64>::new(0u64),
+            rpc_id_field: Cell::<i32>::new(0i32),
+            pending_keepalive_config_field: Cell::<KeepaliveConfig>::new(KeepaliveConfig {}),
+            pending_heartbeat_config_field: Cell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
+            pending_circuit_breaker_config_field: Cell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
+            pending_reconnect_policy_field: Cell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
+            callback_manager_field: Arc::<CallbackManager>::new(CallbackManager::new_()),
+            pending_factory_field: SpinMutex::<Option<ChannelFactoryProxy>>::new(Option::<ChannelFactoryProxy>(None)),
             empty_metrics_field: ConnectionMetrics::new_(),
         }
     }
 
-    fn create(poll_thread_worker: rusty::Arc<PollThread>) -> rusty::Arc<Client> {
-        rusty::Arc::<Client>::new(Client::new_(poll_thread_worker))
+    fn create(poll_thread_worker: Arc<PollThread>) -> Arc<Client> {
+        Arc::<Client>::new(Client::new_(poll_thread_worker))
     }
 
     fn set_client_mode(&self, v: bool) { self.is_client_mode_field.set(v); }
@@ -2109,10 +2109,10 @@ impl Client {
         guard.as_ref().unwrap().request_with_options(rpc_id, options, FutureAttr {}, write_fn)
     }
 
-    fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: ClientConnection::AsyncReplyCallback) -> rusty::Result<(), i32> {
+    fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: ClientConnection::AsyncReplyCallback) -> Result<(), i32> {
         let guard = self.connection_field.borrow();
         if guard.is_none() {
-            return rusty::Result::<(), i32>::Err(ENOTCONN);
+            return Result::<(), i32>::Err(ENOTCONN);
         }
         self.rpc_id_field.set(rpc_id);
         guard.as_ref().unwrap().request_async(rpc_id, write_fn, on_reply)
@@ -2121,8 +2121,8 @@ impl Client {
     fn set_valid(&self, _valid: bool) {}
 
     fn connect(&self, addr: *const i8, client: bool) -> i32 {
-        let conn: rusty::Arc<ClientConnection> =
-            rusty::Arc::<ClientConnection>::make(self.poll_thread_worker_field.clone());
+        let conn: Arc<ClientConnection> =
+            Arc::<ClientConnection>::make(self.poll_thread_worker_field.clone());
         let opt = conn.get_mut();
         verify(opt.is_some());
         let mut_conn: &mut ClientConnection = opt.unwrap();
@@ -2167,9 +2167,9 @@ impl Client {
             let was_connected: bool = conn_ref.connected();
             conn_ref.mark_closing();
             if was_connected {
-                let conn_arc: rusty::Arc<ClientConnection> = conn_ref.clone();
-                let close_job: rusty::Arc<OneTimeJob> =
-                    rusty::Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || {
+                let conn_arc: Arc<ClientConnection> = conn_ref.clone();
+                let close_job: Arc<OneTimeJob> =
+                    Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || {
                         conn_arc.close();
                     }));
                 // Implicit Arc<OneTimeJob> -> Arc<Job> upcast via rusty::Arc's
@@ -2278,12 +2278,12 @@ impl Client {
         false
     }
 
-    fn connection(&self) -> rusty::Option<rusty::Arc<ClientConnection>> {
+    fn connection(&self) -> Option<Arc<ClientConnection>> {
         let guard = self.connection_field.borrow();
         if guard.is_some() {
-            return rusty::Some(guard.as_ref().unwrap().clone());
+            return Some(guard.as_ref().unwrap().clone());
         }
-        rusty::None
+        None
     }
 
     fn server_instance_id(&self) -> u64 {
@@ -2429,7 +2429,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=823e84d1d27d814b34cfbea2c7b3fccf390ddf7cdbe8ea9e3b03d7b759f549fa*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=e7ac788134043a7a78364a12cd7d8077d0f94706b54d714d70ee3658b33b0c42*/
 struct Client;
 
 struct Client {
@@ -2530,7 +2530,7 @@ Client::~Client() noexcept(false) {
 }
 
 Client Client::new_(rusty::Arc<PollThread> poll_thread_worker) {
-    return Client(rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>::new_(rusty::None), std::move(poll_thread_worker), rusty::Cell<bool>::new_(false), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<KeepaliveConfig>::new_(KeepaliveConfig{}), rusty::Cell<HeartbeatConfig>::new_(HeartbeatConfig::disabled()), rusty::Cell<CircuitBreakerConfig>::new_(CircuitBreakerConfig::disabled()), rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::conservative()), rusty::Arc<CallbackManager>::new_(CallbackManager::new_()), SpinMutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)), ConnectionMetrics::new_());
+    return Client(rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>>::new_(rusty::Option<rusty::Arc<ClientConnection>>{rusty::None}), std::move(poll_thread_worker), rusty::Cell<bool>::new_(false), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<KeepaliveConfig>::new_(KeepaliveConfig{}), rusty::Cell<HeartbeatConfig>::new_(HeartbeatConfig::disabled()), rusty::Cell<CircuitBreakerConfig>::new_(CircuitBreakerConfig::disabled()), rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::conservative()), rusty::Arc<CallbackManager>::new_(CallbackManager::new_()), SpinMutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)), ConnectionMetrics::new_());
 }
 
 rusty::Arc<Client> Client::create(rusty::Arc<PollThread> poll_thread_worker) {
@@ -2753,7 +2753,7 @@ rusty::Option<rusty::Arc<ClientConnection>> Client::connection() const {
     if (guard->is_some()) {
         return rusty::Option<rusty::Arc<ClientConnection>>(rusty::clone(guard->as_ref().unwrap()));
     }
-    return rusty::None;
+    return rusty::Option<rusty::Arc<ClientConnection>>{rusty::None};
 }
 
 uint64_t Client::server_instance_id() const {
