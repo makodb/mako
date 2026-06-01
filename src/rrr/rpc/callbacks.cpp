@@ -55,11 +55,11 @@ inline void invoke_callback_safely(const Callback& cb, Args&&... args) {
 
 #if RUSTYCPP_RUST
 struct ConnectionCallbacks {
-    on_connected: rusty::Vec<ConnectionCallback>,
-    on_disconnected: rusty::Vec<ConnectionCallback>,
-    on_error: rusty::Vec<ErrorCallback>,
-    on_reconnecting: rusty::Vec<ConnectionCallback>,
-    on_reconnected: rusty::Vec<ReconnectCallback>,
+    on_connected: Vec<ConnectionCallback>,
+    on_disconnected: Vec<ConnectionCallback>,
+    on_error: Vec<ErrorCallback>,
+    on_reconnecting: Vec<ConnectionCallback>,
+    on_reconnected: Vec<ReconnectCallback>,
 }
 
 impl ConnectionCallbacks {
@@ -138,7 +138,7 @@ impl CallbackManager {
     }
 
     fn invoke_on_connected(&self) {
-        let callbacks_copy: rusty::Vec<ConnectionCallback> = {
+        let callbacks_copy: Vec<ConnectionCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_connected.clone()
         };
@@ -151,7 +151,7 @@ impl CallbackManager {
     }
 
     fn invoke_on_disconnected(&self) {
-        let callbacks_copy: rusty::Vec<ConnectionCallback> = {
+        let callbacks_copy: Vec<ConnectionCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_disconnected.clone()
         };
@@ -164,7 +164,7 @@ impl CallbackManager {
     }
 
     fn invoke_on_error(&self, error: RpcError, message: &std::string) {
-        let callbacks_copy: rusty::Vec<ErrorCallback> = {
+        let callbacks_copy: Vec<ErrorCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_error.clone()
         };
@@ -177,7 +177,7 @@ impl CallbackManager {
     }
 
     fn invoke_on_reconnecting(&self) {
-        let callbacks_copy: rusty::Vec<ConnectionCallback> = {
+        let callbacks_copy: Vec<ConnectionCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_reconnecting.clone()
         };
@@ -190,7 +190,7 @@ impl CallbackManager {
     }
 
     fn invoke_on_reconnected(&self, success: bool) {
-        let callbacks_copy: rusty::Vec<ReconnectCallback> = {
+        let callbacks_copy: Vec<ReconnectCallback> = {
             let guard = self.callbacks_field.lock().unwrap();
             (*guard).on_reconnected.clone()
         };
@@ -242,7 +242,7 @@ impl CallbackManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=e1aad4fe31e899b44fe28b437f1bff6ad3a0d43151310d45050a8f6683ba42c0*/
+/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=b08c15247422cc6cbe60757760fc0d523f9ccaf541527d31e6b2f1f2502c8020*/
 struct ConnectionCallbacks;
 struct CallbackManager;
 
