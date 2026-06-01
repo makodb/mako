@@ -88,11 +88,11 @@ struct HeartbeatConfig {
 #if RUSTYCPP_RUST
 struct HeartbeatManager {
     config_field: HeartbeatConfig,
-    last_send_time: rusty::Cell<u64>,
-    last_recv_time: rusty::Cell<u64>,
-    missed_count_field: rusty::Cell<u32>,
-    pending_pong: rusty::Cell<bool>,
-    timed_out: rusty::Cell<bool>,
+    last_send_time: Cell<u64>,
+    last_recv_time: Cell<u64>,
+    missed_count_field: Cell<u32>,
+    pending_pong: Cell<bool>,
+    timed_out: Cell<bool>,
     on_timeout: HeartbeatTimeoutCallback,
 }
 
@@ -100,11 +100,11 @@ impl HeartbeatManager {
     fn new(config: &HeartbeatConfig) -> HeartbeatManager {
         HeartbeatManager {
             config_field: rusty::clone(config),
-            last_send_time: rusty::Cell::<u64>::new(0u64),
-            last_recv_time: rusty::Cell::<u64>::new(0u64),
-            missed_count_field: rusty::Cell::<u32>::new(0u32),
-            pending_pong: rusty::Cell::<bool>::new(false),
-            timed_out: rusty::Cell::<bool>::new(false),
+            last_send_time: Cell::<u64>::new(0u64),
+            last_recv_time: Cell::<u64>::new(0u64),
+            missed_count_field: Cell::<u32>::new(0u32),
+            pending_pong: Cell::<bool>::new(false),
+            timed_out: Cell::<bool>::new(false),
             on_timeout: HeartbeatTimeoutCallback {},
         }
     }
@@ -223,7 +223,7 @@ impl HeartbeatManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=084940dbb8a74c2c2c9014c9c2d74284e5afd33af4426a2af1f0bdf0e8997aac*/
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=95b80ad2023d6e626fd5e98f4dba7a6e2e937a4a67ba0d1380cd1eefb64e180b*/
 struct HeartbeatManager;
 
 struct HeartbeatManager {
