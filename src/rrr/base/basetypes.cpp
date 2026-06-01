@@ -85,7 +85,7 @@ public:
 };
 
 // `Counter` — atomic-backed monotonically-increasing counter. The
-// underlying field is `rusty::sync::atomic::Atomic<i64>` (a movable
+// underlying field is `rusty::sync::atomic::AtomicI64` (a movable
 // wrapper around `std::atomic<i64>`), so the class as a whole is
 // move-constructible / move-assignable — which is what makes the
 // value-returning `static new_(...)` factory below compile. The
@@ -95,7 +95,7 @@ class Counter: public NoCopy {
 public:
     // Default-init to 0; the implicit default ctor reproduces the
     // prior `Counter()` / `Counter(0)` behaviour.
-    rusty::sync::atomic::Atomic<i64> next_{0};
+    rusty::sync::atomic::AtomicI64 next_{0};
 
     // @safe - Rust-style factory matching `fn new(start) -> Self`.
     // Callers that want a non-zero start switch from `Counter(N)` to

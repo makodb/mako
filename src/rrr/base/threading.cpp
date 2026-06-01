@@ -127,7 +127,7 @@ public:
     // The user-declared virtual dtor above suppresses the implicit move
     // ctor / move-assign. Restore them so SpinLock — which derives from
     // Lockable — can be implicitly move-constructed (its only state is
-    // the movable `rusty::Atomic<bool>` flag).
+    // the movable `rusty::sync::atomic::AtomicBool` flag).
     Lockable() = default;
     Lockable(Lockable&&) noexcept = default;
     Lockable& operator=(Lockable&&) noexcept = default;
@@ -136,7 +136,7 @@ public:
 
 // @unsafe - Used with mutable for interior mutability.
 //
-// The underlying flag is `rusty::sync::atomic::Atomic<bool>` (a thin
+// The underlying flag is `rusty::sync::atomic::AtomicBool` (a thin
 // movable wrapper around `std::atomic<bool>`), which lets SpinLock be
 // move-constructible / move-assignable. The implicit move ctor reads
 // the source's `locked_` value at the time of move and writes it into
@@ -151,13 +151,13 @@ public:
     ~SpinLock() override = default;
 
     // Still not copyable (an atomic flag has identity); rely on
-    // the implicit move (which Atomic<bool> supports) to allow
+    // the implicit move (which AtomicBool supports) to allow
     // value-returning factories like `SpinLock::new_()`.
     SpinLock(const SpinLock&) = delete;
     SpinLock& operator=(const SpinLock&) = delete;
 
     // The user-declared (defaulted) destructor above would otherwise
-    // suppress the implicit move ctor / move-assign. `rusty::Atomic<bool>`
+    // suppress the implicit move ctor / move-assign. `rusty::AtomicBool`
     // is movable, so declaring these `= default` lets value-returning
     // factories like `SpinLock::new_()` and DSL-emitted aggregate ctors
     // taking `SpinMutex<T>` by value lower to a move (not a copy).
@@ -206,7 +206,7 @@ public:
     }
 
 private:
-    rusty::sync::atomic::Atomic<bool> locked_ alignas(64);  // Cache-line aligned to prevent false sharing
+    rusty::sync::atomic::AtomicBool locked_ alignas(64);  // Cache-line aligned to prevent false sharing
 };
 
 // =============================================================================
