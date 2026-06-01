@@ -145,7 +145,7 @@ protected:
         // Create RPC server
         cnode->rpc_server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<ConfigServiceImpl>(*cnode->store);
-        cnode->rpc_server->reg_service(std::move(service_box));
+        cnode->rpc_server->reg_service_typed(std::move(service_box));
 
         std::string addr = "0.0.0.0:" + std::to_string(port);
         if (cnode->rpc_server->start(reinterpret_cast<const int8_t*>(addr.c_str())) != 0) {

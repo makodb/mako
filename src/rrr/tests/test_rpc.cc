@@ -121,7 +121,7 @@ protected:
 
             auto service_box = rusty::make_box<TestService>();
             service_ = service_box.get();
-            server->reg_service(std::move(service_box));
+            server->reg_service_typed(std::move(service_box));
 
             if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) == 0) {
                 started = true;
