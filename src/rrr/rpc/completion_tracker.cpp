@@ -119,30 +119,57 @@ CompletionTrackerConfig CompletionTrackerConfig::disabled() {
 /**
  * @safe - Entry for tracking completed XIDs.
  *
- * Aggregate POD: no user-declared constructors. The previous default
- * ctor and 2-arg value ctor were dropped in favour of the Rust-style
- * `static new_(...)` factory, which mirrors what the inline-Rust DSL
- * emits for `fn new(...) -> Self` (without `#[cpp_ctor]`). Future DSL
- * migration is now a body-level translation; no `#[cpp_ctor]` needed.
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. `fn new(x, ts) -> Self` lowers
+ * to a static `CompletedEntry::new_(x, ts)` factory.
  *
- * Aggregate-init (`CompletedEntry{}`, `CompletedEntry{xid, ts}`) and
- * designated-init still work because the struct remains an aggregate.
+ * The DSL emits a pure C++20 aggregate (no in-class default
+ * initializers, no user-declared ctors). Brace-init and designated-
+ * init still work. Default-construct (`CompletedEntry e;`) is now
+ * uninitialized; the one test that relied on `{0, 0}` defaults moves
+ * to an explicit `CompletedEntry::new_(0, 0)`.
  */
+#if RUSTYCPP_RUST
 struct CompletedEntry {
-    int64_t xid = 0;
-    uint64_t timestamp_ms = 0;
+    xid: i64,
+    timestamp_ms: u64,
+}
 
-    // @safe - Rust-style factory matching the DSL `fn new(x, ts) -> Self` form.
-    static CompletedEntry new_(int64_t x, uint64_t ts) {
-        return CompletedEntry{.xid = x, .timestamp_ms = ts};
+impl CompletedEntry {
+    fn new_(x: i64, ts: u64) -> CompletedEntry {
+        CompletedEntry { xid: x, timestamp_ms: ts }
     }
 
-    // @safe - Check if entry has expired
-    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
-        if (ttl_ms == 0) return false;  // No expiration
-        return current_time_ms > timestamp_ms + ttl_ms;
+    fn is_expired(&self, current_time_ms: u64, ttl_ms: u64) -> bool {
+        if ttl_ms == 0u64 { return false; }
+        current_time_ms > self.timestamp_ms + ttl_ms
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.2 version=1 rust_sha256=9a084ee61354fc19f53bdbb4073b467b20beb9475f0ea84dca2fdcdcef965623*/
+struct CompletedEntry;
+
+struct CompletedEntry {
+    int64_t xid;
+    uint64_t timestamp_ms;
+
+    static CompletedEntry new_(int64_t x, uint64_t ts);
+    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const;
 };
+
+
+CompletedEntry CompletedEntry::new_(int64_t x, uint64_t ts) {
+    return CompletedEntry{.xid = std::move(x), .timestamp_ms = std::move(ts)};
+}
+
+bool CompletedEntry::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
+    if (rusty::detail::deref_if_pointer_like(ttl_ms) == static_cast<uint64_t>(0)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(current_time_ms) > (rusty::detail::deref_if_pointer_like(this->timestamp_ms) + rusty::detail::deref_if_pointer_like(ttl_ms));
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.2*/
 
 // ===========================================================================
 // CompletionTracker

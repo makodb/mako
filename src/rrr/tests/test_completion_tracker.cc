@@ -62,8 +62,8 @@ TEST_F(CompletionTrackerConfigTest, DisabledPreset) {
 
 class CompletedEntryTest : public ::testing::Test {};
 
-TEST_F(CompletedEntryTest, DefaultConstruction) {
-    CompletedEntry entry;
+TEST_F(CompletedEntryTest, ZeroFactory) {
+    auto entry = CompletedEntry::new_(0, 0);
 
     EXPECT_EQ(entry.xid, 0);
     EXPECT_EQ(entry.timestamp_ms, 0);
