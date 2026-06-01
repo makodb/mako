@@ -76,7 +76,7 @@ public:
 // ============================================================================
 
 TEST(KeepaliveConfigTest, DefaultValues) {
-    KeepaliveConfig config;
+    auto config = KeepaliveConfig::new_();
     EXPECT_TRUE(config.enabled);
     EXPECT_EQ(config.idle_sec, 60);
     EXPECT_EQ(config.interval_sec, 10);
@@ -310,7 +310,7 @@ TEST_F(ConnectionValidationTest, KeepaliveAppliedOnConnect) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Set custom keepalive before connecting
-    KeepaliveConfig config;
+    auto config = KeepaliveConfig::new_();
     config.enabled = true;
     config.idle_sec = 30;
     config.interval_sec = 5;

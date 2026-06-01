@@ -151,55 +151,74 @@ struct BufferingConfig {
  * has been idle for `idle_sec` seconds, then at `interval_sec` intervals.
  * If `count` probes go unanswered, the connection is considered dead.
  */
-// @safe - POD config struct for TCP keepalive settings
+// @safe - POD config struct for TCP keepalive settings.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static KeepaliveConfig new_()` factory (returning the relaxed
+// preset, which matches the prior default ctor). Callers construct
+// via the factory presets (`KeepaliveConfig::aggressive()`,
+// `::relaxed()`, `::disabled()`) or via brace-init / designated-init
+// (the emitted struct is a C++20 aggregate).
+#if RUSTYCPP_RUST
 struct KeepaliveConfig {
-    bool enabled = true;       // Enable TCP keepalive probes
-    int idle_sec = 60;         // TCP_KEEPIDLE: seconds before first probe
-    int interval_sec = 10;     // TCP_KEEPINTVL: seconds between probes
-    int count = 5;             // TCP_KEEPCNT: max unanswered probes before dropping
+    enabled: bool,
+    idle_sec: i32,
+    interval_sec: i32,
+    count: i32,
+}
 
-    // @safe - Default constructor
-    KeepaliveConfig() = default;
-
-    // @safe - Copy constructor
-    KeepaliveConfig(const KeepaliveConfig&) = default;
-
-    // @safe - Copy assignment
-    KeepaliveConfig& operator=(const KeepaliveConfig&) = default;
-
-    // Fast detection preset: 10s idle, 2s interval, 3 probes = 16s to detect failure
-    // @safe - POD struct copy is memory-safe
-    static KeepaliveConfig aggressive() {
-        KeepaliveConfig config;
-        config.enabled = true;
-        config.idle_sec = 10;
-        config.interval_sec = 2;
-        config.count = 3;
-        return config;
+impl KeepaliveConfig {
+    fn new_() -> KeepaliveConfig {
+        KeepaliveConfig { enabled: true, idle_sec: 60i32, interval_sec: 10i32, count: 5i32 }
     }
 
-    // Standard preset: 60s idle, 10s interval, 5 probes = 110s to detect failure
-    // @safe - POD struct copy is memory-safe
-    static KeepaliveConfig relaxed() {
-        KeepaliveConfig config;
-        config.enabled = true;
-        config.idle_sec = 60;
-        config.interval_sec = 10;
-        config.count = 5;
-        return config;
+    fn aggressive() -> KeepaliveConfig {
+        KeepaliveConfig { enabled: true, idle_sec: 10i32, interval_sec: 2i32, count: 3i32 }
     }
 
-    // Disabled preset
-    // @safe - POD struct copy is memory-safe
-    static KeepaliveConfig disabled() {
-        KeepaliveConfig config;
-        config.enabled = false;
-        config.idle_sec = 0;
-        config.interval_sec = 0;
-        config.count = 0;
-        return config;
+    fn relaxed() -> KeepaliveConfig {
+        KeepaliveConfig { enabled: true, idle_sec: 60i32, interval_sec: 10i32, count: 5i32 }
     }
+
+    fn disabled() -> KeepaliveConfig {
+        KeepaliveConfig { enabled: false, idle_sec: 0i32, interval_sec: 0i32, count: 0i32 }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.0 version=1 rust_sha256=862a56a6f2b1c2cd4c0a735fc4664d41c54a2b4d8c0a3bc607c5f197242f1c91*/
+struct KeepaliveConfig;
+
+struct KeepaliveConfig {
+    bool enabled;
+    int32_t idle_sec;
+    int32_t interval_sec;
+    int32_t count;
+
+    static KeepaliveConfig new_();
+    static KeepaliveConfig aggressive();
+    static KeepaliveConfig relaxed();
+    static KeepaliveConfig disabled();
 };
+
+
+KeepaliveConfig KeepaliveConfig::new_() {
+    return KeepaliveConfig{.enabled = true, .idle_sec = static_cast<int32_t>(60), .interval_sec = static_cast<int32_t>(10), .count = static_cast<int32_t>(5)};
+}
+
+KeepaliveConfig KeepaliveConfig::aggressive() {
+    return KeepaliveConfig{.enabled = true, .idle_sec = static_cast<int32_t>(10), .interval_sec = static_cast<int32_t>(2), .count = static_cast<int32_t>(3)};
+}
+
+KeepaliveConfig KeepaliveConfig::relaxed() {
+    return KeepaliveConfig{.enabled = true, .idle_sec = static_cast<int32_t>(60), .interval_sec = static_cast<int32_t>(10), .count = static_cast<int32_t>(5)};
+}
+
+KeepaliveConfig KeepaliveConfig::disabled() {
+    return KeepaliveConfig{.enabled = false, .idle_sec = static_cast<int32_t>(0), .interval_sec = static_cast<int32_t>(0), .count = static_cast<int32_t>(0)};
+}
+/*RUSTYCPP:GEN-END id=client.0*/
 
 /**
  * ClientPool configuration for health-aware connection pooling.
