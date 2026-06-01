@@ -23,16 +23,13 @@ export namespace rrr {
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below
 // is the source of truth; the transpiler regenerates the matching
-// GEN-BEGIN block. `#[cpp_ctor] fn new()` lowers to a real default
-// constructor `CompletionTrackerConfig()` whose initializer-list
-// reproduces the previous `= 60000`, `= 100000`, `= true` in-class
-// defaults — so `CompletionTrackerConfig cfg;` default-init still
-// produces the same values without source changes.
+// GEN-BEGIN block. The plain `fn new()` lowers to a
+// `static CompletionTrackerConfig new_()` factory.
 //
-// `defaults()` / `small()` / `large()` / `disabled()` factories use
-// the empty-literal-then-mutate idiom for the same reason as the
-// other config migrations: a populated DSL literal would map to a
-// C++ designated initializer, which the cpp_ctor disqualifies.
+// Now that there is no cpp_ctor, CompletionTrackerConfig is a pure
+// aggregate; the preset bodies use the populated DSL literal form
+// `CompletionTrackerConfig { ttl_ms: ..., ... }` which lowers to a
+// clean designated initializer.
 #if RUSTYCPP_RUST
 struct CompletionTrackerConfig {
     ttl_ms: u64,
@@ -41,7 +38,6 @@ struct CompletionTrackerConfig {
 }
 
 impl CompletionTrackerConfig {
-    #[cpp_ctor]
     fn new() -> CompletionTrackerConfig {
         CompletionTrackerConfig {
             ttl_ms: 60000u64,
@@ -51,31 +47,35 @@ impl CompletionTrackerConfig {
     }
 
     fn defaults() -> CompletionTrackerConfig {
-        CompletionTrackerConfig {}
+        CompletionTrackerConfig::new_()
     }
 
     fn small() -> CompletionTrackerConfig {
-        let mut cfg: CompletionTrackerConfig = CompletionTrackerConfig {};
-        cfg.ttl_ms = 30000u64;
-        cfg.max_entries = 10000usize;
-        cfg
+        CompletionTrackerConfig {
+            ttl_ms: 30000u64,
+            max_entries: 10000usize,
+            enabled: true,
+        }
     }
 
     fn large() -> CompletionTrackerConfig {
-        let mut cfg: CompletionTrackerConfig = CompletionTrackerConfig {};
-        cfg.ttl_ms = 300000u64;
-        cfg.max_entries = 1000000usize;
-        cfg
+        CompletionTrackerConfig {
+            ttl_ms: 300000u64,
+            max_entries: 1000000usize,
+            enabled: true,
+        }
     }
 
     fn disabled() -> CompletionTrackerConfig {
-        let mut cfg: CompletionTrackerConfig = CompletionTrackerConfig {};
-        cfg.enabled = false;
-        cfg
+        CompletionTrackerConfig {
+            ttl_ms: 60000u64,
+            max_entries: 100000usize,
+            enabled: false,
+        }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=5f09e5d23be1daaa2008390e8240bb97a167a34ac4b2bf4a003e21dfbb121a82*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=8d8e447793251f267fe7b086b3524256db555e1e9ae835da136ab52a8abb6e8b*/
 struct CompletionTrackerConfig;
 
 struct CompletionTrackerConfig {
@@ -83,7 +83,7 @@ struct CompletionTrackerConfig {
     size_t max_entries;
     bool enabled;
 
-    CompletionTrackerConfig();
+    static CompletionTrackerConfig new_();
     static CompletionTrackerConfig defaults();
     static CompletionTrackerConfig small();
     static CompletionTrackerConfig large();
@@ -91,34 +91,24 @@ struct CompletionTrackerConfig {
 };
 
 
-CompletionTrackerConfig::CompletionTrackerConfig()
-    : ttl_ms(static_cast<uint64_t>(60000))
-    , max_entries(static_cast<size_t>(100000))
-    , enabled(true)
-{}
+CompletionTrackerConfig CompletionTrackerConfig::new_() {
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(100000), .enabled = true};
+}
 
 CompletionTrackerConfig CompletionTrackerConfig::defaults() {
-    return CompletionTrackerConfig{};
+    return CompletionTrackerConfig::new_();
 }
 
 CompletionTrackerConfig CompletionTrackerConfig::small() {
-    CompletionTrackerConfig cfg = CompletionTrackerConfig{};
-    cfg.ttl_ms = static_cast<uint64_t>(30000);
-    cfg.max_entries = static_cast<size_t>(10000);
-    return std::move(cfg);
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(30000), .max_entries = static_cast<size_t>(10000), .enabled = true};
 }
 
 CompletionTrackerConfig CompletionTrackerConfig::large() {
-    CompletionTrackerConfig cfg = CompletionTrackerConfig{};
-    cfg.ttl_ms = static_cast<uint64_t>(300000);
-    cfg.max_entries = static_cast<size_t>(1000000);
-    return std::move(cfg);
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(300000), .max_entries = static_cast<size_t>(1000000), .enabled = true};
 }
 
 CompletionTrackerConfig CompletionTrackerConfig::disabled() {
-    CompletionTrackerConfig cfg = CompletionTrackerConfig{};
-    cfg.enabled = false;
-    return std::move(cfg);
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(100000), .enabled = false};
 }
 /*RUSTYCPP:GEN-END id=completion_tracker.1*/
 

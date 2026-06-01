@@ -72,19 +72,15 @@ struct QueuedRequest {
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `RUSTYCPP:GEN-BEGIN ... END` block. The `#[cpp_ctor] fn new()`
-// lowers to a real default constructor `RequestQueueConfig()` whose
-// initializer-list mirrors the previous in-class `= 1000`, `= 30000`,
-// etc. defaults — so all existing `RequestQueueConfig config;`
-// call-sites keep getting the same defaults without source changes.
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static RequestQueueConfig new_()` factory. Callers construct via
+// the factory (`auto config = RequestQueueConfig::new_();`) or one of
+// the `defaults()` / `small()` / `large()` / `disabled()` presets.
 //
-// `defaults()` / `small()` / `large()` / `disabled()` factories use
-// `RequestQueueConfig {}` (empty struct literal -> value-init ->
-// calls the cpp_ctor-emitted default ctor) followed by per-field
-// assignment. The transpiler maps a populated literal
-// `RequestQueueConfig { field: value }` to a designated initializer,
-// which requires an aggregate; the cpp_ctor disqualifies the struct
-// from aggregate-init, hence the empty-literal-then-mutate idiom.
+// Now that there is no cpp_ctor, RequestQueueConfig is a pure
+// aggregate; the preset bodies use the populated DSL literal form
+// `RequestQueueConfig { max_size: ..., ... }` which lowers to a clean
+// designated initializer `RequestQueueConfig{.max_size = ...}`.
 #if RUSTYCPP_RUST
 struct RequestQueueConfig {
     max_size: usize,
@@ -94,7 +90,6 @@ struct RequestQueueConfig {
 }
 
 impl RequestQueueConfig {
-    #[cpp_ctor]
     fn new() -> RequestQueueConfig {
         RequestQueueConfig {
             max_size: 1000usize,
@@ -105,32 +100,38 @@ impl RequestQueueConfig {
     }
 
     fn defaults() -> RequestQueueConfig {
-        RequestQueueConfig {}
+        RequestQueueConfig::new_()
     }
 
     fn small() -> RequestQueueConfig {
-        let mut config: RequestQueueConfig = RequestQueueConfig {};
-        config.max_size = 10usize;
-        config.default_ttl_ms = 5000u32;
-        config
+        RequestQueueConfig {
+            max_size: 10usize,
+            default_ttl_ms: 5000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
     fn large() -> RequestQueueConfig {
-        let mut config: RequestQueueConfig = RequestQueueConfig {};
-        config.max_size = 10000usize;
-        config.default_ttl_ms = 60000u32;
-        config
+        RequestQueueConfig {
+            max_size: 10000usize,
+            default_ttl_ms: 60000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
     fn disabled() -> RequestQueueConfig {
-        let mut config: RequestQueueConfig = RequestQueueConfig {};
-        config.enabled = false;
-        config.max_size = 0usize;
-        config
+        RequestQueueConfig {
+            max_size: 0usize,
+            default_ttl_ms: 30000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: false,
+        }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=e7b73afe0660581ce7ad12fd407833889b0c0790f3f55dad4168e8d03bf50686*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=a256db34e70a35cf766611a6e89af022487fb62c38a1b4925b011231ff7ff827*/
 struct RequestQueueConfig;
 
 struct RequestQueueConfig {
@@ -139,7 +140,7 @@ struct RequestQueueConfig {
     OverflowStrategy overflow_strategy;
     bool enabled;
 
-    RequestQueueConfig();
+    static RequestQueueConfig new_();
     static RequestQueueConfig defaults();
     static RequestQueueConfig small();
     static RequestQueueConfig large();
@@ -147,36 +148,24 @@ struct RequestQueueConfig {
 };
 
 
-RequestQueueConfig::RequestQueueConfig()
-    : max_size(static_cast<size_t>(1000))
-    , default_ttl_ms(static_cast<uint32_t>(30000))
-    , overflow_strategy(OverflowStrategy::DROP_OLDEST)
-    , enabled(true)
-{}
+RequestQueueConfig RequestQueueConfig::new_() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
 
 RequestQueueConfig RequestQueueConfig::defaults() {
-    return RequestQueueConfig{};
+    return RequestQueueConfig::new_();
 }
 
 RequestQueueConfig RequestQueueConfig::small() {
-    RequestQueueConfig config = RequestQueueConfig{};
-    config.max_size = static_cast<size_t>(10);
-    config.default_ttl_ms = static_cast<uint32_t>(5000);
-    return std::move(config);
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10), .default_ttl_ms = static_cast<uint32_t>(5000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
 }
 
 RequestQueueConfig RequestQueueConfig::large() {
-    RequestQueueConfig config = RequestQueueConfig{};
-    config.max_size = static_cast<size_t>(10000);
-    config.default_ttl_ms = static_cast<uint32_t>(60000);
-    return std::move(config);
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10000), .default_ttl_ms = static_cast<uint32_t>(60000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
 }
 
 RequestQueueConfig RequestQueueConfig::disabled() {
-    RequestQueueConfig config = RequestQueueConfig{};
-    config.enabled = false;
-    config.max_size = static_cast<size_t>(0);
-    return std::move(config);
+    return RequestQueueConfig{.max_size = static_cast<size_t>(0), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = false};
 }
 /*RUSTYCPP:GEN-END id=request_queue.1*/
 

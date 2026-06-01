@@ -109,7 +109,7 @@ TEST(RequestQueueTest, EmptyQueueDequeueReturnsNone) {
 // ============================================================================
 
 TEST(RequestQueueTest, RespectMaxSize) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 5;
     config.overflow_strategy = OverflowStrategy::DROP_NEWEST;
     RequestQueue queue(config);
@@ -126,7 +126,7 @@ TEST(RequestQueueTest, RespectMaxSize) {
 }
 
 TEST(RequestQueueTest, FullCheck) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 3;
     RequestQueue queue(config);
 
@@ -141,7 +141,7 @@ TEST(RequestQueueTest, FullCheck) {
 }
 
 TEST(RequestQueueTest, RemainingCapacity) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 10;
     RequestQueue queue(config);
 
@@ -160,7 +160,7 @@ TEST(RequestQueueTest, RemainingCapacity) {
 // ============================================================================
 
 TEST(RequestQueueTest, OverflowDropOldest) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 3;
     config.overflow_strategy = OverflowStrategy::DROP_OLDEST;
     RequestQueue queue(config);
@@ -188,7 +188,7 @@ TEST(RequestQueueTest, OverflowDropOldest) {
 }
 
 TEST(RequestQueueTest, OverflowDropNewest) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 3;
     config.overflow_strategy = OverflowStrategy::DROP_NEWEST;
     RequestQueue queue(config);
@@ -215,7 +215,7 @@ TEST(RequestQueueTest, OverflowDropNewest) {
 }
 
 TEST(RequestQueueTest, OverflowDropNewestCallsCallback) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 2;
     config.overflow_strategy = OverflowStrategy::DROP_NEWEST;
     RequestQueue queue(config);
@@ -241,7 +241,7 @@ TEST(RequestQueueTest, OverflowDropNewestCallsCallback) {
 }
 
 TEST(RequestQueueTest, OverflowFailFastCallsCallback) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 2;
     config.overflow_strategy = OverflowStrategy::FAIL_FAST;
     RequestQueue queue(config);
@@ -262,7 +262,7 @@ TEST(RequestQueueTest, OverflowFailFastCallsCallback) {
 }
 
 TEST(RequestQueueTest, DropOldestCallsCallback) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 2;
     config.overflow_strategy = OverflowStrategy::DROP_OLDEST;
     RequestQueue queue(config);
@@ -473,7 +473,7 @@ TEST(RequestQueueTest, LargePreset) {
 // ============================================================================
 
 TEST(RequestQueueTest, ConcurrentEnqueue) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 10000;  // Large enough to not overflow
     RequestQueue queue(config);
 
@@ -499,7 +499,7 @@ TEST(RequestQueueTest, ConcurrentEnqueue) {
 }
 
 TEST(RequestQueueTest, ConcurrentDequeue) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 1000;
     RequestQueue queue(config);
 
@@ -532,7 +532,7 @@ TEST(RequestQueueTest, ConcurrentDequeue) {
 }
 
 TEST(RequestQueueTest, ConcurrentEnqueueDequeue) {
-    RequestQueueConfig config;
+    auto config = RequestQueueConfig::new_();
     config.max_size = 100;
     RequestQueue queue(config);
 

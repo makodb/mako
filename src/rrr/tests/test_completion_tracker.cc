@@ -169,7 +169,7 @@ TEST_F(CompletionTrackerTest, MultipleXIDs) {
 }
 
 TEST_F(CompletionTrackerTest, TTLExpiration) {
-    CompletionTrackerConfig cfg;
+    auto cfg = CompletionTrackerConfig::new_();
     cfg.ttl_ms = 100;  // 100ms TTL
     tracker_.set_config(cfg);
 
@@ -184,7 +184,7 @@ TEST_F(CompletionTrackerTest, TTLExpiration) {
 }
 
 TEST_F(CompletionTrackerTest, EvictionOnCapacity) {
-    CompletionTrackerConfig cfg;
+    auto cfg = CompletionTrackerConfig::new_();
     cfg.max_entries = 3;
     cfg.ttl_ms = 60000;
     tracker_.set_config(cfg);
@@ -287,7 +287,7 @@ TEST_F(CompletionTrackerTest, ResetStats) {
 }
 
 TEST_F(CompletionTrackerTest, EvictExpired) {
-    CompletionTrackerConfig cfg;
+    auto cfg = CompletionTrackerConfig::new_();
     cfg.ttl_ms = 100;  // 100ms TTL
     tracker_.set_config(cfg);
 

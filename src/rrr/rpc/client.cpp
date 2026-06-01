@@ -134,7 +134,7 @@ struct BufferingConfig {
 
     // @safe - Aggregate-initialized POD factory.
     RequestQueueConfig to_queue_config() const {
-        RequestQueueConfig qc;
+        auto qc = RequestQueueConfig::new_();
         qc.max_size = max_pending;
         qc.default_ttl_ms = default_ttl_ms;
         qc.overflow_strategy = overflow;
