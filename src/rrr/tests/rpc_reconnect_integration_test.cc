@@ -574,7 +574,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectCalculatorBackoff) {
     policy.jitter_enabled = false;
     policy.max_retries = 5;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // First delay should be initial
     EXPECT_EQ(calc.next_delay_ms(), 100u);
@@ -591,7 +591,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectCalculatorMaxRetries) {
     policy.max_retries = 3;
     policy.auto_reconnect = true;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     EXPECT_TRUE(calc.should_retry());
     calc.next_delay_ms();  // Retry 1
@@ -609,7 +609,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectCalculatorReset) {
     ReconnectPolicy policy;
     policy.max_retries = 3;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     calc.next_delay_ms();
     calc.next_delay_ms();

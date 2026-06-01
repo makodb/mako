@@ -251,7 +251,7 @@ TEST_F(CombinedReliabilityTest, ReconnectCalculatorResetOnSuccess) {
     policy.max_retries = 5;
     policy.jitter_enabled = false;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // Simulate some failed retries
     calc.next_delay_ms();  // Retry 1

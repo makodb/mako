@@ -57,12 +57,10 @@ struct ReconnectPolicy {
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The constructor uses the
-// `#[cpp_ctor]` attribute (added in `shuaimu/rusty-cpp@9703c1d`) to
-// lower to a real `ReconnectCalculator(const ReconnectPolicy&)` ctor
-// instead of the default `static ReconnectCalculator new_(...)`
-// factory, so all ~20 call sites (`ReconnectCalculator calc(policy);`)
-// keep compiling unchanged.
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The plain `fn new(policy)`
+// lowers to a `static ReconnectCalculator new_(const ReconnectPolicy&)`
+// factory; callers construct via the factory rather than direct ctor
+// syntax (`auto calc = ReconnectCalculator::new_(policy);`).
 //
 // Field rename note: the original C++ class used a private member
 // `retry_count_` alongside a public method `retry_count()`. The DSL
@@ -95,7 +93,6 @@ struct ReconnectCalculator<'p> {
 }
 
 impl<'p> ReconnectCalculator<'p> {
-    #[cpp_ctor]
     fn new(policy: &'p ReconnectPolicy) -> ReconnectCalculator<'p> {
         ReconnectCalculator {
             policy: policy,
@@ -179,14 +176,14 @@ impl<'p> ReconnectCalculator<'p> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reconnect_calculator.1 version=1 rust_sha256=ab86f9333e140938a67528059e3a66f12f5242e96fa76475071c226225e0dc9e*/
+/*RUSTYCPP:GEN-BEGIN id=reconnect_calculator.1 version=1 rust_sha256=6f56d28101c2b7da0547d2e175b592bf942e2eda0aa0343dabcee97c9077b7b9*/
 struct ReconnectCalculator;
 
 struct ReconnectCalculator {
     const ReconnectPolicy& policy;
     rusty::Cell<uint32_t> retries;
 
-    ReconnectCalculator(const ReconnectPolicy& policy);
+    static ReconnectCalculator new_(const ReconnectPolicy& policy);
     bool should_retry() const;
     uint32_t next_delay_ms() const;
     uint32_t peek_delay_ms() const;
@@ -196,10 +193,9 @@ struct ReconnectCalculator {
 };
 
 
-ReconnectCalculator::ReconnectCalculator(const ReconnectPolicy& policy)
-    : policy(policy)
-    , retries(rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)))
-{}
+ReconnectCalculator ReconnectCalculator::new_(const ReconnectPolicy& policy) {
+    return ReconnectCalculator{.policy = policy, .retries = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0))};
+}
 
 bool ReconnectCalculator::should_retry() const {
     if (!this->policy.auto_reconnect) {

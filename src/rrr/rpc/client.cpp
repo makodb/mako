@@ -4137,7 +4137,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   }
 
   // Follow configured backoff/retry policy for subsequent attempts.
-  ReconnectCalculator calc(reconnect_policy_);
+  auto calc = ReconnectCalculator::new_(reconnect_policy_);
   while (calc.should_retry()) {
     if (reconnect_abort_.load(std::memory_order_acquire)) {
       return complete_reconnect(false, ECANCELED);
