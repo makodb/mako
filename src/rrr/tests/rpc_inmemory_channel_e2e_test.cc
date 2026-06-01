@@ -122,7 +122,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
     server_.as_ref().unwrap()->set_channel_factory(make_factory());
-    ASSERT_EQ(server_.as_ref().unwrap()->start("inmemory://e2e-server-1"), 0);
+    ASSERT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("inmemory://e2e-server-1")), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
@@ -162,7 +162,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
     server_.as_ref().unwrap()->set_channel_factory(make_factory());
-    ASSERT_EQ(server_.as_ref().unwrap()->start("inmemory://e2e-server-archive"), 0);
+    ASSERT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("inmemory://e2e-server-archive")), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
@@ -200,7 +200,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
     server_.as_ref().unwrap()->set_channel_factory(make_factory());
-    ASSERT_EQ(server_.as_ref().unwrap()->start("inmemory://e2e-server-mixed"), 0);
+    ASSERT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("inmemory://e2e-server-mixed")), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
@@ -242,7 +242,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
     server_.as_ref().unwrap()->set_channel_factory(make_factory());
-    ASSERT_EQ(server_.as_ref().unwrap()->start("inmemory://e2e-server-2"), 0);
+    ASSERT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("inmemory://e2e-server-2")), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());
@@ -281,7 +281,7 @@ TEST_F(InMemoryE2ETest, ServerDestroyTriggersClientDisconnect) {
     auto svc_box = rusty::make_box<EchoService>();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
     server_.as_ref().unwrap()->set_channel_factory(make_factory());
-    ASSERT_EQ(server_.as_ref().unwrap()->start("inmemory://e2e-server-3"), 0);
+    ASSERT_EQ(server_.as_ref().unwrap()->start(reinterpret_cast<const int8_t*>("inmemory://e2e-server-3")), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap().clone());
     client_ = rusty::Some(client.clone());

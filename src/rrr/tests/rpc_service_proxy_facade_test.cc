@@ -162,17 +162,17 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationUsesProxyBackedPendingStorage)
   server.reg_service(rusty::make_box<CountingService>(
       &reg_calls, &dispatch_calls, &last_svc_index, &last_rpc_id, &last_xid));
 
-  EXPECT_EQ(server.pending_services_.size(), 1u);
+  EXPECT_EQ(server.pending_services_field.size(), 1u);
   EXPECT_EQ(reg_calls.load(std::memory_order_relaxed), 1);
   EXPECT_EQ(last_svc_index, 0u);
 
-  auto rpc_it = server.pending_rpc_to_service_.get(CountingService::RPC_ID);
+  auto rpc_it = server.pending_rpc_to_service_field.get(CountingService::RPC_ID);
   ASSERT_TRUE(rpc_it.is_some());
   EXPECT_EQ(rpc_it.unwrap(), 0u);
 
   auto req = rusty::make_box<Request>();
   req->xid = 88;
-  server.pending_services_[0]->__dispatch__(
+  server.pending_services_field[0]->__dispatch__(
       CountingService::RPC_ID, std::move(req), WeakServerConnection{});
 
   EXPECT_EQ(dispatch_calls.load(std::memory_order_relaxed), 1);
@@ -191,17 +191,17 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationAcceptsTypedServiceWithoutInhe
   server.reg_service_typed(rusty::make_box<TypedCountingService>(
       &reg_calls, &dispatch_calls, &last_svc_index, &last_rpc_id, &last_xid));
 
-  EXPECT_EQ(server.pending_services_.size(), 1u);
+  EXPECT_EQ(server.pending_services_field.size(), 1u);
   EXPECT_EQ(reg_calls.load(std::memory_order_relaxed), 1);
   EXPECT_EQ(last_svc_index, 0u);
 
-  auto rpc_it = server.pending_rpc_to_service_.get(TypedCountingService::RPC_ID);
+  auto rpc_it = server.pending_rpc_to_service_field.get(TypedCountingService::RPC_ID);
   ASSERT_TRUE(rpc_it.is_some());
   EXPECT_EQ(rpc_it.unwrap(), 0u);
 
   auto req = rusty::make_box<Request>();
   req->xid = 99;
-  server.pending_services_[0]->__dispatch__(
+  server.pending_services_field[0]->__dispatch__(
       TypedCountingService::RPC_ID, std::move(req), WeakServerConnection{});
 
   EXPECT_EQ(dispatch_calls.load(std::memory_order_relaxed), 1);

@@ -71,7 +71,7 @@ void client_setup_heartbeat(int num_clients) {
     auto ctrl_port = std::to_string(Config::GetConfig()->get_ctrl_port());
     std::string server_address = std::string("0.0.0.0:").append(ctrl_port);
     Log_info("Start control server on port %s", ctrl_port.c_str());
-    cli_hb_server_g->start(server_address.c_str());
+    cli_hb_server_g->start(reinterpret_cast<const int8_t*>(server_address.c_str()));
   }
 }
 

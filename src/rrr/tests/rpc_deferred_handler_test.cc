@@ -60,7 +60,7 @@ protected:
             auto svc = rusty::make_box<DeferTestService>();
             service_ = svc.get();
             server_->reg_service_typed(std::move(svc));
-            if (server_->start(("0.0.0.0:" + std::to_string(port_)).c_str()) == 0) {
+            if (server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(port_)).c_str())) == 0) {
                 started = true;
                 break;
             }

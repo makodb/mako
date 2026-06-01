@@ -78,7 +78,7 @@ void nc_setup_client(int nkeys, int nthreads, int run) {
     rrr::PollThread *pm = new rrr::PollThread();
     rrr::Client *client = new rrr::Client(pm);
     auto port_s=std::to_string(10010+i);
-    while (client->connect((std::string(server_ip)+":"+port_s).c_str())!=0) {
+    while (client->connect(reinterpret_cast<const int8_t*>((std::string(server_ip)+":"+port_s).c_str()), true)!=0) {
       usleep(100 * 1000); // retry to connect
     }
     HelloworldClientProxy *nc_client_proxy = new HelloworldClientProxy(client);
@@ -104,7 +104,7 @@ void *nc_start_server2(void *input) {
     rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
 
     server->reg_service_typed(rusty::make_box<HelloworldClientServiceImpl>());
-    server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
+    server->start(reinterpret_cast<const int8_t*>((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str())  );
     // Service is now owned by server
     return nullptr;
 }

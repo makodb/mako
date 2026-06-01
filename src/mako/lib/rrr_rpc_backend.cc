@@ -86,10 +86,10 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
         static_cast<rrr::i32>(st_nr_req_types),
         static_cast<rrr::i32>(end_nr_req_types)
     );
-    server_->reg_service(std::move(svc));
+    server_->reg_service_typed(std::move(svc));
 
     // Start listening on the port
-    int ret = server_->start(("0.0.0.0:" + port_str).c_str());
+    int ret = server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + port_str).c_str()));
     if (ret != 0) {
         Panic("Failed to start rrr::Server on port %s", port_str.c_str());
         return ret;

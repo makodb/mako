@@ -29,7 +29,7 @@ void ServerWorker::SetupHeartbeat() {
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
       std::to_string(port);
-  hb_rpc_server_->start(addr_port.c_str());
+  hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
   if (hb_rpc_server_ != nullptr) {
     // Log_info("notify ready to control script for %s", bind_addr.c_str());
     server_status_.as_ref().unwrap()->set_ready();
@@ -242,7 +242,7 @@ void ServerWorker::SetupService() {
 
   // start rpc server
   Log_debug("starting server at %s", bind_addr.c_str());
-  ret = rpc_server_->start(bind_addr.c_str());
+  ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("server launch failed.");
   }

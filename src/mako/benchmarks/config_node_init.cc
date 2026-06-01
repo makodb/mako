@@ -115,7 +115,7 @@ bool init_config_node() {
     g_config_rpc_server->reg_service_typed(rusty::make_box<janus::ConfigServiceImpl>(*g_config_store));
 
     // @unsafe { RPC server start }
-    if (g_config_rpc_server->start(bind_addr.c_str()) != 0) {
+    if (g_config_rpc_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) != 0) {
         rrr::Log_warn("Failed to start ConfigService RPC server on %s", bind_addr.c_str());
         delete g_config_rpc_server;
         g_config_rpc_server = nullptr;

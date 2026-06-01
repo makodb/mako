@@ -137,7 +137,7 @@ protected:
         auto service_box = rusty::make_box<TestFutureService>();
         service_ = service_box.get();  // Store raw pointer before transferring ownership
         server->reg_service(std::move(service_box));
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
+        ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port)).c_str())), 0);
 
         // Client must be created with factory method to initialize weak_self_
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));

@@ -416,7 +416,7 @@ protected:
         auto service_box = rusty::make_box<TestServiceForLB>();
         service_ = service_box.get();
         server_->reg_service_typed(std::move(service_box));
-        ASSERT_EQ(server_->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+        ASSERT_EQ(server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }

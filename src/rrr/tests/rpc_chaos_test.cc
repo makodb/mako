@@ -117,7 +117,7 @@ protected:
         auto service_box = rusty::make_box<ChaosTestService>();
         server->reg_service(std::move(service_box));
         std::string addr = "0.0.0.0:" + std::to_string(port);
-        if (server->start(addr.c_str()) != 0) {
+        if (server->start(reinterpret_cast<const int8_t*>(addr.c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -556,7 +556,7 @@ TEST_F(ChaosTest, IntegrationConnectionChurn) {
         clients[idx]->close();
         // Reconnect immediately
         std::this_thread::sleep_for(milliseconds(20));
-        clients[idx]->connect(addr.c_str());
+        clients[idx]->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
     });
 
     controller.start();

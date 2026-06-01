@@ -123,7 +123,7 @@ protected:
             service_ = service_box.get();
             server->reg_service(std::move(service_box));
 
-            if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) == 0) {
+            if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) == 0) {
                 started = true;
                 break;
             }
@@ -137,7 +137,7 @@ protected:
 
         // Client must be created with factory method to initialize weak_self_
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+        ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }
@@ -393,7 +393,7 @@ TEST_F(RPCTest, ConnectionResilience) {
 
     // Create new client using factory method
     client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-    ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
 
     std::this_thread::sleep_for(milliseconds(100));
 

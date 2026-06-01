@@ -131,7 +131,7 @@ protected:
         server->reg_service_typed(std::move(service_box));
         // Use port 0 to let the OS assign an available ephemeral port
         std::string addr = "0.0.0.0:0";
-        if (server->start(addr.c_str()) == 0) {
+        if (server->start(reinterpret_cast<const int8_t*>(addr.c_str())) == 0) {
             int port = server->get_bound_port();
             if (port > 0) {
                 return {server, port};
@@ -163,7 +163,7 @@ protected:
             auto service_box = rusty::make_box<PartitionTestService>();
             server->reg_service_typed(std::move(service_box));
             std::string addr = "0.0.0.0:" + std::to_string(try_port);
-            if (server->start(addr.c_str()) == 0) {
+            if (server->start(reinterpret_cast<const int8_t*>(addr.c_str())) == 0) {
                 // Advance port_offset_ to account for any skipped ports
                 port_offset_ = std::max(port_offset_, initial_port - base_port_ + (retry * 10) + 1);
                 return {server, try_port};
@@ -187,7 +187,7 @@ protected:
             auto service_box = rusty::make_box<PartitionTestService>();
             server->reg_service_typed(std::move(service_box));
             std::string addr = "0.0.0.0:" + std::to_string(port);
-            if (server->start(addr.c_str()) == 0) {
+            if (server->start(reinterpret_cast<const int8_t*>(addr.c_str())) == 0) {
                 return server;
             }
             delete server;

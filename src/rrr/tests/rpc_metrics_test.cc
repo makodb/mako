@@ -428,7 +428,7 @@ protected:
             auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
             auto service_box = rusty::make_box<MetricsTestService>();
             server->reg_service_typed(std::move(service_box));
-            if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) == 0) {
+            if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) == 0) {
                 return server;
             }
             delete server;
@@ -591,7 +591,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
     auto service_box = rusty::make_box<RetryMetricsRpcService>(1);
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
@@ -633,7 +633,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdate
     auto service_box = rusty::make_box<RetryMetricsRpcService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);

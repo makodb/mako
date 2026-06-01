@@ -148,7 +148,7 @@ protected:
         cnode->rpc_server->reg_service(std::move(service_box));
 
         std::string addr = "0.0.0.0:" + std::to_string(port);
-        if (cnode->rpc_server->start(addr.c_str()) != 0) {
+        if (cnode->rpc_server->start(reinterpret_cast<const int8_t*>(addr.c_str())) != 0) {
             return rusty::None;
         }
 

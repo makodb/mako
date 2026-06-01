@@ -130,7 +130,7 @@ protected:
         auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
         auto service_box = rusty::make_box<ValidationTestService>();
         server->reg_service_typed(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
+        if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) != 0) {
             delete server;
             return nullptr;
         }

@@ -774,7 +774,7 @@ void *nc_start_server(void *input) {
     rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
 
     server->reg_service_typed(rusty::make_box<NetworkClientServiceImpl>());
-    server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
+    server->start(reinterpret_cast<const int8_t*>((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str())  );
     // Service is now owned by server
     int c=0;
     while (1) {

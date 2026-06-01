@@ -429,7 +429,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     auto service_box = rusty::make_box<TimeoutRetryService>(1);  // Drop first response only.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
@@ -477,7 +477,7 @@ TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
@@ -513,7 +513,7 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
@@ -552,7 +552,7 @@ TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) 
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
     auto service_box = rusty::make_box<TimeoutRetryService>(0);
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
@@ -589,7 +589,7 @@ TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
     auto service_box = rusty::make_box<TimeoutRetryService>(0);
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
@@ -630,7 +630,7 @@ TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAt
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);

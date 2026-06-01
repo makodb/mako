@@ -587,6 +587,702 @@ public:
 // behaviour by passing it explicitly.
 inline constexpr uint64_t kDefaultDrainTimeoutMs = 30000;
 
+// Shutdown coordination state — guarded by `Server::shutdown_state_field`
+// (a `rusty::Mutex<ShutdownState>`). Defined outside the DSL block so the
+// inline-Rust source can refer to it by an opaque type name (the DSL
+// transpiler does not parse nested-struct declarations inside an `impl`
+// block).
+struct ShutdownState { bool shutdown = false; };
+
+// @unsafe - reinterpret_cast<const char*> on the addr param. Lives
+// outside the DSL block so the inline-Rust grammar doesn't have to
+// reason about `std::ffi::c_char` (which triggers a transpiler-side
+// `proc_macro_runtime` import explosion). Used by the DSL `start()`
+// body to bridge `*const i8` (Rust DSL) to `const char*` (legacy
+// Log_error / strlen signatures).
+inline const char* server_dsl_addr_to_cstr(const int8_t* addr) {
+    return reinterpret_cast<const char*>(addr);
+}
+
+// Forward declaration of Server to allow helper signatures to refer
+// to it. The DSL emits the full definition below.
+class Server;
+
+// Type aliases for the atomic counters carried inside the DSL Server
+// struct. Defined outside the DSL block so the inline-Rust grammar
+// doesn't have to parse `std::atomic<...>` (the DSL grammar does
+// not yet recognize that template).
+using ServerPendingRequestsAtomic = std::atomic<int32_t>;
+using ServerDropHeartbeatRepliesAtomic = std::atomic<bool>;
+
+// Helper free functions that the DSL `Server` method bodies delegate
+// to. Defined out-of-line in plain C++ because the DSL grammar can't
+// express things like `std::random_device` / `std::chrono` / catch
+// blocks / iteration with the rusty::Mutex<T>'s lambda predicate.
+//
+// Each helper has the same logic the legacy Server out-of-line method
+// had — moved verbatim so the DSL stays a thin shim.
+
+// @safe - Pick the PollThread to use (auto-create one if caller didn't
+// supply one). Used by the ctor.
+inline rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(
+        rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
+    if (poll_thread_worker.is_none()) {
+        return rusty::Some(PollThread::create());
+    }
+    return std::move(poll_thread_worker);
+}
+
+// @unsafe - std::random_device may use system entropy sources.
+inline uint64_t server_generate_instance_id() {
+    auto now = std::chrono::steady_clock::now().time_since_epoch();
+    uint64_t time_component = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    std::random_device rd;
+    uint64_t random_component = static_cast<uint64_t>(rd()) << 32 |
+                                static_cast<uint64_t>(rd());
+    uint64_t pid_component =
+        static_cast<uint64_t>(rusty::sys::process::getpid()) << 48;
+    uint64_t id = (time_component ^ random_component ^ pid_component)
+        & static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+    if (id == 0) {
+        id = 1;
+    }
+    Log_debug("Server: generated instance_id=%lu", id);
+    return id;
+}
+
+// @unsafe - rusty::Mutex::lock + rusty::Condvar::wait_while with a
+// closure predicate. The DSL grammar can't express the wait-while
+// lambda binding, so the call is forwarded here.
+inline void server_wait_for_shutdown_impl(
+        const rusty::Mutex<ShutdownState>& state,
+        const rusty::Box<rusty::Condvar>& cond) {
+    Log_debug("Server::wait_for_shutdown");
+    auto guard = state.lock().unwrap();
+    guard = cond->wait_while(std::move(guard),
+        [](ShutdownState& s) { return !s.shutdown; }).unwrap();
+    Log_debug("Server::wait_for_shutdown - done");
+}
+
+// @unsafe - std::atomic::load (modeled as non-safe by rusty-cpp).
+inline int32_t server_atomic_load_int(
+        const rusty::Arc<ServerPendingRequestsAtomic>& a) {
+    return a->load(std::memory_order_relaxed);
+}
+
+// @unsafe - const_cast + std::atomic::fetch_add.
+inline void server_atomic_fetch_add_int(
+        const rusty::Arc<ServerPendingRequestsAtomic>& a, int32_t delta) {
+    auto* ptr = const_cast<ServerPendingRequestsAtomic*>(a.get());
+    ptr->fetch_add(delta, std::memory_order_relaxed);
+}
+
+// @unsafe - const_cast + std::atomic::fetch_sub.
+inline void server_atomic_fetch_sub_int(
+        const rusty::Arc<ServerPendingRequestsAtomic>& a, int32_t delta) {
+    auto* ptr = const_cast<ServerPendingRequestsAtomic*>(a.get());
+    ptr->fetch_sub(delta, std::memory_order_relaxed);
+}
+
+// @unsafe - const_cast + std::atomic::store.
+inline void server_atomic_store_bool(
+        const rusty::Arc<ServerDropHeartbeatRepliesAtomic>& a, bool v) {
+    auto* ptr = const_cast<ServerDropHeartbeatRepliesAtomic*>(a.get());
+    ptr->store(v, std::memory_order_release);
+}
+
+// @unsafe - std::atomic::load.
+inline bool server_atomic_load_bool(
+        const rusty::Arc<ServerDropHeartbeatRepliesAtomic>& a) {
+    return a->load(std::memory_order_acquire);
+}
+
+// @unsafe - Atomic loop + sleep. The DSL can't easily express the
+// busy-wait loop so the body is moved here verbatim from the legacy
+// `Server::drain` out-of-line.
+inline bool server_drain_impl(
+        const rusty::Cell<ShutdownPhase>& phase,
+        const rusty::Arc<ServerPendingRequestsAtomic>& pending,
+        uint64_t timeout_ms) {
+    auto current_phase = phase.get();
+    if (current_phase != ShutdownPhase::RUNNING &&
+        current_phase != ShutdownPhase::STOP_ACCEPTING) {
+        Log_debug("Server::drain: already in phase %s",
+                  shutdown_phase_to_string(current_phase));
+        return pending->load(std::memory_order_relaxed) == 0;
+    }
+    Log_info("Server::drain: transitioning to DRAINING, pending=%d",
+             pending->load(std::memory_order_relaxed));
+    phase.set(ShutdownPhase::DRAINING);
+    const std::uint64_t start_us =
+        rusty::sys::time::clock_monotonic_us();
+    const std::uint64_t timeout_us = timeout_ms * 1000;
+    while (pending->load(std::memory_order_relaxed) > 0) {
+        const std::uint64_t elapsed_us =
+            rusty::sys::time::clock_monotonic_us() - start_us;
+        if (elapsed_us >= timeout_us) {
+            Log_warn("Server::drain: timeout after %lu ms, pending=%d",
+                     timeout_ms,
+                     pending->load(std::memory_order_relaxed));
+            return false;
+        }
+        rusty::sys::time::sleep_us(1000);
+    }
+    Log_info("Server::drain: completed, all requests drained");
+    return true;
+}
+
+// @unsafe - try/catch + callback execution.
+inline void server_run_shutdown_hooks(
+        const SpinMutex<rusty::Vec<ShutdownHook>>& hooks) {
+    Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks");
+    auto guard = hooks.lock().unwrap();
+    for (auto& hook : *guard) {
+        try {
+            hook();
+        } catch (const std::exception& e) {
+            Log_error("Server::graceful_shutdown: hook threw exception: %s", e.what());
+        } catch (...) {
+            Log_error("Server::graceful_shutdown: hook threw unknown exception");
+        }
+    }
+}
+
+// @unsafe - Box::get + virtual dispatch through ChannelListenerBase.
+// Lives here so the DSL doesn't have to navigate the `.as_ref()
+// .unwrap()` -> Box auto-deref chain (which currently emits
+// `(box).close()` instead of `(*box).close()`).
+inline void server_close_channel_listener_if_bound(
+        const rusty::Option<ChannelListenerProxy>& listener_opt) {
+    if (listener_opt.is_some()) {
+        auto* listener = listener_opt.as_ref().unwrap().get();
+        listener->close();
+    }
+}
+
+// @unsafe - std::stoi / std::string ops / try/catch.
+inline int32_t server_get_bound_port_impl(
+        const rusty::Option<ChannelListenerProxy>& listener_opt) {
+    if (listener_opt.is_none()) {
+        return -1;
+    }
+    std::string local;
+    {
+        auto* listener = listener_opt.as_ref().unwrap().get();
+        local = listener->local_address();
+    }
+    auto colon = local.rfind(':');
+    if (colon == std::string::npos) {
+        Log_error("Server::get_bound_port: malformed local_address %s",
+                  local.c_str());
+        return -1;
+    }
+    try {
+        int port = std::stoi(local.substr(colon + 1));
+        return port;
+    } catch (const std::exception&) {
+        Log_error("Server::get_bound_port: failed to parse port from %s",
+                  local.c_str());
+        return -1;
+    }
+}
+
+// Forward declaration for the `server_start_impl` helper — the body
+// is defined in plain C++ further down because it references Server's
+// fields, makes complex on_accept / on_error lambda captures, and
+// drives Arc<RpcServiceContext> moves that the DSL grammar can't
+// express directly.
+int32_t server_start_impl(Server& self, const int8_t* bind_addr);
+
+// Forward declaration for the `server_drop_impl` helper — the body
+// is defined in plain C++ further down. Auto-deref on
+// `Box<ChannelListenerBase>` for `.close()` and on
+// `Arc<ServerConnection>` (via `Vec[i]`) for `.close()` doesn't fire
+// in the DSL emission for these complex chained accesses, so the
+// body is hand-written.
+void server_drop_impl(Server& self);
+
+// @safe - Iterate over each registered service and invoke the
+// callback. Lives here as a free function template so the DSL's
+// `for_each_service<F>` can delegate without trying to emit the
+// `auto guard = ...borrow_mut(); (*guard)->method()` double-deref
+// (which the transpiler currently mishandles, see comments above).
+// Forward-declared here; defined after the DSL emits the Server
+// struct so the body can access Server's fields.
+template<typename F>
+inline void server_for_each_service_impl(const Server& self, F&& callback);
+
+// `Server` — RPC server facade. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `/*RUSTYCPP:GEN-BEGIN ... END*/`
+// block. Drop trait emits a real destructor that runs the channel-
+// listener / accepted-connection teardown.
+//
+// Behavioral diffs from the previous C++ class:
+//   * Fields are no longer marked `public`/`private` separately;
+//     the DSL emits all as public. The trailing `_` on each field is
+//     replaced with `_field` because the transpiler considers
+//     `pending_services_` to collide with the would-be
+//     `pending_services()` accessor; same convention as other
+//     migrated classes (Client, CircuitBreaker, etc.).
+//   * The user-declared move ctor/move-assign are emitted by the DSL
+//     itself (they respect the Drop-protocol `_rusty_forgotten`
+//     flag). Copy stays implicitly disabled by the `NoCopy` base.
+//   * `~Server()` is no longer `virtual override` — the DSL emits a
+//     non-virtual destructor that runs the close logic. Server has
+//     no derived classes; the `virtual` was inherited from `NoCopy`'s
+//     `virtual ~NoCopy() = default;` and is harmless to drop.
+//   * Out-of-line method bodies (`start`, `unreg`, `do_shutdown`,
+//     `wait_for_shutdown`, `add_shutdown_hook`, `stop_accepting`,
+//     `drain`, `graceful_shutdown`, `get_bound_port`) are translated
+//     into the DSL block.
+//   * `for_each_service<F>` (template) and `reg_service_typed<T>`
+//     (template) stay OUTSIDE the DSL as hand-written templates —
+//     the DSL grammar can't express template methods.
+//
+// @safe - Methods that genuinely cross into unsafe ops (socket I/O via the
+// channel-layer's TcpListener, Pthread / std::atomic primitives, raw
+// pointer extraction from ChannelListenerProxy, etc.) carry their own
+// `// @unsafe` overrides; the rest of the class is now analyzed as @safe
+// by default. Mirrors the Tier-4 flip on `Client`.
+#if RUSTYCPP_RUST
+struct Server {
+    pending_services_field: rusty::Vec<ServiceProxy>,
+    pending_rpc_to_service_field: rusty::HashMap<i32, usize>,
+    pending_fast_rpc_ids_field: rusty::HashSet<i32>,
+    ctx_field: rusty::Option<rusty::Arc<RpcServiceContext>>,
+    poll_thread_field: rusty::Option<rusty::Arc<PollThread>>,
+    shutdown_state_field: rusty::Mutex<ShutdownState>,
+    shutdown_cond_field: rusty::Box<rusty::Condvar>,
+    shutdown_phase_field: rusty::Cell<ShutdownPhase>,
+    shutdown_hooks_field: SpinMutex<rusty::Vec<ShutdownHook>>,
+    pending_requests_field: rusty::Arc<ServerPendingRequestsAtomic>,
+    drop_heartbeat_replies_field: rusty::Arc<ServerDropHeartbeatRepliesAtomic>,
+    instance_id_field: u64,
+    channel_factory_field: rusty::Option<ChannelFactoryProxy>,
+    channel_listener_field: rusty::Option<ChannelListenerProxy>,
+    channel_sconns_field: SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        server_drop_impl(self);
+    }
+}
+
+impl Server {
+    #[cpp_ctor]
+    fn new(poll_thread_worker: rusty::Option<rusty::Arc<PollThread>>) -> Server {
+        Server {
+            pending_services_field: Vec::<ServiceProxy>(),
+            pending_rpc_to_service_field: rusty::HashMap::<i32, usize>(),
+            pending_fast_rpc_ids_field: rusty::HashSet::<i32>(),
+            ctx_field: rusty::None,
+            poll_thread_field: server_resolve_poll_thread(poll_thread_worker),
+            shutdown_state_field: rusty::Mutex::<ShutdownState>(ShutdownState {}),
+            shutdown_cond_field: rusty::make_box::<rusty::Condvar>(),
+            shutdown_phase_field: rusty::Cell::<ShutdownPhase>::new(ShutdownPhase::RUNNING),
+            shutdown_hooks_field: SpinMutex::<rusty::Vec<ShutdownHook>>::new(Vec::<ShutdownHook>()),
+            pending_requests_field: rusty::Arc::<ServerPendingRequestsAtomic>::make(0i32),
+            drop_heartbeat_replies_field: rusty::Arc::<ServerDropHeartbeatRepliesAtomic>::make(false),
+            instance_id_field: server_generate_instance_id(),
+            channel_factory_field: rusty::None,
+            channel_listener_field: rusty::None,
+            channel_sconns_field: SpinMutex::<rusty::Vec<rusty::Arc<ServerConnection>>>::new(Vec::<rusty::Arc<ServerConnection>>()),
+        }
+    }
+
+    fn set_channel_factory(&mut self, factory: ChannelFactoryProxy) {
+        if !factory {
+            return;
+        }
+        self.channel_factory_field = rusty::Some(factory);
+    }
+
+    fn is_channel_factory_bound(&self) -> bool {
+        self.channel_factory_field.is_some()
+    }
+
+    fn reg_service(&mut self, svc: rusty::Box<Service>) {
+        self.pending_services_field.push(make_service_proxy_from_box(svc));
+        let svc_index: usize = self.pending_services_field.size() - 1usize;
+        (*self.pending_services_field[svc_index]).__reg_to__(self, svc_index);
+    }
+
+    fn reg_service_proxy(&mut self, proxy: ServiceProxy) {
+        self.pending_services_field.push(proxy);
+        let svc_index: usize = self.pending_services_field.size() - 1usize;
+        (*self.pending_services_field[svc_index]).__reg_to__(self, svc_index);
+    }
+
+    fn reg_rpc(&mut self, rpc_id: i32, svc_index: usize) -> i32 {
+        if self.pending_rpc_to_service_field.contains_key(rpc_id) {
+            return EEXIST;
+        }
+        self.pending_rpc_to_service_field.insert(rpc_id, svc_index);
+        0i32
+    }
+
+    fn reg_fast_rpc(&mut self, rpc_id: i32, svc_index: usize) -> i32 {
+        let ret: i32 = self.reg_rpc(rpc_id, svc_index);
+        if ret != 0i32 {
+            return ret;
+        }
+        self.pending_fast_rpc_ids_field.insert(rpc_id);
+        0i32
+    }
+
+    fn unreg(&mut self, rpc_id: i32) {
+        self.pending_rpc_to_service_field.remove(rpc_id);
+        self.pending_fast_rpc_ids_field.remove(rpc_id);
+    }
+
+    fn do_shutdown(&self) {
+        let guard = self.shutdown_state_field.lock().unwrap();
+        (*guard).shutdown = true;
+        self.shutdown_cond_field.notify_all();
+    }
+
+    fn wait_for_shutdown(&self) {
+        server_wait_for_shutdown_impl(self.shutdown_state_field, self.shutdown_cond_field);
+    }
+
+    fn add_shutdown_hook(&self, hook: ShutdownHook) {
+        let guard = self.shutdown_hooks_field.lock().unwrap();
+        (*guard).push(hook);
+    }
+
+    fn stop_accepting(&mut self) {
+        if (self.shutdown_phase_field.get() as i32) != (ShutdownPhase::RUNNING as i32) {
+            return;
+        }
+        self.shutdown_phase_field.set(ShutdownPhase::STOP_ACCEPTING);
+        server_close_channel_listener_if_bound(self.channel_listener_field);
+    }
+
+    fn drain(&self, timeout_ms: u64) -> bool {
+        server_drain_impl(self.shutdown_phase_field, self.pending_requests_field, timeout_ms)
+    }
+
+    fn graceful_shutdown(&mut self, drain_timeout_ms: u64) {
+        self.stop_accepting();
+        self.drain(drain_timeout_ms);
+        self.shutdown_phase_field.set(ShutdownPhase::CLOSING);
+        server_run_shutdown_hooks(self.shutdown_hooks_field);
+        self.do_shutdown();
+        self.shutdown_phase_field.set(ShutdownPhase::STOPPED);
+    }
+
+    fn phase(&self) -> ShutdownPhase {
+        self.shutdown_phase_field.get()
+    }
+
+    fn pending_request_count(&self) -> i32 {
+        server_atomic_load_int(self.pending_requests_field)
+    }
+
+    fn increment_pending(&self) {
+        server_atomic_fetch_add_int(self.pending_requests_field, 1i32);
+    }
+
+    fn decrement_pending(&self) {
+        server_atomic_fetch_sub_int(self.pending_requests_field, 1i32);
+    }
+
+    fn set_drop_heartbeat_replies(&self, drop: bool) {
+        server_atomic_store_bool(self.drop_heartbeat_replies_field, drop);
+    }
+
+    fn drop_heartbeat_replies(&self) -> bool {
+        server_atomic_load_bool(self.drop_heartbeat_replies_field)
+    }
+
+    fn instance_id(&self) -> u64 {
+        self.instance_id_field
+    }
+
+    fn service_count(&self) -> usize {
+        if self.ctx_field.is_some() {
+            return self.ctx_field.as_ref().unwrap().services.size();
+        }
+        self.pending_services_field.size()
+    }
+
+    fn addr(&self) -> std::string {
+        self.ctx_field.as_ref().unwrap().addr
+    }
+
+    fn start(&mut self, bind_addr: *const i8) -> i32 {
+        server_start_impl(self, bind_addr)
+    }
+
+    fn get_bound_port(&self) -> i32 {
+        server_get_bound_port_impl(self.channel_listener_field)
+    }
+
+    fn reg_service_typed<T>(&mut self, svc: rusty::Box<T>) {
+        self.pending_services_field.push(make_service_proxy_from_typed_box::<T>(svc));
+        let svc_index: usize = self.pending_services_field.size() - 1usize;
+        (*self.pending_services_field[svc_index]).__reg_to__(self, svc_index);
+    }
+
+    fn for_each_service<F>(&self, callback: F) {
+        server_for_each_service_impl(self, callback);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2772009b5e40b708a4af11a2a5cd3f33ac3f0987a03e0216f6b46079359c9484*/
+struct Server;
+
+struct Server {
+    rusty::Vec<ServiceProxy> pending_services_field;
+    rusty::HashMap<int32_t, size_t> pending_rpc_to_service_field;
+    rusty::HashSet<int32_t> pending_fast_rpc_ids_field;
+    rusty::Option<rusty::Arc<RpcServiceContext>> ctx_field;
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_field;
+    rusty::Mutex<ShutdownState> shutdown_state_field;
+    rusty::Box<rusty::Condvar> shutdown_cond_field;
+    rusty::Cell<ShutdownPhase> shutdown_phase_field;
+    SpinMutex<rusty::Vec<ShutdownHook>> shutdown_hooks_field;
+    rusty::Arc<ServerPendingRequestsAtomic> pending_requests_field;
+    rusty::Arc<ServerDropHeartbeatRepliesAtomic> drop_heartbeat_replies_field;
+    uint64_t instance_id_field;
+    rusty::Option<ChannelFactoryProxy> channel_factory_field;
+    rusty::Option<ChannelListenerProxy> channel_listener_field;
+    SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>> channel_sconns_field;
+    mutable bool _rusty_forgotten = false;
+    Server(rusty::Vec<ServiceProxy> pending_services_field_init, rusty::HashMap<int32_t, size_t> pending_rpc_to_service_field_init, rusty::HashSet<int32_t> pending_fast_rpc_ids_field_init, rusty::Option<rusty::Arc<RpcServiceContext>> ctx_field_init, rusty::Option<rusty::Arc<PollThread>> poll_thread_field_init, rusty::Mutex<ShutdownState> shutdown_state_field_init, rusty::Box<rusty::Condvar> shutdown_cond_field_init, rusty::Cell<ShutdownPhase> shutdown_phase_field_init, SpinMutex<rusty::Vec<ShutdownHook>> shutdown_hooks_field_init, rusty::Arc<ServerPendingRequestsAtomic> pending_requests_field_init, rusty::Arc<ServerDropHeartbeatRepliesAtomic> drop_heartbeat_replies_field_init, uint64_t instance_id_field_init, rusty::Option<ChannelFactoryProxy> channel_factory_field_init, rusty::Option<ChannelListenerProxy> channel_listener_field_init, SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>> channel_sconns_field_init) : pending_services_field(std::move(pending_services_field_init)), pending_rpc_to_service_field(std::move(pending_rpc_to_service_field_init)), pending_fast_rpc_ids_field(std::move(pending_fast_rpc_ids_field_init)), ctx_field(std::move(ctx_field_init)), poll_thread_field(std::move(poll_thread_field_init)), shutdown_state_field(std::move(shutdown_state_field_init)), shutdown_cond_field(std::move(shutdown_cond_field_init)), shutdown_phase_field(std::move(shutdown_phase_field_init)), shutdown_hooks_field(std::move(shutdown_hooks_field_init)), pending_requests_field(std::move(pending_requests_field_init)), drop_heartbeat_replies_field(std::move(drop_heartbeat_replies_field_init)), instance_id_field(std::move(instance_id_field_init)), channel_factory_field(std::move(channel_factory_field_init)), channel_listener_field(std::move(channel_listener_field_init)), channel_sconns_field(std::move(channel_sconns_field_init)) {}
+    Server(const Server&) = delete;
+    Server(Server&& other) noexcept : pending_services_field(std::move(other.pending_services_field)), pending_rpc_to_service_field(std::move(other.pending_rpc_to_service_field)), pending_fast_rpc_ids_field(std::move(other.pending_fast_rpc_ids_field)), ctx_field(std::move(other.ctx_field)), poll_thread_field(std::move(other.poll_thread_field)), shutdown_state_field(std::move(other.shutdown_state_field)), shutdown_cond_field(std::move(other.shutdown_cond_field)), shutdown_phase_field(std::move(other.shutdown_phase_field)), shutdown_hooks_field(std::move(other.shutdown_hooks_field)), pending_requests_field(std::move(other.pending_requests_field)), drop_heartbeat_replies_field(std::move(other.drop_heartbeat_replies_field)), instance_id_field(std::move(other.instance_id_field)), channel_factory_field(std::move(other.channel_factory_field)), channel_listener_field(std::move(other.channel_listener_field)), channel_sconns_field(std::move(other.channel_sconns_field)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
+    }
+    Server& operator=(const Server&) = delete;
+    Server& operator=(Server&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~Server();
+        new (this) Server(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+
+
+    ~Server() noexcept(false);
+    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker);
+    void set_channel_factory(ChannelFactoryProxy factory);
+    bool is_channel_factory_bound() const;
+    void reg_service(rusty::Box<Service> svc);
+    void reg_service_proxy(ServiceProxy proxy);
+    int32_t reg_rpc(int32_t rpc_id, size_t svc_index);
+    int32_t reg_fast_rpc(int32_t rpc_id, size_t svc_index);
+    void unreg(int32_t rpc_id);
+    void do_shutdown() const;
+    void wait_for_shutdown() const;
+    void add_shutdown_hook(ShutdownHook hook) const;
+    void stop_accepting();
+    bool drain(uint64_t timeout_ms) const;
+    void graceful_shutdown(uint64_t drain_timeout_ms);
+    ShutdownPhase phase() const;
+    int32_t pending_request_count() const;
+    void increment_pending() const;
+    void decrement_pending() const;
+    void set_drop_heartbeat_replies(bool drop) const;
+    bool drop_heartbeat_replies() const;
+    uint64_t instance_id() const;
+    size_t service_count() const;
+    std::string addr() const;
+    int32_t start(const int8_t* bind_addr);
+    int32_t get_bound_port() const;
+    template<typename T>
+    void reg_service_typed(rusty::Box<T> svc);
+    template<typename F>
+    void for_each_service(F callback) const;
+};
+
+
+Server::~Server() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    server_drop_impl((*this));
+}
+
+Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker)
+    : pending_services_field(rusty::Vec<ServiceProxy>())
+    , pending_rpc_to_service_field(rusty::HashMap<int32_t, size_t>())
+    , pending_fast_rpc_ids_field(rusty::HashSet<int32_t>())
+    , ctx_field(rusty::None)
+    , poll_thread_field(server_resolve_poll_thread(std::move(poll_thread_worker)))
+    , shutdown_state_field(rusty::Mutex<ShutdownState>(ShutdownState{}))
+    , shutdown_cond_field(rusty::make_box<rusty::Condvar>())
+    , shutdown_phase_field(rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase::RUNNING))))
+    , shutdown_hooks_field(SpinMutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()))
+    , pending_requests_field(rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)))
+    , drop_heartbeat_replies_field(rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false))
+    , instance_id_field(server_generate_instance_id())
+    , channel_factory_field(rusty::None)
+    , channel_listener_field(rusty::None)
+    , channel_sconns_field(SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>()))
+{}
+
+void Server::set_channel_factory(ChannelFactoryProxy factory) {
+    if (!factory) {
+        return;
+    }
+    this->channel_factory_field = rusty::Option<ChannelFactoryProxy>(std::move(factory));
+}
+
+bool Server::is_channel_factory_bound() const {
+    return this->channel_factory_field.is_some();
+}
+
+void Server::reg_service(rusty::Box<Service> svc) {
+    this->pending_services_field.push(make_service_proxy_from_box(std::move(svc)));
+    const size_t svc_index = this->pending_services_field.size() - static_cast<size_t>(1);
+    ((rusty::detail::deref_if_pointer_like(this->pending_services_field[svc_index]))).__reg_to__((*this), std::move(svc_index));
+}
+
+void Server::reg_service_proxy(ServiceProxy proxy) {
+    this->pending_services_field.push(std::move(proxy));
+    const size_t svc_index = this->pending_services_field.size() - static_cast<size_t>(1);
+    ((rusty::detail::deref_if_pointer_like(this->pending_services_field[svc_index]))).__reg_to__((*this), std::move(svc_index));
+}
+
+int32_t Server::reg_rpc(int32_t rpc_id, size_t svc_index) {
+    if (this->pending_rpc_to_service_field.contains_key(std::move(rpc_id))) {
+        return EEXIST;
+    }
+    this->pending_rpc_to_service_field.insert(std::move(rpc_id), std::move(svc_index));
+    return static_cast<int32_t>(0);
+}
+
+int32_t Server::reg_fast_rpc(int32_t rpc_id, size_t svc_index) {
+    int32_t ret = this->reg_rpc(std::move(rpc_id), std::move(svc_index));
+    if (rusty::detail::deref_if_pointer_like(ret) != static_cast<int32_t>(0)) {
+        return std::move(ret);
+    }
+    this->pending_fast_rpc_ids_field.insert(std::move(rpc_id));
+    return static_cast<int32_t>(0);
+}
+
+void Server::unreg(int32_t rpc_id) {
+    this->pending_rpc_to_service_field.remove(std::move(rpc_id));
+    this->pending_fast_rpc_ids_field.remove(std::move(rpc_id));
+}
+
+void Server::do_shutdown() const {
+    auto guard = this->shutdown_state_field.lock().unwrap();
+    (*guard).shutdown = true;
+    this->shutdown_cond_field->notify_all();
+}
+
+void Server::wait_for_shutdown() const {
+    server_wait_for_shutdown_impl(this->shutdown_state_field, this->shutdown_cond_field);
+}
+
+void Server::add_shutdown_hook(ShutdownHook hook) const {
+    auto guard = this->shutdown_hooks_field.lock().unwrap();
+    ((*guard)).push(std::move(hook));
+}
+
+void Server::stop_accepting() {
+    if (((static_cast<int32_t>(this->shutdown_phase_field.get()))) != ((static_cast<int32_t>(ShutdownPhase::RUNNING)))) {
+        return;
+    }
+    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase::STOP_ACCEPTING)));
+    server_close_channel_listener_if_bound(this->channel_listener_field);
+}
+
+bool Server::drain(uint64_t timeout_ms) const {
+    return server_drain_impl(this->shutdown_phase_field, this->pending_requests_field, std::move(timeout_ms));
+}
+
+void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
+    this->stop_accepting();
+    this->drain(std::move(drain_timeout_ms));
+    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase::CLOSING)));
+    server_run_shutdown_hooks(this->shutdown_hooks_field);
+    this->do_shutdown();
+    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase::STOPPED)));
+}
+
+ShutdownPhase Server::phase() const {
+    return this->shutdown_phase_field.get();
+}
+
+int32_t Server::pending_request_count() const {
+    return server_atomic_load_int(this->pending_requests_field);
+}
+
+void Server::increment_pending() const {
+    server_atomic_fetch_add_int(this->pending_requests_field, static_cast<int32_t>(1));
+}
+
+void Server::decrement_pending() const {
+    server_atomic_fetch_sub_int(this->pending_requests_field, static_cast<int32_t>(1));
+}
+
+void Server::set_drop_heartbeat_replies(bool drop) const {
+    server_atomic_store_bool(this->drop_heartbeat_replies_field, std::move(drop));
+}
+
+bool Server::drop_heartbeat_replies() const {
+    return server_atomic_load_bool(this->drop_heartbeat_replies_field);
+}
+
+uint64_t Server::instance_id() const {
+    return this->instance_id_field;
+}
+
+size_t Server::service_count() const {
+    if (this->ctx_field.is_some()) {
+        return (*this->ctx_field.as_ref().unwrap()).services.size();
+    }
+    return this->pending_services_field.size();
+}
+
+std::string Server::addr() const {
+    return (*this->ctx_field.as_ref().unwrap()).addr;
+}
+
+int32_t Server::start(const int8_t* bind_addr) {
+    return server_start_impl((*this), bind_addr);
+}
+
+int32_t Server::get_bound_port() const {
+    return server_get_bound_port_impl(this->channel_listener_field);
+}
+
+template<typename T>
+void Server::reg_service_typed(rusty::Box<T> svc) {
+    this->pending_services_field.push(make_service_proxy_from_typed_box<T>(std::move(svc)));
+    const size_t svc_index = this->pending_services_field.size() - static_cast<size_t>(1);
+    ((rusty::detail::deref_if_pointer_like(this->pending_services_field[svc_index]))).__reg_to__((*this), std::move(svc_index));
+}
+
+template<typename F>
+void Server::for_each_service(F callback) const {
+    server_for_each_service_impl((*this), std::move(callback));
+}
+/*RUSTYCPP:GEN-END id=server.1*/
+
+// Body of the for_each_service helper. Defined after the GEN block
+// so it can refer to Server's fields directly. The DSL's
+// `for_each_service<F>` member template delegates here. Iterates
+// over the immutable `services` Vec inside `ctx_field`, calling
+// `(*guard)->__get_service__()` for each entry.
+template<typename F>
+inline void server_for_each_service_impl(const Server& self, F&& callback) {
+    auto& ctx = self.ctx_field.as_ref().unwrap();
+    for (size_t i = 0; i < ctx->services.size(); ++i) {
+        auto guard = ctx->services[i].borrow_mut();
+        callback((*guard)->__get_service__());
+    }
+}
+
+#if 0  // Legacy hand-written Server class — kept under #if 0 during DSL migration.
+
 // @safe - Methods that genuinely cross into unsafe ops (socket I/O via the
 // channel-layer's TcpListener, Pthread / std::atomic primitives, raw
 // pointer extraction from ChannelListenerProxy, etc.) carry their own
@@ -974,6 +1670,8 @@ public:
     int get_bound_port() const;
 };
 
+#endif  // End of legacy Server class wrap
+
 }  // export namespace rrr
 
 // @safe - Implementation namespace. Out-of-class definitions inherit
@@ -1301,6 +1999,13 @@ int DeferredReply::run_async(rusty::Function<void()> f) {
     f();
     return 0;
 }
+
+// ============================================================================
+// Legacy hand-written Server out-of-line method definitions.
+//
+// These out-of-line defs are kept under #if 0 during DSL migration —
+// the DSL block emits the matching method bodies.
+#if 0
 
 // @safe - Constructs server with PollThread
 // ctx_ starts as None; created in start() after all registrations
@@ -1702,6 +2407,145 @@ int Server::get_bound_port() const {
                   local.c_str());
         return -1;
     }
+}
+
+#endif  // End of legacy Server out-of-line method defs wrap
+
+// @unsafe - The full start() body. Lifted verbatim from the legacy
+// out-of-line method, only with `self->` instead of bare member
+// names. Kept out of the DSL because on_accept / on_error lambda
+// captures (capturing `Server*` + `Arc<RpcServiceContext>`), the
+// `make_listener` factory call sequence, and the channel-error /
+// listen-error branching don't translate cleanly to the DSL grammar.
+int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
+    const char* bind_addr = server_dsl_addr_to_cstr(bind_addr_raw);
+    if (!bind_addr) {
+        Log_error("rrr::Server::start: bind_addr is NULL!");
+        return -1;
+    }
+
+    // Wrap each service in RefCell for interior mutability.
+    rusty::Vec<rusty::RefCell<ServiceProxy>> wrapped_services;
+    for (size_t i = 0; i < self.pending_services_field.size(); ++i) {
+        wrapped_services.push(rusty::RefCell<ServiceProxy>(
+            std::move(self.pending_services_field[i])));
+    }
+
+    // Create immutable RpcServiceContext from pending registration data
+    std::string addr_str(bind_addr, strlen(bind_addr));
+    self.ctx_field = rusty::Some(rusty::Arc<RpcServiceContext>::make(
+        std::move(self.pending_rpc_to_service_field),
+        std::move(self.pending_fast_rpc_ids_field),
+        std::move(wrapped_services),
+        addr_str,
+        self.pending_requests_field,
+        self.drop_heartbeat_replies_field,
+        self.instance_id_field));
+
+    // auto-install default TcpFactory if the caller hasn't bound one.
+    if (!self.is_channel_factory_bound()) {
+        auto tcp_factory = rusty::Arc<TcpFactory>::make(
+            self.poll_thread_field.as_ref().unwrap().clone());
+        self.set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
+    }
+
+    if (self.is_channel_factory_bound()) {
+        rusty::Option<ChannelListenerProxy> listener_opt;
+        // @unsafe { Box::get + proxy method dispatch }
+        {
+            auto* factory = self.channel_factory_field.as_ref().unwrap().get();
+            listener_opt = factory->make_listener();
+        }
+        if (listener_opt.is_none()) {
+            Log_error("rrr::Server::start: factory->make_listener() returned a "
+                      "null proxy (factory backend=%s)",
+                      "unknown");
+            self.ctx_field = rusty::None;
+            return -1;
+        }
+        ChannelListenerProxy listener = std::move(listener_opt).unwrap();
+
+        Server* server_ptr = &self;
+        rusty::Arc<RpcServiceContext> ctx_arc =
+            self.ctx_field.as_ref().unwrap().clone();
+
+        // @unsafe - lambda capture, channel proxy mutator
+        listener->set_on_accept([server_ptr, ctx_arc](
+                                    ChannelConnectionProxy conn_proxy) {
+            if (!conn_proxy) return;
+            auto sconn = rusty::Arc<ServerConnection>::make(
+                ctx_arc.clone(), /*socket=*/-1);
+            auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());
+            mut_sconn.install_self_weak_for_testing(rusty::sync::downgrade(sconn));
+            mut_sconn.bind_channel(std::move(conn_proxy));
+            {
+                auto guard = server_ptr->channel_sconns_field.lock().unwrap();
+                guard->push(std::move(sconn));
+            }
+        });
+        listener->set_on_error([](ChannelError err, std::string_view msg) {
+            Log_warn("rrr::Server: channel listener error %s: %.*s",
+                     channel_error_to_string(err),
+                     static_cast<int>(msg.size()), msg.data());
+        });
+
+        ChannelError listen_err = listener->listen(std::string_view(bind_addr));
+        if (listen_err != ChannelError::None) {
+            Log_error("rrr::Server::start: channel listener failed to bind %s: %s",
+                      bind_addr, channel_error_to_string(listen_err));
+            self.ctx_field = rusty::None;
+            return -1;
+        }
+
+        self.channel_listener_field = rusty::Some(std::move(listener));
+        return 0;
+    }
+
+    verify(false);
+    return -1;
+}
+
+// @unsafe - The destructor body. Lifted from the legacy `~Server()`
+// out-of-line, only with `self.field` instead of bare member names.
+// Kept out of the DSL because the OneTimeJob lambda init-capture
+// (`[listener_box = std::move(...).unwrap()]`) and the channel-
+// connection iteration through SpinMutex guard rely on auto-deref
+// quirks that don't emit cleanly through the DSL pipeline.
+void server_drop_impl(Server& self) {
+    // 5e/5f: tear down the channel-mode listener (if bound). The
+    // proxy's close() is idempotent; dropping the Box afterwards
+    // releases the proxy's underlying TcpListener (or other
+    // backend), which closes its listening fd via its destructor.
+    // We schedule the close on the poll thread via a OneTimeJob so
+    // commands are processed in order (mirrors `Client::close`'s
+    // 4g3c3 fix).
+    if (self.channel_listener_field.is_some()) {
+        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(
+            [listener_box = std::move(self.channel_listener_field).unwrap()]() mutable {
+                listener_box->close();
+            }));
+        auto close_job_base = rusty::Arc<Job>(close_job);
+        self.poll_thread_field.as_ref().unwrap()->add(std::move(close_job_base));
+        self.channel_listener_field = rusty::None;
+    }
+    // 5f: actively close each accepted channel-mode ServerConnection
+    // before dropping the Arcs. ServerConnection::close() drives
+    // the bound channel proxy's close() which closes the underlying
+    // TcpConnection's fd, so the peer (Client) sees EOF
+    // immediately. close() is idempotent.
+    {
+        auto guard = self.channel_sconns_field.lock().unwrap();
+        for (auto& sconn : *guard) {
+            // @unsafe - const_cast through Arc::get for close()
+            auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());
+            mut_sconn.close();
+        }
+        guard->clear();
+    }
+    // No need to wait for connections - Arc<RpcServiceContext>
+    // ensures services stay alive until the last ServerConnection
+    // drops its Arc reference.
+    self.ctx_field = rusty::None;
 }
 
 }  // namespace rrr

@@ -147,7 +147,7 @@ protected:
         auto service_box = rusty::make_box<StressTestService>();
         server->reg_service_typed(std::move(service_box));
         std::string addr = "0.0.0.0:" + std::to_string(port);
-        if (server->start(addr.c_str()) != 0) {
+        if (server->start(reinterpret_cast<const int8_t*>(addr.c_str())) != 0) {
             delete server;
             return nullptr;
         }

@@ -126,7 +126,7 @@ protected:
         auto service_box = rusty::make_box<ExtendedTestService>();
         service_ = service_box.get();  // Store raw pointer before transferring ownership
         server->reg_service_typed(std::move(service_box));
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(current_port)).c_str()), 0);
+        ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(current_port)).c_str())), 0);
     }
 
     void TearDown() override {
@@ -209,7 +209,7 @@ TEST(ServerApiSafetyTest, ServerStartWithInvalidHostReturnsError) {
         auto service_box = rusty::make_box<ExtendedTestService>();
         server.reg_service_typed(std::move(service_box));
 
-        EXPECT_NE(server.start("invalid host:12345"), 0);
+        EXPECT_NE(server.start(reinterpret_cast<const int8_t*>("invalid host:12345")), 0);
     }
     poll_thread->shutdown();
 }
@@ -221,7 +221,7 @@ TEST(ServerApiSafetyTest, ServerStartWithMalformedAddressReturnsError) {
         auto service_box = rusty::make_box<ExtendedTestService>();
         server.reg_service_typed(std::move(service_box));
 
-        EXPECT_NE(server.start("malformed-address-without-port"), 0);
+        EXPECT_NE(server.start(reinterpret_cast<const int8_t*>("malformed-address-without-port")), 0);
     }
     poll_thread->shutdown();
 }
@@ -233,7 +233,7 @@ TEST(ServerApiSafetyTest, ServerStartWithNullAddressReturnsError) {
         auto service_box = rusty::make_box<ExtendedTestService>();
         server.reg_service_typed(std::move(service_box));
 
-        EXPECT_NE(server.start(static_cast<const char*>(nullptr)), 0);
+        EXPECT_NE(server.start(static_cast<const int8_t*>(nullptr)), 0);
     }
     poll_thread->shutdown();
 }

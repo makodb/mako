@@ -144,7 +144,7 @@ void RaftWorker::SetupService() {
   }
 
   // Start RPC server
-  int ret = rpc_server_->start(bind_addr.c_str());
+  int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("Raft server launch failed at %s", bind_addr.c_str());
   }
@@ -190,7 +190,7 @@ void RaftWorker::SetupHeartbeat() {
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = site_info_->GetHostAddr(CtrlPortDelta);
 
-  hb_rpc_server_->start(addr_port.c_str());
+  hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
 }
 
 // @unsafe - uses delete, raw pointers, Option<Arc<PollThread>>
