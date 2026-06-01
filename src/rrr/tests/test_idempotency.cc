@@ -107,7 +107,7 @@ TEST_F(IdempotencyKeyTest, MarshalRoundTrip) {
 class IdempotencyKeyGeneratorTest : public ::testing::Test {};
 
 TEST_F(IdempotencyKeyGeneratorTest, GeneratesUniqueKeys) {
-    IdempotencyKeyGenerator gen(100);
+    auto gen = IdempotencyKeyGenerator::new_(100);
 
     auto key1 = gen.next();
     auto key2 = gen.next();
@@ -125,7 +125,7 @@ TEST_F(IdempotencyKeyGeneratorTest, GeneratesUniqueKeys) {
 }
 
 TEST_F(IdempotencyKeyGeneratorTest, ClientIdAccess) {
-    IdempotencyKeyGenerator gen(42);
+    auto gen = IdempotencyKeyGenerator::new_(42);
 
     EXPECT_EQ(gen.client_id(), 42);
 
@@ -134,7 +134,7 @@ TEST_F(IdempotencyKeyGeneratorTest, ClientIdAccess) {
 }
 
 TEST_F(IdempotencyKeyGeneratorTest, SequenceAccess) {
-    IdempotencyKeyGenerator gen(1);
+    auto gen = IdempotencyKeyGenerator::new_(1);
 
     EXPECT_EQ(gen.current_sequence(), 0);
 
@@ -146,8 +146,8 @@ TEST_F(IdempotencyKeyGeneratorTest, SequenceAccess) {
 }
 
 TEST_F(IdempotencyKeyGeneratorTest, DifferentGeneratorsProduceDifferentKeys) {
-    IdempotencyKeyGenerator gen1(1);
-    IdempotencyKeyGenerator gen2(2);
+    auto gen1 = IdempotencyKeyGenerator::new_(1);
+    auto gen2 = IdempotencyKeyGenerator::new_(2);
 
     auto key1 = gen1.next();
     auto key2 = gen2.next();
@@ -529,7 +529,7 @@ TEST_F(IdempotencyCacheTest, ThreadSafety) {
     std::atomic<int> completed{0};
 
     auto worker = [&](int thread_id) {
-        IdempotencyKeyGenerator gen(thread_id);
+        auto gen = IdempotencyKeyGenerator::new_(thread_id);
 
         for (int i = 0; i < ops_per_thread; i++) {
             auto key = gen.next();

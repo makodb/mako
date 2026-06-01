@@ -201,10 +201,10 @@ struct CachedResponse {
  *
  * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
  * the source of truth; the transpiler regenerates the matching
- * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block. The constructor uses the
- * `#[cpp_ctor]` attribute so the existing
- * `IdempotencyKeyGenerator gen(client_id);` call sites in tests keep
- * compiling.
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block. The `fn new(client_id)`
+ * lowers to a static `IdempotencyKeyGenerator::new_(client_id)`
+ * factory; call sites construct via that factory rather than direct
+ * ctor syntax.
  *
  * Behavioral diffs from the original C++ class:
  *   * `next()` and `set_client_id()` become `const`. Both only mutate
@@ -227,7 +227,6 @@ struct IdempotencyKeyGenerator {
 }
 
 impl IdempotencyKeyGenerator {
-    #[cpp_ctor]
     fn new(client_id: u64) -> IdempotencyKeyGenerator {
         IdempotencyKeyGenerator {
             client_id_field: rusty::Cell::<u64>::new(client_id),
@@ -254,14 +253,14 @@ impl IdempotencyKeyGenerator {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=0d38466bef7db26cf4542c69398da3b3e753d1a433c36076095b710204e04823*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=18d2198bb270c49e8362f7e7b02dbe06fe29df9d467ca7a118647580679e44b5*/
 struct IdempotencyKeyGenerator;
 
 struct IdempotencyKeyGenerator {
     rusty::Cell<uint64_t> client_id_field;
     rusty::Cell<uint64_t> sequence_field;
 
-    IdempotencyKeyGenerator(uint64_t client_id);
+    static IdempotencyKeyGenerator new_(uint64_t client_id);
     IdempotencyKey next() const;
     uint64_t client_id() const;
     void set_client_id(uint64_t id) const;
@@ -269,10 +268,9 @@ struct IdempotencyKeyGenerator {
 };
 
 
-IdempotencyKeyGenerator::IdempotencyKeyGenerator(uint64_t client_id)
-    : client_id_field(rusty::Cell<uint64_t>::new_(std::move(client_id)))
-    , sequence_field(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-{}
+IdempotencyKeyGenerator IdempotencyKeyGenerator::new_(uint64_t client_id) {
+    return IdempotencyKeyGenerator{.client_id_field = rusty::Cell<uint64_t>::new_(std::move(client_id)), .sequence_field = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
 
 IdempotencyKey IdempotencyKeyGenerator::next() const {
     uint64_t seq = this->sequence_field.get();
