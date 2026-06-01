@@ -28,7 +28,6 @@ struct AvgStat {
 }
 
 impl AvgStat {
-    #[cpp_ctor]
     fn new() -> AvgStat {
         AvgStat {
             n_stat_: 0i64,
@@ -59,33 +58,30 @@ impl AvgStat {
         self.min_ = 0i64;
     }
 
-    // peek/reset construct snapshots via `AvgStat {}` (empty struct
-    // literal, emits as value-init `AvgStat{}` which calls the
-    // #[cpp_ctor]-generated default ctor) + field-assign. We avoid the
-    // populated form `AvgStat { n_stat_: ..., ... }` because that maps
-    // to a C++ *designated initializer* `AvgStat{.n_stat_ = ..}` which
-    // requires the struct to be an aggregate; the cpp_ctor disqualifies
-    // it. The literal form is only special-cased to initializer-list
-    // inside the cpp_ctor body itself.
+    // peek/reset snapshot self via a populated struct literal. Now that
+    // the cpp_ctor is gone, AvgStat is a plain aggregate and the
+    // populated form `AvgStat { n_stat_: ..., ... }` lowers to a clean
+    // C++ designated initializer `AvgStat{.n_stat_ = ...}`.
     fn reset(&mut self) -> AvgStat {
-        let mut stat: AvgStat = AvgStat {};
-        stat.n_stat_ = self.n_stat_;
-        stat.sum_ = self.sum_;
-        stat.avg_ = self.avg_;
-        stat.max_ = self.max_;
-        stat.min_ = self.min_;
+        let stat: AvgStat = AvgStat {
+            n_stat_: self.n_stat_,
+            sum_: self.sum_,
+            avg_: self.avg_,
+            max_: self.max_,
+            min_: self.min_,
+        };
         self.clear();
         stat
     }
 
     fn peek(&self) -> AvgStat {
-        let mut result: AvgStat = AvgStat {};
-        result.n_stat_ = self.n_stat_;
-        result.sum_ = self.sum_;
-        result.avg_ = self.avg_;
-        result.max_ = self.max_;
-        result.min_ = self.min_;
-        result
+        AvgStat {
+            n_stat_: self.n_stat_,
+            sum_: self.sum_,
+            avg_: self.avg_,
+            max_: self.max_,
+            min_: self.min_,
+        }
     }
 
     fn avg(&self) -> i64 {
@@ -93,7 +89,7 @@ impl AvgStat {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=stat.1 version=1 rust_sha256=2e414d520e6cd26e30af6339a10fa4007293ade2ce9a185da8851796987b3a2e*/
+/*RUSTYCPP:GEN-BEGIN id=stat.1 version=1 rust_sha256=0bbe5b3e3e26aea0e9b876b99ab620516e2c0f20e79b9664bc8e8d190e33e9eb*/
 struct AvgStat;
 
 struct AvgStat {
@@ -103,7 +99,7 @@ struct AvgStat {
     int64_t max_;
     int64_t min_;
 
-    AvgStat();
+    static AvgStat new_();
     void sample(int64_t s);
     void clear();
     AvgStat reset();
@@ -112,13 +108,9 @@ struct AvgStat {
 };
 
 
-AvgStat::AvgStat()
-    : n_stat_(static_cast<int64_t>(0))
-    , sum_(static_cast<int64_t>(0))
-    , avg_(static_cast<int64_t>(0))
-    , max_(static_cast<int64_t>(0))
-    , min_(static_cast<int64_t>(0))
-{}
+AvgStat AvgStat::new_() {
+    return AvgStat{.n_stat_ = static_cast<int64_t>(0), .sum_ = static_cast<int64_t>(0), .avg_ = static_cast<int64_t>(0), .max_ = static_cast<int64_t>(0), .min_ = static_cast<int64_t>(0)};
+}
 
 void AvgStat::sample(int64_t s) {
     this->n_stat_ += static_cast<int64_t>(1);
@@ -141,24 +133,13 @@ void AvgStat::clear() {
 }
 
 AvgStat AvgStat::reset() {
-    AvgStat stat = AvgStat{};
-    stat.n_stat_ = this->n_stat_;
-    stat.sum_ = this->sum_;
-    stat.avg_ = this->avg_;
-    stat.max_ = this->max_;
-    stat.min_ = this->min_;
+    AvgStat stat = AvgStat{.n_stat_ = this->n_stat_, .sum_ = this->sum_, .avg_ = this->avg_, .max_ = this->max_, .min_ = this->min_};
     this->clear();
     return std::move(stat);
 }
 
 AvgStat AvgStat::peek() const {
-    AvgStat result = AvgStat{};
-    result.n_stat_ = this->n_stat_;
-    result.sum_ = this->sum_;
-    result.avg_ = this->avg_;
-    result.max_ = this->max_;
-    result.min_ = this->min_;
-    return std::move(result);
+    return AvgStat{.n_stat_ = this->n_stat_, .sum_ = this->sum_, .avg_ = this->avg_, .max_ = this->max_, .min_ = this->min_};
 }
 
 int64_t AvgStat::avg() const {
