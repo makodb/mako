@@ -294,7 +294,7 @@ TEST_F(IdempotencyCacheTest, LookupInvalidKey) {
 }
 
 TEST_F(IdempotencyCacheTest, TTLExpiration) {
-    IdempotencyConfig cfg;
+    auto cfg = IdempotencyConfig::defaults();
     cfg.ttl_ms = 100;  // 100ms TTL
     cache_.set_config(cfg);
 
@@ -315,7 +315,7 @@ TEST_F(IdempotencyCacheTest, TTLExpiration) {
 }
 
 TEST_F(IdempotencyCacheTest, EvictionOnCapacity) {
-    IdempotencyConfig cfg;
+    auto cfg = IdempotencyConfig::defaults();
     cfg.max_entries = 3;
     cfg.ttl_ms = 60000;
     cache_.set_config(cfg);
@@ -346,7 +346,7 @@ TEST_F(IdempotencyCacheTest, EvictionOnCapacity) {
 }
 
 TEST_F(IdempotencyCacheTest, LRUOrdering) {
-    IdempotencyConfig cfg;
+    auto cfg = IdempotencyConfig::defaults();
     cfg.max_entries = 3;
     cfg.ttl_ms = 60000;
     cache_.set_config(cfg);
@@ -495,7 +495,7 @@ TEST_F(IdempotencyCacheTest, ResetStats) {
 }
 
 TEST_F(IdempotencyCacheTest, EvictExpired) {
-    IdempotencyConfig cfg;
+    auto cfg = IdempotencyConfig::defaults();
     cfg.ttl_ms = 100;  // 100ms TTL
     cache_.set_config(cfg);
 

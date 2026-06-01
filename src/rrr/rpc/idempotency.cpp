@@ -93,50 +93,81 @@ inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) {
 // ===========================================================================
 
 /**
- * @safe - POD configuration struct for IdempotencyCache
+ * @safe - POD configuration struct for IdempotencyCache.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+ * a `static IdempotencyConfig new_()` factory. Callers construct via
+ * the factory presets (`IdempotencyConfig::defaults()`, `::small()`,
+ * `::large()`, `::disabled()`) or via brace-init / designated-init
+ * (which still works because the emitted struct is a C++20 aggregate).
  */
+#if RUSTYCPP_RUST
 struct IdempotencyConfig {
-    uint64_t ttl_ms = 60000;        // Time-to-live for cached entries (60 seconds)
-    size_t max_entries = 10000;     // Maximum cache size
-    bool enabled = true;            // Enable/disable caching
+    ttl_ms: u64,
+    max_entries: usize,
+    enabled: bool,
+}
 
-    // @safe - Default constructor
-    IdempotencyConfig() = default;
-
-    // @safe - Copy constructor
-    IdempotencyConfig(const IdempotencyConfig&) = default;
-
-    // @safe - Copy assignment
-    IdempotencyConfig& operator=(const IdempotencyConfig&) = default;
-
-    // @safe - Default preset
-    static IdempotencyConfig defaults() {
-        return IdempotencyConfig{};
+impl IdempotencyConfig {
+    fn new_() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 60000u64, max_entries: 10000usize, enabled: true }
     }
 
-    // @safe - Small cache preset (fewer entries, shorter TTL)
-    static IdempotencyConfig small() {
-        IdempotencyConfig cfg;
-        cfg.ttl_ms = 30000;      // 30 seconds
-        cfg.max_entries = 1000;
-        return cfg;
+    fn defaults() -> IdempotencyConfig {
+        IdempotencyConfig::new_()
     }
 
-    // @safe - Large cache preset (more entries, longer TTL)
-    static IdempotencyConfig large() {
-        IdempotencyConfig cfg;
-        cfg.ttl_ms = 300000;     // 5 minutes
-        cfg.max_entries = 100000;
-        return cfg;
+    fn small() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 30000u64, max_entries: 1000usize, enabled: true }
     }
 
-    // @safe - Disabled preset
-    static IdempotencyConfig disabled() {
-        IdempotencyConfig cfg;
-        cfg.enabled = false;
-        return cfg;
+    fn large() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 300000u64, max_entries: 100000usize, enabled: true }
     }
+
+    fn disabled() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 60000u64, max_entries: 10000usize, enabled: false }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.0 version=1 rust_sha256=eb2165036c306c6363517f9fb68c002feb78eb5f665a868cf0e2c6ae19de1eb1*/
+struct IdempotencyConfig;
+
+struct IdempotencyConfig {
+    uint64_t ttl_ms;
+    size_t max_entries;
+    bool enabled;
+
+    static IdempotencyConfig new_();
+    static IdempotencyConfig defaults();
+    static IdempotencyConfig small();
+    static IdempotencyConfig large();
+    static IdempotencyConfig disabled();
 };
+
+
+IdempotencyConfig IdempotencyConfig::new_() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(10000), .enabled = true};
+}
+
+IdempotencyConfig IdempotencyConfig::defaults() {
+    return IdempotencyConfig::new_();
+}
+
+IdempotencyConfig IdempotencyConfig::small() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(30000), .max_entries = static_cast<size_t>(1000), .enabled = true};
+}
+
+IdempotencyConfig IdempotencyConfig::large() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(300000), .max_entries = static_cast<size_t>(100000), .enabled = true};
+}
+
+IdempotencyConfig IdempotencyConfig::disabled() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(10000), .enabled = false};
+}
+/*RUSTYCPP:GEN-END id=idempotency.0*/
 
 // ===========================================================================
 // CachedResponse
