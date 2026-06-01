@@ -112,7 +112,7 @@ TEST(RpcServiceProxyFacadeTest, AdapterForwardsRegistrationAndDispatch) {
 
   auto proxy = make_service_proxy_from_box(rusty::make_box<CountingService>(
       &reg_calls, &dispatch_calls, &last_svc_index, &last_rpc_id, &last_xid));
-  Server server(rusty::None);
+  auto server = Server::new_(rusty::None);
 
   EXPECT_EQ(proxy->__reg_to__(server, 3), 0);
   EXPECT_EQ(reg_calls.load(std::memory_order_relaxed), 1);
@@ -136,7 +136,7 @@ TEST(RpcServiceProxyFacadeTest, TypedBoxAdapterForwardsRegistrationAndDispatch) 
 
   auto proxy = make_service_proxy_from_typed_box(rusty::make_box<TypedCountingService>(
       &reg_calls, &dispatch_calls, &last_svc_index, &last_rpc_id, &last_xid));
-  Server server(rusty::None);
+  auto server = Server::new_(rusty::None);
 
   EXPECT_EQ(proxy->__reg_to__(server, 7), 0);
   EXPECT_EQ(reg_calls.load(std::memory_order_relaxed), 1);
@@ -158,7 +158,7 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationUsesProxyBackedPendingStorage)
   i32 last_rpc_id = -1;
   i64 last_xid = -1;
 
-  Server server(rusty::None);
+  auto server = Server::new_(rusty::None);
   server.reg_service(rusty::make_box<CountingService>(
       &reg_calls, &dispatch_calls, &last_svc_index, &last_rpc_id, &last_xid));
 
@@ -187,7 +187,7 @@ TEST(RpcServiceProxyFacadeTest, ServerRegistrationAcceptsTypedServiceWithoutInhe
   i32 last_rpc_id = -1;
   i64 last_xid = -1;
 
-  Server server(rusty::None);
+  auto server = Server::new_(rusty::None);
   server.reg_service_typed(rusty::make_box<TypedCountingService>(
       &reg_calls, &dispatch_calls, &last_svc_index, &last_rpc_id, &last_xid));
 

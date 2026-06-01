@@ -63,7 +63,7 @@ class ServerChannelBindingTest : public ::testing::Test {
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
         server_ = rusty::make_box<Server>(
-            rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     }
 
     void TearDown() override {

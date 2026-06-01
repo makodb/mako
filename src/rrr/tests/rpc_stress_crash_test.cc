@@ -143,7 +143,7 @@ protected:
 
     // @safe - Create server on given port
     Server* create_server(int port) {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<StressTestService>();
         server->reg_service_typed(std::move(service_box));
         std::string addr = "0.0.0.0:" + std::to_string(port);

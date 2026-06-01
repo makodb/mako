@@ -143,7 +143,7 @@ protected:
         cnode->service = new ConfigServiceImpl(*cnode->store);
 
         // Create RPC server
-        cnode->rpc_server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        cnode->rpc_server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<ConfigServiceImpl>(*cnode->store);
         cnode->rpc_server->reg_service(std::move(service_box));
 

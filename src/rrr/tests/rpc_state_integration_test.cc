@@ -266,7 +266,7 @@ TEST_F(StateIntegrationTest, InitialStateNotConnected) {
 
 TEST_F(StateIntegrationTest, StateAfterSuccessfulConnect) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -287,7 +287,7 @@ TEST_F(StateIntegrationTest, StateAfterSuccessfulConnect) {
 
 TEST_F(StateIntegrationTest, StateAfterDisconnect) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -324,7 +324,7 @@ TEST_F(StateIntegrationTest, StateAfterConnectionRefused) {
 
 TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     auto service = service_box.get();
     server->reg_service_typed(std::move(service_box));
@@ -361,7 +361,7 @@ TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
 }
 
 TEST_F(StateIntegrationTest, PendingRequestCountTracksInFlightSleepRequest) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -395,7 +395,7 @@ TEST_F(StateIntegrationTest, PendingRequestCountTracksInFlightSleepRequest) {
 }
 
 TEST_F(StateIntegrationTest, DrainTimeoutReflectsRealInFlightRequest) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -436,7 +436,7 @@ TEST_F(StateIntegrationTest, DrainTimeoutReflectsRealInFlightRequest) {
 }
 
 TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -477,7 +477,7 @@ TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
 // channel-mode reliability tests).
 
 TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -544,7 +544,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
     ASSERT_EQ(fail_fast.unwrap_err(), EBUSY);
 
     // Bring server back and reconnect transport.
-    server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box2 = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box2));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -594,7 +594,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 }
 
 TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -662,7 +662,7 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
         return has_event(kError) && has_event(kDisconnected);
     }, milliseconds(2000)));
 
-    server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box2 = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box2));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -720,7 +720,7 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     const std::string bind_addr = "0.0.0.0:" + std::to_string(test_port_);
     const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
 
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())), 0);
@@ -765,7 +765,7 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
 
     uint64_t second_server_id = 0;
     for (int attempt = 0; attempt < 20 && server == nullptr; ++attempt) {
-        auto candidate = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto candidate = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto candidate_service = rusty::make_box<StateTestService>();
         candidate->reg_service_typed(std::move(candidate_service));
         if (candidate->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) == 0) {
@@ -812,7 +812,7 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
 
 TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -891,7 +891,7 @@ TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
 
 TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -938,7 +938,7 @@ TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
 
 TEST_F(StateIntegrationTest, RapidConnectDisconnectCycles) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
@@ -961,7 +961,7 @@ TEST_F(StateIntegrationTest, RapidConnectDisconnectCycles) {
 
 TEST_F(StateIntegrationTest, ConnectionObjectAccessible) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     server->reg_service_typed(std::move(service_box));
     ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);

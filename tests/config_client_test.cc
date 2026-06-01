@@ -70,7 +70,7 @@ protected:
         int port = 19100 + (port_counter_.fetch_add(1) % 900);
         server_addr_ = "127.0.0.1:" + std::to_string(port);
 
-        server_ = new rrr::Server(poll_thread_.as_ref().unwrap().clone());
+        server_ = new rrr::Server(rrr::Server::new_(poll_thread_.as_ref().unwrap().clone()));
         // Note: service_ will be owned by the Box after this call
         server_->reg_service_typed(rusty::Box<ConfigServiceImpl>(service_));
 

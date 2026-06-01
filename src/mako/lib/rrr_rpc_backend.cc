@@ -78,7 +78,7 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
 
     // Create server to listen for incoming requests
     // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
-    server_ = new rrr::Server(poll_thread_worker_.as_ref().unwrap().clone());
+    server_ = new rrr::Server(rrr::Server::new_(poll_thread_worker_.as_ref().unwrap().clone()));
 
     // Register TransportBackendService to handle all request types in the range
     auto svc = rusty::make_box<TransportBackendService>(

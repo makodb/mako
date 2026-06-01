@@ -120,7 +120,7 @@ protected:
         poll_thread_worker_ = rusty::Some(PollThread::create());
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Create service, store raw pointer for test access, server takes ownership via Box
         auto service_box = rusty::make_box<ExtendedTestService>();
@@ -205,7 +205,7 @@ TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCall
 TEST(ServerApiSafetyTest, ServerStartWithInvalidHostReturnsError) {
     auto poll_thread = PollThread::create();
     {
-        Server server(rusty::Some(poll_thread.clone()));
+        auto server = Server::new_(rusty::Some(poll_thread.clone()));
         auto service_box = rusty::make_box<ExtendedTestService>();
         server.reg_service_typed(std::move(service_box));
 
@@ -217,7 +217,7 @@ TEST(ServerApiSafetyTest, ServerStartWithInvalidHostReturnsError) {
 TEST(ServerApiSafetyTest, ServerStartWithMalformedAddressReturnsError) {
     auto poll_thread = PollThread::create();
     {
-        Server server(rusty::Some(poll_thread.clone()));
+        auto server = Server::new_(rusty::Some(poll_thread.clone()));
         auto service_box = rusty::make_box<ExtendedTestService>();
         server.reg_service_typed(std::move(service_box));
 
@@ -229,7 +229,7 @@ TEST(ServerApiSafetyTest, ServerStartWithMalformedAddressReturnsError) {
 TEST(ServerApiSafetyTest, ServerStartWithNullAddressReturnsError) {
     auto poll_thread = PollThread::create();
     {
-        Server server(rusty::Some(poll_thread.clone()));
+        auto server = Server::new_(rusty::Some(poll_thread.clone()));
         auto service_box = rusty::make_box<ExtendedTestService>();
         server.reg_service_typed(std::move(service_box));
 

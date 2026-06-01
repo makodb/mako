@@ -126,7 +126,7 @@ protected:
     // The OS kernel picks an available port, avoiding TIME_WAIT issues
     // Returns pair of (server*, actual_port) or (nullptr, 0) on failure
     std::pair<Server*, int> create_server_ephemeral() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<PartitionTestService>();
         server->reg_service_typed(std::move(service_box));
         // Use port 0 to let the OS assign an available ephemeral port
@@ -159,7 +159,7 @@ protected:
             if (try_port > 65000) {
                 try_port = 10000 + (try_port % 55000);  // Wrap around
             }
-            auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
             auto service_box = rusty::make_box<PartitionTestService>();
             server->reg_service_typed(std::move(service_box));
             std::string addr = "0.0.0.0:" + std::to_string(try_port);
@@ -183,7 +183,7 @@ protected:
             if (retry > 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
             }
-            auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
             auto service_box = rusty::make_box<PartitionTestService>();
             server->reg_service_typed(std::move(service_box));
             std::string addr = "0.0.0.0:" + std::to_string(port);

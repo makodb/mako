@@ -406,7 +406,7 @@ int main(int argc, char **argv) {
     request_str = string(byte_size, 'x');
     if (is_server) {
         auto server_poll_thread = rusty::Some(PollThread::create());
-        Server svr(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
+        auto svr = Server::new_(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
         svr.reg_service_typed(rusty::make_box<BenchmarkService>());
         verify(svr.start(reinterpret_cast<const int8_t*>(svr_addr)) == 0);
 

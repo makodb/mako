@@ -410,7 +410,7 @@ protected:
 
         // Create server
         auto poll_clone = poll_thread_.as_ref().unwrap().clone();
-        server_ = new Server(rusty::Some(std::move(poll_clone)));
+        server_ = new Server(Server::new_(rusty::Some(std::move(poll_clone))));
 
         // Create service
         auto service_box = rusty::make_box<TestServiceForLB>();

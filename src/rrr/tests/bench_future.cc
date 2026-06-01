@@ -61,7 +61,7 @@ protected:
     void SetUp() override {
         poll_thread_worker_ = rusty::Some(PollThread::create());
         // Clone the Arc to keep our copy for the client - use as_ref() to borrow
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Register service - server takes ownership via Box
         server->reg_service_typed(rusty::make_box<BenchService>());

@@ -117,7 +117,7 @@ class InMemoryE2ETest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
-    server_ = rusty::make_box<Server>(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server_ = rusty::make_box<Server>(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto svc_box = rusty::make_box<EchoService>();
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
@@ -157,7 +157,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
-    server_ = rusty::make_box<Server>(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server_ = rusty::make_box<Server>(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto svc_box = rusty::make_box<EchoService>();
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
@@ -195,7 +195,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
-    server_ = rusty::make_box<Server>(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server_ = rusty::make_box<Server>(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto svc_box = rusty::make_box<EchoService>();
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
@@ -237,7 +237,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
-    server_ = rusty::make_box<Server>(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server_ = rusty::make_box<Server>(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto svc_box = rusty::make_box<EchoService>();
     auto* svc_raw = svc_box.get();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
@@ -277,7 +277,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryE2ETest, ServerDestroyTriggersClientDisconnect) {
-    server_ = rusty::make_box<Server>(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server_ = rusty::make_box<Server>(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto svc_box = rusty::make_box<EchoService>();
     server_.as_ref().unwrap()->reg_service_typed<EchoService>(std::move(svc_box));
     server_.as_ref().unwrap()->set_channel_factory(make_factory());

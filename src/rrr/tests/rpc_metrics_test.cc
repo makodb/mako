@@ -425,7 +425,7 @@ protected:
     Server* start_server() {
         constexpr int kMaxPortBindAttempts = 16;
         for (int attempt = 0; attempt < kMaxPortBindAttempts; ++attempt) {
-            auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
             auto service_box = rusty::make_box<MetricsTestService>();
             server->reg_service_typed(std::move(service_box));
             if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) == 0) {
@@ -587,7 +587,7 @@ TEST_F(ConnectionMetricsIntegrationTest, ClientWithoutConnection) {
 }
 
 TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<RetryMetricsRpcService>(1);
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
@@ -629,7 +629,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
 }
 
 TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdatesTimeoutMetric) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<RetryMetricsRpcService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));

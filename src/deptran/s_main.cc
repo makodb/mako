@@ -62,7 +62,7 @@ void client_setup_heartbeat(int num_clients) {
   if (hb) {
     // setup controller rpc server
     cli_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-    cli_hb_server_g = new rrr::Server(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone()));
+    cli_hb_server_g = new rrr::Server(rrr::Server::new_(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone())));
 
     // Create service with Arc<ClientStatus>, register as owned Box<Service>
     cli_hb_server_g->reg_service_typed(rusty::make_box<ClientControlServiceImpl>(

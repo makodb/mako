@@ -87,7 +87,7 @@ bool init_config_node() {
 
     // @unsafe { RPC thread creation }
     g_config_poll_thread = rusty::Some(rrr::PollThread::create());
-    g_config_rpc_server = new rrr::Server(rusty::Some(g_config_poll_thread.as_ref().unwrap().clone()));
+    g_config_rpc_server = new rrr::Server(rrr::Server::new_(rusty::Some(g_config_poll_thread.as_ref().unwrap().clone())));
 
     // @unsafe { RPC service registration - ConfigServiceImpl ownership transferred to server }
     g_config_rpc_server->reg_service_typed(rusty::make_box<ConfigServiceImpl>(*g_config_store));

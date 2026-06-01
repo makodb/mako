@@ -56,7 +56,7 @@ protected:
         for (int attempt = 0; attempt < 20; ++attempt) {
             port_ = test_ports::get_port();
             auto poll_clone = poll_.as_ref().unwrap().clone();
-            server_ = new Server(rusty::Some(std::move(poll_clone)));
+            server_ = new Server(Server::new_(rusty::Some(std::move(poll_clone))));
             auto svc = rusty::make_box<DeferTestService>();
             service_ = svc.get();
             server_->reg_service_typed(std::move(svc));

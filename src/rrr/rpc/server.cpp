@@ -872,7 +872,6 @@ impl Drop for Server {
 }
 
 impl Server {
-    #[cpp_ctor]
     fn new(poll_thread_worker: rusty::Option<rusty::Arc<PollThread>>) -> Server {
         Server {
             pending_services_field: Vec::<ServiceProxy>(),
@@ -1032,7 +1031,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2772009b5e40b708a4af11a2a5cd3f33ac3f0987a03e0216f6b46079359c9484*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=21345e9b4942ee29ceaf3b3ce94b9387a96753a4ac0c0c43eba9d85a04a63d20*/
 struct Server;
 
 struct Server {
@@ -1071,7 +1070,7 @@ struct Server {
 
 
     ~Server() noexcept(false);
-    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker);
+    static Server new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker);
     void set_channel_factory(ChannelFactoryProxy factory);
     bool is_channel_factory_bound() const;
     void reg_service(rusty::Box<Service> svc);
@@ -1108,23 +1107,9 @@ Server::~Server() noexcept(false) {
     server_drop_impl((*this));
 }
 
-Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker)
-    : pending_services_field(rusty::Vec<ServiceProxy>())
-    , pending_rpc_to_service_field(rusty::HashMap<int32_t, size_t>())
-    , pending_fast_rpc_ids_field(rusty::HashSet<int32_t>())
-    , ctx_field(rusty::None)
-    , poll_thread_field(server_resolve_poll_thread(std::move(poll_thread_worker)))
-    , shutdown_state_field(rusty::Mutex<ShutdownState>(ShutdownState{}))
-    , shutdown_cond_field(rusty::make_box<rusty::Condvar>())
-    , shutdown_phase_field(rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase::RUNNING))))
-    , shutdown_hooks_field(SpinMutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()))
-    , pending_requests_field(rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)))
-    , drop_heartbeat_replies_field(rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false))
-    , instance_id_field(server_generate_instance_id())
-    , channel_factory_field(rusty::None)
-    , channel_listener_field(rusty::None)
-    , channel_sconns_field(SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>()))
-{}
+Server Server::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
+    return Server(rusty::Vec<ServiceProxy>(), rusty::HashMap<int32_t, size_t>(), rusty::HashSet<int32_t>(), rusty::None, server_resolve_poll_thread(std::move(poll_thread_worker)), rusty::Mutex<ShutdownState>(ShutdownState{}), rusty::make_box<rusty::Condvar>(), rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase::RUNNING))), SpinMutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()), rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)), rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false), server_generate_instance_id(), rusty::None, rusty::None, SpinMutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>()));
+}
 
 void Server::set_channel_factory(ChannelFactoryProxy factory) {
     if (!factory) {

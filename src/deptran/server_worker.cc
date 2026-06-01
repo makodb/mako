@@ -20,7 +20,7 @@ void ServerWorker::SetupHeartbeat() {
   int n_io_threads = 1;
 //  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
   svr_hb_poll_thread_worker_g = svr_poll_thread_worker_.clone();
-  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
@@ -201,7 +201,7 @@ void ServerWorker::SetupService() {
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // init rrr::Server first (before registering services)
-  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
+  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
 
   // Create and register services (ownership transferred to rpc_server_)
 #ifdef RAFT_TEST_CORO

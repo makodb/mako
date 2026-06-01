@@ -117,7 +117,7 @@ protected:
             auto& poll_ref = poll_thread_worker_.as_ref().unwrap();
             auto poll_clone = poll_ref.clone();
             auto server_poll = rusty::Some(std::move(poll_clone));
-            server = new Server(std::move(server_poll));
+            server = new Server(Server::new_(std::move(server_poll)));
 
             auto service_box = rusty::make_box<TestService>();
             service_ = service_box.get();

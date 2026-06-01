@@ -101,7 +101,7 @@ void nc_setup_client(int nkeys, int nthreads, int run) {
 
 void *nc_start_server2(void *input) {
     auto poll_arc = PollThread::create();
-    rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
+    rrr::Server *server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_arc)));
 
     server->reg_service_typed(rusty::make_box<HelloworldClientServiceImpl>());
     server->start(reinterpret_cast<const int8_t*>((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str())  );

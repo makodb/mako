@@ -187,7 +187,7 @@ protected:
         poll_thread_worker_ = rusty::Some(rrr::PollThread::create());
 
         // Create server
-        server_ = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Register TestRangeService to handle test request types
         auto svc = rusty::make_box<TestRangeService>(
@@ -520,7 +520,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     std::atomic<int> request_count{0};
 
     // Start server
-    auto server = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+    auto server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
     auto svc = rusty::make_box<TestSingleService>(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         request_count++;
         auto sconn_opt = weak_sconn.upgrade();

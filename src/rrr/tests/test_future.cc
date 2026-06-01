@@ -131,7 +131,7 @@ protected:
         poll_thread_worker_ = rusty::Some(PollThread::create());
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Create service, store raw pointer for test access, server takes ownership via Box
         auto service_box = rusty::make_box<TestFutureService>();

@@ -161,7 +161,7 @@ void PaxosWorker::SetupService() {
   svr_poll_thread_worker_ = rusty::Some(PollThread::create());
 
   // init rrr::Server first (before registering services)
-  rpc_server_ = new rrr::Server(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone()));
+  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone())));
 
   // Create and register services (ownership transferred to rpc_server_)
   if (rep_frame_ != nullptr) {
@@ -207,7 +207,7 @@ void PaxosWorker::SetupHeartbeat() {
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
