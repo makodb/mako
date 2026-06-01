@@ -34,36 +34,102 @@ inline const char* circuit_state_to_string(CircuitState state) {
     }
 }
 
-// CircuitBreakerConfig is a plain aggregate POD: no user-declared
-// constructors, fields carry in-class default initializers matching
-// the historical default ctor values. Intentionally kept in plain
-// C++ (not migrated to inline-Rust DSL) because the DSL does not
-// emit per-field in-class `= default` initializers, and many tests
-// rely on the `CircuitBreakerConfig config; config.X = ...;`
-// default-mutate-customize pattern that needs those documented
-// defaults present after default construction.
-//
-// The previous user-defined default and parameterized ctors were
-// dropped; the parameterized form was used only by the three named
-// factories below, which now use positional aggregate-init.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static CircuitBreakerConfig new_()` factory (the balanced
+// default). Callers use `::sensitive()`, `::relaxed()`,
+// `::disabled()`, `::defaults()`, or brace-init. Test sites that
+// previously default-constructed `CircuitBreakerConfig cfg;` move to
+// `auto cfg = CircuitBreakerConfig::defaults();` (same pattern as the
+// other migrated config structs).
+#if RUSTYCPP_RUST
 struct CircuitBreakerConfig {
-    uint32_t failure_threshold = 5;
-    uint32_t success_threshold = 3;
-    uint32_t timeout_ms = 30000;
-    bool enabled = true;
+    failure_threshold: u32,
+    success_threshold: u32,
+    timeout_ms: u32,
+    enabled: bool,
+}
 
-    static CircuitBreakerConfig sensitive() {
-        return CircuitBreakerConfig{3, 5, 60000, true};
+impl CircuitBreakerConfig {
+    fn new_() -> CircuitBreakerConfig {
+        CircuitBreakerConfig {
+            failure_threshold: 5u32,
+            success_threshold: 3u32,
+            timeout_ms: 30000u32,
+            enabled: true,
+        }
     }
 
-    static CircuitBreakerConfig relaxed() {
-        return CircuitBreakerConfig{10, 2, 15000, true};
+    fn defaults() -> CircuitBreakerConfig {
+        CircuitBreakerConfig::new_()
     }
 
-    static CircuitBreakerConfig disabled() {
-        return CircuitBreakerConfig{0, 0, 0, false};
+    fn sensitive() -> CircuitBreakerConfig {
+        CircuitBreakerConfig {
+            failure_threshold: 3u32,
+            success_threshold: 5u32,
+            timeout_ms: 60000u32,
+            enabled: true,
+        }
     }
+
+    fn relaxed() -> CircuitBreakerConfig {
+        CircuitBreakerConfig {
+            failure_threshold: 10u32,
+            success_threshold: 2u32,
+            timeout_ms: 15000u32,
+            enabled: true,
+        }
+    }
+
+    fn disabled() -> CircuitBreakerConfig {
+        CircuitBreakerConfig {
+            failure_threshold: 0u32,
+            success_threshold: 0u32,
+            timeout_ms: 0u32,
+            enabled: false,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.2 version=1 rust_sha256=057b2ac8db9c1dc127db298fe2af94124a60bbeff384faaa00cd001218c81d63*/
+struct CircuitBreakerConfig;
+
+struct CircuitBreakerConfig {
+    uint32_t failure_threshold;
+    uint32_t success_threshold;
+    uint32_t timeout_ms;
+    bool enabled;
+
+    static CircuitBreakerConfig new_();
+    static CircuitBreakerConfig defaults();
+    static CircuitBreakerConfig sensitive();
+    static CircuitBreakerConfig relaxed();
+    static CircuitBreakerConfig disabled();
 };
+
+
+CircuitBreakerConfig CircuitBreakerConfig::new_() {
+    return CircuitBreakerConfig{.failure_threshold = static_cast<uint32_t>(5), .success_threshold = static_cast<uint32_t>(3), .timeout_ms = static_cast<uint32_t>(30000), .enabled = true};
+}
+
+CircuitBreakerConfig CircuitBreakerConfig::defaults() {
+    return CircuitBreakerConfig::new_();
+}
+
+CircuitBreakerConfig CircuitBreakerConfig::sensitive() {
+    return CircuitBreakerConfig{.failure_threshold = static_cast<uint32_t>(3), .success_threshold = static_cast<uint32_t>(5), .timeout_ms = static_cast<uint32_t>(60000), .enabled = true};
+}
+
+CircuitBreakerConfig CircuitBreakerConfig::relaxed() {
+    return CircuitBreakerConfig{.failure_threshold = static_cast<uint32_t>(10), .success_threshold = static_cast<uint32_t>(2), .timeout_ms = static_cast<uint32_t>(15000), .enabled = true};
+}
+
+CircuitBreakerConfig CircuitBreakerConfig::disabled() {
+    return CircuitBreakerConfig{.failure_threshold = static_cast<uint32_t>(0), .success_threshold = static_cast<uint32_t>(0), .timeout_ms = static_cast<uint32_t>(0), .enabled = false};
+}
+/*RUSTYCPP:GEN-END id=circuit_breaker.2*/
 
 // `CircuitBreaker` — single-threaded state machine that tracks
 // success/failure counts and a Cell<CircuitState>. All mutable state

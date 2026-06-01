@@ -99,7 +99,7 @@ protected:
 // ============================================================================
 
 TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 3;
     auto cb = CircuitBreaker::new_(cb_config);
 
@@ -141,7 +141,7 @@ TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
 }
 
 TEST_F(CombinedReliabilityTest, CircuitBreakerWithConnectionState) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 2;
     cb_config.timeout_ms = 100;
     auto cb = CircuitBreaker::new_(cb_config);
@@ -270,7 +270,7 @@ TEST_F(CombinedReliabilityTest, ReconnectCalculatorResetOnSuccess) {
 
 TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
     // Configure all reliability components
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 3;
     auto cb = CircuitBreaker::new_(cb_config);
 
@@ -327,7 +327,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
 }
 
 TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 2;
     cb_config.timeout_ms = 100;
     auto cb = CircuitBreaker::new_(cb_config);
@@ -396,7 +396,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 // ============================================================================
 
 TEST_F(CombinedReliabilityTest, ErrorCategoriesWithCircuitBreaker) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 3;
     auto cb = CircuitBreaker::new_(cb_config);
 
@@ -463,7 +463,7 @@ TEST_F(CombinedReliabilityTest, HeartbeatWithStateTransitions) {
 // ============================================================================
 
 TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 5;
     cb_config.timeout_ms = 50;
     auto cb = CircuitBreaker::new_(cb_config);
