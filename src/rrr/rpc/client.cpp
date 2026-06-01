@@ -111,37 +111,91 @@ enum class DisconnectBehavior {
 
 /**
  * Configuration for request buffering during disconnection.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+ * a `static BufferingConfig new_()` factory (returning the default
+ * preset, matching what the prior default ctor produced). Callers
+ * use `BufferingConfig::defaults()` / `::disabled()` / brace-init.
  */
+#if RUSTYCPP_RUST
 struct BufferingConfig {
-    DisconnectBehavior behavior = DisconnectBehavior::QUEUE;
-    size_t max_pending = 1000;           // Max queued requests
-    uint32_t default_ttl_ms = 30000;     // 30 second TTL
-    OverflowStrategy overflow = OverflowStrategy::DROP_OLDEST;
-    bool enabled = true;
+    behavior: DisconnectBehavior,
+    max_pending: usize,
+    default_ttl_ms: u32,
+    overflow: OverflowStrategy,
+    enabled: bool,
+}
 
-    // @safe - Aggregate-initialized POD factory.
-    static BufferingConfig defaults() {
-        return BufferingConfig{};
+impl BufferingConfig {
+    fn new_() -> BufferingConfig {
+        BufferingConfig {
+            behavior: DisconnectBehavior::QUEUE,
+            max_pending: 1000usize,
+            default_ttl_ms: 30000u32,
+            overflow: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static BufferingConfig disabled() {
-        BufferingConfig config;
-        config.enabled = false;
-        config.behavior = DisconnectBehavior::FAIL_FAST;
-        return config;
+    fn defaults() -> BufferingConfig {
+        BufferingConfig::new_()
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    RequestQueueConfig to_queue_config() const {
-        auto qc = RequestQueueConfig::new_();
-        qc.max_size = max_pending;
-        qc.default_ttl_ms = default_ttl_ms;
-        qc.overflow_strategy = overflow;
-        qc.enabled = enabled;
-        return qc;
+    fn disabled() -> BufferingConfig {
+        BufferingConfig {
+            behavior: DisconnectBehavior::FAIL_FAST,
+            max_pending: 1000usize,
+            default_ttl_ms: 30000u32,
+            overflow: OverflowStrategy::DROP_OLDEST,
+            enabled: false,
+        }
     }
+
+    fn to_queue_config(&self) -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: self.max_pending,
+            default_ttl_ms: self.default_ttl_ms,
+            overflow_strategy: self.overflow,
+            enabled: self.enabled,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.0a version=1 rust_sha256=dabec23aec576c3fe4a664428be06e4b52e0f94a8b74686ec25835939ab6f3a8*/
+struct BufferingConfig;
+
+struct BufferingConfig {
+    DisconnectBehavior behavior;
+    size_t max_pending;
+    uint32_t default_ttl_ms;
+    OverflowStrategy overflow;
+    bool enabled;
+
+    static BufferingConfig new_();
+    static BufferingConfig defaults();
+    static BufferingConfig disabled();
+    RequestQueueConfig to_queue_config() const;
 };
+
+
+BufferingConfig BufferingConfig::new_() {
+    return BufferingConfig{.behavior = rusty::clone(rusty::clone(DisconnectBehavior::QUEUE)), .max_pending = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
+
+BufferingConfig BufferingConfig::defaults() {
+    return BufferingConfig::new_();
+}
+
+BufferingConfig BufferingConfig::disabled() {
+    return BufferingConfig{.behavior = rusty::clone(rusty::clone(DisconnectBehavior::FAIL_FAST)), .max_pending = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = false};
+}
+
+RequestQueueConfig BufferingConfig::to_queue_config() const {
+    return RequestQueueConfig{.max_size = this->max_pending, .default_ttl_ms = this->default_ttl_ms, .overflow_strategy = this->overflow, .enabled = this->enabled};
+}
+/*RUSTYCPP:GEN-END id=client.0a*/
 
 /**
  * TCP Keepalive configuration for connection health monitoring.
@@ -787,8 +841,11 @@ private:
     mutable std::atomic<bool> reconnect_abort_{false};
     std::string reconnect_address_;  // Address to reconnect to
 
-    // Request buffering during disconnection
-    mutable BufferingConfig buffering_config_;  // mutable for const set_buffering_config()
+    // Request buffering during disconnection. The DSL-emitted
+    // BufferingConfig no longer carries in-class default initializers,
+    // so use the explicit `defaults()` factory to match the pre-DSL
+    // behaviour (enabled=true, behavior=QUEUE).
+    mutable BufferingConfig buffering_config_ = BufferingConfig::defaults();
     mutable RequestQueue pending_queue_;  // mutable for const request() access
 
     // Server restart detection: tracks server instance ID

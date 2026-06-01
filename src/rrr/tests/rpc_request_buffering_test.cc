@@ -37,7 +37,7 @@ TEST(BufferingConfigTest, DisabledConfig) {
 }
 
 TEST(BufferingConfigTest, ToQueueConfig) {
-    BufferingConfig bc;
+    auto bc = BufferingConfig::defaults();
     bc.max_pending = 500;
     bc.default_ttl_ms = 10000;
     bc.overflow = OverflowStrategy::DROP_NEWEST;
@@ -93,7 +93,7 @@ TEST_F(RequestBufferingTest, BufferingConfigMethods) {
     EXPECT_TRUE(default_config.enabled);
 
     // Set new config
-    BufferingConfig new_config;
+    auto new_config = BufferingConfig::defaults();
     new_config.behavior = DisconnectBehavior::FAIL_FAST;
     new_config.max_pending = 100;
     conn->set_buffering_config(new_config);
