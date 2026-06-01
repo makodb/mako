@@ -2138,7 +2138,7 @@ impl Client {
         mut_conn.set_reconnect_policy(self.pending_reconnect_policy_field.get());
 
         if !self.has_pending_channel_factory() {
-            let tcp_factory = rusty::Arc::<TcpFactory>::make(self.poll_thread_worker_field.clone());
+            let tcp_factory: Arc<TcpFactory> = Arc::<TcpFactory>::make(self.poll_thread_worker_field.clone());
             self.set_channel_factory(make_tcp_factory_proxy(tcp_factory));
         }
 
@@ -2244,12 +2244,12 @@ impl Client {
         guard.is_some() && guard.as_ref().unwrap().is_reconnecting()
     }
 
-    fn host(&self) -> rusty::String {
+    fn host(&self) -> String {
         let guard = self.connection_field.borrow();
         if guard.is_some() {
             return guard.as_ref().unwrap().host();
         }
-        rusty::String::new_()
+        String {}
     }
 
     fn connected(&self) -> bool {
@@ -2429,7 +2429,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=07001ef531b2d67121787135f168a993cb30f1e5fcd1352b57514a45e691cba5*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=57ba40684765b5a52ee4083124645dd76e16e7efa63cf477cb64d1091bca5ea0*/
 struct Client;
 
 struct Client {
@@ -2616,7 +2616,7 @@ int32_t Client::connect(const int8_t* addr, bool client) const {
     mut_conn.set_circuit_breaker_config(this->pending_circuit_breaker_config_field.get());
     mut_conn.set_reconnect_policy(rusty::detail::deref_if_pointer_like(this->pending_reconnect_policy_field.get()));
     if (!this->has_pending_channel_factory()) {
-        const auto tcp_factory = rusty::Arc<TcpFactory>::make(rusty::clone(this->poll_thread_worker_field));
+        const rusty::Arc<TcpFactory> tcp_factory = rusty::Arc<TcpFactory>::make(rusty::clone(this->poll_thread_worker_field));
         this->set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
     }
     {
@@ -2720,7 +2720,7 @@ rusty::String Client::host() const {
     if (guard->is_some()) {
         return guard->as_ref().unwrap()->host();
     }
-    return rusty::String::new_();
+    return rusty::String{};
 }
 
 bool Client::connected() const {
