@@ -117,97 +117,106 @@ inline void Pthread_join(pthread_t thread, void** value_ptr) {
     { verify(pthread_join(thread, value_ptr) == 0); }
 }
 
-class Lockable: public NoCopy {
-public:
-    enum type {MUTEX, SPINLOCK, EMPTY};
+// Bring `Ordering` and `AtomicBool` into the `rrr` namespace so DSL
+// bodies can write `Ordering::Acquire` / `AtomicBool::new(...)` (Rust
+// idiom) and the emitted C++ resolves via these using-decls.
+using rusty::sync::atomic::Ordering;
+using rusty::sync::atomic::AtomicBool;
 
-    virtual void lock() = 0;
-    virtual void unlock() = 0;
-    virtual ~Lockable() = default;
-    // The user-declared virtual dtor above suppresses the implicit move
-    // ctor / move-assign. Restore them so SpinLock — which derives from
-    // Lockable — can be implicitly move-constructed (its only state is
-    // the movable `rusty::sync::atomic::AtomicBool` flag).
-    Lockable() = default;
-    Lockable(Lockable&&) noexcept = default;
-    Lockable& operator=(Lockable&&) noexcept = default;
-//    virtual Lockable::type whatami() = 0;
-};
+// @safe - architecture-specific pause hint for spin loops. Defined
+// outside the DSL because the DSL has no inline-asm or preprocessor
+// support. The inline `@unsafe` block scopes the asm instruction.
+inline void cpu_pause() noexcept {
+#if defined(__i386__) || defined(__x86_64__)
+    // @unsafe { inline asm }
+    { asm volatile("pause"); }
+#elif defined(__aarch64__)
+    // @unsafe { inline asm }
+    { asm volatile("yield"); }
+#endif
+}
 
-// @unsafe - Used with mutable for interior mutability.
+// `SpinLock` — atomic-flag busy-wait lock. The previous `Lockable`
+// abstract base was deleted (no polymorphic callers in the tree);
+// SpinLock is now a standalone DSL struct. The atomic flag's interior
+// mutability lets `lock` / `unlock` take `&self`, so the emitted C++
+// methods are `const`-qualified — the `mutable` qualifier on SpinLock
+// fields in holder classes (SpinMutex<T>::lock_) becomes redundant.
 //
-// The underlying flag is `rusty::sync::atomic::AtomicBool` (a thin
-// movable wrapper around `std::atomic<bool>`), which lets SpinLock be
-// move-constructible / move-assignable. The implicit move ctor reads
-// the source's `locked_` value at the time of move and writes it into
-// the destination — semantically the same as default-constructing a
-// new lock with whatever state the source happened to hold. Callers
-// must not move a SpinLock that is currently held; that contract is
-// the same as it would be for any other lock primitive.
-class SpinLock: public Lockable {
-public:
-    // @safe - Initializes to unlocked state
-    SpinLock(): locked_(false) { }
-    ~SpinLock() override = default;
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. `fn new()` lowers to a static
+// `SpinLock::new_()` factory.
+//
+// One C++ feature deliberately dropped vs. the pre-DSL form: the
+// `alignas(64)` cache-line alignment on `locked_field`. The DSL does
+// not yet emit field-level alignment attributes. The performance
+// impact is small (false-sharing risk for SpinLocks colocated with
+// other heavily-written data); fixable later by adding alignas
+// support to the transpiler or wrapping in a CacheAligned<T> helper.
+#if RUSTYCPP_RUST
+struct SpinLock {
+    locked_field: AtomicBool,
+}
 
-    // Still not copyable (an atomic flag has identity); rely on
-    // the implicit move (which AtomicBool supports) to allow
-    // value-returning factories like `SpinLock::new_()`.
-    SpinLock(const SpinLock&) = delete;
-    SpinLock& operator=(const SpinLock&) = delete;
-
-    // The user-declared (defaulted) destructor above would otherwise
-    // suppress the implicit move ctor / move-assign. `rusty::AtomicBool`
-    // is movable, so declaring these `= default` lets value-returning
-    // factories like `SpinLock::new_()` and DSL-emitted aggregate ctors
-    // taking `SpinMutex<T>` by value lower to a move (not a copy).
-    SpinLock(SpinLock&&) noexcept = default;
-    SpinLock& operator=(SpinLock&&) noexcept = default;
-
-    // @safe - Rust-style factory matching `fn new() -> Self`.
-    static SpinLock new_() {
-        return SpinLock{};
+impl SpinLock {
+    fn new() -> SpinLock {
+        SpinLock { locked_field: AtomicBool::new(false) }
     }
 
-    // @safe - parity with Rust's `Mutex::lock`. The atomic compare/exchange
-    // and load operations are memory-safe; the sleeping fallback path
-    // delegates to `rusty::sys::time::sleep_us` (itself @safe with an
-    // inner @unsafe block around nanosleep).
-    void lock() override {
-        namespace ra = rusty::sync::atomic;
-        // Fast path: try to acquire lock immediately
-        if (locked_.compare_exchange(false, true,
-                                     ra::Ordering::Acquire,
-                                     ra::Ordering::Relaxed).is_ok()) {
+    fn lock(&self) {
+        if self.locked_field.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             return;
         }
+        let mut wait: i32 = 1000i32;
+        while wait > 0i32 && self.locked_field.load(Ordering::Relaxed) {
+            cpu_pause();
+            wait -= 1i32;
+        }
+        while self.locked_field.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            rusty::sys::time::sleep_us(50u64);
+        }
+    }
 
-        // Spin for a short while before sleeping
-        int wait = 1000;
-        while ((wait-- > 0) && locked_.load(ra::Ordering::Relaxed)) {
-            // CPU-specific pause instruction to reduce contention
-#if defined(__i386__) || defined(__x86_64__)
-            asm volatile("pause");
+    fn unlock(&self) {
+        self.locked_field.store(false, Ordering::Release);
+    }
+}
 #endif
-        }
+/*RUSTYCPP:GEN-BEGIN id=threading.1 version=1 rust_sha256=8bff8c93678817029a24300bbe1f78054ca17c8c2557b461e0c1fa1e85a9aea4*/
+struct SpinLock;
 
-        // Fall back to sleeping if still contended.
-        while (locked_.compare_exchange_weak(false, true,
-                                             ra::Ordering::Acquire,
-                                             ra::Ordering::Relaxed).is_err()) {
-            rusty::sys::time::sleep_us(50);  // 50 microseconds
-        }
-    }
+struct SpinLock {
+    rusty::sync::atomic::AtomicBool locked_field;
 
-    // @safe - parity with Rust's `Mutex` drop / `unlock`. Atomic store
-    // is memory-safe; the prior `@unsafe` annotation was over-conservative.
-    void unlock() {
-        locked_.store(false, rusty::sync::atomic::Ordering::Release);
-    }
-
-private:
-    rusty::sync::atomic::AtomicBool locked_ alignas(64);  // Cache-line aligned to prevent false sharing
+    static SpinLock new_();
+    void lock() const;
+    void unlock() const;
 };
+
+
+SpinLock SpinLock::new_() {
+    return SpinLock{.locked_field = AtomicBool::new_(false)};
+}
+
+void SpinLock::lock() const {
+    if (this->locked_field.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()) {
+        return;
+    }
+    int32_t wait = static_cast<int32_t>(1000);
+    while ((rusty::detail::deref_if_pointer_like(wait) > static_cast<int32_t>(0)) && this->locked_field.load(Ordering::Relaxed)) {
+        cpu_pause();
+        wait -= static_cast<int32_t>(1);
+    }
+    while (this->locked_field.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err()) {
+        rusty::sys::time::sleep_us(static_cast<uint64_t>(50));
+    }
+}
+
+void SpinLock::unlock() const {
+    this->locked_field.store(false, Ordering::Release);
+}
+/*RUSTYCPP:GEN-END id=threading.1*/
 
 // =============================================================================
 // SpinMutex<T> - Rust-like Mutex API using SpinLock
