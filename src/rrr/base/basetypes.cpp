@@ -168,6 +168,16 @@ void Counter::reset(int64_t start) const {
 // `rrr::RRR_USEC_PER_SEC` from outside the namespace).
 inline constexpr uint64_t RRR_USEC_PER_SEC = 1000000;
 
+// @safe - precondition check that aborts on failure. Defined outside
+// the DSL because `verify()` lives in `rrr.debugging` which imports
+// basetypes (would be circular). Same shape, different name.
+inline void abort_if_false(bool cond) {
+    if (!cond) {
+        // @unsafe { libc abort }
+        { std::abort(); }
+    }
+}
+
 // @safe - architecture-conditional wall-clock helper. Defined outside
 // the DSL because the DSL has no preprocessor / `cfg!` support; the
 // `#ifdef __APPLE__` branch maps to a single dispatch on Linux.
@@ -226,17 +236,95 @@ void Time::sleep(uint64_t t) {
 }
 /*RUSTYCPP:GEN-END id=basetypes.2*/
 
-class Timer {
-public:
-    Timer();
+// `Timer` — wall-clock stopwatch. Pre-DSL stored two `struct timeval`
+// fields and converted to/from `uint64_t` microseconds on every read
+// and write. The DSL form stores `u64` microseconds directly (0 = not
+// set), which is what the C++ impl was doing under the hood anyway.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Behavioral diff vs the pre-DSL form:
+//   * No default constructor — callers move from `Timer t;` to
+//     `auto t = Timer::new();`.
+//   * `elapsed()` aborts (via `verify(false)`) if start() was never
+//     called, matching the pre-DSL `std::abort()` semantics.
+#if RUSTYCPP_RUST
+struct Timer {
+    begin_us: u64,
+    end_us: u64,
+}
+
+impl Timer {
+    fn new() -> Timer {
+        Timer { begin_us: 0u64, end_us: 0u64 }
+    }
+
+    fn start(&mut self) {
+        self.begin_us = rusty::sys::time::gettimeofday_us();
+        self.end_us = 0u64;
+    }
+
+    fn stop(&mut self) {
+        self.end_us = rusty::sys::time::gettimeofday_us();
+    }
+
+    fn reset(&mut self) {
+        self.begin_us = 0u64;
+        self.end_us = 0u64;
+    }
+
+    fn elapsed(&self) -> f64 {
+        abort_if_false(self.begin_us != 0u64);
+        let end: u64 = if self.end_us == 0u64 {
+            rusty::sys::time::gettimeofday_us()
+        } else {
+            self.end_us
+        };
+        ((end - self.begin_us) as f64) / 1000000.0f64
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.3 version=1 rust_sha256=09ec6064726af792d141ac2b60837dc2b58a3b91b6a6d23f41084d6ed843e5cd*/
+struct Timer;
+
+struct Timer {
+    uint64_t begin_us;
+    uint64_t end_us;
+
+    static Timer new_();
     void start();
     void stop();
     void reset();
     double elapsed() const;
-private:
-    struct timeval begin_;
-    struct timeval end_;
 };
+
+
+Timer Timer::new_() {
+    return Timer{.begin_us = static_cast<uint64_t>(0), .end_us = static_cast<uint64_t>(0)};
+}
+
+void Timer::start() {
+    this->begin_us = rusty::sys::time::gettimeofday_us();
+    this->end_us = static_cast<uint64_t>(0);
+}
+
+void Timer::stop() {
+    this->end_us = rusty::sys::time::gettimeofday_us();
+}
+
+void Timer::reset() {
+    this->begin_us = static_cast<uint64_t>(0);
+    this->end_us = static_cast<uint64_t>(0);
+}
+
+double Timer::elapsed() const {
+    abort_if_false(rusty::detail::deref_if_pointer_like(this->begin_us) != static_cast<uint64_t>(0));
+    const uint64_t end = (rusty::detail::deref_if_pointer_like(this->end_us) == static_cast<uint64_t>(0) ? rusty::sys::time::gettimeofday_us() : this->end_us);
+    return ((static_cast<double>((rusty::detail::deref_if_pointer_like(end) - rusty::detail::deref_if_pointer_like(this->begin_us))))) / 1000000.0;
+}
+/*RUSTYCPP:GEN-END id=basetypes.3*/
 
 class Rand: public NoCopy {
     std::mt19937 rand_;
@@ -537,45 +625,6 @@ i64 SparseInt::load_i64(const char* buf) {
         }
     }
     return val;
-}
-
-Timer::Timer() : begin_(), end_() {
-    reset();
-}
-
-// @safe - delegates to rusty::sys::time::gettimeofday_us, which wraps
-// gettimeofday(2) in an inner @unsafe block.
-void Timer::start() {
-    reset();
-    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
-    begin_.tv_sec  = static_cast<time_t>(now / 1000000);
-    begin_.tv_usec = static_cast<suseconds_t>(now % 1000000);
-}
-
-// @safe - delegates to rusty::sys::time::gettimeofday_us.
-void Timer::stop() {
-    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
-    end_.tv_sec  = static_cast<time_t>(now / 1000000);
-    end_.tv_usec = static_cast<suseconds_t>(now % 1000000);
-}
-
-void Timer::reset() {
-    begin_.tv_sec = 0;
-    begin_.tv_usec = 0;
-    end_.tv_sec = 0;
-    end_.tv_usec = 0;
-}
-
-// @safe - live-elapsed branch delegates to rusty::sys::time::gettimeofday_us.
-double Timer::elapsed() const {
-    if (begin_.tv_sec == 0 && begin_.tv_usec == 0) std::abort();
-    if (end_.tv_sec == 0 && end_.tv_usec == 0) {
-        const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
-        const std::uint64_t begin_us =
-            static_cast<std::uint64_t>(begin_.tv_sec) * 1000000 + begin_.tv_usec;
-        return static_cast<double>(now_us - begin_us) / 1000000.0;
-    }
-    return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
 // @safe - all three seed contributors flow through @safe wrappers:
