@@ -14,13 +14,16 @@ import std;
 // getters/setters. No raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
-// Bring `Ordering` into the `rrr` namespace so DSL bodies can write
-// `Ordering::Relaxed` (Rust idiom) and the emitted C++ resolves via
-// this using-decl. The transpiler maps `Ordering` (the type) to
-// `rusty::sync::atomic::Ordering` in type-position, but does NOT
-// rewrite enum-value paths like `Ordering::Relaxed` in expression
-// position — they're emitted verbatim. This `using` is the bridge.
+// Bring `Ordering` and `AtomicU64` into the `rrr` namespace so DSL
+// bodies can write `Ordering::Relaxed` and `AtomicU64::new(...)`
+// (Rust idiom) and the emitted C++ resolves via these using-decls.
+// The transpiler maps these names (in type-position) to their
+// `rusty::sync::atomic::*` equivalents, but does NOT rewrite
+// enum-value paths (`Ordering::Relaxed`) or static-method-receiver
+// paths (`AtomicU64::new(...)`) in expression position — those are
+// emitted verbatim. These usings are the bridge.
 using rusty::sync::atomic::Ordering;
+using rusty::sync::atomic::AtomicU64;
 
 // `ConnectionMetrics` — bag of `rusty::Cell<u64>` counters. Every
 // field is interior-mutable, so every method is `const` and `&self`.
@@ -43,13 +46,12 @@ using rusty::sync::atomic::Ordering;
 //     all fields are still default-initialized to 0 (except
 //     `min_latency_us_field`, which starts at `u64::MAX`).
 //
-// Transpiler quirk: field-type spellings (`AtomicU64`) get auto-qualified
-// to `rusty::sync::atomic::AtomicU64` in the GEN block, but ctor-call
-// spellings (`AtomicU64::new(...)`) get emitted verbatim and don't pick
-// up the namespace via ADL because the constructed `ConnectionMetrics`
-// is in `rrr`. Until the transpiler is fixed, the impl block below
-// writes the fully-qualified `rusty::sync::atomic::AtomicU64::new(...)`
-// at every ctor site.
+// The DSL writes bare `AtomicU64::new(...)` / `Ordering::Relaxed`;
+// those resolve in the GEN block via the namespace-level
+// `using rusty::sync::atomic::AtomicU64;` and
+// `using rusty::sync::atomic::Ordering;` bridges above. The
+// transpiler maps these names in type-position, but not in
+// expression position — the using-decls cover both cases.
 #if RUSTYCPP_RUST
 struct ConnectionMetrics {
     requests_sent_field: AtomicU64,
@@ -78,24 +80,24 @@ struct ConnectionMetrics {
 impl ConnectionMetrics {
     fn new() -> ConnectionMetrics {
         ConnectionMetrics {
-            requests_sent_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            requests_completed_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            requests_failed_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            requests_timed_out_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            in_flight_requests_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            bytes_sent_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            bytes_received_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            reconnect_count_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            retry_attempts_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            queue_dropped_requests_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            circuit_open_rejections_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            circuit_open_transitions_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            circuit_half_open_transitions_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            circuit_closed_transitions_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            connect_time_ms_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            total_latency_us_field: rusty::sync::atomic::AtomicU64::new(0u64),
-            min_latency_us_field: rusty::sync::atomic::AtomicU64::new(u64::MAX),
-            max_latency_us_field: rusty::sync::atomic::AtomicU64::new(0u64),
+            requests_sent_field: AtomicU64::new(0u64),
+            requests_completed_field: AtomicU64::new(0u64),
+            requests_failed_field: AtomicU64::new(0u64),
+            requests_timed_out_field: AtomicU64::new(0u64),
+            in_flight_requests_field: AtomicU64::new(0u64),
+            bytes_sent_field: AtomicU64::new(0u64),
+            bytes_received_field: AtomicU64::new(0u64),
+            reconnect_count_field: AtomicU64::new(0u64),
+            retry_attempts_field: AtomicU64::new(0u64),
+            queue_dropped_requests_field: AtomicU64::new(0u64),
+            circuit_open_rejections_field: AtomicU64::new(0u64),
+            circuit_open_transitions_field: AtomicU64::new(0u64),
+            circuit_half_open_transitions_field: AtomicU64::new(0u64),
+            circuit_closed_transitions_field: AtomicU64::new(0u64),
+            connect_time_ms_field: AtomicU64::new(0u64),
+            total_latency_us_field: AtomicU64::new(0u64),
+            min_latency_us_field: AtomicU64::new(u64::MAX),
+            max_latency_us_field: AtomicU64::new(0u64),
         }
     }
 
@@ -261,7 +263,7 @@ impl ConnectionMetrics {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=9aebbcf0a1d0281aa982e12ad6dc9688c0d0a690f7dd32eae59859ef96a6e744*/
+/*RUSTYCPP:GEN-BEGIN id=connection_metrics.1 version=1 rust_sha256=eeb80999128a52ebaa786395429e484acec2d96f4f75a1d8746589c950a337b4*/
 struct ConnectionMetrics;
 
 struct ConnectionMetrics {
@@ -327,7 +329,7 @@ struct ConnectionMetrics {
 
 
 ConnectionMetrics ConnectionMetrics::new_() {
-    return ConnectionMetrics{.requests_sent_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .requests_completed_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .requests_failed_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .requests_timed_out_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .in_flight_requests_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .bytes_sent_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .bytes_received_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .reconnect_count_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .retry_attempts_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .queue_dropped_requests_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_open_rejections_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_open_transitions_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_half_open_transitions_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_closed_transitions_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .connect_time_ms_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .total_latency_us_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0)), .min_latency_us_field = rusty::sync::atomic::AtomicU64::new_(std::numeric_limits<uint64_t>::max()), .max_latency_us_field = rusty::sync::atomic::AtomicU64::new_(static_cast<uint64_t>(0))};
+    return ConnectionMetrics{.requests_sent_field = AtomicU64::new_(static_cast<uint64_t>(0)), .requests_completed_field = AtomicU64::new_(static_cast<uint64_t>(0)), .requests_failed_field = AtomicU64::new_(static_cast<uint64_t>(0)), .requests_timed_out_field = AtomicU64::new_(static_cast<uint64_t>(0)), .in_flight_requests_field = AtomicU64::new_(static_cast<uint64_t>(0)), .bytes_sent_field = AtomicU64::new_(static_cast<uint64_t>(0)), .bytes_received_field = AtomicU64::new_(static_cast<uint64_t>(0)), .reconnect_count_field = AtomicU64::new_(static_cast<uint64_t>(0)), .retry_attempts_field = AtomicU64::new_(static_cast<uint64_t>(0)), .queue_dropped_requests_field = AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_open_rejections_field = AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_open_transitions_field = AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_half_open_transitions_field = AtomicU64::new_(static_cast<uint64_t>(0)), .circuit_closed_transitions_field = AtomicU64::new_(static_cast<uint64_t>(0)), .connect_time_ms_field = AtomicU64::new_(static_cast<uint64_t>(0)), .total_latency_us_field = AtomicU64::new_(static_cast<uint64_t>(0)), .min_latency_us_field = AtomicU64::new_(std::numeric_limits<uint64_t>::max()), .max_latency_us_field = AtomicU64::new_(static_cast<uint64_t>(0))};
 }
 
 uint64_t ConnectionMetrics::requests_sent() const {
