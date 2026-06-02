@@ -326,21 +326,6 @@ double Timer::elapsed() const {
 }
 /*RUSTYCPP:GEN-END id=basetypes.3*/
 
-class Rand: public NoCopy {
-    std::mt19937 rand_;
-public:
-    Rand();
-    std::mt19937::result_type next() {
-        return rand_();
-    }
-    std::mt19937::result_type next(int lower, int upper) {
-        return lower + rand_() % (upper - lower);
-    }
-    std::mt19937::result_type operator() () {
-        return rand_();
-    }
-};
-
 template<class T>
 class Enumerator {
 public:
@@ -625,22 +610,6 @@ i64 SparseInt::load_i64(const char* buf) {
         }
     }
     return val;
-}
-
-// @safe - all three seed contributors flow through @safe wrappers:
-// gettimeofday_us, pthread::current_id_hash, and the reinterpret_cast
-// of `this` (mod address-of-this — wrapped inline below since
-// uintptr_t-from-pointer is @unsafe by the rusty-cpp pointer-safety rules).
-Rand::Rand() : rand_() {
-    const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
-    const auto thread_hash =
-        static_cast<long long>(rusty::sys::pthread::current_id_hash());
-    long long this_hash;
-    // @unsafe { reinterpret_cast<uintptr_t>(this) — pointer-to-int cast }
-    {
-        this_hash = static_cast<long long>(reinterpret_cast<uintptr_t>(this));
-    }
-    rand_.seed(static_cast<long long>(now_us) + thread_hash + this_hash);
 }
 
 } // namespace rrr

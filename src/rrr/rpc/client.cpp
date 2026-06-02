@@ -39,6 +39,7 @@ import rrr.marshal;
 import rrr.misc;
 import rrr.reactor;
 import rrr.reconnect_policy;
+import rrr.rand;
 import rrr.request_options;
 import rrr.request_queue;
 import rrr.serializable;
@@ -3704,7 +3705,6 @@ public:
 // @safe - Thread-safe pool of client connections using Arc
 // MIGRATED: Now uses rusty::Arc<Client> for cached connections
 class ClientPool {
-    rrr::Rand rand_;
 
     // owns a shared reference to PollThread
     rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker_;
@@ -5849,7 +5849,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
         cfg.load_balancing,
         clients,
         lb_state,
-        rand_()
+        static_cast<size_t>(RandomGenerator::rand(0, RAND_MAX))
     );
 
     for (int i = 0; i < client_count; i++) {
@@ -5900,7 +5900,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       }
 
       if (ok && !clients.is_empty()) {
-        sp_cl = rusty::Some(clients[rand_() % clients.size()].clone());
+        sp_cl = rusty::Some(clients[static_cast<size_t>(RandomGenerator::rand(0, static_cast<int>(clients.size()) - 1))].clone());
       } else {
         // Remove from cache if we can't connect
         guard->cache.remove(addr);
@@ -5920,7 +5920,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       parallel_clients.push(client);
     }
     if (ok) {
-      sp_cl = rusty::Some(parallel_clients[rand_() % parallel_clients.size()].clone());
+      sp_cl = rusty::Some(parallel_clients[static_cast<size_t>(RandomGenerator::rand(0, static_cast<int>(parallel_clients.size()) - 1))].clone());
       guard->cache.insert(addr, std::move(parallel_clients));
     }
     // If not ok, parallel_clients automatically cleaned up by Arc
