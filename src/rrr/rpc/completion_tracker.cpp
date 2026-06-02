@@ -47,7 +47,7 @@ impl CompletionTrackerConfig {
     }
 
     fn defaults() -> CompletionTrackerConfig {
-        CompletionTrackerConfig::new_()
+        CompletionTrackerConfig::new()
     }
 
     fn small() -> CompletionTrackerConfig {
@@ -75,7 +75,7 @@ impl CompletionTrackerConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=8d8e447793251f267fe7b086b3524256db555e1e9ae835da136ab52a8abb6e8b*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=7e32fc065aab499e699818c6fb08acf209183d782c763409b341bb17eead3316*/
 struct CompletionTrackerConfig;
 
 struct CompletionTrackerConfig {
@@ -137,7 +137,7 @@ struct CompletedEntry {
 }
 
 impl CompletedEntry {
-    fn new_(x: i64, ts: u64) -> CompletedEntry {
+    fn new(x: i64, ts: u64) -> CompletedEntry {
         CompletedEntry { xid: x, timestamp_ms: ts }
     }
 
@@ -147,7 +147,7 @@ impl CompletedEntry {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.2 version=1 rust_sha256=9a084ee61354fc19f53bdbb4073b467b20beb9475f0ea84dca2fdcdcef965623*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.2 version=1 rust_sha256=a8f4fe4b150667270eeed4db72615d281ea9b0c0ba0d468201cf4e60c3e856c3*/
 struct CompletedEntry;
 
 struct CompletedEntry {
@@ -447,7 +447,7 @@ struct CompletionQueryResult {
 }
 
 impl CompletionQueryResult {
-    fn new_() -> CompletionQueryResult {
+    fn new() -> CompletionQueryResult {
         CompletionQueryResult {
             status: CompletionStatus::NOT_FOUND,
             error_code: 0i32,
@@ -456,7 +456,7 @@ impl CompletionQueryResult {
     }
 
     fn not_found() -> CompletionQueryResult {
-        CompletionQueryResult::new_()
+        CompletionQueryResult::new()
     }
 
     fn completed(err_code: i32, has_response: bool) -> CompletionQueryResult {
@@ -481,7 +481,7 @@ impl CompletionQueryResult {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.3 version=1 rust_sha256=5493b067433910d91f510fdb31e8c71fefc9a73a9167c4528f5d5b8115243916*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.3 version=1 rust_sha256=6742787d7b990417abb19cf8a8c18444d1bc7ba24218f8e51589d36d4426058a*/
 struct CompletionQueryResult;
 
 struct CompletionQueryResult {

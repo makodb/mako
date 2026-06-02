@@ -56,7 +56,7 @@ struct IdempotencyKey {
 }
 
 impl IdempotencyKey {
-    fn new_(client_id: u64, sequence: u64) -> IdempotencyKey {
+    fn new(client_id: u64, sequence: u64) -> IdempotencyKey {
         IdempotencyKey { client_id, sequence }
     }
 
@@ -69,7 +69,7 @@ impl IdempotencyKey {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.0a version=1 rust_sha256=6297289150ab31d4d19429006dde701a84cc092fddff4377b4b6dfc893a63e8a*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.0a version=1 rust_sha256=b30b49bf92b45a1e3fe177126b5097c83a8c77174e2f341f33bb64bb279dbd6c*/
 struct IdempotencyKey;
 
 struct IdempotencyKey {
@@ -154,12 +154,12 @@ struct IdempotencyConfig {
 }
 
 impl IdempotencyConfig {
-    fn new_() -> IdempotencyConfig {
+    fn new() -> IdempotencyConfig {
         IdempotencyConfig { ttl_ms: 60000u64, max_entries: 10000usize, enabled: true }
     }
 
     fn defaults() -> IdempotencyConfig {
-        IdempotencyConfig::new_()
+        IdempotencyConfig::new()
     }
 
     fn small() -> IdempotencyConfig {
@@ -175,7 +175,7 @@ impl IdempotencyConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.0 version=1 rust_sha256=eb2165036c306c6363517f9fb68c002feb78eb5f665a868cf0e2c6ae19de1eb1*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.0 version=1 rust_sha256=1a5b1ac0a005df2a0c5315a4fd51b32cfe1d146ba48349b643063dfd7ba42d38*/
 struct IdempotencyConfig;
 
 struct IdempotencyConfig {

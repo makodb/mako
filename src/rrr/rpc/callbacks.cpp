@@ -65,11 +65,11 @@ struct ConnectionCallbacks {
 impl ConnectionCallbacks {
     fn new() -> ConnectionCallbacks {
         ConnectionCallbacks {
-            on_connected: Vec::<ConnectionCallback>::new_(),
-            on_disconnected: Vec::<ConnectionCallback>::new_(),
-            on_error: Vec::<ErrorCallback>::new_(),
-            on_reconnecting: Vec::<ConnectionCallback>::new_(),
-            on_reconnected: Vec::<ReconnectCallback>::new_(),
+            on_connected: Vec::<ConnectionCallback>::new(),
+            on_disconnected: Vec::<ConnectionCallback>::new(),
+            on_error: Vec::<ErrorCallback>::new(),
+            on_reconnecting: Vec::<ConnectionCallback>::new(),
+            on_reconnected: Vec::<ReconnectCallback>::new(),
         }
     }
 
@@ -242,7 +242,7 @@ impl CallbackManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=b08c15247422cc6cbe60757760fc0d523f9ccaf541527d31e6b2f1f2502c8020*/
+/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=d5bc268b81ae662de9728e1557d4e3cef28ba5fafd06712b683d99d66279e11a*/
 struct ConnectionCallbacks;
 struct CallbackManager;
 

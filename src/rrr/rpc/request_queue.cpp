@@ -100,7 +100,7 @@ impl RequestQueueConfig {
     }
 
     fn defaults() -> RequestQueueConfig {
-        RequestQueueConfig::new_()
+        RequestQueueConfig::new()
     }
 
     fn small() -> RequestQueueConfig {
@@ -131,7 +131,7 @@ impl RequestQueueConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=a256db34e70a35cf766611a6e89af022487fb62c38a1b4925b011231ff7ff827*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=18bf9469715694e84270d5bde4d97e4b7daa0b11880dbefa385105d079f4294f*/
 struct RequestQueueConfig;
 
 struct RequestQueueConfig {

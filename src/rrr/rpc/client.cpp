@@ -129,7 +129,7 @@ struct BufferingConfig {
 }
 
 impl BufferingConfig {
-    fn new_() -> BufferingConfig {
+    fn new() -> BufferingConfig {
         BufferingConfig {
             behavior: DisconnectBehavior::QUEUE,
             max_pending: 1000usize,
@@ -140,7 +140,7 @@ impl BufferingConfig {
     }
 
     fn defaults() -> BufferingConfig {
-        BufferingConfig::new_()
+        BufferingConfig::new()
     }
 
     fn disabled() -> BufferingConfig {
@@ -163,7 +163,7 @@ impl BufferingConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.0a version=1 rust_sha256=dabec23aec576c3fe4a664428be06e4b52e0f94a8b74686ec25835939ab6f3a8*/
+/*RUSTYCPP:GEN-BEGIN id=client.0a version=1 rust_sha256=7e0ba144f0837e66cb88578d52aa0282acc8079cc5aab29d696aa63430b38c56*/
 struct BufferingConfig;
 
 struct BufferingConfig {
@@ -224,7 +224,7 @@ struct KeepaliveConfig {
 }
 
 impl KeepaliveConfig {
-    fn new_() -> KeepaliveConfig {
+    fn new() -> KeepaliveConfig {
         KeepaliveConfig { enabled: true, idle_sec: 60i32, interval_sec: 10i32, count: 5i32 }
     }
 
@@ -241,7 +241,7 @@ impl KeepaliveConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.0 version=1 rust_sha256=862a56a6f2b1c2cd4c0a735fc4664d41c54a2b4d8c0a3bc607c5f197242f1c91*/
+/*RUSTYCPP:GEN-BEGIN id=client.0 version=1 rust_sha256=35cfe5f339a1d6ac9c5e1b261893967b5f5d11ba49ade28e603408ab3ecad43d*/
 struct KeepaliveConfig;
 
 struct KeepaliveConfig {
@@ -300,7 +300,7 @@ struct PoolConfig {
 }
 
 impl PoolConfig {
-    fn new_() -> PoolConfig {
+    fn new() -> PoolConfig {
         PoolConfig {
             min_connections: 1i32,
             max_connections: 4i32,
@@ -313,7 +313,7 @@ impl PoolConfig {
     }
 
     fn defaults() -> PoolConfig {
-        PoolConfig::new_()
+        PoolConfig::new()
     }
 
     fn aggressive() -> PoolConfig {
@@ -353,7 +353,7 @@ impl PoolConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.0b version=1 rust_sha256=2235b463a7ffb472b44832341c24fc6ff07246e4617cd78b85c72cf5245c7c2c*/
+/*RUSTYCPP:GEN-BEGIN id=client.0b version=1 rust_sha256=a4fbb6b0a843e27688a5f6cebb6842f15c51f7695e85a969d9ba6c7e38ffbfc1*/
 struct PoolConfig;
 
 struct PoolConfig {
@@ -430,12 +430,12 @@ struct FutureAttr {
 }
 
 impl FutureAttr {
-    fn new_(cb: FutureCallback) -> FutureAttr {
+    fn new(cb: FutureCallback) -> FutureAttr {
         FutureAttr { callback: cb }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.0c version=1 rust_sha256=cf56442d0becba1f7b1cc73ecf3fe205c2b2eeb54245a19b1129ed25a5b4e65b*/
+/*RUSTYCPP:GEN-BEGIN id=client.0c version=1 rust_sha256=63f9e806df0c099603647a4e598fed6cee607ada9faca2c6d7a515cdf7578ce3*/
 struct FutureAttr;
 
 struct FutureAttr {
@@ -2220,14 +2220,14 @@ impl Client {
             pending_heartbeat_config_field: Cell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
             pending_circuit_breaker_config_field: Cell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
             pending_reconnect_policy_field: Cell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
-            callback_manager_field: Arc::<CallbackManager>::new(CallbackManager::new_()),
+            callback_manager_field: Arc::<CallbackManager>::new(CallbackManager::new()),
             pending_factory_field: SpinMutex::<Option<ChannelFactoryProxy>>::new(Option::<ChannelFactoryProxy>(None)),
-            empty_metrics_field: ConnectionMetrics::new_(),
+            empty_metrics_field: ConnectionMetrics::new(),
         }
     }
 
     fn create(poll_thread_worker: Arc<PollThread>) -> Arc<Client> {
-        Arc::<Client>::new(Client::new_(poll_thread_worker))
+        Arc::<Client>::new(Client::new(poll_thread_worker))
     }
 
     fn set_client_mode(&self, v: bool) { self.is_client_mode_field.set(v); }
@@ -2316,6 +2316,12 @@ impl Client {
             conn_ref.mark_closing();
             if was_connected {
                 let conn_arc: Arc<ClientConnection> = conn_ref.clone();
+                // NOTE: keep the trailing-underscore C++ spelling here.
+                // When written as Rust-idiomatic `::new(...)`, the transpiler
+                // adds a spurious `-> rusty::Arc<PollThread>` return type to
+                // the inner lambda (inferred from the next statement's
+                // receiver type) and the lambda body becomes ill-typed.
+                // Tracked as a transpiler bug; use `::new_(...)` until fixed.
                 let close_job: Arc<OneTimeJob> =
                     Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || {
                         conn_arc.close();
@@ -2577,7 +2583,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=57ba40684765b5a52ee4083124645dd76e16e7efa63cf477cb64d1091bca5ea0*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=419cfbbb62533f14c766e88fb3d3d55ace8863557b7f10439799d176948764b9*/
 struct Client;
 
 struct Client {

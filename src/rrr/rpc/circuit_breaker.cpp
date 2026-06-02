@@ -52,7 +52,7 @@ struct CircuitBreakerConfig {
 }
 
 impl CircuitBreakerConfig {
-    fn new_() -> CircuitBreakerConfig {
+    fn new() -> CircuitBreakerConfig {
         CircuitBreakerConfig {
             failure_threshold: 5u32,
             success_threshold: 3u32,
@@ -62,7 +62,7 @@ impl CircuitBreakerConfig {
     }
 
     fn defaults() -> CircuitBreakerConfig {
-        CircuitBreakerConfig::new_()
+        CircuitBreakerConfig::new()
     }
 
     fn sensitive() -> CircuitBreakerConfig {
@@ -93,7 +93,7 @@ impl CircuitBreakerConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.2 version=1 rust_sha256=057b2ac8db9c1dc127db298fe2af94124a60bbeff384faaa00cd001218c81d63*/
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.2 version=1 rust_sha256=9e16f13820a674c5f66baf8335b2f4c47090932b2adf693aacb347c3b5e93c6f*/
 struct CircuitBreakerConfig;
 
 struct CircuitBreakerConfig {

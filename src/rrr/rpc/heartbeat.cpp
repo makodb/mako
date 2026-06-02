@@ -44,7 +44,7 @@ struct HeartbeatConfig {
 }
 
 impl HeartbeatConfig {
-    fn new_() -> HeartbeatConfig {
+    fn new() -> HeartbeatConfig {
         HeartbeatConfig {
             enabled: true,
             interval_ms: 10000u32,
@@ -54,7 +54,7 @@ impl HeartbeatConfig {
     }
 
     fn defaults() -> HeartbeatConfig {
-        HeartbeatConfig::new_()
+        HeartbeatConfig::new()
     }
 
     fn aggressive() -> HeartbeatConfig {
@@ -85,7 +85,7 @@ impl HeartbeatConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=heartbeat.2 version=1 rust_sha256=ad212de27ec84c00b28443521803507a85db2d646edefab3588417345df92d78*/
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.2 version=1 rust_sha256=ce1955104c60643b36350d6c096ba3ed8bd4b54d5049a8c3d16ea914e4d69b49*/
 struct HeartbeatConfig;
 
 struct HeartbeatConfig {
