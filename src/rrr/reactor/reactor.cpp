@@ -773,7 +773,6 @@ class Reactor {
   rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
   rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
   rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
-  static SpinLock trying_job_;
 #if defined(REUSE_FIBER) || defined(REUSE_CORO)
 #define REUSING_FIBER (true)
 #else
@@ -1715,7 +1714,6 @@ inline void stackless_profile_report_periodic() {
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
 // Same for PollThreadWorker::current_worker_, clients_, and dangling_ips_.
-SpinLock Reactor::trying_job_;
 
 // @safe - Returns current fiber with single-threaded reference counting
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
