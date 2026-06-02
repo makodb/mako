@@ -415,23 +415,40 @@ using FutureResult = rusty::Result<rusty::Arc<Future>, i32>;
 using FutureCallback = detail::CallbackWrapper<void(rusty::Arc<Future>) const>;
 
 // @safe - Simple attribute struct for Future callbacks.
-// Aggregate-style POD: no user-declared constructor. `FutureAttr()`
-// continues to work via the implicit aggregate default (which calls
-// `FutureCallback`'s own default ctor — same as the dropped
-// `FutureAttr() = FutureCallback{}`). To attach a callback, use the
-// Rust-style `new_(cb)` factory.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The DSL emits a pure aggregate
+// (single `FutureCallback callback` field); `FutureAttr()` default-
+// construction continues to work via the implicit aggregate default
+// (which calls `FutureCallback`'s own default ctor — same as the
+// dropped `FutureAttr() = FutureCallback{}`). Use `FutureAttr::new_(cb)`
+// to attach a callback.
+#if RUSTYCPP_RUST
 struct FutureAttr {
-    // callback should be fast, otherwise it hurts rpc performance
-    // Receives Arc<Future> for lifetime safety (callback keeps Future alive)
+    callback: FutureCallback,
+}
+
+impl FutureAttr {
+    fn new_(cb: FutureCallback) -> FutureAttr {
+        FutureAttr { callback: cb }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.0c version=1 rust_sha256=cf56442d0becba1f7b1cc73ecf3fe205c2b2eeb54245a19b1129ed25a5b4e65b*/
+struct FutureAttr;
+
+struct FutureAttr {
     FutureCallback callback;
 
-    // @safe - factory matching the DSL `fn new(cb) -> Self` form.
-    static FutureAttr new_(FutureCallback cb) {
-        FutureAttr attr;
-        attr.callback = std::move(cb);
-        return attr;
-    }
+    static FutureAttr new_(FutureCallback cb);
 };
+
+
+FutureAttr FutureAttr::new_(FutureCallback cb) {
+    return FutureAttr{.callback = std::move(cb)};
+}
+/*RUSTYCPP:GEN-END id=client.0c*/
 
 // @safe - Methods that genuinely cross into unsafe ops (network I/O,
 // std::chrono use, etc.) carry their own `// @unsafe` overrides; the
