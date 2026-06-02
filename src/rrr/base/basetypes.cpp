@@ -20,6 +20,12 @@ import std;
 // and `pthread_self`-based hashing in `Rand`.
 export namespace rrr {
 
+// Bring `Ordering` and `AtomicI64` into the `rrr` namespace so DSL
+// bodies can write `Ordering::Relaxed` / `AtomicI64::new(...)` (Rust
+// idiom) and the emitted C++ resolves via these using-decls.
+using rusty::sync::atomic::Ordering;
+using rusty::sync::atomic::AtomicI64;
+
 template<typename T>
 inline void atomic_store_relaxed(std::atomic<T>& atomic_var, T value) {
   atomic_var.store(value, std::memory_order_relaxed);
@@ -84,40 +90,75 @@ public:
     NoCopy& operator=(NoCopy&&) = default;
 };
 
-// `Counter` — atomic-backed monotonically-increasing counter. The
-// underlying field is `rusty::sync::atomic::AtomicI64` (a movable
-// wrapper around `std::atomic<i64>`), so the class as a whole is
-// move-constructible / move-assignable — which is what makes the
-// value-returning `static new_(...)` factory below compile. The
-// implicit move ctor reads the source's value (Relaxed) and stores
-// it into the destination, same as for SpinLock.
-class Counter: public NoCopy {
-public:
-    // Default-init to 0; the implicit default ctor reproduces the
-    // prior `Counter()` / `Counter(0)` behaviour.
-    rusty::sync::atomic::AtomicI64 next_{0};
+// `Counter` — atomic-backed monotonically-increasing counter.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. `fn new(start)` lowers to a
+// static `Counter::new_(start)` factory.
+//
+// Behavioral diffs from the original C++ class:
+//   * No default constructor — callers that previously default-
+//     constructed (`Counter xid_counter_;`, `static Counter g_nop_counter;`)
+//     now write `Counter::new_(0)` explicitly.
+//   * `next()` and `reset()` no longer carry default arguments —
+//     callers write `next(1)` / `reset(0)` explicitly.
+//   * `next` is now `&self` (const-qualified) since the underlying
+//     atomic provides interior mutability — same change as SpinLock.
+//   * No more inheritance from `NoCopy`; DSL structs are non-copyable
+//     by default (move-only) which matches what `NoCopy` provided.
+#if RUSTYCPP_RUST
+struct Counter {
+    next_field: AtomicI64,
+}
 
-    // @safe - Rust-style factory matching `fn new(start) -> Self`.
-    // Callers that want a non-zero start switch from `Counter(N)` to
-    // `Counter::new_(N)`. Existing default-construct callers
-    // (`Counter xid_counter_;`, `static Counter g_nop_counter;`)
-    // continue to work via the implicit default.
-    static Counter new_(i64 start) {
-        Counter c;
-        c.next_.store(start, rusty::sync::atomic::Ordering::Relaxed);
-        return c;
+impl Counter {
+    fn new(start: i64) -> Counter {
+        Counter { next_field: AtomicI64::new(start) }
     }
 
-    i64 peek_next() const {
-        return next_.load(rusty::sync::atomic::Ordering::Relaxed);
+    fn peek_next(&self) -> i64 {
+        self.next_field.load(Ordering::Relaxed)
     }
-    i64 next(i64 step = 1) {
-        return next_.fetch_add(step, rusty::sync::atomic::Ordering::AcqRel);
+
+    fn next(&self, step: i64) -> i64 {
+        self.next_field.fetch_add(step, Ordering::AcqRel)
     }
-    void reset(i64 start = 0) {
-        next_.store(start, rusty::sync::atomic::Ordering::Relaxed);
+
+    fn reset(&self, start: i64) {
+        self.next_field.store(start, Ordering::Relaxed);
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.1 version=1 rust_sha256=f1d8fa5f0444e6e132967de2255c0a516a65acd4aaaaa581d3c1bc9b4dbe5c02*/
+struct Counter;
+
+struct Counter {
+    rusty::sync::atomic::AtomicI64 next_field;
+
+    static Counter new_(int64_t start);
+    int64_t peek_next() const;
+    int64_t next(int64_t step) const;
+    void reset(int64_t start) const;
 };
+
+
+Counter Counter::new_(int64_t start) {
+    return Counter{.next_field = AtomicI64::new_(std::move(start))};
+}
+
+int64_t Counter::peek_next() const {
+    return this->next_field.load(Ordering::Relaxed);
+}
+
+int64_t Counter::next(int64_t step) const {
+    return this->next_field.fetch_add(std::move(step), Ordering::AcqRel);
+}
+
+void Counter::reset(int64_t start) const {
+    this->next_field.store(std::move(start), Ordering::Relaxed);
+}
+/*RUSTYCPP:GEN-END id=basetypes.1*/
 
 class Time {
 public:

@@ -1712,7 +1712,7 @@ static const uint64_t g_stat_server_rpc_counting_report_interval = 1000 * 1000 *
 
 // @unsafe - Uses global mutable state (single-threaded context)
 static void stat_server_rpc_counting(i32 rpc_id) {
-    g_stat_rpc_counter[rpc_id].first.next();
+    g_stat_rpc_counter[rpc_id].first.next(1);
 
     uint64_t now = base::rdtsc();
     if (now - g_stat_server_rpc_counting_report_time > g_stat_server_rpc_counting_report_interval) {
@@ -1720,7 +1720,7 @@ static void stat_server_rpc_counting(i32 rpc_id) {
         for (auto it: g_stat_rpc_counter) {
             i32 counted_rpc_id = it.first;
             i64 count = it.second.first.peek_next();
-            it.second.first.reset();
+            it.second.first.reset(0);
             it.second.second.next(count);
             i64 cumulative = it.second.second.peek_next();
             Log::info("* RPC COUNT: id=%#08x count=%ld cumulative=%ld", counted_rpc_id, count, cumulative);

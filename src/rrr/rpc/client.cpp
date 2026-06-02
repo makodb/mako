@@ -881,7 +881,7 @@ class ClientConnection {
 
     // Transaction ID counter for RPC requests
     // mutable because Counter uses atomics internally for thread-safe interior mutability
-    mutable Counter xid_counter_;
+    mutable Counter xid_counter_ = Counter::new_(0);
 
     // Map of pending futures awaiting responses (protected by SpinMutex)
     SpinMutex<rusty::HashMap<i64, rusty::Arc<Future>>> pending_fu_{rusty::HashMap<i64, rusty::Arc<Future>>()};
@@ -1636,7 +1636,7 @@ private:
             // `max_pending` is reached.
             if (buffering_config_.enabled &&
                 buffering_config_.behavior == DisconnectBehavior::QUEUE) {
-                auto fu = Future::create(xid_counter_.next(), attr);
+                auto fu = Future::create(xid_counter_.next(1), attr);
                 auto fu_for_cb = fu;  // Arc clone for the callback.
                 QueuedRequest qr;
                 qr.xid     = fu->xid_;
@@ -1683,7 +1683,7 @@ private:
         }
 
         // @unsafe { Counter::next }
-        auto fu = Future::create(xid_counter_.next(), attr);
+        auto fu = Future::create(xid_counter_.next(1), attr);
 
         {
             auto pending_guard = pending_fu_.lock().unwrap();
@@ -1773,7 +1773,7 @@ public:
             }
         }
 
-        const i64 xid = xid_counter_.next();
+        const i64 xid = xid_counter_.next(1);
         const size_t slot = static_cast<size_t>(xid) % kAsyncSlotCount;
 
         // Insert callback into the slim slot.  Collision should be
@@ -1881,7 +1881,7 @@ public:
         }
 
         // Return a coordinator future immediately; internal attempts run async.
-        auto final_fu = Future::create(xid_counter_.next(), attr);
+        auto final_fu = Future::create(xid_counter_.next(1), attr);
         RequestOptions waiter_options = effective_options;
         waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
         final_fu->set_options(waiter_options);
@@ -4395,7 +4395,7 @@ void ClientConnection::enqueue_heartbeat_probe() const {
   // `set_bookmark` / `write_bookmark` produced, so the wire format
   // is unchanged.
   Marshal body;
-  body << v64(xid_counter_.next());
+  body << v64(xid_counter_.next(1));
   body << static_cast<i32>(kInternalHeartbeatRpcId);
   const std::size_t body_size = body.content_size();
   std::vector<std::uint8_t> body_bytes;
