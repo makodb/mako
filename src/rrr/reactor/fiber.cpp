@@ -93,7 +93,7 @@ inline void sleep_ms(uint64_t milliseconds) {
  * Sleep for specified seconds. Uses rrr::Time internally.
  */
 inline void sleep_s(uint64_t seconds) {
-    Fiber::sleep(seconds * Time::RRR_USEC_PER_SEC);
+    Fiber::sleep(seconds * rrr::RRR_USEC_PER_SEC);
 }
 
 /**

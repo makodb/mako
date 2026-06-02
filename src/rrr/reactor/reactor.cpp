@@ -1247,7 +1247,7 @@ class QuorumEvent : public Event {
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
-  // @safe - test(), Time::now(), rusty::Vec::push, IntEvent::set
+  // @safe - test(), Time::now(false), rusty::Vec::push, IntEvent::set
   // are all @safe; Cell::get on `finalize_event_->status_` is @safe.
   void vote_yes();
 

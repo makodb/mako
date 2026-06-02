@@ -160,28 +160,71 @@ void Counter::reset(int64_t start) const {
 }
 /*RUSTYCPP:GEN-END id=basetypes.1*/
 
-class Time {
-public:
-    static const uint64_t RRR_USEC_PER_SEC = 1000000;
+// `RRR_USEC_PER_SEC` was a class-static const on `Time`. DSL impl
+// blocks don't model associated constants today, so the constant
+// moves to a free `inline constexpr` at namespace scope. The 2
+// callers (fiber.cpp, fiber_test.cc) migrate from
+// `Time::RRR_USEC_PER_SEC` to bare `RRR_USEC_PER_SEC` (or
+// `rrr::RRR_USEC_PER_SEC` from outside the namespace).
+inline constexpr uint64_t RRR_USEC_PER_SEC = 1000000;
 
-    // @safe - delegates to rusty::sys::time::clock_*_us(), each of
-    // which wraps its clock_gettime call in an inner @unsafe block.
-    static uint64_t now(bool accurate = false) {
+// @safe - architecture-conditional wall-clock helper. Defined outside
+// the DSL because the DSL has no preprocessor / `cfg!` support; the
+// `#ifdef __APPLE__` branch maps to a single dispatch on Linux.
+inline uint64_t time_now_us(bool accurate) {
 #ifdef __APPLE__
-        return rusty::sys::time::clock_realtime_us();
+    (void)accurate;
+    return rusty::sys::time::clock_realtime_us();
 #else
-        return accurate ? rusty::sys::time::clock_monotonic_us()
-                        : rusty::sys::time::clock_realtime_coarse_us();
+    return accurate ? rusty::sys::time::clock_monotonic_us()
+                    : rusty::sys::time::clock_realtime_coarse_us();
 #endif
+}
+
+// `Time` — wall-clock + sleep facade. The historical class was static-
+// only; the DSL form is an empty struct with associated functions.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Behavioral diff vs the pre-DSL form:
+//   * `now()` no longer carries a default arg; callers explicitly
+//     write `now(false)` for coarse wall-clock and `now(true)` for
+//     monotonic. 15 no-arg sites updated.
+//   * `RRR_USEC_PER_SEC` is now a namespace-level free constant
+//     (see above), not a class-static member.
+#if RUSTYCPP_RUST
+struct Time {}
+
+impl Time {
+    fn now(accurate: bool) -> u64 {
+        time_now_us(accurate)
     }
 
-    // @safe - delegates to rusty::sys::time::sleep_us, which wraps
-    // nanosleep in an inner @unsafe block. (Replaces the historical
-    // select(0,NULL,NULL,NULL,&tv) sleep idiom.)
-    static void sleep(uint64_t t) {
+    fn sleep(t: u64) {
         rusty::sys::time::sleep_us(t);
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.2 version=1 rust_sha256=083eafe4dc21a130d6016d56995496d81632d3839d29622e2d0ec49e43ea890d*/
+struct Time;
+
+struct Time {
+
+    static uint64_t now(bool accurate);
+    static void sleep(uint64_t t);
 };
+
+
+uint64_t Time::now(bool accurate) {
+    return time_now_us(std::move(accurate));
+}
+
+void Time::sleep(uint64_t t) {
+    rusty::sys::time::sleep_us(std::move(t));
+}
+/*RUSTYCPP:GEN-END id=basetypes.2*/
 
 class Timer {
 public:

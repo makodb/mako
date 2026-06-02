@@ -18,7 +18,7 @@ import rrr.misc;
 import rrr.reactor;
 
 // @safe - Alarm: BTreeMap-backed timed-callback queue. Bodies use
-// rusty::BTreeMap + rusty::Function + rrr::Time::now() — no raw
+// rusty::BTreeMap + rusty::Function + rrr::Time::now(false) — no raw
 // pointer arithmetic, no syscalls, no Marshal chains. The raw
 // `rrr::PollThread *holder` field is never dereferenced here and
 // `set_holder` is a no-op stub.
@@ -57,7 +57,7 @@ class Alarm: public FrequentJob {
     bool ret = false;
     auto it = waiting_.begin();
     if (it != waiting_.end()) {
-      uint64_t tm_now = rrr::Time::now();
+      uint64_t tm_now = rrr::Time::now(false);
       auto item = *it;
       const uint64_t id = std::get<0>(item);
       auto& val = std::get<1>(item);

@@ -644,7 +644,7 @@ class TimeoutALock: public ALock {
   virtual ~TimeoutALock();
 
   //void safe_check() {
-  //auto tm_now = rrr::Time::now();
+  //auto tm_now = rrr::Time::now(false);
   //if (tm_last_ != 0 && tm_now - tm_last_ > 5 * 1000 * 1000) {
   //    verify(0);
   //}
@@ -1330,7 +1330,7 @@ uint64_t TimeoutALock::vlock(uint64_t owner,
         // status is RLOCKED, type is WLOCK
         // or status is WLOCKED.
         req.set_status(ALockReq::WAIT);
-        uint64_t tm_now = rrr::Time::now();
+        uint64_t tm_now = rrr::Time::now(false);
         uint64_t tm_out = tm_now + tm_wait_;
         auto& alarm = get_alarm_s();
         // @unsafe - Lambda captures reference to req
@@ -1391,7 +1391,7 @@ uint32_t TimeoutALock::lock_all(rusty::Vec<ALockReq*>& lock_reqs) {
             }
 
             it++;
-            //                tm_last_ = rrr::Time::now();
+            //                tm_last_ = rrr::Time::now(false);
             break;
         }
     }

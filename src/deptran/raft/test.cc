@@ -4001,7 +4001,7 @@ int RaftLabTest::testFullCommitPath(void) {
 
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
-      uint64_t now = Time::now();
+      uint64_t now = Time::now(false);
       Log_info("[FULL-PATH-TEST] Callback received: status=%d time=%lu",
                static_cast<int>(status), now);
       if (status == CommitStatus::SPECULATIVE) {

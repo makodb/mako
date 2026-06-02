@@ -21,7 +21,7 @@ import rrr.basetypes;
 // Job/OneTimeJob/FrequentJob value classes. The syscall-touching
 // functions (`rdtsc`, `time_now_str`, `get_ncpu`, `get_exec_path`,
 // `getline`, the static `make_int` byte-writer) and
-// `FrequentJob::Ready` (calls rrr::Time::now()) carry per-method
+// `FrequentJob::Ready` (calls rrr::Time::now(false)) carry per-method
 // `// @unsafe` overrides.
 export namespace rrr {
 
@@ -116,9 +116,9 @@ public:
   uint64_t period_ = 0;
 
   virtual ~FrequentJob() {}
-  // @safe - rrr::Time::now() flows through rusty::sys::time::clock_*_us.
+  // @safe - rrr::Time::now(false) flows through rusty::sys::time::clock_*_us.
   virtual bool Ready() override {
-    uint64_t tm_now = rrr::Time::now();
+    uint64_t tm_now = rrr::Time::now(false);
     uint64_t s = tm_now - tm_last_;
     if (s > period_) {
       tm_last_ = tm_now;

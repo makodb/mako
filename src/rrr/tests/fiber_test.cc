@@ -240,7 +240,7 @@ TEST_F(FiberTest, SleepSConversion) {
     // Note: Even sleep_s(0) creates a TimeoutEvent that may yield
 
     // Verify the conversion factor is correct: 1 second = 1,000,000 us
-    static_assert(Time::RRR_USEC_PER_SEC == 1000000,
+    static_assert(rrr::RRR_USEC_PER_SEC == 1000000,
                   "1 second should be 1,000,000 microseconds");
 
     // Just verify the function exists and is callable

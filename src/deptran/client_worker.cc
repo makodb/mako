@@ -265,7 +265,7 @@ void ClientWorker::Work() {
   // Jetpack: Main transaction dispatch loop
   for (uint32_t n_tx = 0; n_tx < n_concurrent_; n_tx++) {
     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this, n_tx] () {
-      auto beg_time = Time::now();
+      auto beg_time = Time::now(false);
       auto end_time = beg_time + duration * pow(10, 6);
 #ifdef DB_CHECKSUM
       auto read_end_time = end_time + 20 * pow(10, 6);
@@ -274,7 +274,7 @@ void ClientWorker::Work() {
       end_time = beg_time + duration * 5 * pow(10, 2);
 #endif
       while (true) {
-        auto cur_time = Time::now();
+        auto cur_time = Time::now(false);
 #ifndef DB_CHECKSUM
         if (cur_time > end_time) {
 #endif
