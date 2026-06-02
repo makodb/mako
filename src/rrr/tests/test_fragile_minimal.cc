@@ -21,7 +21,7 @@ int main() {
     Log_info("Fragile minimal test starting...");
 
     // Test 2: Basic timer
-    Timer timer;
+    auto timer = Timer::new_();
     timer.start();
 
     // Test 3: Simple loop with time measurement
