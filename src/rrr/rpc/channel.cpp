@@ -77,18 +77,46 @@ using OnClosedCallback = detail::CallbackWrapper<void(ChannelError reason) const
 using OnErrorCallback  = detail::CallbackWrapper<void(ChannelError err,
                                                        std::string_view message) const>;
 
+// `ChannelConnectionBase` — abstract transport-connection interface
+// (TcpConnection, inmemory connection, ...). Authored as inline Rust
+// DSL `pub trait`; the transpiler emits the same shape of C++
+// abstract class at namespace scope. Tier-1.4 of the rrr trait sweep.
+#if RUSTYCPP_RUST
+pub trait ChannelConnectionBase {
+    fn send_frame(&mut self, frame: &ChannelFrame) -> ChannelError;
+    fn flush(&mut self);
+    fn close(&mut self);
+    fn is_closed(&self) -> bool;
+    fn peer_address(&self) -> std::string;
+    fn set_on_frame(&mut self, cb: OnFrameCallback);
+    fn set_on_closed(&mut self, cb: OnClosedCallback);
+    fn set_on_error(&mut self, cb: OnErrorCallback);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.2 version=1 rust_sha256=894b849f6f600fe181394b093c2fc7f0b7960d8219710fcac56ff8398d61fdd2*/
 class ChannelConnectionBase {
- public:
-  virtual ~ChannelConnectionBase() = default;
-  virtual ChannelError send_frame(const ChannelFrame&)         = 0;
-  virtual void         flush()                                  = 0;
-  virtual void         close()                                  = 0;
-  virtual bool         is_closed()       const                  = 0;
-  virtual std::string  peer_address()    const                  = 0;
-  virtual void         set_on_frame(OnFrameCallback)            = 0;
-  virtual void         set_on_closed(OnClosedCallback)          = 0;
-  virtual void         set_on_error(OnErrorCallback)            = 0;
+public:
+    virtual ~ChannelConnectionBase() noexcept(false) {}
+    virtual ChannelError send_frame(const ChannelFrame& frame) = 0;
+    virtual void flush() = 0;
+    virtual void close() = 0;
+    virtual bool is_closed() const = 0;
+    virtual std::string peer_address() const = 0;
+    virtual void set_on_frame(OnFrameCallback cb) = 0;
+    virtual void set_on_closed(OnClosedCallback cb) = 0;
+    virtual void set_on_error(OnErrorCallback cb) = 0;
+    ChannelConnectionBase(const ChannelConnectionBase&) = delete;
+    ChannelConnectionBase& operator=(const ChannelConnectionBase&) = delete;
+    ChannelConnectionBase(ChannelConnectionBase&&) = delete;
+    ChannelConnectionBase& operator=(ChannelConnectionBase&&) = delete;
+protected:
+    ChannelConnectionBase() = default;
 };
+
+template <class U> class ChannelConnectionBaseAdapter;
+template <class U> class ChannelConnectionBaseAdapterRef;
+template <class U> class ChannelConnectionBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=channel.2*/
 
 // Owned, non-nullable handle to a channel connection. Use
 // `rusty::Option<ChannelConnectionProxy>` at call sites that need a
@@ -97,16 +125,40 @@ using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;
 
 using OnAcceptCallback = detail::CallbackWrapper<void(ChannelConnectionProxy) const>;
 
+// `ChannelListenerBase` — abstract accept-loop interface (TcpListener,
+// inmemory listener, ...). Tier-1.4 trait migration.
+#if RUSTYCPP_RUST
+pub trait ChannelListenerBase {
+    fn listen(&mut self, addr: std::string_view) -> ChannelError;
+    fn close(&mut self);
+    fn is_closed(&self) -> bool;
+    fn local_address(&self) -> std::string;
+    fn set_on_accept(&mut self, cb: OnAcceptCallback);
+    fn set_on_error(&mut self, cb: OnErrorCallback);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.3 version=1 rust_sha256=3d86b3cd57d06df5430ae80d838e0bee7b9318ea9e8b467b5d10832684aa91fa*/
 class ChannelListenerBase {
- public:
-  virtual ~ChannelListenerBase() = default;
-  virtual ChannelError listen(std::string_view)         = 0;
-  virtual void         close()                          = 0;
-  virtual bool         is_closed()       const          = 0;
-  virtual std::string  local_address()   const          = 0;
-  virtual void         set_on_accept(OnAcceptCallback)  = 0;
-  virtual void         set_on_error(OnErrorCallback)    = 0;
+public:
+    virtual ~ChannelListenerBase() noexcept(false) {}
+    virtual ChannelError listen(std::string_view addr) = 0;
+    virtual void close() = 0;
+    virtual bool is_closed() const = 0;
+    virtual std::string local_address() const = 0;
+    virtual void set_on_accept(OnAcceptCallback cb) = 0;
+    virtual void set_on_error(OnErrorCallback cb) = 0;
+    ChannelListenerBase(const ChannelListenerBase&) = delete;
+    ChannelListenerBase& operator=(const ChannelListenerBase&) = delete;
+    ChannelListenerBase(ChannelListenerBase&&) = delete;
+    ChannelListenerBase& operator=(ChannelListenerBase&&) = delete;
+protected:
+    ChannelListenerBase() = default;
 };
+
+template <class U> class ChannelListenerBaseAdapter;
+template <class U> class ChannelListenerBaseAdapterRef;
+template <class U> class ChannelListenerBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=channel.3*/
 
 using ChannelListenerProxy = rusty::Box<ChannelListenerBase>;
 
@@ -115,6 +167,14 @@ struct ConnectResult {
     ChannelError                          error = ChannelError::None;
 };
 
+// `ChannelFactoryBase` — abstract transport factory (TcpFactory,
+// inmemory factory, ...). NOT migrated to a DSL trait this round:
+// the `backend_name() -> const char*` return type doesn't lower
+// cleanly through the inline-Rust → C++ pipeline (the DSL's
+// `*const c_char` emits `const c_char*` which isn't a known C++
+// type without a separate typedef). Tier-1.4 leaves this one in
+// hand-written C++ until a `*const char` mapping or a `c_char`
+// alias lands in the transpiler.
 class ChannelFactoryBase {
  public:
   virtual ~ChannelFactoryBase() = default;
