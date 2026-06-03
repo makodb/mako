@@ -342,7 +342,7 @@ def verify_alpha_service_block(block: str) -> None:
         "            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));\n"
         "            __req_ar__ >> __typed_req__.stream_id;\n"
         "            auto __typed_resp__ = std::make_shared<RpcStreamResponse>();\n"
-        "            rrr::DeferredReply __defer__(\n"
+        "            auto __defer__ = rrr::DeferredReply::new_(\n"
         "                std::move(req),\n"
         "                weak_sconn,\n"
         "                [__typed_resp__](rrr::BinaryWriteArchive& m) {\n"

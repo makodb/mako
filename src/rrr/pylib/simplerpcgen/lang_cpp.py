@@ -371,7 +371,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                             for _, field_name in input_fields:
                                 f.writeln("__req_ar__ >> __typed_req__.%s;" % field_name)
                         f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
-                        f.writeln("rrr::DeferredReply __defer__(")
+                        f.writeln("auto __defer__ = rrr::DeferredReply::new_(")
                         with f.indent():
                             f.writeln("std::move(req),")
                             f.writeln("weak_sconn,")
