@@ -477,7 +477,7 @@ class Future {
     rusty::Condvar ready_cond_;  // Uses interior mutability (const methods like Rust's &self)
 
     // Retry support
-    rusty::Cell<RequestOptions> options_;     // Request options (timeout, retry config)
+    rusty::Cell<RequestOptions> options_{RequestOptions::defaults()};  // Request options (timeout, retry config)
     rusty::Cell<TimeoutType> timeout_type_{TimeoutType::NONE};  // Type of timeout that occurred
     rusty::Cell<uint16_t> retry_count_{0};    // Number of retries attempted
 

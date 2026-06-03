@@ -598,7 +598,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
 
     const auto& metrics = client->metrics();
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 30;
     opts.max_retries = 1;
     opts.base_delay_ms = 10;
@@ -640,7 +640,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdate
 
     const auto& metrics = client->metrics();
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 30;
     opts.max_retries = 0;
     opts.idempotent = true;
