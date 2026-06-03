@@ -7,26 +7,66 @@ export module rrr.pollable_proxy;
 
 import std;
 
-// @safe - Pollable interface + thin Arc<T>-wrapping adapter. The
+// @safe - `PollableBase` trait + thin Arc<T>-wrapping adapter. The
 // adapter's `mut_poll()` helper does a const_cast<T&> through
 // rusty::Arc<T>::get() — that one method carries an explicit
 // `// @unsafe` override below; everything else is pure delegation.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block is
+// the source of truth. The transpiler emits the matching abstract
+// C++ class (`class PollableBase`) at namespace scope — the `pub trait`
+// visibility tells it not to wrap in an anonymous namespace, so
+// downstream TUs (`rrr.reactor`, `rrr.tcp_channel`, …) can name
+// `PollableBase` through the import graph. This is the first real
+// trait migration in rrr — exercising the `pub trait` → namespace-
+// scope-class codegen fix that landed on rusty-cpp main as 591aca7.
+//
+// Trait name kept as `PollableBase` (not the Rust-idiomatic
+// `Pollable`) to avoid a name collision with the unrelated
+// `rrr::Pollable` interface that `rrr.epoll_wrapper` exports in
+// the same namespace; the two are structurally identical but live
+// in separate modules and serve different roles, and renaming
+// either is out of scope for this migration.
 export namespace rrr {
 
+#if RUSTYCPP_RUST
+pub trait PollableBase {
+    fn fd(&self) -> i32;
+    fn poll_mode(&self) -> i32;
+    fn content_size(&mut self) -> usize;
+    fn handle_read(&mut self) -> bool;
+    fn handle_write(&mut self) -> i32;
+    fn handle_error(&mut self);
+    fn close(&mut self);
+    fn check_pending_write_update(&self) -> bool;
+    fn is_closed(&self) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=pollable.0 version=1 rust_sha256=58f4fd8299bef8518306a38e8d93c412bfb6de8a9c7150f5c46259aeee31ed7a*/
 class PollableBase {
- public:
-  virtual ~PollableBase() = default;
-
-  virtual int fd() const = 0;
-  virtual int poll_mode() const = 0;
-  virtual size_t content_size() = 0;
-  virtual bool handle_read() = 0;
-  virtual int handle_write() = 0;
-  virtual void handle_error() = 0;
-  virtual void close() = 0;
-  virtual bool check_pending_write_update() const = 0;
-  virtual bool is_closed() const = 0;
+public:
+    virtual ~PollableBase() noexcept(false) {}
+    virtual int32_t fd() const = 0;
+    virtual int32_t poll_mode() const = 0;
+    virtual size_t content_size() = 0;
+    virtual bool handle_read() = 0;
+    virtual int32_t handle_write() = 0;
+    virtual void handle_error() = 0;
+    virtual void close() = 0;
+    virtual bool check_pending_write_update() const = 0;
+    virtual bool is_closed() const = 0;
+    PollableBase(const PollableBase&) = delete;
+    PollableBase& operator=(const PollableBase&) = delete;
+    PollableBase(PollableBase&&) = delete;
+    PollableBase& operator=(PollableBase&&) = delete;
+protected:
+    PollableBase() = default;
 };
+
+template <class U> class PollableBaseAdapter;
+template <class U> class PollableBaseAdapterRef;
+template <class U> class PollableBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=pollable.0*/
 
 using PollableProxy = rusty::Box<PollableBase>;
 
