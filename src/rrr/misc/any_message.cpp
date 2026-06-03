@@ -234,10 +234,26 @@ void AnyMessage::load(BinaryReadArchive& ar) {
 
 namespace {
 
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ struct. Tier-2.2
+// of the rrr trait/struct sweep — a TU-local POD that just bundles
+// two HashMaps. The struct stays inside this anonymous namespace so
+// `registry()` and the impl functions below all see it.
+#if RUSTYCPP_RUST
 struct AnyMessageRegistryMap {
-  rusty::HashMap<std::string, AnyMessageRegistry::Factory> by_name;
-  rusty::HashMap<size_t, std::string> name_by_type_hash;
+    by_name: rusty::HashMap<std::string, AnyMessageRegistry::Factory>,
+    name_by_type_hash: rusty::HashMap<usize, std::string>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.1 version=1 rust_sha256=1f01bc9771042fc5f5717fefe3b0d38fe50e88870888ff5601cffc712958a545*/
+struct AnyMessageRegistryMap;
+
+struct AnyMessageRegistryMap {
+    rusty::HashMap<std::string, AnyMessageRegistry::Factory> by_name;
+    rusty::HashMap<size_t, std::string> name_by_type_hash;
 };
+/*RUSTYCPP:GEN-END id=any_message.1*/
 
 SpinMutex<AnyMessageRegistryMap>& registry() {
   static SpinMutex<AnyMessageRegistryMap> r;
