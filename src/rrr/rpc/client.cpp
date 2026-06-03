@@ -1,8 +1,8 @@
 // rrr.client — RPC client (formerly client.hpp + client.cpp).
 //
 // Owns ClientConnection (socket I/O + framing), Client (user-facing
-// facade), Future / FutureGroup (async reply delivery), and the bulk
-// reconnect helpers. Sits above the channel layer (`tcp_channel`,
+// facade), Future (async reply delivery), and the bulk reconnect
+// helpers. Sits above the channel layer (`tcp_channel`,
 // `inmemory_channel`) which the connection consumes via the
 // transport-agnostic `ChannelConnectionProxy`.
 module;
@@ -49,12 +49,12 @@ import rrr.threading;
 // ===========================================================================
 // Block 1: forward decls (from former client.hpp:50-78)
 // ===========================================================================
-// @safe - first-half namespace block: Future / FutureGroup / TypedFuture
-// awaiters + the BufferingConfig / KeepaliveConfig / PoolConfig POD
-// structs. ClientConnection (declared in the second block below)
-// retains its class-level `// @unsafe`. Methods that genuinely cross
-// into network I/O / socket fd / Marshal byte ops keep their
-// existing per-method `// @unsafe` annotations.
+// @safe - first-half namespace block: Future / TypedFuture awaiters
+// + the BufferingConfig / KeepaliveConfig / PoolConfig POD structs.
+// ClientConnection (declared in the second block below) retains its
+// class-level `// @unsafe`. Methods that genuinely cross into
+// network I/O / socket fd / Marshal byte ops keep their existing
+// per-method `// @unsafe` annotations.
 export namespace rrr {
 
 // Stream operator for RefMut<Marshal> — supports the
@@ -86,7 +86,7 @@ rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 }  // export namespace rrr
 
 // ===========================================================================
-// Block 2: Future, FutureGroup, ClientConnection (from former client.hpp:130-1963)
+// Block 2: Future, ClientConnection (from former client.hpp:130-1963)
 // ===========================================================================
 // @safe - second-half namespace block. Same rules as block 1; the
 // ClientConnection class declared inside retains its class-level
@@ -740,36 +740,6 @@ TypedFutureResultAwaiter<TypedFuture> make_typed_future_result_awaitable(
     rusty::Result<TypedFuture, i32> typed_future_result) {
     return TypedFutureResultAwaiter<TypedFuture>(std::move(typed_future_result));
 }
-
-// @safe - RAII container for managing multiple futures
-// MIGRATED: Now uses Arc<Future> for automatic memory management
-class FutureGroup {
-private:
-    rusty::Vec<rusty::Arc<Future>> futures_;
-
-public:
-    // @safe - Adds future to group
-    void add(rusty::Arc<Future> f) {
-        if (!f) {  // Check Arc validity (empty Arc check)
-            Log_error("Invalid Future object passed to FutureGroup!");
-            return;
-        }
-        futures_.push(std::move(f));
-    }
-
-    // @safe - Waits for all futures in group
-    void wait_all() {
-        for (auto& f : futures_) {
-            f->wait();
-        }
-    }
-
-    // @safe - Destructor waits for futures, Arc auto-cleanup
-    ~FutureGroup() {
-        wait_all();
-        // Arc auto-released when vector destroyed - no manual release needed
-    }
-};
 
 // Type alias for Arc weak reference to ClientConnection
 using WeakClientConnection = rusty::sync::Weak<ClientConnection>;
