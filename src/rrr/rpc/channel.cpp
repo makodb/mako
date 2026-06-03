@@ -168,20 +168,41 @@ struct ConnectResult {
 };
 
 // `ChannelFactoryBase` — abstract transport factory (TcpFactory,
-// inmemory factory, ...). NOT migrated to a DSL trait this round:
-// the `backend_name() -> const char*` return type doesn't lower
-// cleanly through the inline-Rust → C++ pipeline (the DSL's
-// `*const c_char` emits `const c_char*` which isn't a known C++
-// type without a separate typedef). Tier-1.4 leaves this one in
-// hand-written C++ until a `*const char` mapping or a `c_char`
-// alias lands in the transpiler.
+// inmemory factory, ...). Tier-1.4 trait migration. `backend_name`
+// returns `std::string` (Rust `String`) instead of the original
+// `const char*` so the DSL has a clean type to lower — string
+// literals on the impl side auto-convert via the implicit
+// `std::string(const char*)` constructor, so impl bodies like
+// `return "tcp";` keep compiling unchanged. The behavioural diff
+// is a small heap allocation per call, which is fine for a
+// "report-my-backend-name" accessor that runs at startup / in
+// diagnostics, not on the hot path.
+#if RUSTYCPP_RUST
+pub trait ChannelFactoryBase {
+    fn connect(&mut self, addr: std::string_view) -> ConnectResult;
+    fn make_listener(&mut self) -> Option<ChannelListenerProxy>;
+    fn backend_name(&self) -> std::string;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.4 version=1 rust_sha256=46c44a281cc328cf55cb46fcbdfc3a64b6e07227c560428d445abeb2f5f9bd8b*/
 class ChannelFactoryBase {
- public:
-  virtual ~ChannelFactoryBase() = default;
-  virtual ConnectResult                       connect(std::string_view)    = 0;
-  virtual rusty::Option<ChannelListenerProxy> make_listener()              = 0;
-  virtual const char*                         backend_name()    const      = 0;
+public:
+    virtual ~ChannelFactoryBase() noexcept(false) {}
+    virtual ConnectResult connect(std::string_view addr) = 0;
+    virtual rusty::Option<ChannelListenerProxy> make_listener() = 0;
+    virtual std::string backend_name() const = 0;
+    ChannelFactoryBase(const ChannelFactoryBase&) = delete;
+    ChannelFactoryBase& operator=(const ChannelFactoryBase&) = delete;
+    ChannelFactoryBase(ChannelFactoryBase&&) = delete;
+    ChannelFactoryBase& operator=(ChannelFactoryBase&&) = delete;
+protected:
+    ChannelFactoryBase() = default;
 };
+
+template <class U> class ChannelFactoryBaseAdapter;
+template <class U> class ChannelFactoryBaseAdapterRef;
+template <class U> class ChannelFactoryBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=channel.4*/
 
 using ChannelFactoryProxy = rusty::Box<ChannelFactoryBase>;
 

@@ -397,7 +397,7 @@ class InMemoryFactory {
     // ChannelFactoryBase methods.
     ConnectResult                       connect(std::string_view addr);
     rusty::Option<ChannelListenerProxy> make_listener();
-    const char*                         backend_name() const { return "inmemory"; }
+    std::string                         backend_name() const { return "inmemory"; }
 
     // Switchboard accessor (test introspection).
     const rusty::Arc<InMemorySwitchboard>& switchboard() const {
@@ -417,7 +417,7 @@ class InMemoryFactoryAdapter : public ChannelFactoryBase {
     ConnectResult                       connect(std::string_view addr) override { return mut_factory().connect(addr); }
     // @unsafe - forwards through mut_factory() const_cast.
     rusty::Option<ChannelListenerProxy> make_listener() override                { return mut_factory().make_listener(); }
-    const char*                         backend_name() const override           { return factory_->backend_name(); }
+    std::string                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
     // @unsafe - const_cast through Arc::get<T*>().

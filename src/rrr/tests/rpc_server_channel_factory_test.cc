@@ -136,7 +136,7 @@ class FactoryStub {
         last_listener_->listened_ok_ = !next_listen_should_fail_;
         return rusty::Some(make_listener_proxy(last_listener_));
     }
-    const char* backend_name() const { return "factory-stub"; }
+    std::string backend_name() const { return "factory-stub"; }
 };
 
 class FactoryStubAdapter : public ChannelFactoryBase {
@@ -145,7 +145,7 @@ class FactoryStubAdapter : public ChannelFactoryBase {
         : stub_(std::move(p)) {}
     ConnectResult                       connect(std::string_view a) override { return stub_->connect(a); }
     rusty::Option<ChannelListenerProxy> make_listener() override             { return stub_->make_listener(); }
-    const char*                         backend_name() const override        { return stub_->backend_name(); }
+    std::string                         backend_name() const override        { return stub_->backend_name(); }
  private:
     std::shared_ptr<FactoryStub> stub_;
 };

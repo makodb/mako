@@ -36,7 +36,7 @@ class NullFactoryStub {
     rusty::Option<ChannelListenerProxy> make_listener() {
         return rusty::None;
     }
-    const char* backend_name() const { return "null-stub"; }
+    std::string backend_name() const { return "null-stub"; }
 };
 
 class NullFactoryStubAdapter : public ChannelFactoryBase {
@@ -45,7 +45,7 @@ class NullFactoryStubAdapter : public ChannelFactoryBase {
         : stub_(std::move(p)) {}
     ConnectResult                       connect(std::string_view addr) override { return stub_->connect(addr); }
     rusty::Option<ChannelListenerProxy> make_listener() override                { return stub_->make_listener(); }
-    const char*                         backend_name() const override           { return stub_->backend_name(); }
+    std::string                         backend_name() const override           { return stub_->backend_name(); }
 
  private:
     std::shared_ptr<NullFactoryStub> stub_;

@@ -93,7 +93,7 @@ class TcpFactoryTest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(TcpFactoryTest, BackendNameIsTcp) {
-    EXPECT_STREQ(factory().backend_name(), "tcp");
+    EXPECT_EQ(factory().backend_name(), "tcp");
 }
 
 TEST_F(TcpFactoryTest, ConnectInvalidAddressFails) {
@@ -322,7 +322,7 @@ TEST_F(TcpFactoryTest, MultipleSequentialConnects) {
 TEST_F(TcpFactoryTest, FactoryChannelProxyForwardsAllOps) {
     auto proxy = make_tcp_factory_proxy(factory_arc_.as_ref().unwrap().clone());
 
-    EXPECT_STREQ(proxy->backend_name(), "tcp");
+    EXPECT_EQ(proxy->backend_name(), "tcp");
 
     auto listener = proxy->make_listener().unwrap();
     ASSERT_EQ(listener->listen("127.0.0.1:0"), ChannelError::None);
