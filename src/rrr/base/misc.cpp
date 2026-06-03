@@ -74,13 +74,44 @@ erase(Container &l,
   return std::reverse_iterator<typename Container::iterator>(it);
 }
 
+// `Job` — abstract base trait for unit-of-work scheduling. Concrete
+// impls (OneTimeJob, FrequentJob, Alarm) inherit from the emitted
+// `class Job` directly; the trait shape is preserved verbatim
+// (3 pure virtuals + virtual dtor). Method names stay PascalCase
+// (`Ready` / `Work` / `Done`) to match the existing C++ override
+// surface — the DSL accepts any valid Rust ident, so the
+// non-snake_case names emit unchanged.
+//
+// First DSL trait in the rrr base layer. Authored as inline Rust;
+// the transpiler emits `class Job` at namespace scope because the
+// trait is `pub` — same pattern as `PollableBase` in
+// `rrr.pollable_proxy` (rusty-cpp main 591aca7 fix).
+#if RUSTYCPP_RUST
+pub trait Job {
+    fn Ready(&mut self) -> bool;
+    fn Work(&mut self);
+    fn Done(&mut self) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=job.0 version=1 rust_sha256=18786ba6577a83b252e1bcef0f636e48705c6028747245d431309a72153fea97*/
 class Job {
 public:
-  virtual bool Ready() = 0;
-  virtual void Work() = 0;
-  virtual bool Done() = 0;
-  virtual ~Job() = default;
+    virtual ~Job() noexcept(false) {}
+    virtual bool Ready() = 0;
+    virtual void Work() = 0;
+    virtual bool Done() = 0;
+    Job(const Job&) = delete;
+    Job& operator=(const Job&) = delete;
+    Job(Job&&) = delete;
+    Job& operator=(Job&&) = delete;
+protected:
+    Job() = default;
 };
+
+template <class U> class JobAdapter;
+template <class U> class JobAdapterRef;
+template <class U> class JobAdapterRefMut;
+/*RUSTYCPP:GEN-END id=job.0*/
 
 class OneTimeJob : public Job {
  public:
@@ -90,6 +121,17 @@ class OneTimeJob : public Job {
   // form. The ctor delegates to the factory so they stay in lockstep.
   OneTimeJob(rusty::Function<void()> func) : func_(std::move(func)) {
   }
+
+  // Explicit move ctor. The DSL-emitted `Job` base deletes its
+  // implicit copy / move, which would otherwise make `OneTimeJob`'s
+  // implicit move ctor `= delete` too — breaking `Arc<OneTimeJob>::new_(
+  // OneTimeJob::new_(...))` call sites. We construct a fresh `Job`
+  // base subobject (protected default ctor) and move the derived
+  // members. Copy stays implicitly deleted.
+  OneTimeJob(OneTimeJob&& other) noexcept
+      : Job(), done_(other.done_), ready_(other.ready_),
+        func_(std::move(other.func_)) {}
+
   bool done_{false};
   bool ready_{true};
   rusty::Function<void()> func_{};
@@ -114,6 +156,15 @@ class FrequentJob : public Job {
 public:
   uint64_t tm_last_ = 0;
   uint64_t period_ = 0;
+
+  FrequentJob() = default;
+
+  // Explicit move ctor — same rationale as `OneTimeJob`. The
+  // DSL-emitted `Job` base is non-movable, so derived types must
+  // construct a fresh base subobject and move the derived members
+  // by hand to stay movable.
+  FrequentJob(FrequentJob&& other) noexcept
+      : Job(), tm_last_(other.tm_last_), period_(other.period_) {}
 
   virtual ~FrequentJob() {}
   // @safe - rrr::Time::now(false) flows through rusty::sys::time::clock_*_us.
