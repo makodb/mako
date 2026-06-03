@@ -5,6 +5,7 @@ module;
 export module rrr.request_options;
 
 import std;
+import rrr.rand;
 
 // @safe - POD options struct + TimeoutType enum + factory helpers
 // + simple jitter computation. No raw pointers, syscalls, or
@@ -82,17 +83,24 @@ struct RequestOptions {
     }
 
     uint64_t calculate_delay_ms(uint16_t attempt) const {
-        double delay = static_cast<double>(base_delay_ms) * std::pow(2.0, attempt);
+        double delay = static_cast<double>(base_delay_ms);
+        uint16_t i = 0;
+        while (i < attempt) {
+            delay *= 2.0;
+            if (delay > static_cast<double>(max_delay_ms)) {
+                delay = static_cast<double>(max_delay_ms);
+                break;
+            }
+            i++;
+        }
 
         if (delay > static_cast<double>(max_delay_ms)) {
             delay = static_cast<double>(max_delay_ms);
         }
 
         if (jitter_factor > 0.0f) {
-            thread_local std::mt19937 gen(std::random_device{}());
-            thread_local std::uniform_real_distribution<double> dist(-0.5, 0.5);
-
-            double jitter = delay * static_cast<double>(jitter_factor) * dist(gen);
+            double jitter = delay * static_cast<double>(jitter_factor) *
+                            RandomGenerator::rand_double(-0.5, 0.5);
             delay += jitter;
 
             if (delay < 0.0) {
