@@ -766,13 +766,44 @@ class BinaryReadArchive {
 //
 // Downcasting: `dynamic_cast<T*>(proxy.get())` recovers the concrete
 // derived type.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ abstract class.
+// Tier-2.1 of the rrr trait sweep — same `pub trait` → namespace-
+// scope-class pattern as PollableBase / Job / Channel*Base.
+//
+// `SerializableSharedPtrHolder<T>` inherits the emitted class as
+// before; the DSL form adds `= delete` for copy/move on the base,
+// but no caller copies/moves a `SerializableBase` value — it's only
+// reachable through `std::shared_ptr<SerializableBase>`, which only
+// needs the base to be polymorphic-deletable.
+#if RUSTYCPP_RUST
+pub trait SerializableBase {
+    fn save(&self, ar: &mut BinaryWriteArchive);
+    fn load(&mut self, ar: &mut BinaryReadArchive);
+    fn kind(&self) -> i32;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.1 version=1 rust_sha256=09faf724fbedcb9cf6f47203e2f6865062f27426a1e4b6a2f2c53a8bfe3afa60*/
 class SerializableBase {
- public:
-  virtual ~SerializableBase() = default;
-  virtual void save(BinaryWriteArchive& ar) const = 0;
-  virtual void load(BinaryReadArchive& ar) = 0;
-  virtual int32_t kind() const = 0;
+public:
+    virtual ~SerializableBase() noexcept(false) {}
+    virtual void save(BinaryWriteArchive& ar) const = 0;
+    virtual void load(BinaryReadArchive& ar) = 0;
+    virtual int32_t kind() const = 0;
+    SerializableBase(const SerializableBase&) = delete;
+    SerializableBase& operator=(const SerializableBase&) = delete;
+    SerializableBase(SerializableBase&&) = delete;
+    SerializableBase& operator=(SerializableBase&&) = delete;
+protected:
+    SerializableBase() = default;
 };
+
+template <class U> class SerializableBaseAdapter;
+template <class U> class SerializableBaseAdapterRef;
+template <class U> class SerializableBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=serializable.1*/
 
 using SerializableProxy = std::shared_ptr<SerializableBase>;
 
