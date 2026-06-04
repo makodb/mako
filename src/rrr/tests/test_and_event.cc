@@ -1,5 +1,3 @@
-#include <rusty/vec.hpp>
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
@@ -7,6 +5,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace std::chrono;

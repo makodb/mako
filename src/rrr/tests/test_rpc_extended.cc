@@ -4,15 +4,13 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 #include <rusty/arc.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/refcell.hpp>
-#include <rusty/vec.hpp>
 #include "../rrr.hpp"
 #include "benchmark_service.h"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace benchmark;

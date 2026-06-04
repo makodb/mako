@@ -38,13 +38,11 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/async.hpp>
 #include <rusty/box.hpp>
-#include <rusty/btreeset.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/option.hpp>
-#include <rusty/rc.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/rusty.hpp>
 #include <rusty/sync/atomic.hpp>
@@ -55,6 +53,7 @@ module;
 export module rrr.reactor;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.logging;

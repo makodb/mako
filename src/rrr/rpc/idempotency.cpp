@@ -5,13 +5,13 @@ module;
 
 #include <rusty/cell.hpp>
 #include <rusty/function.hpp>
-#include <rusty/hashmap.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/rusty.hpp>
 
 export module rrr.idempotency;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.marshal;

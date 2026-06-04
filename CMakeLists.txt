@@ -168,6 +168,14 @@ set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools" FORCE)
 set(YAML_CPP_INSTALL OFF CACHE BOOL "Disable yaml-cpp install targets" FORCE)
 add_subdirectory(third-party/yaml-cpp)
 
+# rusty-cpp main HEAD retired the hand-written hashmap/btreemap/btreeset/rc/vec
+# headers in favor of transpiled C++20 modules (vec_port.vec, btree_port.btree.*,
+# rc_port, hashbrown_port, plus the umbrella rusty.cppm). Pull in those targets
+# via add_subdirectory so rrr can `import rusty;`. EXCLUDE_FROM_ALL keeps
+# rusty-cpp's test/bench targets out of the default build — they only build
+# if explicitly requested via `cmake --build build --target <name>.out`.
+add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
+
 # RUST
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})

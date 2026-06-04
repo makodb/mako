@@ -5,13 +5,13 @@ module;
 
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
-#include <rusty/hashmap.hpp>
 #include <rusty/option.hpp>
 #include <rusty/result.hpp>
 
 export module rrr.any_message;
 
 import std;
+import rusty;
 import rrr.debugging;
 import rrr.serializable;
 import rrr.threading;

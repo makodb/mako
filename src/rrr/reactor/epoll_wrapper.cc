@@ -1,8 +1,6 @@
 module;
 
 #include <rusty/arc.hpp>
-#include <rusty/rc.hpp>
-#include <rusty/rc/weak.hpp>
 #include <rusty/refcell.hpp>
 
 #include <unistd.h>
@@ -21,6 +19,7 @@ module;
 export module rrr.epoll_wrapper;
 
 import std;
+import rusty;
 import rrr.debugging;
 
 // @safe - kqueue/epoll wrapper. The Pollable virtual interface has

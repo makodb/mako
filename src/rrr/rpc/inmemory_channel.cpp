@@ -6,13 +6,13 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
-#include <rusty/hashmap.hpp>
 #include <rusty/option.hpp>
 #include <rusty/sync/weak.hpp>
 
 export module rrr.inmemory_channel;
 
 import std;
+import rusty;
 import rrr.channel;
 import rrr.debugging;
 import rrr.logging;

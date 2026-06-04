@@ -10,6 +10,7 @@ module;
 export module rrr.basetypes;
 
 import std;
+import rusty;
 
 // @safe - POD/value-type helpers + small classes (SparseInt, v32/v64,
 // NoCopy, Counter, Time, Timer, Rand, Enumerator, MergedEnumerator).

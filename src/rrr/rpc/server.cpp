@@ -17,12 +17,12 @@ module;
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
-#include <rusty/vec.hpp>
 #include <rusty/rusty.hpp>
 
 export module rrr.server;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.callback_wrapper;
 import rrr.channel;

@@ -10,11 +10,11 @@ module;
 #include <cstdint>
 
 #include <rusty/option.hpp>
-#include <rusty/rc.hpp>
 
 export module rrr.fiber;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.reactor;
 

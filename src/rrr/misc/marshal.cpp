@@ -13,13 +13,12 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/fn.hpp>
-#include <rusty/rc.hpp>
 #include <rusty/rusty.hpp>
-#include <rusty/vec.hpp>
 
 export module rrr.marshal;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.misc;

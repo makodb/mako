@@ -10,17 +10,13 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/rusty.hpp>
-#include <rusty/btreemap.hpp>
-#include <rusty/btreeset.hpp>
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
-#include <rusty/vec.hpp>
 
 export module rrr.serializable;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.threading;

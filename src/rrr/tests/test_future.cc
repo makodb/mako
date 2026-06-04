@@ -1,6 +1,5 @@
 #include <stddef.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
@@ -9,6 +8,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 // External safety annotations for std::shared_ptr atomic internals
 // and RPC server types with mutable fields

@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include <string.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
@@ -25,6 +24,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace std::chrono;
 
