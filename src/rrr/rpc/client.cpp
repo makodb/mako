@@ -3042,11 +3042,61 @@ class ClientPool {
     // single SpinMutex matches the access pattern (get_client touches
     // both under one lock) and replaces the prior `SpinLock l_ +
     // unprotected fields` pattern with rusty's RAII guard.
+    // Thin std::map subclass that exposes the BTreeMap-style surface
+    // (`get`, `remove`, `keys`, `len`, two-arg `insert`) so the rest of
+    // ClientPool keeps using the rusty-idiomatic call style we wrote
+    // it against. Switched away from `rusty::BTreeMap` because the
+    // transpiled BTreeMap port has unresolved transpiler bugs that
+    // surface when iter() / clone() / remove() are instantiated.
+    // Migrate back when the upstream BTreeMap port is fixed.
+    template<typename K, typename V>
+    struct CompatMap : std::map<K, V> {
+        using std::map<K, V>::map;
+        // BTreeMap::get(K) -> Option<V&>
+        ::rusty::Option<V&> get(const K& key) {
+            auto it = this->find(key);
+            if (it == this->end()) return ::rusty::Option<V&>(::rusty::None);
+            return ::rusty::Option<V&>(it->second);
+        }
+        ::rusty::Option<const V&> get(const K& key) const {
+            auto it = this->find(key);
+            if (it == this->end()) return ::rusty::Option<const V&>(::rusty::None);
+            return ::rusty::Option<const V&>(it->second);
+        }
+        // BTreeMap::insert(K, V) -> Option<V> (old value if any)
+        ::rusty::Option<V> insert(K key, V value) {
+            auto it = this->find(key);
+            if (it != this->end()) {
+                V old = std::move(it->second);
+                it->second = std::move(value);
+                return ::rusty::Option<V>(std::move(old));
+            }
+            std::map<K, V>::emplace(std::move(key), std::move(value));
+            return ::rusty::Option<V>(::rusty::None);
+        }
+        // BTreeMap::remove(K) -> Option<V>
+        ::rusty::Option<V> remove(const K& key) {
+            auto it = this->find(key);
+            if (it == this->end()) return ::rusty::Option<V>(::rusty::None);
+            V v = std::move(it->second);
+            this->erase(it);
+            return ::rusty::Option<V>(std::move(v));
+        }
+        // BTreeMap::len() -> size_t
+        std::size_t len() const { return this->size(); }
+        // BTreeMap::keys() — snapshot keys into a rusty::Vec for caller.
+        ::rusty::Vec<K> keys() const {
+            ::rusty::Vec<K> out;
+            for (const auto& kv : *this) out.push(kv.first);
+            return out;
+        }
+    };
+
     struct PoolState {
         // @safe - rusty::Arc<Client> for thread-safe reference counting.
-        rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache;
+        CompatMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache;
         // Load balancer state per address (for round-robin tracking).
-        rusty::BTreeMap<std::string, LoadBalancerState> lb_state;
+        CompatMap<std::string, LoadBalancerState> lb_state;
     };
     mutable SpinMutex<PoolState> state_;
 
@@ -3333,8 +3383,10 @@ void ClientConnection::invalidate_pending_futures() const {
 
   list<rusty::Arc<Future>> futures;
   auto guard = pending_fu_.lock().unwrap();
+  // HashMap's STL iterator yields std::tuple<const K&, V&>, not
+  // std::pair, so the value is at std::get<1>(it), not it.second.
   for (auto it: *guard) {
-    futures.push_back(it.second);  // Copy Arc
+    futures.push_back(std::get<1>(it));  // Copy Arc
   }
   guard->clear();  // Clear map (releases its Arc references)
   // Guard dropped here, releasing lock
@@ -4723,10 +4775,12 @@ size_t ClientPool::remove_all_unhealthy() {
   // — doesn't iterate while modifying.
   rusty::Vec<std::string> keys;
   {
-    auto it = guard->cache.keys();
-    keys.reserve(it.len());
-    for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
-      keys.push(std::string(opt.unwrap()));
+    auto key_vec = guard->cache.keys();
+    keys.reserve(key_vec.size());
+    // CompatMap::keys() returns a snapshot rusty::Vec; iterate with
+    // STL-style range-for instead of the old Rust-iter `.next()` loop.
+    for (auto& addr : key_vec) {
+      keys.push(std::string(addr));
     }
   }
   rusty::Vec<std::string> empty_keys;
@@ -4778,10 +4832,12 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
   // BTreeMap::keys() returns a transient `keys_range`.
   rusty::Vec<std::string> keys;
   {
-    auto it = guard->cache.keys();
-    keys.reserve(it.len());
-    for (auto opt = it.next(); opt.is_some(); opt = it.next()) {
-      keys.push(std::string(opt.unwrap()));
+    auto key_vec = guard->cache.keys();
+    keys.reserve(key_vec.size());
+    // CompatMap::keys() returns a snapshot rusty::Vec; iterate with
+    // STL-style range-for instead of the old Rust-iter `.next()` loop.
+    for (auto& addr : key_vec) {
+      keys.push(std::string(addr));
     }
   }
   rusty::Vec<std::string> empty_keys;

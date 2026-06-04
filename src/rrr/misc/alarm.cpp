@@ -34,10 +34,17 @@ class Alarm: public FrequentJob {
 
   rrr::PollThread *holder = NULL;
 
-  rusty::BTreeMap<uint64_t,
+  // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has a
+  // chain of unresolved transpiler bugs (btree_internal: variant ._0
+  // access, NodeRef temp binding, non-const member calls, copy-ctor
+  // requirement on non-copyable T) that surface when iter() / clone() /
+  // remove() are instantiated. std::map is semantically equivalent for
+  // this use (ordered map with begin/end, insert, erase). Migrate back
+  // when the upstream transpiler bugs are patched.
+  std::map<uint64_t,
            std::pair<uint64_t, rusty::Function<void(void)>>> waiting_;
 
-  rusty::BTreeMap<std::pair<uint64_t, uint64_t>,
+  std::map<std::pair<uint64_t, uint64_t>,
            rusty::Function<void(void)> > idx_time_;
 
   Alarm() : waiting_(), idx_time_()
@@ -59,15 +66,17 @@ class Alarm: public FrequentJob {
     auto it = waiting_.begin();
     if (it != waiting_.end()) {
       uint64_t tm_now = rrr::Time::now(false);
-      auto item = *it;
-      const uint64_t id = std::get<0>(item);
-      auto& val = std::get<1>(item);
+      // Take a reference (not a copy) — the value holds a non-copyable
+      // rusty::Function. `*it` is std::pair<const u64, V>.
+      auto& item = *it;
+      const uint64_t id = item.first;
+      auto& val = item.second;
       uint64_t tm_out = val.first;
       ret = (tm_now > tm_out);
       if (ret) {
         auto& func = val.second;
         func();
-        waiting_.remove(id);
+        waiting_.erase(id);  // std::map::erase (was BTreeMap::remove)
       }
     }
     return ret;
@@ -84,12 +93,15 @@ class Alarm: public FrequentJob {
 
   uint64_t add(uint64_t time, rusty::Function<void(void)> func) {
     uint64_t id = next_id_++;
-    waiting_.insert(id, std::make_pair(time, std::move(func)));
+    // std::map::emplace inserts in-place — moves the non-copyable
+    // rusty::Function into the map without an intermediate copy.
+    waiting_.emplace(id, std::make_pair(time, std::move(func)));
     return id;
   }
 
   bool remove(uint64_t id) {
-    return waiting_.remove(id).is_some();
+    // std::map::erase returns the count of erased elements (0 or 1).
+    return waiting_.erase(id) > 0;
   }
 
 };

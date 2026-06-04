@@ -366,7 +366,13 @@ class DispatchEvent: public Event{
   public:
     uint32_t n_dispatch_;
     uint32_t n_dispatch_ack_ = 0;
-    rusty::BTreeMap<uint32_t, bool> dispatch_acks_ = {};
+    // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has
+    // a chain of unresolved transpiler bugs in btree_internal that
+    // surface when iter() / clone() are instantiated. std::map is
+    // semantically equivalent for this use (ordered K→V) and ships in
+    // libc++. Migrate back to rusty::BTreeMap once the upstream bugs
+    // are patched.
+    std::map<uint32_t, bool> dispatch_acks_ = {};
     bool aborted_ = false;
     bool more = false;
 
@@ -737,7 +743,12 @@ class Reactor {
   // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
   // Using RefCell for safe interior mutability in const methods
-  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
+  // std::set (not rusty::BTreeSet) — BTreeSet::remove() triggers a
+  // cascade of transpiler bugs in btree_internal (OccupiedEntry
+  // remove_entry path has ._0 variant-access typos, non-const member
+  // calls, NodeRef temporary binding issues). Migrate back when the
+  // upstream bugs are patched.
+  rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers_{};
   rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
   // `inline` keeps these in vague linkage — see sp_reactor_th_ above for why.
@@ -895,8 +906,8 @@ class Reactor {
   }
 
   ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.len()=%zu",
-              all_events_.borrow()->len(), fibers_.borrow()->len());
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.size()=%zu",
+              all_events_.borrow()->len(), fibers_.borrow()->size());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
@@ -995,7 +1006,10 @@ export namespace rrr {
 //    so RefCell borrow is never held across handler calls
 class PollThreadWorker {
     friend class PollThread;
-    friend class rusty::Rc<rusty::RefCell<PollThreadWorker>>;
+    // `rusty::Rc<T>` is now a template alias (to `rusty::port::rc::Rc<T,A>`),
+    // not a class template — alias templates can't be befriended. Dropped
+    // the friendship since the ctor below is public; Rc::make() reaches
+    // it through the normal public-API path.
 
 public:
     // @unsafe - Factory method - creates worker wrapped in Rc<RefCell<>>
@@ -1082,8 +1096,12 @@ private:
     rusty::HashMap<int, int> mode_;  // fd -> mode
     rusty::HashSet<int> pending_remove_;
 
-    // Jobs - single owner in worker thread
-    rusty::BTreeSet<rusty::Arc<Job>> jobs_;
+    // Jobs - single owner in worker thread.
+    // std::set (not rusty::BTreeSet) — same reason as dispatch_acks_:
+    // the transpiled BTreeSet calls into BTreeMap::clone() which drags
+    // in broken btree_internal templates. Migrate back when the upstream
+    // transpiler bugs are patched.
+    std::set<rusty::Arc<Job>> jobs_;
 
     // Stop flag
     bool stop_ = false;
@@ -1395,7 +1413,10 @@ void Event::wait(uint64_t timeout) {
 //      }
 //      events.insert(it, shared_from_this());
 
-    wp_fiber_ = fiber;
+    // Transpiled Weak has no implicit Rc→Weak conversion / op= — use
+    // the static `Rc::downgrade(rc)` factory (mirrors std::rc::Rc::downgrade
+    // in Rust). Legacy hand-written rusty::Weak had `operator=(const Arc&)`.
+    wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
     status_.set(WAIT);
     auto fiber_status = fiber->status_.get();
     verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
@@ -1451,7 +1472,9 @@ Event::Event() {
   // It's OK if no fiber is running - event might be created outside a fiber
   // and Wait() called later from within one
   if (fiber_opt.is_some()) {
-    wp_fiber_ = fiber_opt.unwrap();
+    // Same Rc→Weak conversion fix as above.
+    auto rc_fiber = fiber_opt.unwrap();
+    wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
   }
   // Otherwise wp_fiber_ stays as default empty weak pointer
 }
@@ -1548,7 +1571,7 @@ void Fiber::run_wrapper(fiber_yield_t& yield) {
   verify(static_cast<bool>(*func_.borrow()));
   auto reactor = Reactor::get_reactor();
   while (true) {
-    auto sz = reactor->fibers_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->size();  // std::set::size
     verify(sz > 0);
     verify(static_cast<bool>(*func_.borrow()));
     (*func_.borrow_mut())();  // borrow_mut needed because operator() is non-const
@@ -1574,7 +1597,7 @@ void Fiber::run() const {
     verify(status_.get() == INIT);
     status_.set(STARTED);
     auto reactor = Reactor::get_reactor();
-    auto sz = reactor->fibers_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->size();  // std::set::size
     verify(sz > 0);
     auto task = std::bind(&Fiber::run_wrapper, const_cast<Fiber*>(this), std::placeholders::_1);
     *fiber_task_.borrow_mut() = rusty::Some(rusty::make_box<fiber_task_t>(std::move(task)));
@@ -1854,17 +1877,18 @@ void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
 
 // @safe - Registers a fiber in the active set
 void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
-  // @unsafe { RefCell::borrow_mut, BTreeSet::insert are not borrow-checked }
+  // @unsafe { RefCell::borrow_mut, std::set::insert are not borrow-checked }
   {
-  // BTreeSet::insert returns bool (true if newly inserted)
+  // std::set::insert returns pair<iterator, bool>; `.second` is true
+  // when the value was newly inserted.
   auto fibers_guard = fibers_.borrow_mut();
-  bool inserted = fibers_guard->insert(fiber.clone());
+  bool inserted = fibers_guard->insert(fiber.clone()).second;
   if (!inserted) {
     Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
-    Log_error("[DEBUG] fibers_ len: %zu, REUSING_FIBER: %d", fibers_guard->len(), REUSING_FIBER);
+    Log_error("[DEBUG] fibers_ size: %zu, REUSING_FIBER: %d", fibers_guard->size(), REUSING_FIBER);
   }
   verify(inserted);
-  verify(fibers_guard->len() > 0);
+  verify(fibers_guard->size() > 0);
   }
 }
 
@@ -2275,7 +2299,7 @@ void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
   }
   n_busy_fibers_.set(n_busy_fibers_.get() - 1);
   // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, fiber is still valid
-  { fibers_.borrow_mut()->remove(fiber); }
+  { fibers_.borrow_mut()->erase(fiber); }  // std::set::erase (was BTreeSet::remove)
 }
 
 void Reactor::display_waiting_ev() const {
@@ -2490,7 +2514,7 @@ void PollThreadWorker::process_commands() {
 // @unsafe blocks.
 void PollThreadWorker::trigger_job() {
   // Copy jobs to process (in case jobs modify the set).
-  rusty::BTreeSet<rusty::Arc<Job>> jobs_exec = jobs_.clone();
+  std::set<rusty::Arc<Job>> jobs_exec = jobs_;
   jobs_.clear();
 
   for (const auto& job : jobs_exec) {
@@ -2601,9 +2625,9 @@ void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
   jobs_.insert(job);
 }
 
-// @safe - rusty::BTreeSet::remove is @safe via namespace inheritance.
+// @safe - std::set::erase is the std equivalent of rusty::BTreeSet::remove.
 void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
-  jobs_.remove(job);
+  jobs_.erase(job);
 }
 
 // @safe - the rusty::HashSet / HashMap ops are @safe; only `poll_.Remove(fd)`

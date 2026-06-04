@@ -106,7 +106,11 @@ inline bool operator!=(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
     return !(lhs == rhs);
 }
 
-// Hash function for IdempotencyKey (for use in unordered_map)
+// Hash function for IdempotencyKey. Provides both:
+//   * std::hash-style `operator()` — for std::unordered_map use
+//   * hashbrown-style `hash_one()` — for rusty::HashMap (the transpiled
+//     hashbrown port calls `S::hash_one(K)` not `S::operator()(K)`)
+// @safe - pure function over POD inputs
 struct IdempotencyKeyHash {
     // @unsafe { hash computation }
     std::size_t operator()(const IdempotencyKey& key) const noexcept {
@@ -114,6 +118,12 @@ struct IdempotencyKeyHash {
         std::size_t h1 = std::hash<uint64_t>{}(key.client_id);
         std::size_t h2 = std::hash<uint64_t>{}(key.sequence);
         return h1 ^ (h2 * 0x9e3779b97f4a7c15ULL);  // Golden ratio constant
+    }
+    // hashbrown's `BuildHasher::hash_one<T>(&self, x: T) -> u64` shape.
+    // Delegate to operator() so both consumers (std/unordered_map and
+    // rusty/hashbrown HashMap) hash identically.
+    std::uint64_t hash_one(const IdempotencyKey& key) const noexcept {
+        return static_cast<std::uint64_t>((*this)(key));
     }
 };
 

@@ -692,8 +692,11 @@ class ALockGroup {
   // of concurrency should use SpinMutex<Inner>, not a separate
   // std::mutex.
 
-  rusty::BTreeMap<ALock *, uint64_t> locked_;
-  rusty::BTreeMap<ALock *, ALock::type_t> tolock_;
+  // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has
+  // unresolved transpiler bugs (see reactor.cpp / alarm.cpp comments).
+  // ALockGroup only needs ordered map-of-pointer-keys; std::map suffices.
+  std::map<ALock *, uint64_t> locked_;
+  std::map<ALock *, ALock::type_t> tolock_;
 
   uint64_t priority_;
   ALockWoundCallback wound_callback_;
@@ -752,7 +755,7 @@ class ALockGroup {
       //	    mtx_locks_.lock();
       //	    tolock_.insert(std::pair<ALock*, uint64_t>(&alock, 0));
       //	    tolock_.insert(std::pair<ALock*, ALock::type_t>(&alock, type));
-      tolock_.insert(alock, type);
+      tolock_.emplace(alock, type);  // std::map::emplace (was BTreeMap::insert)
       //	    mtx_locks_.unlock();
     } else {
       verify(0);
