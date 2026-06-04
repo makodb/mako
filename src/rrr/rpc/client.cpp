@@ -1610,7 +1610,7 @@ private:
                 buffering_config_.behavior == DisconnectBehavior::QUEUE) {
                 auto fu = Future::create(xid_counter_.next(1), attr);
                 auto fu_for_cb = fu;  // Arc clone for the callback.
-                QueuedRequest qr;
+                auto qr = QueuedRequest::new_();
                 qr.xid     = fu->xid_;
                 qr.rpc_id  = rpc_id;
                 qr.ttl_ms  = buffering_config_.default_ttl_ms;
