@@ -19,6 +19,7 @@
 #include "db.hh"
 #include <examples/common.h>
 #include "lib/transaction_ffi.h"
+#include "silo_runtime.h"
 
 import std;
 
@@ -36,12 +37,20 @@ thread_local bool tl_initialized = false;
 // Initialize thread-local state for database operations
 void ensure_thread_info() {
     if (!tl_initialized && g_mako_db != nullptr) {
-        // Initialize thread for mako::DB operations
-        g_mako_db->InitThread();
+        abstract_db* db = g_mako_db->GetDB();
+        if (db == nullptr) {
+            return;
+        }
+
+        // Initialize both the runtime binding and the benchmark DB thread state.
+        // mako::DB::InitThread() can no-op before leader config is installed,
+        // but the Redis path still needs Masstree/STO thread-local state.
+        SiloRuntime::Current()->BindToCurrentThread();
+        db->thread_init(false, 0);
 
         // Allocate thread-local buffers
         tl_arena = new str_arena();
-        tl_txn_buf.resize(g_mako_db->GetDB()->sizeof_txn_object(0));
+        tl_txn_buf.resize(db->sizeof_txn_object(0));
         tl_initialized = true;
 
         std::cout << "[cpp] Thread " << std::this_thread::get_id()
@@ -117,6 +126,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     void* txn = g_mako_db->BeginTransaction();
 
     bool all_success = true;
+    std::unordered_map<std::string, bool> batch_exists;
 
     try {
         // Execute each operation within the transaction
@@ -124,6 +134,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             const TxnOperation& op = request->ops[i];
             TxnOpResult& result = response->results[i];
             result.success = false;
+            result.value_present = false;
             result.data_ptr = nullptr;
             result.data_len = 0;
 
@@ -139,11 +150,15 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 mako::Status s = g_table->Get(txn, tl_key_buf, tl_val_buf);
                 if (s.ok()) {
                     result.success = true;
+                    result.value_present = true;
                     if (!tl_val_buf.empty()) {
                         result.data_len = tl_val_buf.size();
                         result.data_ptr = static_cast<uint8_t*>(std::malloc(result.data_len));
                         if (result.data_ptr) {
                             std::memcpy(result.data_ptr, tl_val_buf.data(), result.data_len);
+                        } else {
+                            all_success = false;
+                            result.success = false;
                         }
                     }
                 } else if (s.IsNotFound()) {
@@ -158,17 +173,42 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 result.success = s.ok();
                 if (!s.ok()) {
                     all_success = false;
+                } else {
+                    batch_exists[tl_key_buf] = true;
                 }
             } else if (op.op == TXN_OP_DEL) {
                 // DEL operation
                 // @unsafe { g_table->Delete calls non-borrow-checked Masstree code }
-                // Note: Delete always returns OK (remove is fire-and-forget).
-                // We avoid Get+Delete in same txn to prevent OCC read-write conflict.
-                // data_len=1 signals success to Rust; actual key existence can be
-                // verified by a separate GET after the DEL transaction commits.
-                mako::Status s = g_table->Delete(txn, tl_key_buf);
+                bool exists = false;
+                auto batch_it = batch_exists.find(tl_key_buf);
+                if (batch_it != batch_exists.end()) {
+                    exists = batch_it->second;
+                } else {
+                    mako::Status exists_status = g_table->Exists(txn, tl_key_buf, &exists);
+                    if (!exists_status.ok()) {
+                        all_success = false;
+                        continue;
+                    }
+                }
+                mako::Status s = exists ? g_table->Delete(txn, tl_key_buf) : mako::Status::OK();
                 result.success = s.ok();
-                result.data_len = s.ok() ? 1 : 0;
+                result.value_present = exists;
+                if (!s.ok()) {
+                    all_success = false;
+                } else {
+                    batch_exists[tl_key_buf] = false;
+                }
+            } else if (op.op == TXN_OP_EXISTS) {
+                bool exists = false;
+                auto batch_it = batch_exists.find(tl_key_buf);
+                mako::Status s = mako::Status::OK();
+                if (batch_it != batch_exists.end()) {
+                    exists = batch_it->second;
+                } else {
+                    s = g_table->Exists(txn, tl_key_buf, &exists);
+                }
+                result.success = s.ok();
+                result.value_present = exists;
                 if (!s.ok()) {
                     all_success = false;
                 }
@@ -251,7 +291,9 @@ int main() {
     int nshards = 1;
     int shard_index = 0;
     int nthreads = 8;
-    std::string paxos_proc_name = "localhost";  // Leader
+    const char* mako_paxos_proc_name = getenv("MAKO_PAXOS_PROC_NAME");
+    std::string paxos_proc_name =
+            mako_paxos_proc_name ? mako_paxos_proc_name : "localhost";  // Leader by default
 
     // Build config path (same pattern as simpleTransactionRep.cc)
     std::string config_path = get_current_absolute_path()
@@ -299,7 +341,13 @@ int main() {
     }
     std::cout << "Rust server initialized with " << nthreads << " worker threads" << std::endl;
 
-    std::cout << "\n=== Server running on 127.0.0.1:6380 ===" << std::endl;
+    const char* mako_host = getenv("MAKO_HOST");
+    const char* mako_port = getenv("MAKO_PORT");
+    std::cout << "\n=== Server running on "
+              << (mako_host ? mako_host : "127.0.0.1")
+              << ":"
+              << (mako_port ? mako_port : "6380")
+              << " ===" << std::endl;
     std::cout << "Press Ctrl+C to exit" << std::endl;
 
     // Main thread just waits

@@ -18,6 +18,8 @@ import std;
 enum class WorkType : uint32_t {
     Get = 1,
     Set = 2,
+    Del = 3,
+    Exists = 4,
     Shutdown = 999
 };
 
@@ -221,6 +223,51 @@ RustWrapper::Result RustWrapper::execute_request(OpCode op,
                 success = false;
                 result = "ERROR: Exception";
             }
+        } else if (op == OpCode::Del) {
+            void *txn = db->new_txn(0, *tl_arena, txn_buf());
+
+            tl_key_buf.clear();
+            tl_key_buf.reserve(sizeof("table_key_") - 1 + key_len);
+            tl_key_buf.append("table_key_", sizeof("table_key_") - 1);
+            tl_key_buf.append(reinterpret_cast<const char*>(key_ptr), key_len);
+
+            try {
+                bool exists = customerTable->exists(txn, tl_key_buf);
+                if (exists) {
+                    customerTable->remove(txn, tl_key_buf);
+                }
+                db->commit_txn(txn);
+                result = exists ? "1" : "0";
+            } catch (abstract_db::abstract_abort_exception &ex) {
+                db->abort_txn(txn);
+                success = false;
+                result = "ERROR: Transaction aborted";
+            } catch (...) {
+                db->abort_txn(txn);
+                success = false;
+                result = "ERROR: Exception";
+            }
+        } else if (op == OpCode::Exists) {
+            void *txn = db->new_txn(0, *tl_arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+
+            tl_key_buf.clear();
+            tl_key_buf.reserve(sizeof("table_key_") - 1 + key_len);
+            tl_key_buf.append("table_key_", sizeof("table_key_") - 1);
+            tl_key_buf.append(reinterpret_cast<const char*>(key_ptr), key_len);
+
+            try {
+                bool exists = customerTable->exists(txn, tl_key_buf);
+                db->commit_txn(txn);
+                result = exists ? "1" : "0";
+            } catch (abstract_db::abstract_abort_exception &ex) {
+                db->abort_txn(txn);
+                success = false;
+                result = "ERROR: Transaction aborted";
+            } catch (...) {
+                db->abort_txn(txn);
+                success = false;
+                result = "ERROR: Exception";
+            }
         } else {
             result = "ERROR: Invalid operation";
             success = false;
@@ -275,7 +322,7 @@ extern "C" {
             const TxnOperation& txn_op = request->ops[i];
 
             // Validate operation
-            if (txn_op.op != 1 && txn_op.op != 2) {
+            if (txn_op.op != 1 && txn_op.op != 2 && txn_op.op != 3 && txn_op.op != 4) {
                 response->results[i].success = false;
                 all_success = false;
                 continue;
@@ -298,6 +345,7 @@ extern "C" {
             auto [result_vec, success] = future.get();
 
             response->results[i].success = success;
+            response->results[i].value_present = false;
 
             if (success && txn_op.op == 1) { // GET
                 if (!result_vec.empty()) {
@@ -307,11 +355,17 @@ extern "C" {
                         std::memcpy(buf, result_vec.data(), n);
                         response->results[i].data_ptr = buf;
                         response->results[i].data_len = n;
+                        response->results[i].value_present = true;
                     } else {
                         response->results[i].success = false;
                         all_success = false;
                     }
+                } else {
+                    response->results[i].value_present = true;
                 }
+            } else if (success && (txn_op.op == 3 || txn_op.op == 4)) {
+                response->results[i].value_present =
+                    (result_vec.size() == 1 && result_vec[0] == static_cast<uint8_t>('1'));
             }
 
             if (!success) {
@@ -384,7 +438,16 @@ public:
             }
             
             // Process the work item
-            OpCode op = (item->type == WorkType::Get) ? OpCode::Get : OpCode::Set;
+            OpCode op = OpCode::Invalid;
+            if (item->type == WorkType::Get) {
+                op = OpCode::Get;
+            } else if (item->type == WorkType::Set) {
+                op = OpCode::Set;
+            } else if (item->type == WorkType::Del) {
+                op = OpCode::Del;
+            } else if (item->type == WorkType::Exists) {
+                op = OpCode::Exists;
+            }
             
             auto result = g_rust_wrapper_instance->execute_request(
                 op,

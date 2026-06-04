@@ -16,6 +16,10 @@ public:
         return v.length() == 1+mako::EXTRA_BITS_FOR_VALUE && v[0] == 'B';
     }
 
+    static bool isDeletedBytes(const char* data, size_t length) {
+        return length == 1 + mako::EXTRA_BITS_FOR_VALUE && data[0] == 'B';
+    }
+
     template <typename ValueType>
     static std::vector<string> getAllVersion(string val) {
         std::vector<string> ret;
@@ -160,6 +164,61 @@ public:
                 }
                 header = reinterpret_cast<mako::Node *>((char*)(header->data+header->data_size-mako::BITS_OF_NODE));
             }
+        }
+#endif
+        return true;
+    }
+
+    static bool mvExists(char *oldval_str,
+                         size_t oldval_len,
+                         uint8_t current_term,
+                         const std::unordered_map<int, uint32_t>& hist_timestamp) {
+        uint32_t *time_term = reinterpret_cast<uint32_t*>(
+            oldval_str + oldval_len - mako::EXTRA_BITS_FOR_VALUE);
+
+        if (likely(*time_term % 10 == current_term)) {
+            return !isDeletedBytes(oldval_str, oldval_len);
+        }
+
+        mako::Node *header = reinterpret_cast<mako::Node *>(
+            oldval_str + oldval_len - mako::BITS_OF_NODE);
+
+#if defined(FAIL_NEW_VERSION)
+        auto hist_it = hist_timestamp.find(*time_term % 10);
+        if (hist_it == hist_timestamp.end()) {
+            return !isDeletedBytes(oldval_str, oldval_len);
+        }
+        if (sync_util::sync_logger::safety_check(header->timestamp, hist_it->second)) {
+            return !isDeletedBytes(oldval_str, oldval_len);
+        }
+        while (header->data_size > 0) {
+            time_term = reinterpret_cast<uint32_t*>(
+                header->data + header->data_size - mako::EXTRA_BITS_FOR_VALUE);
+            hist_it = hist_timestamp.find(*time_term % 10);
+            if (hist_it != hist_timestamp.end()
+                && sync_util::sync_logger::safety_check(header->timestamp, hist_it->second)) {
+                return !isDeletedBytes(header->data, header->data_size);
+            }
+            header = reinterpret_cast<mako::Node*>(
+                header->data + header->data_size - mako::BITS_OF_NODE);
+        }
+#else
+        auto hist_it = hist_timestamp.find(*time_term % 10);
+        if (hist_it == hist_timestamp.end()) {
+            return !isDeletedBytes(oldval_str, oldval_len);
+        }
+        if (header->timestamp / 10 <= hist_it->second) {
+            return !isDeletedBytes(oldval_str, oldval_len);
+        }
+        while (header->data_size > 0) {
+            time_term = reinterpret_cast<uint32_t*>(
+                header->data + header->data_size - mako::EXTRA_BITS_FOR_VALUE);
+            hist_it = hist_timestamp.find(*time_term % 10);
+            if (hist_it != hist_timestamp.end() && header->timestamp / 10 <= hist_it->second) {
+                return !isDeletedBytes(header->data, header->data_size);
+            }
+            header = reinterpret_cast<mako::Node*>(
+                header->data + header->data_size - mako::BITS_OF_NODE);
         }
 #endif
         return true;

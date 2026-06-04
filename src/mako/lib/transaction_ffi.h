@@ -18,6 +18,11 @@
  *   4. C++ executes all operations in a single database transaction
  *   5. C++ returns results for each operation
  *   6. Rust sends RESP array with all results to client
+ *
+ * Encoding boundary:
+ *   Values stay encoded/decoded in the C++ Mako storage layer. Rust treats
+ *   keys and values as opaque Redis bytes and uses value_present to distinguish
+ *   an existing empty bulk string from a missing key.
  */
 
 #ifdef __cplusplus
@@ -30,7 +35,9 @@ extern "C" {
 typedef enum {
     TXN_OP_GET = 1,
     TXN_OP_SET = 2,
-    TXN_OP_DEL = 3,
+    TXN_OP_DELETE = 3,
+    TXN_OP_DEL = TXN_OP_DELETE,
+    TXN_OP_EXISTS = 4,
 } TxnOpCode;
 
 /**
@@ -61,14 +68,19 @@ typedef struct {
  * Result for a single operation
  *
  * For GET:
- *   - success=true, data_ptr!=NULL: hit, data contains value
- *   - success=true, data_ptr==NULL: miss (key not found)
+ *   - success=true, value_present=true: hit, data contains value bytes
+ *     (data_len may be 0 for an empty Redis bulk string)
+ *   - success=true, value_present=false: miss (key not found)
  * For SET:
  *   - success=true: write succeeded
  *   - success=false: write failed (conflict, etc.)
+ * For DELETE / EXISTS:
+ *   - success=true, value_present=true: key existed
+ *   - success=true, value_present=false: key did not exist
  */
 typedef struct {
     bool success;
+    bool value_present;
     uint8_t* data_ptr;   // malloc'd buffer for GET results, NULL for SET
     size_t data_len;
 } TxnOpResult;

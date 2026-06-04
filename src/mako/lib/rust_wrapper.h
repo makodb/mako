@@ -28,7 +28,9 @@ extern "C" {
 enum class OpCode : uint32_t {
     Invalid = 0,
     Get     = 1,
-    Set     = 2
+    Set     = 2,
+    Del     = 3,
+    Exists  = 4
 };
 
 class RustWrapper {
