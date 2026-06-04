@@ -152,41 +152,6 @@ class OneTimeJob : public Job {
   }
 };
 
-class FrequentJob : public Job {
-public:
-  uint64_t tm_last_ = 0;
-  uint64_t period_ = 0;
-
-  FrequentJob() = default;
-
-  // Explicit move ctor — same rationale as `OneTimeJob`. The
-  // DSL-emitted `Job` base is non-movable, so derived types must
-  // construct a fresh base subobject and move the derived members
-  // by hand to stay movable.
-  FrequentJob(FrequentJob&& other) noexcept
-      : Job(), tm_last_(other.tm_last_), period_(other.period_) {}
-
-  virtual ~FrequentJob() {}
-  // @safe - rrr::Time::now(false) flows through rusty::sys::time::clock_*_us.
-  virtual bool Ready() override {
-    uint64_t tm_now = rrr::Time::now(false);
-    uint64_t s = tm_now - tm_last_;
-    if (s > period_) {
-      tm_last_ = tm_now;
-      return true;
-    }
-    return false;
-  }
-
-  virtual bool Done() override {
-    return false;
-  }
-
-  virtual uint64_t get_last_time() { return tm_last_; }
-
-  virtual void set_period(uint64_t p) { period_ = p; }
-};
-
 } // export namespace rrr
 
 // @safe - impl namespace. Every function below carries its own
