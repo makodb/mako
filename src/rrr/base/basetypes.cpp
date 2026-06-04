@@ -62,23 +62,111 @@ public:
     static i64 load_i64(const char* buf);
 };
 
-class v32 {
-    i32 val_;
-public:
-    v32(i32 v = 0): val_(v) { }
-    void set(i32 v) { val_ = v; }
-    i32 get() const { return val_; }
-    size_t val_size() const { return SparseInt::val_size(val_); }
+// `v32` — variable-length 32-bit integer wrapper for Marshal wire ops.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. `fn new(v)` lowers to a static
+// `v32::new_(v)` factory.
+//
+// Behavioral diffs from the original C++ class:
+//   * No default constructor — callers that previously default-
+//     constructed (`v32 v_err;`) now write `v32 v_err = {}` (value-
+//     init zero-fills the aggregate) or `v32::new_(0)` explicitly.
+//   * The single-arg ctor (`v32(123)`) keeps compiling via C++20
+//     aggregate paren-init (P0960), which binds the arg to
+//     `val_field`.
+//   * `set()` becomes `&mut self` (Rust-idiomatic) and stays non-const
+//     on the C++ side. `get()` and `val_size()` stay `const`.
+//   * Field renamed `val_` → `val_field` (cosmetic; private in the
+//     legacy class, public in the DSL-emitted aggregate, but no
+//     callers reach into them — `get()`/`set()` is the public API).
+#if RUSTYCPP_RUST
+struct v32 {
+    val_field: i32,
+}
+
+impl v32 {
+    fn new(v: i32) -> v32 { v32 { val_field: v } }
+    fn set(&mut self, v: i32) { self.val_field = v; }
+    fn get(&self) -> i32 { self.val_field }
+    fn val_size(&self) -> usize { SparseInt::val_size(self.val_field as i64) }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.4 version=1 rust_sha256=3ef01e6050afc2b59a98ef8361930b1cb4d4cbb1345d73481ad776eeeb410641*/
+struct v32;
+
+struct v32 {
+    int32_t val_field;
+
+    static v32 new_(int32_t v);
+    void set(int32_t v);
+    int32_t get() const;
+    size_t val_size() const;
 };
 
-class v64 {
-    i64 val_;
-public:
-    v64(i64 v = 0): val_(v) { }
-    void set(i64 v) { val_ = v; }
-    i64 get() const { return val_; }
-    size_t val_size() const { return SparseInt::val_size(val_); }
+
+v32 v32::new_(int32_t v) {
+    return v32{.val_field = std::move(v)};
+}
+
+void v32::set(int32_t v) {
+    this->val_field = std::move(v);
+}
+
+int32_t v32::get() const {
+    return this->val_field;
+}
+
+size_t v32::val_size() const {
+    return SparseInt::val_size(static_cast<int64_t>(this->val_field));
+}
+/*RUSTYCPP:GEN-END id=basetypes.4*/
+
+// `v64` — variable-length 64-bit integer wrapper for Marshal wire ops.
+// Same DSL pattern + behavioral diffs as `v32` (see above), just at
+// 64-bit width.
+#if RUSTYCPP_RUST
+struct v64 {
+    val_field: i64,
+}
+
+impl v64 {
+    fn new(v: i64) -> v64 { v64 { val_field: v } }
+    fn set(&mut self, v: i64) { self.val_field = v; }
+    fn get(&self) -> i64 { self.val_field }
+    fn val_size(&self) -> usize { SparseInt::val_size(self.val_field) }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.5 version=1 rust_sha256=b79e4b80239015966c8c9d9c9c3cffc923aab52fb8b1c3c28bbba0b2188818bd*/
+struct v64;
+
+struct v64 {
+    int64_t val_field;
+
+    static v64 new_(int64_t v);
+    void set(int64_t v);
+    int64_t get() const;
+    size_t val_size() const;
 };
+
+
+v64 v64::new_(int64_t v) {
+    return v64{.val_field = std::move(v)};
+}
+
+void v64::set(int64_t v) {
+    this->val_field = std::move(v);
+}
+
+int64_t v64::get() const {
+    return this->val_field;
+}
+
+size_t v64::val_size() const {
+    return SparseInt::val_size(this->val_field);
+}
+/*RUSTYCPP:GEN-END id=basetypes.5*/
 
 class NoCopy {
 protected:

@@ -337,7 +337,7 @@ class BinaryWriteArchive {
 
   // ---- Variable-length byte sequences. ----------------------------------
   BinaryWriteArchive& operator<<(std::string_view s) {
-    rrr::v64 v_len = static_cast<rrr::i64>(s.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(s.size())};
     *this << v_len;
     if (s.size() > 0) {
       sink_->write(s.data(), s.size());
@@ -371,7 +371,7 @@ class BinaryWriteArchive {
   // `Marshal` operator<<, so byte-for-byte compatibility holds.
   template<class T>
   BinaryWriteArchive& operator<<(const rusty::Vec<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -379,7 +379,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::vector<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -387,7 +387,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::list<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -395,7 +395,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const rusty::BTreeSet<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -403,7 +403,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::set<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -411,7 +411,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const rusty::HashSet<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -419,7 +419,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::unordered_set<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -427,7 +427,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const rusty::BTreeMap<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, V&>` (post-2026-04 API).
@@ -440,7 +440,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const std::map<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) {
       *this << it->first << it->second;
@@ -450,7 +450,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const rusty::HashMap<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     // rusty::HashMap iter `operator*()` returns
     // `std::tuple<const K&, V&>` (post-2026-04 API).
@@ -463,7 +463,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const std::unordered_map<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) {
       *this << it->first << it->second;

@@ -454,7 +454,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const double &v) {
 // @safe
 // @lifetime: (&'a, const std::string&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
-  v64 v_len = v.length();
+  v64 v_len{static_cast<rrr::i64>(v.length())};
   m << v_len;
   if (v_len.get() > 0) {
     verify(m.write(v.c_str(), v_len.get()) == (size_t) v_len.get());
@@ -484,7 +484,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::pair<T1, T2> &v) {
 // @lifetime: (&'a, const rusty::Vec<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::Vec<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename rusty::Vec<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
@@ -498,7 +498,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::Vec<T> &v) {
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
   // Keep std::vector support for non-rrr call sites while rrr internals move to rusty containers.
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
        ++it) {
@@ -511,7 +511,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
 // @lifetime: (&'a, const std::list<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename std::list<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
@@ -524,7 +524,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
 // @lifetime: (&'a, const rusty::BTreeSet<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeSet<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename rusty::BTreeSet<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
@@ -537,7 +537,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeSet<T> &v) {
 // @lifetime: (&'a, const std::set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
        ++it) {
@@ -550,7 +550,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
 // @lifetime: (&'a, const rusty::BTreeMap<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
@@ -566,7 +566,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v)
 // @lifetime: (&'a, const std::map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
        ++it) {
@@ -580,7 +580,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const rusty::HashSet<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename rusty::HashSet<T>::const_iterator it = v.begin();
          it != v.end(); ++it) {
@@ -594,7 +594,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_set<T> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::unordered_set<T>::const_iterator it = v.begin();
        it != v.end(); ++it) {
@@ -608,7 +608,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const rusty::HashMap<K, V> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     // rusty::HashMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
@@ -625,7 +625,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_map<K, V> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
        it != v.end(); ++it) {
