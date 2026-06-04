@@ -3937,6 +3937,12 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
+    // The FiberChannel ctor only inits fields; bind_callbacks wires
+    // the [this]-capturing on_frame/on_closed/on_error lambdas onto
+    // the owned channel proxy. Must run after the Box-allocated
+    // FiberChannel is in its final memory location (so `this` is
+    // pinned).
+    guard->as_ref().unwrap()->bind_callbacks();
   }
   channel_mode_.set(true);
 
@@ -3992,6 +3998,10 @@ void ClientConnection::bind_channel_via_poll_thread(
   {
     auto guard = fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
+    // Wire up the on_frame/on_closed/on_error lambdas on the just-
+    // installed FiberChannel (see comment in the make_box site above
+    // — bind_callbacks() runs after the Box address is final).
+    guard->as_ref().unwrap()->bind_callbacks();
   }
   channel_mode_.set(true);
 
