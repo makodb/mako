@@ -85,14 +85,13 @@ if(NOT TARGET rusty)
         ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
     )
     target_compile_features(rusty PUBLIC cxx_std_23)
-    # Mirror rusty-cpp's port targets exactly so the PCM module-attachment
-    # checks line up: `-O3 -DNDEBUG -march=native` is what vec_port,
-    # btree_port, rc_port, hashbrown_port, and rusty_async use, and we
-    # turn off GNU extensions (`-std=c++23`, not the mako-default
-    # `-std=gnu++23`) so the "GNU extensions was disabled" PCM
-    # compatibility check passes when rusty.cppm `import`s those ports.
+    # Mako-default toolchain uses `-std=gnu++23` (CMAKE_CXX_EXTENSIONS=ON
+    # at the top level — matches how CMake builds std.pcm). The rusty
+    # umbrella has to match so consumers in rrr can `import rusty;`
+    # without tripping the "GNU extensions was disabled in precompiled
+    # file" PCM-config check.
     target_compile_options(rusty PRIVATE
-        -O3 -DNDEBUG -march=native -std=c++23
+        -O3 -DNDEBUG -march=native -std=gnu++23
     )
     target_link_libraries(rusty PUBLIC
         vec_port btree_port rc_port hashbrown_port rusty_async

@@ -20,6 +20,7 @@ module;
 export module rrr.alock;
 
 import std;
+import rusty;
 import rrr.alarm;
 import rrr.basetypes;
 import rrr.callback_wrapper;

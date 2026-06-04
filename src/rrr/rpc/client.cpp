@@ -20,6 +20,7 @@ module;
 export module rrr.client;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.callback_wrapper;
 import rrr.callbacks;

@@ -6,6 +6,7 @@ module;
 export module rrr.callbacks;
 
 import std;
+import rusty;
 import rrr.errors;
 import rrr.threading;
 

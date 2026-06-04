@@ -12,6 +12,7 @@ module;
 export module rrr.request_queue;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.marshal;
 import rrr.threading;

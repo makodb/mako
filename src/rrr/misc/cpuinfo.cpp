@@ -16,6 +16,7 @@ module;
 export module rrr.cpuinfo;
 
 import std;
+import rusty;
 import rrr.logging;
 
 // @safe - CPUInfo: process-level cpu/network/memory sampling. The

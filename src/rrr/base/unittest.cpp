@@ -8,6 +8,7 @@ module;
 export module rrr.unittest;
 
 import std;
+import rusty;
 import rrr.debugging;
 import rrr.logging;
 import rrr.strop;

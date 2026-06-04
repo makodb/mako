@@ -10,6 +10,7 @@ module;
 export module rrr.completion_tracker;
 
 import std;
+import rusty;
 import rrr.idempotency;
 
 export namespace rrr {

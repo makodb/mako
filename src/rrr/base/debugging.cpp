@@ -11,6 +11,7 @@ module;
 export module rrr.debugging;
 
 import std;
+import rusty;
 import rrr.misc; // for get_exec_path
 
 // @safe - debugging primitives. `verify()` is a pure precondition

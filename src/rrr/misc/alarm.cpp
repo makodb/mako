@@ -6,6 +6,7 @@ module;
 export module rrr.alarm;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.misc;
