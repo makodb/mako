@@ -23,6 +23,11 @@
  *   Values stay encoded/decoded in the C++ Mako storage layer. Rust treats
  *   keys and values as opaque Redis bytes and uses value_present to distinguish
  *   an existing empty bulk string from a missing key.
+ *
+ * Reserved internal keys:
+ *   Redis-visible keys must not use the 0x01 prefix. The Redis layer stores
+ *   TTL metadata under "\x01TTL:<key>" inside the same transaction as the user
+ *   key operation that creates, clears, or observes the expiry.
  */
 
 #ifdef __cplusplus
@@ -42,6 +47,9 @@ typedef enum {
     TXN_OP_STRLEN = 6,
     TXN_OP_INCRBY = 7,
     TXN_OP_INCRBYFLOAT = 8,
+    TXN_OP_EXPIRE = 9,
+    TXN_OP_TTL = 10,
+    TXN_OP_PERSIST = 11,
 } TxnOpCode;
 
 typedef enum {
@@ -52,6 +60,11 @@ typedef enum {
     TXN_FLAG_SET_INTEGER_REPLY = 1u << 3,
     TXN_FLAG_SET_REQUIRE_ABSENT_GROUP = 1u << 4,
     TXN_FLAG_SET_KEEP_TTL = 1u << 5,
+    TXN_FLAG_TTL_MILLISECONDS = 1u << 6,
+    TXN_FLAG_EXPIRE_NX = 1u << 7,
+    TXN_FLAG_EXPIRE_XX = 1u << 8,
+    TXN_FLAG_EXPIRE_GT = 1u << 9,
+    TXN_FLAG_EXPIRE_LT = 1u << 10,
 } TxnOpFlags;
 
 /**
@@ -62,7 +75,8 @@ typedef enum {
  *   - key_ptr/key_len: pointer to key bytes
  *   - val_ptr/val_len: pointer to value bytes (NULL for GET)
  *   - flags: command-specific flags; currently used by SET variants
- *   - expire_at_ms: absolute Unix millisecond expiry, or -1 for no expiry metadata
+ *   - expire_at_ms: absolute Unix millisecond expiry for SET/EXPIRE, or -1
+ *     for no expiry metadata
  *   - group_id: non-zero when ops belong to one all-or-nothing group, such as MSETNX
  */
 typedef struct {
@@ -97,7 +111,7 @@ typedef struct {
  * For DELETE / EXISTS:
  *   - success=true, value_present=true: key existed
  *   - success=true, value_present=false: key did not exist
- * For integer-returning operations:
+ * For integer-returning operations, including TTL-family commands:
  *   - success=true, int_value carries the Redis integer reply
  */
 typedef struct {

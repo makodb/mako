@@ -24,6 +24,9 @@ enum class WorkType : uint32_t {
     StrLen = 6,
     IncrBy = 7,
     IncrByFloat = 8,
+    Expire = 9,
+    Ttl = 10,
+    Persist = 11,
     Shutdown = 999
 };
 
@@ -332,7 +335,7 @@ extern "C" {
             const TxnOperation& txn_op = request->ops[i];
 
             // Validate operation
-            if (txn_op.op < 1 || txn_op.op > 8) {
+            if (txn_op.op < 1 || txn_op.op > 11) {
                 response->results[i].success = false;
                 all_success = false;
                 continue;
@@ -487,6 +490,12 @@ public:
                 op = OpCode::IncrBy;
             } else if (item->type == WorkType::IncrByFloat) {
                 op = OpCode::IncrByFloat;
+            } else if (item->type == WorkType::Expire) {
+                op = OpCode::Expire;
+            } else if (item->type == WorkType::Ttl) {
+                op = OpCode::Ttl;
+            } else if (item->type == WorkType::Persist) {
+                op = OpCode::Persist;
             }
             
             auto result = g_rust_wrapper_instance->execute_request(

@@ -16,6 +16,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `MGET`, `MSET`, `MSETNX` | Multi-key string reads and writes | `MSETNX` is scoped to one FFI request | Expands to per-key operations while returning one Redis reply |
 | `APPEND`, `STRLEN` | String append and length | String type only | Uses C++ read-modify-write inside one transaction with Rust-side bounded retry for growing values |
 | `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT` | Counter updates | No integer overflow parity tests yet | Uses C++ read-modify-write inside one transaction with Rust-side bounded retry |
+| `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `PERSIST` | Adds, reads, or removes key expiry metadata | No background expiry scanner | Stores absolute Unix millisecond expiry under an internal TTL key and checks it inside C++ transactions |
 | `DEL key [key ...]` | Deletes one or more keys and returns the count of keys that existed | No asynchronous deletion | Redis `UNLINK` aliases to this path because Phase 1 has no lazy-free subsystem |
 | `UNLINK key [key ...]` | Alias of `DEL` | No async free semantics | Provides client compatibility without adding background deletion machinery |
 | `EXISTS key [key ...]` | Checks one or more keys and returns the count present | No bloom-filter/cache shortcut; remote tables use `remoteGet()` and may copy the value | Uses a dedicated local no-copy existence path that participates in OCC read observation |
@@ -37,6 +38,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `TXN_OP_DELETE = 3` / `TXN_OP_DEL` | Delete operation | Delete and unlink are not distinguished | `UNLINK` is intentionally an alias at this phase |
 | `TXN_OP_EXISTS = 4` | Existence operation | No value bytes are returned | Existence needs presence, not value materialization |
 | `TXN_OP_APPEND`, `TXN_OP_STRLEN`, `TXN_OP_INCRBY`, `TXN_OP_INCRBYFLOAT` | Phase 3 string/counter operations | String-only command surface | Keeps read-modify-write logic in one C++ transaction |
+| `TXN_OP_EXPIRE`, `TXN_OP_TTL`, `TXN_OP_PERSIST` | Phase 4 TTL-family operations | No background expiry scanner | Keeps expiry decisions and lazy deletion inside one C++ transaction |
 | `TxnOpResult::success` | Operation/backend success | Does not encode key presence | Separates backend failure from Redis nil / missing-key semantics |
 | `TxnOpResult::value_present` | Key presence bit | No value bytes by itself | Required to distinguish missing keys from existing empty bulk strings |
 | `TxnOpResult::data_ptr/data_len` | Returned value bytes for `GET` | Null for non-value operations | Keeps Redis bytes opaque to Rust while preserving empty-string correctness |
@@ -252,7 +254,26 @@ Those are intentionally outside the foundational FFI step.
 
 ## TTL Expiry
 
-`SET` TTL options store expiry metadata in the reserved internal
-`\x01TTL:<key>` namespace. The primary `makoCon` path enforces expiry lazily on
-Redis reads, existence checks, deletes, and read-modify-write commands. There is
-no background expiry scanner yet.
+`SET` TTL options and standalone TTL commands store expiry metadata in the
+reserved internal `\x01TTL:<key>` namespace. The primary `makoCon` path enforces
+expiry lazily on Redis reads, existence checks, deletes, TTL checks, and
+read-modify-write commands. There is no background expiry scanner yet.
+
+Supported Phase 4 commands:
+
+- `EXPIRE key seconds [NX|XX] [GT|LT]`
+- `PEXPIRE key milliseconds [NX|XX] [GT|LT]`
+- `EXPIREAT key unix-seconds [NX|XX] [GT|LT]`
+- `PEXPIREAT key unix-milliseconds [NX|XX] [GT|LT]`
+- `TTL key`
+- `PTTL key`
+- `PERSIST key`
+
+`TTL` and `PTTL` return Redis-compatible integer states:
+
+- `-2` when the key does not exist or has expired during the check.
+- `-1` when the key exists without expiry metadata.
+- a positive remaining lifetime when expiry metadata exists.
+
+`NX` is mutually exclusive with `XX`, `GT`, and `LT`. `GT` and `LT` are mutually
+exclusive with each other. `XX` can combine with `GT` or `LT`, matching Redis.

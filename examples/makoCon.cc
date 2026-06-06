@@ -118,6 +118,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     bool all_success = true;
     std::unordered_map<std::string, bool> batch_exists;
     std::unordered_map<std::string, std::string> batch_values;
+    std::unordered_map<std::string, int64_t> batch_ttls;
     std::unordered_map<uint32_t, bool> group_can_write;
 
     auto make_prefixed_key = [](const TxnOperation& op) {
@@ -191,7 +192,18 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return g_table->Delete(txn, key);
     };
 
-    auto expire_if_needed = [&](void* txn, const std::string& user_key, const std::string& storage_key) {
+    auto now_unix_ms = []() {
+        return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    auto read_ttl_meta = [&](void* txn, const std::string& user_key, int64_t& expire_at_ms, bool& exists) {
+        auto batch_ttl_it = batch_ttls.find(user_key);
+        if (batch_ttl_it != batch_ttls.end()) {
+            expire_at_ms = batch_ttl_it->second;
+            exists = expire_at_ms >= 0;
+            return mako::Status::OK();
+        }
         const std::string meta_key = make_ttl_meta_key(user_key);
         std::string ttl_value;
         bool ttl_exists = false;
@@ -199,23 +211,33 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok() || !ttl_exists) {
             return s;
         }
-        int64_t expire_at_ms = 0;
+        exists = true;
         if (!parse_int64(ttl_value, expire_at_ms)) {
+            exists = false;
             return mako::Status::OK();
         }
-        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        if (expire_at_ms > static_cast<int64_t>(now_ms)) {
+        return mako::Status::OK();
+    };
+
+    auto expire_if_needed = [&](void* txn, const std::string& user_key, const std::string& storage_key) {
+        int64_t expire_at_ms = 0;
+        bool ttl_exists = false;
+        mako::Status s = read_ttl_meta(txn, user_key, expire_at_ms, ttl_exists);
+        if (!s.ok() || !ttl_exists) {
+            return mako::Status::OK();
+        }
+        if (expire_at_ms > now_unix_ms()) {
             return mako::Status::OK();
         }
         s = delete_raw_if_exists(txn, storage_key);
         if (!s.ok()) {
             return s;
         }
-        s = delete_raw_if_exists(txn, meta_key);
+        s = delete_raw_if_exists(txn, make_ttl_meta_key(user_key));
         if (s.ok()) {
             batch_exists[storage_key] = false;
             batch_values.erase(storage_key);
+            batch_ttls[user_key] = -1;
         }
         return s;
     };
@@ -252,11 +274,32 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             return mako::Status::OK();
         }
         std::string meta_key = make_ttl_meta_key(user_key);
-        return put_raw(txn, meta_key, std::to_string(expire_at_ms));
+        mako::Status s = put_raw(txn, meta_key, std::to_string(expire_at_ms));
+        if (s.ok()) {
+            batch_ttls[user_key] = expire_at_ms;
+        }
+        return s;
     };
 
     auto clear_ttl_meta = [&](void* txn, const std::string& user_key) {
-        return delete_raw_if_exists(txn, make_ttl_meta_key(user_key));
+        mako::Status s = delete_raw_if_exists(txn, make_ttl_meta_key(user_key));
+        if (s.ok()) {
+            batch_ttls[user_key] = -1;
+        }
+        return s;
+    };
+
+    auto read_user_exists = [&](void* txn, const std::string& user_key, const std::string& storage_key, bool& exists) {
+        auto batch_it = batch_exists.find(storage_key);
+        if (batch_it != batch_exists.end()) {
+            exists = batch_it->second;
+            return mako::Status::OK();
+        }
+        mako::Status expire_status = expire_if_needed(txn, user_key, storage_key);
+        if (!expire_status.ok()) {
+            return expire_status;
+        }
+        return g_table->Exists(txn, storage_key, &exists);
     };
 
     auto add_int64 = [](int64_t base, int64_t delta, int64_t& out) {
@@ -453,19 +496,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
             } else if (op.op == TXN_OP_EXISTS) {
                 bool exists = false;
-                auto batch_it = batch_exists.find(tl_key_buf);
-                mako::Status s = mako::Status::OK();
-                if (batch_it != batch_exists.end()) {
-                    exists = batch_it->second;
-                } else {
-                    s = expire_if_needed(txn, user_key, tl_key_buf);
-                    if (!s.ok()) {
-                        result.success = false;
-                        all_success = false;
-                        continue;
-                    }
-                    s = g_table->Exists(txn, tl_key_buf, &exists);
-                }
+                mako::Status s = read_user_exists(txn, user_key, tl_key_buf, exists);
                 result.success = s.ok();
                 result.value_present = exists;
                 if (!s.ok()) {
@@ -562,6 +593,142 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 } else {
                     batch_exists[tl_key_buf] = true;
                     batch_values[tl_key_buf] = next_str;
+                }
+            } else if (op.op == TXN_OP_EXPIRE) {
+                bool exists = false;
+                mako::Status s = read_user_exists(txn, user_key, tl_key_buf, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                result.success = true;
+                result.int_value = 0;
+                result.value_present = exists;
+                if (!exists) {
+                    continue;
+                }
+                int64_t current_expire_at_ms = 0;
+                bool ttl_exists = false;
+                s = read_ttl_meta(txn, user_key, current_expire_at_ms, ttl_exists);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                bool should_update = true;
+                if ((op.flags & TXN_FLAG_EXPIRE_NX) != 0) {
+                    should_update = !ttl_exists;
+                }
+                if ((op.flags & TXN_FLAG_EXPIRE_XX) != 0) {
+                    should_update = should_update && ttl_exists;
+                }
+                if ((op.flags & TXN_FLAG_EXPIRE_GT) != 0) {
+                    should_update = should_update && ttl_exists
+                        && op.expire_at_ms > current_expire_at_ms;
+                }
+                if ((op.flags & TXN_FLAG_EXPIRE_LT) != 0) {
+                    should_update = should_update
+                        && (!ttl_exists || op.expire_at_ms < current_expire_at_ms);
+                }
+                if (!should_update) {
+                    continue;
+                }
+                result.int_value = 1;
+                if (op.expire_at_ms <= now_unix_ms()) {
+                    s = delete_raw_if_exists(txn, tl_key_buf);
+                    if (s.ok()) {
+                        s = clear_ttl_meta(txn, user_key);
+                    }
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
+                    batch_exists[tl_key_buf] = false;
+                    batch_values.erase(tl_key_buf);
+                } else {
+                    s = write_ttl_meta(txn, user_key, op.expire_at_ms);
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
+                }
+            } else if (op.op == TXN_OP_TTL) {
+                bool exists = false;
+                mako::Status s = read_user_exists(txn, user_key, tl_key_buf, exists);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                result.success = true;
+                result.value_present = true;
+                if (!exists) {
+                    result.int_value = -2;
+                    continue;
+                }
+                int64_t expire_at_ms = 0;
+                bool ttl_exists = false;
+                s = read_ttl_meta(txn, user_key, expire_at_ms, ttl_exists);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                if (!ttl_exists) {
+                    result.int_value = -1;
+                    continue;
+                }
+                const int64_t remaining_ms = expire_at_ms - now_unix_ms();
+                if (remaining_ms <= 0) {
+                    s = delete_raw_if_exists(txn, tl_key_buf);
+                    if (s.ok()) {
+                        s = clear_ttl_meta(txn, user_key);
+                    }
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
+                    batch_exists[tl_key_buf] = false;
+                    batch_values.erase(tl_key_buf);
+                    result.int_value = -2;
+                } else if ((op.flags & TXN_FLAG_TTL_MILLISECONDS) != 0) {
+                    result.int_value = remaining_ms;
+                } else {
+                    result.int_value = (remaining_ms + 999) / 1000;
+                }
+            } else if (op.op == TXN_OP_PERSIST) {
+                bool exists = false;
+                mako::Status s = read_user_exists(txn, user_key, tl_key_buf, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                result.success = true;
+                result.value_present = exists;
+                if (!exists) {
+                    result.int_value = 0;
+                    continue;
+                }
+                int64_t expire_at_ms = 0;
+                bool ttl_exists = false;
+                s = read_ttl_meta(txn, user_key, expire_at_ms, ttl_exists);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                if (!ttl_exists) {
+                    result.int_value = 0;
+                    continue;
+                }
+                s = clear_ttl_meta(txn, user_key);
+                result.success = s.ok();
+                result.int_value = s.ok() ? 1 : 0;
+                if (!s.ok()) {
+                    all_success = false;
                 }
             } else {
                 // Unknown operation
