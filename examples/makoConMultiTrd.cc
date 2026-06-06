@@ -102,6 +102,12 @@ public:
 
 // Global work queue
 static WorkQueue* g_work_queue = nullptr;
+static const auto g_mako_start_time = std::chrono::steady_clock::now();
+// @unsafe { std::atomic is used for C/Rust FFI INFO counters across worker threads. }
+static std::atomic<uint64_t> g_mako_txn_commits{0};
+static std::atomic<uint64_t> g_mako_txn_aborts{0};
+// No retry loop exists in this Redis path yet, so INFO reports 0 retries.
+static std::atomic<uint64_t> g_mako_txn_retries{0};
 
 // ============================================================================
 // RustWrapper - Now just manages global state
@@ -374,6 +380,11 @@ extern "C" {
         }
 
         response->transaction_success = all_success;
+        if (all_success) {
+            g_mako_txn_commits.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            g_mako_txn_aborts.fetch_add(1, std::memory_order_relaxed);
+        }
         return true;
     }
 
@@ -395,6 +406,19 @@ extern "C" {
 
     void cpp_cleanup_thread_info() {
         RustWrapper::cleanup_thread_info();
+    }
+
+    bool cpp_get_metrics(MakoMetrics* metrics) {
+        if (!metrics) {
+            return false;
+        }
+        const auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - g_mako_start_time);
+        metrics->txn_commits = g_mako_txn_commits.load(std::memory_order_relaxed);
+        metrics->txn_aborts = g_mako_txn_aborts.load(std::memory_order_relaxed);
+        metrics->txn_retries = g_mako_txn_retries.load(std::memory_order_relaxed);
+        metrics->uptime_seconds = static_cast<uint64_t>(uptime.count());
+        return true;
     }
 }
 

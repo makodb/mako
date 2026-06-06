@@ -1,0 +1,11 @@
+# Known intentional Redis compatibility divergences.
+#
+# Format:
+# <suite/test/command> :: <reason-category> :: <short reason>
+#
+# Reason categories:
+# - feature-killed-per-A.11
+# - mako-design-difference
+# - mako-correctness-fix
+#
+CLIENT ID :: mako-design-difference :: returns 0 because makoCon does not assign stable connection IDs yet.

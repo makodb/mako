@@ -15,7 +15,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `DEL key [key ...]` | Deletes one or more keys and returns the count of keys that existed | No asynchronous deletion | Redis `UNLINK` aliases to this path because Phase 1 has no lazy-free subsystem |
 | `UNLINK key [key ...]` | Alias of `DEL` | No async free semantics | Provides client compatibility without adding background deletion machinery |
 | `EXISTS key [key ...]` | Checks one or more keys and returns the count present | No bloom-filter/cache shortcut; remote tables use `remoteGet()` and may copy the value | Uses a dedicated local no-copy existence path that participates in OCC read observation |
-| `PING` | Connection smoke command | No server metadata | Handled entirely in Rust |
+| `PING` | Connection smoke command; queues inside `MULTI` | No server metadata | Handled entirely in Rust |
 | `MULTI` / `EXEC` / `DISCARD` | Queues commands and executes supported operations through one C++ transaction | No `WATCH`; no Lua | Mako's transaction model is the replacement for Redis WATCH/Lua-style optimistic wrappers |
 
 ### FFI Contract
@@ -29,6 +29,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `TxnOpResult::success` | Operation/backend success | Does not encode key presence | Separates backend failure from Redis nil / missing-key semantics |
 | `TxnOpResult::value_present` | Key presence bit | No value bytes by itself | Required to distinguish missing keys from existing empty bulk strings |
 | `TxnOpResult::data_ptr/data_len` | Returned value bytes for `GET` | Null for non-value operations | Keeps Redis bytes opaque to Rust while preserving empty-string correctness |
+| `MakoMetrics` / `cpp_get_metrics` | Supplies `INFO mako` counters and uptime | `txn_retries` is 0 until the Redis path has a retry loop | Keeps Redis INFO formatting in Rust while reading executor counters from C++ |
 
 ---
 

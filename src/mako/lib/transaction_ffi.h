@@ -98,6 +98,16 @@ typedef struct {
 } TxnResponse;
 
 /**
+ * Lightweight server metrics exposed to the Redis INFO formatter.
+ */
+typedef struct {
+    uint64_t txn_commits;
+    uint64_t txn_aborts;
+    uint64_t txn_retries;
+    uint64_t uptime_seconds;
+} MakoMetrics;
+
+/**
  * Execute a batch of operations as a single database transaction
  *
  * @param request  Pointer to transaction request
@@ -119,6 +129,11 @@ bool cpp_execute_transaction(const TxnRequest* request, TxnResponse* response);
  * Free response resources allocated by cpp_execute_transaction
  */
 void cpp_free_transaction_response(TxnResponse* response);
+
+/**
+ * Fill metrics for INFO server / INFO mako.
+ */
+bool cpp_get_metrics(MakoMetrics* metrics);
 
 #ifdef __cplusplus
 }
