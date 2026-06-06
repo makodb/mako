@@ -30,7 +30,7 @@ static const auto g_mako_start_time = std::chrono::steady_clock::now();
 // @unsafe { std::atomic is used for C/Rust FFI INFO counters across worker threads. }
 static std::atomic<uint64_t> g_mako_txn_commits{0};
 static std::atomic<uint64_t> g_mako_txn_aborts{0};
-// No retry loop exists in this Redis path yet, so INFO reports 0 retries.
+// Retry attempts are recorded by the Rust Redis retry loop.
 static std::atomic<uint64_t> g_mako_txn_retries{0};
 
 // Thread-local state for transaction handling
@@ -105,25 +105,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         tl_arena->reset();
     }
 
-    // Pre-encode all SET values before starting the transaction.
-    // StringWrapper (used internally by Put) stores only a pointer to the string —
-    // no copy is made. All encoded strings must therefore outlive Commit().
-    // Using tl_val_buf for all ops would alias every stored pointer to the same
-    // buffer, causing each key to commit with the last-written value.
-    // Solution: give each SET op its own std::string in this vector.
-    // @safe - Vec of strings, all stack-lifetime relative to Commit below
-    std::vector<std::string> encoded_vals(request->num_ops);
-    for (size_t i = 0; i < request->num_ops; i++) {
-        const TxnOperation& op = request->ops[i];
-        if (op.op == TXN_OP_SET) {
-            if (op.val_ptr && op.val_len > 0) {
-                std::string raw_val(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
-                encoded_vals[i] = mako::Encode(raw_val);
-            } else {
-                encoded_vals[i] = mako::Encode("");
-            }
-        }
-    }
+    // StringWrapper stores a pointer to the string, so encoded values must
+    // outlive Commit(). deque keeps references stable as we append values.
+    std::deque<std::string> owned_encoded_vals;
 
     // Begin a single database transaction for all operations
     // NOTE: mbta_wrapper::new_txn() always returns NULL - it uses thread-local TThread::txn state
@@ -133,6 +117,191 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
     bool all_success = true;
     std::unordered_map<std::string, bool> batch_exists;
+    std::unordered_map<std::string, std::string> batch_values;
+    std::unordered_map<uint32_t, bool> group_can_write;
+
+    auto make_prefixed_key = [](const TxnOperation& op) {
+        std::string key;
+        key.reserve(sizeof("table_key_") - 1 + op.key_len);
+        key.append("table_key_", sizeof("table_key_") - 1);
+        key.append(reinterpret_cast<const char*>(op.key_ptr), op.key_len);
+        return key;
+    };
+
+    auto make_ttl_meta_key = [](const std::string& user_key) {
+        std::string meta_key;
+        meta_key.reserve(sizeof("\x01TTL:") - 1 + user_key.size());
+        meta_key.append("\x01TTL:", sizeof("\x01TTL:") - 1);
+        meta_key.append(user_key);
+        return meta_key;
+    };
+
+    auto copy_result_value = [](TxnOpResult& result, const std::string& value) {
+        result.value_present = true;
+        if (value.empty()) {
+            return true;
+        }
+        result.data_len = value.size();
+        result.data_ptr = static_cast<uint8_t*>(std::malloc(result.data_len));
+        if (!result.data_ptr) {
+            result.success = false;
+            return false;
+        }
+        std::memcpy(result.data_ptr, value.data(), result.data_len);
+        return true;
+    };
+
+    auto parse_int64 = [](const std::string& input, int64_t& out) {
+        if (input.empty()) {
+            return false;
+        }
+        size_t pos = 0;
+        try {
+            long long parsed = std::stoll(input, &pos, 10);
+            if (pos != input.size()) {
+                return false;
+            }
+            out = static_cast<int64_t>(parsed);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    auto read_raw = [&](void* txn, const std::string& key, std::string& value, bool& exists) {
+        value.clear();
+        mako::Status s = g_table->Get(txn, key, value);
+        if (s.ok()) {
+            exists = true;
+            return s;
+        }
+        if (s.IsNotFound()) {
+            exists = false;
+            return mako::Status::OK();
+        }
+        return s;
+    };
+
+    auto delete_raw_if_exists = [&](void* txn, const std::string& key) {
+        bool exists = false;
+        mako::Status s = g_table->Exists(txn, key, &exists);
+        if (!s.ok() || !exists) {
+            return s;
+        }
+        return g_table->Delete(txn, key);
+    };
+
+    auto expire_if_needed = [&](void* txn, const std::string& user_key, const std::string& storage_key) {
+        const std::string meta_key = make_ttl_meta_key(user_key);
+        std::string ttl_value;
+        bool ttl_exists = false;
+        mako::Status s = read_raw(txn, meta_key, ttl_value, ttl_exists);
+        if (!s.ok() || !ttl_exists) {
+            return s;
+        }
+        int64_t expire_at_ms = 0;
+        if (!parse_int64(ttl_value, expire_at_ms)) {
+            return mako::Status::OK();
+        }
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        if (expire_at_ms > static_cast<int64_t>(now_ms)) {
+            return mako::Status::OK();
+        }
+        s = delete_raw_if_exists(txn, storage_key);
+        if (!s.ok()) {
+            return s;
+        }
+        s = delete_raw_if_exists(txn, meta_key);
+        if (s.ok()) {
+            batch_exists[storage_key] = false;
+            batch_values.erase(storage_key);
+        }
+        return s;
+    };
+
+    auto read_current = [&](void* txn, const std::string& user_key, const std::string& key, std::string& value, bool& exists) {
+        auto batch_it = batch_exists.find(key);
+        if (batch_it != batch_exists.end()) {
+            exists = batch_it->second;
+            if (!exists) {
+                value.clear();
+                return mako::Status::OK();
+            }
+            auto val_it = batch_values.find(key);
+            if (val_it != batch_values.end()) {
+                value = val_it->second;
+                return mako::Status::OK();
+            }
+        }
+
+        mako::Status s = expire_if_needed(txn, user_key, key);
+        if (!s.ok()) {
+            return s;
+        }
+        return read_raw(txn, key, value, exists);
+    };
+
+    auto put_raw = [&](void* txn, const std::string& key, const std::string& raw_value) {
+        owned_encoded_vals.push_back(mako::Encode(raw_value));
+        return g_table->Put(txn, key, owned_encoded_vals.back());
+    };
+
+    auto write_ttl_meta = [&](void* txn, const std::string& user_key, int64_t expire_at_ms) {
+        if (expire_at_ms < 0) {
+            return mako::Status::OK();
+        }
+        std::string meta_key = make_ttl_meta_key(user_key);
+        return put_raw(txn, meta_key, std::to_string(expire_at_ms));
+    };
+
+    auto clear_ttl_meta = [&](void* txn, const std::string& user_key) {
+        return delete_raw_if_exists(txn, make_ttl_meta_key(user_key));
+    };
+
+    auto add_int64 = [](int64_t base, int64_t delta, int64_t& out) {
+        if ((delta > 0 && base > std::numeric_limits<int64_t>::max() - delta)
+            || (delta < 0 && base < std::numeric_limits<int64_t>::min() - delta)) {
+            return false;
+        }
+        out = base + delta;
+        return true;
+    };
+
+    auto parse_float = [](const std::string& input, long double& out) {
+        if (input.empty()) {
+            return false;
+        }
+        size_t pos = 0;
+        try {
+            long double parsed = std::stold(input, &pos);
+            if (pos != input.size() || !std::isfinite(parsed)) {
+                return false;
+            }
+            out = parsed;
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    auto format_float = [](long double value) {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(17) << value;
+        std::string out = oss.str();
+        if (out.find('.') != std::string::npos) {
+            while (!out.empty() && out.back() == '0') {
+                out.pop_back();
+            }
+            if (!out.empty() && out.back() == '.') {
+                out.pop_back();
+            }
+        }
+        if (out == "-0") {
+            out = "0";
+        }
+        return out;
+    };
 
     try {
         // Execute each operation within the transaction
@@ -149,38 +318,103 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             tl_key_buf.reserve(sizeof("table_key_") - 1 + op.key_len);
             tl_key_buf.append("table_key_", sizeof("table_key_") - 1);
             tl_key_buf.append(reinterpret_cast<const char*>(op.key_ptr), op.key_len);
+            std::string user_key(reinterpret_cast<const char*>(op.key_ptr), op.key_len);
 
             if (op.op == TXN_OP_GET) {
-                // GET operation
-                tl_val_buf.clear();
-                mako::Status s = g_table->Get(txn, tl_key_buf, tl_val_buf);
-                if (s.ok()) {
-                    result.success = true;
-                    result.value_present = true;
-                    if (!tl_val_buf.empty()) {
-                        result.data_len = tl_val_buf.size();
-                        result.data_ptr = static_cast<uint8_t*>(std::malloc(result.data_len));
-                        if (result.data_ptr) {
-                            std::memcpy(result.data_ptr, tl_val_buf.data(), result.data_len);
-                        } else {
-                            all_success = false;
-                            result.success = false;
-                        }
-                    }
-                } else if (s.IsNotFound()) {
-                    // Key not found is success with empty result
-                    result.success = true;
-                } else {
-                    all_success = false;
-                }
-            } else if (op.op == TXN_OP_SET) {
-                // SET operation - use pre-encoded value (encoded_vals[i] owns the buffer)
-                mako::Status s = g_table->Put(txn, tl_key_buf, encoded_vals[i]);
+                bool exists = false;
+                std::string current;
+                mako::Status s = read_current(txn, user_key, tl_key_buf, current, exists);
                 result.success = s.ok();
                 if (!s.ok()) {
                     all_success = false;
-                } else {
+                } else if (exists && !copy_result_value(result, current)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_SET) {
+                std::string old_value;
+                bool existed = false;
+                mako::Status s = read_current(txn, user_key, tl_key_buf, old_value, existed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+
+                bool group_write = true;
+                if ((op.flags & TXN_FLAG_SET_REQUIRE_ABSENT_GROUP) != 0 && op.group_id != 0) {
+                    auto group_it = group_can_write.find(op.group_id);
+                    if (group_it == group_can_write.end()) {
+                        bool can_write = true;
+                        for (size_t j = i; j < request->num_ops; ++j) {
+                            const TxnOperation& group_op = request->ops[j];
+                            if (group_op.group_id != op.group_id) {
+                                continue;
+                            }
+                            std::string group_key = make_prefixed_key(group_op);
+                            std::string group_user_key(
+                                reinterpret_cast<const char*>(group_op.key_ptr),
+                                group_op.key_len);
+                            std::string group_value;
+                            bool group_exists = false;
+                            mako::Status group_status = read_current(
+                                txn, group_user_key, group_key, group_value, group_exists);
+                            if (!group_status.ok()) {
+                                all_success = false;
+                                can_write = false;
+                                break;
+                            }
+                            if (group_exists) {
+                                can_write = false;
+                                break;
+                            }
+                        }
+                        group_can_write[op.group_id] = can_write;
+                        group_write = can_write;
+                    } else {
+                        group_write = group_it->second;
+                    }
+                }
+
+                bool write_allowed = group_write;
+                if ((op.flags & TXN_FLAG_SET_NX) != 0 && existed) {
+                    write_allowed = false;
+                }
+                if ((op.flags & TXN_FLAG_SET_XX) != 0 && !existed) {
+                    write_allowed = false;
+                }
+
+                result.success = true;
+                if ((op.flags & TXN_FLAG_SET_RETURN_OLD) != 0 && existed) {
+                    if (!copy_result_value(result, old_value)) {
+                        all_success = false;
+                        continue;
+                    }
+                }
+
+                if (write_allowed) {
+                    std::string raw_val(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                    s = put_raw(txn, tl_key_buf, raw_val);
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
+                    if (op.expire_at_ms >= 0) {
+                        s = write_ttl_meta(txn, user_key, op.expire_at_ms);
+                    } else if ((op.flags & TXN_FLAG_SET_KEEP_TTL) == 0) {
+                        s = clear_ttl_meta(txn, user_key);
+                    } else {
+                        s = mako::Status::OK();
+                    }
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
                     batch_exists[tl_key_buf] = true;
+                    batch_values[tl_key_buf] = raw_val;
+                }
+                if ((op.flags & TXN_FLAG_SET_RETURN_OLD) == 0) {
+                    result.value_present = write_allowed;
                 }
             } else if (op.op == TXN_OP_DEL) {
                 // DEL operation
@@ -190,6 +424,11 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (batch_it != batch_exists.end()) {
                     exists = batch_it->second;
                 } else {
+                    mako::Status expire_status = expire_if_needed(txn, user_key, tl_key_buf);
+                    if (!expire_status.ok()) {
+                        all_success = false;
+                        continue;
+                    }
                     mako::Status exists_status = g_table->Exists(txn, tl_key_buf, &exists);
                     if (!exists_status.ok()) {
                         all_success = false;
@@ -202,7 +441,15 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (!s.ok()) {
                     all_success = false;
                 } else {
+                    if (exists) {
+                        s = clear_ttl_meta(txn, user_key);
+                        if (!s.ok()) {
+                            all_success = false;
+                            continue;
+                        }
+                    }
                     batch_exists[tl_key_buf] = false;
+                    batch_values.erase(tl_key_buf);
                 }
             } else if (op.op == TXN_OP_EXISTS) {
                 bool exists = false;
@@ -211,12 +458,110 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (batch_it != batch_exists.end()) {
                     exists = batch_it->second;
                 } else {
+                    s = expire_if_needed(txn, user_key, tl_key_buf);
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
                     s = g_table->Exists(txn, tl_key_buf, &exists);
                 }
                 result.success = s.ok();
                 result.value_present = exists;
                 if (!s.ok()) {
                     all_success = false;
+                }
+            } else if (op.op == TXN_OP_APPEND) {
+                std::string current;
+                bool exists = false;
+                mako::Status s = read_current(txn, user_key, tl_key_buf, current, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                std::string suffix(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                std::string next = exists ? current + suffix : suffix;
+                s = put_raw(txn, tl_key_buf, next);
+                result.success = s.ok();
+                result.value_present = true;
+                result.int_value = static_cast<int64_t>(next.size());
+                if (!s.ok()) {
+                    all_success = false;
+                } else {
+                    batch_exists[tl_key_buf] = true;
+                    batch_values[tl_key_buf] = next;
+                }
+            } else if (op.op == TXN_OP_STRLEN) {
+                std::string current;
+                bool exists = false;
+                mako::Status s = read_current(txn, user_key, tl_key_buf, current, exists);
+                result.success = s.ok();
+                result.value_present = true;
+                result.int_value = exists ? static_cast<int64_t>(current.size()) : 0;
+                if (!s.ok()) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_INCRBY) {
+                std::string current;
+                bool exists = false;
+                mako::Status s = read_current(txn, user_key, tl_key_buf, current, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                int64_t base = 0;
+                int64_t delta = 0;
+                std::string delta_str(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                if ((exists && !parse_int64(current, base)) || !parse_int64(delta_str, delta)) {
+                    all_success = false;
+                    continue;
+                }
+                int64_t next = 0;
+                if (!add_int64(base, delta, next)) {
+                    all_success = false;
+                    continue;
+                }
+                std::string next_str = std::to_string(next);
+                s = put_raw(txn, tl_key_buf, next_str);
+                result.success = s.ok();
+                result.value_present = true;
+                result.int_value = next;
+                if (!s.ok()) {
+                    all_success = false;
+                } else {
+                    batch_exists[tl_key_buf] = true;
+                    batch_values[tl_key_buf] = next_str;
+                }
+            } else if (op.op == TXN_OP_INCRBYFLOAT) {
+                std::string current;
+                bool exists = false;
+                mako::Status s = read_current(txn, user_key, tl_key_buf, current, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                long double base = 0;
+                long double delta = 0;
+                std::string delta_str(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                if ((exists && !parse_float(current, base)) || !parse_float(delta_str, delta)) {
+                    all_success = false;
+                    continue;
+                }
+                long double next = base + delta;
+                if (!std::isfinite(next)) {
+                    all_success = false;
+                    continue;
+                }
+                std::string next_str = format_float(next);
+                s = put_raw(txn, tl_key_buf, next_str);
+                result.success = s.ok();
+                if (!s.ok()) {
+                    all_success = false;
+                } else if (!copy_result_value(result, next_str)) {
+                    all_success = false;
+                } else {
+                    batch_exists[tl_key_buf] = true;
+                    batch_values[tl_key_buf] = next_str;
                 }
             } else {
                 // Unknown operation
@@ -305,6 +650,10 @@ extern "C" {
         metrics->uptime_seconds = static_cast<uint64_t>(uptime.count());
         return true;
     }
+
+    void cpp_record_txn_retry(void) {
+        g_mako_txn_retries.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 int main() {
@@ -313,7 +662,19 @@ int main() {
     // Configuration parameters (single shard, no replication)
     int nshards = 1;
     int shard_index = 0;
-    int nthreads = 8;
+    int nthreads = 32;
+    if (const char* mako_redis_threads = getenv("MAKO_REDIS_THREADS")) {
+        try {
+            nthreads = std::stoi(mako_redis_threads);
+        } catch (...) {
+            std::cerr << "Invalid MAKO_REDIS_THREADS value: " << mako_redis_threads << std::endl;
+            return 1;
+        }
+        if (nthreads < 1 || nthreads > 32) {
+            std::cerr << "MAKO_REDIS_THREADS must be between 1 and 32" << std::endl;
+            return 1;
+        }
+    }
     const char* mako_paxos_proc_name = getenv("MAKO_PAXOS_PROC_NAME");
     std::string paxos_proc_name =
             mako_paxos_proc_name ? mako_paxos_proc_name : "localhost";  // Leader by default

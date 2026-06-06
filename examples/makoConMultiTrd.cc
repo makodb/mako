@@ -20,6 +20,10 @@ enum class WorkType : uint32_t {
     Set = 2,
     Del = 3,
     Exists = 4,
+    Append = 5,
+    StrLen = 6,
+    IncrBy = 7,
+    IncrByFloat = 8,
     Shutdown = 999
 };
 
@@ -106,7 +110,7 @@ static const auto g_mako_start_time = std::chrono::steady_clock::now();
 // @unsafe { std::atomic is used for C/Rust FFI INFO counters across worker threads. }
 static std::atomic<uint64_t> g_mako_txn_commits{0};
 static std::atomic<uint64_t> g_mako_txn_aborts{0};
-// No retry loop exists in this Redis path yet, so INFO reports 0 retries.
+// Retry attempts are recorded by the Rust Redis retry loop.
 static std::atomic<uint64_t> g_mako_txn_retries{0};
 
 // ============================================================================
@@ -328,7 +332,7 @@ extern "C" {
             const TxnOperation& txn_op = request->ops[i];
 
             // Validate operation
-            if (txn_op.op != 1 && txn_op.op != 2 && txn_op.op != 3 && txn_op.op != 4) {
+            if (txn_op.op < 1 || txn_op.op > 8) {
                 response->results[i].success = false;
                 all_success = false;
                 continue;
@@ -420,6 +424,10 @@ extern "C" {
         metrics->uptime_seconds = static_cast<uint64_t>(uptime.count());
         return true;
     }
+
+    void cpp_record_txn_retry(void) {
+        g_mako_txn_retries.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // ============================================================================
@@ -471,6 +479,14 @@ public:
                 op = OpCode::Del;
             } else if (item->type == WorkType::Exists) {
                 op = OpCode::Exists;
+            } else if (item->type == WorkType::Append) {
+                op = OpCode::Append;
+            } else if (item->type == WorkType::StrLen) {
+                op = OpCode::StrLen;
+            } else if (item->type == WorkType::IncrBy) {
+                op = OpCode::IncrBy;
+            } else if (item->type == WorkType::IncrByFloat) {
+                op = OpCode::IncrByFloat;
             }
             
             auto result = g_rust_wrapper_instance->execute_request(

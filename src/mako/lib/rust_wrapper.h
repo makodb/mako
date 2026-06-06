@@ -30,7 +30,11 @@ enum class OpCode : uint32_t {
     Get     = 1,
     Set     = 2,
     Del     = 3,
-    Exists  = 4
+    Exists  = 4,
+    Append  = 5,
+    StrLen  = 6,
+    IncrBy  = 7,
+    IncrByFloat = 8
 };
 
 class RustWrapper {
