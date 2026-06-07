@@ -20,7 +20,14 @@ import rrr.callback_wrapper;
 // method here dereferences it.
 export namespace rrr {
 
-enum class ChannelError : int {
+// `ChannelError` — transport-error code surfaced by `ChannelConnectionBase`
+// / `ChannelListenerBase` / `ChannelFactoryBase`. Authored as inline
+// Rust DSL: the `#if RUSTYCPP_RUST` block below is the source of truth;
+// the transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block.
+#if RUSTYCPP_RUST
+#[repr(i32)]
+enum ChannelError {
     None = 0,
     WouldBlock = 1,
     ConnectionRefused = 2,
@@ -31,7 +38,44 @@ enum class ChannelError : int {
     PermissionDenied = 7,
     TooManyOpenFiles = 8,
     Internal = 9,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.channel_error version=1 rust_sha256=a17eae07b8ee684b8064e36c651b23a17d2afd98e4f9d2cfa194f222b6212597*/
+enum class ChannelError;
+constexpr ChannelError ChannelError_None();
+constexpr ChannelError ChannelError_WouldBlock();
+constexpr ChannelError ChannelError_ConnectionRefused();
+constexpr ChannelError ChannelError_ConnectionReset();
+constexpr ChannelError ChannelError_Timeout();
+constexpr ChannelError ChannelError_AddressInUse();
+constexpr ChannelError ChannelError_AddressInvalid();
+constexpr ChannelError ChannelError_PermissionDenied();
+constexpr ChannelError ChannelError_TooManyOpenFiles();
+constexpr ChannelError ChannelError_Internal();
+
+enum class ChannelError {
+    None = 0,
+    WouldBlock = 1,
+    ConnectionRefused = 2,
+    ConnectionReset = 3,
+    Timeout = 4,
+    AddressInUse = 5,
+    AddressInvalid = 6,
+    PermissionDenied = 7,
+    TooManyOpenFiles = 8,
+    Internal = 9
 };
+inline constexpr ChannelError ChannelError_None() { return ChannelError::None; }
+inline constexpr ChannelError ChannelError_WouldBlock() { return ChannelError::WouldBlock; }
+inline constexpr ChannelError ChannelError_ConnectionRefused() { return ChannelError::ConnectionRefused; }
+inline constexpr ChannelError ChannelError_ConnectionReset() { return ChannelError::ConnectionReset; }
+inline constexpr ChannelError ChannelError_Timeout() { return ChannelError::Timeout; }
+inline constexpr ChannelError ChannelError_AddressInUse() { return ChannelError::AddressInUse; }
+inline constexpr ChannelError ChannelError_AddressInvalid() { return ChannelError::AddressInvalid; }
+inline constexpr ChannelError ChannelError_PermissionDenied() { return ChannelError::PermissionDenied; }
+inline constexpr ChannelError ChannelError_TooManyOpenFiles() { return ChannelError::TooManyOpenFiles; }
+inline constexpr ChannelError ChannelError_Internal() { return ChannelError::Internal; }
+/*RUSTYCPP:GEN-END id=channel.channel_error*/
 
 inline constexpr const char* channel_error_to_string(ChannelError e) {
     switch (e) {
