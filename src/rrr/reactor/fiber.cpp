@@ -10,6 +10,7 @@ module;
 #include <cstdint>
 
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 
 export module rrr.fiber;
 
@@ -37,6 +38,12 @@ namespace this_fiber {
 /**
  * Get the ID of the currently executing fiber.
  *
+ * Not migrated to inline Rust DSL: the body needs `fiber.unwrap()->id`,
+ * the smart-pointer `->` deref on `Rc<Fiber>`. The transpiler emits
+ * `.id` instead of `->id` for `Rc<T>` field access, which fails to
+ * compile. Stays as plain inline C++ until the transpiler gains
+ * smart-pointer field-access lowering.
+ *
  * @return Fiber ID (uint64_t), or 0 if called outside fiber context
  */
 inline uint64_t get_id() noexcept {
@@ -50,17 +57,43 @@ inline uint64_t get_id() noexcept {
 
 /**
  * Get the currently executing fiber as an Option<Rc<Fiber>>.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block at the current `this_fiber`
+ * namespace scope.
  */
-inline rusty::Option<rusty::Rc<Fiber>> current() noexcept {
+#if RUSTYCPP_RUST
+fn current() -> rusty::Option<rusty::Rc<Fiber>> {
+    Fiber::current_fiber()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber.current version=1 rust_sha256=1f556ee94fd36c0e239e7d574a31fac11bca2ba749073c1221605616e2db6adc*/
+rusty::Option<rusty::Rc<Fiber>> current() {
     return Fiber::current_fiber();
 }
+/*RUSTYCPP:GEN-END id=fiber.current*/
 
 /**
  * Check if currently executing within a fiber context.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block at the current `this_fiber`
+ * namespace scope.
  */
-inline bool in_fiber_context() noexcept {
+#if RUSTYCPP_RUST
+fn in_fiber_context() -> bool {
+    Fiber::current_fiber().is_some()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber.in_fiber_context version=1 rust_sha256=27ba5af1244c52d2db2455a7c0f1dfe62e8808ac84aa099afaa3af2b7d7f6c47*/
+bool in_fiber_context();
+
+bool in_fiber_context() {
     return Fiber::current_fiber().is_some();
 }
+/*RUSTYCPP:GEN-END id=fiber.in_fiber_context*/
 
 /**
  * Yield execution to other fibers.
@@ -76,37 +109,62 @@ inline void yield() noexcept {
 }
 
 /**
- * Sleep for specified microseconds. Uses rrr::Time internally.
+ * Sleep helpers (sleep_us / sleep_ms / sleep_s / sleep_until_us).
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block at the current `this_fiber`
+ * namespace scope.
+ *
+ * Note: All time-based helpers route through rrr::Time / Fiber::sleep,
+ * which themselves flow through `rusty::sys::time::clock_monotonic_us`
+ * (@safe) — no raw `clock_gettime` or `std::chrono` usage here.
  */
-inline void sleep_us(uint64_t microseconds) {
+#if RUSTYCPP_RUST
+fn sleep_us(microseconds: u64) {
     Fiber::sleep(microseconds);
 }
 
-/**
- * Sleep for specified milliseconds. Uses rrr::Time internally.
- */
-inline void sleep_ms(uint64_t milliseconds) {
+fn sleep_ms(milliseconds: u64) {
     Fiber::sleep(milliseconds * 1000);
 }
 
-/**
- * Sleep for specified seconds. Uses rrr::Time internally.
- */
-inline void sleep_s(uint64_t seconds) {
-    Fiber::sleep(seconds * rrr::RRR_USEC_PER_SEC);
+fn sleep_s(seconds: u64) {
+    Fiber::sleep(seconds * RRR_USEC_PER_SEC);
 }
 
-/**
- * Sleep until specified absolute time (microseconds since epoch).
- * If the time has already passed, returns immediately.
- */
-inline void sleep_until_us(uint64_t abs_time_us) {
-    // Time::now flows through rusty::sys::time::clock_monotonic_us (@safe).
-    uint64_t now = Time::now(true);
-    if (abs_time_us > now) {
+fn sleep_until_us(abs_time_us: u64) {
+    let now: u64 = Time::now(true);
+    if abs_time_us > now {
         Fiber::sleep(abs_time_us - now);
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber.sleep_helpers version=1 rust_sha256=dd2308e48ef406df63c0e8381aea6ece1a37660fb85055b6941454468052f75c*/
+void sleep_us(uint64_t microseconds);
+void sleep_ms(uint64_t milliseconds);
+void sleep_s(uint64_t seconds);
+void sleep_until_us(uint64_t abs_time_us);
+
+void sleep_us(uint64_t microseconds) {
+    Fiber::sleep(std::move(microseconds));
+}
+
+void sleep_ms(uint64_t milliseconds) {
+    Fiber::sleep(rusty::detail::deref_if_pointer_like(milliseconds) * 1000);
+}
+
+void sleep_s(uint64_t seconds) {
+    Fiber::sleep(rusty::detail::deref_if_pointer_like(seconds) * rusty::detail::deref_if_pointer_like(RRR_USEC_PER_SEC));
+}
+
+void sleep_until_us(uint64_t abs_time_us) {
+    const uint64_t now = Time::now(true);
+    if (rusty::detail::deref_if_pointer_like(abs_time_us) > rusty::detail::deref_if_pointer_like(now)) {
+        Fiber::sleep(rusty::detail::deref_if_pointer_like(abs_time_us) - rusty::detail::deref_if_pointer_like(now));
+    }
+}
+/*RUSTYCPP:GEN-END id=fiber.sleep_helpers*/
 
 }  // namespace this_fiber
 
