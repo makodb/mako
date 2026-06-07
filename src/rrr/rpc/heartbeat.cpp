@@ -15,11 +15,25 @@ import std;
 
 export namespace rrr {
 
-inline uint64_t heartbeat_time_us() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
+// Wrapper around rusty::sys::time::clock_monotonic_us. Authored as
+// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
+// of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Same shape as
+// `current_time_us` (circuit_breaker.cpp) and `queued_request_time_us`
+// (request_queue.cpp) — body delegates to the @safe rusty wrapper
+// instead of calling `clock_gettime(CLOCK_MONOTONIC)` directly.
+#if RUSTYCPP_RUST
+fn heartbeat_time_us() -> u64 {
+    rusty::sys::time::clock_monotonic_us()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.heartbeat_time_us version=1 rust_sha256=7074d1b727630247c224432d96fd2828d55e7b0e8017939f22176b0e4699428e*/
+uint64_t heartbeat_time_us();
+
+uint64_t heartbeat_time_us() {
+    return rusty::sys::time::clock_monotonic_us();
+}
+/*RUSTYCPP:GEN-END id=heartbeat.heartbeat_time_us*/
 
 // Type alias for the heartbeat timeout callback. Defined outside the
 // DSL block so the inline-Rust source can refer to it by an opaque
