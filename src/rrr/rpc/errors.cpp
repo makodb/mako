@@ -112,15 +112,42 @@ inline const char* rpc_error_to_string(RpcError err) {
     }
 }
 
-inline RpcErrorCategory get_error_category(RpcError err) {
-    int code = static_cast<int>(err);
-    if (code == 0) return RpcErrorCategory::NONE;
-    if (code >= 100 && code < 200) return RpcErrorCategory::CONNECTION;
-    if (code >= 200 && code < 300) return RpcErrorCategory::PROTOCOL;
-    if (code >= 300 && code < 400) return RpcErrorCategory::APPLICATION;
-    if (code >= 400 && code < 500) return RpcErrorCategory::TIMEOUT;
-    return RpcErrorCategory::INTERNAL;
+// `get_error_category` — bucket an `RpcError` into its category by code
+// range (NONE = 0, CONNECTION = 100–199, PROTOCOL = 200–299,
+// APPLICATION = 300–399, TIMEOUT = 400–499, INTERNAL = otherwise).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+fn get_error_category(err: RpcError) -> RpcErrorCategory {
+    let code: i32 = err as i32;
+    if code == 0 { RpcErrorCategory::NONE }
+    else if code >= 100 && code < 200 { RpcErrorCategory::CONNECTION }
+    else if code >= 200 && code < 300 { RpcErrorCategory::PROTOCOL }
+    else if code >= 300 && code < 400 { RpcErrorCategory::APPLICATION }
+    else if code >= 400 && code < 500 { RpcErrorCategory::TIMEOUT }
+    else { RpcErrorCategory::INTERNAL }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=errors.get_error_category version=1 rust_sha256=71b769d6fee42f5465b681fe532b9cd6124afb9272e918bf615f5cb30fa52a4c*/
+RpcErrorCategory get_error_category(RpcError err) {
+    const int32_t code = static_cast<int32_t>(err);
+    if (rusty::detail::deref_if_pointer_like(code) == static_cast<int32_t>(0)) {
+        return rusty::clone(rusty::clone(RpcErrorCategory::NONE));
+    } else if ((rusty::detail::deref_if_pointer_like(code) >= 100) && (rusty::detail::deref_if_pointer_like(code) < 200)) {
+        return rusty::clone(rusty::clone(RpcErrorCategory::CONNECTION));
+    } else if ((rusty::detail::deref_if_pointer_like(code) >= 200) && (rusty::detail::deref_if_pointer_like(code) < 300)) {
+        return rusty::clone(rusty::clone(RpcErrorCategory::PROTOCOL));
+    } else if ((rusty::detail::deref_if_pointer_like(code) >= 300) && (rusty::detail::deref_if_pointer_like(code) < 400)) {
+        return rusty::clone(rusty::clone(RpcErrorCategory::APPLICATION));
+    } else if ((rusty::detail::deref_if_pointer_like(code) >= 400) && (rusty::detail::deref_if_pointer_like(code) < 500)) {
+        return rusty::clone(rusty::clone(RpcErrorCategory::TIMEOUT));
+    } else {
+        return rusty::clone(rusty::clone(RpcErrorCategory::INTERNAL));
+    }
+}
+/*RUSTYCPP:GEN-END id=errors.get_error_category*/
 
 // `is_connection_error` / `is_timeout_error` — pure integer-range
 // predicates over the `RpcError` code space (CONNECTION = 100–199,
