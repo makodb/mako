@@ -211,7 +211,10 @@ inline void Pthread_create(pthread_t* thread,
     { verify(pthread_create(thread, attr, func, arg) == 0); }
 }
 
-// @safe
+// @safe — Pthread_join stays outside the DSL because libc spells the
+// out-parameter as `void**`, and the DSL has no syntax for `void` /
+// `*mut c_void` (using `*mut *mut u8` emits `uint8_t**`, which libc
+// rejects).
 inline void Pthread_join(pthread_t thread, void** value_ptr) {
     // @unsafe { libc pthread_join + void** out-parameter }
     { verify(pthread_join(thread, value_ptr) == 0); }
