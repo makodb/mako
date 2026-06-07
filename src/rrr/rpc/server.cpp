@@ -663,11 +663,24 @@ constexpr uint64_t kDefaultDrainTimeoutMs = static_cast<uint64_t>(30000);
 /*RUSTYCPP:GEN-END id=server.const_drain_timeout*/
 
 // Shutdown coordination state — guarded by `Server::shutdown_state_field`
-// (a `rusty::Mutex<ShutdownState>`). Defined outside the DSL block so the
-// inline-Rust source can refer to it by an opaque type name (the DSL
-// transpiler does not parse nested-struct declarations inside an `impl`
-// block).
-struct ShutdownState { bool shutdown = false; };
+// (a `rusty::Mutex<ShutdownState>`). Defined as its own DSL struct
+// (not nested inside Server, since the DSL transpiler does not parse
+// nested-struct declarations inside an `impl` block). The DSL emits
+// a C++20 aggregate with a public `shutdown` field; the existing
+// `ShutdownState{}` value-init site in `Server::new_()` keeps working
+// because `bool` value-inits to `false`.
+#if RUSTYCPP_RUST
+struct ShutdownState {
+    shutdown: bool,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.shutdown_state version=1 rust_sha256=7a8622d12ba6546419c9fe006ee93220a163e214052642fc0dafa2cdd71daf2a*/
+struct ShutdownState;
+
+struct ShutdownState {
+    bool shutdown;
+};
+/*RUSTYCPP:GEN-END id=server.shutdown_state*/
 
 // @unsafe - reinterpret_cast<const char*> on the addr param. Lives
 // outside the DSL block so the inline-Rust grammar doesn't have to
