@@ -20,14 +20,33 @@ import rrr.threading;
 export namespace rrr {
 
 
-/**
- * Strategy for handling queue overflow.
- */
+// `OverflowStrategy` — categorical tag for how the queue should
+// handle a push when at capacity. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block with the C++ `enum class`.
+#if RUSTYCPP_RUST
+enum OverflowStrategy {
+    DROP_OLDEST,
+    DROP_NEWEST,
+    FAIL_FAST,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.overflow_strategy version=1 rust_sha256=bf9f48db6809a04afbd718314f92b36dbe612714d96e1a75115ad2bb39673b15*/
+enum class OverflowStrategy;
+constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST();
+constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST();
+constexpr OverflowStrategy OverflowStrategy_FAIL_FAST();
+
 enum class OverflowStrategy {
-    DROP_OLDEST,   // Remove oldest request to make room
-    DROP_NEWEST,   // Reject new request if queue full
-    FAIL_FAST      // Immediately fail the request with error callback
+    DROP_OLDEST,
+    DROP_NEWEST,
+    FAIL_FAST
 };
+inline constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST() { return OverflowStrategy::DROP_OLDEST; }
+inline constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST() { return OverflowStrategy::DROP_NEWEST; }
+inline constexpr OverflowStrategy OverflowStrategy_FAIL_FAST() { return OverflowStrategy::FAIL_FAST; }
+/*RUSTYCPP:GEN-END id=request_queue.overflow_strategy*/
 
 // Canonical queue callback errors for caller observability.
 //
