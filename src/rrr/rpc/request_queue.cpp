@@ -41,12 +41,23 @@ using QueuedRequestCallback = rusty::Function<void(int)>;
 
 // Wrapper around rusty::sys::time::clock_monotonic_us, named so the
 // DSL block below can call it as a simple identifier rather than the
-// fully-qualified path. Same pattern as `heartbeat_time_us` in
-// heartbeat.cpp.
-// @safe - rusty::sys::time::clock_monotonic_us is @safe.
-inline std::uint64_t queued_request_time_us() {
+// fully-qualified path. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block. Same shape as `heartbeat_time_us` (heartbeat.cpp) and
+// `current_time_us` (circuit_breaker.cpp).
+#if RUSTYCPP_RUST
+fn queued_request_time_us() -> u64 {
+    rusty::sys::time::clock_monotonic_us()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queued_request_time_us version=1 rust_sha256=75814fdd205b8de30a538e2f38098e5f2c23f97f12f2952d426174ea0864a759*/
+uint64_t queued_request_time_us();
+
+uint64_t queued_request_time_us() {
     return rusty::sys::time::clock_monotonic_us();
 }
+/*RUSTYCPP:GEN-END id=request_queue.queued_request_time_us*/
 
 /**
  * A queued RPC request awaiting transmission.
