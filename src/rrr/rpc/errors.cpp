@@ -122,13 +122,38 @@ inline RpcErrorCategory get_error_category(RpcError err) {
     return RpcErrorCategory::INTERNAL;
 }
 
-inline bool is_connection_error(RpcError err) {
-    return get_error_category(err) == RpcErrorCategory::CONNECTION;
+// `is_connection_error` / `is_timeout_error` — pure integer-range
+// predicates over the `RpcError` code space (CONNECTION = 100–199,
+// TIMEOUT = 400–499). Inlined here rather than delegating through
+// `get_error_category(err) == RpcErrorCategory::Foo` so the DSL block
+// doesn't need to cross-call a sibling free function (the transpiler
+// currently prepends `::` to such calls, breaking namespace lookup).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+fn is_connection_error(err: RpcError) -> bool {
+    let code: i32 = err as i32;
+    code >= 100 && code < 200
 }
 
-inline bool is_timeout_error(RpcError err) {
-    return get_error_category(err) == RpcErrorCategory::TIMEOUT;
+fn is_timeout_error(err: RpcError) -> bool {
+    let code: i32 = err as i32;
+    code >= 400 && code < 500
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=errors.category_predicates version=1 rust_sha256=c5eddf66e526cd616e15478c813b595e710de432e6cc505ba0d9bd63c0e4c690*/
+bool is_connection_error(RpcError err) {
+    const int32_t code = static_cast<int32_t>(err);
+    return (rusty::detail::deref_if_pointer_like(code) >= 100) && (rusty::detail::deref_if_pointer_like(code) < 200);
+}
+
+bool is_timeout_error(RpcError err) {
+    const int32_t code = static_cast<int32_t>(err);
+    return (rusty::detail::deref_if_pointer_like(code) >= 400) && (rusty::detail::deref_if_pointer_like(code) < 500);
+}
+/*RUSTYCPP:GEN-END id=errors.category_predicates*/
 
 // `is_retryable_error` — pure classification of which `RpcError` codes
 // the client should retry on (transient connection/timeout faults).
