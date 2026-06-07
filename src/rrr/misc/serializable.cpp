@@ -1068,9 +1068,25 @@ namespace rrr {
 
 namespace {
 
+// `SerializableRegistryMap` — TU-local POD wrapping the single
+// `HashMap<i32, Factory>` the SpinMutex guards. Mirrors the shape of
+// `AnyMessageRegistryMap` over in any_message.cpp.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
 struct SerializableRegistryMap {
-  rusty::HashMap<int32_t, SerializableRegistry::Factory> map;
+    map: rusty::HashMap<i32, SerializableRegistry::Factory>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.registry_map version=1 rust_sha256=86fdf7049e82b2c9a5ffdda569e5e58f144d17e43af1a83bb338aea30c052631*/
+struct SerializableRegistryMap;
+
+struct SerializableRegistryMap {
+    rusty::HashMap<int32_t, SerializableRegistry::Factory> map;
 };
+/*RUSTYCPP:GEN-END id=serializable.registry_map*/
 
 // @unsafe - Returns a reference into a process-wide static singleton; the
 // caller treats the returned reference as `'static`-lifetime, which rusty-cpp
