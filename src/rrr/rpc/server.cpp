@@ -766,15 +766,30 @@ using ServerDropHeartbeatRepliesAtomic = std::atomic<bool>;
 // Each helper has the same logic the legacy Server out-of-line method
 // had — moved verbatim so the DSL stays a thin shim.
 
-// @safe - Pick the PollThread to use (auto-create one if caller didn't
-// supply one). Used by the ctor.
-inline rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(
-        rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
-    if (poll_thread_worker.is_none()) {
+// Pick the PollThread to use (auto-create one if caller didn't supply
+// one). Used by the ctor.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+fn server_resolve_poll_thread(
+        poll_thread_worker: rusty::Option<rusty::Arc<PollThread>>)
+        -> rusty::Option<rusty::Arc<PollThread>> {
+    if poll_thread_worker.is_none() {
         return rusty::Some(PollThread::create());
+    }
+    poll_thread_worker
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.resolve_poll_thread version=1 rust_sha256=979240d50170fdeae7be5e0be14f77e42ff023ce0241cd5650d26cc67dc296c4*/
+rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
+    if (poll_thread_worker.is_none()) {
+        return rusty::Option<rusty::Arc<PollThread>>(PollThread::create());
     }
     return std::move(poll_thread_worker);
 }
+/*RUSTYCPP:GEN-END id=server.resolve_poll_thread*/
 
 // @unsafe - std::random_device may use system entropy sources.
 inline uint64_t server_generate_instance_id() {
