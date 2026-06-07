@@ -67,14 +67,27 @@ class Marshal;
 // + read_pos_ and advance read_pos_. When read_pos_ catches up to
 // buf_.size() (fully drained), both reset to zero so steady-state
 // write/read loops don't grow buf_ unboundedly.
+// Pre-reserved capacity on first construction so small payloads don't
+// pay a realloc-on-first-write. 4 KB matches the legacy chunk-list's
+// default chunk size, keeping per-Marshal memory footprint comparable
+// for the bench comparison.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr. Lifted
+// from `Marshal` class scope (private static constexpr) to namespace
+// scope because DSL constants live at namespace level; the one
+// existing use site references it unqualified, so namespace lookup
+// still resolves to the new constant.
+#if RUSTYCPP_RUST
+const kInitialCapacity: usize = 4096;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=marshal.initial_capacity version=1 rust_sha256=72b7f808695d048223203b2f3e49c2f8b175eace523aaf80b1b560ffaccb10a6*/
+constexpr size_t kInitialCapacity = static_cast<size_t>(4096);
+/*RUSTYCPP:GEN-END id=marshal.initial_capacity*/
+
 class Marshal: public NoCopy {
 private:
-  // Pre-reserved capacity on first construction so small payloads
-  // don't pay a realloc-on-first-write. 4 KB matches the legacy
-  // chunk-list's default chunk size, keeping per-Marshal memory
-  // footprint comparable for the bench comparison.
-  static constexpr std::size_t kInitialCapacity = 4096;
-
   rusty::Vec<std::uint8_t> buf_{};
   std::size_t read_pos_{0};
   rrr::i32 write_cnt_{0};
