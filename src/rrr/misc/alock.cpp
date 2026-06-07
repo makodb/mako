@@ -605,12 +605,11 @@ class TimeoutALock: public ALock {
   // Same laziness, same thread-safe first-call init, but with a
   // direct mapping to Rust's `OnceLock<T>` for future DSL migration.
   //
-  // `Alarm::Alarm()` sets `period_ = 50000` on the FrequentJob base,
-  // so the lambda has to construct fresh rather than relying on a
-  // default field initializer alone.
+  // Alarm is now a DSL-emitted struct without a default ctor, so we
+  // build via the `Alarm::new_()` factory.
   static Alarm &get_alarm_s() {
     static rusty::OnceCell<Alarm> inst;
-    inst.get_or_init([]() -> Alarm { return Alarm{}; });
+    inst.get_or_init([]() -> Alarm { return Alarm::new_(); });
     return *inst.get_mut();
   }
 
